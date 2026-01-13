@@ -12,6 +12,7 @@ pub mod config;
 pub mod man;
 pub mod spec;
 pub mod templates;
+pub mod view;
 
 use clap::{Args, Parser, Subcommand};
 

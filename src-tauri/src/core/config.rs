@@ -958,3 +958,53 @@ mod tests {
         assert!(Config::validate_run_name("my\\run").is_err());
     }
 }
+
+// =============================================================================
+// Convenience Path Functions
+// =============================================================================
+// Simple standalone functions for quick path access without loading full config
+
+/// Get the hirsel home directory (~/.hirsel)
+pub fn hirsel_dir() -> PathBuf {
+    dirs::home_dir()
+        .expect("Could not find home directory")
+        .join(".hirsel")
+}
+
+/// Get the runs directory (~/.hirsel/runs)
+pub fn runs_dir() -> PathBuf {
+    hirsel_dir().join("runs")
+}
+
+/// Get the path to a specific run
+pub fn run_dir(run_name: &str) -> PathBuf {
+    runs_dir().join(run_name)
+}
+
+/// Get all run names by listing the runs directory
+pub fn list_runs() -> std::io::Result<Vec<String>> {
+    let runs = runs_dir();
+    if !runs.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(runs)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            if let Some(name) = entry.file_name().to_str() {
+                // Skip hidden directories
+                if !name.starts_with('.') {
+                    names.push(name.to_string());
+                }
+            }
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+/// Check if a run exists
+pub fn run_exists(run_name: &str) -> bool {
+    run_dir(run_name).exists()
+}
