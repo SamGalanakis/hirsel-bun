@@ -4,19 +4,21 @@
   "description": "Herd your AI coding agents",
   "type": "module",
   "scripts": {
-    "dev": "npx tauri dev",
-    "build": "npx tauri build",
-    "build:css": "npx tailwindcss -i src/styles/main.css -o src/styles/output.css",
-    "build:ts": "npx tsc --noEmit",
+    "dev": "tauri dev",
+    "build": "vite build && tauri build",
+    "vite:dev": "vite",
+    "vite:build": "vite build",
     "tauri": "tauri"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.1.18",
+    "@tailwindcss/vite": "^4.1.18",
     "@tauri-apps/api": "^2",
     "@tauri-apps/cli": "^2",
     "alpinejs": "^3",
     "basecoat-css": "^0.3",
     "tailwindcss": "^4.1.18",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vite": "^7.3.1"
   }
 }

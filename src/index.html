@@ -4,18 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Hirsel</title>
-  <link rel="stylesheet" href="styles/main.css">
-  <!-- Import TypeScript components before Alpine loads -->
-  <script type="module">
-    import { runList } from './components/run-list.ts';
-    import { taskPanel } from './components/task-panel.ts';
-    import { toast, toastContainer } from './lib/toast.ts';
-    // Make components available globally for Alpine
-    window.runList = runList;
-    window.taskPanel = taskPanel;
-    window.toast = toast;
-    window.toastContainer = toastContainer;
-  </script>
+  <link rel="stylesheet" href="./styles/main.css">
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/basecoat-css@0.3/dist/js/all.min.js"></script>
 </head>
@@ -970,6 +959,9 @@
     </div>
   </div>
 
+  <!-- Load Tauri APIs -->
+  <script type="module" src="./main.ts"></script>
+
   <!-- Inline Alpine.js component definitions -->
   <script>
     // =========================================================================
@@ -1072,31 +1064,34 @@
 
         // Window control methods (for frameless window)
         async minimizeWindow() {
-          if (window.__TAURI__) {
-            const { getCurrentWindow } = await import('@tauri-apps/api/window');
-            await getCurrentWindow().minimize();
-          }
+          try {
+            if (window.tauriGetCurrentWindow) {
+              await window.tauriGetCurrentWindow().minimize();
+            }
+          } catch (e) { console.error('minimize failed', e); }
         },
 
         async toggleMaximize() {
-          if (window.__TAURI__) {
-            const { getCurrentWindow } = await import('@tauri-apps/api/window');
-            const win = getCurrentWindow();
-            this.isMaximized = await win.isMaximized();
-            if (this.isMaximized) {
-              await win.unmaximize();
-            } else {
-              await win.maximize();
+          try {
+            if (window.tauriGetCurrentWindow) {
+              const win = window.tauriGetCurrentWindow();
+              this.isMaximized = await win.isMaximized();
+              if (this.isMaximized) {
+                await win.unmaximize();
+              } else {
+                await win.maximize();
+              }
+              this.isMaximized = !this.isMaximized;
             }
-            this.isMaximized = !this.isMaximized;
-          }
+          } catch (e) { console.error('maximize failed', e); }
         },
 
         async closeWindow() {
-          if (window.__TAURI__) {
-            const { getCurrentWindow } = await import('@tauri-apps/api/window');
-            await getCurrentWindow().close();
-          }
+          try {
+            if (window.tauriGetCurrentWindow) {
+              await window.tauriGetCurrentWindow().close();
+            }
+          } catch (e) { console.error('close failed', e); }
         },
 
         toggleTheme() {
@@ -1184,10 +1179,9 @@
           this.initTheme();
 
           // Initialize window maximized state (for frameless window)
-          if (window.__TAURI__) {
+          if (window.tauriGetCurrentWindow) {
             try {
-              const { getCurrentWindow } = await import('@tauri-apps/api/window');
-              this.isMaximized = await getCurrentWindow().isMaximized();
+              this.isMaximized = await window.tauriGetCurrentWindow().isMaximized();
             } catch (e) {
               console.warn('Failed to get window state:', e);
             }
@@ -1287,11 +1281,11 @@
         async attachToWorker() {
           // TODO: Tauri invoke to attach to first active worker
           console.log('Attach to worker for run:', this.selectedRun);
-          if (window.__TAURI__) {
+          if (window.tauriInvoke) {
             try {
-              const workers = await window.__TAURI__.core.invoke('get_workers', { runName: this.selectedRun });
+              const workers = await window.tauriInvoke('get_workers', { runName: this.selectedRun });
               if (workers && workers.length > 0) {
-                await window.__TAURI__.core.invoke('attach_worker', {
+                await window.tauriInvoke('attach_worker', {
                   runName: this.selectedRun,
                   workerName: workers[0].name
                 });
@@ -1342,19 +1336,24 @@
 
         async fetchRuns() {
           try {
-            // Try Tauri invoke if available
-            if (window.__TAURI__) {
-              const { invoke } = await import('@tauri-apps/api/core');
-              this.runs = await invoke('get_runs');
+            // Use global Tauri invoke from main.ts
+            if (window.tauriInvoke) {
+              console.log('[DEBUG] Calling get_runs...');
+              this.runs = await window.tauriInvoke('get_runs');
+              console.log('[DEBUG] Got runs:', this.runs);
             } else {
-              // Demo mode - show empty
-              this.runs = [];
+              console.log('[DEBUG] Tauri not loaded yet, retrying...');
+              setTimeout(() => this.fetchRuns(), 100);
+              return;
             }
             this.loading = false;
             this.error = null;
           } catch (err) {
+            console.error('[DEBUG] fetchRuns error:', err);
             this.error = err.message || String(err);
             this.loading = false;
+            // Fallback to empty on error
+            this.runs = [];
           }
         },
 
@@ -1415,8 +1414,8 @@
         async contextPause() {
           if (!this.contextMenuRun) return;
           try {
-            if (window.__TAURI__) {
-              const { invoke } = await import('@tauri-apps/api/core');
+            if (window.tauriInvoke) {
+              const invoke = window.tauriInvoke;
               await invoke('pause_run', { name: this.contextMenuRun });
               await this.fetchRuns();
             }
@@ -1429,8 +1428,8 @@
         async contextResume() {
           if (!this.contextMenuRun) return;
           try {
-            if (window.__TAURI__) {
-              const { invoke } = await import('@tauri-apps/api/core');
+            if (window.tauriInvoke) {
+              const invoke = window.tauriInvoke;
               await invoke('resume_run', { name: this.contextMenuRun });
               await this.fetchRuns();
             }
@@ -1447,8 +1446,8 @@
             return;
           }
           try {
-            if (window.__TAURI__) {
-              const { invoke } = await import('@tauri-apps/api/core');
+            if (window.tauriInvoke) {
+              const invoke = window.tauriInvoke;
               await invoke('delete_run', { name: this.contextMenuRun });
               if (this.selectedRun === this.contextMenuRun) {
                 this.selectedRun = null;
@@ -1466,8 +1465,8 @@
         async contextDeliver() {
           if (!this.contextMenuRun) return;
           try {
-            if (window.__TAURI__) {
-              const { invoke } = await import('@tauri-apps/api/core');
+            if (window.tauriInvoke) {
+              const invoke = window.tauriInvoke;
               const branch = await invoke('deliver_run', { name: this.contextMenuRun });
               window.toast.success(`Delivered to branch: ${branch}`, 'Delivery complete');
               await this.fetchRuns();
@@ -1522,8 +1521,8 @@
           this.error = null;
 
           try {
-            if (window.__TAURI__) {
-              const { invoke } = await import('@tauri-apps/api/core');
+            if (window.tauriInvoke) {
+              const invoke = window.tauriInvoke;
               const [detail, tasks, workers] = await Promise.all([
                 invoke('get_run_detail', { name }),
                 invoke('get_tasks', { runName: name }),
@@ -1546,7 +1545,7 @@
               this.pollInterval = setInterval(async () => {
                 if (!this.runName) return;
                 try {
-                  const { invoke } = await import('@tauri-apps/api/core');
+                  const invoke = window.tauriInvoke;
                   const [detail, tasks, workers] = await Promise.all([
                     invoke('get_run_detail', { name: this.runName }),
                     invoke('get_tasks', { runName: this.runName }),
@@ -1671,8 +1670,8 @@
         async handlePause() {
           if (!this.runName || !this.canPause()) return;
           try {
-            if (window.__TAURI__) {
-              const { invoke } = await import('@tauri-apps/api/core');
+            if (window.tauriInvoke) {
+              const invoke = window.tauriInvoke;
               await invoke('pause_run', { name: this.runName });
               await this.loadRunDetail(this.runName);
             }
@@ -1685,8 +1684,8 @@
         async handleResume() {
           if (!this.runName || !this.canResume()) return;
           try {
-            if (window.__TAURI__) {
-              const { invoke } = await import('@tauri-apps/api/core');
+            if (window.tauriInvoke) {
+              const invoke = window.tauriInvoke;
               await invoke('resume_run', { name: this.runName });
               await this.loadRunDetail(this.runName);
             }
@@ -1699,8 +1698,8 @@
         async handleDeliver() {
           if (!this.runName || !this.canDeliver()) return;
           try {
-            if (window.__TAURI__) {
-              const { invoke } = await import('@tauri-apps/api/core');
+            if (window.tauriInvoke) {
+              const invoke = window.tauriInvoke;
               const branch = await invoke('deliver_run', { name: this.runName });
               alert('Delivered to branch: ' + branch);
               await this.loadRunDetail(this.runName);
@@ -1789,14 +1788,14 @@
 
           try {
             // Check if Tauri is available
-            if (!window.__TAURI__) {
+            if (!window.tauriInvoke) {
               // Mock data for browser development
               this.workers = [];
               this.loading = false;
               return;
             }
 
-            const { invoke } = await import('@tauri-apps/api/core');
+            const invoke = window.tauriInvoke;
             const workers = await invoke('get_workers', { runName: this.selectedRun });
 
             // Also fetch tasks to map claimed tasks to workers
@@ -1850,12 +1849,12 @@
           if (!this.selectedRun) return;
 
           try {
-            if (!window.__TAURI__) {
+            if (!window.tauriInvoke) {
               console.log('Attach to worker:', name);
               return;
             }
 
-            const { invoke } = await import('@tauri-apps/api/core');
+            const invoke = window.tauriInvoke;
             await invoke('attach_worker', { runName: this.selectedRun, workerName: name });
           } catch (err) {
             console.error('Failed to attach to worker:', err);
@@ -1923,8 +1922,8 @@
           this.error = null;
 
           try {
-            if (window.__TAURI__) {
-              const { invoke } = await import('@tauri-apps/api/core');
+            if (window.tauriInvoke) {
+              const invoke = window.tauriInvoke;
               this.tasks = await invoke('get_tasks', { runName });
             } else {
               // Demo mode - show empty
@@ -1941,8 +1940,8 @@
               const currentRun = this.getSelectedRun();
               if (!currentRun) return;
               try {
-                if (window.__TAURI__) {
-                  const { invoke } = await import('@tauri-apps/api/core');
+                if (window.tauriInvoke) {
+                  const invoke = window.tauriInvoke;
                   this.tasks = await invoke('get_tasks', { runName: currentRun });
                   this.buildFlatList();
                   this.updateTaskCounts();
@@ -2080,8 +2079,8 @@
           if (!runName) return;
 
           try {
-            if (window.__TAURI__) {
-              const { invoke } = await import('@tauri-apps/api/core');
+            if (window.tauriInvoke) {
+              const invoke = window.tauriInvoke;
               await invoke('complete_task', { runName, taskId: this.contextMenuTask.id });
               await this.loadTasks(runName);
             }
@@ -2101,8 +2100,8 @@
           if (!runName) return;
 
           try {
-            if (window.__TAURI__) {
-              const { invoke } = await import('@tauri-apps/api/core');
+            if (window.tauriInvoke) {
+              const invoke = window.tauriInvoke;
               await invoke('reopen_task', { runName, taskId: this.contextMenuTask.id });
               await this.loadTasks(runName);
             }
@@ -2122,8 +2121,8 @@
           if (!runName) return;
 
           try {
-            if (window.__TAURI__) {
-              const { invoke } = await import('@tauri-apps/api/core');
+            if (window.tauriInvoke) {
+              const invoke = window.tauriInvoke;
               await invoke('unclaim_task', { runName, taskId: this.contextMenuTask.id });
               await this.loadTasks(runName);
             }
@@ -2148,8 +2147,8 @@
           }
 
           try {
-            if (window.__TAURI__) {
-              const { invoke } = await import('@tauri-apps/api/core');
+            if (window.tauriInvoke) {
+              const invoke = window.tauriInvoke;
               await invoke('delete_task', { runName, taskId: this.contextMenuTask.id });
               await this.loadTasks(runName);
             }
@@ -2254,8 +2253,8 @@
           this.error = null;
 
           try {
-            if (window.__TAURI__) {
-              const { invoke } = await import('@tauri-apps/api/core');
+            if (window.tauriInvoke) {
+              const invoke = window.tauriInvoke;
               this.entries = await invoke('get_history', { runName: name, limit: 100 });
             } else {
               // Demo mode
@@ -2272,8 +2271,8 @@
               if (!this.runName) return;
               try {
                 const prevLength = this.entries.length;
-                if (window.__TAURI__) {
-                  const { invoke } = await import('@tauri-apps/api/core');
+                if (window.tauriInvoke) {
+                  const invoke = window.tauriInvoke;
                   this.entries = await invoke('get_history', { runName: this.runName, limit: 100 });
                 }
                 if (this.entries.length > prevLength && this.autoScroll) {
@@ -2395,8 +2394,8 @@
           if (!runName) return;
 
           try {
-            if (window.__TAURI__) {
-              this.threads = await window.__TAURI__.core.invoke('get_threads', { runName });
+            if (window.tauriInvoke) {
+              this.threads = await window.tauriInvoke('get_threads', { runName });
             } else {
               // Mock data for development
               this.threads = [
@@ -2444,8 +2443,8 @@
             await this.fetchMessages();
 
             // Mark as read
-            if (window.__TAURI__) {
-              await window.__TAURI__.core.invoke('mark_messages_read', { runName, threadName: name });
+            if (window.tauriInvoke) {
+              await window.tauriInvoke('mark_messages_read', { runName, threadName: name });
             }
 
             // Update unread count
@@ -2474,8 +2473,8 @@
           try {
             const prevLength = this.messages.length;
 
-            if (window.__TAURI__) {
-              this.messages = await window.__TAURI__.core.invoke('get_messages', {
+            if (window.tauriInvoke) {
+              this.messages = await window.tauriInvoke('get_messages', {
                 runName,
                 threadName: this.selectedThread
               });
@@ -2513,8 +2512,8 @@
           this.newMessage = '';
 
           try {
-            if (window.__TAURI__) {
-              await window.__TAURI__.core.invoke('send_message', {
+            if (window.tauriInvoke) {
+              await window.tauriInvoke('send_message', {
                 run: runName,
                 thread: this.selectedThread,
                 message: content

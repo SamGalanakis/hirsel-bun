@@ -4,6 +4,7 @@
 //! Types are designed to match the TypeScript definitions in src/lib/types.ts.
 
 use serde::{Deserialize, Serialize};
+use crate::core::{config, state::SQLiteState};
 
 // =============================================================================
 // Status Enums (match TypeScript types)
@@ -221,9 +222,60 @@ pub struct ConfigResponse {
 /// Get list of all runs
 #[tauri::command]
 pub async fn get_runs() -> Result<Vec<RunSummary>, String> {
-    // TODO: Integrate with state.rs to get actual run data
-    // For now return empty list
-    Ok(vec![])
+    let run_names = config::list_runs().map_err(|e| format!("list_runs error: {}", e))?;
+    let mut runs = Vec::new();
+
+    for name in run_names {
+        let db_path = config::run_dir(&name).join("hirsel.db");
+        if !db_path.exists() {
+            continue;
+        }
+
+        match SQLiteState::new(db_path.clone()) {
+            Ok(state) => {
+                let status = state.status().unwrap_or(crate::core::state::Status::Idle);
+                let tasks = state.get_tasks().unwrap_or_default();
+                let workers = state.get_workers().unwrap_or_default();
+
+                let tasks_done = tasks.iter().filter(|t| t.status == crate::core::state::TaskStatus::Done).count() as u32;
+                let tasks_total = tasks.len() as u32;
+                let workers_active = workers.iter().filter(|w| {
+                    w.status == crate::core::state::WorkerStatus::Working
+                }).count() as u32;
+                let workers_total = workers.len() as u32;
+
+                // Convert core Status to GUI RunStatus
+                let run_status = match status {
+                    crate::core::state::Status::Idle => RunStatus::Idle,
+                    crate::core::state::Status::Working => RunStatus::Working,
+                    crate::core::state::Status::Paused => RunStatus::Paused,
+                    crate::core::state::Status::Runaway => RunStatus::Runaway,
+                    crate::core::state::Status::TimedOut => RunStatus::TimedOut,
+                    crate::core::state::Status::Eval => RunStatus::Eval,
+                    crate::core::state::Status::EvalFailed => RunStatus::EvalFailed,
+                    crate::core::state::Status::Waiting => RunStatus::Waiting,
+                    crate::core::state::Status::Done => RunStatus::Done,
+                    crate::core::state::Status::Delivered => RunStatus::Delivered,
+                    crate::core::state::Status::Merged => RunStatus::Merged,
+                };
+
+                runs.push(RunSummary {
+                    name,
+                    status: run_status,
+                    tasks_done,
+                    tasks_total,
+                    workers_active,
+                    workers_total,
+                    elapsed_minutes: 0.0, // TODO: calculate from started_at
+                    time_limit_minutes: None,
+                    has_unread_messages: false, // TODO: check messages
+                });
+            }
+            Err(_) => continue,
+        }
+    }
+
+    Ok(runs)
 }
 
 /// Get detailed information about a specific run
