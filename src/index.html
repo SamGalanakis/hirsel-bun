@@ -23,7 +23,17 @@
       <h1 class="text-lg font-semibold text-amber-500">Hirsel</h1>
     </div>
     <div class="flex items-center gap-1">
-      <button @click="toggleChat()" class="p-2 rounded hover:bg-pasture-700 text-wool-300" title="Chat (c)">
+      <button @click="toggleTheme()" class="p-2 rounded hover:bg-pasture-700 text-wool-300" :title="isDarkTheme ? 'Switch to light mode' : 'Switch to dark mode'">
+        <!-- Sun icon (shown in dark mode) -->
+        <svg x-show="isDarkTheme" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
+        </svg>
+        <!-- Moon icon (shown in light mode) -->
+        <svg x-show="!isDarkTheme" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
+        </svg>
+      </button>
+      <button @click="toggleChat()" class="p-2 rounded hover:bg-pasture-700 text-wool-300 relative" title="Chat (c)">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
         </svg>
@@ -435,6 +445,7 @@
         <div class="flex justify-between"><span class="text-wool-500">r</span><span class="text-wool-300">Resume run</span></div>
         <div class="flex justify-between"><span class="text-wool-500">c</span><span class="text-wool-300">Toggle chat</span></div>
         <div class="flex justify-between"><span class="text-wool-500">m</span><span class="text-wool-300">Send message</span></div>
+        <div class="flex justify-between"><span class="text-wool-500">t</span><span class="text-wool-300">Toggle theme</span></div>
         <div class="flex justify-between"><span class="text-wool-500">?</span><span class="text-wool-300">Show help</span></div>
         <div class="flex justify-between"><span class="text-wool-500">Esc</span><span class="text-wool-300">Close panel</span></div>
       </div>
@@ -453,9 +464,36 @@
         unreadCount: 0,
         tasksDone: 0,
         tasksTotal: 0,
+        isDarkTheme: true,
 
         toggleChat() {
           this.chatOpen = !this.chatOpen;
+        },
+
+        toggleTheme() {
+          this.isDarkTheme = !this.isDarkTheme;
+          if (this.isDarkTheme) {
+            document.documentElement.classList.remove('light');
+            document.documentElement.setAttribute('data-theme', 'dark');
+            localStorage.setItem('hirsel-theme', 'dark');
+          } else {
+            document.documentElement.classList.add('light');
+            document.documentElement.setAttribute('data-theme', 'light');
+            localStorage.setItem('hirsel-theme', 'light');
+          }
+        },
+
+        initTheme() {
+          const stored = localStorage.getItem('hirsel-theme');
+          if (stored === 'light') {
+            this.isDarkTheme = false;
+            document.documentElement.classList.add('light');
+            document.documentElement.setAttribute('data-theme', 'light');
+          } else {
+            this.isDarkTheme = true;
+            document.documentElement.classList.remove('light');
+            document.documentElement.setAttribute('data-theme', 'dark');
+          }
         },
 
         getStatusBadgeClass(status) {
@@ -513,6 +551,9 @@
 
         // Keyboard shortcuts
         init() {
+          // Initialize theme from localStorage
+          this.initTheme();
+
           // Track focused run index for j/k navigation
           this._focusedRunIndex = -1;
 
@@ -565,6 +606,9 @@
                 break;
               case 'r':
                 if (this.selectedRun) this.resumeRun();
+                break;
+              case 't':
+                this.toggleTheme();
                 break;
             }
           });
