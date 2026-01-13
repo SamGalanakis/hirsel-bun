@@ -10,10 +10,12 @@ export { activityLog, registerActivityLogComponent } from './activity-log';
 export { taskPanel, registerTaskPanelComponent } from './task-panel';
 export { statusBar, registerStatusBar } from './status-bar';
 export { workerPanel, registerWorkerPanelComponent } from './worker-panel';
+export { sheepClicker, registerSheepClickerComponent } from './sheep-clicker';
 export type { StatusBarState, StatusBarComponent } from './status-bar';
 export type { ActivityLogData } from './activity-log';
 export type { TaskPanelData } from './task-panel';
 export type { WorkerPanelData } from './worker-panel';
+export type { SheepClickerData } from './sheep-clicker';
 
 // Re-export utility functions for use outside components
 export {
@@ -50,6 +52,9 @@ export function registerAllComponents(): void {
   });
   import('./worker-panel').then(({ registerWorkerPanelComponent }) => {
     registerWorkerPanelComponent();
+  });
+  import('./sheep-clicker').then(({ registerSheepClickerComponent }) => {
+    registerSheepClickerComponent();
   });
 }
 

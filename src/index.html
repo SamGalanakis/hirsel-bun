@@ -820,7 +820,152 @@
         <div class="flex justify-between"><span class="text-wool-500">m</span><span class="text-wool-300">Send message</span></div>
         <div class="flex justify-between"><span class="text-wool-500">t</span><span class="text-wool-300">Toggle theme</span></div>
         <div class="flex justify-between"><span class="text-wool-500">?</span><span class="text-wool-300">Show help</span></div>
+        <div class="flex justify-between"><span class="text-wool-500">g</span><span class="text-wool-300">Sheep clicker game</span></div>
         <div class="flex justify-between"><span class="text-wool-500">Esc</span><span class="text-wool-300">Close panel</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sheep Clicker Mini-Game -->
+  <div
+    x-data="sheepClickerGame()"
+    x-show="isOpen"
+    x-transition.opacity
+    @click.self="close()"
+    class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 sheep-clicker-overlay"
+  >
+    <div class="bg-pasture-800 rounded-xl shadow-2xl w-[700px] max-h-[85vh] overflow-hidden border border-pasture-600" @click.stop>
+      <!-- Header -->
+      <div class="p-4 border-b border-pasture-600 flex items-center justify-between bg-gradient-to-r from-pasture-700 to-pasture-800">
+        <div class="flex items-center gap-3">
+          <span class="text-3xl">🐑</span>
+          <div>
+            <h2 class="text-xl font-bold text-amber-500">Sheep Clicker</h2>
+            <p class="text-xs text-wool-500">Pass time while your agents work</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button @click="reset()" class="text-xs px-2 py-1 rounded bg-terra/20 text-terra hover:bg-terra/30 transition-colors" title="Reset game">
+            Reset
+          </button>
+          <button @click="close()" class="text-wool-500 hover:text-wool-300 transition-colors">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="flex h-[500px]">
+        <!-- Main Game Area -->
+        <div class="flex-1 flex flex-col items-center justify-center p-6 relative overflow-hidden">
+          <!-- Wool Counter -->
+          <div class="text-center mb-6">
+            <div class="text-5xl font-bold text-amber-500 sheep-clicker-wool-count" x-text="formatNumber(wool)"></div>
+            <div class="text-wool-400 text-lg">wool</div>
+            <div class="text-wool-600 text-sm mt-1">
+              <span x-text="formatNumber(woolPerClick * clickMultiplier)"></span>/click
+              <span class="mx-2">•</span>
+              <span x-text="formatNumber(woolPerSecond)"></span>/sec
+            </div>
+          </div>
+
+          <!-- Clickable Sheep -->
+          <button
+            @click="clickSheep($event)"
+            class="sheep-clicker-sheep relative w-48 h-48 rounded-full bg-gradient-to-br from-wool-200 to-wool-400 shadow-lg hover:shadow-xl transition-all duration-100 flex items-center justify-center group"
+            :class="{ 'sheep-bounce': sheepBounce }"
+          >
+            <!-- Sheep SVG -->
+            <svg class="w-36 h-36 text-pasture-800 group-hover:scale-105 transition-transform" viewBox="0 0 64 64">
+              <!-- Body (fluffy wool) -->
+              <ellipse cx="32" cy="38" rx="20" ry="14" fill="currentColor" opacity="0.3"/>
+              <ellipse cx="30" cy="36" rx="18" ry="12" fill="currentColor" opacity="0.5"/>
+              <ellipse cx="32" cy="34" rx="16" ry="10" fill="currentColor" opacity="0.8"/>
+              <!-- Head -->
+              <ellipse cx="48" cy="28" rx="8" ry="6" fill="currentColor"/>
+              <!-- Ear -->
+              <ellipse cx="52" cy="22" rx="3" ry="4" fill="currentColor" opacity="0.8"/>
+              <!-- Eye -->
+              <circle cx="50" cy="27" r="2" fill="#fff"/>
+              <circle cx="50.5" cy="26.5" r="1" fill="#1a1f1c"/>
+              <!-- Legs -->
+              <rect x="22" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7"/>
+              <rect x="28" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7"/>
+              <rect x="36" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7"/>
+              <rect x="42" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7"/>
+            </svg>
+
+            <!-- Floating Numbers -->
+            <template x-for="num in floatingNumbers" :key="num.id">
+              <div
+                class="sheep-clicker-floating absolute text-amber-400 font-bold text-xl pointer-events-none"
+                :style="`left: ${num.x}px; top: ${num.y}px;`"
+                x-text="'+' + num.value"
+              ></div>
+            </template>
+          </button>
+
+          <!-- Combo indicator -->
+          <div x-show="comboCount > 1" x-transition class="mt-4 text-amber-400 font-bold">
+            <span x-text="comboCount"></span>x Combo!
+          </div>
+
+          <!-- Achievement notification area -->
+          <div class="absolute bottom-4 left-4 right-4 text-center">
+            <template x-for="achievement in achievements.filter(a => a.unlocked).slice(-3)" :key="achievement.id">
+              <div class="inline-block mx-1 px-2 py-1 bg-golden/20 text-golden rounded text-xs">
+                <span x-text="achievement.icon"></span>
+                <span x-text="achievement.name"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Upgrades Panel -->
+        <div class="w-64 border-l border-pasture-600 bg-pasture-900/50 flex flex-col">
+          <div class="p-3 border-b border-pasture-600">
+            <h3 class="font-semibold text-wool-200">Upgrades</h3>
+          </div>
+          <div class="flex-1 overflow-y-auto p-2 space-y-2">
+            <template x-for="upgrade in upgrades" :key="upgrade.id">
+              <button
+                @click="buyUpgrade(upgrade.id)"
+                :disabled="!canAfford(getUpgradeCost(upgrade))"
+                class="w-full p-3 rounded-lg text-left transition-all duration-150"
+                :class="canAfford(getUpgradeCost(upgrade))
+                  ? 'bg-pasture-700 hover:bg-pasture-600 cursor-pointer'
+                  : 'bg-pasture-800 opacity-50 cursor-not-allowed'"
+              >
+                <div class="flex items-center gap-2">
+                  <span class="text-2xl" x-text="upgrade.icon"></span>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center justify-between">
+                      <span class="font-medium text-wool-200 text-sm" x-text="upgrade.name"></span>
+                      <span class="text-xs text-wool-500" x-text="'x' + upgrade.owned" x-show="upgrade.owned > 0"></span>
+                    </div>
+                    <div class="text-xs text-wool-500 truncate" x-text="upgrade.description"></div>
+                    <div class="text-xs font-medium mt-1" :class="canAfford(getUpgradeCost(upgrade)) ? 'text-sage' : 'text-terra'">
+                      <span x-text="formatNumber(getUpgradeCost(upgrade))"></span> wool
+                    </div>
+                  </div>
+                </div>
+              </button>
+            </template>
+          </div>
+
+          <!-- Stats -->
+          <div class="p-3 border-t border-pasture-600 text-xs text-wool-500 space-y-1">
+            <div class="flex justify-between">
+              <span>Total wool:</span>
+              <span class="text-wool-300" x-text="formatNumber(totalWool)"></span>
+            </div>
+            <div class="flex justify-between">
+              <span>Achievements:</span>
+              <span class="text-wool-300" x-text="achievements.filter(a => a.unlocked).length + '/' + achievements.length"></span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -2445,6 +2590,196 @@
             hash = sender.charCodeAt(i) + ((hash << 5) - hash);
           }
           return workerColors[Math.abs(hash) % workerColors.length];
+        }
+      };
+    }
+
+    // =========================================================================
+    // Sheep Clicker Mini-Game
+    // =========================================================================
+
+    function sheepClickerGame() {
+      return {
+        isOpen: false,
+        wool: 0,
+        totalWool: 0,
+        woolPerClick: 1,
+        woolPerSecond: 0,
+        clickMultiplier: 1,
+        upgrades: [
+          { id: 'lamb', name: 'Lamb', description: 'A cute lamb helps gather wool', baseCost: 15, woolPerSecond: 0.1, icon: '🐑', owned: 0 },
+          { id: 'sheepdog', name: 'Sheepdog', description: 'Herds sheep more efficiently', baseCost: 100, woolPerSecond: 1, icon: '🐕', owned: 0 },
+          { id: 'shepherd', name: 'Shepherd', description: 'A wise shepherd tends the flock', baseCost: 500, woolPerSecond: 5, icon: '🧑‍🌾', owned: 0 },
+          { id: 'pasture', name: 'Green Pasture', description: 'Lush grass makes happy sheep', baseCost: 2000, woolPerSecond: 20, icon: '🌿', owned: 0 },
+          { id: 'barn', name: 'Cozy Barn', description: 'Shelter increases wool production', baseCost: 10000, woolPerSecond: 100, icon: '🏠', owned: 0 },
+          { id: 'shears', name: 'Golden Shears', description: '+1 wool per click', baseCost: 500, woolPerSecond: 0, icon: '✂️', owned: 0 },
+          { id: 'spinning', name: 'Spinning Wheel', description: 'Doubles click power', baseCost: 5000, woolPerSecond: 0, icon: '🎡', owned: 0 },
+          { id: 'agent', name: 'AI Agent', description: 'An automated wool gatherer', baseCost: 50000, woolPerSecond: 500, icon: '🤖', owned: 0 },
+        ],
+        achievements: [
+          { id: 'first_wool', name: 'First Fleece', description: 'Collect your first wool', requirement: 1, icon: '🎉', unlocked: false },
+          { id: 'wool_100', name: 'Woolly Start', description: 'Collect 100 wool', requirement: 100, icon: '⭐', unlocked: false },
+          { id: 'wool_1000', name: 'Wool Gatherer', description: 'Collect 1,000 wool', requirement: 1000, icon: '🌟', unlocked: false },
+          { id: 'wool_10000', name: 'Wool Baron', description: 'Collect 10,000 wool', requirement: 10000, icon: '💫', unlocked: false },
+          { id: 'wool_100000', name: 'Wool Tycoon', description: 'Collect 100,000 wool', requirement: 100000, icon: '👑', unlocked: false },
+          { id: 'wool_million', name: 'Wool Millionaire', description: 'Collect 1,000,000 wool', requirement: 1000000, icon: '🏆', unlocked: false },
+        ],
+        floatingNumbers: [],
+        lastTick: Date.now(),
+        _tickInterval: null,
+        sheepBounce: false,
+        comboCount: 0,
+        _comboTimer: null,
+
+        init() {
+          this.load();
+          // Start tick interval
+          this._tickInterval = setInterval(() => this.tick(), 100);
+          // Listen for 'g' key
+          document.addEventListener('keydown', (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+            if (e.key === 'g') this.toggle();
+            if (e.key === 'Escape' && this.isOpen) this.close();
+          });
+        },
+
+        destroy() {
+          if (this._tickInterval) clearInterval(this._tickInterval);
+          this.save();
+        },
+
+        toggle() {
+          this.isOpen = !this.isOpen;
+          if (this.isOpen) this.load();
+          else this.save();
+        },
+
+        open() { this.isOpen = true; this.load(); },
+        close() { this.isOpen = false; this.save(); },
+
+        clickSheep(event) {
+          const woolEarned = this.woolPerClick * this.clickMultiplier;
+          // Combo system
+          if (this._comboTimer) clearTimeout(this._comboTimer);
+          this.comboCount++;
+          this._comboTimer = setTimeout(() => { this.comboCount = 0; }, 500);
+          // Combo bonus (max 2x)
+          const comboBonus = Math.min(this.comboCount * 0.1, 2);
+          const totalWool = Math.floor(woolEarned * (1 + comboBonus));
+          this.wool += totalWool;
+          this.totalWool += totalWool;
+          // Bounce animation
+          this.sheepBounce = true;
+          setTimeout(() => { this.sheepBounce = false; }, 100);
+          // Floating number
+          const rect = event.currentTarget.getBoundingClientRect();
+          const x = event.clientX - rect.left;
+          const y = event.clientY - rect.top;
+          const floatingId = Date.now() + Math.random();
+          this.floatingNumbers.push({ id: floatingId, value: totalWool, x, y, opacity: 1 });
+          setTimeout(() => {
+            this.floatingNumbers = this.floatingNumbers.filter(f => f.id !== floatingId);
+          }, 1000);
+          this.checkAchievements();
+          if (Math.random() < 0.1) this.save();
+        },
+
+        buyUpgrade(upgradeId) {
+          const upgrade = this.upgrades.find(u => u.id === upgradeId);
+          if (!upgrade) return;
+          const cost = this.getUpgradeCost(upgrade);
+          if (this.wool < cost) return;
+          this.wool -= cost;
+          upgrade.owned++;
+          if (upgrade.woolPerSecond > 0) this.woolPerSecond += upgrade.woolPerSecond;
+          if (upgrade.id === 'shears') this.woolPerClick += 1;
+          if (upgrade.id === 'spinning') this.clickMultiplier *= 2;
+          this.save();
+        },
+
+        canAfford(cost) { return this.wool >= cost; },
+
+        getUpgradeCost(upgrade) {
+          return Math.floor(upgrade.baseCost * Math.pow(1.15, upgrade.owned));
+        },
+
+        formatNumber(n) {
+          if (n < 1000) return Math.floor(n).toString();
+          if (n < 1000000) return (n / 1000).toFixed(1) + 'K';
+          if (n < 1000000000) return (n / 1000000).toFixed(1) + 'M';
+          return (n / 1000000000).toFixed(1) + 'B';
+        },
+
+        checkAchievements() {
+          for (const a of this.achievements) {
+            if (!a.unlocked && this.totalWool >= a.requirement) {
+              a.unlocked = true;
+              window.toast && window.toast.success(`Achievement: ${a.name}`, a.icon);
+            }
+          }
+        },
+
+        tick() {
+          if (!this.isOpen) return;
+          const now = Date.now();
+          const delta = (now - this.lastTick) / 1000;
+          this.lastTick = now;
+          if (this.woolPerSecond > 0) {
+            const earned = this.woolPerSecond * delta;
+            this.wool += earned;
+            this.totalWool += earned;
+          }
+        },
+
+        save() {
+          const data = {
+            wool: this.wool,
+            totalWool: this.totalWool,
+            woolPerClick: this.woolPerClick,
+            woolPerSecond: this.woolPerSecond,
+            clickMultiplier: this.clickMultiplier,
+            upgrades: this.upgrades.map(u => ({ id: u.id, owned: u.owned })),
+            achievements: this.achievements.map(a => ({ id: a.id, unlocked: a.unlocked })),
+          };
+          localStorage.setItem('hirsel-sheep-clicker', JSON.stringify(data));
+        },
+
+        load() {
+          const saved = localStorage.getItem('hirsel-sheep-clicker');
+          if (!saved) return;
+          try {
+            const data = JSON.parse(saved);
+            this.wool = data.wool || 0;
+            this.totalWool = data.totalWool || 0;
+            this.woolPerClick = data.woolPerClick || 1;
+            this.woolPerSecond = data.woolPerSecond || 0;
+            this.clickMultiplier = data.clickMultiplier || 1;
+            if (data.upgrades) {
+              for (const s of data.upgrades) {
+                const u = this.upgrades.find(x => x.id === s.id);
+                if (u) u.owned = s.owned;
+              }
+            }
+            if (data.achievements) {
+              for (const s of data.achievements) {
+                const a = this.achievements.find(x => x.id === s.id);
+                if (a) a.unlocked = s.unlocked;
+              }
+            }
+            this.lastTick = Date.now();
+          } catch (e) { console.warn('Failed to load sheep clicker:', e); }
+        },
+
+        reset() {
+          if (!confirm('Reset all progress? This cannot be undone!')) return;
+          this.wool = 0;
+          this.totalWool = 0;
+          this.woolPerClick = 1;
+          this.woolPerSecond = 0;
+          this.clickMultiplier = 1;
+          for (const u of this.upgrades) u.owned = 0;
+          for (const a of this.achievements) a.unlocked = false;
+          localStorage.removeItem('hirsel-sheep-clicker');
         }
       };
     }

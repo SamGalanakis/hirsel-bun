@@ -301,6 +301,34 @@ button {
   }
 }
 
+/* Sheep Clicker Game Animations */
+.sheep-clicker-sheep.sheep-bounce {
+  transform: scale(0.95);
+}
+
+.sheep-clicker-floating {
+  animation: float-up 1s ease-out forwards;
+}
+
+@keyframes float-up {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-60px) scale(1.2);
+  }
+}
+
+.sheep-clicker-overlay {
+  backdrop-filter: blur(4px);
+}
+
+.sheep-clicker-wool-count {
+  text-shadow: 0 0 20px rgba(245, 158, 11, 0.3);
+}
+
 /* Wool color class (for SVG sheep) */
 .text-wool-600 {
   color: #6a655f;
@@ -882,6 +910,119 @@ button {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* =========================================================================
+   Sheep Clicker Mini-Game Styles
+   ========================================================================= */
+
+/* Overlay entrance animation */
+.sheep-clicker-overlay {
+  backdrop-filter: blur(4px);
+}
+
+/* Sheep button bounce animation on click */
+.sheep-clicker-sheep {
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.sheep-clicker-sheep:hover {
+  transform: scale(1.02);
+}
+
+.sheep-clicker-sheep:active,
+.sheep-clicker-sheep.sheep-bounce {
+  transform: scale(0.95);
+}
+
+/* Wool counter pulse on big gains */
+.sheep-clicker-wool-count {
+  text-shadow: 0 0 20px rgba(245, 158, 11, 0.3);
+}
+
+/* Floating numbers animation */
+.sheep-clicker-floating {
+  animation: float-up 1s ease-out forwards;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+@keyframes float-up {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-30px) scale(1.2);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-60px) scale(0.8);
+  }
+}
+
+/* Upgrade card hover effect */
+.sheep-clicker-overlay button:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+/* Achievement badge glow */
+.sheep-clicker-overlay .bg-golden\/20 {
+  animation: achievement-glow 2s ease-in-out infinite;
+}
+
+@keyframes achievement-glow {
+  0%, 100% {
+    box-shadow: 0 0 5px rgba(218, 165, 32, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 15px rgba(218, 165, 32, 0.5);
+  }
+}
+
+/* Combo indicator animation */
+.sheep-clicker-overlay .text-amber-400.font-bold {
+  animation: combo-pulse 0.3s ease-out;
+}
+
+@keyframes combo-pulse {
+  0% {
+    transform: scale(1.3);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Sheep idle animation (subtle breathing) */
+.sheep-clicker-sheep svg {
+  animation: sheep-breathe 3s ease-in-out infinite;
+}
+
+@keyframes sheep-breathe {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+}
+
+/* Upgrade purchase flash */
+@keyframes upgrade-flash {
+  0% {
+    background-color: rgba(74, 222, 128, 0.3);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+/* Stats counter animation */
+.sheep-clicker-overlay .text-wool-300 {
+  transition: color 150ms ease-out;
 }
 
 /* Reduced motion preference */
