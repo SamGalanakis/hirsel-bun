@@ -13,9 +13,11 @@ pub mod chats;
 pub mod config;
 pub mod files;
 pub mod git;
+pub mod state;
 
 // Re-export commonly used types
 pub use acp::{ACPClientConfig, ACPError, MCPServerConfig, SessionUpdate};
 pub use chats::{ChatHeader, ChatMode};
 pub use config::*;
 pub use files::Files;
+pub use state::*;

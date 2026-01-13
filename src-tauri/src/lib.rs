@@ -10,6 +10,7 @@ pub mod core;
 // Re-export commonly used types
 pub use cli::{parse_cli, parse_worker_cli, Cli, Commands, WorkerCli, WorkerCommands};
 pub use core::Files;
+pub use core::state;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
