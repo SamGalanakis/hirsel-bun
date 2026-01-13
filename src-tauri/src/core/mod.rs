@@ -15,6 +15,7 @@ pub mod config;
 pub mod eval;
 pub mod files;
 pub mod git;
+pub mod remote;
 pub mod state;
 pub mod workers;
 
@@ -29,4 +30,8 @@ pub use workers::{
     spawn_worker, pause_all_workers, resume_awaiting_workers, check_worker_heartbeats,
     update_worker_heartbeat, get_agent_command, is_pid_alive,
     WorkerError, WorkerResult, WorkerSpawnConfig, SpawnResult,
+};
+pub use remote::{
+    parse_remote_spec, parse_remote_specs,
+    RemoteConfig, RemoteError, RemoteResult, RemoteWorkerSpawner,
 };
