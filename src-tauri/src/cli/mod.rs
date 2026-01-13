@@ -9,6 +9,7 @@
 
 pub mod completions;
 pub mod config;
+pub mod deliver;
 pub mod go;
 pub mod man;
 pub mod runs;
