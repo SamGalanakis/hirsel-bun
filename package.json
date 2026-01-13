@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "npx tauri dev",
     "build": "npx tauri build",
+    "build:css": "npx tailwindcss -i src/styles/main.css -o src/styles/output.css",
+    "build:ts": "npx tsc --noEmit",
     "tauri": "tauri"
   },
   "devDependencies": {
