@@ -346,21 +346,47 @@
 
         <!-- Bottom: Activity Log -->
         <div class="activity-panel h-48 flex flex-col">
-          <div class="p-3 border-b border-pasture-700">
+          <div class="p-3 border-b border-pasture-700 flex items-center justify-between">
             <h3 class="text-sm font-medium text-wool-300">Activity</h3>
+            <button
+              @click="scrollToBottom(); autoScroll = true"
+              x-show="!autoScroll"
+              class="text-xs text-amber-500 hover:text-amber-400"
+              title="Scroll to latest"
+            >
+              ↓ Latest
+            </button>
           </div>
-          <div class="flex-1 overflow-y-auto font-mono text-xs" x-data="activityLog()">
+          <div
+            class="flex-1 overflow-y-auto font-mono text-xs"
+            x-data="activityLog()"
+            @scroll="handleScroll($event)"
+          >
+            <!-- Loading state -->
+            <div x-show="loading" class="text-center text-wool-500 py-4">
+              <span class="animate-pulse">Loading activity...</span>
+            </div>
+
+            <!-- Error state -->
+            <div x-show="error && !loading" class="text-center text-terra py-4">
+              <p x-text="error"></p>
+              <button @click="loadHistory(runName)" class="mt-2 text-xs text-amber-500 hover:underline">Retry</button>
+            </div>
+
+            <!-- Activity entries -->
             <template x-for="entry in entries" :key="entry.id">
-              <div class="px-3 py-1 hover:bg-pasture-800 border-b border-pasture-800">
-                <span class="text-wool-500" x-text="formatTime(entry.timestamp)"></span>
-                <span class="text-wool-300 ml-2" x-text="entry.action"></span>
-                <span x-show="entry.detail" class="text-wool-500 ml-1" x-text="entry.detail"></span>
+              <div class="px-3 py-1 hover:bg-pasture-800 border-b border-pasture-800 flex items-start gap-2">
+                <span class="text-wool-600 flex-shrink-0 w-16" x-text="formatTime(entry.timestamp)"></span>
+                <span class="flex-shrink-0 w-4 text-center" :class="getActionColor(entry.action)" x-text="getActionIcon(entry.action)"></span>
+                <span :class="getActionColor(entry.action)" x-text="entry.action"></span>
+                <span x-show="entry.detail" class="text-wool-500 truncate" x-text="entry.detail"></span>
               </div>
             </template>
 
             <!-- Empty activity state -->
-            <div x-show="entries.length === 0" class="text-center text-wool-500 py-4">
+            <div x-show="!loading && !error && entries.length === 0" class="text-center text-wool-500 py-4">
               <p>No activity yet</p>
+              <p class="text-xs mt-1">Events will appear here as agents work</p>
             </div>
           </div>
         </div>
@@ -1170,19 +1196,171 @@
     }
 
     // Activity log component
+    // Full implementation for displaying activity history with real-time updates
     function activityLog() {
+      const ACTION_COLORS = {
+        task_claimed: 'text-amber-400',
+        task_done: 'text-sage',
+        task_added: 'text-sky-400',
+        task_deleted: 'text-terra',
+        task_unclaimed: 'text-wool-400',
+        task_reopened: 'text-golden',
+        worker_started: 'text-sage',
+        worker_stopped: 'text-wool-500',
+        worker_error: 'text-terra',
+        worker_paused: 'text-golden',
+        worker_resumed: 'text-amber-400',
+        eval_started: 'text-amber-400',
+        eval_passed: 'text-sage',
+        eval_failed: 'text-terra',
+        run_started: 'text-sage',
+        run_paused: 'text-golden',
+        run_resumed: 'text-amber-400',
+        run_done: 'text-sage',
+        run_delivered: 'text-sage',
+        run_timed_out: 'text-terra',
+        message_sent: 'text-sky-400',
+        message_received: 'text-wool-300',
+        default: 'text-wool-300',
+      };
+
+      const ACTION_ICONS = {
+        task_claimed: '→',
+        task_done: '✓',
+        task_added: '+',
+        task_deleted: '×',
+        task_unclaimed: '←',
+        task_reopened: '↺',
+        worker_started: '▶',
+        worker_stopped: '■',
+        worker_error: '!',
+        worker_paused: '⏸',
+        worker_resumed: '▶',
+        eval_started: '⚙',
+        eval_passed: '✓',
+        eval_failed: '✗',
+        run_started: '▶',
+        run_paused: '⏸',
+        run_resumed: '▶',
+        run_done: '✓',
+        run_delivered: '📦',
+        run_timed_out: '⏰',
+        message_sent: '→',
+        message_received: '←',
+        default: '•',
+      };
+
       return {
+        runName: null,
         entries: [],
+        loading: false,
+        error: null,
+        pollInterval: null,
+        autoScroll: true,
 
         async init() {
-          // TODO: Fetch from Tauri
+          // Listen for run selection events
+          window.addEventListener('run-selected', async (e) => {
+            if (e.detail) {
+              await this.loadHistory(e.detail);
+            } else {
+              this.clearHistory();
+            }
+          });
+        },
+
+        destroy() {
+          if (this.pollInterval) {
+            clearInterval(this.pollInterval);
+            this.pollInterval = null;
+          }
+        },
+
+        async loadHistory(name) {
+          if (this.pollInterval) {
+            clearInterval(this.pollInterval);
+            this.pollInterval = null;
+          }
+
+          this.runName = name;
+          this.loading = true;
+          this.error = null;
+
+          try {
+            if (window.__TAURI__) {
+              const { invoke } = await import('@tauri-apps/api/core');
+              this.entries = await invoke('get_history', { runName: name, limit: 100 });
+            } else {
+              // Demo mode
+              this.entries = [];
+            }
+            this.loading = false;
+
+            if (this.autoScroll) {
+              this.$nextTick(() => this.scrollToBottom());
+            }
+
+            // Poll for updates
+            this.pollInterval = setInterval(async () => {
+              if (!this.runName) return;
+              try {
+                const prevLength = this.entries.length;
+                if (window.__TAURI__) {
+                  const { invoke } = await import('@tauri-apps/api/core');
+                  this.entries = await invoke('get_history', { runName: this.runName, limit: 100 });
+                }
+                if (this.entries.length > prevLength && this.autoScroll) {
+                  this.$nextTick(() => this.scrollToBottom());
+                }
+              } catch (err) {
+                console.error('Failed to poll history:', err);
+              }
+            }, 2000);
+          } catch (err) {
+            this.error = err.message || String(err);
+            this.loading = false;
+          }
+        },
+
+        clearHistory() {
+          if (this.pollInterval) {
+            clearInterval(this.pollInterval);
+            this.pollInterval = null;
+          }
+          this.runName = null;
           this.entries = [];
+          this.loading = false;
+          this.error = null;
         },
 
         formatTime(timestamp) {
           if (!timestamp) return '';
           const d = new Date(timestamp);
-          return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+          return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        },
+
+        getActionColor(action) {
+          const normalized = action.toLowerCase().replace(/[\s-]+/g, '_');
+          return ACTION_COLORS[normalized] || ACTION_COLORS.default;
+        },
+
+        getActionIcon(action) {
+          const normalized = action.toLowerCase().replace(/[\s-]+/g, '_');
+          return ACTION_ICONS[normalized] || ACTION_ICONS.default;
+        },
+
+        scrollToBottom() {
+          const container = this.$el;
+          if (container) {
+            container.scrollTop = container.scrollHeight;
+          }
+        },
+
+        handleScroll(event) {
+          const target = event.target;
+          if (!target) return;
+          const isAtBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 50;
+          this.autoScroll = isAtBottom;
         }
       };
     }
