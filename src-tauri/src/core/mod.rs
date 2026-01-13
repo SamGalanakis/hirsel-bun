@@ -8,12 +8,14 @@
 //! - File utilities
 //! - ACP client
 
+pub mod acp;
 pub mod chats;
 pub mod config;
 pub mod files;
 pub mod git;
 
 // Re-export commonly used types
+pub use acp::{ACPClientConfig, ACPError, MCPServerConfig, SessionUpdate};
 pub use chats::{ChatHeader, ChatMode};
 pub use config::*;
 pub use files::Files;
