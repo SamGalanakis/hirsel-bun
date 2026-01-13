@@ -339,6 +339,10 @@ pub struct ConfigArgs {
 /// Arguments for `hirsel completions`
 #[derive(Args, Debug)]
 pub struct CompletionsArgs {
+    /// Shell to generate completions for (bash, zsh, fish, elvish, powershell)
+    /// If provided, prints completion script to stdout
+    pub shell: Option<String>,
+
     /// Force reinstall completions
     #[arg(long)]
     pub force: bool,
