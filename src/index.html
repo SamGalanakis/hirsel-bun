@@ -8,15 +8,54 @@
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/basecoat-css@0.3/dist/js/all.min.js"></script>
 </head>
-<body class="h-screen flex items-center justify-center">
+<body class="h-screen flex items-center justify-center bg-base">
 
-  <!-- Placeholder - implement per spec.md using Basecoat components -->
-  <div class="text-center">
-    <div class="text-6xl mb-4">🐑</div>
-    <h1 class="text-2xl font-semibold" style="color: var(--amber-500)">Hirsel</h1>
-    <p style="color: var(--wool-500)" class="mt-2">Herd your AI coding agents</p>
-    <p style="color: var(--wool-700)" class="text-sm mt-4">TODO: Implement UI per spec.md</p>
-    <p style="color: var(--wool-700)" class="text-xs mt-2">Using: Tauri + Alpine.js + Basecoat UI</p>
+  <!-- Theme Preview / Placeholder -->
+  <div class="text-center animate-fade-in">
+    <!-- Sheep icon with gentle animation -->
+    <div class="text-6xl mb-4 loading-bob">🐑</div>
+
+    <h1 class="text-2xl font-semibold text-accent">Hirsel</h1>
+    <p class="text-secondary mt-2">Herd your AI coding agents</p>
+
+    <!-- Status indicators demo -->
+    <div class="flex items-center justify-center gap-4 mt-6">
+      <div class="flex items-center gap-2">
+        <div class="status-dot status-working"></div>
+        <span class="text-muted text-sm">Working</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <div class="status-dot status-waiting"></div>
+        <span class="text-muted text-sm">Waiting</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <div class="status-dot status-done"></div>
+        <span class="text-muted text-sm">Done</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <div class="status-dot status-idle"></div>
+        <span class="text-muted text-sm">Idle</span>
+      </div>
+    </div>
+
+    <!-- Progress bar demo -->
+    <div class="mt-6 w-64 mx-auto">
+      <div class="progress-bar">
+        <div class="progress-fill" style="width: 65%"></div>
+      </div>
+      <p class="text-dim text-xs mt-2">65% complete</p>
+    </div>
+
+    <!-- Badge demos -->
+    <div class="flex items-center justify-center gap-2 mt-6">
+      <span class="badge badge-success">DONE</span>
+      <span class="badge badge-warning">DOING</span>
+      <span class="badge">TODO</span>
+      <span class="badge badge-leader">Leader</span>
+    </div>
+
+    <p class="text-dim text-sm mt-8">TODO: Implement full UI per spec.md</p>
+    <p class="text-dim text-xs mt-1">Using: Tauri + Alpine.js + Tailwind + Basecoat UI</p>
   </div>
 
 </body>

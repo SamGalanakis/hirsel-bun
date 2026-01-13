@@ -1,66 +1,436 @@
 @import "tailwindcss";
 @import "basecoat-css";
 
-/* Hirsel theme customizations */
-/* Override Basecoat defaults with warm "hirsel" palette */
+/* =============================================================================
+   Hirsel Theme Configuration (Tailwind v4)
 
-:root {
-  /* Backgrounds (dark pasture at dusk) */
-  --pasture-900: #1a1a1a;
-  --pasture-800: #242424;
-  --pasture-700: #2d2d2d;
-  --pasture-600: #333333;
+   Theme: "Pasture at Dusk" - warm, organic, shepherd aesthetic
+   The name "hirsel" is a Scottish term for a flock of sheep.
+   ============================================================================= */
 
-  /* Text (warm off-white, like wool) */
-  --wool-100: #e8e4df;
-  --wool-300: #b5b0a8;
-  --wool-500: #8a8580;
-  --wool-700: #5a5550;
+@theme {
+  /* -------------------------------------------------------------------------
+     Color Palette: Backgrounds (pasture at dusk)
+     ------------------------------------------------------------------------- */
+  --color-pasture-900: #1a1a1a;  /* darkest - main bg */
+  --color-pasture-800: #242424;  /* panels */
+  --color-pasture-700: #2d2d2d;  /* hover states */
+  --color-pasture-600: #333333;  /* borders */
+  --color-pasture-500: #404040;  /* subtle dividers */
+  --color-pasture-400: #525252;  /* disabled text bg */
 
-  /* Accent (shepherd's lantern) */
-  --amber-400: #e8c19a;
-  --amber-500: #d4a574;
-  --amber-600: #b8895c;
+  /* -------------------------------------------------------------------------
+     Color Palette: Text (warm off-white, like wool)
+     ------------------------------------------------------------------------- */
+  --color-wool-50:  #f5f3f0;   /* brightest */
+  --color-wool-100: #e8e4df;   /* primary text */
+  --color-wool-200: #d4cfc7;   /* secondary bright */
+  --color-wool-300: #b5b0a8;   /* secondary */
+  --color-wool-400: #9d9890;   /* tertiary */
+  --color-wool-500: #8a8580;   /* muted */
+  --color-wool-600: #706b66;   /* dimmer */
+  --color-wool-700: #5a5550;   /* dim */
+  --color-wool-800: #3d3a37;   /* very dim */
+  --color-wool-900: #292724;   /* almost invisible */
 
-  /* Status colors */
-  --sage: #7d9970;
-  --golden: #c9a227;
-  --terra: #c45c4a;
+  /* -------------------------------------------------------------------------
+     Color Palette: Accent (shepherd's lantern - amber/gold)
+     ------------------------------------------------------------------------- */
+  --color-amber-300: #f0d4ac;  /* lightest */
+  --color-amber-400: #e8c19a;  /* bright */
+  --color-amber-500: #d4a574;  /* primary accent */
+  --color-amber-600: #b8895c;  /* hover */
+  --color-amber-700: #9a7048;  /* pressed */
+  --color-amber-800: #7a5838;  /* dark accent */
+
+  /* -------------------------------------------------------------------------
+     Color Palette: Status Colors
+     ------------------------------------------------------------------------- */
+  --color-sage: #7d9970;       /* success/done (healthy pasture) */
+  --color-sage-light: #9ab88c; /* success hover */
+  --color-sage-dark: #5c7852;  /* success pressed */
+
+  --color-golden: #c9a227;     /* warning/waiting (attention needed) */
+  --color-golden-light: #dbb94a; /* warning hover */
+  --color-golden-dark: #a6841c;  /* warning pressed */
+
+  --color-terra: #c45c4a;      /* error (problem) */
+  --color-terra-light: #d4786a; /* error hover */
+  --color-terra-dark: #a34538;  /* error pressed */
+
+  /* -------------------------------------------------------------------------
+     Typography: Font Families
+     ------------------------------------------------------------------------- */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Menlo, monospace;
+
+  /* -------------------------------------------------------------------------
+     Spacing & Sizing
+     ------------------------------------------------------------------------- */
+  --radius-card: 8px;
+  --radius-button: 6px;
+  --radius-pill: 9999px;
+
+  /* -------------------------------------------------------------------------
+     Transitions
+     ------------------------------------------------------------------------- */
+  --transition-fast: 150ms ease-out;
+  --transition-normal: 200ms ease-out;
+  --transition-slow: 300ms ease-out;
+
+  /* -------------------------------------------------------------------------
+     Shadows
+     ------------------------------------------------------------------------- */
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.25);
+  --shadow-card-hover: 0 4px 16px rgba(0, 0, 0, 0.35);
+  --shadow-glow-amber: 0 0 12px rgba(212, 165, 116, 0.5);
+  --shadow-glow-sage: 0 0 12px rgba(125, 153, 112, 0.5);
+  --shadow-glow-golden: 0 0 12px rgba(201, 162, 39, 0.5);
+  --shadow-glow-terra: 0 0 12px rgba(196, 92, 74, 0.5);
 }
 
-/* Apply hirsel theme to body */
+/* =============================================================================
+   Light Mode Overrides
+   ============================================================================= */
+
+@theme dark {
+  /* Dark mode is the default, so these are already set above */
+}
+
+/* Light mode: inverted palette */
+.light, [data-theme="light"] {
+  --color-pasture-900: #f8f7f5;  /* lightest - main bg */
+  --color-pasture-800: #efede9;  /* panels */
+  --color-pasture-700: #e5e2dc;  /* hover states */
+  --color-pasture-600: #d8d4cc;  /* borders */
+  --color-pasture-500: #c9c4ba;  /* subtle dividers */
+  --color-pasture-400: #b5b0a5;  /* disabled text bg */
+
+  --color-wool-50:  #1a1917;   /* darkest */
+  --color-wool-100: #2a2826;   /* primary text */
+  --color-wool-200: #3d3a37;   /* secondary dark */
+  --color-wool-300: #524f4a;   /* secondary */
+  --color-wool-400: #6b6660;   /* tertiary */
+  --color-wool-500: #8a8580;   /* muted */
+  --color-wool-600: #a39e97;   /* lighter */
+  --color-wool-700: #b8b3ab;   /* light */
+  --color-wool-800: #d1ccc4;   /* very light */
+  --color-wool-900: #e8e4df;   /* lightest */
+}
+
+/* =============================================================================
+   Base Styles
+   ============================================================================= */
+
+html {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
 body {
-  background-color: var(--pasture-900);
-  color: var(--wool-100);
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: var(--color-pasture-900);
+  color: var(--color-wool-100);
+  line-height: 1.5;
 }
 
-/* Status dot animations */
+/* Monospace elements */
+code, pre, kbd, samp, .font-mono {
+  font-family: var(--font-mono);
+}
+
+/* =============================================================================
+   Component Utilities
+   ============================================================================= */
+
+/* Cards */
+.card {
+  background-color: var(--color-pasture-800);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* Status Indicators (soft glowing dots) */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  transition: all var(--transition-normal);
+}
+
 .status-working {
-  background-color: var(--amber-500);
-  box-shadow: 0 0 8px rgba(212, 165, 116, 0.6);
+  background-color: var(--color-amber-500);
+  box-shadow: var(--shadow-glow-amber);
   animation: pulse-glow 2s ease-in-out infinite;
 }
 
 .status-waiting {
-  background-color: var(--golden);
+  background-color: var(--color-golden);
+  box-shadow: var(--shadow-glow-golden);
+  animation: pulse-attention 3s ease-in-out infinite;
 }
 
 .status-done {
-  background-color: var(--sage);
+  background-color: var(--color-sage);
+}
+
+.status-error {
+  background-color: var(--color-terra);
+  box-shadow: var(--shadow-glow-terra);
 }
 
 .status-idle {
-  background-color: var(--wool-700);
+  background-color: var(--color-wool-600);
 }
 
+.status-blocked {
+  background-color: var(--color-wool-700);
+  opacity: 0.6;
+}
+
+/* =============================================================================
+   Animations
+   ============================================================================= */
+
+/* Gentle glow pulse for working state */
 @keyframes pulse-glow {
   0%, 100% {
     opacity: 1;
-    box-shadow: 0 0 8px rgba(212, 165, 116, 0.6);
+    box-shadow: 0 0 8px rgba(212, 165, 116, 0.5);
   }
   50% {
-    opacity: 0.7;
-    box-shadow: 0 0 12px rgba(212, 165, 116, 0.8);
+    opacity: 0.8;
+    box-shadow: 0 0 16px rgba(212, 165, 116, 0.7);
   }
+}
+
+/* Attention pulse for waiting state */
+@keyframes pulse-attention {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.1);
+  }
+}
+
+/* Gentle bobbing for loading (like grazing sheep) */
+@keyframes bob-gentle {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.loading-bob {
+  animation: bob-gentle 1.5s ease-in-out infinite;
+}
+
+/* Fade in animation */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in var(--transition-normal) ease-out;
+}
+
+/* =============================================================================
+   Focus States (Amber glow for keyboard navigation)
+   ============================================================================= */
+
+*:focus-visible {
+  outline: 2px solid var(--color-amber-500);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Button focus */
+button:focus-visible,
+[role="button"]:focus-visible {
+  box-shadow: 0 0 0 3px var(--color-amber-500);
+  outline: none;
+}
+
+/* =============================================================================
+   Scrollbar Styling
+   ============================================================================= */
+
+/* Webkit scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-pasture-800);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-wool-600);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-wool-500);
+}
+
+/* Firefox scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-wool-600) var(--color-pasture-800);
+}
+
+/* =============================================================================
+   Utility Classes
+   ============================================================================= */
+
+/* Text colors */
+.text-primary { color: var(--color-wool-100); }
+.text-secondary { color: var(--color-wool-300); }
+.text-muted { color: var(--color-wool-500); }
+.text-dim { color: var(--color-wool-700); }
+.text-accent { color: var(--color-amber-500); }
+.text-success { color: var(--color-sage); }
+.text-warning { color: var(--color-golden); }
+.text-error { color: var(--color-terra); }
+
+/* Background colors */
+.bg-base { background-color: var(--color-pasture-900); }
+.bg-panel { background-color: var(--color-pasture-800); }
+.bg-hover { background-color: var(--color-pasture-700); }
+.bg-border { background-color: var(--color-pasture-600); }
+
+/* Border colors */
+.border-subtle { border-color: var(--color-pasture-600); }
+.border-accent { border-color: var(--color-amber-500); }
+
+/* Transition utilities */
+.transition-fast { transition: all var(--transition-fast); }
+.transition-normal { transition: all var(--transition-normal); }
+.transition-slow { transition: all var(--transition-slow); }
+
+/* =============================================================================
+   Progress Bar
+   ============================================================================= */
+
+.progress-bar {
+  height: 6px;
+  background-color: var(--color-pasture-600);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-amber-600), var(--color-amber-500));
+  border-radius: var(--radius-pill);
+  transition: width var(--transition-normal);
+}
+
+.progress-fill-success {
+  background: linear-gradient(90deg, var(--color-sage-dark), var(--color-sage));
+}
+
+/* =============================================================================
+   Panel Layout Helpers
+   ============================================================================= */
+
+.panel {
+  background-color: var(--color-pasture-800);
+  border: 1px solid var(--color-pasture-600);
+  border-radius: var(--radius-card);
+}
+
+.panel-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-pasture-600);
+  font-weight: 500;
+  color: var(--color-wool-100);
+}
+
+.panel-body {
+  padding: 16px;
+}
+
+/* =============================================================================
+   Interactive Elements
+   ============================================================================= */
+
+/* Clickable list items */
+.list-item {
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.list-item:hover {
+  background-color: var(--color-pasture-700);
+}
+
+.list-item.selected {
+  background-color: var(--color-pasture-600);
+  border-left: 3px solid var(--color-amber-500);
+}
+
+/* Badge/Tag */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--radius-pill);
+  background-color: var(--color-pasture-600);
+  color: var(--color-wool-300);
+}
+
+.badge-success {
+  background-color: rgba(125, 153, 112, 0.2);
+  color: var(--color-sage-light);
+}
+
+.badge-warning {
+  background-color: rgba(201, 162, 39, 0.2);
+  color: var(--color-golden-light);
+}
+
+.badge-error {
+  background-color: rgba(196, 92, 74, 0.2);
+  color: var(--color-terra-light);
+}
+
+.badge-accent {
+  background-color: rgba(212, 165, 116, 0.2);
+  color: var(--color-amber-400);
+}
+
+/* Leader badge (star) */
+.badge-leader {
+  background-color: rgba(212, 165, 116, 0.15);
+  color: var(--color-amber-400);
+}
+
+.badge-leader::before {
+  content: '★';
+  margin-right: 4px;
 }
