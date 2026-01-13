@@ -112,20 +112,6 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
         std::fs::create_dir_all(parent)?;
     }
 
-    // Write initial log entry
-    std::fs::write(
-        &log_file,
-        format!(
-            "[worker: {}]\n{}\n\n",
-            config.worker_name,
-            if config.is_leader {
-                "Starting as leader..."
-            } else {
-                "Starting, waiting for tasks..."
-            }
-        ),
-    )?;
-
     debug!(
         "[{}] Worker log file: {:?}",
         config.worker_name, log_file
@@ -138,14 +124,61 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
     env.insert("HIRSEL_RUN".to_string(), config.run_name.clone());
     env.insert("HIRSEL_WORKER".to_string(), config.worker_name.clone());
 
-    // Build the worker command
-    // The worker subprocess will use hirsel-worker CLI
-    let worker_args = build_worker_args(&config);
+    // Set agent command for resume_awaiting_workers in worker subprocess
+    if let Ok(agent_cmd_json) = serde_json::to_string(&config.agent_command) {
+        env.insert("HIRSEL_AGENT_COMMAND".to_string(), agent_cmd_json);
+    }
+
+    // Get the current executable path
+    let hirsel_exe = std::env::current_exe()
+        .map_err(|e| WorkerError::SpawnFailed(format!("Failed to get current exe: {}", e)))?;
+
+    // Build args for hirsel __worker-run
+    let agent_command_json = serde_json::to_string(&config.agent_command)
+        .map_err(|e| WorkerError::SpawnFailed(format!("Failed to serialize agent command: {}", e)))?;
+
+    let mut args = vec![
+        "__worker-run".to_string(),
+        "--run".to_string(),
+        config.run_name.clone(),
+        "--worker".to_string(),
+        config.worker_name.clone(),
+        "--work-dir".to_string(),
+        config.work_dir.to_string_lossy().to_string(),
+        "--run-dir".to_string(),
+        config.run_dir.to_string_lossy().to_string(),
+        "--spec".to_string(),
+        config.spec_path.to_string_lossy().to_string(),
+        "--log-file".to_string(),
+        log_file.to_string_lossy().to_string(),
+        "--agent-command".to_string(),
+        agent_command_json,
+    ];
+
+    if config.is_leader {
+        args.push("--is-leader".to_string());
+    }
+
+    if let Some(ref leader) = config.leader_name {
+        args.push("--leader-name".to_string());
+        args.push(leader.clone());
+    }
+
+    if let Some(ref teammates) = config.teammates {
+        if !teammates.is_empty() {
+            args.push("--teammates".to_string());
+            args.push(teammates.join(","));
+        }
+    }
+
+    if let Some(ref session_id) = config.resume_session_id {
+        args.push("--resume-session-id".to_string());
+        args.push(session_id.clone());
+    }
 
     // Spawn the detached subprocess
-    let child = Command::new(&config.agent_command[0])
-        .args(&config.agent_command[1..])
-        .args(&worker_args)
+    let child = Command::new(&hirsel_exe)
+        .args(&args)
         .current_dir(&config.work_dir)
         .envs(&env)
         .stdin(Stdio::null())
@@ -166,8 +199,8 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
     )?;
 
     info!(
-        "Spawned worker {} (ACP: {}, PID {})",
-        config.worker_name, config.agent_command[0], pid
+        "Spawned worker {} (hirsel __worker-run, PID {})",
+        config.worker_name, pid
     );
 
     Ok(SpawnResult {
@@ -249,8 +282,8 @@ pub fn pause_all_workers(state: &SQLiteState) -> WorkerResult<Vec<String>> {
             }
         }
 
-        // Mark as paused regardless of whether process was running
-        if worker.status != WorkerStatus::Done && worker.status != WorkerStatus::Error {
+        // Mark as paused regardless of whether process was running (skip already inactive workers)
+        if !worker.status.is_inactive() {
             state.update_worker(
                 &worker.name,
                 WorkerUpdate {
@@ -396,6 +429,420 @@ pub fn update_worker_heartbeat(state: &SQLiteState, worker_name: &str) -> Worker
 /// Get the agent command for a preset
 pub fn get_agent_command(preset: &AgentPreset) -> Vec<String> {
     preset.command.clone()
+}
+
+// =============================================================================
+// Time Limit Notifications and Timeout Handling
+// =============================================================================
+
+/// Time notification thresholds (accelerating frequency)
+const TIME_NOTIFICATION_THRESHOLDS: &[i64] = &[25, 50, 75, 85, 90, 95, 98];
+
+/// Get message for a time notification threshold
+fn get_time_notification_message(threshold: i64) -> &'static str {
+    match threshold {
+        25 => "Time check: 25% elapsed, 75% remaining",
+        50 => "Halfway point: 50% of time used",
+        75 => "75% of time used. Start wrapping up non-essential tasks.",
+        85 => "85% elapsed. Prioritize completing current work.",
+        90 => "90% of time elapsed! Focus on essential tasks only.",
+        95 => "5% time remaining! Finalize immediately.",
+        98 => "2% remaining - run will auto-complete very soon.",
+        _ => "Time notification",
+    }
+}
+
+/// Check time limit and send notifications at threshold crossings.
+/// Returns the threshold that was notified, if any.
+pub fn check_and_send_time_notifications(
+    state: &SQLiteState,
+    is_multi_worker: bool,
+    worker_name: Option<&str>,
+) -> WorkerResult<Option<i64>> {
+    let time_info = match state.get_time_info()? {
+        Some(info) => info,
+        None => return Ok(None),
+    };
+
+    let pct_elapsed = time_info.percent_elapsed as i64;
+    let last_notified = state.get_last_time_notification_pct()?.unwrap_or(0);
+
+    // Find thresholds we've crossed since last notification
+    for &threshold in TIME_NOTIFICATION_THRESHOLDS {
+        if threshold > last_notified && pct_elapsed >= threshold {
+            let message = get_time_notification_message(threshold);
+
+            // Send to group chat for multi-worker, or worker direct for single
+            let thread = if is_multi_worker {
+                "group".to_string()
+            } else {
+                worker_name.unwrap_or("user").to_string()
+            };
+
+            // Add message to state
+            state.add_message(&thread, "System", message, false)?;
+
+            info!("Time notification sent: {}% - {}", threshold, message);
+            state.set_last_time_notification_pct(threshold)?;
+
+            return Ok(Some(threshold));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Handle time limit expiration - set run to TIMED_OUT status.
+/// Should only be called by the first worker to detect expiration.
+pub fn handle_time_expired(
+    state: &SQLiteState,
+    files: &Files,
+    is_multi_worker: bool,
+    worker_name: &str,
+    run_name: &str,
+) -> WorkerResult<()> {
+    use crate::core::state::Status;
+
+    // Only the first worker to detect expiration should handle it
+    if state.status()? == Status::TimedOut {
+        info!(
+            "[{}] Time already expired, skipping handler",
+            worker_name
+        );
+        return Ok(());
+    }
+
+    // Send final message
+    let message = "Time limit reached. Run paused with current progress.";
+    let thread = if is_multi_worker { "group" } else { worker_name };
+
+    state.add_message(thread, "System", message, false)?;
+
+    // Cancel any running evals
+    let cancelled = state.cancel_running_evals("Time limit reached")?;
+    if cancelled > 0 {
+        info!(
+            "[{}] Cancelled {} running eval(s) due to timeout",
+            worker_name, cancelled
+        );
+    }
+
+    // Set all active workers to PAUSED
+    let workers = state.get_workers()?;
+    for worker in workers {
+        if matches!(
+            worker.status,
+            WorkerStatus::Working | WorkerStatus::Waiting | WorkerStatus::Awaiting
+        ) {
+            state.update_worker(
+                &worker.name,
+                WorkerUpdate {
+                    status: Some(WorkerStatus::Paused),
+                    ..Default::default()
+                },
+            )?;
+        }
+    }
+
+    // Set run status to TIMED_OUT
+    state.set_status(Status::TimedOut)?;
+    info!("[{}] Run status set to TIMED_OUT", worker_name);
+
+    // Write to worker log
+    let log_file = files.worker_log(worker_name);
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file)
+    {
+        use std::io::Write;
+        let _ = writeln!(file, "\n[time limit reached - run timed out]");
+    }
+
+    // Trigger summary generation in background
+    spawn_background_summary(run_name, worker_name);
+
+    Ok(())
+}
+
+/// Spawn summary generation in a background process
+fn spawn_background_summary(run_name: &str, worker_name: &str) {
+    let hirsel_exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => {
+            warn!("[{}] Failed to get current exe for summary: {}", worker_name, e);
+            return;
+        }
+    };
+
+    match Command::new(&hirsel_exe)
+        .args(["summary", run_name])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(_) => {
+            info!("[{}] Spawned summary generation for timed out run", worker_name);
+        }
+        Err(e) => {
+            warn!("[{}] Failed to spawn summary generation: {}", worker_name, e);
+        }
+    }
+}
+
+/// Check if time has expired and handle it if so.
+/// Returns true if time expired and was handled.
+pub fn check_time_expired(
+    state: &SQLiteState,
+    files: &Files,
+    is_multi_worker: bool,
+    worker_name: &str,
+    run_name: &str,
+) -> WorkerResult<bool> {
+    if state.is_time_expired()? {
+        handle_time_expired(state, files, is_multi_worker, worker_name, run_name)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+// =============================================================================
+// Dynamic Worker Scaling
+// =============================================================================
+
+/// Configuration for worker scaling
+#[derive(Debug, Clone)]
+pub struct WorkerScale {
+    pub min: usize,
+    pub max: usize,
+    pub autoscale: bool,
+}
+
+impl WorkerScale {
+    /// Parse a scale string like "1", "1-3", "1-3:auto"
+    pub fn parse(s: &str) -> Option<Self> {
+        let (range_part, autoscale) = if s.ends_with(":auto") {
+            (&s[..s.len() - 5], true)
+        } else {
+            (s, false)
+        };
+
+        if range_part.contains('-') {
+            let parts: Vec<&str> = range_part.split('-').collect();
+            if parts.len() == 2 {
+                let min = parts[0].parse().ok()?;
+                let max = parts[1].parse().ok()?;
+                return Some(Self { min, max, autoscale });
+            }
+        } else {
+            let count = range_part.parse().ok()?;
+            return Some(Self {
+                min: count,
+                max: count,
+                autoscale,
+            });
+        }
+        None
+    }
+
+    /// Check if we can scale up from current count
+    pub fn can_scale_up(&self, current: usize) -> bool {
+        self.autoscale && current < self.max
+    }
+}
+
+/// Check if we should scale up workers based on autoscale settings.
+/// Returns the name of the new worker if one was spawned, None otherwise.
+pub fn maybe_scale_up(
+    run_name: &str,
+    run_dir: &Path,
+    agent_command: &[String],
+) -> WorkerResult<Option<String>> {
+    use crate::core::git::create_worker_clone;
+
+    let files = Files::new(run_dir);
+    let state = SQLiteState::new(files.db_path())?;
+
+    // Check if autoscaling is enabled
+    let scale_str = match state.get_worker_scale()? {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+
+    let scale = match WorkerScale::parse(&scale_str) {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+
+    if !scale.autoscale {
+        return Ok(None);
+    }
+
+    // Don't scale up if run is paused
+    use crate::core::state::Status;
+    if state.status()? == Status::Paused {
+        debug!("maybe_scale_up: run is paused, not scaling");
+        return Ok(None);
+    }
+
+    // Get current workers
+    let workers = state.get_workers()?;
+    let current_count = workers.len();
+
+    // Check if we can scale up
+    if !scale.can_scale_up(current_count) {
+        return Ok(None);
+    }
+
+    // Count active workers (working or waiting for user)
+    let active_workers: Vec<_> = workers
+        .iter()
+        .filter(|w| matches!(w.status, WorkerStatus::Working | WorkerStatus::Waiting))
+        .collect();
+
+    // Get claimable tasks
+    let claimable = state.get_claimable_tasks()?;
+
+    debug!(
+        "maybe_scale_up: {} claimable tasks, {} active workers, {} total workers",
+        claimable.len(),
+        active_workers.len(),
+        current_count
+    );
+
+    // Only scale up if there are more claimable tasks than active workers
+    if claimable.len() <= active_workers.len() {
+        return Ok(None);
+    }
+
+    // Get a new worker name
+    let existing_names: Vec<String> = workers.iter().map(|w| w.name.clone()).collect();
+    let new_name = crate::cli::go::get_available_name(&existing_names);
+
+    // Get project path
+    let project_path_str = match state.get_project_path()? {
+        Some(p) => p,
+        None => {
+            warn!("maybe_scale_up: no project path, cannot scale");
+            return Ok(None);
+        }
+    };
+
+    let project_path = PathBuf::from(&project_path_str);
+    let staging_dir = run_dir.join("work").join("staging");
+
+    // Create worker clone
+    let worker_dir = match create_worker_clone(run_name, &project_path, &new_name, Some(&staging_dir), run_dir) {
+        Ok(dir) => dir,
+        Err(e) => {
+            warn!("maybe_scale_up: failed to create worker clone: {}", e);
+            return Ok(None);
+        }
+    };
+
+    // Add worker to state
+    state.add_worker(&new_name, worker_dir.to_str().unwrap_or("."), "local")?;
+
+    // Create worker chat file
+    let chat_file = files.chats_dir().join(format!("{}.md", new_name));
+    if let Err(e) = std::fs::write(&chat_file, format!("# {} Chat\n\n", new_name)) {
+        warn!("maybe_scale_up: failed to create worker chat: {}", e);
+    }
+
+    // Announce in group chat
+    let reason = format!(
+        "Autoscaling: {} tasks available, {} workers busy",
+        claimable.len(),
+        active_workers.len()
+    );
+    state.add_message(
+        "group",
+        "System",
+        &format!("New worker **{}** has joined the team. {}", new_name, reason),
+        false,
+    )?;
+
+    // Get leader info
+    let leader = workers.iter().find(|w| {
+        // First worker is typically the leader
+        workers.iter().position(|x| x.name == w.name) == Some(0)
+    });
+    let leader_name = leader.map(|l| l.name.clone());
+
+    // Get teammates
+    let teammates: Vec<String> = workers.iter().map(|w| w.name.clone()).collect();
+
+    // Spawn the worker
+    let config = WorkerSpawnConfig {
+        run_name: run_name.to_string(),
+        worker_name: new_name.clone(),
+        work_dir: worker_dir,
+        run_dir: run_dir.to_path_buf(),
+        spec_path: files.spec(),
+        agent_command: agent_command.to_vec(),
+        is_leader: false,
+        leader_name,
+        teammates: Some(teammates),
+        resume_session_id: None,
+    };
+
+    match spawn_worker(config, &state) {
+        Ok(result) => {
+            info!("Scaled up: spawned new worker {} (PID {})", new_name, result.pid);
+            Ok(Some(new_name))
+        }
+        Err(e) => {
+            warn!("maybe_scale_up: failed to spawn worker: {}", e);
+            Ok(None)
+        }
+    }
+}
+
+// =============================================================================
+// Eval Triggering
+// =============================================================================
+
+/// Check if all workers are inactive and maybe trigger eval.
+/// This should be called whenever a worker transitions to Awaiting or Error status.
+/// Returns true if eval was triggered.
+pub fn maybe_trigger_eval(
+    run_name: &str,
+    run_dir: &Path,
+) -> WorkerResult<bool> {
+    let files = Files::new(run_dir);
+    let state = SQLiteState::new(files.db_path())?;
+
+    // Check if all workers are inactive
+    if !state.all_workers_inactive()? {
+        debug!("maybe_trigger_eval: not all workers inactive, skipping");
+        return Ok(false);
+    }
+
+    // Check if run is still in working status
+    let status = state.status()?;
+    if status != Status::Working {
+        debug!("maybe_trigger_eval: run status is {:?}, not Working, skipping", status);
+        return Ok(false);
+    }
+
+    // Check if there's an eval script configured
+    let eval_path = files.eval_spec();
+    if !eval_path.exists() {
+        // No eval script - set run to Done status
+        info!("maybe_trigger_eval: all workers inactive, no eval script, marking run as Done");
+        state.set_status(Status::Done)?;
+        return Ok(false);
+    }
+
+    // Trigger eval
+    info!("maybe_trigger_eval: all workers inactive, triggering eval");
+    state.set_status(Status::Eval)?;
+
+    // The actual eval execution is handled by the GUI/CLI when they see Eval status
+    // Or we could spawn the eval here directly
+    Ok(true)
 }
 
 #[cfg(test)]

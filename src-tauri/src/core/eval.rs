@@ -416,6 +416,295 @@ pub fn get_eval_script(run_dir: &Path) -> Option<String> {
     None
 }
 
+// =============================================================================
+// ACP-Based Evaluation
+// =============================================================================
+
+/// Maximum number of times to prompt the agent if it doesn't submit a verdict.
+const MAX_VERDICT_RETRIES: usize = 2;
+
+/// Reminder prompt sent if agent doesn't submit verdict.
+const VERDICT_REMINDER_PROMPT: &str = r#"You have not yet submitted your evaluation verdict.
+
+You MUST call one of these MCP tools to complete your evaluation:
+
+- `mcp__eval__eval_pass` - if all checks passed
+- `mcp__eval__eval_fail` - if any check failed (include feedback parameter)
+
+Please call the appropriate tool NOW to submit your verdict."#;
+
+/// Get the eval prompt template.
+fn get_eval_prompt() -> String {
+    r#"# hirsel Eval Mode
+
+You are an eval agent verifying work done by other agents.
+
+## CRITICAL: You MUST Submit a Verdict
+
+Your evaluation is NOT complete until you call one of these MCP tools:
+
+- **`mcp__eval__eval_pass`** - Call if all checks pass. No parameters needed.
+- **`mcp__eval__eval_fail`** - Call if any check fails. Requires `feedback` parameter.
+
+Writing text output is NOT enough. You MUST call one of these tools to submit your verdict. If you don't call a tool, your evaluation will be marked as failed.
+
+## Process
+
+1. Read the eval specification below
+2. Examine the code in the current directory
+3. Run any checks specified (tests, startup, file existence, etc.)
+4. **Call `mcp__eval__eval_pass` or `mcp__eval__eval_fail` to submit your verdict**
+
+## Guidelines
+
+- Be thorough but focused on the spec
+- Don't modify any code - you are read-only
+- If a check is ambiguous, fail with clear explanation
+- Be specific in your feedback about what failed and how to fix it
+
+## Feedback Format (for eval_fail)
+
+```
+Checks:
+- [PASS] Server starts on port 8000
+- [PASS] /healthz returns {"status": "ok"}
+- [FAIL] POST /api/vote returns 500 error
+
+To fix: The vote handler references undefined variable `user_id`. Change line 45 to use `current_user.id` instead.
+```
+
+Remember: Call `mcp__eval__eval_pass` or `mcp__eval__eval_fail` when done!
+"#.to_string()
+}
+
+/// Configuration for running an ACP-based eval.
+#[derive(Debug, Clone)]
+pub struct EvalAcpConfig {
+    pub run_name: String,
+    pub eval_name: String,
+    pub eval_id: i64,
+    pub spec: String,
+    pub eval_spec: String,
+    pub work_dir: std::path::PathBuf,
+    pub run_dir: std::path::PathBuf,
+    pub result_file: std::path::PathBuf,
+    pub log_file: std::path::PathBuf,
+    pub timeout_secs: u64,
+    pub agent_command: Vec<String>,
+}
+
+/// Result of an ACP-based eval.
+#[derive(Debug, Clone)]
+pub struct EvalAcpResult {
+    pub success: bool,
+    pub feedback: String,
+    pub eval_id: i64,
+    pub eval_name: String,
+}
+
+/// Run an evaluation using an ACP agent.
+///
+/// This spawns an AI agent with an eval MCP server that provides eval_pass/eval_fail
+/// tools. The agent is sent the eval prompt and is expected to call one of these
+/// tools to submit its verdict.
+pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalError> {
+    use agent_client_protocol::{
+        Agent, ClientSideConnection, InitializeRequest, NewSessionRequest,
+        PromptRequest, SetSessionModeRequest, McpServer, McpServerStdio,
+        Implementation, ContentBlock, TextContent, ProtocolVersion, EnvVariable,
+    };
+    use tokio::process::Command;
+    use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+    use std::sync::Arc;
+    use tracing::{info, error};
+
+    // Build the full prompt
+    let base_prompt = get_eval_prompt();
+    let time_context = ""; // TODO: Add time context if needed
+    let full_prompt = format!(
+        "{}\n\n## Run\n{}\n\n## Eval Name\n{}\n{}\n## Original Spec (what workers were asked to build)\n{}\n\n## Eval Specification (what to verify)\n{}\n\n## Work Directory\n{}\n\nYou are positioned in the project directory. Evaluate the code according to the specifications above. Use the eval tools to submit your verdict.",
+        base_prompt,
+        config.run_name,
+        config.eval_name,
+        time_context,
+        config.spec,
+        config.eval_spec,
+        config.work_dir.display()
+    );
+
+    // Write log file header
+    fs::write(&config.log_file, format!(
+        "# Eval {} (id={})\n# Started: {}\n\n",
+        config.eval_name,
+        config.eval_id,
+        chrono::Local::now().format("%Y-%m-%dT%H:%M:%S")
+    ))?;
+
+    // Get the hirsel executable for eval MCP server
+    let hirsel_exe = std::env::current_exe()
+        .map_err(|e| EvalError::ProcessFailed(format!("Failed to get current exe: {}", e)))?;
+
+    // Create MCP server config for eval
+    let mcp_env = vec![
+        EnvVariable::new("HIRSEL_EVAL_RESULT_FILE", config.result_file.to_string_lossy().as_ref()),
+    ];
+
+    let mcp_stdio = McpServerStdio::new("eval", hirsel_exe.to_string_lossy().as_ref())
+        .args(vec!["__eval-mcp".to_string()])
+        .env(mcp_env);
+    let mcp_server = McpServer::Stdio(mcp_stdio);
+
+    // Spawn the agent process
+    if config.agent_command.is_empty() {
+        return Err(EvalError::ProcessFailed("Agent command is empty".to_string()));
+    }
+
+    let mut cmd = Command::new(&config.agent_command[0]);
+    if config.agent_command.len() > 1 {
+        cmd.args(&config.agent_command[1..]);
+    }
+
+    cmd.current_dir(&config.work_dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .env("ACP_PERMISSION_MODE", "bypassPermissions");
+
+    let mut child = cmd.spawn()
+        .map_err(|e| EvalError::ProcessFailed(format!("Failed to spawn agent: {}", e)))?;
+
+    let stdin = child.stdin.take()
+        .ok_or_else(|| EvalError::ProcessFailed("Failed to get stdin".to_string()))?;
+    let stdout = child.stdout.take()
+        .ok_or_else(|| EvalError::ProcessFailed("Failed to get stdout".to_string()))?;
+
+    info!("[{}] Eval agent process started, pid={}", config.eval_name, child.id().unwrap_or(0));
+
+    // Convert tokio streams to futures-compatible streams
+    let stdin_compat = stdin.compat_write();
+    let stdout_compat = stdout.compat();
+
+    // Create the client
+    let db_path = config.run_dir.join("hirsel.db");
+    let client = Arc::new(crate::worker::acp_client::HirselClient::new(&config.eval_name, &config.log_file, &db_path));
+
+    // Create ACP connection
+    let (conn, io_task) = ClientSideConnection::new(
+        client.clone(),
+        stdin_compat,
+        stdout_compat,
+        |fut| { tokio::task::spawn_local(fut); },
+    );
+
+    // Spawn the IO task
+    let io_handle = tokio::task::spawn_local(async move {
+        if let Err(e) = io_task.await {
+            error!("ACP IO error: {:?}", e);
+        }
+    });
+
+    // Initialize
+    let init_request = InitializeRequest::new(ProtocolVersion::LATEST)
+        .client_info(Implementation::new("hirsel-eval", env!("CARGO_PKG_VERSION")));
+
+    conn.initialize(init_request).await
+        .map_err(|e| EvalError::ProcessFailed(format!("ACP initialize failed: {}", e)))?;
+
+    // Create session with MCP server
+    let session_request = NewSessionRequest::new(config.work_dir.to_string_lossy().to_string())
+        .mcp_servers(vec![mcp_server]);
+
+    let session = conn.new_session(session_request).await
+        .map_err(|e| EvalError::ProcessFailed(format!("Failed to create session: {}", e)))?;
+
+    let session_id = session.session_id;
+    info!("[{}] Created eval session: {}", config.eval_name, session_id);
+
+    // Set to bypass permissions mode
+    let mode_request = SetSessionModeRequest::new(session_id.clone(), "bypassPermissions");
+    conn.set_session_mode(mode_request).await
+        .map_err(|e| EvalError::ProcessFailed(format!("Failed to set mode: {}", e)))?;
+
+    // Prompt loop with retries
+    let mut current_prompt = full_prompt;
+    let mut attempt = 0;
+
+    loop {
+        // Build prompt content
+        let prompt_content = vec![
+            ContentBlock::Text(TextContent::new(current_prompt.clone()))
+        ];
+        let prompt_request = PromptRequest::new(session_id.clone(), prompt_content);
+
+        let timeout = tokio::time::Duration::from_secs(config.timeout_secs);
+        match tokio::time::timeout(timeout, conn.prompt(prompt_request)).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => {
+                let _ = child.kill().await;
+                io_handle.abort();
+                return Err(EvalError::ProcessFailed(format!("Prompt failed: {}", e)));
+            }
+            Err(_) => {
+                let _ = child.kill().await;
+                io_handle.abort();
+                let timeout_mins = config.timeout_secs / 60;
+                return Ok(EvalAcpResult {
+                    success: false,
+                    feedback: format!("Eval timed out after {} minutes", timeout_mins),
+                    eval_id: config.eval_id,
+                    eval_name: config.eval_name,
+                });
+            }
+        }
+
+        // Check if result file exists
+        if config.result_file.exists() {
+            break;
+        }
+
+        // Retry logic
+        attempt += 1;
+        if attempt > MAX_VERDICT_RETRIES {
+            let _ = child.kill().await;
+            io_handle.abort();
+            return Ok(EvalAcpResult {
+                success: false,
+                feedback: "Agent did not submit verdict after multiple prompts".to_string(),
+                eval_id: config.eval_id,
+                eval_name: config.eval_name,
+            });
+        }
+
+        current_prompt = VERDICT_REMINDER_PROMPT.to_string();
+    }
+
+    // Read result file
+    let result_content = fs::read_to_string(&config.result_file)
+        .map_err(|e| EvalError::Io(e))?;
+
+    #[derive(serde::Deserialize)]
+    struct ResultFile {
+        success: bool,
+        feedback: String,
+    }
+
+    let result: ResultFile = serde_json::from_str(&result_content)
+        .map_err(|e| EvalError::ProcessFailed(format!("Invalid result file: {}", e)))?;
+
+    // Kill agent process and cleanup
+    let _ = child.kill().await;
+    io_handle.abort();
+
+    info!("[{}] Eval completed: success={}", config.eval_name, result.success);
+
+    Ok(EvalAcpResult {
+        success: result.success,
+        feedback: result.feedback,
+        eval_id: config.eval_id,
+        eval_name: config.eval_name,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

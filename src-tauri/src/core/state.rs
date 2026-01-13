@@ -111,9 +111,8 @@ pub enum WorkerStatus {
     Idle,
     Working,
     Waiting,   // Waiting for user reply
-    Awaiting,  // Waiting for tasks (task_await)
+    Awaiting,  // No work to do (no tasks available OR all work complete)
     Paused,    // Worker paused (run is paused/runaway)
-    Done,
     Error,     // Worker process died unexpectedly
 }
 
@@ -125,7 +124,6 @@ impl WorkerStatus {
             WorkerStatus::Waiting => "waiting",
             WorkerStatus::Awaiting => "awaiting",
             WorkerStatus::Paused => "paused",
-            WorkerStatus::Done => "done",
             WorkerStatus::Error => "error",
         }
     }
@@ -137,10 +135,14 @@ impl WorkerStatus {
             "waiting" => Some(WorkerStatus::Waiting),
             "awaiting" => Some(WorkerStatus::Awaiting),
             "paused" => Some(WorkerStatus::Paused),
-            "done" => Some(WorkerStatus::Done),
             "error" => Some(WorkerStatus::Error),
             _ => None,
         }
+    }
+
+    /// Check if worker is inactive (not actively working)
+    pub fn is_inactive(&self) -> bool {
+        matches!(self, WorkerStatus::Awaiting | WorkerStatus::Error)
     }
 }
 
@@ -268,6 +270,95 @@ pub struct Amendment {
     pub spec_hash: String,
 }
 
+/// Type of worker output event
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkerEventType {
+    /// Agent text output
+    Text,
+    /// Tool call started
+    ToolStart,
+    /// Tool call status update
+    ToolUpdate,
+    /// Agent thought/reasoning (if enabled)
+    Thought,
+}
+
+impl WorkerEventType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            WorkerEventType::Text => "text",
+            WorkerEventType::ToolStart => "tool_start",
+            WorkerEventType::ToolUpdate => "tool_update",
+            WorkerEventType::Thought => "thought",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "text" => Some(WorkerEventType::Text),
+            "tool_start" => Some(WorkerEventType::ToolStart),
+            "tool_update" => Some(WorkerEventType::ToolUpdate),
+            "thought" => Some(WorkerEventType::Thought),
+            _ => None,
+        }
+    }
+}
+
+/// Tool call status (from ACP)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCallStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Failed,
+}
+
+impl ToolCallStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ToolCallStatus::Pending => "pending",
+            ToolCallStatus::InProgress => "in_progress",
+            ToolCallStatus::Completed => "completed",
+            ToolCallStatus::Failed => "failed",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "pending" => Some(ToolCallStatus::Pending),
+            "in_progress" => Some(ToolCallStatus::InProgress),
+            "completed" => Some(ToolCallStatus::Completed),
+            "failed" => Some(ToolCallStatus::Failed),
+            _ => None,
+        }
+    }
+}
+
+/// Worker output event for real-time streaming
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkerEvent {
+    pub id: i64,
+    pub worker_name: String,
+    pub event_type: WorkerEventType,
+    pub timestamp: String,
+    /// Text content (for Text/Thought events)
+    pub content: Option<String>,
+    /// Tool call ID (for tool events)
+    pub tool_call_id: Option<String>,
+    /// Tool title/name
+    pub tool_title: Option<String>,
+    /// Tool kind (read, edit, execute, search, etc.)
+    pub tool_kind: Option<String>,
+    /// Tool execution status
+    pub tool_status: Option<ToolCallStatus>,
+    /// Tool input (JSON)
+    pub tool_input: Option<String>,
+    /// Tool output (JSON)
+    pub tool_output: Option<String>,
+}
+
 // =============================================================================
 // Error Type
 // =============================================================================
@@ -327,7 +418,8 @@ CREATE TABLE IF NOT EXISTS state (
     last_time_notification_pct INTEGER,
     learnings_processed_at TEXT,
     iteration_count INTEGER DEFAULT 0,
-    max_iterations INTEGER
+    max_iterations INTEGER,
+    pause_mode TEXT DEFAULT 'sender'
 );
 
 CREATE TABLE IF NOT EXISTS workers (
@@ -401,8 +493,29 @@ CREATE TABLE IF NOT EXISTS amendments (
     spec_hash TEXT NOT NULL
 );
 
+-- Worker output events for real-time UI streaming
+-- event_type: 'text', 'tool_start', 'tool_update', 'tool_end', 'thought'
+-- tool_status: 'pending', 'in_progress', 'completed', 'failed' (for tool events)
+CREATE TABLE IF NOT EXISTS worker_events (
+    id INTEGER PRIMARY KEY,
+    worker_name TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    -- For text/thought events
+    content TEXT,
+    -- For tool events
+    tool_call_id TEXT,
+    tool_title TEXT,
+    tool_kind TEXT,
+    tool_status TEXT,
+    tool_input TEXT,
+    tool_output TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread);
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
+CREATE INDEX IF NOT EXISTS idx_worker_events_worker ON worker_events(worker_name);
+CREATE INDEX IF NOT EXISTS idx_worker_events_timestamp ON worker_events(timestamp);
 "#;
 
 // =============================================================================
@@ -846,6 +959,29 @@ impl SQLiteState {
         self.db.execute(
             "UPDATE state SET learnings_processed_at = ?1, updated_at = ?2 WHERE id = 1",
             params![timestamp, self.now()],
+        )?;
+        Ok(())
+    }
+
+    /// Get pause mode ("sender" or "all")
+    pub fn get_pause_mode(&self) -> StateResult<String> {
+        match self.db.query_row(
+            "SELECT pause_mode FROM state WHERE id = 1",
+            [],
+            |row| row.get::<_, Option<String>>(0),
+        ) {
+            Ok(Some(val)) => Ok(val),
+            Ok(None) => Ok("sender".to_string()),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok("sender".to_string()),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set pause mode ("sender" or "all")
+    pub fn set_pause_mode(&self, mode: &str) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET pause_mode = ?1, updated_at = ?2 WHERE id = 1",
+            params![mode, self.now()],
         )?;
         Ok(())
     }
@@ -1457,12 +1593,15 @@ impl SQLiteState {
         Ok(workers)
     }
 
-    /// Get active workers (not done)
+    /// Get active workers (not awaiting or error)
     pub fn get_active_workers(&self) -> StateResult<Vec<Worker>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, pid, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at FROM workers WHERE status != ?1 ORDER BY id"
+            "SELECT id, name, pid, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at FROM workers WHERE status NOT IN (?1, ?2) ORDER BY id"
         )?;
-        let workers = stmt.query_map(params![WorkerStatus::Done.as_str()], Self::worker_from_row)?
+        let workers = stmt.query_map(
+            params![WorkerStatus::Awaiting.as_str(), WorkerStatus::Error.as_str()],
+            Self::worker_from_row
+        )?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(workers)
     }
@@ -1521,11 +1660,11 @@ impl SQLiteState {
         Ok(())
     }
 
-    /// Check if all workers are done
-    pub fn all_workers_done(&self) -> StateResult<bool> {
+    /// Check if all workers are inactive (awaiting or error)
+    pub fn all_workers_inactive(&self) -> StateResult<bool> {
         let count: i64 = self.db.query_row(
-            "SELECT COUNT(*) FROM workers WHERE status != ?1",
-            params![WorkerStatus::Done.as_str()],
+            "SELECT COUNT(*) FROM workers WHERE status NOT IN (?1, ?2)",
+            params![WorkerStatus::Awaiting.as_str(), WorkerStatus::Error.as_str()],
             |row| row.get(0),
         )?;
         Ok(count == 0)
@@ -1930,6 +2069,130 @@ impl SQLiteState {
             Some(&format!("Compacted {} messages in thread '{}'", ids_to_delete.len(), thread)),
         )?;
 
+        Ok(())
+    }
+
+    // =========================================================================
+    // Worker Event Methods
+    // =========================================================================
+
+    /// Insert a text output event
+    pub fn insert_text_event(&self, worker_name: &str, content: &str) -> StateResult<i64> {
+        self.db.execute(
+            "INSERT INTO worker_events (worker_name, event_type, timestamp, content)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![worker_name, "text", self.now(), content],
+        )?;
+        Ok(self.db.last_insert_rowid())
+    }
+
+    /// Insert a thought event
+    pub fn insert_thought_event(&self, worker_name: &str, content: &str) -> StateResult<i64> {
+        self.db.execute(
+            "INSERT INTO worker_events (worker_name, event_type, timestamp, content)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![worker_name, "thought", self.now(), content],
+        )?;
+        Ok(self.db.last_insert_rowid())
+    }
+
+    /// Insert a tool start event
+    pub fn insert_tool_start_event(
+        &self,
+        worker_name: &str,
+        tool_call_id: &str,
+        title: &str,
+        kind: Option<&str>,
+        status: ToolCallStatus,
+        input: Option<&str>,
+    ) -> StateResult<i64> {
+        self.db.execute(
+            "INSERT INTO worker_events (worker_name, event_type, timestamp, tool_call_id, tool_title, tool_kind, tool_status, tool_input)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                worker_name,
+                "tool_start",
+                self.now(),
+                tool_call_id,
+                title,
+                kind,
+                status.as_str(),
+                input
+            ],
+        )?;
+        Ok(self.db.last_insert_rowid())
+    }
+
+    /// Insert a tool update event
+    pub fn insert_tool_update_event(
+        &self,
+        worker_name: &str,
+        tool_call_id: &str,
+        title: Option<&str>,
+        status: Option<ToolCallStatus>,
+        output: Option<&str>,
+    ) -> StateResult<i64> {
+        self.db.execute(
+            "INSERT INTO worker_events (worker_name, event_type, timestamp, tool_call_id, tool_title, tool_status, tool_output)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                worker_name,
+                "tool_update",
+                self.now(),
+                tool_call_id,
+                title,
+                status.map(|s| s.as_str()),
+                output
+            ],
+        )?;
+        Ok(self.db.last_insert_rowid())
+    }
+
+    /// Get worker events since a given ID (for polling)
+    pub fn get_worker_events(&self, worker_name: &str, after_id: Option<i64>, limit: i64) -> StateResult<Vec<WorkerEvent>> {
+        let after = after_id.unwrap_or(0);
+        let mut stmt = self.db.prepare(
+            "SELECT id, worker_name, event_type, timestamp, content,
+                    tool_call_id, tool_title, tool_kind, tool_status, tool_input, tool_output
+             FROM worker_events
+             WHERE worker_name = ?1 AND id > ?2
+             ORDER BY id ASC
+             LIMIT ?3"
+        )?;
+
+        let events: Vec<WorkerEvent> = stmt.query_map(params![worker_name, after, limit], |row| {
+            let event_type_str: String = row.get("event_type")?;
+            let tool_status_str: Option<String> = row.get("tool_status")?;
+
+            Ok(WorkerEvent {
+                id: row.get("id")?,
+                worker_name: row.get("worker_name")?,
+                event_type: WorkerEventType::from_str(&event_type_str).unwrap_or(WorkerEventType::Text),
+                timestamp: row.get("timestamp")?,
+                content: row.get("content")?,
+                tool_call_id: row.get("tool_call_id")?,
+                tool_title: row.get("tool_title")?,
+                tool_kind: row.get("tool_kind")?,
+                tool_status: tool_status_str.and_then(|s| ToolCallStatus::from_str(&s)),
+                tool_input: row.get("tool_input")?,
+                tool_output: row.get("tool_output")?,
+            })
+        })?.collect::<Result<Vec<_>, _>>()?;
+
+        Ok(events)
+    }
+
+    /// Get all events for a worker (for initial load)
+    pub fn get_all_worker_events(&self, worker_name: &str, limit: i64) -> StateResult<Vec<WorkerEvent>> {
+        self.get_worker_events(worker_name, None, limit)
+    }
+
+    /// Clear old worker events (for cleanup)
+    pub fn clear_worker_events(&self, worker_name: &str) -> StateResult<()> {
+        self.db.execute(
+            "DELETE FROM worker_events WHERE worker_name = ?1",
+            params![worker_name],
+        )?;
         Ok(())
     }
 }

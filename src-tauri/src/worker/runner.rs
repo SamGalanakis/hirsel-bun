@@ -9,6 +9,7 @@
 
 use crate::cli::{MsgSubcommands, TaskSubcommands, WorkerCommands};
 use crate::core::state::{SQLiteState, StateError, WorkerStatus, WorkerUpdate};
+use crate::core::workers::maybe_trigger_eval;
 use crate::core::Files;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -47,8 +48,12 @@ pub type WorkerResult<T> = Result<T, WorkerError>;
 pub struct WorkerConfig {
     /// Name of this worker (e.g., "achilles", "ajax").
     pub worker_name: String,
+    /// Name of the run.
+    pub run_name: String,
     /// Path to the run directory.
     pub run_dir: PathBuf,
+    /// Agent command to use for spawning workers.
+    pub agent_command: Vec<String>,
     /// Heartbeat interval in seconds.
     pub heartbeat_interval: u64,
 }
@@ -63,6 +68,12 @@ impl WorkerConfig {
 
         let worker_name = std::env::var("HIRSEL_WORKER")
             .map_err(|_| WorkerError::Config("HIRSEL_WORKER not set".into()))?;
+
+        // Get agent command from environment or default
+        let agent_command = std::env::var("HIRSEL_AGENT_COMMAND")
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_else(|| vec!["claude-code-acp".to_string()]);
 
         // Get runs directory from HIRSEL_ROOT or default
         let hirsel_root = std::env::var("HIRSEL_ROOT")
@@ -81,16 +92,20 @@ impl WorkerConfig {
 
         Ok(Self {
             worker_name,
+            run_name,
             run_dir,
+            agent_command,
             heartbeat_interval: 30,
         })
     }
 
     /// Create a worker configuration with explicit values.
-    pub fn new(worker_name: String, run_dir: PathBuf) -> Self {
+    pub fn new(worker_name: String, run_name: String, run_dir: PathBuf, agent_command: Vec<String>) -> Self {
         Self {
             worker_name,
+            run_name,
             run_dir,
+            agent_command,
             heartbeat_interval: 30,
         }
     }
@@ -233,6 +248,9 @@ impl WorkerRunner {
             .complete_task(&tid, &self.config.worker_name)
             .map_err(WorkerError::State)?;
 
+        // Completing a task might unblock other tasks, so wake awaiting workers
+        self.try_resume_awaiting_workers();
+
         Ok(serde_json::json!({
             "success": true,
             "task_id": tid,
@@ -257,6 +275,9 @@ impl WorkerRunner {
         self.state
             .unclaim_task(&tid, &self.config.worker_name)
             .map_err(WorkerError::State)?;
+
+        // Unclaiming a task makes it available, so wake awaiting workers
+        self.try_resume_awaiting_workers();
 
         Ok(serde_json::json!({
             "success": true,
@@ -288,11 +309,38 @@ impl WorkerRunner {
             )
             .map_err(WorkerError::State)?;
 
+        // New task might be claimable, so wake awaiting workers
+        if blocked_refs.is_empty() {
+            self.try_resume_awaiting_workers();
+        }
+
         Ok(serde_json::json!({
             "success": true,
             "task_id": task_id,
         })
         .to_string())
+    }
+
+    /// Try to resume awaiting workers if there are claimable tasks.
+    /// This is a best-effort operation - errors are logged but not propagated.
+    fn try_resume_awaiting_workers(&self) {
+        use crate::core::workers::resume_awaiting_workers;
+        use tracing::debug;
+
+        match resume_awaiting_workers(
+            &self.config.run_name,
+            &self.config.run_dir,
+            &self.config.agent_command,
+        ) {
+            Ok(resumed) => {
+                if !resumed.is_empty() {
+                    debug!("Resumed awaiting workers: {:?}", resumed);
+                }
+            }
+            Err(e) => {
+                debug!("Failed to resume awaiting workers: {}", e);
+            }
+        }
     }
 
     /// Delete a task.
@@ -332,12 +380,19 @@ impl WorkerRunner {
             .get_claimable_tasks()
             .map_err(WorkerError::State)?;
 
+        // Check if all workers are now inactive - if so, trigger eval
+        let eval_triggered = maybe_trigger_eval(
+            &self.config.run_name,
+            &self.config.run_dir,
+        ).unwrap_or(false);
+
         Ok(serde_json::json!({
             "available_tasks": claimable.len(),
             "tasks": claimable.iter().map(|t| serde_json::json!({
                 "id": t.id,
                 "name": t.name,
             })).collect::<Vec<_>>(),
+            "eval_triggered": eval_triggered,
         })
         .to_string())
     }
@@ -433,14 +488,24 @@ impl WorkerRunner {
     // Work Done
     // =========================================================================
 
-    /// Signal that all work is complete.
+    /// Signal that worker has no more work to do.
+    /// This sets the worker to Awaiting status. Evaluation is triggered
+    /// when ALL workers become inactive.
     pub fn work_done(&self) -> WorkerResult<String> {
-        // Mark worker as done (this is logged via worker status tracking)
-        self.set_status(WorkerStatus::Done)?;
+        // Mark worker as awaiting (no work to do)
+        self.set_status(WorkerStatus::Awaiting)?;
+
+        // Check if all workers are now inactive - if so, trigger eval
+        let eval_triggered = maybe_trigger_eval(
+            &self.config.run_name,
+            &self.config.run_dir,
+        ).unwrap_or(false);
 
         Ok(serde_json::json!({
             "success": true,
             "worker": self.config.worker_name,
+            "status": "awaiting",
+            "eval_triggered": eval_triggered,
         })
         .to_string())
     }
@@ -491,8 +556,14 @@ mod tests {
 
     #[test]
     fn test_worker_config_new() {
-        let config = WorkerConfig::new("achilles".into(), PathBuf::from("/tmp/test-run"));
+        let config = WorkerConfig::new(
+            "achilles".into(),
+            "test-run".into(),
+            PathBuf::from("/tmp/test-run"),
+            vec!["claude-code-acp".to_string()],
+        );
         assert_eq!(config.worker_name, "achilles");
+        assert_eq!(config.run_name, "test-run");
         assert_eq!(config.heartbeat_interval, 30);
     }
 

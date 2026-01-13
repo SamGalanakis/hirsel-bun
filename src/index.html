@@ -1,14 +1,14 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" style="background:#1a1a1a">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Hirsel</title>
+  <style>html,body{background:#1a1a1a!important}</style>
   <link rel="stylesheet" href="./styles/main.css">
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/basecoat-css@0.3/dist/js/all.min.js"></script>
 </head>
-<body class="h-screen flex flex-col overflow-hidden" x-data="appState()">
+<body class="h-screen flex flex-col overflow-hidden" x-data="appState()" style="background:#1a1a1a">
 
 <!-- SVG Definitions for reusable sheep illustrations -->
   <svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
@@ -138,24 +138,16 @@
         <!-- Icon -->
         <span class="flex-shrink-0 mt-0.5">
           <template x-if="toast.type === 'error'">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-            </svg>
+            <i data-lucide="alert-circle" class="w-5 h-5"></i>
           </template>
           <template x-if="toast.type === 'success'">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-            </svg>
+            <i data-lucide="check-circle" class="w-5 h-5"></i>
           </template>
           <template x-if="toast.type === 'warning'">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
-            </svg>
+            <i data-lucide="alert-triangle" class="w-5 h-5"></i>
           </template>
           <template x-if="toast.type === 'info'">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-            </svg>
+            <i data-lucide="info" class="w-5 h-5"></i>
           </template>
         </span>
         <!-- Content -->
@@ -168,9 +160,7 @@
           @click="dismiss(toast.id)"
           class="flex-shrink-0 opacity-60 hover:opacity-100 transition-opacity"
         >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-          </svg>
+          <i data-lucide="x" class="w-4 h-4"></i>
         </button>
       </div>
     </template>
@@ -186,26 +176,22 @@
       <!-- Theme Toggle -->
       <button @click="toggleTheme()" class="p-2 rounded hover:bg-pasture-700 text-wool-300" :title="isDarkTheme ? 'Switch to light mode' : 'Switch to dark mode'">
         <!-- Sun icon (shown in dark mode) -->
-        <svg x-show="isDarkTheme" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
-        </svg>
+        <i x-show="isDarkTheme" data-lucide="sun" class="w-4 h-4"></i>
         <!-- Moon icon (shown in light mode) -->
-        <svg x-show="!isDarkTheme" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
-        </svg>
+        <i x-show="!isDarkTheme" data-lucide="moon" class="w-4 h-4"></i>
       </button>
       <!-- Chat Button -->
       <button @click="toggleChat()" class="p-2 rounded hover:bg-pasture-700 text-wool-300 relative" title="Chat (c)">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
-        </svg>
+        <i data-lucide="message-circle" class="w-4 h-4"></i>
         <span x-show="unreadCount > 0" class="absolute -top-1 -right-1 w-2 h-2 bg-terra rounded-full"></span>
       </button>
       <!-- Help Button -->
       <button @click="showHelp = true" class="p-2 rounded hover:bg-pasture-700 text-wool-300" title="Help (?)">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-        </svg>
+        <i data-lucide="help-circle" class="w-4 h-4"></i>
+      </button>
+      <!-- Settings Button -->
+      <button @click="showSettings = true" class="p-2 rounded hover:bg-pasture-700 text-wool-300" title="Settings">
+        <i data-lucide="settings" class="w-4 h-4"></i>
       </button>
 
       <!-- Window Controls Divider -->
@@ -213,22 +199,14 @@
 
       <!-- Window Controls (frameless window) -->
       <button @click="minimizeWindow()" class="window-control p-2 rounded hover:bg-pasture-700 text-wool-400 hover:text-wool-200" title="Minimize">
-        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/>
-        </svg>
+        <i data-lucide="minus" class="w-3 h-3"></i>
       </button>
       <button @click="toggleMaximize()" class="window-control p-2 rounded hover:bg-pasture-700 text-wool-400 hover:text-wool-200" title="Maximize">
-        <svg x-show="!isMaximized" class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4h16v16h-4M4 8h12v12H4V8z"/>
-        </svg>
-        <svg x-show="isMaximized" class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <rect x="4" y="4" width="16" height="16" rx="1" stroke-width="2" fill="none"/>
-        </svg>
+        <i x-show="!isMaximized" data-lucide="square" class="w-3 h-3"></i>
+        <i x-show="isMaximized" data-lucide="copy" class="w-3 h-3"></i>
       </button>
       <button @click="closeWindow()" class="window-control p-2 rounded hover:bg-terra text-wool-400 hover:text-wool-100" title="Close">
-        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-        </svg>
+        <i data-lucide="x" class="w-3 h-3"></i>
       </button>
     </div>
   </header>
@@ -236,11 +214,53 @@
   <!-- Main Content Area -->
   <main class="flex-1 flex overflow-hidden">
 
-    <!-- Left Panel: Run List -->
-    <aside class="run-list-panel w-56 flex-shrink-0 border-r border-pasture-600 flex flex-col">
-      <div class="p-3 border-b border-pasture-600">
-        <h2 class="text-sm font-medium text-wool-300 uppercase tracking-wide">Runs</h2>
+    <!-- Left Panel: Run List (Collapsible) -->
+    <aside
+      class="run-list-panel flex-shrink-0 border-r border-pasture-600 flex flex-col transition-all duration-200"
+      :class="sidebarCollapsed ? 'w-10 collapsed' : 'w-56'"
+    >
+      <!-- Collapsed state: just a vertical rail -->
+      <div x-show="sidebarCollapsed" class="flex flex-col items-center py-3 h-full">
+        <button
+          @click="toggleSidebar()"
+          class="p-2 rounded hover:bg-pasture-700 text-wool-400 hover:text-wool-200 mb-2"
+          title="Expand runs panel"
+        >
+          <i data-lucide="chevrons-right" class="w-4 h-4"></i>
+        </button>
+        <!-- Mini run indicators when collapsed -->
+        <div class="flex-1 flex flex-col gap-1 overflow-y-auto px-1" x-data="runList()">
+          <template x-for="run in runs" :key="run.name">
+            <button
+              @click="selectRun(run.name); $dispatch('toggle-sidebar')"
+              :title="run.name + ' (' + run.status + ')'"
+              class="w-6 h-6 rounded flex items-center justify-center transition-colors"
+              :class="{
+                'bg-pasture-700 ring-1 ring-amber-500': selectedRun === run.name,
+                'hover:bg-pasture-700': selectedRun !== run.name
+              }"
+            >
+              <span
+                class="w-2 h-2 rounded-full"
+                :class="getStatusDotClass(run.status)"
+              ></span>
+            </button>
+          </template>
+        </div>
       </div>
+
+      <!-- Expanded state: full run list -->
+      <div x-show="!sidebarCollapsed" class="flex flex-col h-full">
+        <div class="p-3 border-b border-pasture-600 flex items-center justify-between">
+          <h2 class="text-sm font-medium text-wool-300 uppercase tracking-wide">Runs</h2>
+          <button
+            @click="toggleSidebar()"
+            class="p-1 rounded hover:bg-pasture-700 text-wool-500 hover:text-wool-300"
+            title="Collapse runs panel"
+          >
+            <i data-lucide="chevrons-left" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
       <div class="flex-1 overflow-y-auto" x-data="runList()">
         <!-- Empty state -->
         <div x-show="runs.length === 0 && !loading" class="empty-state p-6 text-center text-wool-500">
@@ -271,26 +291,62 @@
             @click="selectRun(run.name)"
             @contextmenu="showContextMenu($event, run.name)"
             :class="{ 'bg-pasture-700': selectedRun === run.name }"
-            class="run-item px-3 py-2 cursor-pointer hover:bg-pasture-700 border-b border-pasture-800 transition-colors"
+            class="run-item px-3 py-2.5 cursor-pointer hover:bg-pasture-700 border-b border-pasture-800 transition-colors"
           >
-            <div class="flex items-center gap-2">
+            <!-- Header: name + status badge -->
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2 min-w-0">
+                <span
+                  class="status-dot w-2 h-2 rounded-full flex-shrink-0"
+                  :class="getStatusDotClass(run.status)"
+                ></span>
+                <span class="text-sm text-wool-100 truncate" x-text="run.name"></span>
+                <span x-show="run.hasUnreadMessages" class="w-1.5 h-1.5 bg-amber-500 rounded-full flex-shrink-0"></span>
+              </div>
               <span
-                class="status-dot w-2 h-2 rounded-full flex-shrink-0"
-                :class="getStatusDotClass(run.status)"
+                class="text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0"
+                :class="getStatusBadgeClass(run.status)"
+                x-text="getStatusLabel(run.status)"
               ></span>
-              <span class="text-sm text-wool-100 truncate" x-text="run.name"></span>
-              <span x-show="run.hasUnreadMessages" class="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
             </div>
-            <div class="flex items-center justify-between mt-1 text-xs text-wool-500">
-              <span x-text="run.tasksDone + '/' + run.tasksTotal + ' tasks'"></span>
+
+            <!-- Stats row: tasks, workers, time -->
+            <div class="flex items-center justify-between mt-1.5 text-xs text-wool-500">
+              <span class="flex items-center gap-2">
+                <span x-text="run.tasksDone + '/' + run.tasksTotal"></span>
+                <span class="text-wool-600">•</span>
+                <span :class="run.workersActive > 0 ? 'text-sage' : ''" x-text="run.workersActive + '/' + run.workersTotal + ' workers'"></span>
+              </span>
               <span x-text="formatElapsed(run.elapsedMinutes)"></span>
             </div>
-            <!-- Progress bar -->
-            <div class="mt-1.5 h-1 bg-pasture-600 rounded-full overflow-hidden">
-              <div
-                class="h-full bg-sage rounded-full transition-all duration-300"
-                :style="'width: ' + formatProgress(run.tasksDone, run.tasksTotal) + '%'"
-              ></div>
+
+            <!-- Progress bar with percentage -->
+            <div class="mt-2 flex items-center gap-2">
+              <div class="flex-1 h-2 bg-pasture-600/50 rounded-full overflow-hidden relative">
+                <div
+                  class="h-full rounded-full transition-all duration-500 ease-out"
+                  :class="[
+                    getProgressBarClass(run.status, run.tasksDone, run.tasksTotal),
+                    run.status === 'working' ? 'animate-pulse-subtle' : ''
+                  ]"
+                  :style="'width: ' + formatProgress(run.tasksDone, run.tasksTotal) + '%'"
+                ></div>
+                <!-- Shine effect for completed runs -->
+                <div
+                  x-show="formatProgress(run.tasksDone, run.tasksTotal) === 100"
+                  class="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent"
+                ></div>
+              </div>
+              <span
+                class="text-[10px] font-medium w-8 text-right tabular-nums"
+                :class="formatProgress(run.tasksDone, run.tasksTotal) === 100 ? 'text-sage' : 'text-wool-500'"
+                x-text="formatProgress(run.tasksDone, run.tasksTotal) + '%'"
+              ></span>
+            </div>
+
+            <!-- Time remaining (if time limit set) -->
+            <div x-show="run.timeLimitMinutes" class="mt-1 text-[10px] text-wool-600">
+              <span x-text="formatTimeRemaining(run.timeLimitMinutes, run.elapsedMinutes)"></span>
             </div>
           </div>
         </template>
@@ -330,6 +386,7 @@
           </button>
         </div>
       </div>
+      </div> <!-- End expanded state -->
     </aside>
 
     <!-- Center Panel: Run Details -->
@@ -347,7 +404,7 @@
             ></span>
             <!-- Human in the loop indicator -->
             <span x-show="detail?.humanInTheLoop" class="text-xs text-amber-400 flex items-center gap-1" title="Human in the Loop mode">
-              <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"/></svg>
+              <i data-lucide="user" class="w-3 h-3"></i>
               HITL
             </span>
           </div>
@@ -376,16 +433,6 @@
           </div>
         </div>
 
-        <!-- Stats row -->
-        <div class="flex items-center gap-4 mt-2 text-sm text-wool-500">
-          <span x-text="getWorkerCount().active + '/' + getWorkerCount().total + ' workers'"></span>
-          <span x-text="getTaskProgress().done + '/' + getTaskProgress().total + ' tasks'"></span>
-          <span x-show="diffStats" class="text-sage">
-            +<span x-text="diffStats?.insertions || 0"></span>
-            <span class="text-terra ml-1">-<span x-text="diffStats?.deletions || 0"></span></span>
-          </span>
-        </div>
-
         <!-- Time progress bar -->
         <div x-show="detail?.timeLimitMinutes" class="mt-3">
           <div class="flex justify-between text-xs text-wool-500 mb-1">
@@ -402,18 +449,24 @@
         </div>
 
         <!-- Project info row -->
-        <div x-show="detail?.projectPath" class="mt-3 flex items-center gap-3 text-xs text-wool-500">
-          <span class="flex items-center gap-1" title="Project path">
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+        <div class="mt-3 flex items-center gap-3 text-xs text-wool-500">
+          <span x-show="detail?.projectPath" class="flex items-center gap-1" title="Project path">
+            <i data-lucide="folder" class="w-3 h-3"></i>
             <span x-text="detail?.projectPath?.split('/').pop()"></span>
           </span>
           <span class="flex items-center gap-1" title="Branch name">
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            <i data-lucide="git-branch" class="w-3 h-3"></i>
             <span x-text="'hirsel/' + runName"></span>
           </span>
           <span x-show="detail?.workerScale" class="flex items-center gap-1" title="Worker scale">
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+            <i data-lucide="users" class="w-3 h-3"></i>
             <span x-text="detail?.workerScale"></span>
+          </span>
+          <!-- Git diff stats -->
+          <span x-show="diffStats" class="flex items-center gap-1 ml-auto" title="Git diff stats">
+            <i data-lucide="file-diff" class="w-3 h-3 text-wool-600"></i>
+            <span class="text-sage">+<span x-text="diffStats?.insertions || 0"></span></span>
+            <span class="text-terra">-<span x-text="diffStats?.deletions || 0"></span></span>
           </span>
         </div>
 
@@ -422,6 +475,45 @@
           <span class="font-medium">Waiting:</span>
           <span x-text="detail?.waitingReason"></span>
         </div>
+      </div>
+
+      <!-- Tab Navigation -->
+      <div x-show="runName" class="tab-bar flex items-center gap-1 px-4 border-b border-pasture-600 bg-pasture-800/50">
+        <button
+          @click="activeTab = 'overview'"
+          class="tab-btn px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
+          :class="activeTab === 'overview' ? 'text-amber-500 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
+        >
+          Overview
+        </button>
+        <button
+          @click="activeTab = 'tasks'"
+          class="tab-btn px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
+          :class="activeTab === 'tasks' ? 'text-amber-500 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
+        >
+          Tasks
+        </button>
+        <button
+          @click="activeTab = 'spec'"
+          class="tab-btn px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
+          :class="activeTab === 'spec' ? 'text-amber-500 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
+        >
+          Spec
+        </button>
+        <button
+          @click="activeTab = 'eval-spec'"
+          class="tab-btn px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
+          :class="activeTab === 'eval-spec' ? 'text-amber-500 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
+        >
+          Eval Spec
+        </button>
+        <button
+          @click="activeTab = 'eval'"
+          class="tab-btn px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
+          :class="activeTab === 'eval' ? 'text-amber-500 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
+        >
+          Eval
+        </button>
       </div>
 
       <!-- Loading state -->
@@ -446,11 +538,11 @@
         </div>
       </div>
 
-      <!-- Run Content (Workers/Tasks + Activity) -->
-      <div x-show="runName" class="flex-1 flex flex-col overflow-hidden">
+      <!-- OVERVIEW TAB: Workers/Tasks + Activity -->
+      <div x-show="runName && activeTab === 'overview'" class="flex-1 flex flex-col overflow-hidden">
 
         <!-- Top: Workers and Tasks side by side -->
-        <div class="flex-1 flex overflow-hidden border-b border-pasture-600">
+        <div class="workers-tasks-container flex-1 flex overflow-hidden border-b border-pasture-600">
 
           <!-- Workers Panel -->
           <div class="workers-panel w-1/2 border-r border-pasture-600 flex flex-col">
@@ -460,7 +552,7 @@
             <div class="flex-1 overflow-y-auto p-2 space-y-2" x-data="workerPanel()">
               <template x-for="worker in workers" :key="worker.id">
                 <div
-                  @click="attachWorker(worker.name)"
+                  @click="openWorkerDetail(worker)"
                   class="worker-card p-3 rounded-lg bg-pasture-800 hover:bg-pasture-700 cursor-pointer transition-colors"
                 >
                   <div class="flex items-center justify-between">
@@ -475,11 +567,29 @@
                         }"
                       ></span>
                       <span class="text-sm font-medium text-wool-100" x-text="worker.name"></span>
-                      <span x-show="worker.isLeader" class="text-amber-500" title="Leader">★</span>
+                      <i x-show="worker.isLeader" data-lucide="star" class="w-3.5 h-3.5 text-amber-500 fill-amber-500" title="Leader"></i>
                     </div>
                     <span class="text-xs text-wool-500" x-text="worker.status"></span>
                   </div>
-                  <div x-show="worker.currentTask" class="mt-2 text-xs text-wool-500 truncate">
+                  <!-- Metrics row: elapsed time, tokens, context -->
+                  <div class="mt-2 flex items-center gap-3 text-xs">
+                    <!-- Elapsed time -->
+                    <span class="text-wool-500" x-text="formatElapsedTime(worker.sessionStartedAt || worker.createdAt)"></span>
+                    <!-- Token counts -->
+                    <span x-show="worker.inputTokens || worker.outputTokens" class="text-wool-600">
+                      <span class="text-wool-500" x-text="formatTokens(worker.inputTokens)"></span>/<span class="text-sage" x-text="formatTokens(worker.outputTokens)"></span>
+                    </span>
+                    <!-- Context utilization (value is 0-1 from backend, display as percentage) -->
+                    <span
+                      x-show="worker.contextUtilization != null"
+                      class="ml-auto"
+                      :class="getContextClass((worker.contextUtilization || 0) * 100)"
+                      :title="'Context: ' + ((worker.contextUtilization || 0) * 100).toFixed(1) + '%'"
+                    >
+                      <span x-text="Math.round((worker.contextUtilization || 0) * 100) + '%'"></span>
+                    </span>
+                  </div>
+                  <div x-show="worker.currentTask" class="mt-1 text-xs text-wool-500 truncate">
                     <span class="text-wool-700">Task:</span>
                     <span x-text="worker.currentTask"></span>
                   </div>
@@ -501,6 +611,138 @@
                   <use href="#sheep-walking"/>
                 </svg>
                 <p class="text-sm text-wool-400">Loading workers...</p>
+              </div>
+
+              <!-- Worker Detail Modal -->
+              <div
+                x-cloak
+                x-show="showWorkerDetail"
+                x-transition.opacity
+                @click.self="closeWorkerDetail()"
+                @keydown.escape.window="closeWorkerDetail()"
+                class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+              >
+                <div class="bg-pasture-800 rounded-lg shadow-xl w-[500px] max-h-[80vh] overflow-hidden border border-pasture-600" @click.stop>
+                  <!-- Modal Header -->
+                  <div class="p-4 border-b border-pasture-600 flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                      <span
+                        class="w-3 h-3 rounded-full"
+                        :class="{
+                          'status-working': selectedWorker?.status === 'working',
+                          'status-waiting': selectedWorker?.status === 'waiting' || selectedWorker?.status === 'awaiting',
+                          'status-done': selectedWorker?.status === 'done',
+                          'status-idle': selectedWorker?.status === 'idle'
+                        }"
+                      ></span>
+                      <h2 class="text-lg font-semibold text-wool-100" x-text="selectedWorker?.name"></h2>
+                      <i x-show="selectedWorker?.isLeader" data-lucide="star" class="w-3.5 h-3.5 text-amber-500 fill-amber-500" title="Leader"></i>
+                    </div>
+                    <button @click="closeWorkerDetail()" class="text-wool-500 hover:text-wool-300">
+                      <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                  </div>
+
+                  <!-- Modal Content -->
+                  <div class="p-4 space-y-4 overflow-y-auto max-h-[50vh]">
+                    <!-- Status & Time -->
+                    <div class="grid grid-cols-2 gap-4">
+                      <div class="bg-pasture-700/50 rounded-lg p-3">
+                        <div class="text-xs text-wool-500 mb-1">Status</div>
+                        <div class="text-sm font-medium text-wool-100 capitalize" x-text="selectedWorker?.status"></div>
+                      </div>
+                      <div class="bg-pasture-700/50 rounded-lg p-3">
+                        <div class="text-xs text-wool-500 mb-1">Session Time</div>
+                        <div class="text-sm font-medium text-wool-100" x-text="formatElapsedTime(selectedWorker?.sessionStartedAt || selectedWorker?.createdAt)"></div>
+                      </div>
+                    </div>
+
+                    <!-- Token Usage -->
+                    <div class="bg-pasture-700/50 rounded-lg p-3">
+                      <div class="text-xs text-wool-500 mb-2">Token Usage</div>
+                      <div class="flex items-center gap-6">
+                        <div>
+                          <span class="text-lg font-medium text-wool-300" x-text="formatTokens(selectedWorker?.inputTokens)"></span>
+                          <span class="text-xs text-wool-500 ml-1">input</span>
+                        </div>
+                        <div>
+                          <span class="text-lg font-medium text-sage" x-text="formatTokens(selectedWorker?.outputTokens)"></span>
+                          <span class="text-xs text-wool-500 ml-1">output</span>
+                        </div>
+                        <div class="ml-auto">
+                          <span
+                            class="text-lg font-medium"
+                            :class="getContextClass((selectedWorker?.contextUtilization || 0) * 100)"
+                            x-text="Math.round((selectedWorker?.contextUtilization || 0) * 100) + '%'"
+                          ></span>
+                          <span class="text-xs text-wool-500 ml-1">context</span>
+                        </div>
+                      </div>
+                      <!-- Context bar -->
+                      <div class="mt-2 h-1.5 bg-pasture-600 rounded-full overflow-hidden">
+                        <div
+                          class="h-full rounded-full transition-all"
+                          :class="{
+                            'bg-terra': (selectedWorker?.contextUtilization || 0) >= 0.9,
+                            'bg-amber-500': (selectedWorker?.contextUtilization || 0) >= 0.75 && (selectedWorker?.contextUtilization || 0) < 0.9,
+                            'bg-sage': (selectedWorker?.contextUtilization || 0) < 0.75
+                          }"
+                          :style="'width: ' + Math.round((selectedWorker?.contextUtilization || 0) * 100) + '%'"
+                        ></div>
+                      </div>
+                    </div>
+
+                    <!-- Current Task -->
+                    <div x-show="selectedWorker?.currentTask" class="bg-pasture-700/50 rounded-lg p-3">
+                      <div class="text-xs text-wool-500 mb-1">Current Task</div>
+                      <div class="text-sm font-medium text-wool-100" x-text="selectedWorker?.currentTask"></div>
+                    </div>
+
+                    <!-- Waiting Thread -->
+                    <div x-show="selectedWorker?.waitingThread" class="bg-golden/10 border border-golden/30 rounded-lg p-3">
+                      <div class="text-xs text-golden mb-1">Waiting on Thread</div>
+                      <div class="text-sm font-medium text-golden" x-text="selectedWorker?.waitingThread"></div>
+                    </div>
+
+                    <!-- Work Directory -->
+                    <div x-show="selectedWorker?.workDir" class="bg-pasture-700/50 rounded-lg p-3">
+                      <div class="text-xs text-wool-500 mb-1">Work Directory</div>
+                      <div class="text-xs font-mono text-wool-400 truncate" x-text="selectedWorker?.workDir"></div>
+                    </div>
+
+                    <!-- Technical Info -->
+                    <div class="grid grid-cols-3 gap-2 text-xs">
+                      <div class="bg-pasture-900/50 rounded p-2">
+                        <span class="text-wool-600">PID:</span>
+                        <span class="text-wool-400 ml-1" x-text="selectedWorker?.pid || 'N/A'"></span>
+                      </div>
+                      <div class="bg-pasture-900/50 rounded p-2">
+                        <span class="text-wool-600">Location:</span>
+                        <span class="text-wool-400 ml-1 capitalize" x-text="selectedWorker?.location || 'local'"></span>
+                      </div>
+                      <div class="bg-pasture-900/50 rounded p-2">
+                        <span class="text-wool-600">Turns:</span>
+                        <span class="text-wool-400 ml-1" x-text="selectedWorker?.turns || 0"></span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Modal Footer -->
+                  <div class="p-4 border-t border-pasture-600 flex justify-end gap-3">
+                    <button
+                      @click="closeWorkerDetail()"
+                      class="px-4 py-2 text-sm rounded border border-pasture-500 text-wool-300 hover:bg-pasture-700"
+                    >
+                      Close
+                    </button>
+                    <button
+                      @click="attachAndClose(selectedWorker?.name)"
+                      class="px-4 py-2 text-sm rounded bg-amber-600 hover:bg-amber-500 text-white font-medium"
+                    >
+                      Attach to Terminal
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -539,9 +781,7 @@
                   </div>
                   <!-- Claimed by info -->
                   <div x-show="task.claimedBy" class="text-xs text-wool-500 mt-1 ml-5 flex items-center gap-1">
-                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
-                    </svg>
+                    <i data-lucide="user" class="w-3 h-3"></i>
                     <span x-text="task.claimedBy"></span>
                   </div>
                   <!-- Description preview (if different from ID) -->
@@ -561,28 +801,28 @@
                   @click="contextMarkDone()"
                   class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600 flex items-center gap-2"
                 >
-                  <span class="text-sage">✓</span> Mark Done
+                  <i data-lucide="check" class="w-3.5 h-3.5 text-sage"></i> Mark Done
                 </button>
                 <button
                   x-show="canReopen(contextMenuTask)"
                   @click="contextReopen()"
                   class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600 flex items-center gap-2"
                 >
-                  <span class="text-amber-500">○</span> Reopen
+                  <i data-lucide="rotate-ccw" class="w-3.5 h-3.5 text-amber-500"></i> Reopen
                 </button>
                 <button
                   x-show="canUnclaim(contextMenuTask)"
                   @click="contextUnclaim()"
                   class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600 flex items-center gap-2"
                 >
-                  <span class="text-golden">↩</span> Unclaim
+                  <i data-lucide="user-minus" class="w-3.5 h-3.5 text-golden"></i> Unclaim
                 </button>
                 <div class="border-t border-pasture-600 my-1"></div>
                 <button
                   @click="contextDelete()"
                   class="w-full px-3 py-1.5 text-left text-sm text-terra hover:bg-pasture-600 flex items-center gap-2"
                 >
-                  <span>✗</span> Delete
+                  <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete
                 </button>
               </div>
 
@@ -608,26 +848,158 @@
                 <p class="text-sm" x-text="error"></p>
                 <button @click="loadTasks(getSelectedRun())" class="mt-2 text-xs text-amber-500 hover:underline">Retry</button>
               </div>
+
+              <!-- Task Detail Modal -->
+              <div
+                x-cloak
+                x-show="showTaskDetail"
+                x-transition.opacity
+                @click.self="closeTaskDetail()"
+                @keydown.escape.window="closeTaskDetail()"
+                class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+              >
+                <div class="bg-pasture-800 rounded-lg shadow-xl w-[500px] max-h-[80vh] overflow-hidden border border-pasture-600" @click.stop>
+                  <!-- Modal Header -->
+                  <div class="p-4 border-b border-pasture-600 flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                      <span
+                        class="task-icon text-lg"
+                        :class="getStatusClass(selectedTask?.status)"
+                        x-text="getStatusIcon(selectedTask?.status)"
+                      ></span>
+                      <h2 class="text-lg font-semibold text-wool-100" x-text="selectedTask?.id"></h2>
+                    </div>
+                    <button @click="closeTaskDetail()" class="text-wool-500 hover:text-wool-300">
+                      <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                  </div>
+
+                  <!-- Modal Content -->
+                  <div class="p-4 space-y-4 overflow-y-auto max-h-[50vh]">
+                    <!-- Status -->
+                    <div class="flex items-center gap-4">
+                      <div class="bg-pasture-700/50 rounded-lg px-4 py-2 flex-1">
+                        <div class="text-xs text-wool-500 mb-1">Status</div>
+                        <div class="text-sm font-medium capitalize" :class="getStatusClass(selectedTask?.status)" x-text="selectedTask?.status"></div>
+                      </div>
+                      <div x-show="selectedTask?.isBlocked" class="bg-terra/10 border border-terra/30 rounded-lg px-4 py-2">
+                        <div class="text-xs text-terra">Blocked</div>
+                      </div>
+                    </div>
+
+                    <!-- Description -->
+                    <div x-show="selectedTask?.description" class="bg-pasture-700/50 rounded-lg p-3">
+                      <div class="text-xs text-wool-500 mb-2">Description</div>
+                      <div class="text-sm text-wool-200 whitespace-pre-wrap" x-text="selectedTask?.description"></div>
+                    </div>
+
+                    <!-- Claimed By -->
+                    <div x-show="selectedTask?.claimedBy" class="bg-pasture-700/50 rounded-lg p-3">
+                      <div class="text-xs text-wool-500 mb-1">Claimed By</div>
+                      <div class="flex items-center gap-2">
+                        <i data-lucide="user" class="w-4 h-4 text-wool-400"></i>
+                        <span class="text-sm font-medium text-wool-100" x-text="selectedTask?.claimedBy"></span>
+                        <span x-show="selectedTask?.claimedAt" class="text-xs text-wool-500 ml-auto" x-text="formatTaskTime(selectedTask?.claimedAt)"></span>
+                      </div>
+                    </div>
+
+                    <!-- Blocked By -->
+                    <div x-show="selectedTask?.blockedBy && selectedTask?.blockedBy.length > 0" class="bg-terra/5 border border-terra/20 rounded-lg p-3">
+                      <div class="text-xs text-terra mb-2">Blocked By</div>
+                      <div class="flex flex-wrap gap-2">
+                        <template x-for="blockerId in (selectedTask?.blockedBy || [])" :key="blockerId">
+                          <span class="px-2 py-1 bg-pasture-700 rounded text-xs text-wool-300" x-text="blockerId"></span>
+                        </template>
+                      </div>
+                    </div>
+
+                    <!-- Parent Task -->
+                    <div x-show="selectedTask?.parentId" class="bg-pasture-700/50 rounded-lg p-3">
+                      <div class="text-xs text-wool-500 mb-1">Parent Task</div>
+                      <span class="text-sm text-wool-300" x-text="selectedTask?.parentId"></span>
+                    </div>
+
+                    <!-- Token Usage -->
+                    <div x-show="selectedTask?.tokensUsed" class="bg-pasture-700/50 rounded-lg p-3">
+                      <div class="text-xs text-wool-500 mb-1">Tokens Used</div>
+                      <span class="text-sm text-wool-100" x-text="formatTaskTokens(selectedTask?.tokensUsed)"></span>
+                    </div>
+
+                    <!-- Timestamps -->
+                    <div class="grid grid-cols-2 gap-2 text-xs">
+                      <div class="bg-pasture-900/50 rounded p-2">
+                        <span class="text-wool-600">Created:</span>
+                        <span class="text-wool-400 ml-1" x-text="formatTaskTime(selectedTask?.createdAt)"></span>
+                      </div>
+                      <div x-show="selectedTask?.pendingDoneAt" class="bg-pasture-900/50 rounded p-2">
+                        <span class="text-wool-600">Pending Done:</span>
+                        <span class="text-wool-400 ml-1" x-text="formatTaskTime(selectedTask?.pendingDoneAt)"></span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Modal Footer -->
+                  <div class="p-4 border-t border-pasture-600 flex justify-between">
+                    <div class="flex gap-2">
+                      <button
+                        x-show="canMarkDone(selectedTask)"
+                        @click="markDone(selectedTask?.id); closeTaskDetail()"
+                        class="px-3 py-2 text-sm rounded bg-sage hover:bg-sage/80 text-pasture-900 font-medium flex items-center gap-1.5"
+                      >
+                        <i data-lucide="check" class="w-4 h-4"></i> Mark Done
+                      </button>
+                      <button
+                        x-show="canReopen(selectedTask)"
+                        @click="reopenTask(selectedTask?.id); closeTaskDetail()"
+                        class="px-3 py-2 text-sm rounded bg-amber-600 hover:bg-amber-500 text-white font-medium flex items-center gap-1.5"
+                      >
+                        <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Reopen
+                      </button>
+                    </div>
+                    <button
+                      @click="closeTaskDetail()"
+                      class="px-4 py-2 text-sm rounded border border-pasture-500 text-wool-300 hover:bg-pasture-700"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
 
         <!-- Bottom: Activity Log -->
-        <div class="activity-panel h-48 flex flex-col">
+        <div
+          class="activity-panel flex flex-col transition-all duration-200"
+          x-data="activityLog()"
+          :class="isFullscreen ? 'fixed inset-0 z-40 bg-pasture-900' : 'h-48'"
+        >
           <div class="p-3 border-b border-pasture-700 flex items-center justify-between">
             <h3 class="text-sm font-medium text-wool-300">Activity</h3>
-            <button
-              @click="scrollToBottom(); autoScroll = true"
-              x-show="!autoScroll"
-              class="text-xs text-amber-500 hover:text-amber-400"
-              title="Scroll to latest"
-            >
-              ↓ Latest
-            </button>
+            <div class="flex items-center gap-2">
+              <button
+                @click="scrollToBottom(); autoScroll = true"
+                x-show="!autoScroll"
+                class="text-xs text-amber-500 hover:text-amber-400"
+                title="Scroll to latest"
+              >
+                ↓ Latest
+              </button>
+              <button
+                @click="toggleFullscreen()"
+                class="p-1 rounded hover:bg-pasture-600 text-wool-500 hover:text-wool-300 transition-colors"
+                :title="isFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'"
+              >
+                <!-- Expand icon -->
+                <i x-show="!isFullscreen" data-lucide="maximize-2" class="w-4 h-4"></i>
+                <!-- Collapse icon -->
+                <i x-show="isFullscreen" data-lucide="minimize-2" class="w-4 h-4"></i>
+              </button>
+            </div>
           </div>
           <div
             class="flex-1 overflow-y-auto font-mono text-xs"
-            x-data="activityLog()"
             @scroll="handleScroll($event)"
           >
             <!-- Loading state -->
@@ -643,11 +1015,17 @@
 
             <!-- Activity entries -->
             <template x-for="entry in entries" :key="entry.id">
-              <div class="px-3 py-1 hover:bg-pasture-800 border-b border-pasture-800 flex items-start gap-2">
-                <span class="text-wool-600 flex-shrink-0 w-16" x-text="formatTime(entry.timestamp)"></span>
-                <span class="flex-shrink-0 w-4 text-center" :class="getActionColor(entry.action)" x-text="getActionIcon(entry.action)"></span>
-                <span :class="getActionColor(entry.action)" x-text="entry.action"></span>
-                <span x-show="entry.detail" class="text-wool-500 truncate" x-text="entry.detail"></span>
+              <div class="px-3 py-1.5 hover:bg-pasture-700/30 flex items-start gap-3 group transition-colors">
+                <span class="text-wool-600 flex-shrink-0 text-[11px] tabular-nums pt-0.5" x-text="formatTime(entry.timestamp)"></span>
+                <span
+                  class="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center"
+                  :class="[getActionBgClass(entry.action), getActionColor(entry.action)]"
+                  x-html="getActionIcon(entry.action)"
+                ></span>
+                <div class="flex-1 min-w-0">
+                  <span class="font-medium text-[11px]" :class="getActionColor(entry.action)" x-text="formatActionLabel(entry.action)"></span>
+                  <span x-show="entry.detail" class="text-wool-400 text-[11px] ml-1" x-text="entry.detail"></span>
+                </div>
               </div>
             </template>
 
@@ -662,6 +1040,152 @@
           </div>
         </div>
       </div>
+      <!-- END OVERVIEW TAB -->
+
+      <!-- TASKS TAB: Full task list with details -->
+      <div x-show="runName && activeTab === 'tasks'" class="flex-1 flex flex-col overflow-hidden p-4" x-data="tasksTab()">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold text-wool-200">All Tasks</h3>
+          <div class="flex items-center gap-2 text-xs">
+            <span class="text-wool-500">
+              <span x-text="tasks.filter(t => t.status === 'done').length"></span>/<span x-text="tasks.length"></span> complete
+            </span>
+            <select
+              x-model="filter"
+              class="bg-pasture-700 border border-pasture-600 rounded px-2 py-1 text-wool-300"
+            >
+              <option value="all">All</option>
+              <option value="todo">Todo</option>
+              <option value="doing">In Progress</option>
+              <option value="done">Done</option>
+            </select>
+          </div>
+        </div>
+        <div class="flex-1 overflow-y-auto space-y-1">
+          <template x-for="task in filteredTasks" :key="task.id">
+            <div
+              class="task-row p-3 rounded bg-pasture-800 hover:bg-pasture-700 cursor-pointer transition-colors"
+              @click="selectTask(task)"
+              :class="selectedTaskId === task.id ? 'ring-1 ring-amber-500' : ''"
+            >
+              <div class="flex items-start gap-2">
+                <span class="flex-shrink-0 mt-0.5" :class="{
+                  'text-wool-600': task.status === 'todo',
+                  'text-amber-500': task.status === 'doing',
+                  'text-sage': task.status === 'done'
+                }">
+                  <i x-show="task.status === 'todo'" data-lucide="circle" class="w-4 h-4"></i>
+                  <i x-show="task.status === 'doing'" data-lucide="circle-dot" class="w-4 h-4"></i>
+                  <i x-show="task.status === 'done'" data-lucide="check-circle" class="w-4 h-4"></i>
+                </span>
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm text-wool-200 break-words" x-text="task.description"></p>
+                  <div class="flex items-center gap-2 mt-1 text-xs text-wool-600">
+                    <span x-show="task.claimedBy" class="flex items-center gap-1">
+                      <i data-lucide="user" class="w-3 h-3"></i>
+                      <span x-text="task.claimedBy"></span>
+                    </span>
+                    <span x-show="task.tokensUsed" class="flex items-center gap-1">
+                      <i data-lucide="hash" class="w-3 h-3"></i>
+                      <span x-text="formatTokens(task.tokensUsed)"></span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+          <div x-show="filteredTasks.length === 0" class="text-center text-wool-500 py-8">
+            <p class="text-sm">No tasks match the filter</p>
+          </div>
+        </div>
+      </div>
+      <!-- END TASKS TAB -->
+
+      <!-- SPEC TAB: Original specification/request -->
+      <div x-show="runName && activeTab === 'spec'" class="flex-1 flex flex-col overflow-hidden p-4">
+        <h3 class="text-lg font-semibold text-wool-200 mb-4">Specification</h3>
+        <div class="flex-1 overflow-y-auto">
+          <div x-show="detail?.request" class="prose prose-invert max-w-none">
+            <pre class="bg-pasture-800 rounded-lg p-4 text-sm text-wool-300 whitespace-pre-wrap overflow-x-auto" x-text="detail?.request"></pre>
+          </div>
+          <div x-show="!detail?.request" class="text-center text-wool-500 py-8">
+            <svg class="w-12 h-12 mx-auto mb-3 text-wool-600">
+              <use href="#sheep-sleeping"/>
+            </svg>
+            <p class="text-sm">No specification provided</p>
+            <p class="text-xs mt-1 text-wool-600">This run was started without a spec file</p>
+          </div>
+        </div>
+      </div>
+      <!-- END SPEC TAB -->
+
+      <!-- EVAL SPEC TAB: Evaluation specification (eval.md) -->
+      <div x-show="runName && activeTab === 'eval-spec'" class="flex-1 flex flex-col overflow-hidden p-4">
+        <h3 class="text-lg font-semibold text-wool-200 mb-4">Evaluation Specification</h3>
+        <div class="flex-1 overflow-y-auto">
+          <div x-show="evalSpec" class="prose prose-invert max-w-none">
+            <pre class="bg-pasture-800 rounded-lg p-4 text-sm text-wool-300 whitespace-pre-wrap overflow-x-auto" x-text="evalSpec"></pre>
+          </div>
+          <div x-show="!evalSpec && !evalSpecLoading" class="text-center text-wool-500 py-8">
+            <svg class="w-12 h-12 mx-auto mb-3 text-wool-600">
+              <use href="#sheep-sleeping"/>
+            </svg>
+            <p class="text-sm">No eval specification found</p>
+            <p class="text-xs mt-1 text-wool-600">Create an eval.md file in the run directory</p>
+          </div>
+          <div x-show="evalSpecLoading" class="text-center text-wool-500 py-8">
+            <div class="animate-pulse">Loading eval spec...</div>
+          </div>
+        </div>
+      </div>
+      <!-- END EVAL SPEC TAB -->
+
+      <!-- EVAL TAB: Evaluation history and results -->
+      <div x-show="runName && activeTab === 'eval'" class="flex-1 flex flex-col overflow-hidden p-4" x-data="evalTab()">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold text-wool-200">Evaluations</h3>
+          <button
+            @click="runEval()"
+            class="px-3 py-1.5 text-sm rounded bg-amber-600 hover:bg-amber-500 text-white font-medium"
+            :disabled="isRunning"
+          >
+            <span x-show="!isRunning">Run Eval</span>
+            <span x-show="isRunning" class="animate-pulse">Running...</span>
+          </button>
+        </div>
+        <div class="flex-1 overflow-y-auto space-y-2">
+          <template x-for="evalItem in evals" :key="evalItem.id">
+            <div class="eval-row p-3 rounded bg-pasture-800 hover:bg-pasture-700 transition-colors">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full" :class="{
+                    'bg-amber-500 animate-pulse': evalItem.status === 'running',
+                    'bg-sage': evalItem.status === 'passed',
+                    'bg-terra': evalItem.status === 'failed'
+                  }"></span>
+                  <span class="text-sm font-medium text-wool-200" x-text="evalItem.evalName || 'Evaluation'"></span>
+                </div>
+                <span class="text-xs text-wool-500" x-text="formatTime(evalItem.startedAt)"></span>
+              </div>
+              <div class="mt-2 text-xs text-wool-500">
+                <span x-text="'Branch: ' + evalItem.branch"></span>
+              </div>
+              <div x-show="evalItem.feedback" class="mt-2 p-2 bg-pasture-900 rounded text-xs text-wool-400">
+                <span x-text="evalItem.feedback"></span>
+              </div>
+            </div>
+          </template>
+          <div x-show="evals.length === 0" class="text-center text-wool-500 py-8">
+            <svg class="w-12 h-12 mx-auto mb-3 text-wool-600">
+              <use href="#sheep-sleeping"/>
+            </svg>
+            <p class="text-sm">No evaluations yet</p>
+            <p class="text-xs mt-1 text-wool-600">Run an eval to test the work</p>
+          </div>
+        </div>
+      </div>
+      <!-- END EVAL TAB -->
+
     </section>
 
     <!-- Right Panel: Chat (slide-out) -->
@@ -678,9 +1202,7 @@
       <div class="p-3 border-b border-pasture-600 flex items-center justify-between">
         <h2 class="text-sm font-medium text-wool-300 uppercase tracking-wide">Chat</h2>
         <button @click="chatOpen = false" class="text-wool-500 hover:text-wool-300">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-          </svg>
+          <i data-lucide="x" class="w-4 h-4"></i>
         </button>
       </div>
 
@@ -760,30 +1282,39 @@
   </main>
 
   <!-- Status Bar -->
-  <footer class="status-bar px-4 py-2 border-t border-pasture-600 flex items-center justify-between text-xs">
-    <div class="flex items-center gap-4">
-      <span class="flex items-center gap-2">
-        <span
-          class="w-2 h-2 rounded-full"
-          :class="getStatusDotClass(runDetail?.status)"
-        ></span>
-        <span class="text-wool-300" x-text="runDetail?.status || 'No run selected'"></span>
+  <footer class="status-bar px-4 py-1.5 border-t border-pasture-600 flex items-center justify-between text-xs">
+    <div class="flex items-center gap-3 text-wool-600">
+      <!-- Project path (truncated) -->
+      <span x-show="currentRunDetail?.projectPath" class="flex items-center gap-1.5 max-w-md truncate" :title="currentRunDetail?.projectPath">
+        <i data-lucide="folder" class="w-3 h-3 flex-shrink-0"></i>
+        <span class="truncate" x-text="currentRunDetail?.projectPath?.split('/').slice(-2).join('/') || ''"></span>
       </span>
-      <span x-show="selectedRun" class="text-wool-500">
-        <span x-text="runDetail?.workersActive || 0"></span>/<span x-text="runDetail?.workersTotal || 0"></span> workers
-      </span>
-      <span x-show="selectedRun" class="text-wool-500">
-        <span x-text="tasksDone"></span>/<span x-text="tasksTotal"></span> tasks
+      <!-- Git branch hint -->
+      <span x-show="currentRunDetail?.name" class="flex items-center gap-1.5">
+        <i data-lucide="git-branch" class="w-3 h-3 flex-shrink-0"></i>
+        <span x-text="'hirsel/' + (currentRunDetail?.name || '')"></span>
       </span>
     </div>
-    <div class="flex items-center gap-4 text-wool-500">
-      <span x-show="runDetail?.elapsedMinutes" x-text="formatElapsed(runDetail?.elapsedMinutes || 0) + ' elapsed'"></span>
-      <span x-show="runDetail?.timeLimitMinutes" x-text="formatTimeRemaining(runDetail?.timeLimitMinutes, runDetail?.elapsedMinutes)"></span>
+    <div class="flex items-center gap-4 text-wool-600">
+      <!-- Keyboard hints -->
+      <span class="hidden sm:flex items-center gap-2">
+        <kbd class="px-1 py-0.5 bg-pasture-700 rounded text-[10px]">?</kbd>
+        <span>help</span>
+      </span>
+      <span class="hidden md:flex items-center gap-2">
+        <kbd class="px-1 py-0.5 bg-pasture-700 rounded text-[10px]">j/k</kbd>
+        <span>navigate</span>
+      </span>
+      <span class="hidden lg:flex items-center gap-2">
+        <kbd class="px-1 py-0.5 bg-pasture-700 rounded text-[10px]">c</kbd>
+        <span>chat</span>
+      </span>
     </div>
   </footer>
 
   <!-- Help Modal -->
   <div
+    x-cloak
     x-show="showHelp"
     x-transition.opacity
     @click.self="showHelp = false"
@@ -794,9 +1325,7 @@
       <div class="p-4 border-b border-pasture-600 flex items-center justify-between">
         <h2 class="text-lg font-semibold text-wool-100">Keyboard Shortcuts</h2>
         <button @click="showHelp = false" class="text-wool-500 hover:text-wool-300">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-          </svg>
+          <i data-lucide="x" class="w-5 h-5"></i>
         </button>
       </div>
       <div class="p-4 space-y-2 text-sm">
@@ -808,6 +1337,8 @@
         <div class="flex justify-between"><span class="text-wool-500">c</span><span class="text-wool-300">Toggle chat</span></div>
         <div class="flex justify-between"><span class="text-wool-500">m</span><span class="text-wool-300">Send message</span></div>
         <div class="flex justify-between"><span class="text-wool-500">t</span><span class="text-wool-300">Toggle theme</span></div>
+        <div class="flex justify-between"><span class="text-wool-500">[</span><span class="text-wool-300">Toggle sidebar</span></div>
+        <div class="flex justify-between"><span class="text-wool-500">f</span><span class="text-wool-300">Fullscreen activity</span></div>
         <div class="flex justify-between"><span class="text-wool-500">?</span><span class="text-wool-300">Show help</span></div>
         <div class="flex justify-between"><span class="text-wool-500">g</span><span class="text-wool-300">Sheep clicker game</span></div>
         <div class="flex justify-between"><span class="text-wool-500">Esc</span><span class="text-wool-300">Close panel</span></div>
@@ -815,8 +1346,186 @@
     </div>
   </div>
 
+  <!-- Settings Modal -->
+  <div
+    x-cloak
+    x-show="showSettings"
+    x-data="settingsModal()"
+    x-init="$watch('$root.showSettings', (val) => { if (val) loadSettings(); })"
+    x-transition.opacity
+    @click.self="$root.showSettings = false"
+    @keydown.escape.window="$root.showSettings = false"
+    class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+  >
+    <div class="bg-pasture-800 rounded-lg shadow-xl w-[500px] max-h-[80vh] overflow-auto" @click.stop>
+      <div class="p-4 border-b border-pasture-600 flex items-center justify-between">
+        <h2 class="text-lg font-semibold text-wool-100">Settings</h2>
+        <button @click="$root.showSettings = false" class="text-wool-500 hover:text-wool-300">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <div class="p-4 space-y-4">
+        <!-- Loading state -->
+        <div x-show="loading" class="text-center py-8 text-wool-500">
+          Loading settings...
+        </div>
+
+        <!-- Settings form -->
+        <div x-show="!loading" class="space-y-4">
+          <!-- Agent Command -->
+          <div>
+            <label class="block text-sm font-medium text-wool-300 mb-1">Agent Command</label>
+            <input
+              type="text"
+              x-model="settings.agentCommand"
+              class="w-full px-3 py-2 bg-pasture-700 border border-pasture-600 rounded text-wool-100 text-sm focus:outline-none focus:ring-1 focus:ring-amber-500"
+              placeholder="claude-code-acp"
+            />
+            <p class="text-xs text-wool-500 mt-1">Command used to spawn workers (e.g., claude-code-acp, gemini-acp)</p>
+          </div>
+
+          <!-- Eval Timeout -->
+          <div>
+            <label class="block text-sm font-medium text-wool-300 mb-1">Eval Timeout (seconds)</label>
+            <input
+              type="number"
+              x-model.number="settings.evalTimeout"
+              class="w-full px-3 py-2 bg-pasture-700 border border-pasture-600 rounded text-wool-100 text-sm focus:outline-none focus:ring-1 focus:ring-amber-500"
+              min="60"
+              step="60"
+            />
+          </div>
+
+          <!-- Human in the Loop -->
+          <div class="flex items-center justify-between">
+            <div>
+              <label class="block text-sm font-medium text-wool-300">Human in the Loop</label>
+              <p class="text-xs text-wool-500">Pause for human review at checkpoints</p>
+            </div>
+            <button
+              @click="settings.humanInTheLoop = !settings.humanInTheLoop"
+              class="relative w-12 h-6 rounded-full transition-colors"
+              :class="settings.humanInTheLoop ? 'bg-amber-500' : 'bg-pasture-600'"
+            >
+              <span
+                class="absolute top-1 w-4 h-4 bg-white rounded-full transition-transform"
+                :class="settings.humanInTheLoop ? 'left-7' : 'left-1'"
+              ></span>
+            </button>
+          </div>
+
+          <!-- Auto Learn -->
+          <div class="flex items-center justify-between">
+            <div>
+              <label class="block text-sm font-medium text-wool-300">Auto Learn</label>
+              <p class="text-xs text-wool-500">Automatically learn from successful runs</p>
+            </div>
+            <button
+              @click="settings.autoLearn = !settings.autoLearn"
+              class="relative w-12 h-6 rounded-full transition-colors"
+              :class="settings.autoLearn ? 'bg-amber-500' : 'bg-pasture-600'"
+            >
+              <span
+                class="absolute top-1 w-4 h-4 bg-white rounded-full transition-transform"
+                :class="settings.autoLearn ? 'left-7' : 'left-1'"
+              ></span>
+            </button>
+          </div>
+
+          <!-- Max Iterations -->
+          <div>
+            <label class="block text-sm font-medium text-wool-300 mb-1">Max Iterations</label>
+            <input
+              type="number"
+              x-model.number="settings.maxIterations"
+              class="w-full px-3 py-2 bg-pasture-700 border border-pasture-600 rounded text-wool-100 text-sm focus:outline-none focus:ring-1 focus:ring-amber-500"
+              placeholder="No limit"
+              min="1"
+            />
+            <p class="text-xs text-wool-500 mt-1">Maximum eval/fix iterations (leave empty for no limit)</p>
+          </div>
+
+          <!-- User Message Pause -->
+          <div>
+            <label class="block text-sm font-medium text-wool-300 mb-1">Pause on User Message</label>
+            <select
+              x-model="settings.userMessagePause"
+              class="w-full px-3 py-2 bg-pasture-700 border border-pasture-600 rounded text-wool-100 text-sm focus:outline-none focus:ring-1 focus:ring-amber-500"
+            >
+              <option value="sender">Sender only</option>
+              <option value="all">All workers</option>
+              <option value="none">None</option>
+            </select>
+          </div>
+
+          <!-- Compaction Threshold -->
+          <div>
+            <label class="block text-sm font-medium text-wool-300 mb-1">Compaction Threshold (tokens)</label>
+            <input
+              type="number"
+              x-model.number="settings.compactionThreshold"
+              class="w-full px-3 py-2 bg-pasture-700 border border-pasture-600 rounded text-wool-100 text-sm focus:outline-none focus:ring-1 focus:ring-amber-500"
+              placeholder="10000"
+              min="1000"
+              step="1000"
+            />
+          </div>
+
+          <!-- Context Warning Threshold -->
+          <div>
+            <label class="block text-sm font-medium text-wool-300 mb-1">Context Warning Threshold</label>
+            <input
+              type="number"
+              x-model.number="settings.contextWarningThreshold"
+              class="w-full px-3 py-2 bg-pasture-700 border border-pasture-600 rounded text-wool-100 text-sm focus:outline-none focus:ring-1 focus:ring-amber-500"
+              placeholder="0.5"
+              min="0.1"
+              max="0.9"
+              step="0.1"
+            />
+            <p class="text-xs text-wool-500 mt-1">Context utilization percentage to trigger warning (0.1-0.9)</p>
+          </div>
+
+          <!-- Coordinator Port -->
+          <div>
+            <label class="block text-sm font-medium text-wool-300 mb-1">Coordinator Port</label>
+            <input
+              type="number"
+              x-model.number="settings.coordinatorPort"
+              class="w-full px-3 py-2 bg-pasture-700 border border-pasture-600 rounded text-wool-100 text-sm focus:outline-none focus:ring-1 focus:ring-amber-500"
+              min="1024"
+              max="65535"
+            />
+          </div>
+        </div>
+
+        <!-- Error message -->
+        <div x-show="error" class="text-terra text-sm" x-text="error"></div>
+      </div>
+
+      <!-- Footer -->
+      <div class="p-4 border-t border-pasture-600 flex justify-end gap-2">
+        <button
+          @click="$root.showSettings = false"
+          class="px-4 py-2 text-sm text-wool-400 hover:text-wool-200"
+        >
+          Cancel
+        </button>
+        <button
+          @click="saveSettings()"
+          :disabled="saving"
+          class="px-4 py-2 text-sm bg-amber-600 hover:bg-amber-500 text-white rounded disabled:opacity-50"
+        >
+          <span x-show="!saving">Save</span>
+          <span x-show="saving">Saving...</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Sheep Clicker Mini-Game -->
   <div
+    x-cloak
     x-data="sheepClickerGame()"
     x-show="isOpen"
     x-transition.opacity
@@ -838,9 +1547,7 @@
             Reset
           </button>
           <button @click="close()" class="text-wool-500 hover:text-wool-300 transition-colors">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-            </svg>
+            <i data-lucide="x" class="w-6 h-6"></i>
           </button>
         </div>
       </div>
@@ -962,1827 +1669,6 @@
   <!-- Load Tauri APIs -->
   <script type="module" src="./main.ts"></script>
 
-  <!-- Inline Alpine.js component definitions -->
-  <script>
-    // =========================================================================
-    // Toast Notification System
-    // =========================================================================
-
-    // Global toast state - accessible via window.toast API
-    const toastState = {
-      toasts: [],
-      nextId: 1,
-    };
-
-    // Toast container Alpine component
-    function toastContainer() {
-      return {
-        toasts: toastState.toasts,
-
-        init() {
-          // Listen for toast events from the global API
-          window.addEventListener('hirsel:toast', (e) => {
-            this.add(e.detail);
-          });
-        },
-
-        add(options) {
-          const toast = {
-            id: toastState.nextId++,
-            type: options.type || 'info',
-            title: options.title || null,
-            message: options.message || '',
-            duration: options.duration ?? 5000,
-            visible: true,
-          };
-
-          this.toasts.push(toast);
-
-          // Auto-dismiss after duration (unless duration is 0)
-          if (toast.duration > 0) {
-            setTimeout(() => {
-              this.dismiss(toast.id);
-            }, toast.duration);
-          }
-        },
-
-        dismiss(id) {
-          const toast = this.toasts.find(t => t.id === id);
-          if (toast) {
-            toast.visible = false;
-            // Remove from array after animation
-            setTimeout(() => {
-              const idx = this.toasts.findIndex(t => t.id === id);
-              if (idx !== -1) {
-                this.toasts.splice(idx, 1);
-              }
-            }, 200);
-          }
-        }
-      };
-    }
-
-    // Global toast API - use from anywhere via window.toast
-    window.toast = {
-      show(options) {
-        window.dispatchEvent(new CustomEvent('hirsel:toast', { detail: options }));
-      },
-      success(message, title = null) {
-        this.show({ type: 'success', message, title });
-      },
-      error(message, title = 'Error') {
-        this.show({ type: 'error', message, title, duration: 8000 });
-      },
-      warning(message, title = null) {
-        this.show({ type: 'warning', message, title });
-      },
-      info(message, title = null) {
-        this.show({ type: 'info', message, title });
-      }
-    };
-
-    // =========================================================================
-    // Main App State
-    // =========================================================================
-
-    // Main app state
-    function appState() {
-      return {
-        selectedRun: null,
-        runDetail: null,
-        chatOpen: false,
-        showHelp: false,
-        unreadCount: 0,
-        tasksDone: 0,
-        tasksTotal: 0,
-        isDarkTheme: true,
-        isMaximized: false,
-
-        toggleChat() {
-          this.chatOpen = !this.chatOpen;
-        },
-
-        // Window control methods (for frameless window)
-        async minimizeWindow() {
-          try {
-            if (window.tauriGetCurrentWindow) {
-              await window.tauriGetCurrentWindow().minimize();
-            }
-          } catch (e) { console.error('minimize failed', e); }
-        },
-
-        async toggleMaximize() {
-          try {
-            if (window.tauriGetCurrentWindow) {
-              const win = window.tauriGetCurrentWindow();
-              this.isMaximized = await win.isMaximized();
-              if (this.isMaximized) {
-                await win.unmaximize();
-              } else {
-                await win.maximize();
-              }
-              this.isMaximized = !this.isMaximized;
-            }
-          } catch (e) { console.error('maximize failed', e); }
-        },
-
-        async closeWindow() {
-          try {
-            if (window.tauriGetCurrentWindow) {
-              await window.tauriGetCurrentWindow().close();
-            }
-          } catch (e) { console.error('close failed', e); }
-        },
-
-        toggleTheme() {
-          this.isDarkTheme = !this.isDarkTheme;
-          if (this.isDarkTheme) {
-            document.documentElement.classList.remove('light');
-            document.documentElement.setAttribute('data-theme', 'dark');
-            localStorage.setItem('hirsel-theme', 'dark');
-          } else {
-            document.documentElement.classList.add('light');
-            document.documentElement.setAttribute('data-theme', 'light');
-            localStorage.setItem('hirsel-theme', 'light');
-          }
-        },
-
-        initTheme() {
-          const stored = localStorage.getItem('hirsel-theme');
-          if (stored === 'light') {
-            this.isDarkTheme = false;
-            document.documentElement.classList.add('light');
-            document.documentElement.setAttribute('data-theme', 'light');
-          } else {
-            this.isDarkTheme = true;
-            document.documentElement.classList.remove('light');
-            document.documentElement.setAttribute('data-theme', 'dark');
-          }
-        },
-
-        getStatusBadgeClass(status) {
-          const classes = {
-            working: 'bg-amber-500/20 text-amber-500',
-            waiting: 'bg-golden/20 text-golden',
-            paused: 'bg-golden/20 text-golden',
-            done: 'bg-sage/20 text-sage',
-            delivered: 'bg-sage/20 text-sage',
-            idle: 'bg-wool-700/20 text-wool-500',
-            error: 'bg-terra/20 text-terra',
-          };
-          return classes[status] || classes.idle;
-        },
-
-        getStatusDotClass(status) {
-          return {
-            'status-working': status === 'working',
-            'status-waiting': status === 'waiting' || status === 'paused',
-            'status-done': status === 'done' || status === 'delivered',
-            'status-idle': !status || status === 'idle',
-          };
-        },
-
-        formatElapsed(minutes) {
-          if (!minutes) return '0m';
-          if (minutes < 60) return minutes + 'm';
-          const h = Math.floor(minutes / 60);
-          const m = minutes % 60;
-          return h + 'h ' + m + 'm';
-        },
-
-        formatTimeRemaining(limit, elapsed) {
-          if (!limit) return '';
-          const remaining = limit - (elapsed || 0);
-          if (remaining <= 0) return 'Time up!';
-          return remaining + 'm remaining';
-        },
-
-        formatTime(timestamp) {
-          if (!timestamp) return '';
-          const d = new Date(timestamp);
-          return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-        },
-
-        async pauseRun() {
-          // TODO: Tauri invoke
-          console.log('Pause run:', this.selectedRun);
-        },
-
-        async resumeRun() {
-          // TODO: Tauri invoke
-          console.log('Resume run:', this.selectedRun);
-        },
-
-        // Keyboard shortcuts and window state
-        async init() {
-          // Initialize theme from localStorage
-          this.initTheme();
-
-          // Initialize window maximized state (for frameless window)
-          if (window.tauriGetCurrentWindow) {
-            try {
-              this.isMaximized = await window.tauriGetCurrentWindow().isMaximized();
-            } catch (e) {
-              console.warn('Failed to get window state:', e);
-            }
-          }
-
-          // Track focused run index for j/k navigation
-          this._focusedRunIndex = -1;
-
-          document.addEventListener('keydown', (e) => {
-            // Ignore if typing in input
-            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-
-            switch(e.key) {
-              case 'j':
-                // Navigate down in run list
-                this.navigateRuns(1);
-                break;
-              case 'k':
-                // Navigate up in run list
-                this.navigateRuns(-1);
-                break;
-              case 'Enter':
-                // Select focused run
-                this.selectFocusedRun();
-                break;
-              case 'a':
-                // Attach to first worker
-                if (this.selectedRun) this.attachToWorker();
-                break;
-              case 'c':
-                this.toggleChat();
-                break;
-              case 'm':
-                // Focus message input
-                if (this.chatOpen) {
-                  const input = document.querySelector('.chat-input');
-                  if (input) input.focus();
-                } else {
-                  this.chatOpen = true;
-                  this.$nextTick(() => {
-                    const input = document.querySelector('.chat-input');
-                    if (input) input.focus();
-                  });
-                }
-                break;
-              case '?':
-                this.showHelp = true;
-                break;
-              case 'Escape':
-                this.showHelp = false;
-                this.chatOpen = false;
-                break;
-              case 'p':
-                if (this.selectedRun) this.pauseRun();
-                break;
-              case 'r':
-                if (this.selectedRun) this.resumeRun();
-                break;
-              case 't':
-                this.toggleTheme();
-                break;
-            }
-          });
-        },
-
-        // Navigate through runs with j/k
-        navigateRuns(direction) {
-          const runItems = document.querySelectorAll('.run-item');
-          if (runItems.length === 0) return;
-
-          // Update focused index
-          this._focusedRunIndex += direction;
-
-          // Clamp to valid range
-          if (this._focusedRunIndex < 0) this._focusedRunIndex = 0;
-          if (this._focusedRunIndex >= runItems.length) this._focusedRunIndex = runItems.length - 1;
-
-          // Update visual focus
-          runItems.forEach((item, idx) => {
-            item.classList.toggle('ring-2', idx === this._focusedRunIndex);
-            item.classList.toggle('ring-amber-500', idx === this._focusedRunIndex);
-          });
-
-          // Scroll into view
-          runItems[this._focusedRunIndex]?.scrollIntoView({ block: 'nearest' });
-        },
-
-        // Select the currently focused run
-        selectFocusedRun() {
-          const runItems = document.querySelectorAll('.run-item');
-          if (this._focusedRunIndex >= 0 && this._focusedRunIndex < runItems.length) {
-            runItems[this._focusedRunIndex].click();
-          }
-        },
-
-        // Attach to first available worker
-        async attachToWorker() {
-          // TODO: Tauri invoke to attach to first active worker
-          console.log('Attach to worker for run:', this.selectedRun);
-          if (window.tauriInvoke) {
-            try {
-              const workers = await window.tauriInvoke('get_workers', { runName: this.selectedRun });
-              if (workers && workers.length > 0) {
-                await window.tauriInvoke('attach_worker', {
-                  runName: this.selectedRun,
-                  workerName: workers[0].name
-                });
-              }
-            } catch (e) {
-              window.toast.error(e.message || String(e), 'Failed to attach');
-            }
-          }
-        }
-      };
-    }
-
-    // Run list component
-    // Full implementation for displaying runs with status, progress, context menu
-    function runList() {
-      return {
-        runs: [],
-        selectedRun: null,
-        selectedIndex: -1,
-        loading: true,
-        error: null,
-        contextMenuVisible: false,
-        contextMenuX: 0,
-        contextMenuY: 0,
-        contextMenuRun: null,
-        pollInterval: null,
-
-        async init() {
-          await this.fetchRuns();
-
-          // Poll for updates every 2 seconds
-          this.pollInterval = setInterval(() => {
-            this.fetchRuns();
-          }, 2000);
-
-          // Listen for run selection from other components
-          window.addEventListener('run-selected', (e) => {
-            this.selectedRun = e.detail;
-            const index = this.runs.findIndex(r => r.name === e.detail);
-            if (index >= 0) this.selectedIndex = index;
-          });
-
-          // Hide context menu on click
-          document.addEventListener('click', () => {
-            this.hideContextMenu();
-          });
-        },
-
-        async fetchRuns() {
-          try {
-            // Use global Tauri invoke from main.ts
-            if (window.tauriInvoke) {
-              console.log('[DEBUG] Calling get_runs...');
-              this.runs = await window.tauriInvoke('get_runs');
-              console.log('[DEBUG] Got runs:', this.runs);
-            } else {
-              console.log('[DEBUG] Tauri not loaded yet, retrying...');
-              setTimeout(() => this.fetchRuns(), 100);
-              return;
-            }
-            this.loading = false;
-            this.error = null;
-          } catch (err) {
-            console.error('[DEBUG] fetchRuns error:', err);
-            this.error = err.message || String(err);
-            this.loading = false;
-            // Fallback to empty on error
-            this.runs = [];
-          }
-        },
-
-        selectRun(name) {
-          this.selectedRun = name;
-          this.selectedIndex = this.runs.findIndex(r => r.name === name);
-          // Update parent state if Alpine store exists
-          if (Alpine.store && Alpine.store('app')) {
-            Alpine.store('app').selectedRun = name;
-          }
-          window.dispatchEvent(new CustomEvent('run-selected', { detail: name }));
-        },
-
-        getStatusDotClass(status) {
-          const classes = {
-            idle: 'status-idle',
-            working: 'status-working',
-            paused: 'status-waiting',
-            runaway: 'status-error',
-            timed_out: 'status-error',
-            eval: 'status-working',
-            eval_failed: 'status-error',
-            waiting: 'status-waiting',
-            done: 'status-done',
-            delivered: 'status-done',
-            merged: 'status-done',
-          };
-          return classes[status] || 'status-idle';
-        },
-
-        formatElapsed(minutes) {
-          if (!minutes) return '0m';
-          if (minutes < 60) return minutes + 'm';
-          const h = Math.floor(minutes / 60);
-          const m = minutes % 60;
-          return h + 'h' + (m > 0 ? ' ' + m + 'm' : '');
-        },
-
-        formatProgress(done, total) {
-          if (total === 0) return 0;
-          return Math.round((done / total) * 100);
-        },
-
-        showContextMenu(event, runName) {
-          event.preventDefault();
-          event.stopPropagation();
-          this.contextMenuX = event.clientX;
-          this.contextMenuY = event.clientY;
-          this.contextMenuRun = runName;
-          this.contextMenuVisible = true;
-        },
-
-        hideContextMenu() {
-          this.contextMenuVisible = false;
-          this.contextMenuRun = null;
-        },
-
-        async contextPause() {
-          if (!this.contextMenuRun) return;
-          try {
-            if (window.tauriInvoke) {
-              const invoke = window.tauriInvoke;
-              await invoke('pause_run', { name: this.contextMenuRun });
-              await this.fetchRuns();
-            }
-          } catch (err) {
-            window.toast.error(err.message || String(err), 'Failed to pause');
-          }
-          this.hideContextMenu();
-        },
-
-        async contextResume() {
-          if (!this.contextMenuRun) return;
-          try {
-            if (window.tauriInvoke) {
-              const invoke = window.tauriInvoke;
-              await invoke('resume_run', { name: this.contextMenuRun });
-              await this.fetchRuns();
-            }
-          } catch (err) {
-            window.toast.error(err.message || String(err), 'Failed to resume');
-          }
-          this.hideContextMenu();
-        },
-
-        async contextDelete() {
-          if (!this.contextMenuRun) return;
-          if (!confirm(`Delete run "${this.contextMenuRun}"?`)) {
-            this.hideContextMenu();
-            return;
-          }
-          try {
-            if (window.tauriInvoke) {
-              const invoke = window.tauriInvoke;
-              await invoke('delete_run', { name: this.contextMenuRun });
-              if (this.selectedRun === this.contextMenuRun) {
-                this.selectedRun = null;
-                this.selectedIndex = -1;
-                window.dispatchEvent(new CustomEvent('run-selected', { detail: null }));
-              }
-              await this.fetchRuns();
-            }
-          } catch (err) {
-            window.toast.error(err.message || String(err), 'Failed to delete');
-          }
-          this.hideContextMenu();
-        },
-
-        async contextDeliver() {
-          if (!this.contextMenuRun) return;
-          try {
-            if (window.tauriInvoke) {
-              const invoke = window.tauriInvoke;
-              const branch = await invoke('deliver_run', { name: this.contextMenuRun });
-              window.toast.success(`Delivered to branch: ${branch}`, 'Delivery complete');
-              await this.fetchRuns();
-            }
-          } catch (err) {
-            window.toast.error(err.message || String(err), 'Failed to deliver');
-          }
-          this.hideContextMenu();
-        }
-      };
-    }
-
-    // Run detail component
-    // Displays detailed info about selected run with status, progress, actions
-    function runDetail() {
-      return {
-        runName: null,
-        detail: null,
-        tasks: [],
-        workers: [],
-        diffStats: null,
-        loading: false,
-        error: null,
-        pollInterval: null,
-
-        async init() {
-          // Listen for run selection events
-          window.addEventListener('run-selected', async (e) => {
-            if (e.detail) {
-              await this.loadRunDetail(e.detail);
-            } else {
-              this.clearRunDetail();
-            }
-          });
-        },
-
-        destroy() {
-          if (this.pollInterval) {
-            clearInterval(this.pollInterval);
-            this.pollInterval = null;
-          }
-        },
-
-        async loadRunDetail(name) {
-          if (this.pollInterval) {
-            clearInterval(this.pollInterval);
-            this.pollInterval = null;
-          }
-
-          this.runName = name;
-          this.loading = true;
-          this.error = null;
-
-          try {
-            if (window.tauriInvoke) {
-              const invoke = window.tauriInvoke;
-              const [detail, tasks, workers] = await Promise.all([
-                invoke('get_run_detail', { name }),
-                invoke('get_tasks', { runName: name }),
-                invoke('get_workers', { runName: name }),
-              ]);
-              this.detail = detail;
-              this.tasks = tasks;
-              this.workers = workers;
-
-              // Try to get diff stats
-              try {
-                this.diffStats = await invoke('get_diff_stats', { runName: name });
-              } catch {
-                this.diffStats = null;
-              }
-
-              this.loading = false;
-
-              // Poll for updates
-              this.pollInterval = setInterval(async () => {
-                if (!this.runName) return;
-                try {
-                  const invoke = window.tauriInvoke;
-                  const [detail, tasks, workers] = await Promise.all([
-                    invoke('get_run_detail', { name: this.runName }),
-                    invoke('get_tasks', { runName: this.runName }),
-                    invoke('get_workers', { runName: this.runName }),
-                  ]);
-                  this.detail = detail;
-                  this.tasks = tasks;
-                  this.workers = workers;
-                } catch (err) {
-                  console.error('Failed to poll:', err);
-                }
-              }, 2000);
-            } else {
-              // Demo mode
-              this.loading = false;
-            }
-          } catch (err) {
-            this.error = err.message || String(err);
-            this.loading = false;
-          }
-        },
-
-        clearRunDetail() {
-          if (this.pollInterval) {
-            clearInterval(this.pollInterval);
-            this.pollInterval = null;
-          }
-          this.runName = null;
-          this.detail = null;
-          this.tasks = [];
-          this.workers = [];
-          this.diffStats = null;
-          this.loading = false;
-          this.error = null;
-        },
-
-        getStatusBadgeClass(status) {
-          const classes = {
-            idle: 'bg-wool-700/20 text-wool-500',
-            working: 'bg-amber-500/20 text-amber-500',
-            paused: 'bg-golden/20 text-golden',
-            runaway: 'bg-terra/20 text-terra',
-            timed_out: 'bg-terra/20 text-terra',
-            eval: 'bg-amber-400/20 text-amber-400',
-            eval_failed: 'bg-terra/20 text-terra',
-            waiting: 'bg-golden/20 text-golden',
-            done: 'bg-sage/20 text-sage',
-            delivered: 'bg-sage/20 text-sage',
-            merged: 'bg-sage/20 text-sage',
-          };
-          return classes[status] || classes.idle;
-        },
-
-        getStatusLabel(status) {
-          const labels = {
-            idle: 'Idle',
-            working: 'Working',
-            paused: 'Paused',
-            runaway: 'Runaway',
-            timed_out: 'Timed Out',
-            eval: 'Evaluating',
-            eval_failed: 'Eval Failed',
-            waiting: 'Waiting',
-            done: 'Done',
-            delivered: 'Delivered',
-            merged: 'Merged',
-          };
-          return labels[status] || status || 'Unknown';
-        },
-
-        formatElapsed(minutes) {
-          if (!minutes) return '0m';
-          if (minutes < 60) return minutes + 'm';
-          const h = Math.floor(minutes / 60);
-          const m = minutes % 60;
-          return m > 0 ? h + 'h ' + m + 'm' : h + 'h';
-        },
-
-        formatTimeRemaining(limit, elapsed) {
-          if (!limit) return '';
-          const remaining = limit - (elapsed || 0);
-          if (remaining <= 0) return 'Time up!';
-          if (remaining < 60) return remaining + 'm remaining';
-          const h = Math.floor(remaining / 60);
-          const m = remaining % 60;
-          return m > 0 ? h + 'h ' + m + 'm remaining' : h + 'h remaining';
-        },
-
-        calculateTimeProgress(elapsed, limit) {
-          if (!limit || !elapsed) return 0;
-          return Math.min(100, Math.round((elapsed / limit) * 100));
-        },
-
-        getTaskProgress() {
-          const done = this.tasks.filter(t => t.status === 'done').length;
-          const total = this.tasks.length;
-          const percentage = total > 0 ? Math.round((done / total) * 100) : 0;
-          return { done, total, percentage };
-        },
-
-        getWorkerCount() {
-          const activeStatuses = ['working', 'waiting', 'eval'];
-          const active = this.workers.filter(w => activeStatuses.includes(w.status)).length;
-          return { active, total: this.workers.length };
-        },
-
-        canPause() {
-          const status = this.detail?.status;
-          return status === 'working' || status === 'eval' || status === 'waiting';
-        },
-
-        canResume() {
-          const status = this.detail?.status;
-          return status === 'paused' || status === 'timed_out' || status === 'runaway';
-        },
-
-        canDeliver() {
-          const status = this.detail?.status;
-          return status === 'done' || status === 'paused' || status === 'timed_out';
-        },
-
-        async handlePause() {
-          if (!this.runName || !this.canPause()) return;
-          try {
-            if (window.tauriInvoke) {
-              const invoke = window.tauriInvoke;
-              await invoke('pause_run', { name: this.runName });
-              await this.loadRunDetail(this.runName);
-            }
-          } catch (err) {
-            console.error('Failed to pause:', err);
-            alert('Failed to pause: ' + (err.message || err));
-          }
-        },
-
-        async handleResume() {
-          if (!this.runName || !this.canResume()) return;
-          try {
-            if (window.tauriInvoke) {
-              const invoke = window.tauriInvoke;
-              await invoke('resume_run', { name: this.runName });
-              await this.loadRunDetail(this.runName);
-            }
-          } catch (err) {
-            console.error('Failed to resume:', err);
-            alert('Failed to resume: ' + (err.message || err));
-          }
-        },
-
-        async handleDeliver() {
-          if (!this.runName || !this.canDeliver()) return;
-          try {
-            if (window.tauriInvoke) {
-              const invoke = window.tauriInvoke;
-              const branch = await invoke('deliver_run', { name: this.runName });
-              alert('Delivered to branch: ' + branch);
-              await this.loadRunDetail(this.runName);
-            }
-          } catch (err) {
-            console.error('Failed to deliver:', err);
-            alert('Failed to deliver: ' + (err.message || err));
-          }
-        }
-      };
-    }
-
-    // Worker panel component
-    function workerPanel() {
-      return {
-        workers: [],
-        loading: false,
-        error: null,
-        selectedRun: null,
-        _pollInterval: null,
-
-        async init() {
-          // Listen for run selection events
-          window.addEventListener('run-selected', (e) => {
-            this.onRunSelected(e.detail);
-          });
-
-          // Check if a run is already selected from parent scope
-          const app = this.getAppState();
-          if (app && app.selectedRun) {
-            await this.onRunSelected(app.selectedRun);
-          }
-        },
-
-        destroy() {
-          if (this._pollInterval) {
-            clearInterval(this._pollInterval);
-            this._pollInterval = null;
-          }
-        },
-
-        getAppState() {
-          // Access parent Alpine scope
-          let el = this.$el;
-          while (el && el.parentElement) {
-            el = el.parentElement;
-            if (el._x_dataStack) {
-              return el._x_dataStack[0];
-            }
-          }
-          return null;
-        },
-
-        async onRunSelected(runName) {
-          // Stop existing polling
-          if (this._pollInterval) {
-            clearInterval(this._pollInterval);
-            this._pollInterval = null;
-          }
-
-          this.selectedRun = runName;
-
-          if (!runName) {
-            this.workers = [];
-            this.loading = false;
-            this.error = null;
-            return;
-          }
-
-          // Fetch workers immediately
-          await this.fetchWorkers();
-
-          // Start polling for updates every 2 seconds
-          this._pollInterval = setInterval(() => {
-            this.fetchWorkers();
-          }, 2000);
-        },
-
-        async fetchWorkers() {
-          if (!this.selectedRun) return;
-
-          // Only show loading on first fetch
-          if (this.workers.length === 0) {
-            this.loading = true;
-          }
-
-          try {
-            // Check if Tauri is available
-            if (!window.tauriInvoke) {
-              // Mock data for browser development
-              this.workers = [];
-              this.loading = false;
-              return;
-            }
-
-            const invoke = window.tauriInvoke;
-            const workers = await invoke('get_workers', { runName: this.selectedRun });
-
-            // Also fetch tasks to map claimed tasks to workers
-            let tasks = [];
-            try {
-              tasks = await invoke('get_tasks', { runName: this.selectedRun });
-            } catch {
-              // Ignore task fetch errors
-            }
-
-            // Create task map for quick lookup
-            const taskByWorker = new Map();
-            for (const task of tasks) {
-              if (task.claimedBy && task.status === 'doing') {
-                taskByWorker.set(task.claimedBy, task.id);
-              }
-            }
-
-            // Enrich workers with display properties
-            const enrichedWorkers = workers.map((worker, index) => {
-              // First worker or one ending in -0 is the leader
-              const isLeader = worker.name.endsWith('-0') || index === 0;
-              const currentTask = taskByWorker.get(worker.name) || null;
-
-              return {
-                ...worker,
-                isLeader,
-                currentTask,
-              };
-            });
-
-            // Sort: active workers first, then by name
-            const activeStatuses = ['working', 'waiting', 'awaiting'];
-            this.workers = enrichedWorkers.sort((a, b) => {
-              const aActive = activeStatuses.includes(a.status);
-              const bActive = activeStatuses.includes(b.status);
-              if (aActive && !bActive) return -1;
-              if (!aActive && bActive) return 1;
-              return a.name.localeCompare(b.name);
-            });
-
-            this.loading = false;
-            this.error = null;
-          } catch (err) {
-            this.error = err.message || String(err);
-            this.loading = false;
-          }
-        },
-
-        async attachWorker(name) {
-          if (!this.selectedRun) return;
-
-          try {
-            if (!window.tauriInvoke) {
-              console.log('Attach to worker:', name);
-              return;
-            }
-
-            const invoke = window.tauriInvoke;
-            await invoke('attach_worker', { runName: this.selectedRun, workerName: name });
-          } catch (err) {
-            console.error('Failed to attach to worker:', err);
-          }
-        }
-      };
-    }
-
-    // Task panel component
-    // Displays hierarchical task list with status icons, claimed-by info, and context menu
-    function taskPanel() {
-      return {
-        tasks: [],
-        flatTasks: [], // Flattened for display with depth info
-        loading: false,
-        error: null,
-        pollInterval: null,
-        selectedTaskId: null,
-        contextMenuVisible: false,
-        contextMenuX: 0,
-        contextMenuY: 0,
-        contextMenuTask: null,
-
-        async init() {
-          // Listen for run selection events
-          window.addEventListener('run-selected', async (e) => {
-            if (e.detail) {
-              await this.loadTasks(e.detail);
-            } else {
-              this.clearTasks();
-            }
-          });
-
-          // Check if run already selected
-          const app = this.getAppState();
-          if (app && app.selectedRun) {
-            await this.loadTasks(app.selectedRun);
-          }
-        },
-
-        getAppState() {
-          let el = this.$el;
-          while (el && el.parentElement) {
-            el = el.parentElement;
-            if (el._x_dataStack) {
-              return el._x_dataStack[0];
-            }
-          }
-          return null;
-        },
-
-        getSelectedRun() {
-          const app = this.getAppState();
-          return app ? app.selectedRun : null;
-        },
-
-        async loadTasks(runName) {
-          // Stop existing poll
-          if (this.pollInterval) {
-            clearInterval(this.pollInterval);
-            this.pollInterval = null;
-          }
-
-          this.loading = true;
-          this.error = null;
-
-          try {
-            if (window.tauriInvoke) {
-              const invoke = window.tauriInvoke;
-              this.tasks = await invoke('get_tasks', { runName });
-            } else {
-              // Demo mode - show empty
-              this.tasks = [];
-            }
-            this.buildFlatList();
-            this.loading = false;
-
-            // Update parent state with task counts
-            this.updateTaskCounts();
-
-            // Start polling
-            this.pollInterval = setInterval(async () => {
-              const currentRun = this.getSelectedRun();
-              if (!currentRun) return;
-              try {
-                if (window.tauriInvoke) {
-                  const invoke = window.tauriInvoke;
-                  this.tasks = await invoke('get_tasks', { runName: currentRun });
-                  this.buildFlatList();
-                  this.updateTaskCounts();
-                }
-              } catch (err) {
-                console.error('Task poll error:', err);
-              }
-            }, 2000);
-          } catch (err) {
-            this.error = err.message || String(err);
-            this.loading = false;
-          }
-        },
-
-        clearTasks() {
-          if (this.pollInterval) {
-            clearInterval(this.pollInterval);
-            this.pollInterval = null;
-          }
-          this.tasks = [];
-          this.flatTasks = [];
-          this.selectedTaskId = null;
-          this.loading = false;
-          this.error = null;
-        },
-
-        // Build flattened list with depth for hierarchical display
-        buildFlatList() {
-          const taskMap = new Map();
-          const rootTasks = [];
-
-          // First pass: index all tasks
-          this.tasks.forEach(t => {
-            taskMap.set(t.id, { ...t, children: [], depth: 0 });
-          });
-
-          // Second pass: build tree
-          this.tasks.forEach(t => {
-            const task = taskMap.get(t.id);
-            if (t.parentId && taskMap.has(t.parentId)) {
-              taskMap.get(t.parentId).children.push(task);
-            } else {
-              rootTasks.push(task);
-            }
-          });
-
-          // Third pass: flatten with depth
-          const flat = [];
-          const flatten = (tasks, depth) => {
-            tasks.forEach(t => {
-              t.depth = depth;
-              // Check if blocked
-              t.isBlocked = t.blockedBy && t.blockedBy.length > 0 &&
-                t.blockedBy.some(bid => {
-                  const blocker = taskMap.get(bid);
-                  return blocker && blocker.status !== 'done';
-                });
-              flat.push(t);
-              if (t.children && t.children.length > 0) {
-                flatten(t.children, depth + 1);
-              }
-            });
-          };
-          flatten(rootTasks, 0);
-          this.flatTasks = flat;
-        },
-
-        updateTaskCounts() {
-          const app = this.getAppState();
-          if (app) {
-            app.tasksTotal = this.tasks.length;
-            app.tasksDone = this.tasks.filter(t => t.status === 'done').length;
-          }
-        },
-
-        getStatusIcon(status) {
-          return status === 'done' ? '✓' : status === 'doing' ? '●' : '○';
-        },
-
-        getStatusClass(status) {
-          if (status === 'done') return 'text-sage';
-          if (status === 'doing') return 'text-amber-500';
-          return 'text-wool-500';
-        },
-
-        getTaskNameClass(task) {
-          const classes = ['text-sm', 'truncate'];
-          if (task.status === 'done') {
-            classes.push('text-wool-500', 'line-through');
-          } else if (task.isBlocked) {
-            classes.push('text-wool-500', 'italic');
-          } else {
-            classes.push('text-wool-100');
-          }
-          return classes.join(' ');
-        },
-
-        selectTask(taskId) {
-          this.selectedTaskId = taskId;
-          window.dispatchEvent(new CustomEvent('task-selected', { detail: taskId }));
-        },
-
-        showContextMenu(event, task) {
-          event.preventDefault();
-          event.stopPropagation();
-          this.contextMenuX = event.clientX;
-          this.contextMenuY = event.clientY;
-          this.contextMenuTask = task;
-          this.contextMenuVisible = true;
-        },
-
-        hideContextMenu() {
-          this.contextMenuVisible = false;
-          this.contextMenuTask = null;
-        },
-
-        canMarkDone(task) {
-          return task && task.status !== 'done';
-        },
-
-        canReopen(task) {
-          return task && task.status === 'done';
-        },
-
-        canUnclaim(task) {
-          return task && task.status === 'doing' && task.claimedBy;
-        },
-
-        async contextMarkDone() {
-          if (!this.contextMenuTask || !this.canMarkDone(this.contextMenuTask)) {
-            this.hideContextMenu();
-            return;
-          }
-          const runName = this.getSelectedRun();
-          if (!runName) return;
-
-          try {
-            if (window.tauriInvoke) {
-              const invoke = window.tauriInvoke;
-              await invoke('complete_task', { runName, taskId: this.contextMenuTask.id });
-              await this.loadTasks(runName);
-            }
-          } catch (err) {
-            console.error('Failed to complete task:', err);
-            alert('Failed to complete task: ' + (err.message || err));
-          }
-          this.hideContextMenu();
-        },
-
-        async contextReopen() {
-          if (!this.contextMenuTask || !this.canReopen(this.contextMenuTask)) {
-            this.hideContextMenu();
-            return;
-          }
-          const runName = this.getSelectedRun();
-          if (!runName) return;
-
-          try {
-            if (window.tauriInvoke) {
-              const invoke = window.tauriInvoke;
-              await invoke('reopen_task', { runName, taskId: this.contextMenuTask.id });
-              await this.loadTasks(runName);
-            }
-          } catch (err) {
-            console.error('Failed to reopen task:', err);
-            alert('Failed to reopen task: ' + (err.message || err));
-          }
-          this.hideContextMenu();
-        },
-
-        async contextUnclaim() {
-          if (!this.contextMenuTask || !this.canUnclaim(this.contextMenuTask)) {
-            this.hideContextMenu();
-            return;
-          }
-          const runName = this.getSelectedRun();
-          if (!runName) return;
-
-          try {
-            if (window.tauriInvoke) {
-              const invoke = window.tauriInvoke;
-              await invoke('unclaim_task', { runName, taskId: this.contextMenuTask.id });
-              await this.loadTasks(runName);
-            }
-          } catch (err) {
-            console.error('Failed to unclaim task:', err);
-            alert('Failed to unclaim task: ' + (err.message || err));
-          }
-          this.hideContextMenu();
-        },
-
-        async contextDelete() {
-          if (!this.contextMenuTask) {
-            this.hideContextMenu();
-            return;
-          }
-          const runName = this.getSelectedRun();
-          if (!runName) return;
-
-          if (!confirm(`Delete task "${this.contextMenuTask.id}"?`)) {
-            this.hideContextMenu();
-            return;
-          }
-
-          try {
-            if (window.tauriInvoke) {
-              const invoke = window.tauriInvoke;
-              await invoke('delete_task', { runName, taskId: this.contextMenuTask.id });
-              await this.loadTasks(runName);
-            }
-          } catch (err) {
-            console.error('Failed to delete task:', err);
-            alert('Failed to delete task: ' + (err.message || err));
-          }
-          this.hideContextMenu();
-        }
-      };
-    }
-
-    // Activity log component
-    // Full implementation for displaying activity history with real-time updates
-    function activityLog() {
-      const ACTION_COLORS = {
-        task_claimed: 'text-amber-400',
-        task_done: 'text-sage',
-        task_added: 'text-sky-400',
-        task_deleted: 'text-terra',
-        task_unclaimed: 'text-wool-400',
-        task_reopened: 'text-golden',
-        worker_started: 'text-sage',
-        worker_stopped: 'text-wool-500',
-        worker_error: 'text-terra',
-        worker_paused: 'text-golden',
-        worker_resumed: 'text-amber-400',
-        eval_started: 'text-amber-400',
-        eval_passed: 'text-sage',
-        eval_failed: 'text-terra',
-        run_started: 'text-sage',
-        run_paused: 'text-golden',
-        run_resumed: 'text-amber-400',
-        run_done: 'text-sage',
-        run_delivered: 'text-sage',
-        run_timed_out: 'text-terra',
-        message_sent: 'text-sky-400',
-        message_received: 'text-wool-300',
-        default: 'text-wool-300',
-      };
-
-      const ACTION_ICONS = {
-        task_claimed: '→',
-        task_done: '✓',
-        task_added: '+',
-        task_deleted: '×',
-        task_unclaimed: '←',
-        task_reopened: '↺',
-        worker_started: '▶',
-        worker_stopped: '■',
-        worker_error: '!',
-        worker_paused: '⏸',
-        worker_resumed: '▶',
-        eval_started: '⚙',
-        eval_passed: '✓',
-        eval_failed: '✗',
-        run_started: '▶',
-        run_paused: '⏸',
-        run_resumed: '▶',
-        run_done: '✓',
-        run_delivered: '📦',
-        run_timed_out: '⏰',
-        message_sent: '→',
-        message_received: '←',
-        default: '•',
-      };
-
-      return {
-        runName: null,
-        entries: [],
-        loading: false,
-        error: null,
-        pollInterval: null,
-        autoScroll: true,
-
-        async init() {
-          // Listen for run selection events
-          window.addEventListener('run-selected', async (e) => {
-            if (e.detail) {
-              await this.loadHistory(e.detail);
-            } else {
-              this.clearHistory();
-            }
-          });
-        },
-
-        destroy() {
-          if (this.pollInterval) {
-            clearInterval(this.pollInterval);
-            this.pollInterval = null;
-          }
-        },
-
-        async loadHistory(name) {
-          if (this.pollInterval) {
-            clearInterval(this.pollInterval);
-            this.pollInterval = null;
-          }
-
-          this.runName = name;
-          this.loading = true;
-          this.error = null;
-
-          try {
-            if (window.tauriInvoke) {
-              const invoke = window.tauriInvoke;
-              this.entries = await invoke('get_history', { runName: name, limit: 100 });
-            } else {
-              // Demo mode
-              this.entries = [];
-            }
-            this.loading = false;
-
-            if (this.autoScroll) {
-              this.$nextTick(() => this.scrollToBottom());
-            }
-
-            // Poll for updates
-            this.pollInterval = setInterval(async () => {
-              if (!this.runName) return;
-              try {
-                const prevLength = this.entries.length;
-                if (window.tauriInvoke) {
-                  const invoke = window.tauriInvoke;
-                  this.entries = await invoke('get_history', { runName: this.runName, limit: 100 });
-                }
-                if (this.entries.length > prevLength && this.autoScroll) {
-                  this.$nextTick(() => this.scrollToBottom());
-                }
-              } catch (err) {
-                console.error('Failed to poll history:', err);
-              }
-            }, 2000);
-          } catch (err) {
-            this.error = err.message || String(err);
-            this.loading = false;
-          }
-        },
-
-        clearHistory() {
-          if (this.pollInterval) {
-            clearInterval(this.pollInterval);
-            this.pollInterval = null;
-          }
-          this.runName = null;
-          this.entries = [];
-          this.loading = false;
-          this.error = null;
-        },
-
-        formatTime(timestamp) {
-          if (!timestamp) return '';
-          const d = new Date(timestamp);
-          return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        },
-
-        getActionColor(action) {
-          const normalized = action.toLowerCase().replace(/[\s-]+/g, '_');
-          return ACTION_COLORS[normalized] || ACTION_COLORS.default;
-        },
-
-        getActionIcon(action) {
-          const normalized = action.toLowerCase().replace(/[\s-]+/g, '_');
-          return ACTION_ICONS[normalized] || ACTION_ICONS.default;
-        },
-
-        scrollToBottom() {
-          const container = this.$el;
-          if (container) {
-            container.scrollTop = container.scrollHeight;
-          }
-        },
-
-        handleScroll(event) {
-          const target = event.target;
-          if (!target) return;
-          const isAtBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 50;
-          this.autoScroll = isAtBottom;
-        }
-      };
-    }
-
-    // Chat panel component
-    function chatPanel() {
-      return {
-        threads: [],
-        selectedThread: 'user',
-        messages: [],
-        newMessage: '',
-        loading: false,
-        error: null,
-        _pollInterval: null,
-        _threadPollInterval: null,
-
-        async init() {
-          // Subscribe to run selection changes
-          window.addEventListener('run-selected', (e) => {
-            this.onRunSelected(e.detail);
-          });
-
-          // Initial load if run already selected
-          const app = this.getAppState();
-          if (app && app.selectedRun) {
-            await this.fetchThreads();
-          }
-        },
-
-        getAppState() {
-          // Access parent Alpine scope
-          let el = this.$el;
-          while (el && el.parentElement) {
-            el = el.parentElement;
-            if (el._x_dataStack) {
-              return el._x_dataStack[0];
-            }
-          }
-          return null;
-        },
-
-        getSelectedRun() {
-          const app = this.getAppState();
-          return app ? app.selectedRun : null;
-        },
-
-        async onRunSelected(runName) {
-          // Stop existing polls
-          this.stopPolling();
-
-          if (!runName) {
-            this.threads = [];
-            this.messages = [];
-            return;
-          }
-
-          await this.fetchThreads();
-
-          // Start polling for thread updates
-          this._threadPollInterval = setInterval(() => this.fetchThreads(), 4000);
-        },
-
-        async fetchThreads() {
-          const runName = this.getSelectedRun();
-          if (!runName) return;
-
-          try {
-            if (window.tauriInvoke) {
-              this.threads = await window.tauriInvoke('get_threads', { runName });
-            } else {
-              // Mock data for development
-              this.threads = [
-                { name: 'user', messageCount: 3, unreadCount: 1, lastMessage: 'Hello!', lastTimestamp: new Date().toISOString() },
-                { name: 'group', messageCount: 5, unreadCount: 0, lastMessage: 'Task complete', lastTimestamp: new Date().toISOString() },
-                { name: 'learnings', messageCount: 2, unreadCount: 0, lastMessage: null, lastTimestamp: null }
-              ];
-            }
-
-            // Update total unread count in parent
-            const totalUnread = this.threads.reduce((sum, t) => sum + t.unreadCount, 0);
-            const app = this.getAppState();
-            if (app) {
-              app.unreadCount = totalUnread;
-            }
-
-            // Select first thread if none selected
-            if (this.threads.length > 0 && !this.threads.find(t => t.name === this.selectedThread)) {
-              this.selectThread(this.threads[0].name);
-            }
-          } catch (e) {
-            window.toast.error(e.message || String(e), 'Failed to load threads');
-            this.error = 'Failed to load threads';
-          }
-        },
-
-        async selectThread(name) {
-          this.selectedThread = name;
-          this.loading = true;
-          this.error = null;
-
-          // Stop message polling
-          if (this._pollInterval) {
-            clearInterval(this._pollInterval);
-            this._pollInterval = null;
-          }
-
-          const runName = this.getSelectedRun();
-          if (!runName) {
-            this.loading = false;
-            return;
-          }
-
-          try {
-            await this.fetchMessages();
-
-            // Mark as read
-            if (window.tauriInvoke) {
-              await window.tauriInvoke('mark_messages_read', { runName, threadName: name });
-            }
-
-            // Update unread count
-            const thread = this.threads.find(t => t.name === name);
-            if (thread) {
-              thread.unreadCount = 0;
-            }
-
-            // Start polling for new messages
-            this._pollInterval = setInterval(() => this.fetchMessages(), 2000);
-
-            // Scroll to bottom
-            this.$nextTick(() => this.scrollToBottom());
-          } catch (e) {
-            window.toast.error(e.message || String(e), 'Failed to load messages');
-            this.error = 'Failed to load messages';
-          } finally {
-            this.loading = false;
-          }
-        },
-
-        async fetchMessages() {
-          const runName = this.getSelectedRun();
-          if (!runName || !this.selectedThread) return;
-
-          try {
-            const prevLength = this.messages.length;
-
-            if (window.tauriInvoke) {
-              this.messages = await window.tauriInvoke('get_messages', {
-                runName,
-                threadName: this.selectedThread
-              });
-            } else {
-              // Mock data for development
-              this.messages = [
-                { id: 1, thread: this.selectedThread, sender: 'user', content: 'Hello, please help with the task.', timestamp: new Date(Date.now() - 300000).toISOString(), waiting: false },
-                { id: 2, thread: this.selectedThread, sender: 'alpha', content: 'Working on it now.', timestamp: new Date(Date.now() - 200000).toISOString(), waiting: false },
-                { id: 3, thread: this.selectedThread, sender: 'alpha', content: 'Task complete! Ready for review.', timestamp: new Date().toISOString(), waiting: false }
-              ];
-            }
-
-            // Auto-scroll if new messages
-            if (this.messages.length > prevLength) {
-              this.$nextTick(() => this.scrollToBottom());
-            }
-          } catch (e) {
-            // Silent failure during polling - don't spam toasts
-            // Only log to console for debugging
-            if (typeof console !== 'undefined') console.debug('Polling fetch failed:', e);
-          }
-        },
-
-        async sendMessage() {
-          const content = this.newMessage.trim();
-          if (!content) return;
-
-          const runName = this.getSelectedRun();
-          if (!runName) {
-            this.error = 'No run selected';
-            return;
-          }
-
-          // Clear input immediately
-          this.newMessage = '';
-
-          try {
-            if (window.tauriInvoke) {
-              await window.tauriInvoke('send_message', {
-                run: runName,
-                thread: this.selectedThread,
-                message: content
-              });
-            } else {
-              // Mock: add message locally
-              this.messages.push({
-                id: Date.now(),
-                thread: this.selectedThread,
-                sender: 'user',
-                content: content,
-                timestamp: new Date().toISOString(),
-                waiting: false
-              });
-            }
-
-            // Refresh messages
-            await this.fetchMessages();
-            this.$nextTick(() => this.scrollToBottom());
-          } catch (e) {
-            window.toast.error(e.message || String(e), 'Failed to send message');
-            this.error = 'Failed to send message';
-            this.newMessage = content; // Restore on error
-          }
-        },
-
-        scrollToBottom() {
-          const container = this.$el.querySelector('.messages-container');
-          if (container) {
-            container.scrollTop = container.scrollHeight;
-          }
-        },
-
-        stopPolling() {
-          if (this._pollInterval) {
-            clearInterval(this._pollInterval);
-            this._pollInterval = null;
-          }
-          if (this._threadPollInterval) {
-            clearInterval(this._threadPollInterval);
-            this._threadPollInterval = null;
-          }
-        },
-
-        formatTime(timestamp) {
-          if (!timestamp) return '';
-          const d = new Date(timestamp);
-          return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-        },
-
-        formatDate(timestamp) {
-          if (!timestamp) return '';
-          const d = new Date(timestamp);
-          const today = new Date();
-          if (d.toDateString() === today.toDateString()) return 'Today';
-          const yesterday = new Date(today);
-          yesterday.setDate(yesterday.getDate() - 1);
-          if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
-          return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        },
-
-        getSenderColor(sender) {
-          const colors = {
-            user: 'text-amber-500',
-            admin: 'text-amber-500',
-            system: 'text-wool-500'
-          };
-          if (colors[sender]) return colors[sender];
-          // Hash-based color for workers
-          const workerColors = ['text-sage', 'text-sky-400', 'text-pink-400', 'text-purple-400', 'text-golden'];
-          let hash = 0;
-          for (let i = 0; i < sender.length; i++) {
-            hash = sender.charCodeAt(i) + ((hash << 5) - hash);
-          }
-          return workerColors[Math.abs(hash) % workerColors.length];
-        }
-      };
-    }
-
-    // =========================================================================
-    // Sheep Clicker Mini-Game
-    // =========================================================================
-
-    function sheepClickerGame() {
-      return {
-        isOpen: false,
-        wool: 0,
-        totalWool: 0,
-        woolPerClick: 1,
-        woolPerSecond: 0,
-        clickMultiplier: 1,
-        upgrades: [
-          { id: 'lamb', name: 'Lamb', description: 'A cute lamb helps gather wool', baseCost: 15, woolPerSecond: 0.1, icon: '🐑', owned: 0 },
-          { id: 'sheepdog', name: 'Sheepdog', description: 'Herds sheep more efficiently', baseCost: 100, woolPerSecond: 1, icon: '🐕', owned: 0 },
-          { id: 'shepherd', name: 'Shepherd', description: 'A wise shepherd tends the flock', baseCost: 500, woolPerSecond: 5, icon: '🧑‍🌾', owned: 0 },
-          { id: 'pasture', name: 'Green Pasture', description: 'Lush grass makes happy sheep', baseCost: 2000, woolPerSecond: 20, icon: '🌿', owned: 0 },
-          { id: 'barn', name: 'Cozy Barn', description: 'Shelter increases wool production', baseCost: 10000, woolPerSecond: 100, icon: '🏠', owned: 0 },
-          { id: 'shears', name: 'Golden Shears', description: '+1 wool per click', baseCost: 500, woolPerSecond: 0, icon: '✂️', owned: 0 },
-          { id: 'spinning', name: 'Spinning Wheel', description: 'Doubles click power', baseCost: 5000, woolPerSecond: 0, icon: '🎡', owned: 0 },
-          { id: 'agent', name: 'AI Agent', description: 'An automated wool gatherer', baseCost: 50000, woolPerSecond: 500, icon: '🤖', owned: 0 },
-        ],
-        achievements: [
-          { id: 'first_wool', name: 'First Fleece', description: 'Collect your first wool', requirement: 1, icon: '🎉', unlocked: false },
-          { id: 'wool_100', name: 'Woolly Start', description: 'Collect 100 wool', requirement: 100, icon: '⭐', unlocked: false },
-          { id: 'wool_1000', name: 'Wool Gatherer', description: 'Collect 1,000 wool', requirement: 1000, icon: '🌟', unlocked: false },
-          { id: 'wool_10000', name: 'Wool Baron', description: 'Collect 10,000 wool', requirement: 10000, icon: '💫', unlocked: false },
-          { id: 'wool_100000', name: 'Wool Tycoon', description: 'Collect 100,000 wool', requirement: 100000, icon: '👑', unlocked: false },
-          { id: 'wool_million', name: 'Wool Millionaire', description: 'Collect 1,000,000 wool', requirement: 1000000, icon: '🏆', unlocked: false },
-        ],
-        floatingNumbers: [],
-        lastTick: Date.now(),
-        _tickInterval: null,
-        sheepBounce: false,
-        comboCount: 0,
-        _comboTimer: null,
-
-        init() {
-          this.load();
-          // Start tick interval
-          this._tickInterval = setInterval(() => this.tick(), 100);
-          // Listen for 'g' key
-          document.addEventListener('keydown', (e) => {
-            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-            if (e.key === 'g') this.toggle();
-            if (e.key === 'Escape' && this.isOpen) this.close();
-          });
-        },
-
-        destroy() {
-          if (this._tickInterval) clearInterval(this._tickInterval);
-          this.save();
-        },
-
-        toggle() {
-          this.isOpen = !this.isOpen;
-          if (this.isOpen) this.load();
-          else this.save();
-        },
-
-        open() { this.isOpen = true; this.load(); },
-        close() { this.isOpen = false; this.save(); },
-
-        clickSheep(event) {
-          const woolEarned = this.woolPerClick * this.clickMultiplier;
-          // Combo system
-          if (this._comboTimer) clearTimeout(this._comboTimer);
-          this.comboCount++;
-          this._comboTimer = setTimeout(() => { this.comboCount = 0; }, 500);
-          // Combo bonus (max 2x)
-          const comboBonus = Math.min(this.comboCount * 0.1, 2);
-          const totalWool = Math.floor(woolEarned * (1 + comboBonus));
-          this.wool += totalWool;
-          this.totalWool += totalWool;
-          // Bounce animation
-          this.sheepBounce = true;
-          setTimeout(() => { this.sheepBounce = false; }, 100);
-          // Floating number
-          const rect = event.currentTarget.getBoundingClientRect();
-          const x = event.clientX - rect.left;
-          const y = event.clientY - rect.top;
-          const floatingId = Date.now() + Math.random();
-          this.floatingNumbers.push({ id: floatingId, value: totalWool, x, y, opacity: 1 });
-          setTimeout(() => {
-            this.floatingNumbers = this.floatingNumbers.filter(f => f.id !== floatingId);
-          }, 1000);
-          this.checkAchievements();
-          if (Math.random() < 0.1) this.save();
-        },
-
-        buyUpgrade(upgradeId) {
-          const upgrade = this.upgrades.find(u => u.id === upgradeId);
-          if (!upgrade) return;
-          const cost = this.getUpgradeCost(upgrade);
-          if (this.wool < cost) return;
-          this.wool -= cost;
-          upgrade.owned++;
-          if (upgrade.woolPerSecond > 0) this.woolPerSecond += upgrade.woolPerSecond;
-          if (upgrade.id === 'shears') this.woolPerClick += 1;
-          if (upgrade.id === 'spinning') this.clickMultiplier *= 2;
-          this.save();
-        },
-
-        canAfford(cost) { return this.wool >= cost; },
-
-        getUpgradeCost(upgrade) {
-          return Math.floor(upgrade.baseCost * Math.pow(1.15, upgrade.owned));
-        },
-
-        formatNumber(n) {
-          if (n < 1000) return Math.floor(n).toString();
-          if (n < 1000000) return (n / 1000).toFixed(1) + 'K';
-          if (n < 1000000000) return (n / 1000000).toFixed(1) + 'M';
-          return (n / 1000000000).toFixed(1) + 'B';
-        },
-
-        checkAchievements() {
-          for (const a of this.achievements) {
-            if (!a.unlocked && this.totalWool >= a.requirement) {
-              a.unlocked = true;
-              window.toast && window.toast.success(`Achievement: ${a.name}`, a.icon);
-            }
-          }
-        },
-
-        tick() {
-          if (!this.isOpen) return;
-          const now = Date.now();
-          const delta = (now - this.lastTick) / 1000;
-          this.lastTick = now;
-          if (this.woolPerSecond > 0) {
-            const earned = this.woolPerSecond * delta;
-            this.wool += earned;
-            this.totalWool += earned;
-          }
-        },
-
-        save() {
-          const data = {
-            wool: this.wool,
-            totalWool: this.totalWool,
-            woolPerClick: this.woolPerClick,
-            woolPerSecond: this.woolPerSecond,
-            clickMultiplier: this.clickMultiplier,
-            upgrades: this.upgrades.map(u => ({ id: u.id, owned: u.owned })),
-            achievements: this.achievements.map(a => ({ id: a.id, unlocked: a.unlocked })),
-          };
-          localStorage.setItem('hirsel-sheep-clicker', JSON.stringify(data));
-        },
-
-        load() {
-          const saved = localStorage.getItem('hirsel-sheep-clicker');
-          if (!saved) return;
-          try {
-            const data = JSON.parse(saved);
-            this.wool = data.wool || 0;
-            this.totalWool = data.totalWool || 0;
-            this.woolPerClick = data.woolPerClick || 1;
-            this.woolPerSecond = data.woolPerSecond || 0;
-            this.clickMultiplier = data.clickMultiplier || 1;
-            if (data.upgrades) {
-              for (const s of data.upgrades) {
-                const u = this.upgrades.find(x => x.id === s.id);
-                if (u) u.owned = s.owned;
-              }
-            }
-            if (data.achievements) {
-              for (const s of data.achievements) {
-                const a = this.achievements.find(x => x.id === s.id);
-                if (a) a.unlocked = s.unlocked;
-              }
-            }
-            this.lastTick = Date.now();
-          } catch (e) { console.warn('Failed to load sheep clicker:', e); }
-        },
-
-        reset() {
-          if (!confirm('Reset all progress? This cannot be undone!')) return;
-          this.wool = 0;
-          this.totalWool = 0;
-          this.woolPerClick = 1;
-          this.woolPerSecond = 0;
-          this.clickMultiplier = 1;
-          for (const u of this.upgrades) u.owned = 0;
-          for (const a of this.achievements) a.unlocked = false;
-          localStorage.removeItem('hirsel-sheep-clicker');
-        }
-      };
-    }
-  </script>
 
 </body>
 </html>

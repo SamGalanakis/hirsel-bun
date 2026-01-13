@@ -6,6 +6,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::cli::config::get_agent_command;
 use crate::cli::GoArgs;
 use crate::core::files::Files;
 use crate::core::git::{create_worker_clone, create_workspace, get_repo_root, GitError};
@@ -14,6 +15,8 @@ use crate::core::chats::{
     create_default_group_chat, create_default_user_chat, create_learnings_thread,
     create_worker_chat, ChatError,
 };
+use crate::core::workers::{spawn_worker, WorkerError, WorkerSpawnConfig};
+use tracing::info;
 
 // =============================================================================
 // Error Types
@@ -25,10 +28,13 @@ pub enum GoError {
     Git(GitError),
     State(StateError),
     Chat(ChatError),
+    Worker(WorkerError),
     InvalidSpec(String),
     RunExists(String),
     InvalidTimeLimit(String),
     InvalidWorkerScale(String),
+    InvalidPauseMode(String),
+    InvalidProject(String),
     NoGitRepo,
 }
 
@@ -39,10 +45,13 @@ impl std::fmt::Display for GoError {
             GoError::Git(e) => write!(f, "Git error: {}", e),
             GoError::State(e) => write!(f, "State error: {}", e),
             GoError::Chat(e) => write!(f, "Chat error: {}", e),
+            GoError::Worker(e) => write!(f, "Worker error: {}", e),
             GoError::InvalidSpec(msg) => write!(f, "Invalid spec: {}", msg),
             GoError::RunExists(name) => write!(f, "Run '{}' already exists and is active", name),
             GoError::InvalidTimeLimit(msg) => write!(f, "Invalid time limit: {}", msg),
             GoError::InvalidWorkerScale(msg) => write!(f, "Invalid worker scale: {}", msg),
+            GoError::InvalidPauseMode(msg) => write!(f, "Invalid pause mode: {}", msg),
+            GoError::InvalidProject(msg) => write!(f, "Invalid project: {}", msg),
             GoError::NoGitRepo => write!(f, "Not in a git repository"),
         }
     }
@@ -71,6 +80,12 @@ impl From<StateError> for GoError {
 impl From<ChatError> for GoError {
     fn from(e: ChatError) -> Self {
         GoError::Chat(e)
+    }
+}
+
+impl From<WorkerError> for GoError {
+    fn from(e: WorkerError) -> Self {
+        GoError::Worker(e)
     }
 }
 
@@ -386,6 +401,15 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
         )));
     }
 
+    // Validate pause_mode if specified
+    if let Some(ref pm) = args.pause_mode {
+        if pm != "sender" && pm != "all" {
+            return Err(GoError::InvalidPauseMode(
+                "pause_mode must be 'sender' or 'all'".to_string()
+            ));
+        }
+    }
+
     // Parse worker scale
     let scale = WorkerScale::parse(&args.workers)
         .map_err(GoError::InvalidWorkerScale)?;
@@ -421,15 +445,54 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
         }
     }
 
-    // Resolve spec content
-    let spec_content = resolve_content(&args.spec)?;
+    // Resolve spec content - handle --template flag
+    let (spec_content, eval_path) = if let Some(ref template_name) = args.template {
+        let template_dir = get_hirsel_dir().join("templates").join(template_name);
+        if !template_dir.exists() {
+            return Err(GoError::InvalidSpec(format!(
+                "Template '{}' not found. Use 'hirsel templates' to list available templates.",
+                template_name
+            )));
+        }
+        let spec_file = template_dir.join("spec.md");
+        if !spec_file.exists() {
+            return Err(GoError::InvalidSpec(format!(
+                "Template '{}' has no spec.md",
+                template_name
+            )));
+        }
+        let content = fs::read_to_string(&spec_file)?;
+        let eval = template_dir.join("eval.md");
+        let eval_path = if eval.exists() { Some(eval) } else { None };
+        (content, eval_path)
+    } else {
+        let content = resolve_content(&args.spec)?;
+        let eval_path = args.eval.as_ref().map(PathBuf::from);
+        (content, eval_path)
+    };
+
     if spec_content.trim().is_empty() {
         return Err(GoError::InvalidSpec("Spec is empty".to_string()));
     }
 
-    // Get project path (current directory or specified)
-    let project_path = get_repo_root(Some(Path::new(".")))
-        .map_err(|_| GoError::NoGitRepo)?;
+    // Get project path (specified, or detect from current directory)
+    let project_path = if let Some(ref proj) = args.project {
+        let path = Path::new(proj);
+        if !path.exists() {
+            return Err(GoError::InvalidProject(format!(
+                "Project path does not exist: {}",
+                proj
+            )));
+        }
+        get_repo_root(Some(path))
+            .map_err(|_| GoError::InvalidProject(format!(
+                "Not a git repository: {}",
+                proj
+            )))?
+    } else {
+        get_repo_root(Some(Path::new(".")))
+            .map_err(|_| GoError::NoGitRepo)?
+    };
 
     // Create staging directory with spec
     fs::create_dir_all(&staging_dir)?;
@@ -546,9 +609,66 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
         state.set_human_in_the_loop(false)?;
     }
 
-    // TODO: Actually spawn worker processes
-    // This requires the worker spawning system from worker_spawner task
-    // For now, we just set up the state - workers need to be spawned separately
+    // Set max iterations if specified
+    if let Some(max_iter) = args.max_iterations {
+        state.set_max_iterations(Some(max_iter))?;
+    }
+
+    // Set pause mode if specified
+    if let Some(ref pm) = args.pause_mode {
+        state.set_pause_mode(pm)?;
+    }
+
+    // Store eval path if specified (from template or CLI)
+    if let Some(ref eval) = eval_path {
+        // Store the eval file path for later use
+        let eval_dest = run_dir.join("eval.md");
+        if eval.exists() {
+            fs::copy(eval, &eval_dest)?;
+        }
+    }
+
+    // Spawn worker processes
+    let agent_command = get_agent_command();
+    let spec_path = run_dir.join("spec.md");
+    let teammates: Vec<String> = worker_names.clone();
+
+    for (i, (worker_name, work_dir)) in worker_dirs.iter().enumerate() {
+        let is_leader = i == 0 && is_multi_worker;
+        let config = WorkerSpawnConfig {
+            run_name: run_name.clone(),
+            worker_name: worker_name.clone(),
+            work_dir: work_dir.clone(),
+            run_dir: run_dir.clone(),
+            spec_path: spec_path.clone(),
+            agent_command: agent_command.clone(),
+            is_leader,
+            leader_name: leader.clone(),
+            teammates: if is_multi_worker {
+                Some(teammates.iter().filter(|t| *t != worker_name).cloned().collect())
+            } else {
+                None
+            },
+            resume_session_id: None,
+        };
+
+        match spawn_worker(config, &state) {
+            Ok(result) => {
+                info!(
+                    "Spawned worker {} (PID {})",
+                    result.worker_name, result.pid
+                );
+            }
+            Err(WorkerError::RunPaused) => {
+                // Run was paused - don't spawn more workers
+                break;
+            }
+            Err(e) => {
+                // Log error but continue with other workers
+                eprintln!("Warning: Failed to spawn worker {}: {}", worker_name, e);
+            }
+        }
+    }
 
     Ok(GoOutput {
         run_name,

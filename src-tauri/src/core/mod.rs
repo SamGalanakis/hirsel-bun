@@ -11,10 +11,12 @@
 
 pub mod acp;
 pub mod chats;
+pub mod compaction;
 pub mod config;
 pub mod eval;
 pub mod files;
 pub mod git;
+pub mod metrics;
 pub mod remote;
 pub mod state;
 pub mod workers;
@@ -23,12 +25,14 @@ pub mod workers;
 pub use acp::{ACPClientConfig, ACPError, MCPServerConfig, SessionUpdate};
 pub use chats::{ChatHeader, ChatMode};
 pub use config::*;
-pub use eval::{EvalConfig, EvalError, EvalResult};
+pub use eval::{EvalConfig, EvalError, EvalResult, EvalAcpConfig, EvalAcpResult, run_eval_acp};
 pub use files::Files;
 pub use state::*;
 pub use workers::{
     spawn_worker, pause_all_workers, resume_awaiting_workers, check_worker_heartbeats,
     update_worker_heartbeat, get_agent_command, is_pid_alive,
+    check_and_send_time_notifications, handle_time_expired, check_time_expired,
+    maybe_scale_up, maybe_trigger_eval, WorkerScale,
     WorkerError, WorkerResult, WorkerSpawnConfig, SpawnResult,
 };
 pub use remote::{

@@ -19,6 +19,10 @@ import type {
   Config,
   ApiResult,
   GuiError,
+  WorkerLogResponse,
+  ParsedLogLine,
+  WorkerEvent,
+  WorkerEventsResponse,
 } from './types';
 import { toast } from './toast';
 
@@ -37,7 +41,7 @@ export async function getRuns(): Promise<RunSummary[]> {
  * Get detailed information about a specific run
  */
 export async function getRunDetail(name: string): Promise<RunDetail> {
-  return invoke<RunDetail>('get_run_detail', { name });
+  return invoke<RunDetail>('get_run_detail', { runName: name });
 }
 
 /**
@@ -65,7 +69,7 @@ export async function startRun(
  * Pause a run (stops all workers)
  */
 export async function pauseRun(name: string): Promise<void> {
-  return invoke('pause_run', { name });
+  return invoke('pause_run', { runName: name });
 }
 
 /**
@@ -75,14 +79,14 @@ export async function resumeRun(
   name: string,
   timeLimit?: string
 ): Promise<void> {
-  return invoke('resume_run', { name, timeLimit });
+  return invoke('resume_run', { runName: name, timeLimit: timeLimit });
 }
 
 /**
  * Delete a run and all its data
  */
 export async function deleteRun(name: string): Promise<void> {
-  return invoke('delete_run', { name });
+  return invoke('delete_run', { runName: name });
 }
 
 /**
@@ -117,7 +121,7 @@ export async function getRunSummary(name: string): Promise<string> {
  * Get all tasks for a run
  */
 export async function getTasks(runName: string): Promise<Task[]> {
-  return invoke<Task[]>('get_tasks', { runName });
+  return invoke<Task[]>('get_tasks', { runName: runName });
 }
 
 /**
@@ -133,8 +137,8 @@ export async function addTask(
   }
 ): Promise<void> {
   return invoke('add_task', {
-    runName,
-    taskId,
+    runName: runName,
+    taskId: taskId,
     description,
     parentId: options?.parentId,
     blockedBy: options?.blockedBy,
@@ -145,28 +149,28 @@ export async function addTask(
  * Delete a task from a run
  */
 export async function deleteTask(runName: string, taskId: string): Promise<void> {
-  return invoke('delete_task', { runName, taskId });
+  return invoke('delete_task', { runName: runName, taskId: taskId });
 }
 
 /**
  * Mark a task as done
  */
 export async function completeTask(runName: string, taskId: string): Promise<void> {
-  return invoke('complete_task', { runName, taskId });
+  return invoke('complete_task', { runName: runName, taskId: taskId });
 }
 
 /**
  * Reopen a completed task
  */
 export async function reopenTask(runName: string, taskId: string): Promise<void> {
-  return invoke('reopen_task', { runName, taskId });
+  return invoke('reopen_task', { runName: runName, taskId: taskId });
 }
 
 /**
  * Unclaim a task (release it back to todo)
  */
 export async function unclaimTask(runName: string, taskId: string): Promise<void> {
-  return invoke('unclaim_task', { runName, taskId });
+  return invoke('unclaim_task', { runName: runName, taskId: taskId });
 }
 
 // =============================================================================
@@ -177,21 +181,21 @@ export async function unclaimTask(runName: string, taskId: string): Promise<void
  * Get all workers for a run
  */
 export async function getWorkers(runName: string): Promise<Worker[]> {
-  return invoke<Worker[]>('get_workers', { runName });
+  return invoke<Worker[]>('get_workers', { runName: runName });
 }
 
 /**
  * Attach to a worker's tmux session
  */
 export async function attachWorker(runName: string, workerName: string): Promise<void> {
-  return invoke('attach_worker', { runName, workerName });
+  return invoke('attach_worker', { runName: runName, workerName: workerName });
 }
 
 /**
  * Add a new worker to a run
  */
 export async function addWorker(runName: string): Promise<string> {
-  return invoke<string>('add_worker', { runName });
+  return invoke<string>('add_worker', { runName: runName });
 }
 
 /**
@@ -206,7 +210,219 @@ export async function getWorkerMetrics(
   turns: number;
   contextUtilization: number;
 }> {
-  return invoke('get_worker_metrics', { runName, workerName });
+  return invoke('get_worker_metrics', { runName: runName, workerName: workerName });
+}
+
+// =============================================================================
+// Worker Log API
+// =============================================================================
+
+/**
+ * Get worker log content
+ *
+ * @param runName - The run name
+ * @param workerName - The worker name
+ * @param lines - Optional: limit to last N lines (only if fromOffset is not set)
+ * @param fromOffset - Optional: read from byte offset (for efficient polling)
+ */
+export async function getWorkerLog(
+  runName: string,
+  workerName: string,
+  options?: {
+    lines?: number;
+    fromOffset?: number;
+  }
+): Promise<WorkerLogResponse> {
+  return invoke<WorkerLogResponse>('get_worker_log', {
+    runName: runName,
+    workerName: workerName,
+    lines: options?.lines,
+    fromOffset: options?.fromOffset,
+  });
+}
+
+/**
+ * Get the path to a worker's log file
+ */
+export async function getWorkerLogPath(
+  runName: string,
+  workerName: string
+): Promise<string> {
+  return invoke<string>('get_worker_log_path', {
+    runName: runName,
+    workerName: workerName,
+  });
+}
+
+/**
+ * Parse worker log content and extract tool activity markers
+ */
+export async function parseWorkerLog(content: string): Promise<ParsedLogLine[]> {
+  return invoke<ParsedLogLine[]>('parse_worker_log', { content });
+}
+
+/**
+ * Get eval log content
+ */
+export async function getEvalLog(
+  runName: string,
+  options?: {
+    lines?: number;
+    fromOffset?: number;
+  }
+): Promise<WorkerLogResponse> {
+  return invoke<WorkerLogResponse>('get_eval_log', {
+    runName: runName,
+    lines: options?.lines,
+    fromOffset: options?.fromOffset,
+  });
+}
+
+/**
+ * Create a poller for worker log updates
+ *
+ * This creates a poller that efficiently fetches only new content
+ * since the last poll by tracking byte offsets.
+ */
+export function createWorkerLogPoller(
+  runName: string,
+  workerName: string,
+  onUpdate: (content: string, isNew: boolean) => void,
+  intervalMs: number = 500
+): { start: () => void; stop: () => void } {
+  let intervalId: ReturnType<typeof setInterval> | null = null;
+  let lastOffset = 0;
+  let isFirstPoll = true;
+
+  const poll = async () => {
+    try {
+      const response = await getWorkerLog(runName, workerName, {
+        fromOffset: isFirstPoll ? undefined : lastOffset,
+      });
+
+      if (!response.exists) {
+        return;
+      }
+
+      if (response.content) {
+        onUpdate(response.content, !isFirstPoll);
+      }
+
+      lastOffset = response.byteOffset;
+      isFirstPoll = false;
+    } catch (error) {
+      console.error('Error polling worker log:', error);
+    }
+  };
+
+  return {
+    start() {
+      if (intervalId) return;
+      poll(); // Fetch immediately
+      intervalId = setInterval(poll, intervalMs);
+    },
+    stop() {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+      // Reset state
+      lastOffset = 0;
+      isFirstPoll = true;
+    },
+  };
+}
+
+// =============================================================================
+// Worker Events API (ACP-based streaming)
+// =============================================================================
+
+/**
+ * Get worker events for real-time streaming
+ *
+ * @param runName - The run name
+ * @param workerName - The worker name
+ * @param afterId - Only return events after this ID (for efficient polling)
+ * @param limit - Maximum number of events to return
+ */
+export async function getWorkerEvents(
+  runName: string,
+  workerName: string,
+  options?: {
+    afterId?: number;
+    limit?: number;
+  }
+): Promise<WorkerEventsResponse> {
+  return invoke<WorkerEventsResponse>('get_worker_events', {
+    runName: runName,
+    workerName: workerName,
+    afterId: options?.afterId,
+    limit: options?.limit,
+  });
+}
+
+/**
+ * Clear worker events (for cleanup when attaching/detaching)
+ */
+export async function clearWorkerEvents(
+  runName: string,
+  workerName: string
+): Promise<void> {
+  return invoke('clear_worker_events', {
+    runName: runName,
+    workerName: workerName,
+  });
+}
+
+/**
+ * Create a poller for worker events
+ *
+ * This creates a poller that efficiently fetches only new events
+ * since the last poll by tracking event IDs.
+ */
+export function createWorkerEventsPoller(
+  runName: string,
+  workerName: string,
+  onEvents: (events: WorkerEvent[], isNew: boolean) => void,
+  intervalMs: number = 200
+): { start: () => void; stop: () => void } {
+  let intervalId: ReturnType<typeof setInterval> | null = null;
+  let lastId: number | null = null;
+  let isFirstPoll = true;
+
+  const poll = async () => {
+    try {
+      const response = await getWorkerEvents(runName, workerName, {
+        afterId: lastId ?? undefined,
+      });
+
+      if (response.events.length > 0) {
+        onEvents(response.events, !isFirstPoll);
+        lastId = response.lastId;
+      }
+
+      isFirstPoll = false;
+    } catch (error) {
+      console.error('Error polling worker events:', error);
+    }
+  };
+
+  return {
+    start() {
+      if (intervalId) return;
+      poll(); // Fetch immediately
+      intervalId = setInterval(poll, intervalMs);
+    },
+    stop() {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+      // Reset state
+      lastId = null;
+      isFirstPoll = true;
+    },
+  };
 }
 
 // =============================================================================
@@ -217,7 +433,7 @@ export async function getWorkerMetrics(
  * Get all threads for a run
  */
 export async function getThreads(runName: string): Promise<ThreadSummary[]> {
-  return invoke<ThreadSummary[]>('get_threads', { runName });
+  return invoke<ThreadSummary[]>('get_threads', { runName: runName });
 }
 
 /**
@@ -227,7 +443,7 @@ export async function getMessages(
   runName: string,
   threadName: string
 ): Promise<Message[]> {
-  return invoke<Message[]>('get_messages', { runName, threadName });
+  return invoke<Message[]>('get_messages', { runName: runName, threadName: threadName });
 }
 
 /**
@@ -239,9 +455,9 @@ export async function sendMessage(
   content: string
 ): Promise<void> {
   return invoke('send_message', {
-    run: runName,
-    thread: threadName,
-    message: content,
+    runName: runName,
+    threadName: threadName,
+    content,
   });
 }
 
@@ -252,7 +468,7 @@ export async function markMessagesRead(
   runName: string,
   threadName: string
 ): Promise<void> {
-  return invoke('mark_messages_read', { runName, threadName });
+  return invoke('mark_messages_read', { runName: runName, threadName: threadName, reader: 'user' });
 }
 
 // =============================================================================
@@ -263,14 +479,21 @@ export async function markMessagesRead(
  * Get all evals for a run
  */
 export async function getEvals(runName: string): Promise<Eval[]> {
-  return invoke<Eval[]>('get_evals', { runName });
+  return invoke<Eval[]>('get_evals', { runName: runName });
+}
+
+/**
+ * Get the eval spec (eval.md) content for a run
+ */
+export async function getEvalSpec(runName: string): Promise<string | null> {
+  return invoke<string | null>('get_eval_spec', { runName: runName });
 }
 
 /**
  * Attach to an eval's log output
  */
 export async function attachEval(runName: string, evalName: string): Promise<void> {
-  return invoke('attach_eval', { runName, evalName });
+  return invoke('attach_eval', { runName: runName, evalName: evalName });
 }
 
 // =============================================================================
@@ -284,7 +507,7 @@ export async function getHistory(
   runName: string,
   limit?: number
 ): Promise<HistoryEntry[]> {
-  return invoke<HistoryEntry[]>('get_history', { runName, limit });
+  return invoke<HistoryEntry[]>('get_history', { runName: runName, limit });
 }
 
 // =============================================================================
@@ -320,7 +543,7 @@ export async function getAgents(): Promise<string[]> {
  * Get diff between run's work and original project
  */
 export async function getDiff(runName: string): Promise<string> {
-  return invoke<string>('get_diff', { runName });
+  return invoke<string>('get_diff', { runName: runName });
 }
 
 /**
@@ -331,7 +554,7 @@ export async function getDiffStats(runName: string): Promise<{
   insertions: number;
   deletions: number;
 }> {
-  return invoke('get_diff_stats', { runName });
+  return invoke('get_diff_stats', { runName: runName });
 }
 
 // =============================================================================

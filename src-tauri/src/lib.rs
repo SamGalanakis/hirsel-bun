@@ -210,6 +210,48 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
         Commands::Improve(args) => {
             cli::improve::execute(args.run_name.as_deref(), json)?;
         }
+        Commands::WorkerRun(args) => {
+            // Internal command for worker subprocess
+            use std::path::PathBuf;
+
+            let agent_command: Vec<String> = serde_json::from_str(&args.agent_command)
+                .map_err(|e| format!("Invalid agent_command JSON: {}", e))?;
+            let teammates = args.teammates.map(|t| {
+                t.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+            });
+
+            let config = worker::WorkerRunConfig {
+                run_name: args.run,
+                worker_name: args.worker,
+                work_dir: PathBuf::from(args.work_dir),
+                run_dir: PathBuf::from(args.run_dir),
+                spec_path: PathBuf::from(args.spec),
+                log_file: PathBuf::from(args.log_file),
+                agent_command,
+                is_leader: args.is_leader,
+                leader_name: args.leader_name,
+                teammates,
+                resume_session_id: args.resume_session_id,
+            };
+
+            // Run the async worker in a tokio runtime
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| format!("Failed to create runtime: {}", e))?;
+            rt.block_on(async {
+                tokio::task::LocalSet::new().run_until(async {
+                    worker::run_acp_worker(config).await
+                }).await
+            }).map_err(|e| format!("Worker error: {}", e))?;
+        }
+        Commands::EvalMcp => {
+            // Internal command for eval MCP server
+            worker::run_eval_mcp_server();
+        }
+        // Completion helpers - handled by cli/mod.rs
+        Commands::CompleteRuns | Commands::CompleteWorkers(_) | Commands::CompleteThreads(_) => {
+            // These are handled by the cli module's run_cli function
+            // This code path should not be reached
+        }
     }
 
     Ok(())
@@ -218,9 +260,30 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
 /// Run the GUI (Tauri application)
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_log::Builder::new().build())
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_log::Builder::new().build());
+
+    // Enable MCP plugin in debug builds for AI agent debugging
+    #[cfg(debug_assertions)]
+    {
+        builder = builder.plugin(tauri_plugin_mcp::init_with_config(
+            tauri_plugin_mcp::PluginConfig::new("Hirsel".to_string())
+                .start_socket_server(true)
+                .socket_path("/tmp/hirsel-mcp.sock".into())
+        ));
+    }
+
+    builder
         .invoke_handler(gui::get_handlers())
+        .setup(|app| {
+            // Set window background color to match app theme (prevents white flash on resize)
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                // Dark background color #1a1a1a = rgb(26, 26, 26)
+                let _ = window.set_background_color(Some(tauri::window::Color(26, 26, 26, 255)));
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

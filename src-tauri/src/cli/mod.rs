@@ -33,7 +33,7 @@ use clap::{Args, Parser, Subcommand};
 // Re-export command implementations
 pub use completions::{generate_completions, print_completions, run_completions};
 pub use config::{
-    agent_presets, get_current_agent, run_config, set_agent, AgentPreset,
+    agent_presets, get_agent_command, get_current_agent, run_config, set_agent, AgentPreset,
 };
 pub use go::{run as run_go, GoError, GoOutput, GoResult};
 pub use log::{run_log, LogResult, OutputFormat};
@@ -157,6 +157,76 @@ pub enum Commands {
 
     /// Update project memory from learnings
     Improve(ImproveArgs),
+
+    // ========== Internal ==========
+    /// Run worker subprocess (internal, called by spawn_worker)
+    #[command(name = "__worker-run", hide = true)]
+    WorkerRun(InternalWorkerRunArgs),
+
+    /// Run eval MCP server (internal, called by eval agent)
+    #[command(name = "__eval-mcp", hide = true)]
+    EvalMcp,
+
+    // ========== Completion Helpers ==========
+    /// List run names (for shell completion)
+    #[command(name = "_complete_runs", hide = true)]
+    CompleteRuns,
+
+    /// List worker names for a run (for shell completion)
+    #[command(name = "_complete_workers", hide = true)]
+    CompleteWorkers(RunNameArg),
+
+    /// List thread names for a run (for shell completion)
+    #[command(name = "_complete_threads", hide = true)]
+    CompleteThreads(RunNameArg),
+}
+
+/// Arguments for internal worker run command
+#[derive(Args, Debug)]
+pub struct InternalWorkerRunArgs {
+    /// Run name
+    #[arg(long)]
+    pub run: String,
+
+    /// Worker name
+    #[arg(long)]
+    pub worker: String,
+
+    /// Work directory
+    #[arg(long)]
+    pub work_dir: String,
+
+    /// Run directory
+    #[arg(long)]
+    pub run_dir: String,
+
+    /// Spec file path
+    #[arg(long)]
+    pub spec: String,
+
+    /// Log file path
+    #[arg(long)]
+    pub log_file: String,
+
+    /// Agent command (JSON array)
+    #[arg(long)]
+    pub agent_command: String,
+
+    /// Is leader
+    #[arg(long, default_value = "false")]
+    pub is_leader: bool,
+
+    /// Leader name
+    #[arg(long)]
+    pub leader_name: Option<String>,
+
+    /// Teammates (comma-separated)
+    #[arg(long)]
+    pub teammates: Option<String>,
+
+    /// Resume session ID
+    #[arg(long)]
+    pub resume_session_id: Option<String>,
 }
 
 // ========== Argument structs ==========
@@ -193,6 +263,22 @@ pub struct GoArgs {
     /// Path to eval script
     #[arg(long)]
     pub eval: Option<String>,
+
+    /// Use a template instead of spec file
+    #[arg(long)]
+    pub template: Option<String>,
+
+    /// Project path (defaults to current directory)
+    #[arg(short, long)]
+    pub project: Option<String>,
+
+    /// Maximum iterations before auto-pause
+    #[arg(long)]
+    pub max_iterations: Option<i64>,
+
+    /// Pause behavior when messaging user: "sender" or "all"
+    #[arg(long)]
+    pub pause_mode: Option<String>,
 }
 
 /// Simple run name argument
@@ -829,6 +915,78 @@ pub fn run_cli() -> anyhow::Result<bool> {
             if let Err(e) = improve::execute(args.run_name.as_deref(), json) {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
+            }
+        }
+        Commands::WorkerRun(_args) => {
+            // This is handled by lib.rs run_cli() for compatibility
+            // Should not reach here in normal CLI flow
+            eprintln!("Worker run command should be called via hirsel binary directly");
+            std::process::exit(1);
+        }
+        Commands::EvalMcp => {
+            // This is handled by lib.rs run_cli() for compatibility
+            // Should not reach here in normal CLI flow
+            eprintln!("Eval MCP command should be called via hirsel binary directly");
+            std::process::exit(1);
+        }
+
+        // Completion helpers
+        Commands::CompleteRuns => {
+            let runs_dir = crate::core::config::runs_dir();
+            if runs_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&runs_dir) {
+                    let mut runs: Vec<String> = entries
+                        .filter_map(|e| e.ok())
+                        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                        .filter(|e| e.path().join("hirsel.db").exists())
+                        .filter_map(|e| e.file_name().to_str().map(String::from))
+                        .collect();
+                    runs.sort();
+                    for run in runs {
+                        println!("{}", run);
+                    }
+                }
+            }
+        }
+        Commands::CompleteWorkers(args) => {
+            use crate::core::{config as core_config, state::SQLiteState, Files};
+            let run_dir = core_config::run_dir(&args.run_name);
+            let files = Files::new(&run_dir);
+            if files.db_path().exists() {
+                if let Ok(state) = SQLiteState::new(files.db_path()) {
+                    if let Ok(workers) = state.get_workers() {
+                        for worker in workers {
+                            println!("{}", worker.name);
+                        }
+                    }
+                }
+            }
+        }
+        Commands::CompleteThreads(args) => {
+            use crate::core::{config as core_config, Files};
+            let run_dir = core_config::run_dir(&args.run_name);
+            let files = Files::new(&run_dir);
+            let chats_dir = files.chats_dir();
+            if chats_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&chats_dir) {
+                    let mut threads: Vec<String> = entries
+                        .filter_map(|e| e.ok())
+                        .filter_map(|e| {
+                            let path = e.path();
+                            if path.extension().map_or(false, |ext| ext == "md") {
+                                path.file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .map(String::from)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    threads.sort();
+                    for thread in threads {
+                        println!("{}", thread);
+                    }
+                }
             }
         }
     }

@@ -33,7 +33,7 @@ pub fn execute(run_name: &str, json: bool) -> Result<(), Box<dyn std::error::Err
 
 /// Print run status as JSON
 fn print_json(state: &SQLiteState, run_name: &str, files: &Files) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::core::state::{TaskStatus, WorkerStatus};
+    use crate::core::state::TaskStatus;
 
     let status = state.status()?;
     let tasks = state.get_tasks()?;
@@ -94,7 +94,7 @@ fn print_json(state: &SQLiteState, run_name: &str, files: &Files) -> Result<(), 
         },
         "workers": {
             "total": workers.len(),
-            "active": workers.iter().filter(|w| w.status != WorkerStatus::Done).count(),
+            "active": workers.iter().filter(|w| !w.status.is_inactive()).count(),
             "list": worker_data,
         },
         "time": time_info.map(|t| serde_json::json!({
@@ -273,7 +273,6 @@ fn format_worker_status_icon(status: &crate::core::state::WorkerStatus) -> &'sta
         WorkerStatus::Waiting => "◐",
         WorkerStatus::Awaiting => "◌",
         WorkerStatus::Paused => "◫",
-        WorkerStatus::Done => "✓",
         WorkerStatus::Error => "✗",
     }
 }

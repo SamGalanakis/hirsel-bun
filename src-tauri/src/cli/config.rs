@@ -129,6 +129,25 @@ pub fn get_current_agent() -> Option<String> {
     None
 }
 
+/// Get the configured agent command, defaulting to claude if not set
+pub fn get_agent_command() -> Vec<String> {
+    if let Some(config) = read_config_file() {
+        if let Some(agent) = config.get("agent").and_then(|a| a.as_table()) {
+            if let Some(command) = agent.get("command").and_then(|c| c.as_array()) {
+                let cmd: Vec<String> = command
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect();
+                if !cmd.is_empty() {
+                    return cmd;
+                }
+            }
+        }
+    }
+    // Default to claude
+    vec!["claude-code-acp".to_string()]
+}
+
 /// Check if a command is available in PATH
 pub fn command_exists(cmd: &str) -> bool {
     Command::new("which")

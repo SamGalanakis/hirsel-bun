@@ -34,6 +34,7 @@ export interface RunSummary {
   elapsedMinutes: number;
   timeLimitMinutes: number | null;
   hasUnreadMessages: boolean;
+  createdAt: string;
 }
 
 /** Full run details for the detail view */
@@ -53,6 +54,12 @@ export interface RunDetail {
   humanInTheLoop: boolean;
   waitingReason: string | null;
   unreadCount: number;
+  // Additional fields for status bar display
+  tasksDone: number;
+  tasksTotal: number;
+  workersActive: number;
+  workersTotal: number;
+  elapsedMinutes: number;
 }
 
 /** Run state from the database state table */
@@ -115,7 +122,6 @@ export type WorkerStatus =
   | 'waiting'
   | 'awaiting'
   | 'paused'
-  | 'done'
   | 'error';
 
 /** Worker location */
@@ -378,6 +384,63 @@ export const WORKER_ICONS: Record<WorkerStatus, string> = {
   waiting: '\u29d7', // ⧗
   awaiting: '\u25cc', // ◌
   paused: '\u23f8', // ⏸
-  done: '\u2713', // ✓
   error: '\u2717', // ✗
 };
+
+// =============================================================================
+// Worker Log Types
+// =============================================================================
+
+/** Response for worker log content */
+export interface WorkerLogResponse {
+  content: string;
+  byteOffset: number;
+  fileSize: number;
+  exists: boolean;
+}
+
+/** Parsed log line with tool activity info */
+export interface ParsedLogLine {
+  text: string;
+  isToolStart: boolean;
+  isToolEnd: boolean;
+  toolName: string | null;
+}
+
+// =============================================================================
+// Worker Events Types (ACP-based streaming)
+// =============================================================================
+
+/** Worker event type */
+export type WorkerEventType = 'text' | 'tool_start' | 'tool_update' | 'thought';
+
+/** Tool call status */
+export type ToolCallStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+
+/** Worker event for real-time streaming */
+export interface WorkerEvent {
+  id: number;
+  workerName: string;
+  eventType: WorkerEventType;
+  timestamp: string;
+  /** Text content (for text/thought events) */
+  content: string | null;
+  /** Tool call ID (for tool events) */
+  toolCallId: string | null;
+  /** Tool title/name */
+  toolTitle: string | null;
+  /** Tool kind (read, edit, execute, search, etc.) */
+  toolKind: string | null;
+  /** Tool execution status */
+  toolStatus: ToolCallStatus | null;
+  /** Tool input (JSON string) */
+  toolInput: string | null;
+  /** Tool output (JSON string) */
+  toolOutput: string | null;
+}
+
+/** Response for worker events query */
+export interface WorkerEventsResponse {
+  events: WorkerEvent[];
+  lastId: number | null;
+}

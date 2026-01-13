@@ -71,7 +71,7 @@ pub fn run_pause(run_name: &str, json: bool) -> anyhow::Result<()> {
                 paused_names.push(worker.name.clone());
             } else {
                 // Process not running but worker record exists
-                if !matches!(worker.status, WorkerStatus::Done | WorkerStatus::Error) {
+                if !worker.status.is_inactive() {
                     state.update_worker(
                         &worker.name,
                         WorkerUpdate {
@@ -83,7 +83,7 @@ pub fn run_pause(run_name: &str, json: bool) -> anyhow::Result<()> {
             }
         } else {
             // No PID but worker might be active
-            if !matches!(worker.status, WorkerStatus::Done | WorkerStatus::Error) {
+            if !worker.status.is_inactive() {
                 state.update_worker(
                     &worker.name,
                     WorkerUpdate {

@@ -3,8 +3,38 @@
 //! These commands provide the interface between the frontend and backend.
 //! Types are designed to match the TypeScript definitions in src/lib/types.ts.
 
+use chrono::{NaiveDateTime, Utc, TimeZone};
 use serde::{Deserialize, Serialize};
-use crate::core::{config, state::SQLiteState};
+use crate::core::{config, metrics, state::SQLiteState};
+
+/// Parse a timestamp string (with or without timezone) and return elapsed minutes
+fn parse_elapsed_minutes(timestamp: &str) -> f64 {
+    // Try RFC3339 first (has timezone)
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(timestamp) {
+        let now = Utc::now();
+        let elapsed = now.signed_duration_since(dt.with_timezone(&Utc));
+        return elapsed.num_seconds() as f64 / 60.0;
+    }
+
+    // Try parsing as NaiveDateTime (no timezone, assume UTC)
+    // Format: "2024-01-13T12:30:45.123456"
+    if let Ok(naive) = NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M:%S%.f") {
+        let dt = Utc.from_utc_datetime(&naive);
+        let now = Utc::now();
+        let elapsed = now.signed_duration_since(dt);
+        return elapsed.num_seconds() as f64 / 60.0;
+    }
+
+    // Try without fractional seconds
+    if let Ok(naive) = NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M:%S") {
+        let dt = Utc.from_utc_datetime(&naive);
+        let now = Utc::now();
+        let elapsed = now.signed_duration_since(dt);
+        return elapsed.num_seconds() as f64 / 60.0;
+    }
+
+    0.0
+}
 
 // =============================================================================
 // Status Enums (match TypeScript types)
@@ -45,7 +75,6 @@ pub enum WorkerStatus {
     Waiting,
     Awaiting,
     Paused,
-    Done,
     Error,
 }
 
@@ -83,6 +112,7 @@ pub struct RunSummary {
     pub elapsed_minutes: f64,
     pub time_limit_minutes: Option<u32>,
     pub has_unread_messages: bool,
+    pub created_at: String,
 }
 
 /// Full run details for the detail view
@@ -104,6 +134,12 @@ pub struct RunDetail {
     pub human_in_the_loop: bool,
     pub waiting_reason: Option<String>,
     pub unread_count: u32,
+    // Additional fields for status bar display
+    pub tasks_done: u32,
+    pub tasks_total: u32,
+    pub workers_active: u32,
+    pub workers_total: u32,
+    pub elapsed_minutes: f64,
 }
 
 /// Task from the database
@@ -209,10 +245,32 @@ pub struct AgentPreset {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigResponse {
     pub runs_dir: String,
-    pub agent: String,
-    pub agent_presets: std::collections::HashMap<String, AgentPreset>,
-    pub default_worker_scale: String,
-    pub default_time_limit: Option<u32>,
+    pub agent_command: Vec<String>,
+    pub eval_timeout: u32,
+    pub auto_learn: bool,
+    pub max_iterations: Option<u32>,
+    pub user_message_pause: String,
+    pub human_in_the_loop: bool,
+    pub compaction_threshold: Option<u32>,
+    pub compaction_keep_messages: u32,
+    pub context_warning_threshold: f64,
+    pub coordinator_port: u16,
+}
+
+/// Request to update configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigUpdateRequest {
+    pub agent_command: Option<Vec<String>>,
+    pub eval_timeout: Option<u32>,
+    pub auto_learn: Option<bool>,
+    pub max_iterations: Option<Option<u32>>,
+    pub user_message_pause: Option<String>,
+    pub human_in_the_loop: Option<bool>,
+    pub compaction_threshold: Option<Option<u32>>,
+    pub compaction_keep_messages: Option<u32>,
+    pub context_warning_threshold: Option<f64>,
+    pub coordinator_port: Option<u16>,
 }
 
 // =============================================================================
@@ -244,6 +302,32 @@ pub async fn get_runs() -> Result<Vec<RunSummary>, String> {
                 }).count() as u32;
                 let workers_total = workers.len() as u32;
 
+                // Calculate elapsed minutes from started_at or created_at
+                let elapsed_minutes = if let Ok(Some(time_info)) = state.get_time_info() {
+                    time_info.elapsed_minutes
+                } else if let Ok(Some(started_at)) = state.get_started_at() {
+                    parse_elapsed_minutes(&started_at)
+                } else if let Ok(Some(created_at)) = state.get_created_at() {
+                    parse_elapsed_minutes(&created_at)
+                } else {
+                    0.0
+                };
+
+                // Get time limit
+                let time_limit_minutes = state.get_time_limit_minutes()
+                    .ok()
+                    .flatten()
+                    .map(|m| m as u32);
+
+                // Check for unread messages
+                let has_unread_messages = state.get_unread_count().unwrap_or(0) > 0;
+
+                // Get created_at for sorting
+                let created_at = state.get_created_at()
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| Utc::now().to_rfc3339());
+
                 // Convert core Status to GUI RunStatus
                 let run_status = match status {
                     crate::core::state::Status::Idle => RunStatus::Idle,
@@ -266,14 +350,18 @@ pub async fn get_runs() -> Result<Vec<RunSummary>, String> {
                     tasks_total,
                     workers_active,
                     workers_total,
-                    elapsed_minutes: 0.0, // TODO: calculate from started_at
-                    time_limit_minutes: None,
-                    has_unread_messages: false, // TODO: check messages
+                    elapsed_minutes,
+                    time_limit_minutes,
+                    has_unread_messages,
+                    created_at,
                 });
             }
             Err(_) => continue,
         }
     }
+
+    // Sort by created_at descending (newest first)
+    runs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
     Ok(runs)
 }
@@ -281,8 +369,84 @@ pub async fn get_runs() -> Result<Vec<RunSummary>, String> {
 /// Get detailed information about a specific run
 #[tauri::command]
 pub async fn get_run_detail(run_name: String) -> Result<RunDetail, String> {
-    // TODO: Integrate with state.rs
-    Err(format!("Run '{}' not found", run_name))
+    let db_path = config::run_dir(&run_name).join("hirsel.db");
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    let status = state.status().unwrap_or(crate::core::state::Status::Idle);
+    let run_status = match status {
+        crate::core::state::Status::Idle => RunStatus::Idle,
+        crate::core::state::Status::Working => RunStatus::Working,
+        crate::core::state::Status::Paused => RunStatus::Paused,
+        crate::core::state::Status::Runaway => RunStatus::Runaway,
+        crate::core::state::Status::TimedOut => RunStatus::TimedOut,
+        crate::core::state::Status::Eval => RunStatus::Eval,
+        crate::core::state::Status::EvalFailed => RunStatus::EvalFailed,
+        crate::core::state::Status::Waiting => RunStatus::Waiting,
+        crate::core::state::Status::Done => RunStatus::Done,
+        crate::core::state::Status::Delivered => RunStatus::Delivered,
+        crate::core::state::Status::Merged => RunStatus::Merged,
+    };
+
+    let request = state.get_request().ok().flatten();
+    let project_path = state.get_project_path().ok().flatten();
+    let worker_scale = state.get_worker_scale().ok().flatten();
+    let time_limit_minutes = state.get_time_limit_minutes().ok().flatten().map(|m| m as u32);
+    let started_at = state.get_started_at().ok().flatten();
+    let summary = state.get_summary().ok().flatten();
+    let created_at = state.get_created_at().ok().flatten().unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+    let iteration_count = state.get_iteration_count().unwrap_or(0) as u32;
+    let max_iterations = state.get_max_iterations().ok().flatten().map(|m| m as u32);
+    let human_in_the_loop = state.get_human_in_the_loop().unwrap_or(true);
+    let waiting_reason = state.get_waiting_reason().ok().flatten();
+    let unread_count = state.get_unread_count().unwrap_or(0) as u32;
+
+    // Get tasks and workers for counts
+    let tasks = state.get_tasks().unwrap_or_default();
+    let workers = state.get_workers().unwrap_or_default();
+
+    let tasks_done = tasks.iter().filter(|t| t.status == crate::core::state::TaskStatus::Done).count() as u32;
+    let tasks_total = tasks.len() as u32;
+    let workers_active = workers.iter().filter(|w| {
+        w.status == crate::core::state::WorkerStatus::Working
+    }).count() as u32;
+    let workers_total = workers.len() as u32;
+
+    // Calculate elapsed minutes
+    let elapsed_minutes = if let Ok(Some(time_info)) = state.get_time_info() {
+        time_info.elapsed_minutes
+    } else if let Some(ref sa) = started_at {
+        parse_elapsed_minutes(sa)
+    } else {
+        parse_elapsed_minutes(&created_at)
+    };
+
+    Ok(RunDetail {
+        name: run_name,
+        status: run_status,
+        request,
+        project_path,
+        worker_scale,
+        time_limit_minutes,
+        started_at,
+        summary,
+        created_at: created_at.clone(),
+        updated_at: created_at, // TODO: Track updated_at separately
+        iteration_count,
+        max_iterations,
+        human_in_the_loop,
+        waiting_reason,
+        unread_count,
+        tasks_done,
+        tasks_total,
+        workers_active,
+        workers_total,
+        elapsed_minutes,
+    })
 }
 
 /// Pause a running run
@@ -316,9 +480,47 @@ pub async fn delete_run(run_name: String) -> Result<(), String> {
 /// Get all tasks for a run
 #[tauri::command]
 pub async fn get_tasks(run_name: String) -> Result<Vec<Task>, String> {
-    // TODO: Integrate with state.rs
-    let _ = run_name;
-    Ok(vec![])
+    let db_path = config::run_dir(&run_name).join("hirsel.db");
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    let core_tasks = state.get_tasks()
+        .map_err(|e| format!("Failed to get tasks: {}", e))?;
+
+    let tasks = core_tasks.into_iter().map(|t| {
+        let status = match t.status {
+            crate::core::state::TaskStatus::Todo => TaskStatus::Todo,
+            crate::core::state::TaskStatus::Doing => TaskStatus::Doing,
+            crate::core::state::TaskStatus::Done => TaskStatus::Done,
+        };
+
+        // Parse blocked_by string into Vec<String>
+        let blocked_by = t.blocked_by.as_ref().map(|b| {
+            b.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        });
+
+        Task {
+            id: t.id,
+            description: t.name,
+            status,
+            claimed_by: t.claimed_by,
+            claimed_at: t.claimed_at,
+            parent_id: t.parent_id,
+            blocked_by,
+            tokens_used: t.tokens_used.map(|n| n as u64),
+            created_at: t.created_at,
+            pending_done_at: t.pending_done_at,
+        }
+    }).collect();
+
+    Ok(tasks)
 }
 
 /// Add a new task
@@ -391,9 +593,72 @@ pub async fn reopen_task(run_name: String, task_id: String) -> Result<(), String
 /// Get all workers for a run
 #[tauri::command]
 pub async fn get_workers(run_name: String) -> Result<Vec<Worker>, String> {
-    // TODO: Integrate with state.rs
-    let _ = run_name;
-    Ok(vec![])
+    let db_path = config::run_dir(&run_name).join("hirsel.db");
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    let core_workers = state.get_workers()
+        .map_err(|e| format!("Failed to get workers: {}", e))?;
+
+    // Get tasks to find current task for each worker
+    let tasks = state.get_tasks().unwrap_or_default();
+
+    let workers = core_workers.into_iter().map(|w| {
+        let status = match w.status {
+            crate::core::state::WorkerStatus::Idle => WorkerStatus::Idle,
+            crate::core::state::WorkerStatus::Working => WorkerStatus::Working,
+            crate::core::state::WorkerStatus::Waiting => WorkerStatus::Waiting,
+            crate::core::state::WorkerStatus::Awaiting => WorkerStatus::Awaiting,
+            crate::core::state::WorkerStatus::Paused => WorkerStatus::Paused,
+            crate::core::state::WorkerStatus::Error => WorkerStatus::Error,
+        };
+
+        let location = match w.location.as_str() {
+            "remote" => WorkerLocation::Remote,
+            _ => WorkerLocation::Local,
+        };
+
+        // Find current task for this worker
+        let current_task = tasks.iter()
+            .find(|t| t.claimed_by.as_deref() == Some(&w.name) && t.status == crate::core::state::TaskStatus::Doing)
+            .map(|t| t.name.clone());
+
+        // Check if this is the leader (first worker or worker id 1)
+        let is_leader = w.id == 1;
+
+        // Get session metrics for this worker
+        let session_metrics = metrics::get_session_metrics(
+            w.session_id.as_deref(),
+            w.work_dir.as_deref(),
+        );
+
+        Worker {
+            id: w.id as u32,
+            name: w.name.clone(),
+            pid: w.pid.map(|p| p as u32),
+            session_id: w.session_id,
+            status,
+            work_dir: w.work_dir,
+            waiting_thread: w.waiting_thread,
+            location,
+            last_heartbeat: w.last_heartbeat,
+            created_at: w.created_at,
+            needs_restart: w.needs_restart,
+            session_started_at: w.session_started_at,
+            is_leader,
+            context_utilization: session_metrics.context_utilization,
+            input_tokens: Some(session_metrics.input_tokens),
+            output_tokens: Some(session_metrics.output_tokens),
+            turns: Some(session_metrics.turns),
+            current_task,
+        }
+    }).collect();
+
+    Ok(workers)
 }
 
 /// Attach a new worker to a run
@@ -457,19 +722,66 @@ pub async fn restart_worker(run_name: String, worker_id: u32) -> Result<(), Stri
 pub async fn get_messages(
     run_name: String,
     thread_name: String,
-    _limit: Option<u32>,
+    limit: Option<u32>,
 ) -> Result<Vec<Message>, String> {
-    // TODO: Integrate with state.rs
-    let _ = (run_name, thread_name);
-    Ok(vec![])
+    let db_path = config::run_dir(&run_name).join("hirsel.db");
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    let limit = limit.unwrap_or(100) as i64;
+    let core_messages = state.get_messages(&thread_name, limit)
+        .map_err(|e| format!("Failed to get messages: {}", e))?;
+
+    let messages = core_messages.into_iter().map(|m| {
+        Message {
+            id: m.id as u32,
+            thread: m.thread,
+            sender: m.sender,
+            content: m.content,
+            waiting: m.waiting,
+            read_by: None, // TODO: Track read_by
+            timestamp: m.timestamp,
+        }
+    }).collect();
+
+    Ok(messages)
 }
 
 /// Get all threads for a run
 #[tauri::command]
 pub async fn get_threads(run_name: String) -> Result<Vec<ThreadSummary>, String> {
-    // TODO: Integrate with state.rs
-    let _ = run_name;
-    Ok(vec![])
+    let db_path = config::run_dir(&run_name).join("hirsel.db");
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    let thread_names = state.get_threads()
+        .map_err(|e| format!("Failed to get threads: {}", e))?;
+
+    let mut threads = Vec::new();
+    for name in thread_names {
+        let message_count = state.get_thread_message_count(&name).unwrap_or(0) as u32;
+        let messages = state.get_messages(&name, 1).unwrap_or_default();
+        let last_message = messages.first().map(|m| m.content.clone());
+        let last_timestamp = messages.first().map(|m| m.timestamp.clone());
+
+        threads.push(ThreadSummary {
+            name,
+            message_count,
+            unread_count: 0, // TODO: Calculate unread count per thread
+            last_message,
+            last_timestamp,
+        });
+    }
+
+    Ok(threads)
 }
 
 /// Send a message to a thread
@@ -516,22 +828,85 @@ pub async fn mark_messages_read(
 
 /// Get history entries for a run
 #[tauri::command]
-pub async fn get_history(run_name: String, _limit: Option<u32>) -> Result<Vec<HistoryEntry>, String> {
-    // TODO: Integrate with state.rs
-    let _ = run_name;
-    Ok(vec![])
+pub async fn get_history(run_name: String, limit: Option<u32>) -> Result<Vec<HistoryEntry>, String> {
+    let db_path = config::run_dir(&run_name).join("hirsel.db");
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    let limit = limit.unwrap_or(100) as i64;
+    let core_history = state.get_history(limit)
+        .map_err(|e| format!("Failed to get history: {}", e))?;
+
+    let history = core_history.into_iter().map(|h| {
+        HistoryEntry {
+            id: h.id as u32,
+            timestamp: h.timestamp,
+            action: h.action,
+            detail: h.detail,
+        }
+    }).collect();
+
+    Ok(history)
 }
 
 // =============================================================================
 // Eval Commands
 // =============================================================================
 
+/// Get the eval spec (eval.md) content for a run
+#[tauri::command]
+pub async fn get_eval_spec(run_name: String) -> Result<Option<String>, String> {
+    let run_dir = config::run_dir(&run_name);
+    let eval_spec_path = run_dir.join("eval.md");
+
+    if !eval_spec_path.exists() {
+        return Ok(None);
+    }
+
+    let content = std::fs::read_to_string(&eval_spec_path)
+        .map_err(|e| format!("Failed to read eval spec: {}", e))?;
+
+    Ok(Some(content))
+}
+
 /// Get evals for a run
 #[tauri::command]
 pub async fn get_evals(run_name: String) -> Result<Vec<Eval>, String> {
-    // TODO: Integrate with state.rs
-    let _ = run_name;
-    Ok(vec![])
+    let db_path = config::run_dir(&run_name).join("hirsel.db");
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    let core_evals = state.get_evals(100)
+        .map_err(|e| format!("Failed to get evals: {}", e))?;
+
+    let evals = core_evals.into_iter().map(|e| {
+        let status = match e.status {
+            crate::core::state::EvalStatus::Running => EvalStatus::Running,
+            crate::core::state::EvalStatus::Passed => EvalStatus::Passed,
+            crate::core::state::EvalStatus::Failed => EvalStatus::Failed,
+        };
+
+        Eval {
+            id: e.id as u32,
+            branch: e.branch,
+            eval_name: e.eval_name,
+            status,
+            feedback: e.feedback,
+            log_file: e.log_file,
+            started_at: e.started_at,
+            finished_at: e.finished_at,
+        }
+    }).collect();
+
+    Ok(evals)
 }
 
 /// Start an eval
@@ -555,24 +930,398 @@ pub async fn start_eval(run_name: String, eval_name: Option<String>) -> Result<E
 }
 
 // =============================================================================
+// Worker Log Commands
+// =============================================================================
+
+/// Response for worker log content
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerLogResponse {
+    pub content: String,
+    pub byte_offset: u64,
+    pub file_size: u64,
+    pub exists: bool,
+}
+
+/// Parsed log line with tool activity info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParsedLogLine {
+    pub text: String,
+    pub is_tool_start: bool,
+    pub is_tool_end: bool,
+    pub tool_name: Option<String>,
+}
+
+/// Get worker log file content
+///
+/// Returns the log content for a specific worker. Supports optional line limit
+/// and byte offset for efficient tailing/streaming.
+#[tauri::command]
+pub async fn get_worker_log(
+    run_name: String,
+    worker_name: String,
+    lines: Option<u32>,
+    from_offset: Option<u64>,
+) -> Result<WorkerLogResponse, String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let run_dir = config::run_dir(&run_name);
+    let files = crate::core::Files::new(&run_dir);
+    let log_path = files.worker_log(&worker_name);
+
+    if !log_path.exists() {
+        return Ok(WorkerLogResponse {
+            content: String::new(),
+            byte_offset: 0,
+            file_size: 0,
+            exists: false,
+        });
+    }
+
+    let metadata = std::fs::metadata(&log_path)
+        .map_err(|e| format!("Failed to read log file metadata: {}", e))?;
+    let file_size = metadata.len();
+
+    let mut file = std::fs::File::open(&log_path)
+        .map_err(|e| format!("Failed to open log file: {}", e))?;
+
+    // If offset is provided, seek to that position
+    let start_offset = if let Some(offset) = from_offset {
+        if offset < file_size {
+            file.seek(SeekFrom::Start(offset))
+                .map_err(|e| format!("Failed to seek in log file: {}", e))?;
+            offset
+        } else {
+            // Already at or past end
+            return Ok(WorkerLogResponse {
+                content: String::new(),
+                byte_offset: file_size,
+                file_size,
+                exists: true,
+            });
+        }
+    } else {
+        0
+    };
+
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|e| format!("Failed to read log file: {}", e))?;
+
+    // If lines limit is specified and no offset was given, return only the last N lines
+    if lines.is_some() && from_offset.is_none() {
+        let limit = lines.unwrap() as usize;
+        let all_lines: Vec<&str> = content.lines().collect();
+        if all_lines.len() > limit {
+            content = all_lines[all_lines.len() - limit..].join("\n");
+        }
+    }
+
+    Ok(WorkerLogResponse {
+        content,
+        byte_offset: file_size,
+        file_size,
+        exists: true,
+    })
+}
+
+/// Get worker log file path
+///
+/// Returns the absolute path to the worker's log file for use with
+/// file system watchers or external tools.
+#[tauri::command]
+pub async fn get_worker_log_path(
+    run_name: String,
+    worker_name: String,
+) -> Result<String, String> {
+    let run_dir = config::run_dir(&run_name);
+    let files = crate::core::Files::new(&run_dir);
+    let log_path = files.worker_log(&worker_name);
+    Ok(log_path.to_string_lossy().to_string())
+}
+
+/// Parse log content and extract tool activity markers
+///
+/// Parses `[tool:name]` and `[/tool]` markers from Claude Code output.
+#[tauri::command]
+pub async fn parse_worker_log(content: String) -> Result<Vec<ParsedLogLine>, String> {
+    let tool_start_re = regex::Regex::new(r"\[tool:([^\]]+)\]")
+        .map_err(|e| format!("Invalid regex: {}", e))?;
+    let tool_end_re = regex::Regex::new(r"\[/tool\]")
+        .map_err(|e| format!("Invalid regex: {}", e))?;
+
+    let parsed: Vec<ParsedLogLine> = content
+        .lines()
+        .map(|line| {
+            let is_tool_start = tool_start_re.is_match(line);
+            let is_tool_end = tool_end_re.is_match(line);
+            let tool_name = if is_tool_start {
+                tool_start_re.captures(line).map(|c| c[1].to_string())
+            } else {
+                None
+            };
+
+            ParsedLogLine {
+                text: line.to_string(),
+                is_tool_start,
+                is_tool_end,
+                tool_name,
+            }
+        })
+        .collect();
+
+    Ok(parsed)
+}
+
+/// Get eval log file content
+#[tauri::command]
+pub async fn get_eval_log(
+    run_name: String,
+    lines: Option<u32>,
+    from_offset: Option<u64>,
+) -> Result<WorkerLogResponse, String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let run_dir = config::run_dir(&run_name);
+    let files = crate::core::Files::new(&run_dir);
+    let log_path = files.eval_log();
+
+    if !log_path.exists() {
+        return Ok(WorkerLogResponse {
+            content: String::new(),
+            byte_offset: 0,
+            file_size: 0,
+            exists: false,
+        });
+    }
+
+    let metadata = std::fs::metadata(&log_path)
+        .map_err(|e| format!("Failed to read eval log metadata: {}", e))?;
+    let file_size = metadata.len();
+
+    let mut file = std::fs::File::open(&log_path)
+        .map_err(|e| format!("Failed to open eval log: {}", e))?;
+
+    let start_offset = if let Some(offset) = from_offset {
+        if offset < file_size {
+            file.seek(SeekFrom::Start(offset))
+                .map_err(|e| format!("Failed to seek in eval log: {}", e))?;
+            offset
+        } else {
+            return Ok(WorkerLogResponse {
+                content: String::new(),
+                byte_offset: file_size,
+                file_size,
+                exists: true,
+            });
+        }
+    } else {
+        0
+    };
+
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|e| format!("Failed to read eval log: {}", e))?;
+
+    if lines.is_some() && from_offset.is_none() {
+        let limit = lines.unwrap() as usize;
+        let all_lines: Vec<&str> = content.lines().collect();
+        if all_lines.len() > limit {
+            content = all_lines[all_lines.len() - limit..].join("\n");
+        }
+    }
+
+    Ok(WorkerLogResponse {
+        content,
+        byte_offset: file_size,
+        file_size,
+        exists: true,
+    })
+}
+
+// =============================================================================
+// Worker Events Commands (ACP-based streaming)
+// =============================================================================
+
+/// Worker event for real-time streaming
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerEventResponse {
+    pub id: i64,
+    pub worker_name: String,
+    pub event_type: String,
+    pub timestamp: String,
+    /// Text content (for text/thought events)
+    pub content: Option<String>,
+    /// Tool call ID (for tool events)
+    pub tool_call_id: Option<String>,
+    /// Tool title/name
+    pub tool_title: Option<String>,
+    /// Tool kind (read, edit, execute, search, etc.)
+    pub tool_kind: Option<String>,
+    /// Tool execution status (pending, in_progress, completed, failed)
+    pub tool_status: Option<String>,
+    /// Tool input (JSON string)
+    pub tool_input: Option<String>,
+    /// Tool output (JSON string)
+    pub tool_output: Option<String>,
+}
+
+/// Response for worker events query
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerEventsResponse {
+    pub events: Vec<WorkerEventResponse>,
+    pub last_id: Option<i64>,
+}
+
+/// Get worker events for real-time streaming
+///
+/// Returns events since `after_id` for efficient polling.
+/// On first call, pass `after_id: null` to get recent events.
+#[tauri::command]
+pub async fn get_worker_events(
+    run_name: String,
+    worker_name: String,
+    after_id: Option<i64>,
+    limit: Option<i64>,
+) -> Result<WorkerEventsResponse, String> {
+    let db_path = config::run_dir(&run_name).join("hirsel.db");
+    if !db_path.exists() {
+        return Ok(WorkerEventsResponse {
+            events: Vec::new(),
+            last_id: None,
+        });
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    let limit = limit.unwrap_or(1000);
+    let events = state.get_worker_events(&worker_name, after_id, limit)
+        .map_err(|e| format!("Failed to get worker events: {}", e))?;
+
+    let last_id = events.last().map(|e| e.id);
+
+    let events: Vec<WorkerEventResponse> = events.into_iter().map(|e| {
+        WorkerEventResponse {
+            id: e.id,
+            worker_name: e.worker_name,
+            event_type: e.event_type.as_str().to_string(),
+            timestamp: e.timestamp,
+            content: e.content,
+            tool_call_id: e.tool_call_id,
+            tool_title: e.tool_title,
+            tool_kind: e.tool_kind,
+            tool_status: e.tool_status.map(|s| s.as_str().to_string()),
+            tool_input: e.tool_input,
+            tool_output: e.tool_output,
+        }
+    }).collect();
+
+    Ok(WorkerEventsResponse {
+        events,
+        last_id,
+    })
+}
+
+/// Clear worker events (for cleanup when attaching/detaching)
+#[tauri::command]
+pub async fn clear_worker_events(
+    run_name: String,
+    worker_name: String,
+) -> Result<(), String> {
+    let db_path = config::run_dir(&run_name).join("hirsel.db");
+    if !db_path.exists() {
+        return Ok(());
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    state.clear_worker_events(&worker_name)
+        .map_err(|e| format!("Failed to clear worker events: {}", e))?;
+
+    Ok(())
+}
+
+// =============================================================================
 // Config Commands
 // =============================================================================
 
 /// Get application configuration
 #[tauri::command]
 pub async fn get_config() -> Result<ConfigResponse, String> {
-    // TODO: Load actual config from ~/.hirsel/config.toml using core::config
-    let runs_dir = dirs::home_dir()
-        .map(|h| h.join(".hirsel").join("runs").to_string_lossy().to_string())
-        .unwrap_or_else(|| "~/.hirsel/runs".to_string());
+    let (cfg, _warnings) = config::Config::load()
+        .map_err(|e| format!("Failed to load config: {}", e))?;
+
+    let runs_dir = cfg.runs_dir().to_string_lossy().to_string();
 
     Ok(ConfigResponse {
         runs_dir,
-        agent: "claude-code".to_string(),
-        agent_presets: std::collections::HashMap::new(),
-        default_worker_scale: "1".to_string(),
-        default_time_limit: None,
+        agent_command: cfg.agent.command,
+        eval_timeout: cfg.eval_timeout,
+        auto_learn: cfg.auto_learn,
+        max_iterations: cfg.max_iterations,
+        user_message_pause: cfg.user_message_pause,
+        human_in_the_loop: cfg.human_in_the_loop,
+        compaction_threshold: cfg.compaction_threshold,
+        compaction_keep_messages: cfg.compaction_keep_messages,
+        context_warning_threshold: cfg.context_warning_threshold,
+        coordinator_port: cfg.coordinator_port,
     })
+}
+
+/// Save application configuration
+#[tauri::command]
+pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
+    let config_path = config::hirsel_dir().join("config.toml");
+
+    // Load existing config or create default
+    let (mut cfg, _) = config::Config::load().unwrap_or_else(|_| (config::Config::default(), vec![]));
+
+    // Apply updates
+    if let Some(cmd) = updates.agent_command {
+        cfg.agent.command = cmd;
+    }
+    if let Some(timeout) = updates.eval_timeout {
+        cfg.eval_timeout = timeout;
+    }
+    if let Some(auto) = updates.auto_learn {
+        cfg.auto_learn = auto;
+    }
+    if let Some(max) = updates.max_iterations {
+        cfg.max_iterations = max;
+    }
+    if let Some(pause) = updates.user_message_pause {
+        cfg.user_message_pause = pause;
+    }
+    if let Some(hitl) = updates.human_in_the_loop {
+        cfg.human_in_the_loop = hitl;
+    }
+    if let Some(threshold) = updates.compaction_threshold {
+        cfg.compaction_threshold = threshold;
+    }
+    if let Some(keep) = updates.compaction_keep_messages {
+        cfg.compaction_keep_messages = keep;
+    }
+    if let Some(warning) = updates.context_warning_threshold {
+        cfg.context_warning_threshold = warning;
+    }
+    if let Some(port) = updates.coordinator_port {
+        cfg.coordinator_port = port;
+    }
+
+    // Serialize to TOML
+    let toml_str = toml::to_string_pretty(&cfg)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+
+    // Write to file
+    std::fs::write(&config_path, toml_str)
+        .map_err(|e| format!("Failed to write config: {}", e))?;
+
+    Ok(())
 }
 
 // =============================================================================
@@ -600,6 +1349,14 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         attach_worker,
         detach_worker,
         restart_worker,
+        // Worker log commands
+        get_worker_log,
+        get_worker_log_path,
+        parse_worker_log,
+        get_eval_log,
+        // Worker events commands (ACP-based streaming)
+        get_worker_events,
+        clear_worker_events,
         // Message commands
         get_messages,
         get_threads,
@@ -608,9 +1365,11 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         // History commands
         get_history,
         // Eval commands
+        get_eval_spec,
         get_evals,
         start_eval,
         // Config commands
         get_config,
+        save_config,
     ]
 }

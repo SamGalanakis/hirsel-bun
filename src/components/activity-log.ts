@@ -12,6 +12,7 @@
 
 import { getHistory } from '../lib/api';
 import type { HistoryEntry } from '../lib/types';
+import { getActionIcon as getActionIconSvg } from '../lib/icons';
 
 /**
  * Activity log component data
@@ -66,35 +67,6 @@ const ACTION_COLORS: Record<string, string> = {
 };
 
 /**
- * Action icons for visual distinction
- */
-const ACTION_ICONS: Record<string, string> = {
-  task_claimed: '→',
-  task_done: '✓',
-  task_added: '+',
-  task_deleted: '×',
-  task_unclaimed: '←',
-  task_reopened: '↺',
-  worker_started: '▶',
-  worker_stopped: '■',
-  worker_error: '!',
-  worker_paused: '⏸',
-  worker_resumed: '▶',
-  eval_started: '⚙',
-  eval_passed: '✓',
-  eval_failed: '✗',
-  run_started: '▶',
-  run_paused: '⏸',
-  run_resumed: '▶',
-  run_done: '✓',
-  run_delivered: '📦',
-  run_timed_out: '⏰',
-  message_sent: '→',
-  message_received: '←',
-  default: '•',
-};
-
-/**
  * Format timestamp for display
  */
 function formatTime(timestamp: string | null): string {
@@ -138,11 +110,10 @@ function getActionColor(action: string): string {
 }
 
 /**
- * Get icon for action type
+ * Get icon SVG for action type
  */
 function getActionIcon(action: string): string {
-  const normalized = action.toLowerCase().replace(/[\s-]+/g, '_');
-  return ACTION_ICONS[normalized] || ACTION_ICONS.default;
+  return getActionIconSvg(action, 14);
 }
 
 /**
