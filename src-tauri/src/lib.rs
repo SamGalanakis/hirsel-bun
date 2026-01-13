@@ -1,5 +1,13 @@
-// Hirsel - Herd your AI coding agents
-// TODO: Implement core modules and Tauri commands per spec.md
+//! Hirsel - Herd your AI coding agents
+//!
+//! This library provides the core functionality for hirsel,
+//! including file system utilities, state management, and
+//! the Tauri GUI integration.
+
+pub mod core;
+
+// Re-export core types for convenience
+pub use core::Files;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
