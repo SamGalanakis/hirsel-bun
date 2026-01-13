@@ -312,29 +312,53 @@
         </button>
       </div>
 
-      <!-- Thread list -->
-      <div class="border-b border-pasture-600" x-data="chatPanel()">
-        <div class="flex overflow-x-auto p-2 gap-1">
-          <template x-for="thread in threads" :key="thread.name">
-            <button
-              @click="selectThread(thread.name)"
-              :class="{ 'bg-pasture-600': selectedThread === thread.name }"
-              class="px-3 py-1 text-xs rounded whitespace-nowrap hover:bg-pasture-700 transition-colors"
-            >
-              <span x-text="thread.name"></span>
-              <span x-show="thread.unreadCount > 0" class="ml-1 text-terra" x-text="'(' + thread.unreadCount + ')'"></span>
-            </button>
-          </template>
+      <!-- Thread list and messages (single x-data scope) -->
+      <div class="flex-1 flex flex-col overflow-hidden" x-data="chatPanel()">
+        <!-- Thread tabs -->
+        <div class="border-b border-pasture-600 flex-shrink-0">
+          <div class="flex overflow-x-auto p-2 gap-1">
+            <!-- Empty threads state -->
+            <span x-show="threads.length === 0" class="text-xs text-wool-500 px-2">No threads</span>
+
+            <template x-for="thread in threads" :key="thread.name">
+              <button
+                @click="selectThread(thread.name)"
+                :class="{ 'bg-pasture-600': selectedThread === thread.name }"
+                class="px-3 py-1 text-xs rounded whitespace-nowrap hover:bg-pasture-700 transition-colors relative"
+              >
+                <span x-text="thread.name"></span>
+                <span x-show="thread.unreadCount > 0" class="ml-1 text-terra font-bold" x-text="'(' + thread.unreadCount + ')'"></span>
+              </button>
+            </template>
+          </div>
         </div>
-      </div>
 
       <!-- Messages -->
-      <div class="flex-1 overflow-y-auto p-3 space-y-3">
+      <div class="messages-container flex-1 overflow-y-auto p-3 space-y-3">
+        <!-- Loading state -->
+        <div x-show="loading" class="text-center text-wool-500 py-4">
+          <span class="animate-pulse">Loading messages...</span>
+        </div>
+
+        <!-- Error state -->
+        <div x-show="error && !loading" class="text-center text-terra py-4">
+          <p x-text="error"></p>
+          <button @click="selectThread(selectedThread)" class="mt-2 text-sm underline hover:no-underline">Retry</button>
+        </div>
+
+        <!-- Empty state -->
+        <div x-show="!loading && !error && messages.length === 0" class="text-center text-wool-500 py-8">
+          <p class="text-sm">No messages yet</p>
+          <p class="text-xs mt-1">Start the conversation below</p>
+        </div>
+
+        <!-- Message list -->
         <template x-for="msg in messages" :key="msg.id">
           <div class="message">
             <div class="flex items-baseline gap-2 mb-1">
-              <span class="text-sm font-medium text-amber-500" x-text="msg.sender"></span>
+              <span class="text-sm font-medium" :class="getSenderColor(msg.sender)" x-text="msg.sender"></span>
               <span class="text-xs text-wool-500" x-text="formatTime(msg.timestamp)"></span>
+              <span x-show="msg.waiting" class="text-xs text-golden">[waiting]</span>
             </div>
             <p class="text-sm text-wool-300 whitespace-pre-wrap" x-text="msg.content"></p>
           </div>
@@ -342,14 +366,14 @@
       </div>
 
       <!-- Message input -->
-      <div class="p-3 border-t border-pasture-600">
+      <div class="p-3 border-t border-pasture-600 flex-shrink-0">
         <div class="flex gap-2">
           <input
             type="text"
             x-model="newMessage"
             @keydown.enter="sendMessage()"
             placeholder="Type a message..."
-            class="flex-1 px-3 py-2 text-sm bg-pasture-900 border border-pasture-600 rounded focus:outline-none focus:border-amber-500"
+            class="chat-input flex-1 px-3 py-2 text-sm bg-pasture-900 border border-pasture-600 rounded focus:outline-none focus:border-amber-500"
           >
           <button
             @click="sendMessage()"
@@ -358,6 +382,7 @@
             Send
           </button>
         </div>
+      </div>
       </div>
     </aside>
   </main>
@@ -488,13 +513,45 @@
 
         // Keyboard shortcuts
         init() {
+          // Track focused run index for j/k navigation
+          this._focusedRunIndex = -1;
+
           document.addEventListener('keydown', (e) => {
             // Ignore if typing in input
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
             switch(e.key) {
+              case 'j':
+                // Navigate down in run list
+                this.navigateRuns(1);
+                break;
+              case 'k':
+                // Navigate up in run list
+                this.navigateRuns(-1);
+                break;
+              case 'Enter':
+                // Select focused run
+                this.selectFocusedRun();
+                break;
+              case 'a':
+                // Attach to first worker
+                if (this.selectedRun) this.attachToWorker();
+                break;
               case 'c':
                 this.toggleChat();
+                break;
+              case 'm':
+                // Focus message input
+                if (this.chatOpen) {
+                  const input = document.querySelector('.chat-input');
+                  if (input) input.focus();
+                } else {
+                  this.chatOpen = true;
+                  this.$nextTick(() => {
+                    const input = document.querySelector('.chat-input');
+                    if (input) input.focus();
+                  });
+                }
                 break;
               case '?':
                 this.showHelp = true;
@@ -511,6 +568,55 @@
                 break;
             }
           });
+        },
+
+        // Navigate through runs with j/k
+        navigateRuns(direction) {
+          const runItems = document.querySelectorAll('.run-item');
+          if (runItems.length === 0) return;
+
+          // Update focused index
+          this._focusedRunIndex += direction;
+
+          // Clamp to valid range
+          if (this._focusedRunIndex < 0) this._focusedRunIndex = 0;
+          if (this._focusedRunIndex >= runItems.length) this._focusedRunIndex = runItems.length - 1;
+
+          // Update visual focus
+          runItems.forEach((item, idx) => {
+            item.classList.toggle('ring-2', idx === this._focusedRunIndex);
+            item.classList.toggle('ring-amber-500', idx === this._focusedRunIndex);
+          });
+
+          // Scroll into view
+          runItems[this._focusedRunIndex]?.scrollIntoView({ block: 'nearest' });
+        },
+
+        // Select the currently focused run
+        selectFocusedRun() {
+          const runItems = document.querySelectorAll('.run-item');
+          if (this._focusedRunIndex >= 0 && this._focusedRunIndex < runItems.length) {
+            runItems[this._focusedRunIndex].click();
+          }
+        },
+
+        // Attach to first available worker
+        async attachToWorker() {
+          // TODO: Tauri invoke to attach to first active worker
+          console.log('Attach to worker for run:', this.selectedRun);
+          if (window.__TAURI__) {
+            try {
+              const workers = await window.__TAURI__.core.invoke('get_workers', { runName: this.selectedRun });
+              if (workers && workers.length > 0) {
+                await window.__TAURI__.core.invoke('attach_worker', {
+                  runName: this.selectedRun,
+                  workerName: workers[0].name
+                });
+              }
+            } catch (e) {
+              console.error('Failed to attach to worker:', e);
+            }
+          }
         }
       };
     }
@@ -746,29 +852,255 @@
         selectedThread: 'user',
         messages: [],
         newMessage: '',
+        loading: false,
+        error: null,
+        _pollInterval: null,
+        _threadPollInterval: null,
 
         async init() {
-          // TODO: Fetch from Tauri
-          this.threads = [];
-          this.messages = [];
+          // Subscribe to run selection changes
+          window.addEventListener('run-selected', (e) => {
+            this.onRunSelected(e.detail);
+          });
+
+          // Initial load if run already selected
+          const app = this.getAppState();
+          if (app && app.selectedRun) {
+            await this.fetchThreads();
+          }
         },
 
-        selectThread(name) {
+        getAppState() {
+          // Access parent Alpine scope
+          let el = this.$el;
+          while (el && el.parentElement) {
+            el = el.parentElement;
+            if (el._x_dataStack) {
+              return el._x_dataStack[0];
+            }
+          }
+          return null;
+        },
+
+        getSelectedRun() {
+          const app = this.getAppState();
+          return app ? app.selectedRun : null;
+        },
+
+        async onRunSelected(runName) {
+          // Stop existing polls
+          this.stopPolling();
+
+          if (!runName) {
+            this.threads = [];
+            this.messages = [];
+            return;
+          }
+
+          await this.fetchThreads();
+
+          // Start polling for thread updates
+          this._threadPollInterval = setInterval(() => this.fetchThreads(), 4000);
+        },
+
+        async fetchThreads() {
+          const runName = this.getSelectedRun();
+          if (!runName) return;
+
+          try {
+            if (window.__TAURI__) {
+              this.threads = await window.__TAURI__.core.invoke('get_threads', { runName });
+            } else {
+              // Mock data for development
+              this.threads = [
+                { name: 'user', messageCount: 3, unreadCount: 1, lastMessage: 'Hello!', lastTimestamp: new Date().toISOString() },
+                { name: 'group', messageCount: 5, unreadCount: 0, lastMessage: 'Task complete', lastTimestamp: new Date().toISOString() },
+                { name: 'learnings', messageCount: 2, unreadCount: 0, lastMessage: null, lastTimestamp: null }
+              ];
+            }
+
+            // Update total unread count in parent
+            const totalUnread = this.threads.reduce((sum, t) => sum + t.unreadCount, 0);
+            const app = this.getAppState();
+            if (app) {
+              app.unreadCount = totalUnread;
+            }
+
+            // Select first thread if none selected
+            if (this.threads.length > 0 && !this.threads.find(t => t.name === this.selectedThread)) {
+              this.selectThread(this.threads[0].name);
+            }
+          } catch (e) {
+            console.error('Failed to fetch threads:', e);
+            this.error = 'Failed to load threads';
+          }
+        },
+
+        async selectThread(name) {
           this.selectedThread = name;
-          // TODO: Fetch messages for thread
+          this.loading = true;
+          this.error = null;
+
+          // Stop message polling
+          if (this._pollInterval) {
+            clearInterval(this._pollInterval);
+            this._pollInterval = null;
+          }
+
+          const runName = this.getSelectedRun();
+          if (!runName) {
+            this.loading = false;
+            return;
+          }
+
+          try {
+            await this.fetchMessages();
+
+            // Mark as read
+            if (window.__TAURI__) {
+              await window.__TAURI__.core.invoke('mark_messages_read', { runName, threadName: name });
+            }
+
+            // Update unread count
+            const thread = this.threads.find(t => t.name === name);
+            if (thread) {
+              thread.unreadCount = 0;
+            }
+
+            // Start polling for new messages
+            this._pollInterval = setInterval(() => this.fetchMessages(), 2000);
+
+            // Scroll to bottom
+            this.$nextTick(() => this.scrollToBottom());
+          } catch (e) {
+            console.error('Failed to fetch messages:', e);
+            this.error = 'Failed to load messages';
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        async fetchMessages() {
+          const runName = this.getSelectedRun();
+          if (!runName || !this.selectedThread) return;
+
+          try {
+            const prevLength = this.messages.length;
+
+            if (window.__TAURI__) {
+              this.messages = await window.__TAURI__.core.invoke('get_messages', {
+                runName,
+                threadName: this.selectedThread
+              });
+            } else {
+              // Mock data for development
+              this.messages = [
+                { id: 1, thread: this.selectedThread, sender: 'user', content: 'Hello, please help with the task.', timestamp: new Date(Date.now() - 300000).toISOString(), waiting: false },
+                { id: 2, thread: this.selectedThread, sender: 'alpha', content: 'Working on it now.', timestamp: new Date(Date.now() - 200000).toISOString(), waiting: false },
+                { id: 3, thread: this.selectedThread, sender: 'alpha', content: 'Task complete! Ready for review.', timestamp: new Date().toISOString(), waiting: false }
+              ];
+            }
+
+            // Auto-scroll if new messages
+            if (this.messages.length > prevLength) {
+              this.$nextTick(() => this.scrollToBottom());
+            }
+          } catch (e) {
+            console.error('Failed to fetch messages:', e);
+          }
         },
 
         async sendMessage() {
-          if (!this.newMessage.trim()) return;
-          // TODO: Tauri invoke
-          console.log('Send message:', this.selectedThread, this.newMessage);
+          const content = this.newMessage.trim();
+          if (!content) return;
+
+          const runName = this.getSelectedRun();
+          if (!runName) {
+            this.error = 'No run selected';
+            return;
+          }
+
+          // Clear input immediately
           this.newMessage = '';
+
+          try {
+            if (window.__TAURI__) {
+              await window.__TAURI__.core.invoke('send_message', {
+                run: runName,
+                thread: this.selectedThread,
+                message: content
+              });
+            } else {
+              // Mock: add message locally
+              this.messages.push({
+                id: Date.now(),
+                thread: this.selectedThread,
+                sender: 'user',
+                content: content,
+                timestamp: new Date().toISOString(),
+                waiting: false
+              });
+            }
+
+            // Refresh messages
+            await this.fetchMessages();
+            this.$nextTick(() => this.scrollToBottom());
+          } catch (e) {
+            console.error('Failed to send message:', e);
+            this.error = 'Failed to send message';
+            this.newMessage = content; // Restore on error
+          }
+        },
+
+        scrollToBottom() {
+          const container = this.$el.querySelector('.messages-container');
+          if (container) {
+            container.scrollTop = container.scrollHeight;
+          }
+        },
+
+        stopPolling() {
+          if (this._pollInterval) {
+            clearInterval(this._pollInterval);
+            this._pollInterval = null;
+          }
+          if (this._threadPollInterval) {
+            clearInterval(this._threadPollInterval);
+            this._threadPollInterval = null;
+          }
         },
 
         formatTime(timestamp) {
           if (!timestamp) return '';
           const d = new Date(timestamp);
           return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        },
+
+        formatDate(timestamp) {
+          if (!timestamp) return '';
+          const d = new Date(timestamp);
+          const today = new Date();
+          if (d.toDateString() === today.toDateString()) return 'Today';
+          const yesterday = new Date(today);
+          yesterday.setDate(yesterday.getDate() - 1);
+          if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+          return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        },
+
+        getSenderColor(sender) {
+          const colors = {
+            user: 'text-amber-500',
+            admin: 'text-amber-500',
+            system: 'text-wool-500'
+          };
+          if (colors[sender]) return colors[sender];
+          // Hash-based color for workers
+          const workerColors = ['text-sage', 'text-sky-400', 'text-pink-400', 'text-purple-400', 'text-golden'];
+          let hash = 0;
+          for (let i = 0; i < sender.length; i++) {
+            hash = sender.charCodeAt(i) + ((hash << 5) - hash);
+          }
+          return workerColors[Math.abs(hash) % workerColors.length];
         }
       };
     }
