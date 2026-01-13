@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Hirsel</title>
   <link rel="stylesheet" href="styles/main.css">
+  <!-- Import TypeScript components before Alpine loads -->
+  <script type="module">
+    import { runList } from './components/run-list.ts';
+    // Make components available globally for Alpine
+    window.runList = runList;
+  </script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/basecoat-css@0.3/dist/js/all.min.js"></script>
 </head>
@@ -47,31 +53,81 @@
           <p class="text-xs mt-1">Use <code class="bg-pasture-700 px-1 rounded">hirsel go</code> to start</p>
         </div>
 
+        <!-- Loading state -->
+        <div x-show="loading" class="p-4 text-center text-wool-500">
+          <div class="animate-pulse">Loading...</div>
+        </div>
+
+        <!-- Error state -->
+        <div x-show="error" class="p-4 text-center text-terra">
+          <p class="text-sm" x-text="error"></p>
+          <button @click="fetchRuns()" class="mt-2 text-xs text-amber-500 hover:underline">Retry</button>
+        </div>
+
         <!-- Run list items -->
         <template x-for="run in runs" :key="run.name">
           <div
             @click="selectRun(run.name)"
+            @contextmenu="showContextMenu($event, run.name)"
             :class="{ 'bg-pasture-700': selectedRun === run.name }"
             class="run-item px-3 py-2 cursor-pointer hover:bg-pasture-700 border-b border-pasture-800 transition-colors"
           >
             <div class="flex items-center gap-2">
               <span
                 class="status-dot w-2 h-2 rounded-full flex-shrink-0"
-                :class="{
-                  'status-working': run.status === 'working',
-                  'status-waiting': run.status === 'waiting' || run.status === 'paused',
-                  'status-done': run.status === 'done' || run.status === 'delivered',
-                  'status-idle': run.status === 'idle'
-                }"
+                :class="getStatusDotClass(run.status)"
               ></span>
               <span class="text-sm text-wool-100 truncate" x-text="run.name"></span>
+              <span x-show="run.hasUnreadMessages" class="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
             </div>
             <div class="flex items-center justify-between mt-1 text-xs text-wool-500">
               <span x-text="run.tasksDone + '/' + run.tasksTotal + ' tasks'"></span>
               <span x-text="formatElapsed(run.elapsedMinutes)"></span>
             </div>
+            <!-- Progress bar -->
+            <div class="mt-1.5 h-1 bg-pasture-600 rounded-full overflow-hidden">
+              <div
+                class="h-full bg-sage rounded-full transition-all duration-300"
+                :style="'width: ' + formatProgress(run.tasksDone, run.tasksTotal) + '%'"
+              ></div>
+            </div>
           </div>
         </template>
+
+        <!-- Context menu -->
+        <div
+          x-show="contextMenuVisible"
+          x-transition
+          @click.away="hideContextMenu()"
+          :style="'left: ' + contextMenuX + 'px; top: ' + contextMenuY + 'px'"
+          class="fixed z-50 bg-pasture-700 border border-pasture-600 rounded shadow-lg py-1 min-w-[140px]"
+        >
+          <button
+            @click="contextPause()"
+            class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600"
+          >
+            Pause
+          </button>
+          <button
+            @click="contextResume()"
+            class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600"
+          >
+            Resume
+          </button>
+          <div class="border-t border-pasture-600 my-1"></div>
+          <button
+            @click="contextDeliver()"
+            class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600"
+          >
+            Deliver
+          </button>
+          <button
+            @click="contextDelete()"
+            class="w-full px-3 py-1.5 text-left text-sm text-terra hover:bg-pasture-600"
+          >
+            Delete
+          </button>
+        </div>
       </div>
     </aside>
 
@@ -460,27 +516,84 @@
     }
 
     // Run list component
+    // Full implementation for displaying runs with status, progress, context menu
     function runList() {
       return {
         runs: [],
         selectedRun: null,
+        selectedIndex: -1,
+        loading: true,
+        error: null,
+        contextMenuVisible: false,
+        contextMenuX: 0,
+        contextMenuY: 0,
+        contextMenuRun: null,
+        pollInterval: null,
 
         async init() {
-          // TODO: Fetch from Tauri
-          // For now, show empty state
-          this.runs = [];
+          await this.fetchRuns();
+
+          // Poll for updates every 2 seconds
+          this.pollInterval = setInterval(() => {
+            this.fetchRuns();
+          }, 2000);
 
           // Listen for run selection from other components
           window.addEventListener('run-selected', (e) => {
             this.selectedRun = e.detail;
+            const index = this.runs.findIndex(r => r.name === e.detail);
+            if (index >= 0) this.selectedIndex = index;
           });
+
+          // Hide context menu on click
+          document.addEventListener('click', () => {
+            this.hideContextMenu();
+          });
+        },
+
+        async fetchRuns() {
+          try {
+            // Try Tauri invoke if available
+            if (window.__TAURI__) {
+              const { invoke } = await import('@tauri-apps/api/core');
+              this.runs = await invoke('get_runs');
+            } else {
+              // Demo mode - show empty
+              this.runs = [];
+            }
+            this.loading = false;
+            this.error = null;
+          } catch (err) {
+            this.error = err.message || String(err);
+            this.loading = false;
+          }
         },
 
         selectRun(name) {
           this.selectedRun = name;
-          // Update parent state
-          Alpine.store('app').selectedRun = name;
+          this.selectedIndex = this.runs.findIndex(r => r.name === name);
+          // Update parent state if Alpine store exists
+          if (Alpine.store && Alpine.store('app')) {
+            Alpine.store('app').selectedRun = name;
+          }
           window.dispatchEvent(new CustomEvent('run-selected', { detail: name }));
+        },
+
+        getStatusDotClass(status) {
+          const classes = {
+            idle: 'status-idle',
+            working: 'status-working',
+            paused: 'status-waiting',
+            runaway: 'status-error',
+            timed_out: 'status-error',
+            eval: 'status-working',
+            eval_failed: 'status-error',
+            waiting: 'status-waiting',
+            done: 'status-done',
+            delivered: 'status-done',
+            merged: 'status-done',
+          };
+          return classes[status] || 'status-idle';
         },
 
         formatElapsed(minutes) {
@@ -489,6 +602,92 @@
           const h = Math.floor(minutes / 60);
           const m = minutes % 60;
           return h + 'h' + (m > 0 ? ' ' + m + 'm' : '');
+        },
+
+        formatProgress(done, total) {
+          if (total === 0) return 0;
+          return Math.round((done / total) * 100);
+        },
+
+        showContextMenu(event, runName) {
+          event.preventDefault();
+          event.stopPropagation();
+          this.contextMenuX = event.clientX;
+          this.contextMenuY = event.clientY;
+          this.contextMenuRun = runName;
+          this.contextMenuVisible = true;
+        },
+
+        hideContextMenu() {
+          this.contextMenuVisible = false;
+          this.contextMenuRun = null;
+        },
+
+        async contextPause() {
+          if (!this.contextMenuRun) return;
+          try {
+            if (window.__TAURI__) {
+              const { invoke } = await import('@tauri-apps/api/core');
+              await invoke('pause_run', { name: this.contextMenuRun });
+              await this.fetchRuns();
+            }
+          } catch (err) {
+            console.error('Failed to pause:', err);
+          }
+          this.hideContextMenu();
+        },
+
+        async contextResume() {
+          if (!this.contextMenuRun) return;
+          try {
+            if (window.__TAURI__) {
+              const { invoke } = await import('@tauri-apps/api/core');
+              await invoke('resume_run', { name: this.contextMenuRun });
+              await this.fetchRuns();
+            }
+          } catch (err) {
+            console.error('Failed to resume:', err);
+          }
+          this.hideContextMenu();
+        },
+
+        async contextDelete() {
+          if (!this.contextMenuRun) return;
+          if (!confirm(`Delete run "${this.contextMenuRun}"?`)) {
+            this.hideContextMenu();
+            return;
+          }
+          try {
+            if (window.__TAURI__) {
+              const { invoke } = await import('@tauri-apps/api/core');
+              await invoke('delete_run', { name: this.contextMenuRun });
+              if (this.selectedRun === this.contextMenuRun) {
+                this.selectedRun = null;
+                this.selectedIndex = -1;
+                window.dispatchEvent(new CustomEvent('run-selected', { detail: null }));
+              }
+              await this.fetchRuns();
+            }
+          } catch (err) {
+            console.error('Failed to delete:', err);
+          }
+          this.hideContextMenu();
+        },
+
+        async contextDeliver() {
+          if (!this.contextMenuRun) return;
+          try {
+            if (window.__TAURI__) {
+              const { invoke } = await import('@tauri-apps/api/core');
+              const branch = await invoke('deliver_run', { name: this.contextMenuRun });
+              alert(`Delivered to branch: ${branch}`);
+              await this.fetchRuns();
+            }
+          } catch (err) {
+            console.error('Failed to deliver:', err);
+            alert(`Failed to deliver: ${err.message || err}`);
+          }
+          this.hideContextMenu();
         }
       };
     }
