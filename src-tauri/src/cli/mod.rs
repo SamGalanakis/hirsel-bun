@@ -7,6 +7,7 @@
 //!
 //! When invoked without arguments, `hirsel` launches the native GUI.
 
+pub mod attach;
 pub mod completions;
 pub mod config;
 pub mod delete;
@@ -41,6 +42,11 @@ pub use templates::{
     run_templates, Template, TemplateError,
 };
 pub use msg::{run as run_msg, get_available_threads, MsgError, MsgOutput, MsgResult};
+pub use pause::run_pause;
+pub use resume::{run_resume, parse_time_limit};
+pub use attach::{run_attach, list_targets};
+pub use delete::execute as run_delete;
+pub use prune::execute as run_prune;
 
 /// Hirsel - Herd your AI coding agents
 #[derive(Parser, Debug)]
