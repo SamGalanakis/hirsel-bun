@@ -1,0 +1,26 @@
+{
+  "name": "hirsel",
+  "version": "0.1.0",
+  "description": "Herd your AI coding agents",
+  "type": "module",
+  "scripts": {
+    "start": "bun run build:dev && electrobun dev",
+    "build:dev": "bun install && electrobun build && bun run build:cli",
+    "build:release": "electrobun build --release && bun run build:cli",
+    "build:cli": "mkdir -p dist && echo '#!/usr/bin/env bun\nimport \"../src/cli/index\";' > dist/hirsel && echo '#!/usr/bin/env bun\nimport \"../src/cli/worker\";' > dist/hirsel-worker && chmod +x dist/hirsel dist/hirsel-worker",
+    "cli": "bun run src/cli/index.ts",
+    "test": "bun test"
+  },
+  "bin": {
+    "hirsel": "./dist/hirsel",
+    "hirsel-worker": "./dist/hirsel-worker"
+  },
+  "dependencies": {
+    "electrobun": "latest"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^25.0.7",
+    "typescript": "^5.9.3"
+  }
+}

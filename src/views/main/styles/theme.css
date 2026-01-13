@@ -1,0 +1,158 @@
+/**
+ * Hirsel Theme - Warm Pastoral Color Palette
+ *
+ * "hirsel" is a Scottish term for a flock of sheep. The app evokes
+ * the feeling of a shepherd overseeing their flock - calm, organized, pastoral.
+ */
+
+:root {
+  /* Background colors */
+  --bg-base: #1a1a1a;        /* dark charcoal, like evening pasture */
+  --bg-surface: #242424;     /* slightly lighter panels */
+  --bg-elevated: #2a2a2a;    /* hover/elevated surfaces */
+  --border: #333333;         /* subtle separation */
+  --border-focus: #d4a574;   /* amber focus ring */
+
+  /* Text colors */
+  --text-primary: #e8e4df;   /* warm off-white, like wool */
+  --text-secondary: #8a8580; /* muted warmth */
+  --text-dim: #5a5550;       /* dimmed text */
+
+  /* Accent colors */
+  --accent: #d4a574;         /* warm amber/gold - shepherd's lantern */
+  --accent-bright: #e8c19a;  /* lighter amber for hover */
+  --accent-dim: #a67c52;     /* darker amber */
+
+  /* Semantic colors */
+  --success: #7d9970;        /* sage green - healthy pasture */
+  --warning: #c9a227;        /* golden yellow - attention needed */
+  --error: #c45c4a;          /* terracotta red - problem */
+
+  /* Status colors (workers/runs) */
+  --status-working: #d4a574; /* amber glow - active */
+  --status-waiting: #c9a227; /* needs attention */
+  --status-done: #7d9970;    /* completed, at peace */
+  --status-idle: #5a5550;    /* resting */
+  --status-error: #c45c4a;   /* problem */
+  --status-paused: #c9a227;  /* paused */
+
+  /* Typography */
+  --font-mono: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+  --font-ui: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  /* Sizing */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  /* Transitions */
+  --transition-fast: 100ms ease;
+  --transition-normal: 200ms ease;
+  --transition-slow: 300ms ease;
+
+  /* Spacing */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+}
+
+/* Base reset and defaults */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background-color: var(--bg-base);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-base);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-sm);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+}
+
+/* Focus styles */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Selection */
+::selection {
+  background: var(--accent);
+  color: var(--bg-base);
+}
+
+/* Code/mono text */
+code, pre, .mono {
+  font-family: var(--font-mono);
+}
+
+/* Links */
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--accent-bright);
+  text-decoration: underline;
+}
+
+/* Buttons */
+button {
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Input elements */
+input, textarea, select {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm) var(--space-md);
+}
+
+input:focus, textarea:focus, select:focus {
+  border-color: var(--accent);
+}

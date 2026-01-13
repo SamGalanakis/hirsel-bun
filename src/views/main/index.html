@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hirsel</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <aside class="sidebar">
+      <header class="sidebar-header">
+        <h1>Hirsel</h1>
+      </header>
+      <nav class="run-list" id="run-list">
+        <div class="empty-state">No runs yet</div>
+      </nav>
+    </aside>
+    
+    <main class="content">
+      <div class="empty-state" id="empty-state">
+        <div class="sheep-logo">
+       ,ww
+    wWWWWWW_)
+    `WWWWWW'
+      || ||
+        </div>
+        <p>Select a run or start herding with <code>hirsel go</code></p>
+      </div>
+      
+      <div class="run-detail hidden" id="run-detail">
+        <header class="run-header">
+          <h2 id="run-name">Run Name</h2>
+          <span class="status-badge" id="run-status">idle</span>
+        </header>
+        
+        <div class="panels">
+          <section class="panel workers-panel">
+            <h3>Workers</h3>
+            <div id="workers-list"></div>
+          </section>
+          
+          <section class="panel tasks-panel">
+            <h3>Tasks</h3>
+            <div id="tasks-list"></div>
+          </section>
+          
+          <section class="panel activity-panel">
+            <h3>Activity</h3>
+            <div id="activity-log"></div>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+  
+  <!-- Chat Panel (slide-out) -->
+  <aside class="chat-panel hidden" id="chat-panel">
+    <header class="chat-header">
+      <h3>Messages</h3>
+      <button class="chat-close" id="chat-close" title="Close (c)">&times;</button>
+    </header>
+    <nav class="chat-threads" id="chat-threads"></nav>
+    <div class="chat-messages" id="chat-messages"></div>
+    <div class="chat-input-container">
+      <input type="text" class="chat-input" id="chat-input" placeholder="Type a message..." />
+      <button class="chat-send" id="chat-send">Send</button>
+    </div>
+  </aside>
+
+  <!-- Help Overlay -->
+  <div class="help-overlay hidden" id="help-overlay">
+    <div class="help-content">
+      <h2>Keyboard Shortcuts</h2>
+      <div class="help-grid">
+        <div class="help-item"><kbd>↑</kbd><kbd>↓</kbd> Navigate runs</div>
+        <div class="help-item"><kbd>a</kbd> Attach to selected worker</div>
+        <div class="help-item"><kbd>p</kbd> Pause selected run</div>
+        <div class="help-item"><kbd>r</kbd> Resume selected run</div>
+        <div class="help-item"><kbd>d</kbd> Deliver run (create branch)</div>
+        <div class="help-item"><kbd>c</kbd> Toggle chat panel</div>
+        <div class="help-item"><kbd>m</kbd> Send message to user thread</div>
+        <div class="help-item"><kbd>n</kbd> New run</div>
+        <div class="help-item"><kbd>⌘R</kbd> Refresh</div>
+        <div class="help-item"><kbd>Esc</kbd> Close/Deselect</div>
+        <div class="help-item"><kbd>?</kbd> Toggle this help</div>
+      </div>
+      <p class="help-footer">Press any key to close</p>
+    </div>
+  </div>
+
+  <footer class="status-bar">
+    <span id="status-text">Ready</span>
+    <span class="status-help">Press <kbd>?</kbd> for help</span>
+  </footer>
+
+  <script type="module" src="index.js"></script>
+</body>
+</html>
