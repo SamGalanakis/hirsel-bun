@@ -1306,6 +1306,55 @@ impl SQLiteState {
         }
     }
 
+    /// Admin complete a task (bypasses claim check)
+    pub fn admin_complete_task(&self, task_id: &str) -> StateResult<()> {
+        let task = match self.get_task(task_id)? {
+            Some(t) => t,
+            None => return Err(StateError::NotFound(format!("Task '{}' not found", task_id))),
+        };
+
+        if task.status == TaskStatus::Done {
+            return Ok(()); // Already done
+        }
+
+        self.db.execute(
+            "UPDATE tasks SET status = ?1, completed_at = ?2 WHERE id = ?3",
+            params![TaskStatus::Done.as_str(), self.now(), task_id],
+        )?;
+
+        self.log_history("task_done", Some(&format!("{} (admin)", task_id)))?;
+
+        // Auto-complete parent if all siblings are done
+        if let Some(parent_id) = &task.parent_id {
+            self.maybe_complete_parent(parent_id)?;
+        }
+
+        Ok(())
+    }
+
+    /// Admin unclaim a task (bypasses worker check)
+    pub fn admin_unclaim_task(&self, task_id: &str) -> StateResult<()> {
+        let task = match self.get_task(task_id)? {
+            Some(t) => t,
+            None => return Err(StateError::NotFound(format!("Task '{}' not found", task_id))),
+        };
+
+        if task.status != TaskStatus::Doing {
+            return Ok(()); // Not claimed
+        }
+
+        self.db.execute(
+            "UPDATE tasks SET status = ?1, claimed_by = NULL, claimed_at = NULL WHERE id = ?2",
+            params![TaskStatus::Todo.as_str(), task_id],
+        )?;
+
+        self.log_history(
+            "task_unclaim",
+            Some(&format!("{} (admin)", task_id)),
+        )?;
+        Ok(())
+    }
+
     // =========================================================================
     // Worker Methods
     // =========================================================================

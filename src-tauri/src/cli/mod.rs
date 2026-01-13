@@ -16,6 +16,7 @@ pub mod pause;
 pub mod resume;
 pub mod runs;
 pub mod spec;
+pub mod tasks;
 pub mod templates;
 pub mod view;
 
@@ -30,6 +31,10 @@ pub use go::{run as run_go, GoError, GoOutput, GoResult};
 pub use man::run_man;
 pub use runs::list_runs;
 pub use spec::{read_spec, run_spec, update_spec_amendments, Amendment, SpecError};
+pub use tasks::{
+    run_task_add, run_task_delete, run_task_done, run_task_reopen, run_task_unclaim, run_tasks,
+    TaskError,
+};
 pub use templates::{
     get_template, get_templates_dir, list_templates, read_template_eval, read_template_spec,
     run_templates, Template, TemplateError,
