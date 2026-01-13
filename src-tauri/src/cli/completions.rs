@@ -85,11 +85,36 @@ pub fn generate_completions(shell: Shell, for_worker: bool) -> String {
     String::from_utf8(buf).unwrap_or_default()
 }
 
+/// Parse shell name string to Shell enum
+fn parse_shell(name: &str) -> Option<Shell> {
+    match name.to_lowercase().as_str() {
+        "bash" => Some(Shell::Bash),
+        "zsh" => Some(Shell::Zsh),
+        "fish" => Some(Shell::Fish),
+        "elvish" => Some(Shell::Elvish),
+        "powershell" | "pwsh" => Some(Shell::PowerShell),
+        _ => None,
+    }
+}
+
 /// Install completions for the detected shell
 pub fn run_completions(args: &CompletionsArgs) -> anyhow::Result<()> {
+    // If a shell argument is provided, print completions to stdout and exit
+    if let Some(shell_name) = &args.shell {
+        let shell = parse_shell(shell_name).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Unknown shell '{}'. Supported: bash, zsh, fish, elvish, powershell",
+                shell_name
+            )
+        })?;
+        print_completions(shell, false);
+        return Ok(());
+    }
+
+    // Otherwise, detect shell and install completions
     let shell = detect_shell().ok_or_else(|| {
         anyhow::anyhow!(
-            "Could not detect shell. Set $SHELL or use shell-specific completion commands."
+            "Could not detect shell. Set $SHELL or specify shell: hirsel completions bash"
         )
     })?;
 
