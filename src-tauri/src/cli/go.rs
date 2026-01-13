@@ -365,7 +365,7 @@ pub fn slugify(name: &str) -> String {
 // =============================================================================
 
 /// Result of a successful `go` command
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct GoOutput {
     pub run_name: String,
     pub project_path: PathBuf,

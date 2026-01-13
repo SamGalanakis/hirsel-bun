@@ -37,7 +37,7 @@ pub enum MsgError {
 pub type MsgResult<T> = Result<T, MsgError>;
 
 /// Output from viewing messages
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct MessageView {
     pub sender: String,
     pub content: String,
@@ -46,7 +46,7 @@ pub struct MessageView {
 }
 
 /// Output from the msg command
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub enum MsgOutput {
     /// List of available threads with message counts
     ThreadList {
@@ -67,7 +67,7 @@ pub enum MsgOutput {
 }
 
 /// Information about a thread
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct ThreadInfo {
     pub name: String,
     pub message_count: i64,

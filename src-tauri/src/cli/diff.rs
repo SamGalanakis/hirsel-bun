@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use crate::core::{git, Config, SQLiteState};
 
 /// Result of running the diff command
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct DiffResult {
     pub run_name: String,
     pub has_changes: bool,
