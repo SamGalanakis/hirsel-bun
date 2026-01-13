@@ -35,6 +35,25 @@ body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
+/* Title bar - draggable region */
+.title-bar {
+  background-color: var(--pasture-800);
+  -webkit-app-region: drag;
+}
+
+.title-bar button {
+  -webkit-app-region: no-drag;
+}
+
+/* Panel backgrounds */
+.run-list-panel {
+  background-color: var(--pasture-800);
+}
+
+.chat-panel {
+  background-color: var(--pasture-800);
+}
+
 /* Status dot animations */
 .status-working {
   background-color: var(--amber-500);
@@ -63,4 +82,147 @@ body {
     opacity: 0.7;
     box-shadow: 0 0 12px rgba(212, 165, 116, 0.8);
   }
+}
+
+/* Border colors using CSS variables */
+.border-pasture-600 {
+  border-color: var(--pasture-600);
+}
+
+.border-pasture-700 {
+  border-color: var(--pasture-700);
+}
+
+.border-pasture-800 {
+  border-color: var(--pasture-800);
+}
+
+/* Background colors */
+.bg-pasture-900 {
+  background-color: var(--pasture-900);
+}
+
+.bg-pasture-800 {
+  background-color: var(--pasture-800);
+}
+
+.bg-pasture-700 {
+  background-color: var(--pasture-700);
+}
+
+.bg-pasture-600 {
+  background-color: var(--pasture-600);
+}
+
+/* Text colors */
+.text-wool-100 {
+  color: var(--wool-100);
+}
+
+.text-wool-300 {
+  color: var(--wool-300);
+}
+
+.text-wool-500 {
+  color: var(--wool-500);
+}
+
+.text-wool-700 {
+  color: var(--wool-700);
+}
+
+.text-amber-500 {
+  color: var(--amber-500);
+}
+
+.text-sage {
+  color: var(--sage);
+}
+
+.text-golden {
+  color: var(--golden);
+}
+
+.text-terra {
+  color: var(--terra);
+}
+
+/* Hover states */
+.hover\:bg-pasture-700:hover {
+  background-color: var(--pasture-700);
+}
+
+.hover\:bg-pasture-600:hover {
+  background-color: var(--pasture-600);
+}
+
+.hover\:text-wool-300:hover {
+  color: var(--wool-300);
+}
+
+/* Button styles */
+.bg-amber-600 {
+  background-color: var(--amber-600);
+}
+
+.hover\:bg-amber-500:hover {
+  background-color: var(--amber-500);
+}
+
+/* Focus states */
+.focus\:border-amber-500:focus {
+  border-color: var(--amber-500);
+}
+
+/* Status badge backgrounds with opacity */
+.bg-amber-500\/20 {
+  background-color: rgba(212, 165, 116, 0.2);
+}
+
+.bg-golden\/20 {
+  background-color: rgba(201, 162, 39, 0.2);
+}
+
+.bg-sage\/20 {
+  background-color: rgba(125, 153, 112, 0.2);
+}
+
+.bg-terra\/20 {
+  background-color: rgba(196, 92, 74, 0.2);
+}
+
+.bg-wool-700\/20 {
+  background-color: rgba(90, 85, 80, 0.2);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--pasture-900);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--pasture-600);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--pasture-700);
+}
+
+/* Transitions */
+.transition-colors {
+  transition-property: color, background-color, border-color;
+  transition-timing-function: ease-out;
+  transition-duration: 150ms;
+}
+
+/* Selection */
+::selection {
+  background-color: var(--amber-500);
+  color: var(--pasture-900);
 }
