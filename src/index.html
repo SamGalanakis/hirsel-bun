@@ -8,9 +8,11 @@
   <!-- Import TypeScript components before Alpine loads -->
   <script type="module">
     import { runList } from './components/run-list.ts';
+    import { taskPanel } from './components/task-panel.ts';
     import { toast, toastContainer } from './lib/toast.ts';
     // Make components available globally for Alpine
     window.runList = runList;
+    window.taskPanel = taskPanel;
     window.toast = toast;
     window.toastContainer = toastContainer;
   </script>
@@ -515,43 +517,88 @@
           </div>
 
           <!-- Tasks Panel -->
-          <div class="tasks-panel w-1/2 flex flex-col">
-            <div class="p-3 border-b border-pasture-700">
+          <div class="tasks-panel w-1/2 flex flex-col" x-data="taskPanel()">
+            <div class="p-3 border-b border-pasture-700 flex items-center justify-between">
               <h3 class="text-sm font-medium text-wool-300">Tasks</h3>
+              <span class="text-xs text-wool-500" x-text="flatTasks.filter(t => t.status === 'done').length + '/' + flatTasks.length"></span>
             </div>
-            <div class="flex-1 overflow-y-auto" x-data="taskPanel()">
-              <template x-for="task in tasks" :key="task.id">
+            <div class="flex-1 overflow-y-auto relative" @click.away="hideContextMenu()">
+              <!-- Task list -->
+              <template x-for="task in flatTasks" :key="task.id">
                 <div
-                  class="task-item px-3 py-2 hover:bg-pasture-700 cursor-pointer border-b border-pasture-800"
+                  @click="selectTask(task.id)"
+                  @contextmenu="showContextMenu($event, task)"
+                  class="task-item px-3 py-2 hover:bg-pasture-700 cursor-pointer border-b border-pasture-800 transition-colors"
+                  :class="{ 'bg-pasture-700': selectedTaskId === task.id }"
                   :style="{ paddingLeft: (task.depth * 16 + 12) + 'px' }"
                 >
                   <div class="flex items-center gap-2">
+                    <!-- Status icon -->
                     <span
-                      class="task-icon text-sm"
-                      :class="{
-                        'text-sage': task.status === 'done',
-                        'text-amber-500': task.status === 'doing',
-                        'text-wool-500': task.status === 'todo'
-                      }"
-                      x-text="task.status === 'done' ? '✓' : task.status === 'doing' ? '●' : '○'"
+                      class="task-icon text-sm flex-shrink-0"
+                      :class="getStatusClass(task.status)"
+                      x-text="getStatusIcon(task.status)"
                     ></span>
+                    <!-- Task ID/name -->
                     <span
-                      class="text-sm truncate"
-                      :class="{
-                        'text-wool-500 line-through': task.status === 'done',
-                        'text-wool-100': task.status !== 'done'
-                      }"
+                      :class="getTaskNameClass(task)"
                       x-text="task.id"
+                      :title="task.description || task.id"
                     ></span>
+                    <!-- Blocked indicator -->
+                    <span x-show="task.isBlocked" class="text-xs text-terra" title="Blocked by other tasks">⊘</span>
                   </div>
-                  <div x-show="task.claimedBy" class="text-xs text-wool-500 mt-1 ml-5">
+                  <!-- Claimed by info -->
+                  <div x-show="task.claimedBy" class="text-xs text-wool-500 mt-1 ml-5 flex items-center gap-1">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                    </svg>
                     <span x-text="task.claimedBy"></span>
                   </div>
+                  <!-- Description preview (if different from ID) -->
+                  <div x-show="task.description && task.description !== task.id" class="text-xs text-wool-600 mt-1 ml-5 truncate" x-text="task.description"></div>
                 </div>
               </template>
 
+              <!-- Context menu -->
+              <div
+                x-show="contextMenuVisible"
+                x-transition
+                :style="'left: ' + contextMenuX + 'px; top: ' + contextMenuY + 'px'"
+                class="fixed z-50 bg-pasture-700 border border-pasture-600 rounded shadow-lg py-1 min-w-[140px]"
+              >
+                <button
+                  x-show="canMarkDone(contextMenuTask)"
+                  @click="contextMarkDone()"
+                  class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600 flex items-center gap-2"
+                >
+                  <span class="text-sage">✓</span> Mark Done
+                </button>
+                <button
+                  x-show="canReopen(contextMenuTask)"
+                  @click="contextReopen()"
+                  class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600 flex items-center gap-2"
+                >
+                  <span class="text-amber-500">○</span> Reopen
+                </button>
+                <button
+                  x-show="canUnclaim(contextMenuTask)"
+                  @click="contextUnclaim()"
+                  class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600 flex items-center gap-2"
+                >
+                  <span class="text-golden">↩</span> Unclaim
+                </button>
+                <div class="border-t border-pasture-600 my-1"></div>
+                <button
+                  @click="contextDelete()"
+                  class="w-full px-3 py-1.5 text-left text-sm text-terra hover:bg-pasture-600 flex items-center gap-2"
+                >
+                  <span>✗</span> Delete
+                </button>
+              </div>
+
               <!-- Empty tasks state -->
-              <div x-show="tasks.length === 0 && !loading" class="empty-state text-center text-wool-500 py-6">
+              <div x-show="flatTasks.length === 0 && !loading && !error" class="empty-state text-center text-wool-500 py-6">
                 <svg class="w-12 h-12 mx-auto mb-2 text-wool-600">
                   <use href="#sheep-sleeping"/>
                 </svg>
@@ -565,6 +612,12 @@
                   <use href="#sheep-walking"/>
                 </svg>
                 <p class="text-sm text-wool-400">Loading tasks...</p>
+              </div>
+
+              <!-- Error state -->
+              <div x-show="error" class="p-4 text-center text-terra">
+                <p class="text-sm" x-text="error"></p>
+                <button @click="loadTasks(getSelectedRun())" class="mt-2 text-xs text-amber-500 hover:underline">Retry</button>
               </div>
             </div>
           </div>
@@ -1667,20 +1720,299 @@
     }
 
     // Task panel component
+    // Displays hierarchical task list with status icons, claimed-by info, and context menu
     function taskPanel() {
       return {
         tasks: [],
+        flatTasks: [], // Flattened for display with depth info
         loading: false,
+        error: null,
+        pollInterval: null,
+        selectedTaskId: null,
+        contextMenuVisible: false,
+        contextMenuX: 0,
+        contextMenuY: 0,
+        contextMenuTask: null,
 
         async init() {
+          // Listen for run selection events
+          window.addEventListener('run-selected', async (e) => {
+            if (e.detail) {
+              await this.loadTasks(e.detail);
+            } else {
+              this.clearTasks();
+            }
+          });
+
+          // Check if run already selected
+          const app = this.getAppState();
+          if (app && app.selectedRun) {
+            await this.loadTasks(app.selectedRun);
+          }
+        },
+
+        getAppState() {
+          let el = this.$el;
+          while (el && el.parentElement) {
+            el = el.parentElement;
+            if (el._x_dataStack) {
+              return el._x_dataStack[0];
+            }
+          }
+          return null;
+        },
+
+        getSelectedRun() {
+          const app = this.getAppState();
+          return app ? app.selectedRun : null;
+        },
+
+        async loadTasks(runName) {
+          // Stop existing poll
+          if (this.pollInterval) {
+            clearInterval(this.pollInterval);
+            this.pollInterval = null;
+          }
+
           this.loading = true;
+          this.error = null;
+
           try {
-            // TODO: Fetch from Tauri
-            await new Promise(resolve => setTimeout(resolve, 400));
-            this.tasks = [];
-          } finally {
+            if (window.__TAURI__) {
+              const { invoke } = await import('@tauri-apps/api/core');
+              this.tasks = await invoke('get_tasks', { runName });
+            } else {
+              // Demo mode - show empty
+              this.tasks = [];
+            }
+            this.buildFlatList();
+            this.loading = false;
+
+            // Update parent state with task counts
+            this.updateTaskCounts();
+
+            // Start polling
+            this.pollInterval = setInterval(async () => {
+              const currentRun = this.getSelectedRun();
+              if (!currentRun) return;
+              try {
+                if (window.__TAURI__) {
+                  const { invoke } = await import('@tauri-apps/api/core');
+                  this.tasks = await invoke('get_tasks', { runName: currentRun });
+                  this.buildFlatList();
+                  this.updateTaskCounts();
+                }
+              } catch (err) {
+                console.error('Task poll error:', err);
+              }
+            }, 2000);
+          } catch (err) {
+            this.error = err.message || String(err);
             this.loading = false;
           }
+        },
+
+        clearTasks() {
+          if (this.pollInterval) {
+            clearInterval(this.pollInterval);
+            this.pollInterval = null;
+          }
+          this.tasks = [];
+          this.flatTasks = [];
+          this.selectedTaskId = null;
+          this.loading = false;
+          this.error = null;
+        },
+
+        // Build flattened list with depth for hierarchical display
+        buildFlatList() {
+          const taskMap = new Map();
+          const rootTasks = [];
+
+          // First pass: index all tasks
+          this.tasks.forEach(t => {
+            taskMap.set(t.id, { ...t, children: [], depth: 0 });
+          });
+
+          // Second pass: build tree
+          this.tasks.forEach(t => {
+            const task = taskMap.get(t.id);
+            if (t.parentId && taskMap.has(t.parentId)) {
+              taskMap.get(t.parentId).children.push(task);
+            } else {
+              rootTasks.push(task);
+            }
+          });
+
+          // Third pass: flatten with depth
+          const flat = [];
+          const flatten = (tasks, depth) => {
+            tasks.forEach(t => {
+              t.depth = depth;
+              // Check if blocked
+              t.isBlocked = t.blockedBy && t.blockedBy.length > 0 &&
+                t.blockedBy.some(bid => {
+                  const blocker = taskMap.get(bid);
+                  return blocker && blocker.status !== 'done';
+                });
+              flat.push(t);
+              if (t.children && t.children.length > 0) {
+                flatten(t.children, depth + 1);
+              }
+            });
+          };
+          flatten(rootTasks, 0);
+          this.flatTasks = flat;
+        },
+
+        updateTaskCounts() {
+          const app = this.getAppState();
+          if (app) {
+            app.tasksTotal = this.tasks.length;
+            app.tasksDone = this.tasks.filter(t => t.status === 'done').length;
+          }
+        },
+
+        getStatusIcon(status) {
+          return status === 'done' ? '✓' : status === 'doing' ? '●' : '○';
+        },
+
+        getStatusClass(status) {
+          if (status === 'done') return 'text-sage';
+          if (status === 'doing') return 'text-amber-500';
+          return 'text-wool-500';
+        },
+
+        getTaskNameClass(task) {
+          const classes = ['text-sm', 'truncate'];
+          if (task.status === 'done') {
+            classes.push('text-wool-500', 'line-through');
+          } else if (task.isBlocked) {
+            classes.push('text-wool-500', 'italic');
+          } else {
+            classes.push('text-wool-100');
+          }
+          return classes.join(' ');
+        },
+
+        selectTask(taskId) {
+          this.selectedTaskId = taskId;
+          window.dispatchEvent(new CustomEvent('task-selected', { detail: taskId }));
+        },
+
+        showContextMenu(event, task) {
+          event.preventDefault();
+          event.stopPropagation();
+          this.contextMenuX = event.clientX;
+          this.contextMenuY = event.clientY;
+          this.contextMenuTask = task;
+          this.contextMenuVisible = true;
+        },
+
+        hideContextMenu() {
+          this.contextMenuVisible = false;
+          this.contextMenuTask = null;
+        },
+
+        canMarkDone(task) {
+          return task && task.status !== 'done';
+        },
+
+        canReopen(task) {
+          return task && task.status === 'done';
+        },
+
+        canUnclaim(task) {
+          return task && task.status === 'doing' && task.claimedBy;
+        },
+
+        async contextMarkDone() {
+          if (!this.contextMenuTask || !this.canMarkDone(this.contextMenuTask)) {
+            this.hideContextMenu();
+            return;
+          }
+          const runName = this.getSelectedRun();
+          if (!runName) return;
+
+          try {
+            if (window.__TAURI__) {
+              const { invoke } = await import('@tauri-apps/api/core');
+              await invoke('complete_task', { runName, taskId: this.contextMenuTask.id });
+              await this.loadTasks(runName);
+            }
+          } catch (err) {
+            console.error('Failed to complete task:', err);
+            alert('Failed to complete task: ' + (err.message || err));
+          }
+          this.hideContextMenu();
+        },
+
+        async contextReopen() {
+          if (!this.contextMenuTask || !this.canReopen(this.contextMenuTask)) {
+            this.hideContextMenu();
+            return;
+          }
+          const runName = this.getSelectedRun();
+          if (!runName) return;
+
+          try {
+            if (window.__TAURI__) {
+              const { invoke } = await import('@tauri-apps/api/core');
+              await invoke('reopen_task', { runName, taskId: this.contextMenuTask.id });
+              await this.loadTasks(runName);
+            }
+          } catch (err) {
+            console.error('Failed to reopen task:', err);
+            alert('Failed to reopen task: ' + (err.message || err));
+          }
+          this.hideContextMenu();
+        },
+
+        async contextUnclaim() {
+          if (!this.contextMenuTask || !this.canUnclaim(this.contextMenuTask)) {
+            this.hideContextMenu();
+            return;
+          }
+          const runName = this.getSelectedRun();
+          if (!runName) return;
+
+          try {
+            if (window.__TAURI__) {
+              const { invoke } = await import('@tauri-apps/api/core');
+              await invoke('unclaim_task', { runName, taskId: this.contextMenuTask.id });
+              await this.loadTasks(runName);
+            }
+          } catch (err) {
+            console.error('Failed to unclaim task:', err);
+            alert('Failed to unclaim task: ' + (err.message || err));
+          }
+          this.hideContextMenu();
+        },
+
+        async contextDelete() {
+          if (!this.contextMenuTask) {
+            this.hideContextMenu();
+            return;
+          }
+          const runName = this.getSelectedRun();
+          if (!runName) return;
+
+          if (!confirm(`Delete task "${this.contextMenuTask.id}"?`)) {
+            this.hideContextMenu();
+            return;
+          }
+
+          try {
+            if (window.__TAURI__) {
+              const { invoke } = await import('@tauri-apps/api/core');
+              await invoke('delete_task', { runName, taskId: this.contextMenuTask.id });
+              await this.loadTasks(runName);
+            }
+          } catch (err) {
+            console.error('Failed to delete task:', err);
+            alert('Failed to delete task: ' + (err.message || err));
+          }
+          this.hideContextMenu();
         }
       };
     }
