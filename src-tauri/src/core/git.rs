@@ -855,7 +855,7 @@ mod tests {
 
         // Create initial commit
         let sig = Signature::now("test", "test@test.com").unwrap();
-        let tree_id = {
+        {
             let mut index = repo.index().unwrap();
 
             // Create a test file
@@ -865,11 +865,11 @@ mod tests {
 
             index.add_path(Path::new("test.txt")).unwrap();
             index.write().unwrap();
-            index.write_tree().unwrap()
-        };
-        let tree = repo.find_tree(tree_id).unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
-            .unwrap();
+            let tree_id = index.write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+                .unwrap();
+        }
 
         (dir, repo)
     }
