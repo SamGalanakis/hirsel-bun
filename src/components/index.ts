@@ -6,6 +6,8 @@
 
 export { runList, registerRunListComponent } from './run-list';
 export { runDetail, registerRunDetailComponent } from './run-detail';
+export { activityLog, registerActivityLogComponent } from './activity-log';
+export type { ActivityLogData } from './activity-log';
 export { statusBar, registerStatusBar } from './status-bar';
 export type { StatusBarState, StatusBarComponent } from './status-bar';
 
@@ -32,6 +34,9 @@ export function registerAllComponents(): void {
   });
   import('./run-detail').then(({ registerRunDetailComponent }) => {
     registerRunDetailComponent();
+  });
+  import('./activity-log').then(({ registerActivityLogComponent }) => {
+    registerActivityLogComponent();
   });
   import('./status-bar').then(({ registerStatusBar }) => {
     registerStatusBar();
