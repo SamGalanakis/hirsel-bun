@@ -13,6 +13,7 @@ pub mod config;
 pub mod delete;
 pub mod deliver;
 pub mod go;
+pub mod improve;
 pub mod log;
 pub mod man;
 pub mod msg;
