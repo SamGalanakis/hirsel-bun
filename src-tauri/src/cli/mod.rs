@@ -7,7 +7,14 @@
 //!
 //! When invoked without arguments, `hirsel` launches the native GUI.
 
+pub mod completions;
+pub mod man;
+
 use clap::{Args, Parser, Subcommand};
+
+// Re-export command implementations
+pub use completions::{generate_completions, print_completions, run_completions};
+pub use man::run_man;
 
 /// Hirsel - Herd your AI coding agents
 #[derive(Parser, Debug)]
