@@ -1,15 +1,26 @@
-//! Worker subprocess commands for hirsel-worker.
+//! Worker subprocess implementation for hirsel.
 //!
-//! This module provides the implementation for commands that AI agents
-//! use inside their worker tmux sessions. These commands interact with
-//! the hirsel state through environment variables:
+//! This module implements the worker subprocess that runs inside a tmux session
+//! and manages an AI coding agent through the Agent Control Protocol (ACP).
 //!
-//! - `HIRSEL_RUN_DIR` - Path to the run directory
-//! - `HIRSEL_WORKER_NAME` - Name of this worker
-//! - `HIRSEL_WORKER_SUBPROCESS` - Marker that we're running as a worker
+//! ## Worker Lifecycle
+//!
+//! 1. Worker starts via `hirsel-worker` binary
+//! 2. Connects to the run's SQLite database
+//! 3. Spawns the AI agent process
+//! 4. Sends the initial prompt (spec + tasks)
+//! 5. Enters main loop handling:
+//!    - Agent responses and tool calls
+//!    - Task claim/done/unclaim requests
+//!    - Message sending/receiving
+//!    - Heartbeat updates
+//! 6. Signals completion via work_done
 
+pub mod mcp;
 pub mod msg;
+pub mod runner;
 
-// Re-export commonly used items
+pub use mcp::{McpServer, run_mcp_server};
 pub use msg::{execute_inbox, execute_list, execute_read, execute_send};
 pub use msg::{inbox, list, read, send, MsgError, MsgResult};
+pub use runner::{WorkerConfig, WorkerError, WorkerRunner};
