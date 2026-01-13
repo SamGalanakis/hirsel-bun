@@ -1,0 +1,10 @@
+[project]
+name = "todo-api"
+version = "0.1.0"
+description = "A simple todo API"
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

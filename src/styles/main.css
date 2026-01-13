@@ -1,0 +1,66 @@
+@import "tailwindcss";
+@import "basecoat-css";
+
+/* Hirsel theme customizations */
+/* Override Basecoat defaults with warm "hirsel" palette */
+
+:root {
+  /* Backgrounds (dark pasture at dusk) */
+  --pasture-900: #1a1a1a;
+  --pasture-800: #242424;
+  --pasture-700: #2d2d2d;
+  --pasture-600: #333333;
+
+  /* Text (warm off-white, like wool) */
+  --wool-100: #e8e4df;
+  --wool-300: #b5b0a8;
+  --wool-500: #8a8580;
+  --wool-700: #5a5550;
+
+  /* Accent (shepherd's lantern) */
+  --amber-400: #e8c19a;
+  --amber-500: #d4a574;
+  --amber-600: #b8895c;
+
+  /* Status colors */
+  --sage: #7d9970;
+  --golden: #c9a227;
+  --terra: #c45c4a;
+}
+
+/* Apply hirsel theme to body */
+body {
+  background-color: var(--pasture-900);
+  color: var(--wool-100);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Status dot animations */
+.status-working {
+  background-color: var(--amber-500);
+  box-shadow: 0 0 8px rgba(212, 165, 116, 0.6);
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.status-waiting {
+  background-color: var(--golden);
+}
+
+.status-done {
+  background-color: var(--sage);
+}
+
+.status-idle {
+  background-color: var(--wool-700);
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 8px rgba(212, 165, 116, 0.6);
+  }
+  50% {
+    opacity: 0.7;
+    box-shadow: 0 0 12px rgba(212, 165, 116, 0.8);
+  }
+}
