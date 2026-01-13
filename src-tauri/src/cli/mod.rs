@@ -14,6 +14,7 @@ pub mod deliver;
 pub mod go;
 pub mod log;
 pub mod man;
+pub mod msg;
 pub mod pause;
 pub mod prune;
 pub mod resume;
@@ -39,6 +40,7 @@ pub use templates::{
     get_template, get_templates_dir, list_templates, read_template_eval, read_template_spec,
     run_templates, Template, TemplateError,
 };
+pub use msg::{run as run_msg, get_available_threads, MsgError, MsgOutput, MsgResult};
 
 /// Hirsel - Herd your AI coding agents
 #[derive(Parser, Debug)]
