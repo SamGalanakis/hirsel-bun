@@ -142,45 +142,110 @@
     </aside>
 
     <!-- Center Panel: Run Details -->
-    <section class="flex-1 flex flex-col overflow-hidden">
+    <section class="flex-1 flex flex-col overflow-hidden" x-data="runDetail()">
 
       <!-- Run Header -->
-      <div x-show="selectedRun" class="run-header p-4 border-b border-pasture-600">
+      <div x-show="runName" class="run-header p-4 border-b border-pasture-600">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-3">
-            <h2 class="text-xl font-semibold text-wool-100" x-text="runDetail?.name || selectedRun"></h2>
+            <h2 class="text-xl font-semibold text-wool-100" x-text="detail?.name || runName"></h2>
             <span
               class="status-badge px-2 py-0.5 rounded text-xs font-medium"
-              :class="getStatusBadgeClass(runDetail?.status)"
-              x-text="runDetail?.status || 'loading'"
+              :class="getStatusBadgeClass(detail?.status)"
+              x-text="getStatusLabel(detail?.status)"
             ></span>
+            <!-- Human in the loop indicator -->
+            <span x-show="detail?.humanInTheLoop" class="text-xs text-amber-400 flex items-center gap-1" title="Human in the Loop mode">
+              <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"/></svg>
+              HITL
+            </span>
           </div>
           <div class="flex items-center gap-2">
             <button
-              @click="pauseRun()"
-              x-show="runDetail?.status === 'working'"
-              class="btn-secondary px-3 py-1 text-sm rounded hover:bg-pasture-600"
+              @click="handlePause()"
+              x-show="canPause()"
+              class="btn-secondary px-3 py-1 text-sm rounded border border-pasture-500 hover:bg-pasture-600"
             >
               Pause
             </button>
             <button
-              @click="resumeRun()"
-              x-show="runDetail?.status === 'paused' || runDetail?.status === 'timed_out'"
+              @click="handleResume()"
+              x-show="canResume()"
               class="btn-primary px-3 py-1 text-sm rounded bg-amber-600 hover:bg-amber-500"
             >
               Resume
             </button>
+            <button
+              @click="handleDeliver()"
+              x-show="canDeliver()"
+              class="btn-success px-3 py-1 text-sm rounded bg-sage hover:bg-sage/80 text-pasture-900"
+            >
+              Deliver
+            </button>
           </div>
         </div>
+
+        <!-- Stats row -->
         <div class="flex items-center gap-4 mt-2 text-sm text-wool-500">
-          <span x-text="runDetail?.workersActive + '/' + runDetail?.workersTotal + ' workers'"></span>
-          <span x-text="formatElapsed(runDetail?.elapsedMinutes || 0) + ' elapsed'"></span>
-          <span x-show="runDetail?.timeLimitMinutes" x-text="'Limit: ' + runDetail?.timeLimitMinutes + 'm'"></span>
+          <span x-text="getWorkerCount().active + '/' + getWorkerCount().total + ' workers'"></span>
+          <span x-text="getTaskProgress().done + '/' + getTaskProgress().total + ' tasks'"></span>
+          <span x-show="diffStats" class="text-sage">
+            +<span x-text="diffStats?.insertions || 0"></span>
+            <span class="text-terra ml-1">-<span x-text="diffStats?.deletions || 0"></span></span>
+          </span>
+        </div>
+
+        <!-- Time progress bar -->
+        <div x-show="detail?.timeLimitMinutes" class="mt-3">
+          <div class="flex justify-between text-xs text-wool-500 mb-1">
+            <span x-text="formatElapsed(Math.floor((Date.now() - new Date(detail?.startedAt || Date.now()).getTime()) / 60000)) + ' elapsed'"></span>
+            <span x-text="formatTimeRemaining(detail?.timeLimitMinutes, Math.floor((Date.now() - new Date(detail?.startedAt || Date.now()).getTime()) / 60000))"></span>
+          </div>
+          <div class="h-1.5 bg-pasture-600 rounded-full overflow-hidden">
+            <div
+              class="h-full rounded-full transition-all duration-1000"
+              :class="calculateTimeProgress(Math.floor((Date.now() - new Date(detail?.startedAt || Date.now()).getTime()) / 60000), detail?.timeLimitMinutes) > 80 ? 'bg-terra' : 'bg-amber-500'"
+              :style="'width: ' + calculateTimeProgress(Math.floor((Date.now() - new Date(detail?.startedAt || Date.now()).getTime()) / 60000), detail?.timeLimitMinutes) + '%'"
+            ></div>
+          </div>
+        </div>
+
+        <!-- Project info row -->
+        <div x-show="detail?.projectPath" class="mt-3 flex items-center gap-3 text-xs text-wool-500">
+          <span class="flex items-center gap-1" title="Project path">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+            <span x-text="detail?.projectPath?.split('/').pop()"></span>
+          </span>
+          <span class="flex items-center gap-1" title="Branch name">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            <span x-text="'hirsel/' + runName"></span>
+          </span>
+          <span x-show="detail?.workerScale" class="flex items-center gap-1" title="Worker scale">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+            <span x-text="detail?.workerScale"></span>
+          </span>
+        </div>
+
+        <!-- Waiting reason (when status is waiting) -->
+        <div x-show="detail?.waitingReason" class="mt-3 p-2 bg-golden/10 border border-golden/30 rounded text-sm text-golden">
+          <span class="font-medium">Waiting:</span>
+          <span x-text="detail?.waitingReason"></span>
         </div>
       </div>
 
+      <!-- Loading state -->
+      <div x-show="loading" class="p-4 text-center text-wool-500">
+        <div class="animate-pulse">Loading run details...</div>
+      </div>
+
+      <!-- Error state -->
+      <div x-show="error" class="p-4 text-center text-terra">
+        <p class="text-sm" x-text="error"></p>
+        <button @click="loadRunDetail(runName)" class="mt-2 text-xs text-amber-500 hover:underline">Retry</button>
+      </div>
+
       <!-- Empty state when no run selected -->
-      <div x-show="!selectedRun" class="flex-1 flex items-center justify-center">
+      <div x-show="!runName && !loading" class="flex-1 flex items-center justify-center">
         <div class="text-center text-wool-500">
           <div class="text-6xl mb-4">🐑</div>
           <p class="text-lg">Select a run to view details</p>
@@ -189,7 +254,7 @@
       </div>
 
       <!-- Run Content (Workers/Tasks + Activity) -->
-      <div x-show="selectedRun" class="flex-1 flex flex-col overflow-hidden">
+      <div x-show="runName" class="flex-1 flex flex-col overflow-hidden">
 
         <!-- Top: Workers and Tasks side by side -->
         <div class="flex-1 flex overflow-hidden border-b border-pasture-600">
@@ -838,6 +903,239 @@
             alert(`Failed to deliver: ${err.message || err}`);
           }
           this.hideContextMenu();
+        }
+      };
+    }
+
+    // Run detail component
+    // Displays detailed info about selected run with status, progress, actions
+    function runDetail() {
+      return {
+        runName: null,
+        detail: null,
+        tasks: [],
+        workers: [],
+        diffStats: null,
+        loading: false,
+        error: null,
+        pollInterval: null,
+
+        async init() {
+          // Listen for run selection events
+          window.addEventListener('run-selected', async (e) => {
+            if (e.detail) {
+              await this.loadRunDetail(e.detail);
+            } else {
+              this.clearRunDetail();
+            }
+          });
+        },
+
+        destroy() {
+          if (this.pollInterval) {
+            clearInterval(this.pollInterval);
+            this.pollInterval = null;
+          }
+        },
+
+        async loadRunDetail(name) {
+          if (this.pollInterval) {
+            clearInterval(this.pollInterval);
+            this.pollInterval = null;
+          }
+
+          this.runName = name;
+          this.loading = true;
+          this.error = null;
+
+          try {
+            if (window.__TAURI__) {
+              const { invoke } = await import('@tauri-apps/api/core');
+              const [detail, tasks, workers] = await Promise.all([
+                invoke('get_run_detail', { name }),
+                invoke('get_tasks', { runName: name }),
+                invoke('get_workers', { runName: name }),
+              ]);
+              this.detail = detail;
+              this.tasks = tasks;
+              this.workers = workers;
+
+              // Try to get diff stats
+              try {
+                this.diffStats = await invoke('get_diff_stats', { runName: name });
+              } catch {
+                this.diffStats = null;
+              }
+
+              this.loading = false;
+
+              // Poll for updates
+              this.pollInterval = setInterval(async () => {
+                if (!this.runName) return;
+                try {
+                  const { invoke } = await import('@tauri-apps/api/core');
+                  const [detail, tasks, workers] = await Promise.all([
+                    invoke('get_run_detail', { name: this.runName }),
+                    invoke('get_tasks', { runName: this.runName }),
+                    invoke('get_workers', { runName: this.runName }),
+                  ]);
+                  this.detail = detail;
+                  this.tasks = tasks;
+                  this.workers = workers;
+                } catch (err) {
+                  console.error('Failed to poll:', err);
+                }
+              }, 2000);
+            } else {
+              // Demo mode
+              this.loading = false;
+            }
+          } catch (err) {
+            this.error = err.message || String(err);
+            this.loading = false;
+          }
+        },
+
+        clearRunDetail() {
+          if (this.pollInterval) {
+            clearInterval(this.pollInterval);
+            this.pollInterval = null;
+          }
+          this.runName = null;
+          this.detail = null;
+          this.tasks = [];
+          this.workers = [];
+          this.diffStats = null;
+          this.loading = false;
+          this.error = null;
+        },
+
+        getStatusBadgeClass(status) {
+          const classes = {
+            idle: 'bg-wool-700/20 text-wool-500',
+            working: 'bg-amber-500/20 text-amber-500',
+            paused: 'bg-golden/20 text-golden',
+            runaway: 'bg-terra/20 text-terra',
+            timed_out: 'bg-terra/20 text-terra',
+            eval: 'bg-amber-400/20 text-amber-400',
+            eval_failed: 'bg-terra/20 text-terra',
+            waiting: 'bg-golden/20 text-golden',
+            done: 'bg-sage/20 text-sage',
+            delivered: 'bg-sage/20 text-sage',
+            merged: 'bg-sage/20 text-sage',
+          };
+          return classes[status] || classes.idle;
+        },
+
+        getStatusLabel(status) {
+          const labels = {
+            idle: 'Idle',
+            working: 'Working',
+            paused: 'Paused',
+            runaway: 'Runaway',
+            timed_out: 'Timed Out',
+            eval: 'Evaluating',
+            eval_failed: 'Eval Failed',
+            waiting: 'Waiting',
+            done: 'Done',
+            delivered: 'Delivered',
+            merged: 'Merged',
+          };
+          return labels[status] || status || 'Unknown';
+        },
+
+        formatElapsed(minutes) {
+          if (!minutes) return '0m';
+          if (minutes < 60) return minutes + 'm';
+          const h = Math.floor(minutes / 60);
+          const m = minutes % 60;
+          return m > 0 ? h + 'h ' + m + 'm' : h + 'h';
+        },
+
+        formatTimeRemaining(limit, elapsed) {
+          if (!limit) return '';
+          const remaining = limit - (elapsed || 0);
+          if (remaining <= 0) return 'Time up!';
+          if (remaining < 60) return remaining + 'm remaining';
+          const h = Math.floor(remaining / 60);
+          const m = remaining % 60;
+          return m > 0 ? h + 'h ' + m + 'm remaining' : h + 'h remaining';
+        },
+
+        calculateTimeProgress(elapsed, limit) {
+          if (!limit || !elapsed) return 0;
+          return Math.min(100, Math.round((elapsed / limit) * 100));
+        },
+
+        getTaskProgress() {
+          const done = this.tasks.filter(t => t.status === 'done').length;
+          const total = this.tasks.length;
+          const percentage = total > 0 ? Math.round((done / total) * 100) : 0;
+          return { done, total, percentage };
+        },
+
+        getWorkerCount() {
+          const activeStatuses = ['working', 'waiting', 'eval'];
+          const active = this.workers.filter(w => activeStatuses.includes(w.status)).length;
+          return { active, total: this.workers.length };
+        },
+
+        canPause() {
+          const status = this.detail?.status;
+          return status === 'working' || status === 'eval' || status === 'waiting';
+        },
+
+        canResume() {
+          const status = this.detail?.status;
+          return status === 'paused' || status === 'timed_out' || status === 'runaway';
+        },
+
+        canDeliver() {
+          const status = this.detail?.status;
+          return status === 'done' || status === 'paused' || status === 'timed_out';
+        },
+
+        async handlePause() {
+          if (!this.runName || !this.canPause()) return;
+          try {
+            if (window.__TAURI__) {
+              const { invoke } = await import('@tauri-apps/api/core');
+              await invoke('pause_run', { name: this.runName });
+              await this.loadRunDetail(this.runName);
+            }
+          } catch (err) {
+            console.error('Failed to pause:', err);
+            alert('Failed to pause: ' + (err.message || err));
+          }
+        },
+
+        async handleResume() {
+          if (!this.runName || !this.canResume()) return;
+          try {
+            if (window.__TAURI__) {
+              const { invoke } = await import('@tauri-apps/api/core');
+              await invoke('resume_run', { name: this.runName });
+              await this.loadRunDetail(this.runName);
+            }
+          } catch (err) {
+            console.error('Failed to resume:', err);
+            alert('Failed to resume: ' + (err.message || err));
+          }
+        },
+
+        async handleDeliver() {
+          if (!this.runName || !this.canDeliver()) return;
+          try {
+            if (window.__TAURI__) {
+              const { invoke } = await import('@tauri-apps/api/core');
+              const branch = await invoke('deliver_run', { name: this.runName });
+              alert('Delivered to branch: ' + branch);
+              await this.loadRunDetail(this.runName);
+            }
+          } catch (err) {
+            console.error('Failed to deliver:', err);
+            alert('Failed to deliver: ' + (err.message || err));
+          }
         }
       };
     }

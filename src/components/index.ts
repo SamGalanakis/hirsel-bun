@@ -5,6 +5,7 @@
  */
 
 export { runList, registerRunListComponent } from './run-list';
+export { runDetail, registerRunDetailComponent } from './run-detail';
 export { statusBar, registerStatusBar } from './status-bar';
 export type { StatusBarState, StatusBarComponent } from './status-bar';
 
@@ -28,6 +29,9 @@ export function registerAllComponents(): void {
   // This makes them available as x-data="componentName()"
   import('./run-list').then(({ registerRunListComponent }) => {
     registerRunListComponent();
+  });
+  import('./run-detail').then(({ registerRunDetailComponent }) => {
+    registerRunDetailComponent();
   });
   import('./status-bar').then(({ registerStatusBar }) => {
     registerStatusBar();
