@@ -10,6 +10,7 @@
 pub mod completions;
 pub mod config;
 pub mod man;
+pub mod runs;
 pub mod spec;
 pub mod templates;
 pub mod view;
@@ -22,6 +23,7 @@ pub use config::{
     agent_presets, get_current_agent, run_config, set_agent, AgentPreset,
 };
 pub use man::run_man;
+pub use runs::list_runs;
 pub use spec::{read_spec, run_spec, update_spec_amendments, Amendment, SpecError};
 pub use templates::{
     get_template, get_templates_dir, list_templates, read_template_eval, read_template_spec,
