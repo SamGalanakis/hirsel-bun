@@ -1214,6 +1214,24 @@ impl SQLiteState {
         Ok(())
     }
 
+    /// Set pending_done_at for a task (first phase of two-phase completion)
+    pub fn set_task_pending_done(&self, task_id: &str) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE tasks SET pending_done_at = ?1 WHERE id = ?2",
+            params![self.now(), task_id],
+        )?;
+        Ok(())
+    }
+
+    /// Clear pending_done_at for a task (second phase of two-phase completion)
+    pub fn clear_task_pending_done(&self, task_id: &str) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE tasks SET pending_done_at = NULL WHERE id = ?1",
+            params![task_id],
+        )?;
+        Ok(())
+    }
+
     /// Delete a task and all its children
     pub fn delete_task(&self, task_id: &str) -> StateResult<()> {
         let task = match self.get_task(task_id)? {
