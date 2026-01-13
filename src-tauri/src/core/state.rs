@@ -828,6 +828,28 @@ impl SQLiteState {
         Ok(())
     }
 
+    /// Get learnings processed at timestamp
+    pub fn get_learnings_processed_at(&self) -> StateResult<Option<String>> {
+        match self.db.query_row(
+            "SELECT learnings_processed_at FROM state WHERE id = 1",
+            [],
+            |row| row.get::<_, Option<String>>(0),
+        ) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set learnings processed at timestamp
+    pub fn set_learnings_processed_at(&self, timestamp: &str) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET learnings_processed_at = ?1, updated_at = ?2 WHERE id = 1",
+            params![timestamp, self.now()],
+        )?;
+        Ok(())
+    }
+
     // =========================================================================
     // Task Methods
     // =========================================================================
