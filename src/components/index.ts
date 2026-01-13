@@ -5,6 +5,7 @@
  */
 
 export { runList, registerRunListComponent } from './run-list';
+export { runDetail, registerRunDetailComponent } from './run-detail';
 
 /**
  * Register all components with the global window object for Alpine.js
@@ -16,6 +17,9 @@ export function registerAllComponents(): void {
   // This makes them available as x-data="componentName()"
   import('./run-list').then(({ registerRunListComponent }) => {
     registerRunListComponent();
+  });
+  import('./run-detail').then(({ registerRunDetailComponent }) => {
+    registerRunDetailComponent();
   });
 }
 
