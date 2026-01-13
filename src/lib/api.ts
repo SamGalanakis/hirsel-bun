@@ -18,7 +18,9 @@ import type {
   HistoryEntry,
   Config,
   ApiResult,
+  GuiError,
 } from './types';
+import { toast } from './toast';
 
 // =============================================================================
 // Run Management API
@@ -344,6 +346,43 @@ export function isTauriAvailable(): boolean {
 }
 
 /**
+ * Parse error from Tauri invoke
+ * Errors from Tauri can be GuiError objects (JSON) or plain strings
+ */
+function parseError(error: unknown): { message: string; guiError?: GuiError } {
+  // Try to parse as GuiError
+  if (error && typeof error === 'object' && 'code' in error && 'message' in error) {
+    return {
+      message: (error as GuiError).message,
+      guiError: error as GuiError,
+    };
+  }
+
+  // Try to parse JSON string (Tauri sometimes returns errors as JSON strings)
+  if (typeof error === 'string') {
+    try {
+      const parsed = JSON.parse(error);
+      if (parsed && typeof parsed === 'object' && 'code' in parsed && 'message' in parsed) {
+        return {
+          message: parsed.message,
+          guiError: parsed as GuiError,
+        };
+      }
+    } catch {
+      // Not JSON, use as-is
+    }
+    return { message: error };
+  }
+
+  // Handle standard Error
+  if (error instanceof Error) {
+    return { message: error.message };
+  }
+
+  return { message: 'An unexpected error occurred' };
+}
+
+/**
  * Safe invoke wrapper that returns ApiResult
  */
 export async function safeInvoke<T>(
@@ -354,11 +393,42 @@ export async function safeInvoke<T>(
     const data = await invoke<T>(command, args);
     return { success: true, data };
   } catch (error) {
+    const { message, guiError } = parseError(error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : String(error),
+      error: message,
+      guiError,
     };
   }
+}
+
+/**
+ * Safe invoke with automatic toast notification on error
+ */
+export async function safeInvokeWithToast<T>(
+  command: string,
+  args?: Record<string, unknown>,
+  options?: {
+    successMessage?: string;
+    errorPrefix?: string;
+  }
+): Promise<ApiResult<T>> {
+  const result = await safeInvoke<T>(command, args);
+
+  if (result.success) {
+    if (options?.successMessage) {
+      toast.success(options.successMessage);
+    }
+  } else {
+    const prefix = options?.errorPrefix ? `${options.errorPrefix}: ` : '';
+    if (result.guiError) {
+      toast.fromGuiError(result.guiError);
+    } else {
+      toast.error('Error', `${prefix}${result.error}`);
+    }
+  }
+
+  return result;
 }
 
 /**

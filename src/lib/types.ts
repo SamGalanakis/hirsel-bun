@@ -247,11 +247,69 @@ export type Theme = 'dark' | 'light' | 'system';
 // API Response Types
 // =============================================================================
 
+/** Error codes from the backend */
+export type ErrorCode =
+  | 'run_not_found'
+  | 'task_not_found'
+  | 'worker_not_found'
+  | 'thread_not_found'
+  | 'invalid_input'
+  | 'state_error'
+  | 'git_error'
+  | 'io_error'
+  | 'config_error'
+  | 'invalid_state'
+  | 'permission_denied'
+  | 'network_error'
+  | 'process_error'
+  | 'internal_error';
+
+/** Structured error from the backend */
+export interface GuiError {
+  code: ErrorCode;
+  message: string;
+  details?: string;
+}
+
+/** Check if an error is a user error (vs system error) */
+export function isUserError(code: ErrorCode): boolean {
+  return [
+    'invalid_input',
+    'run_not_found',
+    'task_not_found',
+    'worker_not_found',
+    'thread_not_found',
+    'invalid_state',
+  ].includes(code);
+}
+
+/** Get a human-readable label for an error code */
+export function getErrorLabel(code: ErrorCode): string {
+  const labels: Record<ErrorCode, string> = {
+    run_not_found: 'Not Found',
+    task_not_found: 'Not Found',
+    worker_not_found: 'Not Found',
+    thread_not_found: 'Not Found',
+    invalid_input: 'Invalid Input',
+    state_error: 'Database Error',
+    git_error: 'Git Error',
+    io_error: 'File Error',
+    config_error: 'Config Error',
+    invalid_state: 'Invalid State',
+    permission_denied: 'Permission Denied',
+    network_error: 'Network Error',
+    process_error: 'Process Error',
+    internal_error: 'Internal Error',
+  };
+  return labels[code];
+}
+
 /** Generic API result wrapper */
 export interface ApiResult<T> {
   success: boolean;
   data?: T;
   error?: string;
+  guiError?: GuiError;
 }
 
 /** Paginated list response */

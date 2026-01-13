@@ -311,3 +311,123 @@ button {
   font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
   font-size: 0.75rem;
 }
+/* Toast Notifications */
+.toast-container {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  pointer-events: none;
+}
+
+.toast {
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  background-color: var(--pasture-700);
+  border: 1px solid var(--pasture-600);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  pointer-events: auto;
+  max-width: 350px;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  animation: toast-slide-in 0.3s ease-out;
+}
+
+.toast.toast-exit {
+  animation: toast-slide-out 0.3s ease-in forwards;
+}
+
+.toast-icon {
+  flex-shrink: 0;
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.toast-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast-title {
+  font-weight: 500;
+  font-size: 0.875rem;
+  color: var(--wool-100);
+}
+
+.toast-message {
+  font-size: 0.8125rem;
+  color: var(--wool-300);
+  margin-top: 0.25rem;
+}
+
+.toast-close {
+  flex-shrink: 0;
+  padding: 0.25rem;
+  border-radius: 0.25rem;
+  color: var(--wool-500);
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.toast-close:hover {
+  background-color: var(--pasture-600);
+  color: var(--wool-300);
+}
+
+/* Toast variants */
+.toast-success {
+  border-left: 3px solid var(--sage);
+}
+
+.toast-success .toast-icon {
+  color: var(--sage);
+}
+
+.toast-error {
+  border-left: 3px solid var(--terra);
+}
+
+.toast-error .toast-icon {
+  color: var(--terra);
+}
+
+.toast-warning {
+  border-left: 3px solid var(--golden);
+}
+
+.toast-warning .toast-icon {
+  color: var(--golden);
+}
+
+.toast-info {
+  border-left: 3px solid var(--amber-500);
+}
+
+.toast-info .toast-icon {
+  color: var(--amber-500);
+}
+
+@keyframes toast-slide-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes toast-slide-out {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
