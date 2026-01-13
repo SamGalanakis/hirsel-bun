@@ -21,6 +21,7 @@ pub mod prune;
 pub mod resume;
 pub mod runs;
 pub mod spec;
+pub mod summary;
 pub mod tasks;
 pub mod templates;
 pub mod view;
@@ -47,6 +48,7 @@ pub use resume::{run_resume, parse_time_limit};
 pub use attach::{run_attach, list_targets};
 pub use delete::execute as run_delete;
 pub use prune::execute as run_prune;
+pub use summary::{run_summary, has_summary, get_summary_text, SummaryError};
 
 /// Hirsel - Herd your AI coding agents
 #[derive(Parser, Debug)]
