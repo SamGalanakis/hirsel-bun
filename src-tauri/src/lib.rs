@@ -1,5 +1,6 @@
 // Hirsel - Herd your AI coding agents
-// TODO: Implement core modules and Tauri commands per spec.md
+
+pub mod core;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
