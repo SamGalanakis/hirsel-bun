@@ -6,6 +6,7 @@
 
 pub mod cli;
 pub mod core;
+pub mod gui;
 
 // Re-export commonly used types
 pub use cli::{parse_cli, parse_worker_cli, Cli, Commands, WorkerCli, WorkerCommands};
@@ -16,6 +17,7 @@ pub use core::state;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::new().build())
+        .invoke_handler(gui::get_handlers())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
