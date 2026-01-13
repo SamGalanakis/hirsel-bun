@@ -12,6 +12,7 @@ pub mod config;
 pub mod delete;
 pub mod deliver;
 pub mod go;
+pub mod log;
 pub mod man;
 pub mod pause;
 pub mod prune;
@@ -30,6 +31,7 @@ pub use config::{
     agent_presets, get_current_agent, run_config, set_agent, AgentPreset,
 };
 pub use go::{run as run_go, GoError, GoOutput, GoResult};
+pub use log::{run_log, LogResult, OutputFormat};
 pub use man::run_man;
 pub use runs::list_runs;
 pub use spec::{read_spec, run_spec, update_spec_amendments, Amendment, SpecError};
