@@ -7,7 +7,21 @@
 //!
 //! When invoked without arguments, `hirsel` launches the native GUI.
 
+pub mod config;
+pub mod spec;
+pub mod templates;
+
 use clap::{Args, Parser, Subcommand};
+
+// Re-export command implementations
+pub use config::{
+    agent_presets, get_current_agent, run_config, set_agent, AgentPreset,
+};
+pub use spec::{read_spec, run_spec, update_spec_amendments, Amendment, SpecError};
+pub use templates::{
+    get_template, get_templates_dir, list_templates, read_template_eval, read_template_spec,
+    run_templates, Template, TemplateError,
+};
 
 /// Hirsel - Herd your AI coding agents
 #[derive(Parser, Debug)]
