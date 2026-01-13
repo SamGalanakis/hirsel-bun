@@ -9,7 +9,9 @@ export { runDetail, registerRunDetailComponent } from './run-detail';
 export { activityLog, registerActivityLogComponent } from './activity-log';
 export type { ActivityLogData } from './activity-log';
 export { statusBar, registerStatusBar } from './status-bar';
+export { workerPanel, registerWorkerPanelComponent } from './worker-panel';
 export type { StatusBarState, StatusBarComponent } from './status-bar';
+export type { WorkerPanelData } from './worker-panel';
 
 // Re-export utility functions for use outside components
 export {
@@ -40,6 +42,9 @@ export function registerAllComponents(): void {
   });
   import('./status-bar').then(({ registerStatusBar }) => {
     registerStatusBar();
+  });
+  import('./worker-panel').then(({ registerWorkerPanelComponent }) => {
+    registerWorkerPanelComponent();
   });
 }
 

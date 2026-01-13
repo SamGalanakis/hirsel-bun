@@ -1374,21 +1374,148 @@
       return {
         workers: [],
         loading: false,
+        error: null,
+        selectedRun: null,
+        _pollInterval: null,
 
         async init() {
-          this.loading = true;
-          try {
-            // TODO: Fetch from Tauri
-            await new Promise(resolve => setTimeout(resolve, 300));
+          // Listen for run selection events
+          window.addEventListener('run-selected', (e) => {
+            this.onRunSelected(e.detail);
+          });
+
+          // Check if a run is already selected from parent scope
+          const app = this.getAppState();
+          if (app && app.selectedRun) {
+            await this.onRunSelected(app.selectedRun);
+          }
+        },
+
+        destroy() {
+          if (this._pollInterval) {
+            clearInterval(this._pollInterval);
+            this._pollInterval = null;
+          }
+        },
+
+        getAppState() {
+          // Access parent Alpine scope
+          let el = this.$el;
+          while (el && el.parentElement) {
+            el = el.parentElement;
+            if (el._x_dataStack) {
+              return el._x_dataStack[0];
+            }
+          }
+          return null;
+        },
+
+        async onRunSelected(runName) {
+          // Stop existing polling
+          if (this._pollInterval) {
+            clearInterval(this._pollInterval);
+            this._pollInterval = null;
+          }
+
+          this.selectedRun = runName;
+
+          if (!runName) {
             this.workers = [];
-          } finally {
+            this.loading = false;
+            this.error = null;
+            return;
+          }
+
+          // Fetch workers immediately
+          await this.fetchWorkers();
+
+          // Start polling for updates every 2 seconds
+          this._pollInterval = setInterval(() => {
+            this.fetchWorkers();
+          }, 2000);
+        },
+
+        async fetchWorkers() {
+          if (!this.selectedRun) return;
+
+          // Only show loading on first fetch
+          if (this.workers.length === 0) {
+            this.loading = true;
+          }
+
+          try {
+            // Check if Tauri is available
+            if (!window.__TAURI__) {
+              // Mock data for browser development
+              this.workers = [];
+              this.loading = false;
+              return;
+            }
+
+            const { invoke } = await import('@tauri-apps/api/core');
+            const workers = await invoke('get_workers', { runName: this.selectedRun });
+
+            // Also fetch tasks to map claimed tasks to workers
+            let tasks = [];
+            try {
+              tasks = await invoke('get_tasks', { runName: this.selectedRun });
+            } catch {
+              // Ignore task fetch errors
+            }
+
+            // Create task map for quick lookup
+            const taskByWorker = new Map();
+            for (const task of tasks) {
+              if (task.claimedBy && task.status === 'doing') {
+                taskByWorker.set(task.claimedBy, task.id);
+              }
+            }
+
+            // Enrich workers with display properties
+            const enrichedWorkers = workers.map((worker, index) => {
+              // First worker or one ending in -0 is the leader
+              const isLeader = worker.name.endsWith('-0') || index === 0;
+              const currentTask = taskByWorker.get(worker.name) || null;
+
+              return {
+                ...worker,
+                isLeader,
+                currentTask,
+              };
+            });
+
+            // Sort: active workers first, then by name
+            const activeStatuses = ['working', 'waiting', 'awaiting'];
+            this.workers = enrichedWorkers.sort((a, b) => {
+              const aActive = activeStatuses.includes(a.status);
+              const bActive = activeStatuses.includes(b.status);
+              if (aActive && !bActive) return -1;
+              if (!aActive && bActive) return 1;
+              return a.name.localeCompare(b.name);
+            });
+
+            this.loading = false;
+            this.error = null;
+          } catch (err) {
+            this.error = err.message || String(err);
             this.loading = false;
           }
         },
 
         async attachWorker(name) {
-          // TODO: Tauri invoke to attach tmux
-          console.log('Attach to worker:', name);
+          if (!this.selectedRun) return;
+
+          try {
+            if (!window.__TAURI__) {
+              console.log('Attach to worker:', name);
+              return;
+            }
+
+            const { invoke } = await import('@tauri-apps/api/core');
+            await invoke('attach_worker', { runName: this.selectedRun, workerName: name });
+          } catch (err) {
+            console.error('Failed to attach to worker:', err);
+          }
         }
       };
     }
