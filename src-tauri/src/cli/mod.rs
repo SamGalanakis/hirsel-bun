@@ -9,6 +9,7 @@
 
 pub mod completions;
 pub mod config;
+pub mod go;
 pub mod man;
 pub mod runs;
 pub mod spec;
@@ -22,6 +23,7 @@ pub use completions::{generate_completions, print_completions, run_completions};
 pub use config::{
     agent_presets, get_current_agent, run_config, set_agent, AgentPreset,
 };
+pub use go::{run as run_go, GoError, GoOutput, GoResult};
 pub use man::run_man;
 pub use runs::list_runs;
 pub use spec::{read_spec, run_spec, update_spec_amendments, Amendment, SpecError};
