@@ -119,13 +119,14 @@
     </defs>
   </svg>
 
-  <!-- Title Bar -->
-  <header class="title-bar flex items-center justify-between px-4 py-2 border-b border-pasture-600" data-tauri-drag-region>
-    <div class="flex items-center gap-2">
+  <!-- Title Bar (Custom Window Chrome) -->
+  <header class="title-bar flex items-center justify-between px-4 py-2 border-b border-pasture-600 select-none" data-tauri-drag-region>
+    <div class="flex items-center gap-2" data-tauri-drag-region>
       <span class="text-xl">🐑</span>
       <h1 class="text-lg font-semibold text-amber-500">Hirsel</h1>
     </div>
     <div class="flex items-center gap-1">
+      <!-- Theme Toggle -->
       <button @click="toggleTheme()" class="p-2 rounded hover:bg-pasture-700 text-wool-300" :title="isDarkTheme ? 'Switch to light mode' : 'Switch to dark mode'">
         <!-- Sun icon (shown in dark mode) -->
         <svg x-show="isDarkTheme" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -136,15 +137,40 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
         </svg>
       </button>
+      <!-- Chat Button -->
       <button @click="toggleChat()" class="p-2 rounded hover:bg-pasture-700 text-wool-300 relative" title="Chat (c)">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
         </svg>
         <span x-show="unreadCount > 0" class="absolute -top-1 -right-1 w-2 h-2 bg-terra rounded-full"></span>
       </button>
+      <!-- Help Button -->
       <button @click="showHelp = true" class="p-2 rounded hover:bg-pasture-700 text-wool-300" title="Help (?)">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+      </button>
+
+      <!-- Window Controls Divider -->
+      <div class="w-px h-4 bg-pasture-600 mx-2"></div>
+
+      <!-- Window Controls (frameless window) -->
+      <button @click="minimizeWindow()" class="window-control p-2 rounded hover:bg-pasture-700 text-wool-400 hover:text-wool-200" title="Minimize">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/>
+        </svg>
+      </button>
+      <button @click="toggleMaximize()" class="window-control p-2 rounded hover:bg-pasture-700 text-wool-400 hover:text-wool-200" title="Maximize">
+        <svg x-show="!isMaximized" class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4h16v16h-4M4 8h12v12H4V8z"/>
+        </svg>
+        <svg x-show="isMaximized" class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <rect x="4" y="4" width="16" height="16" rx="1" stroke-width="2" fill="none"/>
+        </svg>
+      </button>
+      <button @click="closeWindow()" class="window-control p-2 rounded hover:bg-terra text-wool-400 hover:text-wool-100" title="Close">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
         </svg>
       </button>
     </div>
@@ -675,9 +701,39 @@
         tasksDone: 0,
         tasksTotal: 0,
         isDarkTheme: true,
+        isMaximized: false,
 
         toggleChat() {
           this.chatOpen = !this.chatOpen;
+        },
+
+        // Window control methods (for frameless window)
+        async minimizeWindow() {
+          if (window.__TAURI__) {
+            const { getCurrentWindow } = await import('@tauri-apps/api/window');
+            await getCurrentWindow().minimize();
+          }
+        },
+
+        async toggleMaximize() {
+          if (window.__TAURI__) {
+            const { getCurrentWindow } = await import('@tauri-apps/api/window');
+            const win = getCurrentWindow();
+            this.isMaximized = await win.isMaximized();
+            if (this.isMaximized) {
+              await win.unmaximize();
+            } else {
+              await win.maximize();
+            }
+            this.isMaximized = !this.isMaximized;
+          }
+        },
+
+        async closeWindow() {
+          if (window.__TAURI__) {
+            const { getCurrentWindow } = await import('@tauri-apps/api/window');
+            await getCurrentWindow().close();
+          }
         },
 
         toggleTheme() {
@@ -759,10 +815,20 @@
           console.log('Resume run:', this.selectedRun);
         },
 
-        // Keyboard shortcuts
-        init() {
+        // Keyboard shortcuts and window state
+        async init() {
           // Initialize theme from localStorage
           this.initTheme();
+
+          // Initialize window maximized state (for frameless window)
+          if (window.__TAURI__) {
+            try {
+              const { getCurrentWindow } = await import('@tauri-apps/api/window');
+              this.isMaximized = await getCurrentWindow().isMaximized();
+            } catch (e) {
+              console.warn('Failed to get window state:', e);
+            }
+          }
 
           // Track focused run index for j/k navigation
           this._focusedRunIndex = -1;
