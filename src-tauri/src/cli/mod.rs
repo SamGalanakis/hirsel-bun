@@ -44,13 +44,14 @@ pub use templates::{
     get_template, get_templates_dir, list_templates, read_template_eval, read_template_spec,
     run_templates, Template, TemplateError,
 };
-pub use msg::{run as run_msg, get_available_threads, MsgError, MsgOutput, MsgResult};
+pub use msg::{run as run_msg, get_available_threads, MsgError, MsgOutput, MsgResult, ThreadInfo};
 pub use pause::run_pause;
 pub use resume::{run_resume, parse_time_limit};
 pub use attach::{run_attach, list_targets};
 pub use delete::execute as run_delete;
 pub use prune::execute as run_prune;
 pub use summary::{run_summary, has_summary, get_summary_text, SummaryError};
+pub use self::diff::{run_diff, print_diff, DiffResult, DiffError};
 
 /// Hirsel - Herd your AI coding agents
 #[derive(Parser, Debug)]
