@@ -13,9 +13,12 @@ pub mod delete;
 pub mod deliver;
 pub mod go;
 pub mod man;
+pub mod pause;
 pub mod prune;
+pub mod resume;
 pub mod runs;
 pub mod spec;
+pub mod tasks;
 pub mod templates;
 pub mod view;
 
