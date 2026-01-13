@@ -10,7 +10,7 @@ pub mod gui;
 pub mod worker;
 
 // Re-export commonly used types
-pub use cli::{parse_cli, parse_worker_cli, Cli, Commands, WorkerCli, WorkerCommands};
+pub use cli::{parse_cli, parse_worker_cli, run_cli, Cli, Commands, WorkerCli, WorkerCommands};
 pub use core::Files;
 pub use core::state;
 pub use worker::{WorkerRunner, WorkerConfig, WorkerError};

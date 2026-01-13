@@ -12,6 +12,7 @@ pub mod completions;
 pub mod config;
 pub mod delete;
 pub mod deliver;
+pub mod diff;
 pub mod go;
 pub mod improve;
 pub mod log;
@@ -495,6 +496,339 @@ pub fn parse_worker_cli() -> WorkerCli {
 /// Check if running as worker subprocess
 pub fn is_worker_subprocess() -> bool {
     std::env::var("HIRSEL_WORKER_SUBPROCESS").is_ok()
+}
+
+/// Run the CLI with the given parsed arguments
+/// Returns Ok(true) if a command was executed, Ok(false) if no command (launch GUI)
+pub fn run_cli() -> anyhow::Result<bool> {
+    let cli = parse_cli();
+
+    let Some(command) = cli.command else {
+        // No command - return false to indicate GUI should launch
+        return Ok(false);
+    };
+
+    let json = cli.json;
+
+    match command {
+        // Run Management
+        Commands::Go(args) => {
+            match go::run(&args) {
+                Ok(output) => {
+                    if json {
+                        // Build JSON manually since GoOutput doesn't impl Serialize
+                        let json_output = serde_json::json!({
+                            "run_name": output.run_name,
+                            "project_path": output.project_path,
+                            "run_dir": output.run_dir,
+                            "worker_names": output.worker_names,
+                            "worker_count": output.worker_count,
+                            "time_limit_minutes": output.time_limit_minutes,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&json_output)?);
+                    } else {
+                        println!("Started run '{}' with {} workers", output.run_name, output.worker_count);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::View(args) => {
+            if let Err(e) = view::execute(&args.run_name, json) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Log(args) => {
+            let format = if json { log::OutputFormat::Json } else { log::OutputFormat::Pretty };
+            match log::run_log(&args.run_name, args.follow, args.limit, format) {
+                log::LogResult::Success | log::LogResult::Empty | log::LogResult::Interrupted => {}
+                log::LogResult::Error(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Attach(args) => {
+            if let Err(e) = attach::run_attach(&args.run_name, args.target.as_deref(), json) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Msg(args) => {
+            match msg::run(&args) {
+                Ok(output) => {
+                    if json {
+                        // Build JSON manually since MsgOutput doesn't impl Serialize
+                        let json_output = match &output {
+                            msg::MsgOutput::Sent { thread, resumed_workers } => serde_json::json!({
+                                "type": "sent",
+                                "thread": thread,
+                                "resumed_workers": resumed_workers,
+                            }),
+                            msg::MsgOutput::Messages { run_name, thread, messages } => serde_json::json!({
+                                "type": "messages",
+                                "run_name": run_name,
+                                "thread": thread,
+                                "messages": messages.iter().map(|m| serde_json::json!({
+                                    "timestamp": m.timestamp,
+                                    "sender": m.sender,
+                                    "content": m.content,
+                                })).collect::<Vec<_>>(),
+                            }),
+                            msg::MsgOutput::ThreadList { run_name, threads } => serde_json::json!({
+                                "type": "thread_list",
+                                "run_name": run_name,
+                                "threads": threads.iter().map(|t| serde_json::json!({
+                                    "name": t.name,
+                                    "message_count": t.message_count,
+                                })).collect::<Vec<_>>(),
+                            }),
+                        };
+                        println!("{}", serde_json::to_string_pretty(&json_output)?);
+                    } else {
+                        match output {
+                            msg::MsgOutput::Sent { .. } => println!("Message sent"),
+                            msg::MsgOutput::Messages { messages, .. } => {
+                                for m in messages {
+                                    println!("[{}] {}: {}", m.timestamp, m.sender, m.content);
+                                }
+                            }
+                            msg::MsgOutput::ThreadList { threads, .. } => {
+                                println!("Available threads:");
+                                for t in threads {
+                                    println!("  {} ({} messages)", t.name, t.message_count);
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Diff(args) => {
+            match diff::run_diff(&args.run_name, false) {
+                Ok(result) => {
+                    diff::print_diff(&result, json);
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Deliver(args) => {
+            if let Err(e) = deliver::execute(&args.run_name, args.branch.as_deref(), json) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Pause(args) => {
+            if let Err(e) = pause::run_pause(&args.run_name, json) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Resume(args) => {
+            if let Err(e) = resume::run_resume(&args.run_name, args.time_limit.as_deref(), json) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Delete(args) => {
+            if let Err(e) = delete::execute(&args.run_name, json) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Prune => {
+            if let Err(e) = prune::execute(json) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Runs => {
+            if let Err(e) = runs::list_runs(json) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Summary(args) => {
+            match summary::run_summary(&args.run_name, args.regenerate, json) {
+                Ok(output) => {
+                    if !json {
+                        println!("{}", output);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Mode(args) => {
+            use crate::core::{config as core_config, state::SQLiteState, Files};
+            let run_dir = core_config::run_dir(&args.run_name);
+            let files = Files::new(&run_dir);
+            match SQLiteState::new(files.db_path()) {
+                Ok(state) => {
+                    let hitl = args.new_mode.to_lowercase() == "hitl";
+                    if let Err(e) = state.set_human_in_the_loop(hitl) {
+                        eprintln!("Error setting mode: {}", e);
+                        std::process::exit(1);
+                    }
+                    if json {
+                        println!(r#"{{"mode": "{}"}}"#, if hitl { "hitl" } else { "yolo" });
+                    } else {
+                        println!("Mode set to {}", if hitl { "hitl" } else { "yolo" });
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Amend(args) => {
+            use crate::core::config as core_config;
+            let run_dir = core_config::run_dir(&args.run_name);
+            // Create an amendment from the message
+            let amendment = spec::Amendment {
+                id: 0, // Will be assigned by the storage
+                message: args.message.clone(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            };
+            match spec::update_spec_amendments(&run_dir, &[amendment]) {
+                Ok(_) => {
+                    if json {
+                        println!(r#"{{"status": "amended"}}"#);
+                    } else {
+                        println!("Amendment added to spec");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Spec(args) => {
+            use crate::core::config as core_config;
+            let run_dir = core_config::run_dir(&args.run_name);
+            match spec::run_spec(&run_dir) {
+                Ok(content) => {
+                    if json {
+                        println!("{}", serde_json::to_string(&content)?);
+                    } else {
+                        println!("{}", content);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        // Task Management
+        Commands::Tasks(args) => {
+            match tasks::run_tasks(&args.run_name, json) {
+                Ok(output) => println!("{}", output),
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::TaskAdd(args) => {
+            match tasks::run_task_add(&args.run_name, &args.task_id, &args.description, args.parent.as_deref(), &args.blocked_by, json) {
+                Ok(output) => println!("{}", output),
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::TaskDelete(args) => {
+            match tasks::run_task_delete(&args.run_name, &args.task_id, json) {
+                Ok(output) => println!("{}", output),
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::TaskDone(args) => {
+            match tasks::run_task_done(&args.run_name, &args.task_id, json) {
+                Ok(output) => println!("{}", output),
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::TaskReopen(args) => {
+            match tasks::run_task_reopen(&args.run_name, &args.task_id, json) {
+                Ok(output) => println!("{}", output),
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::TaskUnclaim(args) => {
+            match tasks::run_task_unclaim(&args.run_name, &args.task_id, json) {
+                Ok(output) => println!("{}", output),
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        // Configuration
+        Commands::Config(args) => {
+            if let Err(e) = config::run_config(args.agent) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Templates => {
+            match templates::run_templates(json) {
+                Ok(output) => println!("{}", output),
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Completions(args) => {
+            if let Err(e) = completions::run_completions(&args) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Man(args) => {
+            if let Err(e) = man::run_man(&args) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Improve(args) => {
+            if let Err(e) = improve::execute(args.run_name.as_deref(), json) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    Ok(true)
 }
 
 #[cfg(test)]

@@ -28,6 +28,7 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 anyhow = "1"
 libc = "0.2"
+agent-client-protocol = "0.9"
 
 [dev-dependencies]
 tempfile = "3"
