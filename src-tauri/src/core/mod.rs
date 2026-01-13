@@ -7,10 +7,12 @@
 //! - Chat/messaging system
 //! - File utilities
 //! - ACP client
+//! - Eval system
 
 pub mod acp;
 pub mod chats;
 pub mod config;
+pub mod eval;
 pub mod files;
 pub mod git;
 pub mod state;
@@ -20,6 +22,7 @@ pub mod workers;
 pub use acp::{ACPClientConfig, ACPError, MCPServerConfig, SessionUpdate};
 pub use chats::{ChatHeader, ChatMode};
 pub use config::*;
+pub use eval::{EvalConfig, EvalError, EvalResult};
 pub use files::Files;
 pub use state::*;
 pub use workers::{
