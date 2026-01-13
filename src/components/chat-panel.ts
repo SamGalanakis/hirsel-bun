@@ -22,9 +22,18 @@ import type { ThreadSummary, Message } from '../lib/types';
 const MESSAGE_POLL_INTERVAL = 2000;
 
 /**
+ * Alpine.js magic properties
+ */
+interface AlpineMagic {
+  $nextTick: (fn: () => void) => void;
+  $el: HTMLElement;
+  $data: Record<string, unknown>;
+}
+
+/**
  * Chat panel component state and methods
  */
-export interface ChatPanelState {
+export interface ChatPanelState extends AlpineMagic {
   threads: ThreadSummary[];
   selectedThread: string;
   messages: Message[];
@@ -34,22 +43,53 @@ export interface ChatPanelState {
 
   // Methods
   init(): Promise<void>;
+  fetchThreads(runName: string): Promise<void>;
   selectThread(name: string): Promise<void>;
   sendMessage(): Promise<void>;
   formatTime(timestamp: string): string;
   formatDate(timestamp: string): string;
   scrollToBottom(): void;
   destroy(): void;
+  getRunName(): string | null;
+  handleRunChange(event: CustomEvent): void;
+  updateUnreadCount(): void;
+}
+
+/**
+ * Internal component data (without Alpine magic properties which are injected at runtime)
+ */
+interface ChatPanelData {
+  threads: ThreadSummary[];
+  selectedThread: string;
+  messages: Message[];
+  newMessage: string;
+  loading: boolean;
+  error: string | null;
 }
 
 /**
  * Create the chat panel Alpine.js component
+ *
+ * Note: Alpine.js magic properties ($nextTick, $el, $data) are injected at runtime
+ * so we use type assertions where needed.
  */
-export function chatPanel(): ChatPanelState {
-  let threadPoller: ReturnType<typeof createPoller> | null = null;
-  let messagePoller: ReturnType<typeof createPoller> | null = null;
+export function chatPanel() {
+  let threadPoller: ReturnType<typeof createPoller<ThreadSummary[]>> | null = null;
+  let messagePoller: ReturnType<typeof createPoller<Message[]>> | null = null;
 
-  return {
+  const component: ChatPanelData & {
+    init(this: ChatPanelState): Promise<void>;
+    fetchThreads(this: ChatPanelState, runName: string): Promise<void>;
+    selectThread(this: ChatPanelState, name: string): Promise<void>;
+    sendMessage(this: ChatPanelState): Promise<void>;
+    formatTime(timestamp: string): string;
+    formatDate(timestamp: string): string;
+    scrollToBottom(this: ChatPanelState): void;
+    destroy(this: ChatPanelState): void;
+    getRunName(this: ChatPanelState): string | null;
+    handleRunChange(this: ChatPanelState, event: CustomEvent): void;
+    updateUnreadCount(this: ChatPanelState): void;
+  } = {
     threads: [],
     selectedThread: 'user',
     messages: [],
@@ -57,7 +97,7 @@ export function chatPanel(): ChatPanelState {
     loading: false,
     error: null,
 
-    async init() {
+    async init(this: ChatPanelState) {
       // Get run name from parent scope
       const runName = this.getRunName();
       if (!runName) {
@@ -71,7 +111,7 @@ export function chatPanel(): ChatPanelState {
 
       // Select user thread by default if available
       if (this.threads.length > 0) {
-        const userThread = this.threads.find(t => t.name === 'user');
+        const userThread = this.threads.find((t: ThreadSummary) => t.name === 'user');
         if (userThread) {
           await this.selectThread('user');
         } else {
@@ -80,11 +120,12 @@ export function chatPanel(): ChatPanelState {
       }
 
       // Start polling for thread updates
+      const self = this;
       threadPoller = createPoller(
         () => getThreads(runName),
-        (threads) => {
-          this.threads = threads;
-          this.updateUnreadCount();
+        (threads: ThreadSummary[]) => {
+          self.threads = threads;
+          self.updateUnreadCount();
         },
         MESSAGE_POLL_INTERVAL * 2 // Poll threads less frequently
       );
@@ -94,7 +135,7 @@ export function chatPanel(): ChatPanelState {
       window.addEventListener('run-selected', this.handleRunChange.bind(this) as EventListener);
     },
 
-    async fetchThreads(runName: string) {
+    async fetchThreads(this: ChatPanelState, runName: string) {
       try {
         this.threads = await getThreads(runName);
         this.updateUnreadCount();
@@ -104,7 +145,7 @@ export function chatPanel(): ChatPanelState {
       }
     },
 
-    async selectThread(name: string) {
+    async selectThread(this: ChatPanelState, name: string) {
       this.selectedThread = name;
       this.messages = [];
       this.loading = true;
@@ -130,7 +171,7 @@ export function chatPanel(): ChatPanelState {
         await markMessagesRead(runName, name);
 
         // Update thread unread count
-        const thread = this.threads.find(t => t.name === name);
+        const thread = this.threads.find((t: ThreadSummary) => t.name === name);
         if (thread) {
           thread.unreadCount = 0;
         }
@@ -140,16 +181,17 @@ export function chatPanel(): ChatPanelState {
         this.$nextTick(() => this.scrollToBottom());
 
         // Start polling for new messages in this thread
+        const self = this;
         messagePoller = createPoller(
           () => getMessages(runName, name),
-          async (messages) => {
-            const hadNewMessages = messages.length > this.messages.length;
-            this.messages = messages;
+          async (messages: Message[]) => {
+            const hadNewMessages = messages.length > self.messages.length;
+            self.messages = messages;
 
             if (hadNewMessages) {
               // Mark new messages as read
               await markMessagesRead(runName, name);
-              this.$nextTick(() => this.scrollToBottom());
+              self.$nextTick(() => self.scrollToBottom());
             }
           },
           MESSAGE_POLL_INTERVAL
@@ -164,7 +206,7 @@ export function chatPanel(): ChatPanelState {
       }
     },
 
-    async sendMessage() {
+    async sendMessage(this: ChatPanelState) {
       const content = this.newMessage.trim();
       if (!content) return;
 
@@ -232,14 +274,14 @@ export function chatPanel(): ChatPanelState {
       });
     },
 
-    scrollToBottom() {
+    scrollToBottom(this: ChatPanelState) {
       const container = this.$el.querySelector('.messages-container');
       if (container) {
         container.scrollTop = container.scrollHeight;
       }
     },
 
-    destroy() {
+    destroy(this: ChatPanelState) {
       // Clean up pollers
       if (threadPoller) {
         threadPoller.stop();
@@ -254,17 +296,17 @@ export function chatPanel(): ChatPanelState {
       window.removeEventListener('run-selected', this.handleRunChange.bind(this) as EventListener);
     },
 
-    // Private helper methods
-    getRunName(): string | null {
+    getRunName(this: ChatPanelState): string | null {
       // Access parent Alpine scope to get selected run
-      // This depends on how the parent appState exposes selectedRun
-      return (window as any).Alpine?.store?.('app')?.selectedRun ||
-             (this.$data as any).selectedRun ||
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const win = window as any;
+      return win.Alpine?.store?.('app')?.selectedRun ||
+             (this.$data as Record<string, unknown>).selectedRun as string ||
              null;
     },
 
-    handleRunChange(event: CustomEvent) {
-      const runName = event.detail;
+    handleRunChange(this: ChatPanelState, event: CustomEvent) {
+      const runName = event.detail as string;
       if (runName) {
         this.fetchThreads(runName).then(() => {
           if (this.threads.length > 0) {
@@ -277,21 +319,14 @@ export function chatPanel(): ChatPanelState {
       }
     },
 
-    updateUnreadCount() {
-      const total = this.threads.reduce((sum, t) => sum + t.unreadCount, 0);
+    updateUnreadCount(this: ChatPanelState) {
+      const total = this.threads.reduce((sum: number, t: ThreadSummary) => sum + t.unreadCount, 0);
       // Dispatch event for header badge
       dispatchEvent('unread-count-changed', { count: total });
     },
+  };
 
-    // Alpine.js lifecycle hooks
-    $nextTick(fn: () => void) {
-      // This will be provided by Alpine.js
-      setTimeout(fn, 0);
-    },
-
-    $el: null as unknown as HTMLElement,
-    $data: null as unknown as Record<string, unknown>,
-  } as unknown as ChatPanelState;
+  return component;
 }
 
 /**
