@@ -10,6 +10,8 @@
 pub mod completions;
 pub mod config;
 pub mod man;
+pub mod pause;
+pub mod resume;
 pub mod runs;
 pub mod spec;
 pub mod templates;
@@ -29,6 +31,8 @@ pub use templates::{
     get_template, get_templates_dir, list_templates, read_template_eval, read_template_spec,
     run_templates, Template, TemplateError,
 };
+pub use pause::run_pause;
+pub use resume::{run_resume, parse_time_limit};
 
 /// Hirsel - Herd your AI coding agents
 #[derive(Parser, Debug)]
