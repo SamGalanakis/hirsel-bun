@@ -270,3 +270,44 @@ button {
   background-color: var(--amber-500);
   color: var(--pasture-900);
 }
+
+/* Empty state styling */
+.empty-state {
+  animation: fade-in 0.3s ease-out;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Sheep walking animation for loading states */
+.sheep-walking-anim {
+  animation: sheep-bounce 1.2s ease-in-out infinite;
+}
+
+@keyframes sheep-bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+/* Wool color class (for SVG sheep) */
+.text-wool-600 {
+  color: #6a655f;
+}
+
+/* Additional empty state helper text styling */
+.empty-state code {
+  font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+}
