@@ -171,14 +171,9 @@ export function workerPanel() {
     },
 
     async attachWorker(name: string) {
-      if (!this.selectedRun) return;
+      if (!this.selectedRun || !window.tauriInvoke) return;
 
       try {
-        if (!window.tauriInvoke) {
-          console.log('Attach to worker:', name);
-          return;
-        }
-
         await window.tauriInvoke('attach_worker', {
           runName: this.selectedRun,
           workerName: name,

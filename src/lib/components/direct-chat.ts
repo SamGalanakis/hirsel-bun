@@ -45,10 +45,8 @@ export function directChat() {
 
     async init() {
       // Listen for run selection changes
-      window.addEventListener('run-selected', (e: Event) => {
-        const customEvent = e as CustomEvent<string | null>;
+      window.addEventListener('run-selected', (_e: Event) => {
         // Could reconnect session with new run context
-        console.debug('Run selected:', customEvent.detail);
       });
     },
 
@@ -114,7 +112,6 @@ export function directChat() {
     },
 
     async connect() {
-      console.log('[DirectChat] connect() called');
       if (this.sessionId) {
         await this.disconnect();
       }
@@ -124,15 +121,13 @@ export function directChat() {
 
       try {
         // Start listening for events first
-        console.log('[DirectChat] Setting up event listener...');
         // Capture `this` to ensure correct binding in callback
         const self = this;
         this._unlisten = await listenChatEvents((event) => {
-          console.log('[DirectChat] Received event:', event.type, event);
           try {
             self.handleChatEvent(event);
           } catch (e) {
-            console.error('[DirectChat] Error in handleChatEvent:', e);
+            console.error('[DirectChat] Error handling event:', e);
           }
         });
 
@@ -141,14 +136,11 @@ export function directChat() {
         const runName = app?.selectedRun || undefined;
 
         // Start the session
-        console.log('[DirectChat] Starting session with command:', this.agentCommand);
         const sessionId = await startChatSession(this.agentCommand, {
           runName,
           systemPrompt: this.getSystemPrompt(),
         });
-        console.log('[DirectChat] Session started, ID:', sessionId);
         this.sessionId = sessionId;
-        console.log('[DirectChat] this.sessionId is now:', this.sessionId);
 
         this.connected = true;
 
@@ -162,7 +154,7 @@ export function directChat() {
       } catch (e) {
         const error = e as Error;
         this.error = error.message || 'Failed to connect';
-        console.error('[DirectChat] Failed to start chat session:', e);
+        console.error('[DirectChat] Failed to connect:', e);
       } finally {
         this.loading = false;
       }
@@ -206,14 +198,10 @@ Be concise.`;
     },
 
     handleChatEvent(event: ChatEvent) {
-      console.log('[DirectChat] handleChatEvent ENTRY - received event:', JSON.stringify(event));
       // Filter events for our session
-      console.log('[DirectChat] handleChatEvent - event.sessionId:', event.sessionId, 'this.sessionId:', this.sessionId);
       if (event.sessionId !== this.sessionId) {
-        console.log('[DirectChat] Session ID mismatch, ignoring event');
         return;
       }
-      console.log('[DirectChat] Processing event type:', event.type);
 
       switch (event.type) {
         case 'textDelta':
@@ -244,10 +232,8 @@ Be concise.`;
     },
 
     handleTextDelta(text: string) {
-      console.log('[DirectChat] handleTextDelta called with:', text);
       if (!this._currentMessage) {
         // Start a new assistant message
-        console.log('[DirectChat] Creating new assistant message');
         this._currentMessage = {
           id: crypto.randomUUID(),
           role: 'assistant',
@@ -269,8 +255,6 @@ Be concise.`;
         this.messages[idx] = this._currentMessage;
         this.messages = [...this.messages];
       }
-      console.log('[DirectChat] Message content now:', this._currentMessage.content.substring(0, 50));
-      console.log('[DirectChat] Messages array length:', this.messages.length);
       this.scrollToBottom();
     },
 
@@ -398,10 +382,8 @@ Be concise.`;
     },
 
     async sendMessage() {
-      console.log('[DirectChat] sendMessage called, inputText:', this.inputText, 'sessionId:', this.sessionId, 'streaming:', this.streaming);
       const content = this.inputText.trim();
       if (!content || !this.sessionId || this.streaming) {
-        console.log('[DirectChat] sendMessage early return - content:', !!content, 'sessionId:', !!this.sessionId, 'streaming:', this.streaming);
         return;
       }
 
@@ -413,19 +395,16 @@ Be concise.`;
         timestamp: new Date(),
       };
       this.messages = [...this.messages, userMessage];
-      console.log('[DirectChat] Added user message, messages count:', this.messages.length);
 
       this.inputText = '';
       this.scrollToBottom();
 
       try {
         // Send with UI context (invisible to user)
-        console.log('[DirectChat] Calling sendChatMessage...');
         await sendChatMessage(this.sessionId, content, this.getUIContext());
-        console.log('[DirectChat] sendChatMessage completed');
       } catch (e) {
         const error = e as Error;
-        console.error('[DirectChat] sendChatMessage error:', e);
+        console.error('[DirectChat] Failed to send:', e);
         this.handleError(error.message || 'Failed to send message');
         // Restore input on error
         this.inputText = content;

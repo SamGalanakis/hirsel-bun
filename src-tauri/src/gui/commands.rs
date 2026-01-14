@@ -460,24 +460,104 @@ pub async fn get_run_detail(run_name: String) -> Result<RunDetail, String> {
 /// Pause a running run
 #[tauri::command]
 pub async fn pause_run(run_name: String) -> Result<(), String> {
-    // TODO: Integrate with state.rs to update run status
-    eprintln!("[INFO] Pausing run: {}", run_name);
+    use crate::core::workers::pause_all_workers;
+
+    let run_dir = config::run_dir(&run_name);
+    let db_path = run_dir.join("hirsel.db");
+
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    // Check current status
+    let status = state.status().map_err(|e| format!("Failed to get status: {}", e))?;
+    if status == crate::core::state::Status::Paused {
+        return Ok(()); // Already paused
+    }
+    if status != crate::core::state::Status::Working {
+        return Err(format!("Cannot pause run in '{}' status", status));
+    }
+
+    // Pause all workers (sends SIGTERM)
+    let paused = pause_all_workers(&state)
+        .map_err(|e| format!("Failed to pause workers: {}", e))?;
+
+    // Update status
+    state.set_status(crate::core::state::Status::Paused)
+        .map_err(|e| format!("Failed to update status: {}", e))?;
+
+    tracing::info!("Paused run '{}', stopped {} workers", run_name, paused.len());
     Ok(())
 }
 
 /// Resume a paused run
 #[tauri::command]
 pub async fn resume_run(run_name: String) -> Result<(), String> {
-    // TODO: Integrate with state.rs to update run status
-    eprintln!("[INFO] Resuming run: {}", run_name);
+    use crate::core::workers::resume_awaiting_workers;
+    use crate::cli::config::get_agent_command;
+
+    let run_dir = config::run_dir(&run_name);
+    let db_path = run_dir.join("hirsel.db");
+
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    // Check current status
+    let status = state.status().map_err(|e| format!("Failed to get status: {}", e))?;
+    if status == crate::core::state::Status::Working {
+        return Ok(()); // Already running
+    }
+    if status != crate::core::state::Status::Paused
+        && status != crate::core::state::Status::Runaway
+    {
+        return Err(format!("Cannot resume run in '{}' status", status));
+    }
+
+    // Update status first
+    state.set_status(crate::core::state::Status::Working)
+        .map_err(|e| format!("Failed to update status: {}", e))?;
+
+    // Resume workers
+    let agent_command = get_agent_command();
+    let resumed = resume_awaiting_workers(&run_name, &run_dir, &agent_command)
+        .map_err(|e| format!("Failed to resume workers: {}", e))?;
+
+    tracing::info!("Resumed run '{}', restarted {} workers", run_name, resumed.len());
     Ok(())
 }
 
 /// Delete a run
 #[tauri::command]
 pub async fn delete_run(run_name: String) -> Result<(), String> {
-    // TODO: Integrate with state.rs to delete run
-    eprintln!("[INFO] Deleting run: {}", run_name);
+    use crate::core::workers::pause_all_workers;
+    use std::fs;
+
+    let run_dir = config::run_dir(&run_name);
+
+    if !run_dir.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    // Try to stop any running workers first
+    let db_path = run_dir.join("hirsel.db");
+    if db_path.exists() {
+        if let Ok(state) = SQLiteState::new(db_path) {
+            let _ = pause_all_workers(&state);
+        }
+    }
+
+    // Delete the run directory
+    fs::remove_dir_all(&run_dir)
+        .map_err(|e| format!("Failed to delete run directory: {}", e))?;
+
+    tracing::info!("Deleted run '{}'", run_name);
     Ok(())
 }
 
@@ -972,57 +1052,123 @@ pub async fn add_task(
     parent_id: Option<String>,
     blocked_by: Option<Vec<String>>,
 ) -> Result<Task, String> {
-    eprintln!(
-        "[INFO] Adding task {} to run {}: {}",
-        task_id, run_name, description
-    );
-    // TODO: Integrate with state.rs
+    let db_path = config::run_dir(&run_name).join("hirsel.db");
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    // Convert blocked_by from Vec<String> to Vec<&str> for state.add_task
+    let blocked_by_refs: Option<Vec<&str>> = blocked_by.as_ref().map(|v| v.iter().map(|s| s.as_str()).collect());
+    let blocked_by_slice: Option<&[&str]> = blocked_by_refs.as_ref().map(|v| v.as_slice());
+
+    // Add the task
+    state.add_task(&task_id, &description, parent_id.as_deref(), blocked_by_slice)
+        .map_err(|e| format!("Failed to add task: {}", e))?;
+
+    // Return the created task
+    let task = state.get_task(&task_id)
+        .map_err(|e| format!("Failed to get task: {}", e))?
+        .ok_or_else(|| "Task not found after creation".to_string())?;
+
+    // Convert blocked_by from comma-separated string to Vec
+    let blocked_by_vec = task.blocked_by.as_ref().map(|s| {
+        s.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect::<Vec<_>>()
+    }).filter(|v: &Vec<String>| !v.is_empty());
+
     Ok(Task {
-        id: task_id,
-        description,
-        status: TaskStatus::Todo,
-        claimed_by: None,
-        claimed_at: None,
-        parent_id,
-        blocked_by,
-        tokens_used: None,
-        created_at: chrono::Utc::now().to_rfc3339(),
-        pending_done_at: None,
+        id: task.id,
+        description: task.name,
+        status: match task.status {
+            crate::core::state::TaskStatus::Todo => TaskStatus::Todo,
+            crate::core::state::TaskStatus::Doing => TaskStatus::Doing,
+            crate::core::state::TaskStatus::Done => TaskStatus::Done,
+        },
+        claimed_by: task.claimed_by,
+        claimed_at: task.claimed_at,
+        parent_id: task.parent_id,
+        blocked_by: blocked_by_vec,
+        tokens_used: task.tokens_used.map(|t| t as u64),
+        created_at: task.created_at,
+        pending_done_at: task.pending_done_at,
     })
 }
 
 /// Delete a task
 #[tauri::command]
 pub async fn delete_task(run_name: String, task_id: String) -> Result<(), String> {
-    eprintln!("[INFO] Deleting task {} from run {}", task_id, run_name);
-    // TODO: Integrate with state.rs
+    let db_path = config::run_dir(&run_name).join("hirsel.db");
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    state.delete_task(&task_id)
+        .map_err(|e| format!("Failed to delete task: {}", e))?;
+
     Ok(())
 }
 
-/// Mark a task as complete
+/// Mark a task as complete (from UI - uses "user" as worker name)
 #[tauri::command]
 pub async fn complete_task(run_name: String, task_id: String) -> Result<(), String> {
-    eprintln!(
-        "[INFO] Marking task {} as complete in run {}",
-        task_id, run_name
-    );
-    // TODO: Integrate with state.rs
+    let db_path = config::run_dir(&run_name).join("hirsel.db");
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    // Use "user" as the worker name for UI-initiated completions
+    state.complete_task(&task_id, "user")
+        .map_err(|e| format!("Failed to complete task: {}", e))?;
+
     Ok(())
 }
 
 /// Unclaim a task (release it back to the pool)
 #[tauri::command]
 pub async fn unclaim_task(run_name: String, task_id: String) -> Result<(), String> {
-    eprintln!("[INFO] Unclaiming task {} in run {}", task_id, run_name);
-    // TODO: Integrate with state.rs
+    let db_path = config::run_dir(&run_name).join("hirsel.db");
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    // Get the task to find who claimed it
+    let task = state.get_task(&task_id)
+        .map_err(|e| format!("Failed to get task: {}", e))?
+        .ok_or_else(|| format!("Task '{}' not found", task_id))?;
+
+    let worker = task.claimed_by.unwrap_or_else(|| "user".to_string());
+
+    state.unclaim_task(&task_id, &worker)
+        .map_err(|e| format!("Failed to unclaim task: {}", e))?;
+
     Ok(())
 }
 
 /// Reopen a completed task
 #[tauri::command]
 pub async fn reopen_task(run_name: String, task_id: String) -> Result<(), String> {
-    eprintln!("[INFO] Reopening task {} in run {}", task_id, run_name);
-    // TODO: Integrate with state.rs
+    let db_path = config::run_dir(&run_name).join("hirsel.db");
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    state.reopen_task(&task_id)
+        .map_err(|e| format!("Failed to reopen task: {}", e))?;
+
     Ok(())
 }
 
@@ -1102,26 +1248,110 @@ pub async fn get_workers(run_name: String) -> Result<Vec<Worker>, String> {
 }
 
 /// Attach a new worker to a run
+///
+/// Creates a new worker with the given name, sets up its working directory,
+/// and spawns the worker process.
 #[tauri::command]
 pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Worker, String> {
-    eprintln!(
-        "[INFO] Attaching worker {} to run {}",
-        worker_name, run_name
-    );
-    // TODO: Integrate with state.rs and spawn actual worker
+    use crate::core::git::create_worker_clone;
+    use crate::core::workers::{spawn_worker, WorkerSpawnConfig};
+    use crate::core::Files;
+    use crate::cli::config::get_agent_command;
+
+    let run_dir = config::run_dir(&run_name);
+    let db_path = run_dir.join("hirsel.db");
+
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    // Check if worker already exists
+    if state.get_worker(&worker_name).ok().flatten().is_some() {
+        return Err(format!("Worker '{}' already exists", worker_name));
+    }
+
+    // Get project path
+    let project_path_str = state.get_project_path()
+        .map_err(|e| format!("Failed to get project path: {}", e))?
+        .ok_or_else(|| "No project path configured".to_string())?;
+    let project_path = std::path::PathBuf::from(&project_path_str);
+
+    // Get existing workers to determine if multi-worker
+    let workers = state.get_workers()
+        .map_err(|e| format!("Failed to get workers: {}", e))?;
+    let is_multi_worker = !workers.is_empty();
+
+    // Create worker clone/worktree
+    let staging_dir = run_dir.join("work").join("staging");
+    let runs_dir = config::runs_dir();
+    let worker_dir = create_worker_clone(&run_name, &project_path, &worker_name, Some(&staging_dir), &runs_dir)
+        .map_err(|e| format!("Failed to create worker clone: {}", e))?;
+
+    // Add worker to state
+    state.add_worker(&worker_name, worker_dir.to_str().unwrap_or("."), "local")
+        .map_err(|e| format!("Failed to add worker: {}", e))?;
+
+    // Create worker chat file
+    let files = Files::new(&run_dir);
+    let chat_file = files.chats_dir().join(format!("{}.md", worker_name));
+    let _ = std::fs::write(&chat_file, format!("# {} Chat\n\n", worker_name));
+
+    // Get leader info
+    let leader_name = workers.first().map(|w| w.name.clone());
+    let teammates: Vec<String> = workers.iter().map(|w| w.name.clone()).collect();
+
+    // Spawn the worker
+    let agent_command = get_agent_command();
+    let config = WorkerSpawnConfig {
+        run_name: run_name.clone(),
+        worker_name: worker_name.clone(),
+        work_dir: worker_dir.clone(),
+        run_dir: run_dir.clone(),
+        spec_path: files.spec(),
+        agent_command,
+        is_leader: false,
+        leader_name,
+        teammates: if is_multi_worker { Some(teammates) } else { None },
+        resume_session_id: None,
+    };
+
+    match spawn_worker(config, &state) {
+        Ok(result) => {
+            tracing::info!("Attached worker {} (PID {})", worker_name, result.pid);
+        }
+        Err(e) => {
+            return Err(format!("Failed to spawn worker: {}", e));
+        }
+    }
+
+    // Return the created worker
+    let worker = state.get_worker(&worker_name)
+        .map_err(|e| format!("Failed to get worker: {}", e))?
+        .ok_or_else(|| "Worker not found after creation".to_string())?;
+
     Ok(Worker {
-        id: 1,
-        name: worker_name,
-        pid: None,
-        session_id: None,
-        status: WorkerStatus::Idle,
-        work_dir: None,
-        waiting_thread: None,
+        id: worker.id as u32,
+        name: worker.name,
+        pid: worker.pid.map(|p| p as u32),
+        session_id: worker.session_id,
+        status: match worker.status {
+            crate::core::state::WorkerStatus::Idle => WorkerStatus::Idle,
+            crate::core::state::WorkerStatus::Working => WorkerStatus::Working,
+            crate::core::state::WorkerStatus::Waiting => WorkerStatus::Waiting,
+            crate::core::state::WorkerStatus::Awaiting => WorkerStatus::Awaiting,
+            crate::core::state::WorkerStatus::Paused => WorkerStatus::Paused,
+            crate::core::state::WorkerStatus::Error => WorkerStatus::Error,
+        },
+        work_dir: worker.work_dir,
+        waiting_thread: worker.waiting_thread,
         location: WorkerLocation::Local,
-        last_heartbeat: None,
-        created_at: chrono::Utc::now().to_rfc3339(),
-        needs_restart: false,
-        session_started_at: None,
+        last_heartbeat: worker.last_heartbeat,
+        created_at: worker.created_at,
+        needs_restart: worker.needs_restart,
+        session_started_at: worker.session_started_at,
         is_leader: false,
         context_utilization: None,
         input_tokens: None,
@@ -1132,25 +1362,146 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
 }
 
 /// Detach/stop a worker
+///
+/// Stops the worker process and marks it as paused.
 #[tauri::command]
 pub async fn detach_worker(run_name: String, worker_id: u32) -> Result<(), String> {
-    eprintln!(
-        "[INFO] Detaching worker {} from run {}",
-        worker_id, run_name
-    );
-    // TODO: Integrate with state.rs
+    use crate::core::workers::is_pid_alive;
+    use crate::core::state::WorkerUpdate;
+
+    let run_dir = config::run_dir(&run_name);
+    let db_path = run_dir.join("hirsel.db");
+
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    // Find the worker by ID
+    let workers = state.get_workers()
+        .map_err(|e| format!("Failed to get workers: {}", e))?;
+
+    let worker = workers.iter()
+        .find(|w| w.id as u32 == worker_id)
+        .ok_or_else(|| format!("Worker with ID {} not found", worker_id))?;
+
+    // Kill the process if it's running
+    if let Some(pid) = worker.pid {
+        if is_pid_alive(pid as u32) {
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+            tracing::info!("Stopped worker {} (PID {})", worker.name, pid);
+        }
+    }
+
+    // Mark as paused
+    state.update_worker(
+        &worker.name,
+        WorkerUpdate {
+            pid: None,
+            status: Some(crate::core::state::WorkerStatus::Paused),
+            ..Default::default()
+        },
+    ).map_err(|e| format!("Failed to update worker: {}", e))?;
+
+    tracing::info!("Detached worker {} from run {}", worker.name, run_name);
     Ok(())
 }
 
 /// Restart a worker
+///
+/// Stops the current worker process and spawns a new one.
 #[tauri::command]
 pub async fn restart_worker(run_name: String, worker_id: u32) -> Result<(), String> {
-    eprintln!(
-        "[INFO] Restarting worker {} in run {}",
-        worker_id, run_name
-    );
-    // TODO: Integrate with state.rs
-    Ok(())
+    use crate::core::workers::{is_pid_alive, spawn_worker, WorkerSpawnConfig};
+    use crate::core::state::WorkerUpdate;
+    use crate::core::Files;
+    use crate::cli::config::get_agent_command;
+
+    let run_dir = config::run_dir(&run_name);
+    let db_path = run_dir.join("hirsel.db");
+
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    // Find the worker by ID
+    let workers = state.get_workers()
+        .map_err(|e| format!("Failed to get workers: {}", e))?;
+
+    let worker = workers.iter()
+        .find(|w| w.id as u32 == worker_id)
+        .ok_or_else(|| format!("Worker with ID {} not found", worker_id))?
+        .clone();
+
+    // Kill the process if it's running
+    if let Some(pid) = worker.pid {
+        if is_pid_alive(pid as u32) {
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+            tracing::info!("Stopped worker {} (PID {}) for restart", worker.name, pid);
+            // Give the process time to clean up
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    }
+
+    // Clear PID before restarting
+    state.update_worker(
+        &worker.name,
+        WorkerUpdate {
+            pid: None,
+            ..Default::default()
+        },
+    ).map_err(|e| format!("Failed to update worker: {}", e))?;
+
+    // Get work directory
+    let work_dir = worker.work_dir
+        .as_ref()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| run_dir.join("work").join(&worker.name));
+
+    // Determine if multi-worker mode
+    let is_multi_worker = workers.len() > 1;
+    let leader_name = workers.first().map(|w| w.name.clone());
+    let teammates: Vec<String> = workers.iter()
+        .filter(|w| w.name != worker.name)
+        .map(|w| w.name.clone())
+        .collect();
+
+    // Spawn the worker
+    let files = Files::new(&run_dir);
+    let agent_command = get_agent_command();
+    let config = WorkerSpawnConfig {
+        run_name: run_name.clone(),
+        worker_name: worker.name.clone(),
+        work_dir,
+        run_dir: run_dir.clone(),
+        spec_path: files.spec(),
+        agent_command,
+        is_leader: worker.id == 1, // First worker is typically the leader
+        leader_name,
+        teammates: if is_multi_worker { Some(teammates) } else { None },
+        resume_session_id: worker.session_id.clone(),
+    };
+
+    match spawn_worker(config, &state) {
+        Ok(result) => {
+            tracing::info!("Restarted worker {} (PID {})", worker.name, result.pid);
+            Ok(())
+        }
+        Err(e) => {
+            Err(format!("Failed to restart worker: {}", e))
+        }
+    }
 }
 
 // =============================================================================
@@ -1231,13 +1582,21 @@ pub async fn send_message(
     thread_name: String,
     content: String,
 ) -> Result<Message, String> {
-    eprintln!(
-        "[INFO] Sending message to {}/{}: {}",
-        run_name, thread_name, content
-    );
-    // TODO: Integrate with state.rs
+    let db_path = config::run_dir(&run_name).join("hirsel.db");
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    // Add the message (user messages are not waiting)
+    let message_id = state.add_message(&thread_name, "user", &content, false)
+        .map_err(|e| format!("Failed to send message: {}", e))?;
+
+    // Return the created message
     Ok(Message {
-        id: 1,
+        id: message_id as u32,
         thread: thread_name,
         sender: "user".to_string(),
         content,
@@ -1254,11 +1613,18 @@ pub async fn mark_messages_read(
     thread_name: String,
     reader: String,
 ) -> Result<(), String> {
-    eprintln!(
-        "[INFO] Marking messages read by {} in {}/{}",
-        reader, run_name, thread_name
-    );
-    // TODO: Integrate with state.rs
+    let db_path = config::run_dir(&run_name).join("hirsel.db");
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    // Mark all messages in thread as read by this reader
+    state.mark_messages_read(&thread_name, &reader, None)
+        .map_err(|e| format!("Failed to mark messages read: {}", e))?;
+
     Ok(())
 }
 
@@ -1687,6 +2053,22 @@ pub async fn clear_worker_events(
 }
 
 // =============================================================================
+// Platform Commands
+// =============================================================================
+
+/// Check if running on Wayland
+///
+/// Returns true if XDG_SESSION_TYPE is "wayland". On Wayland, minimize and
+/// maximize window operations don't work as expected, so the UI should hide
+/// those controls.
+#[tauri::command]
+pub fn is_wayland() -> bool {
+    std::env::var("XDG_SESSION_TYPE")
+        .map(|v| v.to_lowercase() == "wayland")
+        .unwrap_or(false)
+}
+
+// =============================================================================
 // Config Commands
 // =============================================================================
 
@@ -1922,6 +2304,8 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         get_eval_spec,
         get_evals,
         start_eval,
+        // Platform commands
+        is_wayland,
         // Config commands
         get_config,
         save_config,

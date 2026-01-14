@@ -12,6 +12,7 @@ import type { RunSummary, RunStatus } from '../lib/types';
  * Status color class mapping for the status dot
  */
 const STATUS_DOT_CLASS: Record<RunStatus, string> = {
+  draft: 'status-idle',
   idle: 'status-idle',
   working: 'status-working',
   paused: 'status-waiting',
@@ -29,6 +30,7 @@ const STATUS_DOT_CLASS: Record<RunStatus, string> = {
  * Status display text
  */
 const STATUS_LABEL: Record<RunStatus, string> = {
+  draft: 'Draft',
   idle: 'Idle',
   working: 'Working',
   paused: 'Paused',

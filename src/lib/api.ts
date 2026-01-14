@@ -881,13 +881,9 @@ export async function listChatSessions(): Promise<string[]> {
 export async function listenChatEvents(
   handler: (event: ChatEvent) => void
 ): Promise<() => void> {
-  console.log('[API] listenChatEvents - setting up listener');
   const unlisten = await listen<ChatEvent>('chat-event', (event) => {
-    console.log('[API] chat-event received raw:', event);
-    console.log('[API] chat-event payload:', event.payload);
     handler(event.payload);
   });
-  console.log('[API] listenChatEvents - listener set up successfully');
 
   return unlisten;
 }

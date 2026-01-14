@@ -24,6 +24,7 @@ import type { RunDetail, RunStatus, Task, Worker } from '../lib/types';
  * Status badge class mapping
  */
 const STATUS_BADGE_CLASSES: Record<RunStatus, string> = {
+  draft: 'bg-wool-600/20 text-wool-400',
   idle: 'bg-wool-700/20 text-wool-500',
   working: 'bg-amber-500/20 text-amber-500',
   paused: 'bg-golden/20 text-golden',
@@ -41,6 +42,7 @@ const STATUS_BADGE_CLASSES: Record<RunStatus, string> = {
  * Status display labels
  */
 const STATUS_LABELS: Record<RunStatus, string> = {
+  draft: 'Draft',
   idle: 'Idle',
   working: 'Working',
   paused: 'Paused',

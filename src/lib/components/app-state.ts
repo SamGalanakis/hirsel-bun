@@ -15,15 +15,17 @@ export function appState() {
     // State
     selectedRun: null as string | null,
     currentRunDetail: null as RunDetail | null,
-    chatOpen: false,
     aiChatOpen: false,
+    notificationsOpen: false,
     showHelp: false,
     showSettings: false,
     unreadCount: 0,
+    totalUnreadCount: 0,
     tasksDone: 0,
     tasksTotal: 0,
     isDarkTheme: isDarkTheme(),
     isMaximized: false,
+    isWayland: false,
     sidebarCollapsed: false,
     _focusedRunIndex: -1,
 
@@ -32,8 +34,8 @@ export function appState() {
       this.sidebarCollapsed = !this.sidebarCollapsed;
     },
 
-    toggleChat() {
-      this.chatOpen = !this.chatOpen;
+    toggleNotifications() {
+      this.notificationsOpen = !this.notificationsOpen;
     },
 
     toggleAiChat() {
@@ -118,13 +120,13 @@ export function appState() {
     getStatusBadgeClass,
     getStatusDotClass,
 
-    // Run actions
+    // Run actions (implemented in run-detail.ts)
     async pauseRun() {
-      console.log('Pause run:', this.selectedRun);
+      // Stub - use run-detail component actions
     },
 
     async resumeRun() {
-      console.log('Resume run:', this.selectedRun);
+      // Stub - use run-detail component actions
     },
 
     // Keyboard navigation
@@ -156,7 +158,6 @@ export function appState() {
     },
 
     async attachToWorker() {
-      console.log('Attach to worker for run:', this.selectedRun);
       if (window.tauriInvoke) {
         try {
           const workers = await window.tauriInvoke<Array<{ name: string }>>('get_workers', {
@@ -178,6 +179,15 @@ export function appState() {
     // Initialization
     async init() {
       this.initTheme();
+
+      // Check if running on Wayland (minimize/maximize don't work there)
+      if (window.tauriInvoke) {
+        try {
+          this.isWayland = await window.tauriInvoke<boolean>('is_wayland');
+        } catch (e) {
+          console.warn('Failed to check Wayland:', e);
+        }
+      }
 
       // Initialize window state
       if (window.tauriGetCurrentWindow) {
@@ -231,19 +241,20 @@ export function appState() {
             if (this.selectedRun) this.attachToWorker();
             break;
           case 'c':
-            this.toggleChat();
+            // Switch to messages tab
+            if (this.selectedRun) {
+              window.dispatchEvent(new CustomEvent('switch-tab', { detail: 'messages' }));
+            }
             break;
           case 'i':
             this.toggleAiChat();
             break;
           case 'm':
-            if (this.chatOpen) {
-              const input = document.querySelector('.chat-input') as HTMLElement;
-              if (input) input.focus();
-            } else {
-              this.chatOpen = true;
+            // Switch to messages tab and focus input
+            if (this.selectedRun) {
+              window.dispatchEvent(new CustomEvent('switch-tab', { detail: 'messages' }));
               setTimeout(() => {
-                const input = document.querySelector('.chat-input') as HTMLElement;
+                const input = document.querySelector('.inline-chat-input') as HTMLElement;
                 if (input) input.focus();
               }, 100);
             }
@@ -253,7 +264,7 @@ export function appState() {
             break;
           case 'Escape':
             this.showHelp = false;
-            this.chatOpen = false;
+            this.notificationsOpen = false;
             this.aiChatOpen = false;
             break;
           case 'p':

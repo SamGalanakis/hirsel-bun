@@ -52,7 +52,7 @@ export function isTauriReady(): boolean {
 export function waitForTauri(callback: () => void, maxAttempts = 50): void {
   let attempts = 0;
   const check = () => {
-    if (window.tauriInvoke) {
+    if (isTauriReady()) {
       callback();
     } else if (attempts < maxAttempts) {
       attempts++;
@@ -64,4 +64,4 @@ export function waitForTauri(callback: () => void, maxAttempts = 50): void {
   check();
 }
 
-export { ToastOptions };
+export type { ToastOptions };

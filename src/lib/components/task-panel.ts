@@ -260,7 +260,7 @@ export function taskPanel() {
       } catch (err) {
         const error = err as Error;
         console.error('Failed to complete task:', error);
-        alert('Failed to complete task: ' + (error.message || error));
+        window.toast?.error('Failed to complete task', error.message || String(error));
       }
     },
 
@@ -277,7 +277,7 @@ export function taskPanel() {
       } catch (err) {
         const error = err as Error;
         console.error('Failed to reopen task:', error);
-        alert('Failed to reopen task: ' + (error.message || error));
+        window.toast?.error('Failed to reopen task', error.message || String(error));
       }
     },
 
@@ -315,7 +315,7 @@ export function taskPanel() {
       } catch (err) {
         const error = err as Error;
         console.error('Failed to unclaim task:', error);
-        alert('Failed to unclaim task: ' + (error.message || error));
+        window.toast?.error('Failed to unclaim task', error.message || String(error));
       }
       this.hideContextMenu();
     },
@@ -341,7 +341,7 @@ export function taskPanel() {
       } catch (err) {
         const error = err as Error;
         console.error('Failed to delete task:', error);
-        alert('Failed to delete task: ' + (error.message || error));
+        window.toast?.error('Failed to delete task', error.message || String(error));
       }
       this.hideContextMenu();
     },

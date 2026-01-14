@@ -6,7 +6,6 @@
  */
 
 // Core components
-export { toastContainer, initToastApi } from './toast';
 export { appState } from './app-state';
 
 // Run management
@@ -25,6 +24,9 @@ export { activityLog } from './activity-log';
 export { chatPanel } from './chat-panel';
 export { directChat } from './direct-chat';
 export { permissionModal } from './permission-modal';
+
+// Notifications
+export { notifications } from './notifications';
 
 // Tabs
 export { tasksTab, evalTab } from './tabs';

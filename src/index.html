@@ -184,11 +184,51 @@
       <button @click="toggleAiChat()" class="p-2 rounded hover:bg-pasture-700 text-wool-300 relative" :class="{ 'bg-pasture-700 text-amber-500': aiChatOpen }" title="Gyp (a)">
         <i data-lucide="sparkles" class="w-4 h-4"></i>
       </button>
-      <!-- Chat Button -->
-      <button @click="toggleChat()" class="p-2 rounded hover:bg-pasture-700 text-wool-300 relative" title="Chat (c)">
-        <i data-lucide="message-circle" class="w-4 h-4"></i>
-        <span x-show="unreadCount > 0" class="absolute -top-1 -right-1 w-2 h-2 bg-terra rounded-full"></span>
-      </button>
+      <!-- Notifications Bell -->
+      <div class="relative" x-data="notifications()">
+        <button @click="toggleNotifications()" class="p-2 rounded hover:bg-pasture-700 text-wool-300 relative" :class="{ 'bg-pasture-700': open }" title="Notifications">
+          <i data-lucide="bell" class="w-4 h-4"></i>
+          <span x-show="totalUnread > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-terra rounded-full text-[10px] text-white font-bold flex items-center justify-center px-1" x-text="totalUnread > 99 ? '99+' : totalUnread"></span>
+        </button>
+        <!-- Notifications dropdown -->
+        <div
+          x-show="open"
+          @click.away="open = false"
+          x-transition:enter="transition ease-out duration-150"
+          x-transition:enter-start="opacity-0 scale-95"
+          x-transition:enter-end="opacity-100 scale-100"
+          x-transition:leave="transition ease-in duration-100"
+          x-transition:leave-start="opacity-100 scale-100"
+          x-transition:leave-end="opacity-0 scale-95"
+          class="absolute right-0 mt-2 w-80 bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl z-50 overflow-hidden"
+        >
+          <div class="p-3 border-b border-pasture-600 flex items-center justify-between">
+            <h3 class="text-sm font-medium text-wool-300">Notifications</h3>
+            <button x-show="notifications.length > 0" @click="markAllRead()" class="text-xs text-wool-500 hover:text-wool-300">Mark all read</button>
+          </div>
+          <div class="max-h-80 overflow-y-auto">
+            <template x-for="notif in notifications" :key="notif.id">
+              <div
+                @click="goToRun(notif.runName); open = false"
+                class="p-3 hover:bg-pasture-700 cursor-pointer border-b border-pasture-700 last:border-0"
+                :class="{ 'bg-pasture-700/50': !notif.read }"
+              >
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="text-xs font-medium text-amber-500" x-text="notif.runName"></span>
+                  <span class="text-xs text-wool-600" x-text="notif.thread"></span>
+                  <span class="text-xs text-wool-600 ml-auto" x-text="formatTime(notif.timestamp)"></span>
+                </div>
+                <p class="text-sm text-wool-300 truncate" x-text="notif.content"></p>
+                <p class="text-xs text-wool-500 mt-0.5" x-text="notif.sender"></p>
+              </div>
+            </template>
+            <div x-show="notifications.length === 0" class="p-6 text-center text-wool-500">
+              <i data-lucide="bell-off" class="w-8 h-8 mx-auto mb-2 text-wool-600"></i>
+              <p class="text-sm">No notifications</p>
+            </div>
+          </div>
+        </div>
+      </div>
       <!-- Help Button -->
       <button @click="showHelp = true" class="p-2 rounded hover:bg-pasture-700 text-wool-300" title="Help (?)">
         <i data-lucide="help-circle" class="w-4 h-4"></i>
@@ -202,10 +242,11 @@
       <div class="w-px h-4 bg-pasture-600 mx-2"></div>
 
       <!-- Window Controls (frameless window) -->
-      <button @click="minimizeWindow()" class="window-control p-2 rounded hover:bg-pasture-700 text-wool-400 hover:text-wool-200" title="Minimize">
+      <!-- Minimize/Maximize hidden on Wayland where they don't work -->
+      <button x-show="!isWayland" @click="minimizeWindow()" class="window-control p-2 rounded hover:bg-pasture-700 text-wool-400 hover:text-wool-200" title="Minimize">
         <i data-lucide="minus" class="w-3 h-3"></i>
       </button>
-      <button @click="toggleMaximize()" class="window-control p-2 rounded hover:bg-pasture-700 text-wool-400 hover:text-wool-200" title="Maximize">
+      <button x-show="!isWayland" @click="toggleMaximize()" class="window-control p-2 rounded hover:bg-pasture-700 text-wool-400 hover:text-wool-200" title="Maximize">
         <i x-show="!isMaximized" data-lucide="square" class="w-3 h-3"></i>
         <i x-show="isMaximized" data-lucide="copy" class="w-3 h-3"></i>
       </button>
@@ -286,12 +327,23 @@
           <p class="text-xs mt-2">Use <code class="bg-pasture-700 px-1.5 py-0.5 rounded text-wool-300">hirsel go</code> to start</p>
         </div>
 
-        <!-- Loading state -->
-        <div x-show="loading" class="empty-state p-6 text-center text-wool-500">
-          <svg class="w-16 h-16 mx-auto mb-3 text-wool-600 sheep-walking-anim">
-            <use href="#sheep-walking"/>
-          </svg>
-          <p class="text-sm text-wool-400">Loading runs...</p>
+        <!-- Loading state - skeleton run items -->
+        <div x-show="loading" class="space-y-1 p-2">
+          <template x-for="i in 4" :key="i">
+            <div class="px-3 py-2.5 border-b border-pasture-800">
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                  <div class="skeleton w-2 h-2 rounded-full"></div>
+                  <div class="skeleton h-4 w-24"></div>
+                </div>
+                <div class="skeleton h-4 w-12 rounded"></div>
+              </div>
+              <div class="flex items-center justify-between mt-1.5">
+                <div class="skeleton h-3 w-32"></div>
+                <div class="skeleton h-3 w-8"></div>
+              </div>
+            </div>
+          </template>
         </div>
 
         <!-- Error state -->
@@ -756,6 +808,14 @@ Example:
         >
           Eval
         </button>
+        <button
+          @click="activeTab = 'messages'"
+          class="tab-btn px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px relative"
+          :class="activeTab === 'messages' ? 'text-amber-500 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
+        >
+          Messages
+          <span x-show="unreadCount > 0" class="absolute -top-1 -right-1 min-w-[16px] h-4 bg-terra rounded-full text-[10px] text-white font-bold flex items-center justify-center px-1" x-text="unreadCount"></span>
+        </button>
       </div>
 
       <!-- Loading state -->
@@ -847,12 +907,20 @@ Example:
                 <p class="text-xs mt-1">Workers will appear when the run starts</p>
               </div>
 
-              <!-- Loading workers state -->
-              <div x-show="loading" class="empty-state text-center text-wool-500 py-6">
-                <svg class="w-12 h-12 mx-auto mb-2 text-wool-600 sheep-walking-anim">
-                  <use href="#sheep-walking"/>
-                </svg>
-                <p class="text-sm text-wool-400">Loading workers...</p>
+              <!-- Loading workers state - skeleton -->
+              <div x-show="loading" class="space-y-2 py-2">
+                <template x-for="i in 3" :key="i">
+                  <div class="px-3 py-2.5 border-b border-pasture-700">
+                    <div class="flex items-center gap-3">
+                      <div class="skeleton w-3 h-3 rounded-full"></div>
+                      <div class="flex-1">
+                        <div class="skeleton h-4 w-20 mb-1"></div>
+                        <div class="skeleton h-3 w-24"></div>
+                      </div>
+                      <div class="skeleton h-3 w-12"></div>
+                    </div>
+                  </div>
+                </template>
               </div>
 
               <!-- Worker Detail Modal -->
@@ -1077,12 +1145,19 @@ Example:
                 <p class="text-xs mt-1">Tasks will be created by the leader</p>
               </div>
 
-              <!-- Loading tasks state -->
-              <div x-show="loading" class="empty-state text-center text-wool-500 py-6">
-                <svg class="w-12 h-12 mx-auto mb-2 text-wool-600 sheep-walking-anim">
-                  <use href="#sheep-walking"/>
-                </svg>
-                <p class="text-sm text-wool-400">Loading tasks...</p>
+              <!-- Loading tasks state - skeleton -->
+              <div x-show="loading" class="space-y-2 py-2">
+                <template x-for="i in 4" :key="i">
+                  <div class="px-3 py-2 border-b border-pasture-700">
+                    <div class="flex items-center gap-3">
+                      <div class="skeleton w-4 h-4 rounded"></div>
+                      <div class="flex-1">
+                        <div class="skeleton h-4 w-32 mb-1"></div>
+                        <div class="skeleton h-3 w-20"></div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
               </div>
 
               <!-- Error state -->
@@ -1213,9 +1288,9 @@ Example:
 
         <!-- Bottom: Activity Log -->
         <div
-          class="activity-panel flex flex-col transition-all duration-200"
+          class="activity-panel flex flex-col transition-all duration-200 h-48"
           x-data="activityLog()"
-          :class="isFullscreen ? 'fixed inset-0 z-40 bg-pasture-900' : 'h-48'"
+          :class="isFullscreen ? 'fixed inset-0 z-40 bg-pasture-900' : ''"
         >
           <div class="p-3 border-b border-pasture-700 flex items-center justify-between">
             <h3 class="text-sm font-medium text-wool-300">Activity</h3>
@@ -1233,9 +1308,7 @@ Example:
                 class="p-1 rounded hover:bg-pasture-600 text-wool-500 hover:text-wool-300 transition-colors"
                 :title="isFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'"
               >
-                <!-- Expand icon -->
                 <i x-show="!isFullscreen" data-lucide="maximize-2" class="w-4 h-4"></i>
-                <!-- Collapse icon -->
                 <i x-show="isFullscreen" data-lucide="minimize-2" class="w-4 h-4"></i>
               </button>
             </div>
@@ -1244,18 +1317,13 @@ Example:
             class="flex-1 overflow-y-auto font-mono text-xs"
             @scroll="handleScroll($event)"
           >
-            <!-- Loading state -->
             <div x-show="loading" class="text-center text-wool-500 py-4">
               <span class="animate-pulse">Loading activity...</span>
             </div>
-
-            <!-- Error state -->
             <div x-show="error && !loading" class="text-center text-terra py-4">
               <p x-text="error"></p>
               <button @click="loadHistory(runName)" class="mt-2 text-xs text-amber-500 hover:underline">Retry</button>
             </div>
-
-            <!-- Activity entries -->
             <template x-for="entry in entries" :key="entry.id">
               <div class="px-3 py-1.5 hover:bg-pasture-700/30 flex items-start gap-3 group transition-colors">
                 <span class="text-wool-600 flex-shrink-0 text-[11px] tabular-nums pt-0.5" x-text="formatTime(entry.timestamp)"></span>
@@ -1270,8 +1338,6 @@ Example:
                 </div>
               </div>
             </template>
-
-            <!-- Empty activity state -->
             <div x-show="!loading && !error && entries.length === 0" class="empty-state text-center text-wool-500 py-4">
               <svg class="w-10 h-10 mx-auto mb-2 text-wool-600">
                 <use href="#sheep-sleeping"/>
@@ -1347,9 +1413,7 @@ Example:
       <div x-show="runName && activeTab === 'spec'" class="flex-1 flex flex-col overflow-hidden p-4">
         <h3 class="text-lg font-semibold text-wool-200 mb-4">Specification</h3>
         <div class="flex-1 overflow-y-auto">
-          <div x-show="detail?.request" class="prose prose-invert max-w-none">
-            <pre class="bg-pasture-800 rounded-lg p-4 text-sm text-wool-300 whitespace-pre-wrap overflow-x-auto" x-text="detail?.request"></pre>
-          </div>
+          <div x-show="detail?.request" class="markdown-preview" x-html="renderMarkdown(detail?.request)"></div>
           <div x-show="!detail?.request" class="text-center text-wool-500 py-8">
             <svg class="w-12 h-12 mx-auto mb-3 text-wool-600">
               <use href="#sheep-sleeping"/>
@@ -1365,9 +1429,7 @@ Example:
       <div x-show="runName && activeTab === 'eval-spec'" class="flex-1 flex flex-col overflow-hidden p-4">
         <h3 class="text-lg font-semibold text-wool-200 mb-4">Evaluation Specification</h3>
         <div class="flex-1 overflow-y-auto">
-          <div x-show="evalSpec" class="prose prose-invert max-w-none">
-            <pre class="bg-pasture-800 rounded-lg p-4 text-sm text-wool-300 whitespace-pre-wrap overflow-x-auto" x-text="evalSpec"></pre>
-          </div>
+          <div x-show="evalSpec" class="markdown-preview" x-html="renderMarkdown(evalSpec)"></div>
           <div x-show="!evalSpec && !evalSpecLoading" class="text-center text-wool-500 py-8">
             <svg class="w-12 h-12 mx-auto mb-3 text-wool-600">
               <use href="#sheep-sleeping"/>
@@ -1428,99 +1490,102 @@ Example:
       </div>
       <!-- END EVAL TAB -->
 
-    </section>
-
-    <!-- Right Panel: Chat (slide-out) -->
-    <aside
-      x-show="chatOpen"
-      x-transition:enter="transition ease-out duration-200"
-      x-transition:enter-start="translate-x-full"
-      x-transition:enter-end="translate-x-0"
-      x-transition:leave="transition ease-in duration-150"
-      x-transition:leave-start="translate-x-0"
-      x-transition:leave-end="translate-x-full"
-      class="chat-panel w-80 flex-shrink-0 border-l border-pasture-600 flex flex-col bg-pasture-800"
-    >
-      <div class="p-3 border-b border-pasture-600 flex items-center justify-between">
-        <h2 class="text-sm font-medium text-wool-300 uppercase tracking-wide">Chat</h2>
-        <button @click="chatOpen = false" class="text-wool-500 hover:text-wool-300">
-          <i data-lucide="x" class="w-4 h-4"></i>
-        </button>
-      </div>
-
-      <!-- Thread list and messages (single x-data scope) -->
-      <div class="flex-1 flex flex-col overflow-hidden" x-data="chatPanel()">
-        <!-- Thread tabs -->
-        <div class="border-b border-pasture-600 flex-shrink-0">
-          <div class="flex overflow-x-auto p-2 gap-1">
-            <!-- Empty threads state -->
-            <span x-show="threads.length === 0" class="text-xs text-wool-500 px-2">No threads</span>
-
+      <!-- MESSAGES TAB -->
+      <div x-show="runName && activeTab === 'messages'" class="flex-1 flex overflow-hidden" x-data="chatPanel()">
+        <!-- Thread sidebar -->
+        <div class="w-48 border-r border-pasture-600 flex flex-col bg-pasture-800/50">
+          <div class="p-3 border-b border-pasture-700">
+            <h3 class="text-sm font-medium text-wool-300">Threads</h3>
+          </div>
+          <div class="flex-1 overflow-y-auto">
+            <!-- Show existing threads -->
             <template x-for="thread in threads" :key="thread.name">
               <button
                 @click="selectThread(thread.name)"
-                :class="{ 'bg-pasture-600': selectedThread === thread.name }"
-                class="px-3 py-1 text-xs rounded whitespace-nowrap hover:bg-pasture-700 transition-colors relative"
+                class="w-full px-3 py-2 text-left text-sm hover:bg-pasture-700 transition-colors flex items-center justify-between"
+                :class="{ 'bg-pasture-700 border-l-2 border-amber-500': selectedThread === thread.name }"
               >
-                <span x-text="thread.name"></span>
-                <span x-show="thread.unreadCount > 0" class="ml-1 text-terra font-bold" x-text="'(' + thread.unreadCount + ')'"></span>
+                <span class="truncate" x-text="thread.name"></span>
+                <span x-show="thread.unreadCount > 0" class="ml-2 min-w-[18px] h-[18px] bg-terra rounded-full text-[10px] text-white font-bold flex items-center justify-center px-1" x-text="thread.unreadCount"></span>
               </button>
             </template>
+            <!-- Default 'user' thread when no threads exist -->
+            <button
+              x-show="threads.length === 0"
+              @click="selectedThread = 'user'"
+              class="w-full px-3 py-2 text-left text-sm hover:bg-pasture-700 transition-colors flex items-center justify-between bg-pasture-700 border-l-2 border-amber-500"
+            >
+              <span class="truncate">user</span>
+              <span class="text-[10px] text-wool-500">new</span>
+            </button>
           </div>
         </div>
 
-      <!-- Messages -->
-      <div class="messages-container flex-1 overflow-y-auto p-3 space-y-3">
-        <!-- Loading state -->
-        <div x-show="loading" class="text-center text-wool-500 py-4">
-          <span class="animate-pulse">Loading messages...</span>
-        </div>
+        <!-- Messages area -->
+        <div class="flex-1 flex flex-col">
+          <!-- Messages header -->
+          <div class="p-3 border-b border-pasture-700 flex items-center justify-between">
+            <h3 class="text-sm font-medium text-wool-300">
+              <span x-show="selectedThread" x-text="'#' + selectedThread"></span>
+              <span x-show="!selectedThread" class="text-wool-500">Select a thread</span>
+            </h3>
+          </div>
 
-        <!-- Error state -->
-        <div x-show="error && !loading" class="text-center text-terra py-4">
-          <p x-text="error"></p>
-          <button @click="selectThread(selectedThread)" class="mt-2 text-sm underline hover:no-underline">Retry</button>
-        </div>
-
-        <!-- Empty state -->
-        <div x-show="!loading && !error && messages.length === 0" class="text-center text-wool-500 py-8">
-          <p class="text-sm">No messages yet</p>
-          <p class="text-xs mt-1">Start the conversation below</p>
-        </div>
-
-        <!-- Message list -->
-        <template x-for="msg in messages" :key="msg.id">
-          <div class="message">
-            <div class="flex items-baseline gap-2 mb-1">
-              <span class="text-sm font-medium" :class="getSenderColor(msg.sender)" x-text="msg.sender"></span>
-              <span class="text-xs text-wool-500" x-text="formatTime(msg.timestamp)"></span>
-              <span x-show="msg.waiting" class="text-xs text-golden">[waiting]</span>
+          <!-- Messages list -->
+          <div class="messages-container flex-1 overflow-y-auto p-4 space-y-4">
+            <div x-show="loading" class="text-center text-wool-500 py-8">
+              <span class="animate-pulse">Loading messages...</span>
             </div>
-            <p class="text-sm text-wool-300 whitespace-pre-wrap" x-text="msg.content"></p>
+            <div x-show="error && !loading" class="text-center text-terra py-8">
+              <p x-text="error"></p>
+              <button @click="selectThread(selectedThread)" class="mt-2 text-xs text-amber-500 hover:underline">Retry</button>
+            </div>
+            <div x-show="!loading && !error && !selectedThread" class="text-center text-wool-500 py-8">
+              <i data-lucide="message-circle" class="w-12 h-12 mx-auto mb-3 text-wool-600"></i>
+              <p class="text-sm">Select a thread to view messages</p>
+            </div>
+            <div x-show="!loading && !error && selectedThread && messages.length === 0" class="text-center text-wool-500 py-8">
+              <i data-lucide="message-square-plus" class="w-10 h-10 mx-auto mb-3 text-wool-600"></i>
+              <p class="text-sm">No messages yet</p>
+              <p class="text-xs mt-1 text-wool-600">Send a message to start the conversation</p>
+            </div>
+            <template x-for="msg in messages" :key="msg.id">
+              <div class="message">
+                <div class="flex items-baseline gap-2 mb-1">
+                  <span class="text-sm font-medium" :class="getSenderColor(msg.sender)" x-text="msg.sender"></span>
+                  <span class="text-xs text-wool-500" x-text="formatTime(msg.timestamp)"></span>
+                  <span x-show="msg.waiting" class="text-xs text-golden">[waiting]</span>
+                </div>
+                <p class="text-sm text-wool-300 whitespace-pre-wrap" x-text="msg.content"></p>
+              </div>
+            </template>
           </div>
-        </template>
-      </div>
 
-      <!-- Message input -->
-      <div class="p-3 border-t border-pasture-600 flex-shrink-0">
-        <div class="flex gap-2">
-          <input
-            type="text"
-            x-model="newMessage"
-            @keydown.enter="sendMessage()"
-            placeholder="Type a message..."
-            class="chat-input flex-1 px-3 py-2 text-sm bg-pasture-900 border border-pasture-600 rounded focus:outline-none focus:border-amber-500"
-          >
-          <button
-            @click="sendMessage()"
-            class="px-3 py-2 bg-amber-600 hover:bg-amber-500 rounded text-sm font-medium transition-colors"
-          >
-            Send
-          </button>
+          <!-- Message input -->
+          <div class="p-3 border-t border-pasture-700 flex-shrink-0">
+            <div class="flex gap-2">
+              <input
+                type="text"
+                x-model="newMessage"
+                @keydown.enter="sendMessage()"
+                :disabled="!selectedThread"
+                placeholder="Type a message..."
+                class="inline-chat-input flex-1 px-3 py-2 text-sm bg-pasture-900 border border-pasture-600 rounded focus:outline-none focus:border-amber-500 disabled:opacity-50"
+              >
+              <button
+                @click="sendMessage()"
+                :disabled="!selectedThread"
+                class="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:hover:bg-amber-600 rounded text-sm font-medium transition-colors"
+              >
+                Send
+              </button>
+            </div>
+          </div>
         </div>
       </div>
-      </div>
-    </aside>
+      <!-- END MESSAGES TAB -->
+
+    </section>
 
     <!-- Right Panel: Gyp (slide-out drawer) -->
     <aside
@@ -2168,6 +2233,9 @@ Example:
       </div>
     </div>
   </div>
+
+  <!-- Basecoat Toaster -->
+  <div id="toaster" class="toaster"></div>
 
   <!-- Load Tauri APIs -->
   <script type="module" src="./main.ts"></script>

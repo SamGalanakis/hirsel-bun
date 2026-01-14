@@ -10,7 +10,7 @@ import type { ThreadSummary, Message } from '../types';
 export function chatPanel() {
   return {
     threads: [] as ThreadSummary[],
-    selectedThread: 'user',
+    selectedThread: null as string | null,
     messages: [] as Message[],
     newMessage: '',
     loading: false,
@@ -94,8 +94,14 @@ export function chatPanel() {
           app.unreadCount = totalUnread;
         }
 
-        if (this.threads.length > 0 && !this.threads.find(t => t.name === this.selectedThread)) {
-          this.selectThread(this.threads[0].name);
+        // Auto-select thread: first available, or 'user' if no threads yet
+        if (this.threads.length > 0) {
+          if (!this.selectedThread || !this.threads.find(t => t.name === this.selectedThread)) {
+            this.selectThread(this.threads[0].name);
+          }
+        } else if (!this.selectedThread) {
+          // No threads exist, default to 'user' so users can start chatting
+          this.selectedThread = 'user';
         }
       } catch (e) {
         const error = e as Error;

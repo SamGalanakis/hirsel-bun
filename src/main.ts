@@ -6,8 +6,6 @@ import { listen, emit } from '@tauri-apps/api/event';
 
 // Import Alpine components
 import {
-  toastContainer,
-  initToastApi,
   appState,
   runList,
   runDetail,
@@ -18,11 +16,15 @@ import {
   chatPanel,
   directChat,
   permissionModal,
+  notifications,
   tasksTab,
   evalTab,
   sheepClickerGame,
   settingsModal,
 } from './lib/components';
+
+// Initialize toast system (uses basecoat toaster)
+import './lib/toast';
 
 // Import Lucide icons
 import {
@@ -47,7 +49,6 @@ import {
 (window as any).getWorkerStatusIcon = getWorkerStatusIcon;
 
 // Export Alpine components globally for x-data bindings
-(window as any).toastContainer = toastContainer;
 (window as any).appState = appState;
 (window as any).runList = runList;
 (window as any).runDetail = runDetail;
@@ -58,13 +59,11 @@ import {
 (window as any).chatPanel = chatPanel;
 (window as any).directChat = directChat;
 (window as any).permissionModal = permissionModal;
+(window as any).notifications = notifications;
 (window as any).tasksTab = tasksTab;
 (window as any).evalTab = evalTab;
 (window as any).sheepClickerGame = sheepClickerGame;
 (window as any).settingsModal = settingsModal;
-
-// Initialize toast API
-initToastApi();
 
 // Initialize Lucide icons
 initLucideIcons();
@@ -82,7 +81,6 @@ console.log('[Hirsel] App initialized');
 
 listen<string>('execute-js', async (event) => {
   const code = event.payload;
-  console.log('[MCP] Executing JS:', code.substring(0, 100) + (code.length > 100 ? '...' : ''));
 
   try {
     // Execute the JavaScript code
@@ -98,7 +96,7 @@ listen<string>('execute-js', async (event) => {
     const result = await fn();
 
     // Determine the type of the result
-    let resultType = typeof result;
+    let resultType: string = typeof result;
     if (result === null) resultType = 'null';
     else if (Array.isArray(result)) resultType = 'array';
     else if (result instanceof Error) resultType = 'error';
@@ -116,8 +114,6 @@ listen<string>('execute-js', async (event) => {
       result: resultString,
       type: resultType,
     });
-
-    console.log('[MCP] JS execution success, type:', resultType);
   } catch (error) {
     // Send back the error
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -131,11 +127,9 @@ listen<string>('execute-js', async (event) => {
 
 // Handle DOM retrieval - responds to 'got-dom-content' with the full DOM
 listen('got-dom-content', async () => {
-  console.log('[MCP] Getting DOM');
   try {
     const html = document.documentElement.outerHTML;
     await emit('got-dom-content-response', html);
-    console.log('[MCP] DOM retrieved, length:', html.length);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[MCP] DOM retrieval error:', errorMessage);
@@ -153,7 +147,7 @@ interface ElementPositionRequest {
 
 listen<ElementPositionRequest>('get-element-position', async (event) => {
   const { selectorType, selectorValue, shouldClick, rawCoordinates } = event.payload;
-  console.log('[MCP] Finding element:', selectorType, selectorValue);
+  void rawCoordinates; // unused
 
   try {
     let element: Element | null = null;
@@ -200,7 +194,6 @@ listen<ElementPositionRequest>('get-element-position', async (event) => {
     // Click if requested
     if (shouldClick && element instanceof HTMLElement) {
       element.click();
-      console.log('[MCP] Clicked element at', centerX, centerY);
     }
 
     await emit('get-element-position-response', JSON.stringify({
@@ -215,8 +208,6 @@ listen<ElementPositionRequest>('get-element-position', async (event) => {
         clicked: shouldClick || false,
       },
     }));
-
-    console.log('[MCP] Element position:', centerX, centerY);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[MCP] Element position error:', errorMessage);
@@ -237,7 +228,6 @@ interface SendTextRequest {
 
 listen<SendTextRequest>('send-text-to-element', async (event) => {
   const { selectorType, selectorValue, text, delayMs = 20 } = event.payload;
-  console.log('[MCP] Sending text to element:', selectorType, selectorValue);
 
   try {
     let element: Element | null = null;
@@ -299,8 +289,6 @@ listen<SendTextRequest>('send-text-to-element', async (event) => {
       success: true,
       data: { textLength: text.length },
     }));
-
-    console.log('[MCP] Text sent successfully');
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[MCP] Send text error:', errorMessage);
@@ -310,5 +298,3 @@ listen<SendTextRequest>('send-text-to-element', async (event) => {
     }));
   }
 });
-
-console.log('[Hirsel] MCP event handlers registered');

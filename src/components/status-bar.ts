@@ -109,6 +109,7 @@ export function isTimeWarning(
 // =============================================================================
 
 const STATUS_LABELS: Record<RunStatus, string> = {
+  draft: 'Draft',
   idle: 'Idle',
   working: 'Working',
   paused: 'Paused',

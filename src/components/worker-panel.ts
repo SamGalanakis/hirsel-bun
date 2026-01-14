@@ -18,7 +18,6 @@ const STATUS_DOT_CLASS: Record<WorkerStatus, string> = {
   waiting: 'status-waiting',
   awaiting: 'status-waiting',
   paused: 'status-waiting',
-  done: 'status-done',
   error: 'status-error',
 };
 
@@ -31,7 +30,6 @@ const STATUS_LABEL: Record<WorkerStatus, string> = {
   waiting: 'Waiting',
   awaiting: 'Awaiting',
   paused: 'Paused',
-  done: 'Done',
   error: 'Error',
 };
 

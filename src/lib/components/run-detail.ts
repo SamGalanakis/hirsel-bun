@@ -2,6 +2,7 @@
  * Run detail panel Alpine component
  */
 
+import { marked } from 'marked';
 import {
   formatElapsed,
   formatTimeRemaining,
@@ -36,7 +37,7 @@ export function runDetail() {
     loading: false,
     error: null as string | null,
     pollInterval: null as ReturnType<typeof setInterval> | null,
-    activeTab: 'overview' as 'overview' | 'tasks' | 'spec' | 'eval' | 'eval-spec',
+    activeTab: 'overview' as 'overview' | 'tasks' | 'spec' | 'eval' | 'eval-spec' | 'messages',
 
     // Formatting helpers
     formatElapsed,
@@ -98,9 +99,8 @@ export function runDetail() {
         }
       });
 
-      // @ts-expect-error Alpine.js $watch magic property
       const self = this;
-      // @ts-expect-error Alpine.js $root magic property
+      // @ts-expect-error Alpine.js $watch magic property
       this.$watch('$root.selectedRun', async (newValue: string | null, oldValue: string | null) => {
         if (newValue && newValue !== oldValue) {
           await self.loadRunDetail(newValue);
@@ -120,6 +120,14 @@ export function runDetail() {
       this.$watch('activeTab', async (newTab: string) => {
         if (newTab === 'eval-spec' && this.runName) {
           await this.loadEvalSpec();
+        }
+      });
+
+      // Listen for tab switch events from keyboard shortcuts
+      window.addEventListener('switch-tab', (e: Event) => {
+        const customEvent = e as CustomEvent<string>;
+        if (customEvent.detail && this.runName) {
+          this.activeTab = customEvent.detail as typeof this.activeTab;
         }
       });
     },
@@ -225,8 +233,7 @@ export function runDetail() {
         }
       } catch (err) {
         const error = err as Error;
-        console.error('Failed to pause:', error);
-        alert('Failed to pause: ' + (error.message || error));
+        window.toast?.error('Failed to pause', error.message || String(error));
       }
     },
 
@@ -239,8 +246,7 @@ export function runDetail() {
         }
       } catch (err) {
         const error = err as Error;
-        console.error('Failed to resume:', error);
-        alert('Failed to resume: ' + (error.message || error));
+        window.toast?.error('Failed to resume', error.message || String(error));
       }
     },
 
@@ -259,6 +265,14 @@ export function runDetail() {
         console.error('Failed to deliver:', error);
         window.toast.error(error.message || String(error), 'Failed to deliver');
       }
+    },
+
+    /**
+     * Render markdown content to HTML
+     */
+    renderMarkdown(content: string | null | undefined): string {
+      if (!content) return '<p class="text-wool-500 italic">No content</p>';
+      return marked(content) as string;
     },
   };
 }
