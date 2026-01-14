@@ -260,6 +260,8 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
 /// Run the GUI (Tauri application)
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    use std::sync::Arc;
+
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::new().build());
 
@@ -273,7 +275,11 @@ pub fn run() {
         ));
     }
 
+    // Create chat session manager as shared state
+    let chat_manager = Arc::new(core::ChatSessionManager::new());
+
     builder
+        .manage(chat_manager)
         .invoke_handler(gui::get_handlers())
         .setup(|app| {
             // Set window background color to match app theme (prevents white flash on resize)

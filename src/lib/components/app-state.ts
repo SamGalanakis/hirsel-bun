@@ -4,6 +4,7 @@
 
 import { formatElapsed, formatTimeRemaining, formatTimeShort } from '../utils/formatters';
 import { getStatusBadgeClass, getStatusDotClass } from '../utils/status';
+import { getTheme, setTheme, toggleTheme as themeToggle, isDarkTheme, THEMES, type ThemeId } from '../theme';
 import type { RunDetail } from '../types';
 
 /**
@@ -15,12 +16,13 @@ export function appState() {
     selectedRun: null as string | null,
     currentRunDetail: null as RunDetail | null,
     chatOpen: false,
+    aiChatOpen: false,
     showHelp: false,
     showSettings: false,
     unreadCount: 0,
     tasksDone: 0,
     tasksTotal: 0,
-    isDarkTheme: true,
+    isDarkTheme: isDarkTheme(),
     isMaximized: false,
     sidebarCollapsed: false,
     _focusedRunIndex: -1,
@@ -32,6 +34,10 @@ export function appState() {
 
     toggleChat() {
       this.chatOpen = !this.chatOpen;
+    },
+
+    toggleAiChat() {
+      this.aiChatOpen = !this.aiChatOpen;
     },
 
     // Window controls (for frameless window)
@@ -73,30 +79,36 @@ export function appState() {
     },
 
     // Theme
+    currentTheme: getTheme() as ThemeId,
+
     toggleTheme() {
-      this.isDarkTheme = !this.isDarkTheme;
-      if (this.isDarkTheme) {
-        document.documentElement.classList.remove('light');
-        document.documentElement.setAttribute('data-theme', 'dark');
-        localStorage.setItem('hirsel-theme', 'dark');
-      } else {
-        document.documentElement.classList.add('light');
-        document.documentElement.setAttribute('data-theme', 'light');
-        localStorage.setItem('hirsel-theme', 'light');
-      }
+      const newTheme = themeToggle();
+      this.currentTheme = newTheme;
+      this.isDarkTheme = isDarkTheme();
+    },
+
+    setTheme(themeId: ThemeId) {
+      setTheme(themeId);
+      this.currentTheme = themeId;
+      this.isDarkTheme = THEMES[themeId].isDark;
     },
 
     initTheme() {
-      const stored = localStorage.getItem('hirsel-theme');
-      if (stored === 'light') {
-        this.isDarkTheme = false;
-        document.documentElement.classList.add('light');
-        document.documentElement.setAttribute('data-theme', 'light');
-      } else {
-        this.isDarkTheme = true;
-        document.documentElement.classList.remove('light');
-        document.documentElement.setAttribute('data-theme', 'dark');
-      }
+      const themeId = getTheme();
+      setTheme(themeId);
+      this.currentTheme = themeId;
+      this.isDarkTheme = isDarkTheme();
+
+      // Listen for theme changes from settings modal
+      window.addEventListener('theme-changed', ((e: CustomEvent) => {
+        this.currentTheme = e.detail.themeId;
+        this.isDarkTheme = e.detail.theme.isDark;
+      }) as EventListener);
+
+      // Listen for close-settings event
+      window.addEventListener('close-settings', () => {
+        this.showSettings = false;
+      });
     },
 
     // Formatting helpers (bound to this for templates)
@@ -221,6 +233,9 @@ export function appState() {
           case 'c':
             this.toggleChat();
             break;
+          case 'i':
+            this.toggleAiChat();
+            break;
           case 'm':
             if (this.chatOpen) {
               const input = document.querySelector('.chat-input') as HTMLElement;
@@ -239,6 +254,7 @@ export function appState() {
           case 'Escape':
             this.showHelp = false;
             this.chatOpen = false;
+            this.aiChatOpen = false;
             break;
           case 'p':
             if (this.selectedRun) this.pauseRun();

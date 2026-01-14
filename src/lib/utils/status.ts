@@ -9,6 +9,7 @@ import type { RunStatus, WorkerStatus, TaskStatus } from '../types';
  */
 export function getStatusBadgeClass(status: RunStatus | null | undefined): string {
   const classes: Record<string, string> = {
+    draft: 'bg-sky-500/20 text-sky-400',
     idle: 'bg-wool-700/20 text-wool-500',
     working: 'bg-amber-500/20 text-amber-500',
     paused: 'bg-golden/20 text-golden',
@@ -29,6 +30,7 @@ export function getStatusBadgeClass(status: RunStatus | null | undefined): strin
  */
 export function getStatusLabel(status: RunStatus | null | undefined): string {
   const labels: Record<string, string> = {
+    draft: 'Draft',
     idle: 'Idle',
     working: 'Working',
     paused: 'Paused',
@@ -49,6 +51,7 @@ export function getStatusLabel(status: RunStatus | null | undefined): string {
  */
 export function getStatusDotClass(status: RunStatus | null | undefined): Record<string, boolean> {
   return {
+    'status-draft': status === 'draft',
     'status-working': status === 'working',
     'status-waiting': status === 'waiting' || status === 'paused',
     'status-done': status === 'done' || status === 'delivered' || status === 'merged',

@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "basecoat-css";
+@plugin "@tailwindcss/typography";
 
 /* Base reset for Tauri */
 *, *::before, *::after {
@@ -12,8 +13,6 @@ html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  /* Prevent white flash during resize */
-  background-color: #1a1a1a !important;
 }
 
 /* Hide elements with x-cloak until Alpine initializes */
@@ -21,11 +20,35 @@ html, body {
   display: none !important;
 }
 
-/* Hirsel theme customizations */
-/* Override Basecoat defaults with warm "hirsel" palette */
+/* Hide native number input spinners */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
 
-/* Dark theme (default) */
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* ============================================
+   Theme System - CSS Custom Properties
+   Using :where() for specificity control
+   ============================================ */
+
+/* Theme transition */
 :root {
+  --theme-transition: background-color 200ms ease-out, color 200ms ease-out, border-color 200ms ease-out;
+}
+
+/* ============================================
+   HIRSEL THEME (Default) - "Pasture at Dusk"
+   ============================================ */
+
+/* Hirsel Dark (default) */
+:root,
+:root[data-theme="hirsel-dark"] {
   /* Backgrounds (dark pasture at dusk) */
   --pasture-900: #1a1a1a;
   --pasture-800: #242424;
@@ -48,33 +71,266 @@ html, body {
   --golden: #c9a227;
   --terra: #c45c4a;
 
-  /* Theme transition */
-  --theme-transition: background-color 200ms ease-out, color 200ms ease-out, border-color 200ms ease-out;
+  /* Basecoat/shadcn compatibility */
+  --background: #1a1a1a;
+  --foreground: #e8e4df;
+  --card: #242424;
+  --card-foreground: #e8e4df;
+  --popover: #242424;
+  --popover-foreground: #e8e4df;
+  --primary: #d4a574;
+  --primary-foreground: #1a1a1a;
+  --secondary: #2d2d2d;
+  --secondary-foreground: #e8e4df;
+  --muted: #2d2d2d;
+  --muted-foreground: #8a8580;
+  --accent: #2d2d2d;
+  --accent-foreground: #e8e4df;
+  --destructive: #c45c4a;
+  --destructive-foreground: #e8e4df;
+  --border: #333333;
+  --input: #333333;
+  --ring: #d4a574;
 }
 
-/* Light theme (pasture at dawn) */
-:root.light, [data-theme="light"] {
-  /* Backgrounds (misty morning pasture) */
-  --pasture-900: #f5f3f0;
-  --pasture-800: #ebe8e3;
-  --pasture-700: #e0dcd6;
-  --pasture-600: #d4cfc7;
+/* Hirsel Light - "Pasture at Dawn" */
+:root.light,
+:root[data-theme="light"],
+:root[data-theme="hirsel-light"] {
+  /* Backgrounds (clean warm whites) */
+  --pasture-900: #faf9f7;
+  --pasture-800: #f4f2ef;
+  --pasture-700: #eae7e3;
+  --pasture-600: #ddd9d3;
 
   /* Text (dark earth tones) */
-  --wool-100: #292724;
-  --wool-300: #5a5550;
-  --wool-500: #706b66;
-  --wool-700: #9d9890;
+  --wool-100: #1f1d1a;
+  --wool-300: #4a4744;
+  --wool-500: #6b6864;
+  --wool-700: #a09c97;
 
-  /* Accent (morning sun) */
-  --amber-400: #b8895c;
-  --amber-500: #9a7048;
-  --amber-600: #7a5838;
+  /* Accent (warm amber) */
+  --amber-400: #c4956a;
+  --amber-500: #a67c4e;
+  --amber-600: #8a6640;
 
-  /* Status colors (slightly muted for light bg) */
-  --sage: #5c7852;
-  --golden: #a6841c;
-  --terra: #a34538;
+  /* Status colors (good contrast for light bg) */
+  --sage: #4a7340;
+  --golden: #9a7a18;
+  --terra: #b84535;
+
+  /* Basecoat/shadcn compatibility */
+  --background: #faf9f7;
+  --foreground: #1f1d1a;
+  --card: #f4f2ef;
+  --card-foreground: #1f1d1a;
+  --popover: #f4f2ef;
+  --popover-foreground: #1f1d1a;
+  --primary: #a67c4e;
+  --primary-foreground: #faf9f7;
+  --secondary: #eae7e3;
+  --secondary-foreground: #1f1d1a;
+  --muted: #eae7e3;
+  --muted-foreground: #6b6864;
+  --accent: #eae7e3;
+  --accent-foreground: #1f1d1a;
+  --destructive: #b84535;
+  --destructive-foreground: #faf9f7;
+  --border: #ddd9d3;
+  --input: #ddd9d3;
+  --ring: #a67c4e;
+}
+
+/* ============================================
+   CATPPUCCIN MOCHA (Very Dark)
+   ============================================ */
+:root[data-theme="catppuccin-mocha"] {
+  /* Backgrounds */
+  --pasture-900: #1e1e2e; /* Base */
+  --pasture-800: #181825; /* Mantle */
+  --pasture-700: #313244; /* Surface0 */
+  --pasture-600: #45475a; /* Surface1 */
+
+  /* Text */
+  --wool-100: #cdd6f4; /* Text */
+  --wool-300: #bac2de; /* Subtext1 */
+  --wool-500: #a6adc8; /* Subtext0 */
+  --wool-700: #6c7086; /* Overlay0 */
+
+  /* Accent (Peach/Mauve) */
+  --amber-400: #f5c2e7; /* Pink */
+  --amber-500: #cba6f7; /* Mauve */
+  --amber-600: #f38ba8; /* Red */
+
+  /* Status colors */
+  --sage: #a6e3a1;   /* Green */
+  --golden: #f9e2af; /* Yellow */
+  --terra: #f38ba8;  /* Red */
+
+  /* Basecoat/shadcn compatibility */
+  --background: #1e1e2e;
+  --foreground: #cdd6f4;
+  --card: #181825;
+  --card-foreground: #cdd6f4;
+  --popover: #181825;
+  --popover-foreground: #cdd6f4;
+  --primary: #cba6f7;
+  --primary-foreground: #1e1e2e;
+  --secondary: #313244;
+  --secondary-foreground: #cdd6f4;
+  --muted: #313244;
+  --muted-foreground: #a6adc8;
+  --accent: #313244;
+  --accent-foreground: #cdd6f4;
+  --destructive: #f38ba8;
+  --destructive-foreground: #1e1e2e;
+  --border: #45475a;
+  --input: #45475a;
+  --ring: #cba6f7;
+}
+
+/* ============================================
+   CATPPUCCIN MACCHIATO (Medium Dark)
+   ============================================ */
+:root[data-theme="catppuccin-macchiato"] {
+  /* Backgrounds */
+  --pasture-900: #24273a; /* Base */
+  --pasture-800: #1e2030; /* Mantle */
+  --pasture-700: #363a4f; /* Surface0 */
+  --pasture-600: #494d64; /* Surface1 */
+
+  /* Text */
+  --wool-100: #cad3f5; /* Text */
+  --wool-300: #b8c0e0; /* Subtext1 */
+  --wool-500: #a5adcb; /* Subtext0 */
+  --wool-700: #6e738d; /* Overlay0 */
+
+  /* Accent */
+  --amber-400: #f5bde6; /* Pink */
+  --amber-500: #c6a0f6; /* Mauve */
+  --amber-600: #ed8796; /* Red */
+
+  /* Status colors */
+  --sage: #a6da95;   /* Green */
+  --golden: #eed49f; /* Yellow */
+  --terra: #ed8796;  /* Red */
+
+  /* Basecoat/shadcn compatibility */
+  --background: #24273a;
+  --foreground: #cad3f5;
+  --card: #1e2030;
+  --card-foreground: #cad3f5;
+  --popover: #1e2030;
+  --popover-foreground: #cad3f5;
+  --primary: #c6a0f6;
+  --primary-foreground: #24273a;
+  --secondary: #363a4f;
+  --secondary-foreground: #cad3f5;
+  --muted: #363a4f;
+  --muted-foreground: #a5adcb;
+  --accent: #363a4f;
+  --accent-foreground: #cad3f5;
+  --destructive: #ed8796;
+  --destructive-foreground: #24273a;
+  --border: #494d64;
+  --input: #494d64;
+  --ring: #c6a0f6;
+}
+
+/* ============================================
+   CATPPUCCIN FRAPPE (Dark)
+   ============================================ */
+:root[data-theme="catppuccin-frappe"] {
+  /* Backgrounds */
+  --pasture-900: #303446; /* Base */
+  --pasture-800: #292c3c; /* Mantle */
+  --pasture-700: #414559; /* Surface0 */
+  --pasture-600: #51576d; /* Surface1 */
+
+  /* Text */
+  --wool-100: #c6d0f5; /* Text */
+  --wool-300: #b5bfe2; /* Subtext1 */
+  --wool-500: #a5adce; /* Subtext0 */
+  --wool-700: #737994; /* Overlay0 */
+
+  /* Accent */
+  --amber-400: #f4b8e4; /* Pink */
+  --amber-500: #ca9ee6; /* Mauve */
+  --amber-600: #e78284; /* Red */
+
+  /* Status colors */
+  --sage: #a6d189;   /* Green */
+  --golden: #e5c890; /* Yellow */
+  --terra: #e78284;  /* Red */
+
+  /* Basecoat/shadcn compatibility */
+  --background: #303446;
+  --foreground: #c6d0f5;
+  --card: #292c3c;
+  --card-foreground: #c6d0f5;
+  --popover: #292c3c;
+  --popover-foreground: #c6d0f5;
+  --primary: #ca9ee6;
+  --primary-foreground: #303446;
+  --secondary: #414559;
+  --secondary-foreground: #c6d0f5;
+  --muted: #414559;
+  --muted-foreground: #a5adce;
+  --accent: #414559;
+  --accent-foreground: #c6d0f5;
+  --destructive: #e78284;
+  --destructive-foreground: #303446;
+  --border: #51576d;
+  --input: #51576d;
+  --ring: #ca9ee6;
+}
+
+/* ============================================
+   CATPPUCCIN LATTE (Light)
+   ============================================ */
+:root[data-theme="catppuccin-latte"] {
+  /* Backgrounds */
+  --pasture-900: #eff1f5; /* Base */
+  --pasture-800: #e6e9ef; /* Mantle */
+  --pasture-700: #ccd0da; /* Surface0 */
+  --pasture-600: #bcc0cc; /* Surface1 */
+
+  /* Text */
+  --wool-100: #4c4f69; /* Text */
+  --wool-300: #5c5f77; /* Subtext1 */
+  --wool-500: #6c6f85; /* Subtext0 */
+  --wool-700: #9ca0b0; /* Overlay0 */
+
+  /* Accent */
+  --amber-400: #ea76cb; /* Pink */
+  --amber-500: #8839ef; /* Mauve */
+  --amber-600: #d20f39; /* Red */
+
+  /* Status colors */
+  --sage: #40a02b;   /* Green */
+  --golden: #df8e1d; /* Yellow */
+  --terra: #d20f39;  /* Red */
+
+  /* Basecoat/shadcn compatibility */
+  --background: #eff1f5;
+  --foreground: #4c4f69;
+  --card: #e6e9ef;
+  --card-foreground: #4c4f69;
+  --popover: #e6e9ef;
+  --popover-foreground: #4c4f69;
+  --primary: #8839ef;
+  --primary-foreground: #eff1f5;
+  --secondary: #ccd0da;
+  --secondary-foreground: #4c4f69;
+  --muted: #ccd0da;
+  --muted-foreground: #6c6f85;
+  --accent: #ccd0da;
+  --accent-foreground: #4c4f69;
+  --destructive: #d20f39;
+  --destructive-foreground: #eff1f5;
+  --border: #bcc0cc;
+  --input: #bcc0cc;
+  --ring: #8839ef;
 }
 
 /* Apply hirsel theme to body */
@@ -118,6 +374,10 @@ button {
   background-color: var(--pasture-800);
 }
 
+.ai-chat-panel {
+  background-color: var(--pasture-800);
+}
+
 /* Status dot animations */
 .status-working {
   background-color: var(--amber-500);
@@ -135,6 +395,10 @@ button {
 
 .status-idle {
   background-color: var(--wool-700);
+}
+
+.status-draft {
+  background-color: rgb(14, 165, 233); /* sky-500 */
 }
 
 @keyframes pulse-glow {
@@ -1237,4 +1501,280 @@ section.flex-1.flex.flex-col {
 .tasks-panel > div:last-child {
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+/* ============================================
+   AI Chat Assistant Panel Styles
+   ============================================ */
+
+.ai-chat-panel {
+  transition: width 200ms ease-out, transform 200ms ease-out;
+}
+
+/* Message bubbles */
+.ai-chat-message {
+  animation: message-slide-up 200ms ease-out;
+}
+
+.ai-chat-message-user {
+  background-color: var(--pasture-700);
+  border-radius: 1rem 1rem 0.25rem 1rem;
+}
+
+.ai-chat-message-assistant {
+  background-color: var(--pasture-600);
+  border-radius: 1rem 1rem 1rem 0.25rem;
+}
+
+/* Streaming cursor animation */
+.ai-chat-streaming::after {
+  content: '\25AE';
+  animation: cursor-blink 1s step-end infinite;
+  color: var(--amber-500);
+  margin-left: 2px;
+}
+
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Tool call cards */
+.ai-chat-tool-card {
+  background-color: var(--pasture-700);
+  border: 1px solid var(--pasture-600);
+  border-radius: 0.5rem;
+  transition: background-color 150ms ease-out;
+}
+
+.ai-chat-tool-card:hover {
+  background-color: var(--pasture-600);
+}
+
+.ai-chat-tool-card-pending {
+  border-left: 3px solid var(--wool-500);
+}
+
+.ai-chat-tool-card-running {
+  border-left: 3px solid var(--amber-500);
+}
+
+.ai-chat-tool-card-completed {
+  border-left: 3px solid var(--sage);
+}
+
+.ai-chat-tool-card-failed {
+  border-left: 3px solid var(--terra);
+}
+
+/* Thinking block */
+.ai-chat-thinking {
+  background-color: var(--pasture-700);
+  border-left: 2px solid var(--wool-500);
+  font-style: italic;
+  color: var(--wool-500);
+}
+
+/* Connect button */
+.ai-chat-connect-btn {
+  background: linear-gradient(135deg, var(--amber-600) 0%, var(--amber-500) 100%);
+  transition: transform 150ms ease-out, box-shadow 150ms ease-out;
+}
+
+.ai-chat-connect-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(212, 165, 116, 0.3);
+}
+
+.ai-chat-connect-btn:active {
+  transform: translateY(0);
+}
+
+/* Disconnect button */
+.ai-chat-disconnect-btn {
+  background-color: var(--pasture-600);
+  transition: background-color 150ms ease-out;
+}
+
+.ai-chat-disconnect-btn:hover {
+  background-color: var(--terra);
+}
+
+/* Permission modal */
+.ai-chat-permission-modal {
+  animation: modal-scale-in 200ms ease-out;
+}
+
+.ai-chat-permission-option {
+  transition: background-color 150ms ease-out, border-color 150ms ease-out;
+}
+
+.ai-chat-permission-option:hover {
+  background-color: var(--pasture-600);
+}
+
+.ai-chat-permission-allow {
+  border-color: var(--sage);
+}
+
+.ai-chat-permission-allow:hover {
+  background-color: rgba(125, 153, 112, 0.2);
+}
+
+.ai-chat-permission-deny {
+  border-color: var(--terra);
+}
+
+.ai-chat-permission-deny:hover {
+  background-color: rgba(196, 92, 74, 0.2);
+}
+
+/* AI chat floating toggle button */
+.ai-chat-fab {
+  position: fixed;
+  bottom: 3rem;
+  right: 1rem;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--amber-600) 0%, var(--amber-500) 100%);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  transition: transform 150ms ease-out, box-shadow 150ms ease-out;
+  z-index: 40;
+}
+
+.ai-chat-fab:hover {
+  transform: scale(1.1);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.ai-chat-fab:active {
+  transform: scale(0.95);
+}
+
+/* Input focus glow */
+.ai-chat-input:focus {
+  box-shadow: 0 0 0 2px var(--amber-500);
+}
+
+/* Responsive adjustments */
+@media (max-width: 1000px) {
+  .ai-chat-panel {
+    width: 18rem !important;
+  }
+}
+
+@media (max-width: 850px) {
+  .ai-chat-panel {
+    position: fixed !important;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 100% !important;
+    max-width: 24rem;
+    z-index: 50;
+    box-shadow: -4px 0 24px rgba(0, 0, 0, 0.4);
+  }
+
+  .ai-chat-fab {
+    bottom: 4.5rem;
+  }
+}
+
+/* Markdown Preview Styles */
+.markdown-preview {
+  color: var(--wool-200);
+  font-size: 0.875rem;
+  line-height: 1.7;
+}
+
+.markdown-preview h1 {
+  font-size: 1.75rem;
+  font-weight: 600;
+  color: var(--wool-100);
+  margin-bottom: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.markdown-preview h1:first-child {
+  margin-top: 0;
+}
+
+.markdown-preview h2 {
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: var(--wool-100);
+  margin-bottom: 0.5rem;
+  margin-top: 1.25rem;
+}
+
+.markdown-preview h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--wool-100);
+  margin-bottom: 0.5rem;
+  margin-top: 1rem;
+}
+
+.markdown-preview p {
+  margin-bottom: 0.75rem;
+}
+
+.markdown-preview ul,
+.markdown-preview ol {
+  margin-bottom: 0.75rem;
+  padding-left: 1.5rem;
+}
+
+.markdown-preview li {
+  margin-bottom: 0.25rem;
+}
+
+.markdown-preview ul li {
+  list-style-type: disc;
+}
+
+.markdown-preview ol li {
+  list-style-type: decimal;
+}
+
+.markdown-preview code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+  background: var(--pasture-700);
+  padding: 0.15em 0.35em;
+  border-radius: 0.25rem;
+  color: var(--amber-400);
+}
+
+.markdown-preview pre {
+  background: var(--pasture-800);
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin-bottom: 0.75rem;
+}
+
+.markdown-preview pre code {
+  background: transparent;
+  padding: 0;
+  color: var(--wool-200);
+}
+
+.markdown-preview strong {
+  font-weight: 600;
+  color: var(--wool-100);
+}
+
+.markdown-preview a {
+  color: var(--amber-400);
+  text-decoration: underline;
+}
+
+.markdown-preview blockquote {
+  border-left: 3px solid var(--pasture-600);
+  padding-left: 1rem;
+  margin-left: 0;
+  color: var(--wool-400);
+  font-style: italic;
 }

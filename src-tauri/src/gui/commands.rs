@@ -44,6 +44,7 @@ fn parse_elapsed_minutes(timestamp: &str) -> f64 {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RunStatus {
+    Draft,
     Idle,
     Working,
     Paused,
@@ -123,6 +124,7 @@ pub struct RunDetail {
     pub status: RunStatus,
     pub request: Option<String>,
     pub project_path: Option<String>,
+    pub remote_url: Option<String>,
     pub worker_scale: Option<String>,
     pub time_limit_minutes: Option<u32>,
     pub started_at: Option<String>,
@@ -330,6 +332,7 @@ pub async fn get_runs() -> Result<Vec<RunSummary>, String> {
 
                 // Convert core Status to GUI RunStatus
                 let run_status = match status {
+                    crate::core::state::Status::Draft => RunStatus::Draft,
                     crate::core::state::Status::Idle => RunStatus::Idle,
                     crate::core::state::Status::Working => RunStatus::Working,
                     crate::core::state::Status::Paused => RunStatus::Paused,
@@ -379,6 +382,7 @@ pub async fn get_run_detail(run_name: String) -> Result<RunDetail, String> {
 
     let status = state.status().unwrap_or(crate::core::state::Status::Idle);
     let run_status = match status {
+        crate::core::state::Status::Draft => RunStatus::Draft,
         crate::core::state::Status::Idle => RunStatus::Idle,
         crate::core::state::Status::Working => RunStatus::Working,
         crate::core::state::Status::Paused => RunStatus::Paused,
@@ -425,11 +429,15 @@ pub async fn get_run_detail(run_name: String) -> Result<RunDetail, String> {
         parse_elapsed_minutes(&created_at)
     };
 
+    // Get remote URL if set
+    let remote_url = state.get_remote_url().ok().flatten();
+
     Ok(RunDetail {
         name: run_name,
         status: run_status,
         request,
         project_path,
+        remote_url,
         worker_scale,
         time_limit_minutes,
         started_at,
@@ -471,6 +479,438 @@ pub async fn delete_run(run_name: String) -> Result<(), String> {
     // TODO: Integrate with state.rs to delete run
     eprintln!("[INFO] Deleting run: {}", run_name);
     Ok(())
+}
+
+// =============================================================================
+// Draft Commands
+// =============================================================================
+
+/// Adjectives for random run names
+const ADJECTIVES: &[&str] = &[
+    "curious", "swift", "bright", "calm", "bold", "eager", "gentle", "happy",
+    "clever", "brave", "kind", "quick", "quiet", "wise", "warm", "keen",
+    "noble", "merry", "fair", "steady", "agile", "witty", "lively", "earnest",
+];
+
+/// Nouns for random run names
+const NOUNS: &[&str] = &[
+    "fox", "eagle", "wolf", "owl", "bear", "hawk", "deer", "hare",
+    "otter", "raven", "falcon", "lynx", "crane", "swan", "finch", "sparrow",
+    "badger", "heron", "robin", "wren", "thrush", "lark", "dove", "jay",
+];
+
+/// Generate a random friendly run name like "curious-fox" or "swift-eagle"
+fn generate_run_name() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // Simple pseudo-random based on system time
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as usize;
+
+    let adj_idx = seed % ADJECTIVES.len();
+    let noun_idx = (seed / ADJECTIVES.len()) % NOUNS.len();
+
+    format!("{}-{}", ADJECTIVES[adj_idx], NOUNS[noun_idx])
+}
+
+/// Request to update a draft run
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftUpdateRequest {
+    pub spec: Option<String>,
+    pub worker_scale: Option<String>,
+    pub time_limit_minutes: Option<u32>,
+    pub human_in_the_loop: Option<bool>,
+    pub project_path: Option<String>,
+    pub name: Option<String>,
+}
+
+/// Create a new draft run
+///
+/// Creates a draft run with a random friendly name. The draft can be configured
+/// before being started. No workers are spawned until start_draft is called.
+#[tauri::command]
+pub async fn create_draft(project_path: Option<String>) -> Result<RunDetail, String> {
+    use std::fs;
+    use crate::core::Files;
+
+    // Generate a unique run name
+    let mut run_name = generate_run_name();
+    let mut run_dir = config::run_dir(&run_name);
+
+    // Ensure the name is unique by appending a number if needed
+    let mut counter = 1;
+    while run_dir.exists() {
+        run_name = format!("{}-{}", generate_run_name(), counter);
+        run_dir = config::run_dir(&run_name);
+        counter += 1;
+        if counter > 100 {
+            return Err("Failed to generate unique run name".to_string());
+        }
+    }
+
+    // Create run directory
+    fs::create_dir_all(&run_dir)
+        .map_err(|e| format!("Failed to create run directory: {}", e))?;
+
+    // Initialize Files helper and create required directories
+    let files = Files::new(&run_dir);
+    files.init_dirs()
+        .map_err(|e| format!("Failed to init dirs: {}", e))?;
+
+    // Create empty spec.md
+    fs::write(run_dir.join("spec.md"), "# Specification\n\nDescribe the task for the AI workers...\n")
+        .map_err(|e| format!("Failed to create spec file: {}", e))?;
+
+    // Create empty tasks.md
+    fs::write(
+        run_dir.join("tasks.md"),
+        "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n| scope | TODO | | Read spec, create exploration tasks |\n",
+    ).map_err(|e| format!("Failed to create tasks file: {}", e))?;
+
+    // Initialize database
+    let db_path = run_dir.join("hirsel.db");
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to create database: {}", e))?;
+
+    // Initialize state with Draft status
+    state.init_state(project_path.as_deref())
+        .map_err(|e| format!("Failed to init state: {}", e))?;
+    state.set_status(crate::core::state::Status::Draft)
+        .map_err(|e| format!("Failed to set draft status: {}", e))?;
+
+    // Set defaults
+    state.set_worker_scale("1")
+        .map_err(|e| format!("Failed to set worker scale: {}", e))?;
+    state.set_human_in_the_loop(true)
+        .map_err(|e| format!("Failed to set HITL: {}", e))?;
+
+    // Add scope task
+    let _ = state.add_task("scope", "Read spec, create exploration tasks", None, None);
+
+    // Return the run detail
+    let created_at = chrono::Utc::now().to_rfc3339();
+
+    Ok(RunDetail {
+        name: run_name,
+        status: RunStatus::Draft,
+        request: None,
+        project_path,
+        remote_url: None,
+        worker_scale: Some("1".to_string()),
+        time_limit_minutes: None,
+        started_at: None,
+        summary: None,
+        created_at: created_at.clone(),
+        updated_at: created_at,
+        iteration_count: 0,
+        max_iterations: None,
+        human_in_the_loop: true,
+        waiting_reason: None,
+        unread_count: 0,
+        tasks_done: 0,
+        tasks_total: 1,
+        workers_active: 0,
+        workers_total: 0,
+        elapsed_minutes: 0.0,
+    })
+}
+
+/// Update a draft run's configuration
+///
+/// Allows updating the spec, worker scale, time limit, HITL mode, and project path
+/// before the draft is started.
+#[tauri::command]
+pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Result<(), String> {
+    use std::fs;
+
+    let run_dir = config::run_dir(&run_name);
+    let db_path = run_dir.join("hirsel.db");
+
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    // Verify it's a draft
+    let status = state.status().map_err(|e| format!("Failed to get status: {}", e))?;
+    if status != crate::core::state::Status::Draft {
+        return Err("Can only update draft runs".to_string());
+    }
+
+    // Update spec
+    if let Some(spec) = updates.spec {
+        let spec_path = run_dir.join("spec.md");
+        fs::write(&spec_path, &spec)
+            .map_err(|e| format!("Failed to write spec: {}", e))?;
+        state.set_request(Some(&spec))
+            .map_err(|e| format!("Failed to update request: {}", e))?;
+    }
+
+    // Update worker scale
+    if let Some(scale) = updates.worker_scale {
+        state.set_worker_scale(&scale)
+            .map_err(|e| format!("Failed to update worker scale: {}", e))?;
+    }
+
+    // Update time limit
+    if let Some(limit) = updates.time_limit_minutes {
+        state.set_time_limit_minutes(Some(limit as i64))
+            .map_err(|e| format!("Failed to update time limit: {}", e))?;
+    }
+
+    // Update HITL
+    if let Some(hitl) = updates.human_in_the_loop {
+        state.set_human_in_the_loop(hitl)
+            .map_err(|e| format!("Failed to update HITL: {}", e))?;
+    }
+
+    // Update project path
+    if let Some(path) = updates.project_path {
+        state.set_project_path(&path)
+            .map_err(|e| format!("Failed to update project path: {}", e))?;
+    }
+
+    // Handle rename if requested
+    if let Some(new_name) = updates.name {
+        if new_name != run_name {
+            let new_run_dir = config::run_dir(&new_name);
+            if new_run_dir.exists() {
+                return Err(format!("Run '{}' already exists", new_name));
+            }
+            fs::rename(&run_dir, &new_run_dir)
+                .map_err(|e| format!("Failed to rename run: {}", e))?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Start a draft run
+///
+/// Spawns workers and transitions the draft to a running state.
+/// The draft must have a project path set.
+#[tauri::command]
+pub async fn start_draft(run_name: String) -> Result<RunDetail, String> {
+    use crate::core::Files;
+    use crate::core::git::{create_worker_clone, create_workspace, get_repo_root, is_remote_url, clone_remote};
+    use crate::core::chats::{create_default_group_chat, create_default_user_chat, create_learnings_thread, create_worker_chat};
+    use crate::core::workers::{spawn_worker, WorkerError, WorkerSpawnConfig};
+    use crate::cli::config::get_agent_command;
+    use crate::cli::go::{WorkerScale, get_available_names};
+
+    let run_dir = config::run_dir(&run_name);
+    let db_path = run_dir.join("hirsel.db");
+
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path.clone())
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+
+    // Verify it's a draft
+    let status = state.status().map_err(|e| format!("Failed to get status: {}", e))?;
+    if status != crate::core::state::Status::Draft {
+        return Err("Can only start draft runs".to_string());
+    }
+
+    // Get project path - required for starting
+    let project_path_str = state.get_project_path()
+        .map_err(|e| format!("Failed to get project path: {}", e))?
+        .ok_or_else(|| "Project path is required to start a run".to_string())?;
+
+    // Handle remote URLs - clone to local directory
+    let project_path = if is_remote_url(&project_path_str) {
+        // Clone remote repo to run directory
+        let clone_dir = run_dir.join("repo");
+        let local_path = clone_remote(&project_path_str, &clone_dir)
+            .map_err(|e| format!("Failed to clone remote repository: {}", e))?;
+
+        // Store the remote URL for delivery
+        state.set_remote_url(Some(&project_path_str))
+            .map_err(|e| format!("Failed to store remote URL: {}", e))?;
+
+        // Update project_path to local clone
+        state.set_project_path(local_path.to_str().unwrap_or(&project_path_str))
+            .map_err(|e| format!("Failed to update project path: {}", e))?;
+
+        local_path
+    } else {
+        let project_path = std::path::PathBuf::from(&project_path_str);
+
+        if !project_path.exists() {
+            return Err(format!("Project path does not exist: {}", project_path_str));
+        }
+
+        // Verify project is a git repo
+        get_repo_root(Some(&project_path))
+            .map_err(|_| format!("Project path is not a git repository: {}", project_path_str))?
+    };
+
+    // Parse worker scale
+    let worker_scale_str = state.get_worker_scale()
+        .map_err(|e| format!("Failed to get worker scale: {}", e))?
+        .unwrap_or_else(|| "1".to_string());
+    let scale = WorkerScale::parse(&worker_scale_str)
+        .map_err(|e| format!("Invalid worker scale: {}", e))?;
+
+    // Get worker names
+    let initial_count = scale.initial_count();
+    let worker_names = get_available_names(initial_count, &[]);
+
+    // Determine if multi-worker mode
+    let is_multi_worker = initial_count > 1 || scale.autoscale;
+    let leader = if is_multi_worker {
+        Some(worker_names[0].clone())
+    } else {
+        None
+    };
+
+    // Create workspace with staging branch
+    let runs_dir = config::runs_dir();
+    let workspace_dir = create_workspace(&run_name, &project_path, &runs_dir)
+        .map_err(|e| format!("Failed to create workspace: {}", e))?;
+
+    // Create worker clones/worktrees
+    let mut worker_dirs: Vec<(String, std::path::PathBuf)> = Vec::new();
+
+    for worker_name in &worker_names {
+        let worker_dir = if is_multi_worker {
+            create_worker_clone(&run_name, &project_path, worker_name, Some(&workspace_dir), &runs_dir)
+                .map_err(|e| format!("Failed to create worker clone: {}", e))?
+        } else {
+            workspace_dir.clone()
+        };
+
+        worker_dirs.push((worker_name.clone(), worker_dir.clone()));
+
+        // Register worker in state
+        state.add_worker(worker_name, worker_dir.to_str().unwrap_or("."), "local")
+            .map_err(|e| format!("Failed to add worker: {}", e))?;
+    }
+
+    // Create chats
+    let files = Files::new(&run_dir);
+    let chats_dir = files.chats_dir();
+    create_default_user_chat(&chats_dir)
+        .map_err(|e| format!("Failed to create user chat: {}", e))?;
+
+    if is_multi_worker {
+        create_default_group_chat(&chats_dir, &worker_names, leader.as_deref())
+            .map_err(|e| format!("Failed to create group chat: {}", e))?;
+    }
+
+    create_learnings_thread(&chats_dir, &worker_names)
+        .map_err(|e| format!("Failed to create learnings thread: {}", e))?;
+
+    for worker_name in &worker_names {
+        create_worker_chat(&chats_dir, worker_name)
+            .map_err(|e| format!("Failed to create worker chat: {}", e))?;
+    }
+
+    // Pre-claim scope for first worker
+    let first_worker = &worker_names[0];
+    let _ = state.claim_task("scope", first_worker);
+
+    // Set status to working and start time tracking
+    state.set_status(crate::core::state::Status::Working)
+        .map_err(|e| format!("Failed to set status: {}", e))?;
+
+    // Set started_at if time limit is set
+    if state.get_time_limit_minutes().ok().flatten().is_some() {
+        state.set_started_at(None)
+            .map_err(|e| format!("Failed to set started_at: {}", e))?;
+    }
+
+    // Spawn worker processes
+    let agent_command = get_agent_command();
+    let spec_path = run_dir.join("spec.md");
+    let teammates: Vec<String> = worker_names.clone();
+
+    for (i, (worker_name, work_dir)) in worker_dirs.iter().enumerate() {
+        let is_leader = i == 0 && is_multi_worker;
+        let config = WorkerSpawnConfig {
+            run_name: run_name.clone(),
+            worker_name: worker_name.clone(),
+            work_dir: work_dir.clone(),
+            run_dir: run_dir.clone(),
+            spec_path: spec_path.clone(),
+            agent_command: agent_command.clone(),
+            is_leader,
+            leader_name: leader.clone(),
+            teammates: if is_multi_worker {
+                Some(teammates.iter().filter(|t| *t != worker_name).cloned().collect())
+            } else {
+                None
+            },
+            resume_session_id: None,
+        };
+
+        match spawn_worker(config, &state) {
+            Ok(result) => {
+                tracing::info!(
+                    "Spawned worker {} (PID {})",
+                    result.worker_name, result.pid
+                );
+            }
+            Err(WorkerError::RunPaused) => {
+                break;
+            }
+            Err(e) => {
+                tracing::warn!("Failed to spawn worker {}: {}", worker_name, e);
+            }
+        }
+    }
+
+    // Return updated run detail
+    get_run_detail(run_name).await
+}
+
+// =============================================================================
+// Spec/Eval File Commands (file-first editing)
+// =============================================================================
+
+/// Read the spec.md file for a run
+#[tauri::command]
+pub async fn read_spec_file(run_name: String) -> Result<String, String> {
+    let spec_path = config::run_dir(&run_name).join("spec.md");
+    if !spec_path.exists() {
+        return Ok(String::new());
+    }
+    std::fs::read_to_string(&spec_path)
+        .map_err(|e| format!("Failed to read spec file: {}", e))
+}
+
+/// Write the spec.md file for a run
+#[tauri::command]
+pub async fn write_spec_file(run_name: String, content: String) -> Result<(), String> {
+    let spec_path = config::run_dir(&run_name).join("spec.md");
+    std::fs::write(&spec_path, &content)
+        .map_err(|e| format!("Failed to write spec file: {}", e))
+}
+
+/// Read the eval.md file for a run
+#[tauri::command]
+pub async fn read_eval_file(run_name: String) -> Result<String, String> {
+    let eval_path = config::run_dir(&run_name).join("eval.md");
+    if !eval_path.exists() {
+        return Ok(String::new());
+    }
+    std::fs::read_to_string(&eval_path)
+        .map_err(|e| format!("Failed to read eval file: {}", e))
+}
+
+/// Write the eval.md file for a run
+#[tauri::command]
+pub async fn write_eval_file(run_name: String, content: String) -> Result<(), String> {
+    let eval_path = config::run_dir(&run_name).join("eval.md");
+    std::fs::write(&eval_path, &content)
+        .map_err(|e| format!("Failed to write eval file: {}", e))
 }
 
 // =============================================================================
@@ -987,7 +1427,7 @@ pub async fn get_worker_log(
         .map_err(|e| format!("Failed to open log file: {}", e))?;
 
     // If offset is provided, seek to that position
-    let start_offset = if let Some(offset) = from_offset {
+    let _start_offset = if let Some(offset) = from_offset {
         if offset < file_size {
             file.seek(SeekFrom::Start(offset))
                 .map_err(|e| format!("Failed to seek in log file: {}", e))?;
@@ -1103,7 +1543,7 @@ pub async fn get_eval_log(
     let mut file = std::fs::File::open(&log_path)
         .map_err(|e| format!("Failed to open eval log: {}", e))?;
 
-    let start_offset = if let Some(offset) = from_offset {
+    let _start_offset = if let Some(offset) = from_offset {
         if offset < file_size {
             file.seek(SeekFrom::Start(offset))
                 .map_err(|e| format!("Failed to seek in eval log: {}", e))?;
@@ -1325,6 +1765,111 @@ pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
 }
 
 // =============================================================================
+// Chat Session Commands (Direct AI Chat via ACP)
+// =============================================================================
+
+use std::sync::Arc;
+use crate::core::{ChatSessionManager, ChatSessionConfig, UIContext, PermissionResponse, ChatEvent};
+
+/// Start a new direct chat session with an AI agent
+///
+/// Returns the session ID. Events will be emitted via Tauri events.
+#[tauri::command]
+pub async fn start_chat_session(
+    app: tauri::AppHandle,
+    chat_manager: tauri::State<'_, Arc<ChatSessionManager>>,
+    agent_command: Vec<String>,
+    working_dir: Option<String>,
+    run_name: Option<String>,
+    system_prompt: Option<String>,
+) -> Result<String, String> {
+    use tauri::Emitter;
+
+    let config = ChatSessionConfig {
+        agent_command,
+        working_dir,
+        run_name,
+        system_prompt,
+    };
+
+    let (session_id, mut event_rx) = chat_manager.start_session(config).await
+        .map_err(|e| format!("Failed to start chat session: {}", e))?;
+
+    // Spawn task to forward events to frontend
+    let session_id_clone = session_id.clone();
+    let app_clone = app.clone();
+    eprintln!("[FORWARD] Starting event forwarder for session {}", session_id);
+    tokio::spawn(async move {
+        eprintln!("[FORWARD] Event forwarder task started");
+        while let Some(event) = event_rx.recv().await {
+            eprintln!("[FORWARD] Received event: {:?}", event);
+            // Emit event to frontend
+            match app_clone.emit("chat-event", &event) {
+                Ok(_) => eprintln!("[FORWARD] Emitted to frontend"),
+                Err(e) => eprintln!("[FORWARD] Emit error: {:?}", e),
+            }
+
+            // Check if session ended
+            if matches!(event, ChatEvent::SessionEnded { .. }) {
+                break;
+            }
+        }
+        eprintln!("[FORWARD] Event forwarder stopped for {}", session_id_clone);
+    });
+
+    Ok(session_id)
+}
+
+/// Send a message to an active chat session
+///
+/// The message will be prefixed with UI context (invisible to user).
+#[tauri::command]
+pub async fn send_chat_message(
+    chat_manager: tauri::State<'_, Arc<ChatSessionManager>>,
+    session_id: String,
+    content: String,
+    context: Option<UIContext>,
+) -> Result<(), String> {
+    chat_manager.send_message(&session_id, content, context).await
+        .map_err(|e| format!("Failed to send message: {}", e))
+}
+
+/// Respond to a permission request from a chat session
+#[tauri::command]
+pub async fn respond_chat_permission(
+    chat_manager: tauri::State<'_, Arc<ChatSessionManager>>,
+    session_id: String,
+    request_id: String,
+    option_id: String,
+) -> Result<(), String> {
+    let response = PermissionResponse {
+        request_id,
+        option_id,
+    };
+
+    chat_manager.respond_to_permission(&session_id, response).await
+        .map_err(|e| format!("Failed to respond to permission: {}", e))
+}
+
+/// Stop an active chat session
+#[tauri::command]
+pub async fn stop_chat_session(
+    chat_manager: tauri::State<'_, Arc<ChatSessionManager>>,
+    session_id: String,
+) -> Result<(), String> {
+    chat_manager.stop_session(&session_id).await
+        .map_err(|e| format!("Failed to stop session: {}", e))
+}
+
+/// List active chat sessions
+#[tauri::command]
+pub async fn list_chat_sessions(
+    chat_manager: tauri::State<'_, Arc<ChatSessionManager>>,
+) -> Result<Vec<String>, String> {
+    Ok(chat_manager.list_sessions().await)
+}
+
+// =============================================================================
 // Handler Registration
 // =============================================================================
 
@@ -1337,6 +1882,15 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         pause_run,
         resume_run,
         delete_run,
+        // Draft commands
+        create_draft,
+        update_draft,
+        start_draft,
+        // Spec/Eval file commands
+        read_spec_file,
+        write_spec_file,
+        read_eval_file,
+        write_eval_file,
         // Task commands
         get_tasks,
         add_task,
@@ -1371,5 +1925,11 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         // Config commands
         get_config,
         save_config,
+        // Chat session commands
+        start_chat_session,
+        send_chat_message,
+        respond_chat_permission,
+        stop_chat_session,
+        list_chat_sessions,
     ]
 }

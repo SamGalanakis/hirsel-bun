@@ -33,6 +33,163 @@ pub enum GitError {
 
 pub type Result<T> = std::result::Result<T, GitError>;
 
+// =============================================================================
+// Remote URL Detection and Cloning
+// =============================================================================
+
+/// Check if a string is a remote git URL
+///
+/// Supports:
+/// - HTTPS: https://github.com/user/repo.git
+/// - SSH: git@github.com:user/repo.git
+/// - Git protocol: git://github.com/user/repo.git
+pub fn is_remote_url(path: &str) -> bool {
+    let trimmed = path.trim();
+    trimmed.starts_with("https://")
+        || trimmed.starts_with("http://")
+        || trimmed.starts_with("git://")
+        || trimmed.starts_with("git@")
+        || trimmed.starts_with("ssh://")
+}
+
+/// Extract repository name from a remote URL
+///
+/// Examples:
+/// - https://github.com/user/repo.git -> repo
+/// - git@github.com:user/repo.git -> repo
+/// - https://github.com/user/repo -> repo
+pub fn repo_name_from_url(url: &str) -> Option<String> {
+    let trimmed = url.trim();
+
+    // Get the last path component
+    let name = if trimmed.contains(':') && !trimmed.contains("://") {
+        // SSH format: git@github.com:user/repo.git
+        trimmed.rsplit(':').next()?.rsplit('/').next()?
+    } else {
+        // HTTPS/Git format: https://github.com/user/repo.git
+        trimmed.rsplit('/').next()?
+    };
+
+    // Remove .git suffix if present
+    let name = name.strip_suffix(".git").unwrap_or(name);
+
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+/// Clone a remote repository to a local directory
+///
+/// Returns the path to the cloned repository.
+pub fn clone_remote(url: &str, target_dir: &Path) -> Result<PathBuf> {
+    if target_dir.exists() {
+        info!("Clone target already exists: {:?}", target_dir);
+        return Ok(target_dir.to_path_buf());
+    }
+
+    fs::create_dir_all(target_dir)?;
+
+    info!("Cloning {} to {:?}", url, target_dir);
+
+    let repo = Repository::clone(url, target_dir)?;
+
+    // Ensure we have a working directory
+    let work_dir = repo
+        .workdir()
+        .map(|p| p.to_path_buf())
+        .ok_or_else(|| GitError::Other("Cloned repository has no working directory".to_string()))?;
+
+    info!("Successfully cloned to {:?}", work_dir);
+    Ok(work_dir)
+}
+
+/// Push staging branch to a remote repository
+///
+/// Creates or updates a branch on the remote.
+pub fn push_to_remote(work_dir: &Path, remote_url: &str, branch_name: &str) -> Result<(bool, String)> {
+    let repo = get_repo(Some(work_dir))?;
+
+    // Make sure we're on staging
+    checkout_branch(&repo, "staging")?;
+
+    // Add or update the remote
+    let remote_name = "hirsel_delivery";
+
+    // Remove existing remote if present
+    let _ = repo.remote_delete(remote_name);
+
+    repo.remote(remote_name, remote_url)?;
+
+    // Push staging as the target branch
+    let mut remote = repo.find_remote(remote_name)?;
+
+    let refspec = format!("refs/heads/staging:refs/heads/{}", branch_name);
+
+    // Use default push options
+    let mut push_opts = git2::PushOptions::new();
+
+    // Set up credentials callback for SSH/HTTPS auth
+    let mut callbacks = git2::RemoteCallbacks::new();
+    callbacks.credentials(|_url, username_from_url, allowed_types| {
+        // Try SSH agent first
+        if allowed_types.contains(git2::CredentialType::SSH_KEY) {
+            if let Some(username) = username_from_url {
+                return git2::Cred::ssh_key_from_agent(username);
+            }
+        }
+
+        // Try default SSH key
+        if allowed_types.contains(git2::CredentialType::SSH_KEY) {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            let ssh_key = std::path::PathBuf::from(&home).join(".ssh/id_rsa");
+            let ssh_key_ed = std::path::PathBuf::from(&home).join(".ssh/id_ed25519");
+
+            let key_path = if ssh_key_ed.exists() {
+                ssh_key_ed
+            } else {
+                ssh_key
+            };
+
+            if key_path.exists() {
+                let username = username_from_url.unwrap_or("git");
+                return git2::Cred::ssh_key(username, None, &key_path, None);
+            }
+        }
+
+        // Try git credential helper for HTTPS
+        if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+            return git2::Cred::credential_helper(
+                &repo.config()?,
+                _url,
+                username_from_url,
+            );
+        }
+
+        Err(git2::Error::from_str("no credentials available"))
+    });
+
+    push_opts.remote_callbacks(callbacks);
+
+    match remote.push(&[&refspec], Some(&mut push_opts)) {
+        Ok(()) => {
+            // Clean up remote
+            let _ = repo.remote_delete(remote_name);
+            info!("Pushed to remote {} as branch {}", remote_url, branch_name);
+            Ok((true, format!("Pushed to branch '{}' on remote", branch_name)))
+        }
+        Err(e) => {
+            let _ = repo.remote_delete(remote_name);
+            Ok((false, format!("Failed to push: {}", e)))
+        }
+    }
+}
+
+// =============================================================================
+// Repository Operations
+// =============================================================================
+
 /// Open a git repository, searching parent directories if needed
 pub fn get_repo(cwd: Option<&Path>) -> Result<Repository> {
     let path = cwd.map(|p| p.to_path_buf()).unwrap_or_else(|| {

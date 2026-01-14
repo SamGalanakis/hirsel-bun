@@ -115,7 +115,7 @@ impl WorkerConfig {
 pub struct WorkerRunner {
     config: WorkerConfig,
     state: SQLiteState,
-    files: Files,
+    _files: Files,
     last_heartbeat: Instant,
 }
 
@@ -134,7 +134,7 @@ impl WorkerRunner {
         Ok(Self {
             config,
             state,
-            files,
+            _files: files,
             last_heartbeat: Instant::now(),
         })
     }

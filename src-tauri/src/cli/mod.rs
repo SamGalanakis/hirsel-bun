@@ -279,6 +279,10 @@ pub struct GoArgs {
     /// Pause behavior when messaging user: "sender" or "all"
     #[arg(long)]
     pub pause_mode: Option<String>,
+
+    /// Create a draft run (don't spawn workers until explicitly started)
+    #[arg(long)]
+    pub draft: bool,
 }
 
 /// Simple run name argument

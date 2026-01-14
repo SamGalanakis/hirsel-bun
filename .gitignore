@@ -2,6 +2,7 @@ references/
 node_modules/
 build/
 dist/
+runs/
 bun.lock
 .DS_Store
 *.log

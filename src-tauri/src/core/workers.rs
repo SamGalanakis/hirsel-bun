@@ -211,6 +211,7 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
 }
 
 /// Build command line arguments for the worker subprocess
+#[allow(dead_code)]
 fn build_worker_args(config: &WorkerSpawnConfig) -> Vec<String> {
     let mut args = vec![
         "--run".to_string(),
@@ -808,7 +809,7 @@ pub fn maybe_scale_up(
 /// This should be called whenever a worker transitions to Awaiting or Error status.
 /// Returns true if eval was triggered.
 pub fn maybe_trigger_eval(
-    run_name: &str,
+    _run_name: &str,
     run_dir: &Path,
 ) -> WorkerResult<bool> {
     let files = Files::new(run_dir);

@@ -525,7 +525,7 @@ impl Default for Config {
             run: None,
             agent: AgentConfig::default(),
             eval_timeout: default_eval_timeout(),
-            auto_learn: false,
+            auto_learn: true,
             max_iterations: None,
             user_message_pause: default_user_message_pause(),
             human_in_the_loop: default_human_in_the_loop(),

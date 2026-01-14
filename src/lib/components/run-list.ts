@@ -4,6 +4,7 @@
 
 import { formatElapsed, formatProgress } from '../utils/formatters';
 import { getStatusBadgeClass, getStatusLabel, getProgressBarClass } from '../utils/status';
+import { createDraft } from '../api';
 import type { RunSummary } from '../types';
 
 declare const Alpine: {
@@ -35,6 +36,7 @@ export function runList() {
 
     getStatusDotClass(status: string) {
       const classes: Record<string, string> = {
+        draft: 'status-draft',
         idle: 'status-idle',
         working: 'status-working',
         paused: 'status-waiting',
@@ -48,6 +50,10 @@ export function runList() {
         merged: 'status-done',
       };
       return classes[status] || 'status-idle';
+    },
+
+    isDraft(status: string) {
+      return status === 'draft';
     },
 
     formatTimeRemaining(limit: number | null, elapsed: number | null) {
@@ -92,7 +98,13 @@ export function runList() {
           this.runs = await window.tauriInvoke<RunSummary[]>('get_runs');
 
           if (autoSelectFirst && this.runs.length > 0 && !this.selectedRun) {
-            this.selectRun(this.runs[0].name);
+            // Delay auto-select to ensure app-state event listener is ready
+            setTimeout(() => {
+              if (!this.selectedRun && this.runs.length > 0) {
+                const firstRun = this.runs[0];
+                this.selectRunWithDraft(firstRun.name, firstRun.status);
+              }
+            }, 50);
           }
         } else {
           setTimeout(() => this.fetchRuns(autoSelectFirst), 100);
@@ -200,6 +212,49 @@ export function runList() {
         window.toast.error(error.message || String(error), 'Failed to deliver');
       }
       this.hideContextMenu();
+    },
+
+    /**
+     * Create a new draft run and select it
+     */
+    async createNewDraft() {
+      try {
+        const detail = await createDraft();
+        window.toast.success(`Draft "${detail.name}" created`, 'New draft');
+
+        // Refresh runs list
+        await this.fetchRuns(false);
+
+        // Select the new draft
+        this.selectRun(detail.name);
+
+        // Dispatch draft-selected event for the draft editor
+        window.dispatchEvent(new CustomEvent('draft-selected', { detail: detail.name }));
+      } catch (err) {
+        const error = err as Error;
+        window.toast.error(error.message || String(error), 'Failed to create draft');
+      }
+    },
+
+    /**
+     * Override selectRun to dispatch draft-selected for drafts
+     */
+    selectRunWithDraft(name: string, status: string) {
+      this.selectedRun = name;
+      this.selectedIndex = this.runs.findIndex(r => r.name === name);
+      if (typeof Alpine !== 'undefined' && Alpine.store && Alpine.store('app')) {
+        const store = Alpine.store('app');
+        if (store) store.selectedRun = name;
+      }
+      window.dispatchEvent(new CustomEvent('run-selected', { detail: name }));
+
+      // Also dispatch draft-selected if this is a draft
+      if (status === 'draft') {
+        window.dispatchEvent(new CustomEvent('draft-selected', { detail: name }));
+      } else {
+        // Clear draft selection when selecting a non-draft run
+        window.dispatchEvent(new CustomEvent('draft-selected', { detail: null }));
+      }
     },
   };
 }

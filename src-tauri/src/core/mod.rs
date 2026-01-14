@@ -10,6 +10,7 @@
 //! - Eval system
 
 pub mod acp;
+pub mod chat_session;
 pub mod chats;
 pub mod compaction;
 pub mod config;
@@ -23,6 +24,10 @@ pub mod workers;
 
 // Re-export commonly used types
 pub use acp::{ACPClientConfig, ACPError, MCPServerConfig, SessionUpdate};
+pub use chat_session::{
+    ChatSessionManager, ChatSessionConfig, ChatSessionError, ChatEvent,
+    UIContext, PendingPermission, PermissionResponse, PermissionOption,
+};
 pub use chats::{ChatHeader, ChatMode};
 pub use config::*;
 pub use eval::{EvalConfig, EvalError, EvalResult, EvalAcpConfig, EvalAcpResult, run_eval_acp};

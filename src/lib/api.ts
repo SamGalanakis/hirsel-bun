@@ -10,6 +10,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   RunSummary,
   RunDetail,
+  DraftUpdateRequest,
   Task,
   Worker,
   Message,
@@ -88,6 +89,79 @@ export async function resumeRun(
 export async function deleteRun(name: string): Promise<void> {
   return invoke('delete_run', { runName: name });
 }
+
+// =============================================================================
+// Draft Management API
+// =============================================================================
+
+/**
+ * Create a new draft run
+ *
+ * Creates a draft run with a random friendly name. The draft can be configured
+ * before being started. No workers are spawned until startDraft is called.
+ */
+export async function createDraft(projectPath?: string): Promise<RunDetail> {
+  return invoke<RunDetail>('create_draft', { projectPath });
+}
+
+/**
+ * Update a draft run's configuration
+ *
+ * Allows updating the spec, worker scale, time limit, HITL mode, and project path
+ * before the draft is started.
+ */
+export async function updateDraft(
+  runName: string,
+  updates: DraftUpdateRequest
+): Promise<void> {
+  return invoke('update_draft', { runName, updates });
+}
+
+/**
+ * Start a draft run
+ *
+ * Spawns workers and transitions the draft to a running state.
+ * The draft must have a project path set.
+ */
+export async function startDraft(runName: string): Promise<RunDetail> {
+  return invoke<RunDetail>('start_draft', { runName });
+}
+
+// =============================================================================
+// Spec/Eval File API (file-first editing)
+// =============================================================================
+
+/**
+ * Read the spec.md file for a run
+ */
+export async function readSpecFile(runName: string): Promise<string> {
+  return invoke<string>('read_spec_file', { runName });
+}
+
+/**
+ * Write the spec.md file for a run
+ */
+export async function writeSpecFile(runName: string, content: string): Promise<void> {
+  return invoke('write_spec_file', { runName, content });
+}
+
+/**
+ * Read the eval.md file for a run
+ */
+export async function readEvalFile(runName: string): Promise<string> {
+  return invoke<string>('read_eval_file', { runName });
+}
+
+/**
+ * Write the eval.md file for a run
+ */
+export async function writeEvalFile(runName: string, content: string): Promise<void> {
+  return invoke('write_eval_file', { runName, content });
+}
+
+// =============================================================================
+// Run Delivery API
+// =============================================================================
 
 /**
  * Deliver run changes to project repo as a branch
@@ -712,4 +786,108 @@ export function onEvent<T>(
 
   // Return cleanup function
   return () => window.removeEventListener(eventName, listener);
+}
+
+// =============================================================================
+// Direct Chat Session API (ACP-based AI chat)
+// =============================================================================
+
+import { listen } from '@tauri-apps/api/event';
+import type { ChatEvent, UIContext } from './types';
+
+/**
+ * Start a new direct chat session with an AI agent
+ *
+ * @param agentCommand - Command to run the agent (e.g., ["claude", "acp"])
+ * @param options - Session options
+ * @returns Session ID
+ */
+export async function startChatSession(
+  agentCommand: string[],
+  options?: {
+    workingDir?: string;
+    runName?: string;
+    systemPrompt?: string;
+  }
+): Promise<string> {
+  return invoke<string>('start_chat_session', {
+    agentCommand,
+    workingDir: options?.workingDir,
+    runName: options?.runName,
+    systemPrompt: options?.systemPrompt,
+  });
+}
+
+/**
+ * Send a message to a chat session
+ *
+ * @param sessionId - The session ID
+ * @param content - Message content
+ * @param context - UI context to inject (invisible to user)
+ */
+export async function sendChatMessage(
+  sessionId: string,
+  content: string,
+  context?: UIContext
+): Promise<void> {
+  return invoke('send_chat_message', {
+    sessionId,
+    content,
+    context,
+  });
+}
+
+/**
+ * Respond to a permission request from a chat session
+ *
+ * @param sessionId - The session ID
+ * @param requestId - The permission request ID
+ * @param optionId - The selected option ID
+ */
+export async function respondChatPermission(
+  sessionId: string,
+  requestId: string,
+  optionId: string
+): Promise<void> {
+  return invoke('respond_chat_permission', {
+    sessionId,
+    requestId,
+    optionId,
+  });
+}
+
+/**
+ * Stop a chat session
+ *
+ * @param sessionId - The session ID
+ */
+export async function stopChatSession(sessionId: string): Promise<void> {
+  return invoke('stop_chat_session', { sessionId });
+}
+
+/**
+ * List active chat sessions
+ */
+export async function listChatSessions(): Promise<string[]> {
+  return invoke<string[]>('list_chat_sessions');
+}
+
+/**
+ * Listen for chat events from a session
+ *
+ * @param handler - Function to handle chat events
+ * @returns Cleanup function to stop listening
+ */
+export async function listenChatEvents(
+  handler: (event: ChatEvent) => void
+): Promise<() => void> {
+  console.log('[API] listenChatEvents - setting up listener');
+  const unlisten = await listen<ChatEvent>('chat-event', (event) => {
+    console.log('[API] chat-event received raw:', event);
+    console.log('[API] chat-event payload:', event.payload);
+    handler(event.payload);
+  });
+  console.log('[API] listenChatEvents - listener set up successfully');
+
+  return unlisten;
 }

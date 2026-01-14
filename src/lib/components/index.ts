@@ -12,6 +12,7 @@ export { appState } from './app-state';
 // Run management
 export { runList } from './run-list';
 export { runDetail } from './run-detail';
+export { draftEditor } from './draft-editor';
 
 // Worker and task panels (overview tab)
 export { workerPanel } from './worker-panel';
@@ -22,6 +23,8 @@ export { activityLog } from './activity-log';
 
 // Chat
 export { chatPanel } from './chat-panel';
+export { directChat } from './direct-chat';
+export { permissionModal } from './permission-modal';
 
 // Tabs
 export { tasksTab, evalTab } from './tabs';

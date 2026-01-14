@@ -250,6 +250,7 @@ fn print_text(state: &SQLiteState, files: &Files, run_name: &str) -> Result<(), 
 fn format_status_badge(status: &crate::core::state::Status) -> String {
     use crate::core::state::Status;
     match status {
+        Status::Draft => "[DRAFT]".to_string(),
         Status::Idle => "[idle]".to_string(),
         Status::Working => "[WORKING]".to_string(),
         Status::Paused => "[PAUSED]".to_string(),

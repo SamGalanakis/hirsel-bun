@@ -595,13 +595,19 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
         create_worker_chat(&chats_dir, worker_name)?;
     }
 
-    // Set run status to working
-    state.set_status(Status::Working)?;
+    // Set run status - Draft if --draft flag, otherwise Working
+    if args.draft {
+        state.set_status(Status::Draft)?;
+    } else {
+        state.set_status(Status::Working)?;
+    }
 
-    // Set time limit if specified
+    // Set time limit if specified (but don't set started_at for drafts)
     if let Some(limit) = time_limit_minutes {
         state.set_time_limit_minutes(Some(limit))?;
-        state.set_started_at(None)?;
+        if !args.draft {
+            state.set_started_at(None)?;
+        }
     }
 
     // Set HITL mode
@@ -628,44 +634,46 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
         }
     }
 
-    // Spawn worker processes
-    let agent_command = get_agent_command();
-    let spec_path = run_dir.join("spec.md");
-    let teammates: Vec<String> = worker_names.clone();
+    // Spawn worker processes (skip for draft runs)
+    if !args.draft {
+        let agent_command = get_agent_command();
+        let spec_path = run_dir.join("spec.md");
+        let teammates: Vec<String> = worker_names.clone();
 
-    for (i, (worker_name, work_dir)) in worker_dirs.iter().enumerate() {
-        let is_leader = i == 0 && is_multi_worker;
-        let config = WorkerSpawnConfig {
-            run_name: run_name.clone(),
-            worker_name: worker_name.clone(),
-            work_dir: work_dir.clone(),
-            run_dir: run_dir.clone(),
-            spec_path: spec_path.clone(),
-            agent_command: agent_command.clone(),
-            is_leader,
-            leader_name: leader.clone(),
-            teammates: if is_multi_worker {
-                Some(teammates.iter().filter(|t| *t != worker_name).cloned().collect())
-            } else {
-                None
-            },
-            resume_session_id: None,
-        };
+        for (i, (worker_name, work_dir)) in worker_dirs.iter().enumerate() {
+            let is_leader = i == 0 && is_multi_worker;
+            let config = WorkerSpawnConfig {
+                run_name: run_name.clone(),
+                worker_name: worker_name.clone(),
+                work_dir: work_dir.clone(),
+                run_dir: run_dir.clone(),
+                spec_path: spec_path.clone(),
+                agent_command: agent_command.clone(),
+                is_leader,
+                leader_name: leader.clone(),
+                teammates: if is_multi_worker {
+                    Some(teammates.iter().filter(|t| *t != worker_name).cloned().collect())
+                } else {
+                    None
+                },
+                resume_session_id: None,
+            };
 
-        match spawn_worker(config, &state) {
-            Ok(result) => {
-                info!(
-                    "Spawned worker {} (PID {})",
-                    result.worker_name, result.pid
-                );
-            }
-            Err(WorkerError::RunPaused) => {
-                // Run was paused - don't spawn more workers
-                break;
-            }
-            Err(e) => {
-                // Log error but continue with other workers
-                eprintln!("Warning: Failed to spawn worker {}: {}", worker_name, e);
+            match spawn_worker(config, &state) {
+                Ok(result) => {
+                    info!(
+                        "Spawned worker {} (PID {})",
+                        result.worker_name, result.pid
+                    );
+                }
+                Err(WorkerError::RunPaused) => {
+                    // Run was paused - don't spawn more workers
+                    break;
+                }
+                Err(e) => {
+                    // Log error but continue with other workers
+                    eprintln!("Warning: Failed to spawn worker {}: {}", worker_name, e);
+                }
             }
         }
     }

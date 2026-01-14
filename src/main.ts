@@ -11,10 +11,13 @@ import {
   appState,
   runList,
   runDetail,
+  draftEditor,
   workerPanel,
   taskPanel,
   activityLog,
   chatPanel,
+  directChat,
+  permissionModal,
   tasksTab,
   evalTab,
   sheepClickerGame,
@@ -48,10 +51,13 @@ import {
 (window as any).appState = appState;
 (window as any).runList = runList;
 (window as any).runDetail = runDetail;
+(window as any).draftEditor = draftEditor;
 (window as any).workerPanel = workerPanel;
 (window as any).taskPanel = taskPanel;
 (window as any).activityLog = activityLog;
 (window as any).chatPanel = chatPanel;
+(window as any).directChat = directChat;
+(window as any).permissionModal = permissionModal;
 (window as any).tasksTab = tasksTab;
 (window as any).evalTab = evalTab;
 (window as any).sheepClickerGame = sheepClickerGame;

@@ -16,6 +16,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
+    Draft,       // Configured but not started (no workers spawned)
     Idle,
     Working,
     Paused,      // Manually paused by user
@@ -32,6 +33,7 @@ pub enum Status {
 impl Status {
     pub fn as_str(&self) -> &'static str {
         match self {
+            Status::Draft => "draft",
             Status::Idle => "idle",
             Status::Working => "working",
             Status::Paused => "paused",
@@ -48,6 +50,7 @@ impl Status {
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
+            "draft" => Some(Status::Draft),
             "idle" => Some(Status::Idle),
             "working" => Some(Status::Working),
             "paused" => Some(Status::Paused),
@@ -408,6 +411,7 @@ CREATE TABLE IF NOT EXISTS state (
     updated_at TEXT NOT NULL,
     request TEXT,
     project_path TEXT,
+    remote_url TEXT,
     unread_count INTEGER DEFAULT 0,
     human_in_the_loop INTEGER DEFAULT 1,
     summary TEXT,
@@ -675,6 +679,28 @@ impl SQLiteState {
         self.db.execute(
             "UPDATE state SET project_path = ?1, updated_at = ?2 WHERE id = 1",
             params![path, self.now()],
+        )?;
+        Ok(())
+    }
+
+    /// Get remote URL (for remote git repos)
+    pub fn get_remote_url(&self) -> StateResult<Option<String>> {
+        match self.db.query_row(
+            "SELECT remote_url FROM state WHERE id = 1",
+            [],
+            |row| row.get::<_, Option<String>>(0),
+        ) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set remote URL (for remote git repos)
+    pub fn set_remote_url(&self, url: Option<&str>) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET remote_url = ?1, updated_at = ?2 WHERE id = 1",
+            params![url, self.now()],
         )?;
         Ok(())
     }

@@ -11,6 +11,7 @@
 
 /** Run status values matching Rust Status enum */
 export type RunStatus =
+  | 'draft'
   | 'idle'
   | 'working'
   | 'paused'
@@ -43,6 +44,7 @@ export interface RunDetail {
   status: RunStatus;
   request: string | null;
   projectPath: string | null;
+  remoteUrl: string | null;
   workerScale: string | null;
   timeLimitMinutes: number | null;
   startedAt: string | null;
@@ -60,6 +62,16 @@ export interface RunDetail {
   workersActive: number;
   workersTotal: number;
   elapsedMinutes: number;
+}
+
+/** Request to update a draft run */
+export interface DraftUpdateRequest {
+  spec?: string;
+  workerScale?: string;
+  timeLimitMinutes?: number;
+  humanInTheLoop?: boolean;
+  projectPath?: string;
+  name?: string;
 }
 
 /** Run state from the database state table */
@@ -357,6 +369,7 @@ export type Timestamp = string;
 
 /** Status color mapping for UI */
 export const STATUS_COLORS: Record<RunStatus, string> = {
+  draft: 'sky-500',
   idle: 'wool-500',
   working: 'amber-500',
   paused: 'golden',
@@ -443,4 +456,133 @@ export interface WorkerEvent {
 export interface WorkerEventsResponse {
   events: WorkerEvent[];
   lastId: number | null;
+}
+
+// =============================================================================
+// Direct Chat Session Types (ACP-based AI chat)
+// =============================================================================
+
+/** UI context injected before user messages */
+export interface UIContext {
+  selectedRun: string | null;
+  selectedWorker: string | null;
+  uiSection: string;
+  extra?: Record<string, string>;
+}
+
+/** Permission option in a permission request */
+export interface PermissionOption {
+  optionId: string;
+  label: string;
+  kind: string;
+}
+
+/** Pending permission request */
+export interface PendingPermission {
+  requestId: string;
+  sessionId: string;
+  title: string;
+  description: string | null;
+  options: PermissionOption[];
+}
+
+/** Chat event types */
+export type ChatEventType =
+  | 'textDelta'
+  | 'thinkingDelta'
+  | 'toolCallStart'
+  | 'toolCallUpdate'
+  | 'permissionRequest'
+  | 'messageComplete'
+  | 'error'
+  | 'sessionEnded';
+
+/** Base chat event */
+export interface ChatEventBase {
+  type: ChatEventType;
+  sessionId: string;
+}
+
+/** Text delta event */
+export interface TextDeltaEvent extends ChatEventBase {
+  type: 'textDelta';
+  text: string;
+}
+
+/** Thinking delta event */
+export interface ThinkingDeltaEvent extends ChatEventBase {
+  type: 'thinkingDelta';
+  text: string;
+}
+
+/** Tool call start event */
+export interface ToolCallStartEvent extends ChatEventBase {
+  type: 'toolCallStart';
+  toolCallId: string;
+  title: string;
+  kind: string | null;
+}
+
+/** Tool call update event */
+export interface ToolCallUpdateEvent extends ChatEventBase {
+  type: 'toolCallUpdate';
+  toolCallId: string;
+  status: string;
+  output: string | null;
+}
+
+/** Permission request event */
+export interface PermissionRequestEvent extends ChatEventBase {
+  type: 'permissionRequest';
+  request: PendingPermission;
+}
+
+/** Message complete event */
+export interface MessageCompleteEvent extends ChatEventBase {
+  type: 'messageComplete';
+}
+
+/** Error event */
+export interface ChatErrorEvent extends ChatEventBase {
+  type: 'error';
+  message: string;
+}
+
+/** Session ended event */
+export interface SessionEndedEvent extends ChatEventBase {
+  type: 'sessionEnded';
+}
+
+/** Union type for all chat events */
+export type ChatEvent =
+  | TextDeltaEvent
+  | ThinkingDeltaEvent
+  | ToolCallStartEvent
+  | ToolCallUpdateEvent
+  | PermissionRequestEvent
+  | MessageCompleteEvent
+  | ChatErrorEvent
+  | SessionEndedEvent;
+
+/** Chat message role */
+export type ChatMessageRole = 'user' | 'assistant' | 'system';
+
+/** Tool call in a message */
+export interface ChatToolCall {
+  id: string;
+  title: string;
+  kind: string | null;
+  status: string;
+  output: string | null;
+}
+
+/** Chat message for display */
+export interface ChatMessage {
+  id: string;
+  role: ChatMessageRole;
+  content: string;
+  thinking?: string;
+  toolCalls?: ChatToolCall[];
+  timestamp: Date;
+  streaming?: boolean;
 }
