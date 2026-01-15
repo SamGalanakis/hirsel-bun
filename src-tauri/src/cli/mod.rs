@@ -26,32 +26,33 @@ pub mod spec;
 pub mod summary;
 pub mod tasks;
 pub mod templates;
+pub mod test;
 pub mod view;
 
 use clap::{Args, Parser, Subcommand};
 
 // Re-export command implementations
+pub use self::diff::{print_diff, run_diff, DiffError, DiffResult};
+pub use attach::{list_targets, run_attach};
 pub use completions::{generate_completions, print_completions, run_completions};
 pub use config::{
     agent_presets, get_agent_command, get_current_agent, run_config, set_agent, AgentPreset,
 };
+pub use delete::execute as run_delete;
 pub use go::{run as run_go, GoError, GoOutput, GoResult};
 pub use log::{run_log, LogResult, OutputFormat};
 pub use man::run_man;
+pub use msg::{get_available_threads, run as run_msg, MsgError, MsgOutput, MsgResult, ThreadInfo};
+pub use pause::run_pause;
+pub use prune::execute as run_prune;
+pub use resume::{parse_time_limit, run_resume};
 pub use runs::list_runs;
 pub use spec::{read_spec, run_spec, update_spec_amendments, Amendment, SpecError};
+pub use summary::{get_summary_text, has_summary, run_summary, SummaryError};
 pub use templates::{
     get_template, get_templates_dir, list_templates, read_template_eval, read_template_spec,
     run_templates, Template, TemplateError,
 };
-pub use msg::{run as run_msg, get_available_threads, MsgError, MsgOutput, MsgResult, ThreadInfo};
-pub use pause::run_pause;
-pub use resume::{run_resume, parse_time_limit};
-pub use attach::{run_attach, list_targets};
-pub use delete::execute as run_delete;
-pub use prune::execute as run_prune;
-pub use summary::{run_summary, has_summary, get_summary_text, SummaryError};
-pub use self::diff::{run_diff, print_diff, DiffResult, DiffError};
 
 /// Hirsel - Herd your AI coding agents
 #[derive(Parser, Debug)]
@@ -158,6 +159,9 @@ pub enum Commands {
     /// Update project memory from learnings
     Improve(ImproveArgs),
 
+    /// Run e2e test scenarios
+    Test(TestArgs),
+
     // ========== Internal ==========
     /// Run worker subprocess (internal, called by spawn_worker)
     #[command(name = "__worker-run", hide = true)]
@@ -166,6 +170,14 @@ pub enum Commands {
     /// Run eval MCP server (internal, called by eval agent)
     #[command(name = "__eval-mcp", hide = true)]
     EvalMcp,
+
+    /// Run worker MCP server (internal, called by worker agent)
+    #[command(name = "__worker-mcp", hide = true)]
+    WorkerMcp,
+
+    /// Run eval agent (internal, spawned by maybe_trigger_eval)
+    #[command(name = "__eval-run", hide = true)]
+    EvalRun(InternalEvalRunArgs),
 
     // ========== Completion Helpers ==========
     /// List run names (for shell completion)
@@ -227,6 +239,30 @@ pub struct InternalWorkerRunArgs {
     /// Resume session ID
     #[arg(long)]
     pub resume_session_id: Option<String>,
+}
+
+/// Arguments for internal eval run command
+#[derive(Args, Debug)]
+pub struct InternalEvalRunArgs {
+    /// Run name
+    #[arg(long)]
+    pub run: String,
+
+    /// Run directory
+    #[arg(long)]
+    pub run_dir: String,
+
+    /// Spec file path
+    #[arg(long)]
+    pub spec: String,
+
+    /// Eval spec file path
+    #[arg(long)]
+    pub eval_spec: String,
+
+    /// Agent command (JSON array)
+    #[arg(long)]
+    pub agent_command: String,
 }
 
 // ========== Argument structs ==========
@@ -453,6 +489,25 @@ pub struct ImproveArgs {
     pub run_name: Option<String>,
 }
 
+/// Arguments for `hirsel test`
+#[derive(Args, Debug)]
+pub struct TestArgs {
+    /// Scenario name to run (lists available scenarios if omitted)
+    pub scenario: Option<String>,
+
+    /// Custom run name (default: test-<scenario>)
+    #[arg(short = 'n', long)]
+    pub run_name: Option<String>,
+
+    /// Number of workers
+    #[arg(short, long, default_value = "1")]
+    pub workers: String,
+
+    /// YOLO mode (skip confirmation prompts)
+    #[arg(long)]
+    pub yolo: bool,
+}
+
 // ========== Worker CLI (hirsel-worker) ==========
 
 /// Hirsel Worker - Commands for AI agents inside runs
@@ -622,7 +677,10 @@ pub fn run_cli() -> anyhow::Result<bool> {
                         });
                         println!("{}", serde_json::to_string_pretty(&json_output)?);
                     } else {
-                        println!("Started run '{}' with {} workers", output.run_name, output.worker_count);
+                        println!(
+                            "Started run '{}' with {} workers",
+                            output.run_name, output.worker_count
+                        );
                     }
                 }
                 Err(e) => {
@@ -638,7 +696,11 @@ pub fn run_cli() -> anyhow::Result<bool> {
             }
         }
         Commands::Log(args) => {
-            let format = if json { log::OutputFormat::Json } else { log::OutputFormat::Pretty };
+            let format = if json {
+                log::OutputFormat::Json
+            } else {
+                log::OutputFormat::Pretty
+            };
             match log::run_log(&args.run_name, args.follow, args.limit, format) {
                 log::LogResult::Success | log::LogResult::Empty | log::LogResult::Interrupted => {}
                 log::LogResult::Error(e) => {
@@ -659,12 +721,19 @@ pub fn run_cli() -> anyhow::Result<bool> {
                     if json {
                         // Build JSON manually since MsgOutput doesn't impl Serialize
                         let json_output = match &output {
-                            msg::MsgOutput::Sent { thread, resumed_workers } => serde_json::json!({
+                            msg::MsgOutput::Sent {
+                                thread,
+                                resumed_workers,
+                            } => serde_json::json!({
                                 "type": "sent",
                                 "thread": thread,
                                 "resumed_workers": resumed_workers,
                             }),
-                            msg::MsgOutput::Messages { run_name, thread, messages } => serde_json::json!({
+                            msg::MsgOutput::Messages {
+                                run_name,
+                                thread,
+                                messages,
+                            } => serde_json::json!({
                                 "type": "messages",
                                 "run_name": run_name,
                                 "thread": thread,
@@ -707,17 +776,15 @@ pub fn run_cli() -> anyhow::Result<bool> {
                 }
             }
         }
-        Commands::Diff(args) => {
-            match diff::run_diff(&args.run_name, false) {
-                Ok(result) => {
-                    diff::print_diff(&result, json);
-                }
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
-                }
+        Commands::Diff(args) => match diff::run_diff(&args.run_name, false) {
+            Ok(result) => {
+                diff::print_diff(&result, json);
             }
-        }
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        },
         Commands::Deliver(args) => {
             if let Err(e) = deliver::execute(&args.run_name, args.branch.as_deref(), json) {
                 eprintln!("Error: {}", e);
@@ -832,17 +899,22 @@ pub fn run_cli() -> anyhow::Result<bool> {
         }
 
         // Task Management
-        Commands::Tasks(args) => {
-            match tasks::run_tasks(&args.run_name, json) {
-                Ok(output) => println!("{}", output),
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
-                }
+        Commands::Tasks(args) => match tasks::run_tasks(&args.run_name, json) {
+            Ok(output) => println!("{}", output),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
             }
-        }
+        },
         Commands::TaskAdd(args) => {
-            match tasks::run_task_add(&args.run_name, &args.task_id, &args.description, args.parent.as_deref(), &args.blocked_by, json) {
+            match tasks::run_task_add(
+                &args.run_name,
+                &args.task_id,
+                &args.description,
+                args.parent.as_deref(),
+                &args.blocked_by,
+                json,
+            ) {
                 Ok(output) => println!("{}", output),
                 Err(e) => {
                     eprintln!("Error: {}", e);
@@ -894,15 +966,13 @@ pub fn run_cli() -> anyhow::Result<bool> {
                 std::process::exit(1);
             }
         }
-        Commands::Templates => {
-            match templates::run_templates(json) {
-                Ok(output) => println!("{}", output),
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
-                }
+        Commands::Templates => match templates::run_templates(json) {
+            Ok(output) => println!("{}", output),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
             }
-        }
+        },
         Commands::Completions(args) => {
             if let Err(e) = completions::run_completions(&args) {
                 eprintln!("Error: {}", e);
@@ -921,6 +991,18 @@ pub fn run_cli() -> anyhow::Result<bool> {
                 std::process::exit(1);
             }
         }
+        Commands::Test(args) => {
+            if let Err(e) = test::execute(
+                args.scenario.as_deref(),
+                args.run_name.as_deref(),
+                Some(&args.workers),
+                args.yolo,
+                json,
+            ) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         Commands::WorkerRun(_args) => {
             // This is handled by lib.rs run_cli() for compatibility
             // Should not reach here in normal CLI flow
@@ -931,6 +1013,18 @@ pub fn run_cli() -> anyhow::Result<bool> {
             // This is handled by lib.rs run_cli() for compatibility
             // Should not reach here in normal CLI flow
             eprintln!("Eval MCP command should be called via hirsel binary directly");
+            std::process::exit(1);
+        }
+        Commands::WorkerMcp => {
+            // This is handled by lib.rs run_cli() for compatibility
+            // Should not reach here in normal CLI flow
+            eprintln!("Worker MCP command should be called via hirsel binary directly");
+            std::process::exit(1);
+        }
+        Commands::EvalRun(_args) => {
+            // This is handled by lib.rs run_cli() for compatibility
+            // Should not reach here in normal CLI flow
+            eprintln!("Eval run command should be called via hirsel binary directly");
             std::process::exit(1);
         }
 
@@ -978,9 +1072,7 @@ pub fn run_cli() -> anyhow::Result<bool> {
                         .filter_map(|e| {
                             let path = e.path();
                             if path.extension().map_or(false, |ext| ext == "md") {
-                                path.file_stem()
-                                    .and_then(|s| s.to_str())
-                                    .map(String::from)
+                                path.file_stem().and_then(|s| s.to_str()).map(String::from)
                             } else {
                                 None
                             }
@@ -1099,8 +1191,7 @@ mod tests {
     #[test]
     fn test_worker_cli_task_done_optional_id() {
         // With task_id
-        let cli =
-            WorkerCli::try_parse_from(["hirsel-worker", "task", "done", "my_task"]).unwrap();
+        let cli = WorkerCli::try_parse_from(["hirsel-worker", "task", "done", "my_task"]).unwrap();
         if let WorkerCommands::Task(TaskSubcommands::Done(args)) = cli.command {
             assert_eq!(args.task_id, Some("my_task".to_string()));
         } else {

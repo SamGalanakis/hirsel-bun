@@ -33,7 +33,7 @@ export function registerManageLocalStorageTool(server: McpServer) {
             ],
           };
         }
-        
+
         // Validate actions that require a key
         if ((action === 'set' || action === 'remove') && !key) {
           return {
@@ -46,7 +46,7 @@ export function registerManageLocalStorageTool(server: McpServer) {
             ],
           };
         }
-        
+
         // Validate set action requires a value
         if (action === 'set' && value === undefined) {
           return {
@@ -59,26 +59,26 @@ export function registerManageLocalStorageTool(server: McpServer) {
             ],
           };
         }
-        
+
         // Use default window label if not provided
         const effectiveWindowLabel = window_label || 'main';
-        
+
         console.error(`Managing localStorage with params: ${JSON.stringify({
           action,
           key,
           value: value?.substring(0, 50) + (value && value.length > 50 ? '...' : ''),
           window_label: effectiveWindowLabel
         })}`);
-        
+
         const result = await socketClient.sendCommand('manage_local_storage', {
           action,
           key,
           value,
           window_label: effectiveWindowLabel
         });
-        
+
         console.error(`Got localStorage result type: ${typeof result}`);
-        
+
         // Format the result as a string based on the type
         let resultText;
         if (typeof result === 'string') {
@@ -90,7 +90,7 @@ export function registerManageLocalStorageTool(server: McpServer) {
         } else {
           resultText = JSON.stringify(result, null, 2);
         }
-        
+
         return {
           content: [
             {
@@ -113,4 +113,4 @@ export function registerManageLocalStorageTool(server: McpServer) {
       }
     },
   );
-} 
+}

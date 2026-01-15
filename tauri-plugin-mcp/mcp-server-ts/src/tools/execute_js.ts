@@ -25,21 +25,21 @@ export function registerExecuteJsTool(server: McpServer) {
         if (!code || code.trim() === '') {
           return createErrorResponse("The code parameter is required and cannot be empty");
         }
-        
+
         const params = { code, window_label, timeout_ms };
         logCommandParams('execute_js', params);
-        
+
         // Use default window label if not provided
         const effectiveWindowLabel = window_label || 'main';
-        
+
         const result = await socketClient.sendCommand('execute_js', {
           code,
           window_label: effectiveWindowLabel,
           timeout_ms
         });
-        
+
         console.error(`Got JS execution result type: ${typeof result}`);
-        
+
         return createSuccessResponse(formatResultAsText(result));
       } catch (error) {
         console.error('JS execution error:', error);
@@ -47,4 +47,4 @@ export function registerExecuteJsTool(server: McpServer) {
       }
     },
   );
-} 
+}

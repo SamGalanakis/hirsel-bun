@@ -118,7 +118,10 @@ pub struct RemoteWorkerSpawner {
 impl RemoteWorkerSpawner {
     /// Create a new spawner for a remote machine
     pub fn new(config: RemoteConfig, tunnel_port: u16) -> Self {
-        Self { config, tunnel_port }
+        Self {
+            config,
+            tunnel_port,
+        }
     }
 
     /// Spawn a worker process on the remote machine
@@ -291,9 +294,7 @@ echo $!
         let stdout = String::from_utf8_lossy(&output.stdout);
         let pid_str = stdout.trim().lines().last().unwrap_or("");
 
-        pid_str
-            .parse::<u32>()
-            .map_err(|_| RemoteError::InvalidPid)
+        pid_str.parse::<u32>().map_err(|_| RemoteError::InvalidPid)
     }
 
     /// Build the base SSH command
@@ -423,10 +424,7 @@ mod tests {
 
         assert_eq!(config.ssh_port, 2222);
         assert_eq!(config.python_path, "/usr/local/bin/python3.11");
-        assert_eq!(
-            config.ssh_key,
-            Some(PathBuf::from("~/.ssh/remote_key"))
-        );
+        assert_eq!(config.ssh_key, Some(PathBuf::from("~/.ssh/remote_key")));
         assert_eq!(config.work_base, "/home/user/hirsel");
         assert_eq!(config.display_location(), "build-server");
     }

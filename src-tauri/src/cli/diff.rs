@@ -44,8 +44,7 @@ pub enum DiffError {
 /// By default shows the full diff; use `stat_only` for a summary.
 pub fn run_diff(run_name: &str, stat_only: bool) -> Result<DiffResult, DiffError> {
     // Load config to get runs directory
-    let (config, _warnings) =
-        Config::load().map_err(|e| DiffError::ConfigError(e.to_string()))?;
+    let (config, _warnings) = Config::load().map_err(|e| DiffError::ConfigError(e.to_string()))?;
 
     let run_dir = config.runs_dir().join(run_name);
     let staging_dir = run_dir.join("work").join("staging");
@@ -138,7 +137,10 @@ fn print_diff_json(result: &DiffResult) {
         "stat": result.stat,
         "diff": result.diff,
     });
-    println!("{}", serde_json::to_string_pretty(&json).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json).unwrap_or_default()
+    );
 }
 
 #[cfg(test)]

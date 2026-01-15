@@ -2,7 +2,7 @@
  * Run list sidebar Alpine component
  */
 
-import { formatElapsed, formatProgress } from '../utils/formatters';
+import { formatElapsed, formatProgress, formatRelativeTime } from '../utils/formatters';
 import { getStatusBadgeClass, getStatusLabel, getProgressBarClass } from '../utils/status';
 import { createDraft } from '../api';
 import type { RunSummary } from '../types';
@@ -30,9 +30,32 @@ export function runList() {
     // Formatting helpers
     formatElapsed,
     formatProgress,
+    formatRelativeTime,
     getStatusBadgeClass,
     getStatusLabel,
     getProgressBarClass,
+
+    /**
+     * Get the appropriate time display for a run based on its status
+     * - Draft: shows relative creation time (e.g., "2h ago")
+     * - Completed: shows duration (e.g., "1h 30m")
+     * - Active: shows elapsed time (e.g., "45m")
+     */
+    getTimeDisplay(run: RunSummary): string {
+      const completedStatuses = ['done', 'delivered', 'merged', 'timed_out', 'eval_failed', 'runaway'];
+
+      if (run.status === 'draft') {
+        return formatRelativeTime(run.createdAt);
+      }
+
+      if (completedStatuses.includes(run.status)) {
+        // For completed runs, show duration
+        return formatElapsed(run.elapsedMinutes);
+      }
+
+      // For active runs, show elapsed time
+      return formatElapsed(run.elapsedMinutes);
+    },
 
     getStatusDotClass(status: string) {
       const classes: Record<string, string> = {
@@ -155,7 +178,7 @@ export function runList() {
         }
       } catch (err) {
         const error = err as Error;
-        window.toast.error(error.message || String(error), 'Failed to pause');
+        window.toast.error('Failed to pause run');
       }
       this.hideContextMenu();
     },
@@ -169,21 +192,24 @@ export function runList() {
         }
       } catch (err) {
         const error = err as Error;
-        window.toast.error(error.message || String(error), 'Failed to resume');
+        window.toast.error('Failed to resume run');
       }
       this.hideContextMenu();
     },
 
     async contextDelete() {
       if (!this.contextMenuRun) return;
-      if (!confirm(`Delete run "${this.contextMenuRun}"?`)) {
-        this.hideContextMenu();
-        return;
-      }
+      const runToDelete = this.contextMenuRun;
+      this.hideContextMenu();
+
+      const confirmed = await (window as any).confirmDialog?.delete(runToDelete, 'run')
+        ?? confirm(`Delete run "${runToDelete}"?`);
+      if (!confirmed) return;
+
       try {
         if (window.tauriInvoke) {
-          await window.tauriInvoke('delete_run', { runName: this.contextMenuRun });
-          if (this.selectedRun === this.contextMenuRun) {
+          await window.tauriInvoke('delete_run', { runName: runToDelete });
+          if (this.selectedRun === runToDelete) {
             this.selectedRun = null;
             this.selectedIndex = -1;
             window.dispatchEvent(new CustomEvent('run-selected', { detail: null }));
@@ -192,9 +218,8 @@ export function runList() {
         }
       } catch (err) {
         const error = err as Error;
-        window.toast.error(error.message || String(error), 'Failed to delete');
+        window.toast.error('Failed to delete run');
       }
-      this.hideContextMenu();
     },
 
     async contextDeliver() {
@@ -204,12 +229,12 @@ export function runList() {
           const branch = await window.tauriInvoke<string>('deliver_run', {
             runName: this.contextMenuRun,
           });
-          window.toast.success(`Delivered to branch: ${branch}`, 'Delivery complete');
+          window.toast.success(`Delivered to ${branch}`);
           await this.fetchRuns();
         }
       } catch (err) {
         const error = err as Error;
-        window.toast.error(error.message || String(error), 'Failed to deliver');
+        window.toast.error('Failed to deliver');
       }
       this.hideContextMenu();
     },
@@ -220,7 +245,7 @@ export function runList() {
     async createNewDraft() {
       try {
         const detail = await createDraft();
-        window.toast.success(`Draft "${detail.name}" created`, 'New draft');
+        window.toast.success(`Draft "${detail.name}" created`);
 
         // Refresh runs list
         await this.fetchRuns(false);
@@ -232,7 +257,7 @@ export function runList() {
         window.dispatchEvent(new CustomEvent('draft-selected', { detail: detail.name }));
       } catch (err) {
         const error = err as Error;
-        window.toast.error(error.message || String(error), 'Failed to create draft');
+        window.toast.error('Failed to create draft');
       }
     },
 

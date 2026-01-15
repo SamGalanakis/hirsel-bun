@@ -134,7 +134,10 @@ pub fn format_message(message: &Message) -> String {
     let waiting_marker = if message.waiting { " [WAITING]" } else { "" };
 
     let lines = vec![
-        format!("### {} \u{00b7} {}{}", message.sender, time_str, waiting_marker),
+        format!(
+            "### {} \u{00b7} {}{}",
+            message.sender, time_str, waiting_marker
+        ),
         String::new(),
         message.content.clone(),
         String::new(),
@@ -297,8 +300,7 @@ mod tests {
 
     #[test]
     fn test_format_chat_header() {
-        let header = ChatHeader::new("test", ChatMode::TwoWay)
-            .with_description("Test description");
+        let header = ChatHeader::new("test", ChatMode::TwoWay).with_description("Test description");
 
         let formatted = format_chat_header(&header);
         assert!(formatted.contains("# test"));

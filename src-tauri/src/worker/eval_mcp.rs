@@ -157,7 +157,11 @@ impl EvalMcpServer {
                     feedback: "All checks passed.".to_string(),
                 };
                 if let Err(e) = self.write_result(&result) {
-                    return JsonRpcResponse::error(id, -32000, format!("Failed to write result: {}", e));
+                    return JsonRpcResponse::error(
+                        id,
+                        -32000,
+                        format!("Failed to write result: {}", e),
+                    );
                 }
                 self.submitted = true;
                 JsonRpcResponse::success(
@@ -183,7 +187,11 @@ impl EvalMcpServer {
                     feedback,
                 };
                 if let Err(e) = self.write_result(&result) {
-                    return JsonRpcResponse::error(id, -32000, format!("Failed to write result: {}", e));
+                    return JsonRpcResponse::error(
+                        id,
+                        -32000,
+                        format!("Failed to write result: {}", e),
+                    );
                 }
                 self.submitted = true;
                 JsonRpcResponse::success(
@@ -227,11 +235,8 @@ impl EvalMcpServer {
             let request: JsonRpcRequest = match serde_json::from_str(&line) {
                 Ok(r) => r,
                 Err(e) => {
-                    let error_response = JsonRpcResponse::error(
-                        None,
-                        -32700,
-                        format!("Parse error: {}", e),
-                    );
+                    let error_response =
+                        JsonRpcResponse::error(None, -32700, format!("Parse error: {}", e));
                     if let Ok(json) = serde_json::to_string(&error_response) {
                         let _ = writeln!(stdout, "{}", json);
                         let _ = stdout.flush();
@@ -277,7 +282,10 @@ pub fn run_eval_mcp_server() {
         }
     };
 
-    eprintln!("Eval MCP server started, result_file={}", result_file.display());
+    eprintln!(
+        "Eval MCP server started, result_file={}",
+        result_file.display()
+    );
 
     let mut server = EvalMcpServer::new(result_file);
     if let Err(e) = server.run() {

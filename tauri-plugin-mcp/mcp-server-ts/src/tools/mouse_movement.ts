@@ -34,7 +34,7 @@ export function registerMouseMovementTool(server: McpServer) {
             ],
           };
         }
-        
+
         console.error(`Simulating mouse movement with params: ${JSON.stringify({
           x,
           y,
@@ -42,7 +42,7 @@ export function registerMouseMovementTool(server: McpServer) {
           click,
           button
         })}`);
-        
+
         await socketClient.sendCommand('simulate_mouse_movement', {
           x,
           y,
@@ -50,8 +50,8 @@ export function registerMouseMovementTool(server: McpServer) {
           click,
           button
         });
-        
-        const actionText = click 
+
+        const actionText = click
           ? `Successfully moved mouse to coordinates (${x}, ${y})${relative ? ' (relative)' : ''} and clicked ${button || 'left'} button`
           : `Successfully moved mouse to coordinates (${x}, ${y})${relative ? ' (relative)' : ''}`;
 
@@ -77,4 +77,4 @@ export function registerMouseMovementTool(server: McpServer) {
       }
     },
   );
-} 
+}

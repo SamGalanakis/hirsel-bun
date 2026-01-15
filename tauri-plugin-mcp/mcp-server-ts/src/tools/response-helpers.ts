@@ -4,7 +4,7 @@
 
 /**
  * Creates a standardized error response
- * 
+ *
  * @param message Error message to display
  * @returns Properly formatted error response object
  */
@@ -17,7 +17,7 @@ export function createErrorResponse(message: string) {
 
 /**
  * Creates a standardized success response with text content
- * 
+ *
  * @param text Success message or result to display
  * @returns Properly formatted success response object
  */
@@ -30,7 +30,7 @@ export function createSuccessResponse(text: string) {
 
 /**
  * Creates a standardized success response with image content
- * 
+ *
  * @param base64Data Base64-encoded image data
  * @param mimeType MIME type of the image (default: 'image/jpeg')
  * @returns Properly formatted success response with image
@@ -38,8 +38,8 @@ export function createSuccessResponse(text: string) {
 export function createImageResponse(base64Data: string, mimeType: string = 'image/jpeg') {
   return {
     isError: false,
-    content: [{ 
-      type: "image" as const, 
+    content: [{
+      type: "image" as const,
       data: base64Data,
       mimeType
     }],
@@ -48,20 +48,20 @@ export function createImageResponse(base64Data: string, mimeType: string = 'imag
 
 /**
  * Helper to safely extract base64 data from various response formats
- * 
+ *
  * @param result Result object from command
  * @returns Extracted base64 data or null if not found
  */
 export function extractBase64Data(result: unknown): string | null {
   if (typeof result === 'string') {
     // Direct base64 string
-    return result.startsWith('data:image') 
+    return result.startsWith('data:image')
       ? result.split(',')[1]  // Remove the data URL prefix if present
       : result;
   } else if (result && typeof result === 'object') {
     // Check for data field in response object
     const obj = result as Record<string, any>;
-    
+
     if (obj.data) {
       if (typeof obj.data === 'string') {
         return obj.data.startsWith('data:image')
@@ -75,13 +75,13 @@ export function extractBase64Data(result: unknown): string | null {
       }
     }
   }
-  
+
   return null;
 }
 
 /**
  * Format result from command as text, handling different types
- * 
+ *
  * @param result Result from command execution
  * @returns Formatted text representation
  */
@@ -95,7 +95,7 @@ export function formatResultAsText(result: unknown): string {
 
 /**
  * Helper to log parameters for debugging purposes
- * 
+ *
  * @param commandName Name of the command being executed
  * @param params Parameters being sent to the command
  */
@@ -107,6 +107,6 @@ export function logCommandParams(commandName: string, params: Record<string, any
       code: params.code.substring(0, 100) + (params.code.length > 100 ? '...' : '')
     };
   }
-  
+
   console.error(`Executing ${commandName} with params: ${JSON.stringify(params)}`);
-} 
+}

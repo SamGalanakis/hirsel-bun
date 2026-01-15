@@ -88,7 +88,10 @@ fn get_run_info(name: &str, run_dir: &PathBuf) -> Option<RunInfo> {
     let tasks = state.get_tasks().unwrap_or_default();
     let workers = state.get_workers().unwrap_or_default();
 
-    let tasks_done = tasks.iter().filter(|t| t.status == TaskStatus::Done).count();
+    let tasks_done = tasks
+        .iter()
+        .filter(|t| t.status == TaskStatus::Done)
+        .count();
     let tasks_total = tasks.len();
 
     let workers_active = workers
@@ -116,12 +119,7 @@ fn get_run_info(name: &str, run_dir: &PathBuf) -> Option<RunInfo> {
 /// Print runs as a formatted table
 fn print_runs_table(runs: &[RunInfo]) {
     // Calculate column widths
-    let name_width = runs
-        .iter()
-        .map(|r| r.name.len())
-        .max()
-        .unwrap_or(4)
-        .max(4);
+    let name_width = runs.iter().map(|r| r.name.len()).max().unwrap_or(4).max(4);
     let status_width = runs
         .iter()
         .map(|r| r.status.len())
@@ -132,7 +130,11 @@ fn print_runs_table(runs: &[RunInfo]) {
     // Print header
     println!(
         "{:<name_width$}  {:<status_width$}  {:>10}  {:>9}  {:>8}",
-        "NAME", "STATUS", "TASKS", "WORKERS", "TIME",
+        "NAME",
+        "STATUS",
+        "TASKS",
+        "WORKERS",
+        "TIME",
         name_width = name_width,
         status_width = status_width,
     );
@@ -140,7 +142,11 @@ fn print_runs_table(runs: &[RunInfo]) {
     // Print separator
     println!(
         "{:-<name_width$}  {:-<status_width$}  {:->10}  {:->9}  {:->8}",
-        "", "", "", "", "",
+        "",
+        "",
+        "",
+        "",
+        "",
         name_width = name_width,
         status_width = status_width,
     );

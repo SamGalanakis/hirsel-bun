@@ -36,7 +36,7 @@ export class TauriSocketClient {
 
   async connect(): Promise<void> {
     if (this.isConnected) return;
-    
+
     return new Promise((resolve, reject) => {
       let connectionOptions: net.NetConnectOpts;
       let connectionInfo: string;
@@ -51,29 +51,29 @@ export class TauriSocketClient {
       } else {
         // IPC connection
         let connectionPath = this.config.path || DEFAULT_SOCKET_PATH;
-        
+
         // On Windows, the socket is created as a named pipe in a specific location
         if (os.platform() === 'win32') {
           connectionPath = `\\\\.\\pipe\\tmp\\${SOCKET_FILENAME}`;
           console.error(`Using Windows-specific pipe path: ${connectionPath}`);
         }
-        
+
         connectionOptions = { path: connectionPath };
         connectionInfo = `IPC ${connectionPath}`;
       }
 
       console.error(`Connecting to ${connectionInfo} (attempt ${this.reconnectAttempts + 1})`);
-      
+
       this.client = net.createConnection(connectionOptions, () => {
         this.isConnected = true;
         this.reconnectAttempts = 0;
         console.error(`Connected to Tauri socket server at ${connectionInfo}`);
-        
+
         // Setup data handler
         this.client!.on('data', (data) => {
           this.handleData(data);
         });
-        
+
         resolve();
       });
 
@@ -82,11 +82,11 @@ export class TauriSocketClient {
         this.isConnected = false;
         reject(err);
       });
-      
+
       this.client!.on('close', () => {
         this.isConnected = false;
         console.error('Socket connection closed');
-        
+
         // Try to reconnect if not too many attempts
         if (this.reconnectAttempts < 3) {
           this.reconnectAttempts++;
@@ -100,38 +100,38 @@ export class TauriSocketClient {
       });
     });
   }
-  
+
   private handleData(data: Buffer) {
     // Accumulate data in the buffer
     this.buffer += data.toString();
-    
+
     console.error(`Received ${data.length} bytes, buffer size: ${this.buffer.length}`);
-    
+
     // Try to find complete JSON responses that end with newline
     let newlineIndex;
     while ((newlineIndex = this.buffer.indexOf('\n')) !== -1) {
       const jsonStr = this.buffer.substring(0, newlineIndex);
       this.buffer = this.buffer.substring(newlineIndex + 1);
-      
+
       console.error(`Processing JSON response of ${jsonStr.length} bytes`);
-      
+
       try {
         const response = JSON.parse(jsonStr);
-        
+
         // Process all matching callbacks that might be waiting for this response
         // Rather than just taking the first one, match based on timestamps (oldest first)
         const callbackIds = Array.from(this.responseCallbacks.keys());
-        
+
         if (callbackIds.length > 0) {
           // Sort by timestamp (assuming IDs start with timestamp)
           callbackIds.sort();
           const callbackId = callbackIds[0];
-          
+
           const callback = this.responseCallbacks.get(callbackId);
           if (callback) {
             // Remove the callback before invoking to prevent double calls
             this.responseCallbacks.delete(callbackId);
-            
+
             if (!response.success) {
               // If the server indicates failure, reject the promise with the error message
               const errorMsg = response.error || 'Command failed without specific error';
@@ -146,7 +146,7 @@ export class TauriSocketClient {
         }
       } catch (err) {
         console.error('Error parsing response:', err);
-        
+
         // Log first and last 100 characters of the JSON string for debugging
         if (jsonStr.length > 200) {
           console.error(`JSON starts with: ${jsonStr.substring(0, 100)}...`);
@@ -154,14 +154,14 @@ export class TauriSocketClient {
         } else {
           console.error(`Full JSON: ${jsonStr}`);
         }
-        
+
         // If parsing failed, this could be a partial message
         // so we'll just add it back to the buffer and wait for more data
         // But if it's too large (>10MB), something is wrong, so clear it
         if (this.buffer.length > 10_000_000) {
           console.error('Buffer overflow, clearing buffer');
           this.buffer = '';
-          
+
           // Reject any pending callbacks
           for (const [id, callback] of this.responseCallbacks.entries()) {
             callback.reject(new Error('Buffer overflow'));
@@ -188,7 +188,7 @@ export class TauriSocketClient {
     return new Promise((resolve, reject) => {
       // Handle both string and object payloads
       let finalPayload: Record<string, any>;
-      
+
       if (typeof payload === 'string') {
         // If payload is a string, send it as a special value that the server will recognize
         finalPayload = { window_label: payload };
@@ -197,7 +197,7 @@ export class TauriSocketClient {
         // If payload is an object, use it as is
         finalPayload = payload;
       }
-      
+
       const request = JSON.stringify({
         command,
         payload: finalPayload
@@ -209,7 +209,7 @@ export class TauriSocketClient {
 
       // Log the request
       console.error(`Sending request: ${command} with payload: ${JSON.stringify(finalPayload)}`);
-      
+
       // Send the request
       this.client!.write(request, (err) => {
         if (err) {
@@ -218,7 +218,7 @@ export class TauriSocketClient {
           reject(new Error(`Failed to send request: ${err.message}`));
         }
       });
-      
+
       // Set a timeout to prevent hanging if response never comes
       setTimeout(() => {
         if (this.responseCallbacks.has(requestId)) {
@@ -234,11 +234,11 @@ export class TauriSocketClient {
 function createSocketClient(): TauriSocketClient {
   // Check for environment variables to configure connection
   const connectionType = process.env.TAURI_MCP_CONNECTION_TYPE;
-  
+
   if (connectionType === 'tcp') {
     const host = process.env.TAURI_MCP_TCP_HOST || '127.0.0.1';
     const port = parseInt(process.env.TAURI_MCP_TCP_PORT || '9999', 10);
-    
+
     console.error(`Creating TCP socket client: ${host}:${port}`);
     return new TauriSocketClient({
       type: 'tcp',
@@ -257,4 +257,4 @@ function createSocketClient(): TauriSocketClient {
 }
 
 // Export a singleton instance
-export const socketClient = createSocketClient(); 
+export const socketClient = createSocketClient();

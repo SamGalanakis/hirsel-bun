@@ -24,22 +24,22 @@ export function registerTakeScreenshotTool(server: McpServer) {
         if (!window_label) {
           window_label = "main";
         }
-        
+
         const params = { window_label };
         logCommandParams('take_screenshot', params);
-        
+
         const result = await socketClient.sendCommand('take_screenshot', params);
-        
+
         console.error(`Got screenshot result type: ${typeof result}`);
-        
+
         // Use our shared utility to extract base64 data
         const base64Data = extractBase64Data(result);
-        
+
         if (!base64Data) {
           console.error('Failed to extract base64 data from response:', JSON.stringify(result));
           return createErrorResponse(`Failed to extract image data from response: ${JSON.stringify(result).substring(0, 100)}...`);
         }
-        
+
         return createImageResponse(base64Data, 'image/jpeg');
       } catch (error) {
         console.error('Screenshot error:', error);
@@ -47,4 +47,4 @@ export function registerTakeScreenshotTool(server: McpServer) {
       }
     },
   );
-} 
+}

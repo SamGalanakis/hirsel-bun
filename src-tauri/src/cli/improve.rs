@@ -87,7 +87,8 @@ pub fn execute(run_name: Option<&str>, json: bool) -> Result<(), Box<dyn std::er
     let memory_file = detect_memory_file(&project_path);
     let memory_exists = memory_file.exists();
     let memory_content = if memory_exists {
-        std::fs::read_to_string(&memory_file).unwrap_or_else(|_| "(Could not read file)".to_string())
+        std::fs::read_to_string(&memory_file)
+            .unwrap_or_else(|_| "(Could not read file)".to_string())
     } else {
         "(File does not exist yet)".to_string()
     };
@@ -121,7 +122,10 @@ Analyze the learnings above and update {} with any patterns you find.
         memory_file.display(),
         memory_exists,
         memory_content,
-        memory_file.file_name().unwrap_or_default().to_string_lossy()
+        memory_file
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
     );
 
     let full_prompt = format!("{}\n\n{}", base_prompt, context);
@@ -173,7 +177,14 @@ Analyze the learnings above and update {} with any patterns you find.
 /// Collect learnings from a specific run
 fn collect_learnings_from_run(
     run_name: &str,
-) -> Result<(std::collections::HashMap<String, Vec<Learning>>, std::collections::HashMap<String, String>, Option<PathBuf>), Box<dyn std::error::Error>> {
+) -> Result<
+    (
+        std::collections::HashMap<String, Vec<Learning>>,
+        std::collections::HashMap<String, String>,
+        Option<PathBuf>,
+    ),
+    Box<dyn std::error::Error>,
+> {
     let run_dir = config::run_dir(run_name);
     let files = Files::new(&run_dir);
     let state = SQLiteState::new(files.db_path())?;
@@ -185,16 +196,22 @@ fn collect_learnings_from_run(
 
     // Filter by timestamp if needed
     let filtered: Vec<_> = if let Some(ref since_ts) = since {
-        messages.into_iter().filter(|m| m.timestamp > *since_ts).collect()
+        messages
+            .into_iter()
+            .filter(|m| m.timestamp > *since_ts)
+            .collect()
     } else {
         messages
     };
 
-    let learnings: Vec<Learning> = filtered.into_iter().map(|m| Learning {
-        sender: m.sender,
-        content: m.content,
-        timestamp: m.timestamp,
-    }).collect();
+    let learnings: Vec<Learning> = filtered
+        .into_iter()
+        .map(|m| Learning {
+            sender: m.sender,
+            content: m.content,
+            timestamp: m.timestamp,
+        })
+        .collect();
 
     let mut result = std::collections::HashMap::new();
     let mut timestamps = std::collections::HashMap::new();
@@ -210,10 +227,21 @@ fn collect_learnings_from_run(
 }
 
 /// Collect learnings from all runs
-fn collect_all_learnings() -> Result<(std::collections::HashMap<String, Vec<Learning>>, std::collections::HashMap<String, String>, Option<PathBuf>), Box<dyn std::error::Error>> {
+fn collect_all_learnings() -> Result<
+    (
+        std::collections::HashMap<String, Vec<Learning>>,
+        std::collections::HashMap<String, String>,
+        Option<PathBuf>,
+    ),
+    Box<dyn std::error::Error>,
+> {
     let runs_dir = config::runs_dir();
     if !runs_dir.exists() {
-        return Ok((std::collections::HashMap::new(), std::collections::HashMap::new(), None));
+        return Ok((
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            None,
+        ));
     }
 
     let mut all_learnings = std::collections::HashMap::new();
@@ -250,16 +278,22 @@ fn collect_all_learnings() -> Result<(std::collections::HashMap<String, Vec<Lear
 
             if let Ok(messages) = state.get_messages("learnings", 1000) {
                 let filtered: Vec<_> = if let Some(ref since_ts) = since {
-                    messages.into_iter().filter(|m| m.timestamp > *since_ts).collect()
+                    messages
+                        .into_iter()
+                        .filter(|m| m.timestamp > *since_ts)
+                        .collect()
                 } else {
                     messages
                 };
 
-                let learnings: Vec<Learning> = filtered.into_iter().map(|m| Learning {
-                    sender: m.sender,
-                    content: m.content,
-                    timestamp: m.timestamp,
-                }).collect();
+                let learnings: Vec<Learning> = filtered
+                    .into_iter()
+                    .map(|m| Learning {
+                        sender: m.sender,
+                        content: m.content,
+                        timestamp: m.timestamp,
+                    })
+                    .collect();
 
                 if !learnings.is_empty() {
                     if let Some(latest) = learnings.iter().map(|l| &l.timestamp).max() {
@@ -309,7 +343,8 @@ fn format_learnings(learnings: &std::collections::HashMap<String, Vec<Learning>>
                 &msg.timestamp[..16]
             } else {
                 &msg.timestamp
-            }.replace('T', " ");
+            }
+            .replace('T', " ");
             parts.push(format!("**{}** ({}):\n{}\n", msg.sender, ts, msg.content));
         }
         parts.push(String::new());
@@ -373,7 +408,8 @@ After updating, report:
 - **Patterns matter** - Single observations don't become rules
 - **Preserve structure** - If the file has sections, maintain them
 - **Don't duplicate** - Check existing rules before adding
-"#.to_string()
+"#
+    .to_string()
 }
 
 /// Run the improve agent (spawns claude CLI)
@@ -384,7 +420,10 @@ fn run_improve_agent(
 ) -> Result<String, Box<dyn std::error::Error>> {
     let task = format!(
         "Analyze the learnings and update {}. Report what you changed.",
-        memory_file.file_name().unwrap_or_default().to_string_lossy()
+        memory_file
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
     );
 
     let output = Command::new("claude")
@@ -404,7 +443,12 @@ fn run_improve_agent(
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("Agent exited with code {:?}: {}", output.status.code(), stderr).into())
+        Err(format!(
+            "Agent exited with code {:?}: {}",
+            output.status.code(),
+            stderr
+        )
+        .into())
     }
 }
 

@@ -12,7 +12,10 @@ pub fn run_resume(run_name: &str, time_limit: Option<&str>, json: bool) -> anyho
 
     if !run_dir.exists() {
         if json {
-            println!(r#"{{"success": false, "error": "Run '{}' not found"}}"#, run_name);
+            println!(
+                r#"{{"success": false, "error": "Run '{}' not found"}}"#,
+                run_name
+            );
         } else {
             eprintln!("Run '{}' not found", run_name);
         }
@@ -107,7 +110,9 @@ pub fn run_resume(run_name: &str, time_limit: Option<&str>, json: bool) -> anyho
     }
 
     if json {
-        let time_limit_msg = time_limit.map(|t| format!(r#", "time_limit": "{}""#, t)).unwrap_or_default();
+        let time_limit_msg = time_limit
+            .map(|t| format!(r#", "time_limit": "{}""#, t))
+            .unwrap_or_default();
         println!(
             r#"{{"success": true, "resumed_workers": {}, "resumed_names": {:?}{}}}"#,
             resumed_count, resumed_names, time_limit_msg
@@ -115,7 +120,10 @@ pub fn run_resume(run_name: &str, time_limit: Option<&str>, json: bool) -> anyho
     } else {
         println!("Resumed {} worker(s)", resumed_count);
         println!();
-        println!("Workers marked for restart. Use 'hirsel attach {}' to watch progress.", run_name);
+        println!(
+            "Workers marked for restart. Use 'hirsel attach {}' to watch progress.",
+            run_name
+        );
     }
 
     Ok(())

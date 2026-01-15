@@ -29,7 +29,7 @@ export function registerSendTextToElementTool(server: McpServer) {
           window_label,
           delay_ms
         })}`);
-        
+
         // Create the payload object
         const payload = {
           selector_type,
@@ -38,11 +38,11 @@ export function registerSendTextToElementTool(server: McpServer) {
           window_label,
           delay_ms
         };
-        
+
         const result = await socketClient.sendCommand('send_text_to_element', payload);
-        
+
         console.error(`Got result: ${JSON.stringify(result)}`);
-        
+
         // Process the result
         if (!result || typeof result !== 'object') {
           const errorMsg = 'Failed to get a valid response';
@@ -56,11 +56,11 @@ export function registerSendTextToElementTool(server: McpServer) {
             ],
           };
         }
-        
+
         // The server can provide two different response formats:
         // 1. Direct object with data property containing element info
         // 2. Response with success flag and nested data property
-        
+
         // If the result has a data property at the top level with element info
         if (result.element) {
           const elementInfo = result.element;
@@ -74,14 +74,14 @@ export function registerSendTextToElementTool(server: McpServer) {
             isError: false,
           };
         }
-        
+
         // Check if it's a standard response object
         if ('success' in result) {
           if (result.success === true) {
             // Handle data embedded in the data property
             const data = result.data || {};
             const elementInfo = data.element || {};
-            
+
             return {
               content: [
                 {
@@ -105,7 +105,7 @@ export function registerSendTextToElementTool(server: McpServer) {
             };
           }
         }
-        
+
         // Try one more case - direct object with the element details
         if (result.data && result.data.element) {
           const elementInfo = result.data.element;
@@ -119,7 +119,7 @@ export function registerSendTextToElementTool(server: McpServer) {
             isError: false,
           };
         }
-        
+
         // If we get here, the response format wasn't recognized
         return {
           isError: true,
@@ -144,4 +144,4 @@ export function registerSendTextToElementTool(server: McpServer) {
       }
     },
   );
-} 
+}

@@ -45,6 +45,7 @@ export interface RunDetail {
   request: string | null;
   projectPath: string | null;
   remoteUrl: string | null;
+  branch: string | null;
   workerScale: string | null;
   timeLimitMinutes: number | null;
   startedAt: string | null;
@@ -72,6 +73,31 @@ export interface DraftUpdateRequest {
   humanInTheLoop?: boolean;
   projectPath?: string;
   name?: string;
+  branch?: string;
+}
+
+/** Result of validating a repository path/URL */
+export interface RepoValidation {
+  /** Whether the repo is valid and accessible */
+  valid: boolean;
+  /** Error message if not valid */
+  error: string | null;
+  /** Whether this is a remote URL (vs local path) */
+  isRemote: boolean;
+  /** Available branches in the repository */
+  branches: string[];
+  /** Currently checked out branch (for local repos) */
+  currentBranch: string | null;
+  /** The normalized repo URL (with branch stripped if it was in the URL) */
+  repoUrl: string;
+  /** Branch extracted from URL (if any) */
+  urlBranch: string | null;
+  /** Whether the URL branch exists in the repo */
+  urlBranchValid: boolean;
+  /** Whether the directory needs to be created (local paths only) */
+  needsDirCreate: boolean;
+  /** Whether git needs to be initialized (local paths only) */
+  needsGitInit: boolean;
 }
 
 /** Run state from the database state table */

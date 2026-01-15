@@ -327,7 +327,7 @@ impl<R: Runtime> SocketServer<R> {
                         // Handle TCP connections
                         // Set non-blocking mode to allow checking the running flag
                         tcp_listener.set_nonblocking(true).ok();
-                        
+
                         loop {
                             if !*running.lock().unwrap() {
                                 break;
@@ -336,13 +336,13 @@ impl<R: Runtime> SocketServer<R> {
                             match tcp_listener.accept() {
                                 Ok((mut stream, addr)) => {
                                     info!("[TAURI_MCP] Accepted new TCP connection from: {}", addr);
-                                    
+
                                     // Set the stream back to blocking mode for normal I/O operations
                                     if let Err(e) = stream.set_nonblocking(false) {
                                         error!("[TAURI_MCP] Failed to set stream to blocking mode: {}", e);
                                         continue;
                                     }
-                                    
+
                                     let app_clone = app.clone();
                                     let unified_stream = UnifiedStream::Tcp(stream);
 
@@ -595,7 +595,7 @@ fn handle_client<R: Runtime>(stream: UnifiedStream, app: AppHandle<R>) -> crate:
                 }
             }
         }
-        
+
         // Clear the line for the next command
         line.clear();
         } // End of loop

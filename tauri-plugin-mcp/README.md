@@ -22,7 +22,7 @@ The Tauri MCP Plugin provides a comprehensive set of tools that allow AI models 
 
 ## How to build
 ```bash
-pnpm i 
+pnpm i
 pnpm run build && pnpm run build-plugin
 ```
 
@@ -48,7 +48,7 @@ Then, register the plugin in your Tauri application:
         info!("Development build detected, enabling MCP plugin");
         tauri::Builder::default()
         .plugin(tauri_mcp::init_with_config(
-         tauri_mcp::PluginConfig::new(String::new("APPLICATION_NAME")) 
+         tauri_mcp::PluginConfig::new(String::new("APPLICATION_NAME"))
                 .start_socket_server(true)
                 // For IPC socket (default)
                 .socket_path("/tmp/tauri-mcp.sock")

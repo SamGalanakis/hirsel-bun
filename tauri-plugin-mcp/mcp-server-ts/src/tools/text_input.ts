@@ -32,19 +32,19 @@ export function registerTextInputTool(server: McpServer) {
             ],
           };
         }
-        
+
         console.error(`Simulating text input with params: ${JSON.stringify({
           text: text.length > 50 ? `${text.substring(0, 50)}...` : text,
           delay_ms,
           initial_delay_ms
         })}`);
-        
+
         await socketClient.sendCommand('simulate_text_input', {
           text,
           delay_ms,
           initial_delay_ms
         });
-        
+
         return {
           content: [
             {
@@ -67,4 +67,4 @@ export function registerTextInputTool(server: McpServer) {
       }
     },
   );
-} 
+}

@@ -35,4 +35,4 @@ export async function initializeSocket(): Promise<void> {
     console.error("Failed to initialize socket connection:", error);
     // Don't rethrow - allow operation to continue without socket
   }
-} 
+}

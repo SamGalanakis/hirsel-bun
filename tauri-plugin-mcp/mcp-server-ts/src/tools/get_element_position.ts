@@ -35,39 +35,39 @@ export function registerGetElementPositionTool(server: McpServer) {
           window_label,
           should_click
         };
-        
+
         logCommandParams('get_element_position', payload);
-        
+
         const result = await socketClient.sendCommand('get_element_position', payload);
-        
+
         console.error(`Got result: ${JSON.stringify(result)}`);
-        
+
         // Handle invalid response
         if (!result || typeof result !== 'object') {
           return createErrorResponse('Failed to get a valid response');
         }
-        
+
         // Process response based on format
-        
+
         // Case 1: Direct top-level format
         if (result.element && 'x' in result && 'y' in result) {
-          const clickInfo = result.clicked ? 
+          const clickInfo = result.clicked ?
             (result.clickResult?.success ? "Element was clicked successfully." : "Click attempt failed.") : "";
-          
+
           return createSuccessResponse(formatElementInfo(
-            result.element, 
-            { x: result.x, y: result.y }, 
+            result.element,
+            { x: result.x, y: result.y },
             clickInfo
           ));
         }
-        
+
         // Case 2: Nested data format
         if (result.data) {
           const data = result.data;
           if (data.element && 'x' in data && 'y' in data) {
-            const clickInfo = data.clicked ? 
+            const clickInfo = data.clicked ?
               (data.clickResult?.success ? "Element was clicked successfully." : "Click attempt failed.") : "";
-            
+
             return createSuccessResponse(formatElementInfo(
               data.element,
               { x: data.x, y: data.y },
@@ -75,15 +75,15 @@ export function registerGetElementPositionTool(server: McpServer) {
             ));
           }
         }
-        
+
         // Case 3: Success property format
         if ('success' in result) {
           if (result.success === true && result.data) {
             const data = result.data;
             const element = data.element || {};
-            const clickInfo = data.clicked ? 
+            const clickInfo = data.clicked ?
               (data.clickResult?.success ? "Element was clicked successfully." : "Click attempt failed.") : "";
-            
+
             return createSuccessResponse(formatElementInfo(
               element,
               { x: data.x, y: data.y },
@@ -93,7 +93,7 @@ export function registerGetElementPositionTool(server: McpServer) {
             return createErrorResponse(result.error || 'Failed to find element');
           }
         }
-        
+
         // Fallback error case
         return createErrorResponse(`Element found, but response format unexpected. Response data: ${JSON.stringify(result)}`);
       } catch (error) {
@@ -102,4 +102,4 @@ export function registerGetElementPositionTool(server: McpServer) {
       }
     },
   );
-} 
+}

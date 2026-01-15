@@ -170,12 +170,10 @@ pub fn set_agent(agent: &str) -> Result<(), String> {
     let agent = agent.to_lowercase();
     let presets = agent_presets();
 
-    let preset = presets
-        .get(agent.as_str())
-        .ok_or_else(|| {
-            let available = presets.keys().copied().collect::<Vec<_>>().join(", ");
-            format!("Unknown agent: {}. Available: {}", agent, available)
-        })?;
+    let preset = presets.get(agent.as_str()).ok_or_else(|| {
+        let available = presets.keys().copied().collect::<Vec<_>>().join(", ");
+        format!("Unknown agent: {}. Available: {}", agent, available)
+    })?;
 
     // Check if command exists
     let cmd = &preset.command[0];
@@ -184,14 +182,16 @@ pub fn set_agent(agent: &str) -> Result<(), String> {
         if let Some(hint) = preset.install_hint {
             msg.push_str(&format!("\n\nInstall with:\n  {}", hint));
         } else {
-            msg.push_str(&format!("\n\nMake sure '{}' is installed and in your PATH", cmd));
+            msg.push_str(&format!(
+                "\n\nMake sure '{}' is installed and in your PATH",
+                cmd
+            ));
         }
         return Err(msg);
     }
 
     // Write config
-    write_config_file(&preset.command)
-        .map_err(|e| format!("Failed to write config: {}", e))?;
+    write_config_file(&preset.command).map_err(|e| format!("Failed to write config: {}", e))?;
 
     println!("\n✓ Agent set to {}", agent);
     println!("  {}", preset.description);

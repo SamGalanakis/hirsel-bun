@@ -79,12 +79,7 @@ pub enum LogResult {
 ///
 /// # Returns
 /// A `LogResult` indicating success or failure
-pub fn run_log(
-    run_name: &str,
-    follow: bool,
-    limit: usize,
-    format: OutputFormat,
-) -> LogResult {
+pub fn run_log(run_name: &str, follow: bool, limit: usize, format: OutputFormat) -> LogResult {
     // Get the run directory from config
     let (config, _warnings) = match Config::load() {
         Ok(c) => c,
@@ -249,7 +244,8 @@ fn ctrlc_handler<F: FnOnce() + Send + 'static>(handler: F) -> Result<(), String>
 /// This is a convenience function for getting the db path without
 /// loading the full config.
 pub fn get_db_path(run_name: &str) -> Result<PathBuf, String> {
-    let (config, _warnings) = Config::load().map_err(|e| format!("Failed to load config: {}", e))?;
+    let (config, _warnings) =
+        Config::load().map_err(|e| format!("Failed to load config: {}", e))?;
     Ok(config.runs_dir().join(run_name).join("hirsel.db"))
 }
 

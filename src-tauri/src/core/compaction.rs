@@ -44,10 +44,7 @@ pub fn should_compact(messages: &[Message], threshold: u32, keep_count: u32) -> 
         messages
     };
 
-    let total_chars: usize = messages_to_compact
-        .iter()
-        .map(|m| m.content.len())
-        .sum();
+    let total_chars: usize = messages_to_compact.iter().map(|m| m.content.len()).sum();
 
     total_chars >= threshold as usize
 }
@@ -63,7 +60,11 @@ pub fn format_messages_for_summary(messages: &[Message]) -> String {
 
 /// Generate the full compaction prompt from messages
 pub fn get_compaction_prompt(messages: &[Message]) -> String {
-    format!("{}{}", COMPACTION_PROMPT, format_messages_for_summary(messages))
+    format!(
+        "{}{}",
+        COMPACTION_PROMPT,
+        format_messages_for_summary(messages)
+    )
 }
 
 /// Perform compaction on a thread (synchronous version)
@@ -115,10 +116,7 @@ pub fn compact_thread_with_summary(
     );
 
     // Get the IDs of messages to delete
-    let ids_to_delete: Vec<i64> = messages_to_compact
-        .iter()
-        .map(|m| m.id)
-        .collect();
+    let ids_to_delete: Vec<i64> = messages_to_compact.iter().map(|m| m.id).collect();
 
     // Perform compaction in database
     state.compact_messages(thread, &ids_to_delete, &compaction_msg)?;

@@ -10,22 +10,20 @@ use std::path::PathBuf;
 
 /// Detect the current shell from environment
 fn detect_shell() -> Option<Shell> {
-    std::env::var("SHELL")
-        .ok()
-        .and_then(|s| {
-            let shell_name = PathBuf::from(&s)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())?;
+    std::env::var("SHELL").ok().and_then(|s| {
+        let shell_name = PathBuf::from(&s)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())?;
 
-            match shell_name.as_str() {
-                "bash" => Some(Shell::Bash),
-                "zsh" => Some(Shell::Zsh),
-                "fish" => Some(Shell::Fish),
-                "elvish" => Some(Shell::Elvish),
-                "powershell" | "pwsh" => Some(Shell::PowerShell),
-                _ => None,
-            }
-        })
+        match shell_name.as_str() {
+            "bash" => Some(Shell::Bash),
+            "zsh" => Some(Shell::Zsh),
+            "fish" => Some(Shell::Fish),
+            "elvish" => Some(Shell::Elvish),
+            "powershell" | "pwsh" => Some(Shell::PowerShell),
+            _ => None,
+        }
+    })
 }
 
 /// Get the completion file path for a given shell

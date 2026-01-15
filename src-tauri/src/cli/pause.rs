@@ -11,7 +11,10 @@ pub fn run_pause(run_name: &str, json: bool) -> anyhow::Result<()> {
 
     if !run_dir.exists() {
         if json {
-            println!(r#"{{"success": false, "error": "Run '{}' not found"}}"#, run_name);
+            println!(
+                r#"{{"success": false, "error": "Run '{}' not found"}}"#,
+                run_name
+            );
         } else {
             eprintln!("Run '{}' not found", run_name);
         }

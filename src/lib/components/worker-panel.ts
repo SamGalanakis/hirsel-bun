@@ -170,16 +170,18 @@ export function workerPanel() {
       return 'text-wool-500';
     },
 
-    async attachWorker(name: string) {
+    async openTerminal(name: string) {
       if (!this.selectedRun || !window.tauriInvoke) return;
 
       try {
-        await window.tauriInvoke('attach_worker', {
+        await window.tauriInvoke('open_worker_terminal', {
           runName: this.selectedRun,
           workerName: name,
         });
       } catch (err) {
-        console.error('Failed to attach to worker:', err);
+        const error = err as Error;
+        console.error('Failed to open terminal:', error);
+        window.toast?.error('Failed to open terminal');
       }
     },
 
@@ -194,7 +196,13 @@ export function workerPanel() {
     },
 
     async attachAndClose(name: string) {
-      await this.attachWorker(name);
+      // Dispatch event to show worker output viewer
+      window.dispatchEvent(new CustomEvent('show-worker-output', {
+        detail: {
+          runName: this.selectedRun,
+          workerName: name,
+        },
+      }));
       this.closeWorkerDetail();
     },
   };

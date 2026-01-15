@@ -10,19 +10,15 @@
 //! - Full hirsel MCP access for the agent
 
 use agent_client_protocol::{
-    Agent, Client, ClientSideConnection,
-    CreateTerminalRequest, CreateTerminalResponse,
-    KillTerminalCommandRequest, KillTerminalCommandResponse,
-    ReadTextFileRequest, ReadTextFileResponse,
-    ReleaseTerminalRequest, ReleaseTerminalResponse,
-    RequestPermissionRequest, RequestPermissionResponse, RequestPermissionOutcome,
-    SessionNotification, SessionUpdate,
-    TerminalOutputRequest, TerminalOutputResponse, TerminalExitStatus,
-    WaitForTerminalExitRequest, WaitForTerminalExitResponse,
-    WriteTextFileRequest, WriteTextFileResponse,
-    InitializeRequest, NewSessionRequest, PromptRequest,
-    McpServer, McpServerStdio, ContentBlock, TextContent, Implementation, EnvVariable,
-    ProtocolVersion, PermissionOptionKind, SelectedPermissionOutcome, TerminalId,
+    Agent, Client, ClientSideConnection, ContentBlock, CreateTerminalRequest,
+    CreateTerminalResponse, EnvVariable, Implementation, InitializeRequest,
+    KillTerminalCommandRequest, KillTerminalCommandResponse, McpServer, McpServerStdio,
+    NewSessionRequest, PermissionOptionKind, PromptRequest, ProtocolVersion, ReadTextFileRequest,
+    ReadTextFileResponse, ReleaseTerminalRequest, ReleaseTerminalResponse,
+    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+    SelectedPermissionOutcome, SessionNotification, SessionUpdate, TerminalExitStatus, TerminalId,
+    TerminalOutputRequest, TerminalOutputResponse, TextContent, WaitForTerminalExitRequest,
+    WaitForTerminalExitResponse, WriteTextFileRequest, WriteTextFileResponse,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -32,7 +28,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
-use tracing::{debug, info, error};
+use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use super::acp::collect_agent_env;
@@ -146,16 +142,10 @@ pub struct PermissionResponse {
 pub enum ChatEvent {
     /// Text chunk from assistant
     #[serde(rename_all = "camelCase")]
-    TextDelta {
-        session_id: String,
-        text: String,
-    },
+    TextDelta { session_id: String, text: String },
     /// Thinking/reasoning chunk
     #[serde(rename_all = "camelCase")]
-    ThinkingDelta {
-        session_id: String,
-        text: String,
-    },
+    ThinkingDelta { session_id: String, text: String },
     /// Tool call started
     #[serde(rename_all = "camelCase")]
     ToolCallStart {
@@ -180,20 +170,13 @@ pub enum ChatEvent {
     },
     /// Message completed
     #[serde(rename_all = "camelCase")]
-    MessageComplete {
-        session_id: String,
-    },
+    MessageComplete { session_id: String },
     /// Error occurred
     #[serde(rename_all = "camelCase")]
-    Error {
-        session_id: String,
-        message: String,
-    },
+    Error { session_id: String, message: String },
     /// Session ended
     #[serde(rename_all = "camelCase")]
-    SessionEnded {
-        session_id: String,
-    },
+    SessionEnded { session_id: String },
 }
 
 /// Terminal handle for tracking spawned terminals
@@ -257,7 +240,12 @@ impl ChatClient {
         let request_id = Uuid::new_v4().to_string();
 
         // Get title from tool_call
-        let title = args.tool_call.fields.title.clone().unwrap_or_else(|| "Permission Request".to_string());
+        let title = args
+            .tool_call
+            .fields
+            .title
+            .clone()
+            .unwrap_or_else(|| "Permission Request".to_string());
 
         // Create the pending permission
         let pending = PendingPermission {
@@ -265,11 +253,15 @@ impl ChatClient {
             session_id: self.session_id.clone(),
             title,
             description: None,
-            options: args.options.iter().map(|o| PermissionOption {
-                option_id: o.option_id.to_string(),
-                label: o.name.clone(),
-                kind: format!("{:?}", o.kind),
-            }).collect(),
+            options: args
+                .options
+                .iter()
+                .map(|o| PermissionOption {
+                    option_id: o.option_id.to_string(),
+                    label: o.name.clone(),
+                    kind: format!("{:?}", o.kind),
+                })
+                .collect(),
         };
 
         // Create response channel
@@ -290,7 +282,9 @@ impl ChatClient {
         // Wait for response with timeout
         match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
             Ok(Ok(response)) => Ok(response),
-            Ok(Err(_)) => Err(ChatSessionError::Channel("Permission channel closed".into())),
+            Ok(Err(_)) => Err(ChatSessionError::Channel(
+                "Permission channel closed".into(),
+            )),
             Err(_) => {
                 // Clean up on timeout
                 let mut permissions = self.pending_permissions.lock().await;
@@ -321,39 +315,56 @@ impl Client for ChatClient {
         // Auto-approve hirsel-related permissions
         if self.is_hirsel_related(&args) {
             let title = args.tool_call.fields.title.as_deref().unwrap_or("unknown");
-            debug!("[chat:{}] Auto-approving hirsel permission: {}", self.session_id, title);
+            debug!(
+                "[chat:{}] Auto-approving hirsel permission: {}",
+                self.session_id, title
+            );
 
-            let option_id = args.options.iter()
+            let option_id = args
+                .options
+                .iter()
                 .find(|o| o.kind == PermissionOptionKind::AllowAlways)
-                .or_else(|| args.options.iter().find(|o| o.kind == PermissionOptionKind::AllowOnce))
+                .or_else(|| {
+                    args.options
+                        .iter()
+                        .find(|o| o.kind == PermissionOptionKind::AllowOnce)
+                })
                 .map(|o| o.option_id.clone())
                 .unwrap_or_else(|| "allow".into());
 
             return Ok(RequestPermissionResponse::new(
-                RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option_id))
+                RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option_id)),
             ));
         }
 
         // For other permissions, prompt the user
         let title = args.tool_call.fields.title.as_deref().unwrap_or("unknown");
-        debug!("[chat:{}] Requesting user permission: {}", self.session_id, title);
+        debug!(
+            "[chat:{}] Requesting user permission: {}",
+            self.session_id, title
+        );
 
         match self.prompt_user_permission(&args).await {
-            Ok(response) => {
-                Ok(RequestPermissionResponse::new(
-                    RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(response.option_id))
-                ))
-            }
+            Ok(response) => Ok(RequestPermissionResponse::new(
+                RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
+                    response.option_id,
+                )),
+            )),
             Err(ChatSessionError::PermissionDenied) => {
                 // Find a non-allow option, or use first option as fallback
-                let option_id = args.options.iter()
-                    .find(|o| o.kind != PermissionOptionKind::AllowAlways && o.kind != PermissionOptionKind::AllowOnce)
+                let option_id = args
+                    .options
+                    .iter()
+                    .find(|o| {
+                        o.kind != PermissionOptionKind::AllowAlways
+                            && o.kind != PermissionOptionKind::AllowOnce
+                    })
                     .or_else(|| args.options.first())
                     .map(|o| o.option_id.clone())
                     .unwrap_or_else(|| "deny".into());
 
                 Ok(RequestPermissionResponse::new(
-                    RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option_id))
+                    RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option_id)),
                 ))
             }
             Err(e) => {
@@ -367,7 +378,10 @@ impl Client for ChatClient {
         &self,
         args: SessionNotification,
     ) -> std::result::Result<(), agent_client_protocol::Error> {
-        eprintln!("[CHAT] session_notification called for {}: {:?}", self.session_id, args.update);
+        eprintln!(
+            "[CHAT] session_notification called for {}: {:?}",
+            self.session_id, args.update
+        );
         match &args.update {
             SessionUpdate::AgentMessageChunk(chunk) => {
                 if let ContentBlock::Text(text) = &chunk.content {
@@ -408,15 +422,22 @@ impl Client for ChatClient {
                 });
             }
             SessionUpdate::ToolCallUpdate(update) => {
-                let status = update.fields.status.map(|s| match s {
-                    agent_client_protocol::ToolCallStatus::Pending => "pending",
-                    agent_client_protocol::ToolCallStatus::InProgress => "in_progress",
-                    agent_client_protocol::ToolCallStatus::Completed => "completed",
-                    agent_client_protocol::ToolCallStatus::Failed => "failed",
-                    _ => "unknown",
-                }).unwrap_or("unknown");
+                let status = update
+                    .fields
+                    .status
+                    .map(|s| match s {
+                        agent_client_protocol::ToolCallStatus::Pending => "pending",
+                        agent_client_protocol::ToolCallStatus::InProgress => "in_progress",
+                        agent_client_protocol::ToolCallStatus::Completed => "completed",
+                        agent_client_protocol::ToolCallStatus::Failed => "failed",
+                        _ => "unknown",
+                    })
+                    .unwrap_or("unknown");
 
-                let output = update.fields.raw_output.as_ref()
+                let output = update
+                    .fields
+                    .raw_output
+                    .as_ref()
                     .and_then(|v| serde_json::to_string(v).ok());
 
                 let _ = self.event_tx.send(ChatEvent::ToolCallUpdate {
@@ -441,7 +462,10 @@ impl Client for ChatClient {
                 if args.line.is_some() || args.limit.is_some() {
                     let lines: Vec<&str> = content.lines().collect();
                     let start = args.line.map(|l| l as usize).unwrap_or(0);
-                    let end = args.limit.map(|l| start + l as usize).unwrap_or(lines.len());
+                    let end = args
+                        .limit
+                        .map(|l| start + l as usize)
+                        .unwrap_or(lines.len());
                     content = lines[start.min(lines.len())..end.min(lines.len())].join("\n");
                 }
                 Ok(ReadTextFileResponse::new(content))
@@ -487,7 +511,13 @@ impl Client for ChatClient {
 
         match cmd.spawn() {
             Ok(child) => {
-                state.terminals.insert(terminal_id.clone(), TerminalHandle { child, output: String::new() });
+                state.terminals.insert(
+                    terminal_id.clone(),
+                    TerminalHandle {
+                        child,
+                        output: String::new(),
+                    },
+                );
                 Ok(CreateTerminalResponse::new(terminal_id))
             }
             Err(_) => Err(agent_client_protocol::Error::internal_error()),
@@ -500,9 +530,12 @@ impl Client for ChatClient {
     ) -> std::result::Result<TerminalOutputResponse, agent_client_protocol::Error> {
         let mut state = self.state.lock().await;
         if let Some(handle) = state.terminals.get_mut(&args.terminal_id) {
-            let exit_status = handle.child.try_wait().ok().flatten().map(|s| {
-                TerminalExitStatus::new().exit_code(s.code().map(|c| c as u32))
-            });
+            let exit_status = handle
+                .child
+                .try_wait()
+                .ok()
+                .flatten()
+                .map(|s| TerminalExitStatus::new().exit_code(s.code().map(|c| c as u32)));
             let mut response = TerminalOutputResponse::new(handle.output.clone(), false);
             if let Some(status) = exit_status {
                 response = response.exit_status(status);
@@ -532,8 +565,8 @@ impl Client for ChatClient {
         if let Some(handle) = state.terminals.get_mut(&args.terminal_id) {
             match handle.child.wait().await {
                 Ok(status) => {
-                    let exit_status = TerminalExitStatus::new()
-                        .exit_code(status.code().map(|c| c as u32));
+                    let exit_status =
+                        TerminalExitStatus::new().exit_code(status.code().map(|c| c as u32));
                     Ok(WaitForTerminalExitResponse::new(exit_status))
                 }
                 Err(_) => Err(agent_client_protocol::Error::internal_error()),
@@ -630,12 +663,14 @@ impl ChatSessionManager {
 
             rt.block_on(async {
                 let local = tokio::task::LocalSet::new();
-                local.run_until(run_chat_session_loop(
-                    session_id_clone,
-                    config,
-                    event_tx,
-                    cmd_rx,
-                )).await;
+                local
+                    .run_until(run_chat_session_loop(
+                        session_id_clone,
+                        config,
+                        event_tx,
+                        cmd_rx,
+                    ))
+                    .await;
             });
         });
 
@@ -650,7 +685,8 @@ impl ChatSessionManager {
         context: Option<UIContext>,
     ) -> Result<()> {
         let txs = self.command_txs.read().await;
-        let tx = txs.get(session_id)
+        let tx = txs
+            .get(session_id)
             .ok_or_else(|| ChatSessionError::SessionNotFound(session_id.to_string()))?;
 
         tx.send(SessionCommand::SendMessage { content, context })
@@ -666,7 +702,8 @@ impl ChatSessionManager {
         response: PermissionResponse,
     ) -> Result<()> {
         let txs = self.command_txs.read().await;
-        let tx = txs.get(session_id)
+        let tx = txs
+            .get(session_id)
             .ok_or_else(|| ChatSessionError::SessionNotFound(session_id.to_string()))?;
 
         tx.send(SessionCommand::RespondPermission(response))
@@ -723,7 +760,9 @@ async fn run_chat_session_loop(
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
     // Determine working directory
-    let working_dir = config.working_dir.as_ref()
+    let working_dir = config
+        .working_dir
+        .as_ref()
         .map(PathBuf::from)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
@@ -791,7 +830,11 @@ async fn run_chat_session_loop(
         }
     };
 
-    info!("[chat:{}] Agent process started, pid={}", session_id, child.id().unwrap_or(0));
+    info!(
+        "[chat:{}] Agent process started, pid={}",
+        session_id,
+        child.id().unwrap_or(0)
+    );
 
     // Store child in state
     {
@@ -804,12 +847,10 @@ async fn run_chat_session_loop(
     let stdout_compat = stdout.compat();
 
     // Create ACP connection
-    let (conn, io_task) = ClientSideConnection::new(
-        client.clone(),
-        stdin_compat,
-        stdout_compat,
-        |fut| { tokio::task::spawn_local(fut); },
-    );
+    let (conn, io_task) =
+        ClientSideConnection::new(client.clone(), stdin_compat, stdout_compat, |fut| {
+            tokio::task::spawn_local(fut);
+        });
 
     // Spawn IO task
     let session_id_clone = session_id.clone();
@@ -825,8 +866,9 @@ async fn run_chat_session_loop(
     });
 
     // Initialize ACP
-    let init_request = InitializeRequest::new(ProtocolVersion::LATEST)
-        .client_info(Implementation::new("hirsel-chat", env!("CARGO_PKG_VERSION")));
+    let init_request = InitializeRequest::new(ProtocolVersion::LATEST).client_info(
+        Implementation::new("hirsel-chat", env!("CARGO_PKG_VERSION")),
+    );
     let init_result = match conn.initialize(init_request).await {
         Ok(r) => r,
         Err(e) => {
@@ -845,10 +887,11 @@ async fn run_chat_session_loop(
     // Add hirsel MCP if run is specified
     if let Some(ref run_name) = config.run_name {
         let mcp_config = super::acp::create_hirsel_mcp_config(run_name, "assistant", None);
-        let mut mcp_stdio = McpServerStdio::new(&mcp_config.name, &mcp_config.command)
-            .args(mcp_config.args);
+        let mut mcp_stdio =
+            McpServerStdio::new(&mcp_config.name, &mcp_config.command).args(mcp_config.args);
         if let Some(vars) = mcp_config.env {
-            let env_vars: Vec<EnvVariable> = vars.into_iter()
+            let env_vars: Vec<EnvVariable> = vars
+                .into_iter()
                 .map(|v| EnvVariable::new(&v.name, &v.value))
                 .collect();
             mcp_stdio = mcp_stdio.env(env_vars);
@@ -857,8 +900,8 @@ async fn run_chat_session_loop(
     }
 
     // Create new session
-    let session_request = NewSessionRequest::new(working_dir.to_string_lossy().to_string())
-        .mcp_servers(mcp_servers);
+    let session_request =
+        NewSessionRequest::new(working_dir.to_string_lossy().to_string()).mcp_servers(mcp_servers);
     let session = match conn.new_session(session_request).await {
         Ok(s) => s,
         Err(e) => {
@@ -870,7 +913,10 @@ async fn run_chat_session_loop(
         }
     };
     let agent_session_id = session.session_id.clone();
-    info!("[chat:{}] Created agent session: {}", session_id, agent_session_id);
+    info!(
+        "[chat:{}] Created agent session: {}",
+        session_id, agent_session_id
+    );
 
     // Store system prompt for later use (prepend to first user message)
     // We don't send it as a prompt() because that triggers a model response
@@ -896,7 +942,11 @@ async fn run_chat_session_loop(
                     first_message = false;
                 }
 
-                info!("[chat:{}] Sending message: {} chars", session_id, full_content.len());
+                info!(
+                    "[chat:{}] Sending message: {} chars",
+                    session_id,
+                    full_content.len()
+                );
 
                 let prompt_request = PromptRequest::new(
                     agent_session_id.clone(),
@@ -904,7 +954,10 @@ async fn run_chat_session_loop(
                 );
                 match conn.prompt(prompt_request).await {
                     Ok(response) => {
-                        info!("[chat:{}] Message response: {:?}", session_id, response.stop_reason);
+                        info!(
+                            "[chat:{}] Message response: {:?}",
+                            session_id, response.stop_reason
+                        );
                     }
                     Err(e) => {
                         error!("[chat:{}] Failed to send message: {:?}", session_id, e);
@@ -923,7 +976,10 @@ async fn run_chat_session_loop(
             SessionCommand::RespondPermission(response) => {
                 // Forward to client
                 if let Err(e) = client.respond_to_permission(response).await {
-                    error!("[chat:{}] Failed to respond to permission: {}", session_id, e);
+                    error!(
+                        "[chat:{}] Failed to respond to permission: {}",
+                        session_id, e
+                    );
                 }
             }
             SessionCommand::Stop => {

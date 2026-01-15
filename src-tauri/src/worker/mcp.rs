@@ -295,11 +295,9 @@ impl McpServer {
             "initialize" => self.handle_initialize(id),
             "tools/list" => self.handle_tools_list(id),
             "tools/call" => self.handle_tools_call(id, request.params),
-            _ => JsonRpcResponse::error(
-                id,
-                -32601,
-                format!("Method not found: {}", request.method),
-            ),
+            _ => {
+                JsonRpcResponse::error(id, -32601, format!("Method not found: {}", request.method))
+            }
         };
 
         Some(response)
@@ -421,10 +419,7 @@ impl McpServer {
             }
             "msg_list" => self.runner.msg_list(),
             "msg_inbox" => self.runner.msg_inbox(),
-            "work_done" => {
-                // TODO: Handle force flag when implemented in runner
-                self.runner.work_done()
-            }
+            "work_done" => self.runner.work_done(),
             "time_status" => self.time_status(),
             _ => Err(WorkerError::Config(format!("Unknown tool: {}", name))),
         }
@@ -488,11 +483,8 @@ impl McpServer {
             let request: JsonRpcRequest = match serde_json::from_str(&line) {
                 Ok(r) => r,
                 Err(e) => {
-                    let error_response = JsonRpcResponse::error(
-                        None,
-                        -32700,
-                        format!("Parse error: {}", e),
-                    );
+                    let error_response =
+                        JsonRpcResponse::error(None, -32700, format!("Parse error: {}", e));
                     if let Ok(json) = serde_json::to_string(&error_response) {
                         let _ = writeln!(stdout, "{}", json);
                         let _ = stdout.flush();

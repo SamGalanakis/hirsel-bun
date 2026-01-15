@@ -18,13 +18,18 @@ import {
   permissionModal,
   notifications,
   tasksTab,
-  evalTab,
   sheepClickerGame,
   settingsModal,
+  aiMessageStream,
+  workerOutputViewer,
+  toastContainer,
 } from './lib/components';
 
 // Initialize toast system (uses basecoat toaster)
 import './lib/toast';
+
+// Initialize confirm dialog
+import { initConfirmDialog } from './lib/confirm-dialog';
 
 // Import Lucide icons
 import {
@@ -61,15 +66,20 @@ import {
 (window as any).permissionModal = permissionModal;
 (window as any).notifications = notifications;
 (window as any).tasksTab = tasksTab;
-(window as any).evalTab = evalTab;
 (window as any).sheepClickerGame = sheepClickerGame;
 (window as any).settingsModal = settingsModal;
+(window as any).aiMessageStream = aiMessageStream;
+(window as any).workerOutputViewer = workerOutputViewer;
+(window as any).toastContainer = toastContainer;
 
 // Initialize Lucide icons
 initLucideIcons();
 
 // Start Alpine
 Alpine.start();
+
+// Initialize confirm dialog after DOM is ready
+initConfirmDialog();
 
 console.log('[Hirsel] App initialized');
 

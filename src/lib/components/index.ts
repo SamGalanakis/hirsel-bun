@@ -25,14 +25,21 @@ export { chatPanel } from './chat-panel';
 export { directChat } from './direct-chat';
 export { permissionModal } from './permission-modal';
 
+// AI message stream (shared component)
+export { aiMessageStream } from './ai-message-stream';
+export { workerOutputViewer } from './worker-output-viewer';
+
 // Notifications
 export { notifications } from './notifications';
 
 // Tabs
-export { tasksTab, evalTab } from './tabs';
+export { tasksTab } from './tabs';
 
 // Extras
 export { sheepClickerGame } from './sheep-clicker';
 
 // Modals
 export { settingsModal } from './settings-modal';
+
+// Toast
+export { toastContainer } from './toast-container';

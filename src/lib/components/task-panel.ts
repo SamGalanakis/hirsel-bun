@@ -260,7 +260,7 @@ export function taskPanel() {
       } catch (err) {
         const error = err as Error;
         console.error('Failed to complete task:', error);
-        window.toast?.error('Failed to complete task', error.message || String(error));
+        window.toast?.error('Failed to complete task');
       }
     },
 
@@ -277,7 +277,7 @@ export function taskPanel() {
       } catch (err) {
         const error = err as Error;
         console.error('Failed to reopen task:', error);
-        window.toast?.error('Failed to reopen task', error.message || String(error));
+        window.toast?.error('Failed to reopen task');
       }
     },
 
@@ -315,7 +315,7 @@ export function taskPanel() {
       } catch (err) {
         const error = err as Error;
         console.error('Failed to unclaim task:', error);
-        window.toast?.error('Failed to unclaim task', error.message || String(error));
+        window.toast?.error('Failed to unclaim task');
       }
       this.hideContextMenu();
     },
@@ -328,22 +328,23 @@ export function taskPanel() {
       const runName = this.getSelectedRun();
       if (!runName) return;
 
-      if (!confirm(`Delete task "${this.contextMenuTask.id}"?`)) {
-        this.hideContextMenu();
-        return;
-      }
+      const taskToDelete = this.contextMenuTask.id;
+      this.hideContextMenu();
+
+      const confirmed = await (window as any).confirmDialog?.delete(taskToDelete, 'task')
+        ?? confirm(`Delete task "${taskToDelete}"?`);
+      if (!confirmed) return;
 
       try {
         if (window.tauriInvoke) {
-          await window.tauriInvoke('delete_task', { runName, taskId: this.contextMenuTask.id });
+          await window.tauriInvoke('delete_task', { runName, taskId: taskToDelete });
           await this.loadTasks(runName);
         }
       } catch (err) {
         const error = err as Error;
         console.error('Failed to delete task:', error);
-        window.toast?.error('Failed to delete task', error.message || String(error));
+        window.toast?.error('Failed to delete task');
       }
-      this.hideContextMenu();
     },
   };
 }

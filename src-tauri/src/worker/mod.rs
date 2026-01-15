@@ -23,8 +23,8 @@ pub mod msg;
 pub mod runner;
 
 pub use acp_client::{run_acp_worker, WorkerRunConfig};
-pub use eval_mcp::{EvalMcpServer, run_eval_mcp_server};
-pub use mcp::{McpServer, run_mcp_server};
+pub use eval_mcp::{run_eval_mcp_server, EvalMcpServer};
+pub use mcp::{run_mcp_server, McpServer};
 pub use msg::{execute_inbox, execute_list, execute_read, execute_send};
 pub use msg::{inbox, list, read, send, MsgError, MsgResult};
 pub use runner::{WorkerConfig, WorkerError, WorkerRunner};

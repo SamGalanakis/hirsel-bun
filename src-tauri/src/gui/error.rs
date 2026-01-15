@@ -161,8 +161,7 @@ impl std::error::Error for GuiError {}
 
 impl From<crate::core::state::StateError> for GuiError {
     fn from(err: crate::core::state::StateError) -> Self {
-        Self::new(ErrorCode::StateError, "Database operation failed")
-            .with_details(err.to_string())
+        Self::new(ErrorCode::StateError, "Database operation failed").with_details(err.to_string())
     }
 }
 

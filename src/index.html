@@ -121,72 +121,72 @@
     <template x-for="toast in toasts" :key="toast.id">
       <div
         x-show="toast.visible"
-        x-transition:enter="transition ease-out duration-200"
-        x-transition:enter-start="translate-x-full opacity-0"
+        x-transition:enter="transition ease-out duration-150"
+        x-transition:enter-start="translate-x-4 opacity-0"
         x-transition:enter-end="translate-x-0 opacity-100"
-        x-transition:leave="transition ease-in duration-150"
+        x-transition:leave="transition ease-in duration-100"
         x-transition:leave-start="translate-x-0 opacity-100"
-        x-transition:leave-end="translate-x-full opacity-0"
-        class="pointer-events-auto max-w-sm p-4 rounded-lg shadow-lg border flex items-start gap-3"
-        :class="{
-          'bg-terra/10 border-terra text-terra': toast.type === 'error',
-          'bg-sage/10 border-sage text-sage': toast.type === 'success',
-          'bg-amber-500/10 border-amber-500 text-amber-500': toast.type === 'warning',
-          'bg-pasture-700 border-pasture-600 text-wool-200': toast.type === 'info'
-        }"
+        x-transition:leave-end="translate-x-4 opacity-0"
+        class="pointer-events-auto px-3 py-2 rounded-md shadow-lg bg-pasture-800/95 backdrop-blur-sm flex items-center gap-2"
       >
         <!-- Icon -->
-        <span class="flex-shrink-0 mt-0.5">
-          <template x-if="toast.type === 'error'">
-            <i data-lucide="alert-circle" class="w-5 h-5"></i>
-          </template>
-          <template x-if="toast.type === 'success'">
-            <i data-lucide="check-circle" class="w-5 h-5"></i>
-          </template>
-          <template x-if="toast.type === 'warning'">
-            <i data-lucide="alert-triangle" class="w-5 h-5"></i>
-          </template>
-          <template x-if="toast.type === 'info'">
-            <i data-lucide="info" class="w-5 h-5"></i>
-          </template>
+        <span :class="{
+          'text-terra': toast.type === 'error',
+          'text-sage': toast.type === 'success',
+          'text-amber-400': toast.type === 'warning',
+          'text-wool-400': toast.type === 'info'
+        }">
+          <i x-show="toast.type === 'error'" data-lucide="x-circle" class="w-4 h-4"></i>
+          <i x-show="toast.type === 'success'" data-lucide="check-circle" class="w-4 h-4"></i>
+          <i x-show="toast.type === 'warning'" data-lucide="alert-triangle" class="w-4 h-4"></i>
+          <i x-show="toast.type === 'info'" data-lucide="info" class="w-4 h-4"></i>
         </span>
         <!-- Content -->
-        <div class="flex-1 min-w-0">
-          <p x-show="toast.title" class="font-medium text-sm" x-text="toast.title"></p>
-          <p class="text-sm opacity-90" :class="{ 'mt-1': toast.title }" x-text="toast.message"></p>
-        </div>
+        <span class="text-sm text-wool-200" x-text="toast.title"></span>
         <!-- Dismiss button -->
         <button
-          @click="dismiss(toast.id)"
-          class="flex-shrink-0 opacity-60 hover:opacity-100 transition-opacity"
+          @click="dismissToast(toast.id)"
+          class="ml-2 text-wool-500 hover:text-wool-300 transition-colors"
         >
-          <i data-lucide="x" class="w-4 h-4"></i>
+          <i data-lucide="x" class="w-3.5 h-3.5"></i>
         </button>
       </div>
     </template>
   </div>
 
-    <!-- Title Bar (Custom Window Chrome) -->
-  <header class="title-bar flex items-center justify-between px-4 py-2 border-b border-pasture-600 select-none" data-tauri-drag-region>
-    <div class="flex items-center gap-2" data-tauri-drag-region>
-      <span class="text-xl">🐑</span>
+    <!-- Title Bar -->
+  <header class="title-bar flex items-center justify-between px-4 py-2 border-b border-pasture-600 select-none">
+    <div class="flex items-center gap-2">
+      <div class="relative" x-data="{ baas: [], nextId: 0 }">
+        <button
+          @click="$el.classList.add('sheep-squish'); setTimeout(() => $el.classList.remove('sheep-squish'), 400); let id = nextId++; baas.push({ id, x: Math.random() * 10 - 5 }); setTimeout(() => baas = baas.filter(b => b.id !== id), 800)"
+          class="text-xl cursor-pointer hover:scale-110 transition-transform select-none sheep-btn"
+        >🐑</button>
+        <template x-for="baa in baas" :key="baa.id">
+          <span
+            x-init="setTimeout(() => $el.classList.add('baa-float'), 10)"
+            :style="`--baa-x: ${baa.x}px`"
+            class="absolute -top-2 left-1 text-[10px] text-amber-400 font-medium pointer-events-none baa-text"
+          >Baa!</span>
+        </template>
+      </div>
       <h1 class="text-lg font-semibold text-amber-500">Hirsel</h1>
     </div>
     <div class="flex items-center gap-1">
       <!-- Theme Toggle -->
-      <button @click="toggleTheme()" class="p-2 rounded hover:bg-pasture-700 text-wool-300" :title="isDarkTheme ? 'Switch to light mode' : 'Switch to dark mode'">
+      <button @click="toggleTheme()" class="p-2 rounded hover:bg-pasture-700 text-wool-300">
         <!-- Sun icon (shown in dark mode) -->
         <i x-show="isDarkTheme" data-lucide="sun" class="w-4 h-4"></i>
         <!-- Moon icon (shown in light mode) -->
         <i x-show="!isDarkTheme" data-lucide="moon" class="w-4 h-4"></i>
       </button>
       <!-- Gyp Button -->
-      <button @click="toggleAiChat()" class="p-2 rounded hover:bg-pasture-700 text-wool-300 relative" :class="{ 'bg-pasture-700 text-amber-500': aiChatOpen }" title="Gyp (a)">
+      <button @click="toggleAiChat()" class="p-2 rounded hover:bg-pasture-700 text-wool-300 relative" :class="{ 'bg-pasture-700 text-amber-500': aiChatOpen }">
         <i data-lucide="sparkles" class="w-4 h-4"></i>
       </button>
       <!-- Notifications Bell -->
       <div class="relative" x-data="notifications()">
-        <button @click="toggleNotifications()" class="p-2 rounded hover:bg-pasture-700 text-wool-300 relative" :class="{ 'bg-pasture-700': open }" title="Notifications">
+        <button @click="toggleNotifications()" class="p-2 rounded hover:bg-pasture-700 text-wool-300 relative" :class="{ 'bg-pasture-700': open }">
           <i data-lucide="bell" class="w-4 h-4"></i>
           <span x-show="totalUnread > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-terra rounded-full text-[10px] text-white font-bold flex items-center justify-center px-1" x-text="totalUnread > 99 ? '99+' : totalUnread"></span>
         </button>
@@ -230,28 +230,12 @@
         </div>
       </div>
       <!-- Help Button -->
-      <button @click="showHelp = true" class="p-2 rounded hover:bg-pasture-700 text-wool-300" title="Help (?)">
+      <button @click="showHelp = true" class="p-2 rounded hover:bg-pasture-700 text-wool-300">
         <i data-lucide="help-circle" class="w-4 h-4"></i>
       </button>
       <!-- Settings Button -->
-      <button @click="showSettings = true" class="p-2 rounded hover:bg-pasture-700 text-wool-300" title="Settings">
+      <button @click="showSettings = true" class="p-2 rounded hover:bg-pasture-700 text-wool-300">
         <i data-lucide="settings" class="w-4 h-4"></i>
-      </button>
-
-      <!-- Window Controls Divider -->
-      <div class="w-px h-4 bg-pasture-600 mx-2"></div>
-
-      <!-- Window Controls (frameless window) -->
-      <!-- Minimize/Maximize hidden on Wayland where they don't work -->
-      <button x-show="!isWayland" @click="minimizeWindow()" class="window-control p-2 rounded hover:bg-pasture-700 text-wool-400 hover:text-wool-200" title="Minimize">
-        <i data-lucide="minus" class="w-3 h-3"></i>
-      </button>
-      <button x-show="!isWayland" @click="toggleMaximize()" class="window-control p-2 rounded hover:bg-pasture-700 text-wool-400 hover:text-wool-200" title="Maximize">
-        <i x-show="!isMaximized" data-lucide="square" class="w-3 h-3"></i>
-        <i x-show="isMaximized" data-lucide="copy" class="w-3 h-3"></i>
-      </button>
-      <button @click="closeWindow()" class="window-control p-2 rounded hover:bg-terra text-wool-400 hover:text-wool-100" title="Close">
-        <i data-lucide="x" class="w-3 h-3"></i>
       </button>
     </div>
   </header>
@@ -269,25 +253,27 @@
         <button
           @click="toggleSidebar()"
           class="p-2 rounded hover:bg-pasture-700 text-wool-400 hover:text-wool-200"
-          title="Expand runs panel"
+          data-tooltip="Expand runs panel"
+          data-side="right"
         >
           <i data-lucide="chevrons-right" class="w-4 h-4"></i>
         </button>
         <div class="w-6 border-t border-pasture-600 my-2"></div>
         <!-- Mini run indicators when collapsed -->
-        <div class="flex-1 flex flex-col gap-1 overflow-y-auto px-1" x-data="runList()">
+        <div class="flex-1 flex flex-col gap-2 overflow-y-auto px-2" x-data="runList()">
           <template x-for="run in runs" :key="run.name">
             <button
-              @click="selectRun(run.name); $dispatch('toggle-sidebar')"
-              :title="run.name + ' (' + run.status + ')'"
-              class="w-6 h-6 rounded flex items-center justify-center transition-colors"
+              @click="selectRunWithDraft(run.name, run.status); $dispatch('toggle-sidebar')"
+              :data-tooltip="run.name + ' (' + run.status + ')'"
+              data-side="right"
+              class="w-6 h-6 rounded-md flex items-center justify-center transition-colors shrink-0 border-2 border-transparent"
               :class="{
-                'bg-pasture-700 ring-1 ring-amber-500': selectedRun === run.name,
+                'bg-pasture-600 border-amber-500': selectedRun === run.name,
                 'hover:bg-pasture-700': selectedRun !== run.name
               }"
             >
               <span
-                class="w-2 h-2 rounded-full"
+                class="w-2.5 h-2.5 rounded-full"
                 :class="getStatusDotClass(run.status)"
               ></span>
             </button>
@@ -304,14 +290,16 @@
               x-data
               @click="$dispatch('create-draft')"
               class="p-1 rounded hover:bg-pasture-700 text-wool-500 hover:text-wool-300"
-              title="New draft run"
+              data-tooltip="New draft run"
+              data-side="bottom"
             >
               <i data-lucide="plus" class="w-3.5 h-3.5"></i>
             </button>
             <button
               @click="toggleSidebar()"
               class="p-1 rounded hover:bg-pasture-700 text-wool-500 hover:text-wool-300"
-              title="Collapse runs panel"
+              data-tooltip="Collapse runs panel"
+              data-side="bottom"
             >
               <i data-lucide="chevrons-left" class="w-3.5 h-3.5"></i>
             </button>
@@ -377,18 +365,22 @@
               ></span>
             </div>
 
-            <!-- Stats row: tasks, workers, time -->
-            <div class="flex items-center justify-between mt-1.5 text-xs text-wool-500">
+            <!-- Stats row: tasks, workers, time (hide for drafts) -->
+            <div x-show="run.status !== 'draft'" class="flex items-center justify-between mt-1.5 text-xs text-wool-500">
               <span class="flex items-center gap-2">
                 <span x-text="run.tasksDone + '/' + run.tasksTotal"></span>
                 <span class="text-wool-600">•</span>
                 <span :class="run.workersActive > 0 ? 'text-sage' : ''" x-text="run.workersActive + '/' + run.workersTotal + ' workers'"></span>
               </span>
-              <span x-text="formatElapsed(run.elapsedMinutes)"></span>
+              <span x-text="getTimeDisplay(run)"></span>
+            </div>
+            <!-- Draft: just show creation time -->
+            <div x-show="run.status === 'draft'" class="mt-1.5 text-xs text-wool-500">
+              <span x-text="getTimeDisplay(run)"></span>
             </div>
 
-            <!-- Progress bar with percentage -->
-            <div class="mt-2 flex items-center gap-2">
+            <!-- Progress bar with percentage (hide for drafts) -->
+            <div x-show="run.status !== 'draft'" class="mt-2 flex items-center gap-2">
               <div class="flex-1 h-2 bg-pasture-600/50 rounded-full overflow-hidden relative">
                 <div
                   class="h-full rounded-full transition-all duration-500 ease-out"
@@ -411,9 +403,14 @@
               ></span>
             </div>
 
-            <!-- Time remaining (if time limit set) -->
-            <div x-show="run.timeLimitMinutes" class="mt-1 text-[10px] text-wool-600">
-              <span x-text="formatTimeRemaining(run.timeLimitMinutes, run.elapsedMinutes)"></span>
+            <!-- Time limit/remaining (only show if time limit is set) -->
+            <div x-show="run.timeLimitMinutes" class="mt-1 text-[10px] text-wool-600 flex items-center gap-1">
+              <template x-if="run.status === 'draft'">
+                <span x-text="formatElapsed(run.timeLimitMinutes) + ' limit'"></span>
+              </template>
+              <template x-if="run.status !== 'draft'">
+                <span x-text="formatTimeRemaining(run.timeLimitMinutes, run.elapsedMinutes)"></span>
+              </template>
             </div>
           </div>
         </template>
@@ -468,7 +465,8 @@
                 @click="handleNameEdit()"
                 class="text-xl font-semibold text-wool-100 cursor-pointer hover:text-amber-400 transition-colors"
                 x-text="name"
-                title="Click to rename"
+                data-tooltip="Click to rename"
+                data-side="bottom"
               ></h2>
             </template>
             <template x-if="isEditing">
@@ -487,7 +485,7 @@
           </div>
           <button
             @click="startRun()"
-            :disabled="starting || !projectPath"
+            :disabled="!canStart()"
             class="px-5 py-2 text-sm font-medium rounded-lg bg-sage hover:bg-sage/90 text-pasture-900 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
           >
             <template x-if="starting">
@@ -512,72 +510,114 @@
       <!-- Draft Editor Content -->
       <div x-show="!loading" class="flex-1 flex flex-col overflow-hidden">
         <!-- Configuration Card (compact, at top) -->
-        <div class="px-6 py-4 border-b border-pasture-700 bg-pasture-800/20">
-          <div class="flex items-start gap-6">
-            <!-- Project Path (most important) -->
-            <div class="flex-1 min-w-0">
-              <label class="text-xs text-wool-400 flex items-center gap-1.5">
-                Project
-                <i data-lucide="help-circle" class="w-3 h-3 text-wool-600 hover:text-wool-400 cursor-help" data-tooltip="Local path or remote git URL (https://, git@)" data-side="bottom" data-align="start"></i>
-                <!-- Remote/Local indicator -->
+        <div class="px-6 pt-8 pb-4 border-b border-pasture-700 bg-pasture-800/20 overflow-visible">
+          <div class="flex flex-wrap items-end gap-4">
+            <!-- Repository -->
+            <div class="flex-1 min-w-[280px] max-w-xl">
+              <label class="text-xs text-wool-400 flex items-center gap-1.5 mb-1.5">
+                Repository
+                <span class="inline-flex" data-tooltip="Local path or GitHub URL (branch can be specified in URL like /tree/branch)" data-side="top"><i data-lucide="help-circle" class="w-3 h-3 text-wool-600 hover:text-wool-400"></i></span>
                 <span
-                  x-show="projectPath && (projectPath.startsWith('https://') || projectPath.startsWith('git@') || projectPath.startsWith('git://') || projectPath.startsWith('ssh://'))"
+                  x-show="projectPath && repoIsRemote"
                   class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-400"
                 >remote</span>
                 <span
-                  x-show="projectPath && !(projectPath.startsWith('https://') || projectPath.startsWith('git@') || projectPath.startsWith('git://') || projectPath.startsWith('ssh://'))"
+                  x-show="projectPath && !repoIsRemote && availableBranches.length > 0"
                   class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-pasture-600 text-wool-400"
                 >local</span>
+                <span
+                  x-show="repoValidating"
+                  class="ml-1 flex items-center gap-1 text-[10px] text-wool-500"
+                >
+                  <div class="spinner w-3 h-3 border-wool-500"></div>
+                  checking...
+                </span>
               </label>
-              <input
-                type="text"
-                x-model="projectPath"
-                @input="debouncedSave()"
-                class="mt-1 w-full px-3 py-1.5 bg-pasture-700 border border-pasture-600 rounded text-wool-100 text-sm focus:border-amber-500 focus:outline-none"
-                placeholder="/path/to/project or https://github.com/user/repo"
-              />
+              <div class="flex gap-2">
+                <input
+                  type="text"
+                  x-model="projectPath"
+                  @input="debouncedSave(); debouncedValidateProjectPath()"
+                  :class="{'border-terra': repoError, 'border-pasture-600': !repoError}"
+                  class="flex-1 min-w-0 px-3 py-1.5 bg-pasture-700 border rounded text-wool-100 text-sm focus:border-amber-500 focus:outline-none"
+                  placeholder="/path/to/project or https://github.com/user/repo"
+                />
+                <select
+                  x-show="availableBranches.length > 0"
+                  x-model="selectedBranch"
+                  @change="onBranchChange()"
+                  :class="{'border-terra': !selectedBranch && availableBranches.length > 0, 'border-pasture-600': selectedBranch || availableBranches.length === 0}"
+                  class="w-36 shrink-0 px-3 py-1.5 bg-pasture-700 border rounded text-wool-100 text-sm focus:border-amber-500 focus:outline-none"
+                >
+                  <option value="">Select branch...</option>
+                  <template x-for="branch in availableBranches" :key="branch">
+                    <option :value="branch" x-text="branch"></option>
+                  </template>
+                </select>
+              </div>
+              <p
+                x-show="repoError"
+                x-text="repoError"
+                class="mt-1 text-xs text-terra"
+              ></p>
+              <p
+                x-show="!repoError && (needsDirCreate || needsGitInit)"
+                class="mt-1 text-xs text-amber-400 flex items-center gap-1"
+              >
+                <i data-lucide="info" class="w-3 h-3"></i>
+                <span x-text="needsDirCreate ? 'Directory will be created and git initialized' : 'Git will be initialized with a main branch'"></span>
+              </p>
             </div>
             <!-- Workers -->
-            <div class="w-28">
-              <label class="text-xs text-wool-400 flex items-center gap-1.5">
+            <div class="shrink-0">
+              <label class="text-xs text-wool-400 flex items-center gap-1.5 mb-1.5">
                 Workers
-                <i data-lucide="help-circle" class="w-3 h-3 text-wool-600 hover:text-wool-400 cursor-help" data-tooltip="Parallel AI workers (e.g., 1 or 1-3)" data-side="bottom"></i>
+                <span class="inline-flex" data-tooltip="Parallel AI workers. Examples: 1, 1-3, 2+" data-side="top"><i data-lucide="help-circle" class="w-3 h-3 text-wool-600 hover:text-wool-400"></i></span>
               </label>
               <input
                 type="text"
                 x-model="workerScale"
                 @input="debouncedSave()"
-                class="mt-1 w-full px-3 py-1.5 bg-pasture-700 border border-pasture-600 rounded text-wool-100 text-sm text-center focus:border-amber-500 focus:outline-none"
+                @blur="validateWorkerScale()"
+                class="w-20 px-3 py-1.5 bg-pasture-700 border rounded text-wool-100 text-sm text-center focus:outline-none"
+                :class="workerScaleError ? 'border-terra focus:border-terra' : 'border-pasture-600 focus:border-amber-500'"
                 placeholder="1"
               />
+              <p x-show="workerScaleError" x-text="workerScaleError" class="text-[10px] text-terra mt-1 max-w-[120px]"></p>
             </div>
             <!-- Time Limit -->
-            <div class="w-28">
-              <label class="text-xs text-wool-400 flex items-center gap-1.5">
+            <div class="shrink-0">
+              <label class="text-xs text-wool-400 flex items-center gap-1.5 mb-1.5">
                 Time limit
-                <i data-lucide="help-circle" class="w-3 h-3 text-wool-600 hover:text-wool-400 cursor-help" data-tooltip="Max duration (e.g., 30m, 1h)" data-side="bottom"></i>
+                <span class="inline-flex" data-tooltip="Max duration. Examples: 30m, 1h, 1h30m. Leave empty for no limit." data-side="top"><i data-lucide="help-circle" class="w-3 h-3 text-wool-600 hover:text-wool-400"></i></span>
               </label>
-              <input
-                type="text"
-                x-model="timeLimitInput"
-                @input="debouncedSave()"
-                class="mt-1 w-full px-3 py-1.5 bg-pasture-700 border border-pasture-600 rounded text-wool-100 text-sm text-center focus:border-amber-500 focus:outline-none"
-                placeholder="1h"
-              />
+              <div class="relative">
+                <input
+                  type="text"
+                  x-model="timeLimitInput"
+                  @input="debouncedSave()"
+                  @blur="validateTimeLimit()"
+                  class="w-20 px-3 py-1.5 bg-pasture-700 border rounded text-wool-100 text-sm text-center focus:outline-none"
+                  :class="timeLimitError ? 'border-terra focus:border-terra' : 'border-pasture-600 focus:border-amber-500'"
+                  placeholder=""
+                />
+                <span x-show="!timeLimitInput && !timeLimitError" class="absolute inset-0 flex items-center justify-center text-wool-500 pointer-events-none">
+                  <i data-lucide="infinity" class="w-4 h-4"></i>
+                </span>
+              </div>
+              <p x-show="timeLimitError" x-text="timeLimitError" class="text-[10px] text-terra mt-1 max-w-[120px]"></p>
             </div>
             <!-- HITL Toggle -->
-            <div class="pt-5">
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  x-model="humanInTheLoop"
-                  @change="debouncedSave()"
-                  class="w-4 h-4 rounded border-pasture-600 bg-pasture-700 text-amber-500 focus:ring-amber-500 focus:ring-offset-0"
-                />
-                <span class="text-xs text-wool-400">Human in the loop</span>
-                <i data-lucide="help-circle" class="w-3 h-3 text-wool-600 hover:text-wool-400 cursor-help" data-tooltip="Workers pause and wait for your approval" data-side="bottom" data-align="end"></i>
-              </label>
-            </div>
+            <label class="label gap-2 cursor-pointer shrink-0 py-1.5">
+              <input
+                type="checkbox"
+                x-model="humanInTheLoop"
+                @change="debouncedSave()"
+                class="input"
+              />
+              <span class="text-xs text-wool-400">HITL</span>
+              <span class="inline-flex" data-tooltip="Human in the Loop - workers pause and wait for your approval" data-side="top"><i data-lucide="help-circle" class="w-3 h-3 text-wool-600 hover:text-wool-400"></i></span>
+            </label>
           </div>
         </div>
 
@@ -691,7 +731,7 @@ Example:
               x-text="getStatusLabel(detail?.status)"
             ></span>
             <!-- Human in the loop indicator -->
-            <span x-show="detail?.humanInTheLoop" class="text-xs text-amber-400 flex items-center gap-1" title="Human in the Loop mode">
+            <span x-show="detail?.humanInTheLoop" class="text-xs text-amber-400 flex items-center gap-1" data-tooltip="Human in the Loop mode" data-side="bottom">
               <i data-lucide="user" class="w-3 h-3"></i>
               HITL
             </span>
@@ -721,43 +761,57 @@ Example:
           </div>
         </div>
 
-        <!-- Time progress bar -->
-        <div x-show="detail?.timeLimitMinutes" class="mt-3">
-          <div class="flex justify-between text-xs text-wool-500 mb-1">
-            <span x-text="formatElapsed(Math.floor((Date.now() - new Date(detail?.startedAt || Date.now()).getTime()) / 60000)) + ' elapsed'"></span>
-            <span x-text="formatTimeRemaining(detail?.timeLimitMinutes, Math.floor((Date.now() - new Date(detail?.startedAt || Date.now()).getTime()) / 60000))"></span>
-          </div>
-          <div class="h-1.5 bg-pasture-600 rounded-full overflow-hidden">
-            <div
-              class="h-full rounded-full transition-all duration-1000"
-              :class="calculateTimeProgress(Math.floor((Date.now() - new Date(detail?.startedAt || Date.now()).getTime()) / 60000), detail?.timeLimitMinutes) > 80 ? 'bg-terra' : 'bg-amber-500'"
-              :style="'width: ' + calculateTimeProgress(Math.floor((Date.now() - new Date(detail?.startedAt || Date.now()).getTime()) / 60000), detail?.timeLimitMinutes) + '%'"
-            ></div>
-          </div>
+        <!-- Time progress / no limit indicator -->
+        <div class="mt-3">
+          <template x-if="detail?.timeLimitMinutes">
+            <div>
+              <div class="flex justify-between text-xs text-wool-500 mb-1">
+                <span x-text="formatElapsed(Math.floor((Date.now() - new Date(detail?.startedAt || Date.now()).getTime()) / 60000)) + ' elapsed'"></span>
+                <span x-text="formatTimeRemaining(detail?.timeLimitMinutes, Math.floor((Date.now() - new Date(detail?.startedAt || Date.now()).getTime()) / 60000))"></span>
+              </div>
+              <div class="h-1.5 bg-pasture-600 rounded-full overflow-hidden">
+                <div
+                  class="h-full rounded-full transition-all duration-1000"
+                  :class="calculateTimeProgress(Math.floor((Date.now() - new Date(detail?.startedAt || Date.now()).getTime()) / 60000), detail?.timeLimitMinutes) > 80 ? 'bg-terra' : 'bg-amber-500'"
+                  :style="'width: ' + calculateTimeProgress(Math.floor((Date.now() - new Date(detail?.startedAt || Date.now()).getTime()) / 60000), detail?.timeLimitMinutes) + '%'"
+                ></div>
+              </div>
+            </div>
+          </template>
+          <template x-if="!detail?.timeLimitMinutes && detail?.startedAt">
+            <div class="flex items-center gap-2 text-xs text-wool-500">
+              <span x-text="formatElapsed(Math.floor((Date.now() - new Date(detail?.startedAt || Date.now()).getTime()) / 60000)) + ' elapsed'"></span>
+              <span class="text-wool-600">·</span>
+              <span class="flex items-center gap-1 text-wool-600">
+                <i data-lucide="infinity" class="w-3 h-3"></i>
+                <span>no limit</span>
+              </span>
+            </div>
+          </template>
         </div>
 
         <!-- Project info row -->
         <div class="mt-3 flex items-center gap-3 text-xs text-wool-500">
           <!-- Remote repo indicator -->
-          <span x-show="detail?.remoteUrl" class="flex items-center gap-1 text-amber-400" :title="detail?.remoteUrl">
+          <span x-show="detail?.remoteUrl" class="flex items-center gap-1 text-amber-400" :data-tooltip="detail?.remoteUrl" data-side="bottom">
             <i data-lucide="cloud" class="w-3 h-3"></i>
             <span x-text="detail?.remoteUrl?.replace(/^https?:\/\//, '').replace(/\.git$/, '').split('/').slice(-2).join('/') || 'remote'"></span>
           </span>
           <!-- Local project path (when not remote) -->
-          <span x-show="detail?.projectPath && !detail?.remoteUrl" class="flex items-center gap-1" title="Project path">
+          <span x-show="detail?.projectPath && !detail?.remoteUrl" class="flex items-center gap-1" data-tooltip="Project path" data-side="bottom">
             <i data-lucide="folder" class="w-3 h-3"></i>
             <span x-text="detail?.projectPath?.split('/').pop()"></span>
           </span>
-          <span class="flex items-center gap-1" title="Branch name">
+          <span class="flex items-center gap-1" data-tooltip="Branch name" data-side="bottom">
             <i data-lucide="git-branch" class="w-3 h-3"></i>
             <span x-text="'hirsel/' + runName"></span>
           </span>
-          <span x-show="detail?.workerScale" class="flex items-center gap-1" title="Worker scale">
+          <span x-show="detail?.workerScale" class="flex items-center gap-1" data-tooltip="Worker scale" data-side="bottom">
             <i data-lucide="users" class="w-3 h-3"></i>
             <span x-text="detail?.workerScale"></span>
           </span>
           <!-- Git diff stats -->
-          <span x-show="diffStats" class="flex items-center gap-1 ml-auto" title="Git diff stats">
+          <span x-show="diffStats" class="flex items-center gap-1 ml-auto" data-tooltip="Git diff stats" data-side="bottom">
             <i data-lucide="file-diff" class="w-3 h-3 text-wool-600"></i>
             <span class="text-sage">+<span x-text="diffStats?.insertions || 0"></span></span>
             <span class="text-terra">-<span x-text="diffStats?.deletions || 0"></span></span>
@@ -802,11 +856,12 @@ Example:
           Eval Spec
         </button>
         <button
-          @click="activeTab = 'eval'"
-          class="tab-btn px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
-          :class="activeTab === 'eval' ? 'text-amber-500 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
+          x-show="evals.length > 0"
+          @click="activeTab = 'evals'"
+          class="tab-btn px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px relative"
+          :class="activeTab === 'evals' ? 'text-amber-500 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
         >
-          Eval
+          Evals <span class="text-wool-500 font-normal" x-text="'(' + evals.length + ')'"></span>
         </button>
         <button
           @click="activeTab = 'messages'"
@@ -869,14 +924,14 @@ Example:
                         }"
                       ></span>
                       <span class="text-sm font-medium text-wool-100" x-text="worker.name"></span>
-                      <i x-show="worker.isLeader" data-lucide="star" class="w-3.5 h-3.5 text-amber-500 fill-amber-500" title="Leader"></i>
+                      <span x-show="worker.isLeader" class="inline-flex" data-tooltip="Leader" data-side="top"><i data-lucide="star" class="w-3.5 h-3.5 text-amber-500 fill-amber-500"></i></span>
                     </div>
                     <span class="text-xs text-wool-500" x-text="worker.status"></span>
                   </div>
                   <!-- Metrics row: elapsed time, tokens, context -->
                   <div class="mt-2 flex items-center gap-3 text-xs">
                     <!-- Elapsed time -->
-                    <span class="text-wool-500" x-text="formatElapsedTime(worker.sessionStartedAt || worker.createdAt)"></span>
+                    <span class="text-wool-500" x-text="worker.sessionStartedAt ? formatElapsedTime(worker.sessionStartedAt) : '--'"></span>
                     <!-- Token counts -->
                     <span x-show="worker.inputTokens || worker.outputTokens" class="text-wool-600">
                       <span class="text-wool-500" x-text="formatTokens(worker.inputTokens)"></span>/<span class="text-sage" x-text="formatTokens(worker.outputTokens)"></span>
@@ -886,7 +941,8 @@ Example:
                       x-show="worker.contextUtilization != null"
                       class="ml-auto"
                       :class="getContextClass((worker.contextUtilization || 0) * 100)"
-                      :title="'Context: ' + ((worker.contextUtilization || 0) * 100).toFixed(1) + '%'"
+                      :data-tooltip="'Context: ' + ((worker.contextUtilization || 0) * 100).toFixed(1) + '%'"
+                      data-side="left"
                     >
                       <span x-text="Math.round((worker.contextUtilization || 0) * 100) + '%'"></span>
                     </span>
@@ -946,7 +1002,7 @@ Example:
                         }"
                       ></span>
                       <h2 class="text-lg font-semibold text-wool-100" x-text="selectedWorker?.name"></h2>
-                      <i x-show="selectedWorker?.isLeader" data-lucide="star" class="w-3.5 h-3.5 text-amber-500 fill-amber-500" title="Leader"></i>
+                      <span x-show="selectedWorker?.isLeader" class="inline-flex" data-tooltip="Leader" data-side="top"><i data-lucide="star" class="w-3.5 h-3.5 text-amber-500 fill-amber-500"></i></span>
                     </div>
                     <button @click="closeWorkerDetail()" class="text-wool-500 hover:text-wool-300">
                       <i data-lucide="x" class="w-5 h-5"></i>
@@ -963,7 +1019,7 @@ Example:
                       </div>
                       <div class="bg-pasture-700/50 rounded-lg p-3">
                         <div class="text-xs text-wool-500 mb-1">Session Time</div>
-                        <div class="text-sm font-medium text-wool-100" x-text="formatElapsedTime(selectedWorker?.sessionStartedAt || selectedWorker?.createdAt)"></div>
+                        <div class="text-sm font-medium text-wool-100" x-text="selectedWorker?.sessionStartedAt ? formatElapsedTime(selectedWorker.sessionStartedAt) : '--'"></div>
                       </div>
                     </div>
 
@@ -1084,10 +1140,11 @@ Example:
                     <span
                       :class="getTaskNameClass(task)"
                       x-text="task.id"
-                      :title="task.description || task.id"
+                      :data-tooltip="task.description || task.id"
+                      data-side="top"
                     ></span>
                     <!-- Blocked indicator -->
-                    <span x-show="task.isBlocked" class="text-xs text-terra" title="Blocked by other tasks">⊘</span>
+                    <span x-show="task.isBlocked" class="text-xs text-terra" data-tooltip="Blocked by other tasks" data-side="top">⊘</span>
                   </div>
                   <!-- Claimed by info -->
                   <div x-show="task.claimedBy" class="text-xs text-wool-500 mt-1 ml-5 flex items-center gap-1">
@@ -1288,9 +1345,9 @@ Example:
 
         <!-- Bottom: Activity Log -->
         <div
-          class="activity-panel flex flex-col transition-all duration-200 h-48"
+          class="activity-panel flex flex-col transition-all duration-200"
           x-data="activityLog()"
-          :class="isFullscreen ? 'fixed inset-0 z-40 bg-pasture-900' : ''"
+          :class="isFullscreen ? 'fixed inset-0 z-50 bg-pasture-900 h-auto' : 'h-48'"
         >
           <div class="p-3 border-b border-pasture-700 flex items-center justify-between">
             <h3 class="text-sm font-medium text-wool-300">Activity</h3>
@@ -1299,14 +1356,16 @@ Example:
                 @click="scrollToBottom(); autoScroll = true"
                 x-show="!autoScroll"
                 class="text-xs text-amber-500 hover:text-amber-400"
-                title="Scroll to latest"
+                data-tooltip="Scroll to latest"
+                data-side="top"
               >
                 ↓ Latest
               </button>
               <button
                 @click="toggleFullscreen()"
                 class="p-1 rounded hover:bg-pasture-600 text-wool-500 hover:text-wool-300 transition-colors"
-                :title="isFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'"
+                :data-tooltip="isFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'"
+                data-side="top"
               >
                 <i x-show="!isFullscreen" data-lucide="maximize-2" class="w-4 h-4"></i>
                 <i x-show="isFullscreen" data-lucide="minimize-2" class="w-4 h-4"></i>
@@ -1351,59 +1410,363 @@ Example:
       <!-- END OVERVIEW TAB -->
 
       <!-- TASKS TAB: Full task list with details -->
-      <div x-show="runName && activeTab === 'tasks'" class="flex-1 flex flex-col overflow-hidden p-4" x-data="tasksTab()">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-semibold text-wool-200">All Tasks</h3>
-          <div class="flex items-center gap-2 text-xs">
-            <span class="text-wool-500">
-              <span x-text="tasks.filter(t => t.status === 'done').length"></span>/<span x-text="tasks.length"></span> complete
+      <div x-show="runName && activeTab === 'tasks'" x-effect="if (activeTab === 'tasks' && runName) loadTasks(runName)" class="flex-1 flex flex-col overflow-hidden" x-data="tasksTab()" @click.away="closeTaskPopover()">
+        <!-- Header with stats -->
+        <div class="p-4 border-b border-pasture-600">
+          <!-- Title row -->
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-3">
+              <h3 class="text-lg font-semibold text-wool-200">Tasks</h3>
+              <span class="text-sm text-wool-500">
+                <span class="text-wool-300 font-medium" x-text="stats.done"></span>/<span x-text="stats.total"></span> complete
+              </span>
+            </div>
+            <div class="flex items-center gap-2">
+              <!-- Search -->
+              <div class="relative">
+                <i data-lucide="search" class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-wool-500 pointer-events-none"></i>
+                <input
+                  type="text"
+                  x-model="searchQuery"
+                  placeholder="Search tasks..."
+                  class="input w-48 pl-8 text-sm py-1.5"
+                />
+              </div>
+              <!-- Filter -->
+              <select x-model="filter" class="select text-sm">
+                <option value="all">All</option>
+                <option value="todo">To Do</option>
+                <option value="doing">In Progress</option>
+                <option value="done">Done</option>
+                <option value="blocked">Blocked</option>
+              </select>
+            </div>
+          </div>
+          <!-- Progress bar -->
+          <div class="h-2 bg-pasture-700 rounded-full overflow-hidden">
+            <div class="h-full bg-sage transition-all duration-500" :style="'width: ' + stats.percentDone + '%'"></div>
+          </div>
+          <!-- Stats pills -->
+          <div class="flex items-center gap-3 mt-3 text-xs">
+            <span class="flex items-center gap-1.5 px-2 py-1 rounded-full bg-pasture-700">
+              <span class="w-2 h-2 rounded-full bg-wool-600"></span>
+              <span class="text-wool-400"><span class="text-wool-200 font-medium" x-text="stats.todo"></span> to do</span>
             </span>
-            <select
-              x-model="filter"
-              class="bg-pasture-700 border border-pasture-600 rounded px-2 py-1 text-wool-300"
-            >
-              <option value="all">All</option>
-              <option value="todo">Todo</option>
-              <option value="doing">In Progress</option>
-              <option value="done">Done</option>
-            </select>
+            <span class="flex items-center gap-1.5 px-2 py-1 rounded-full bg-pasture-700">
+              <span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+              <span class="text-wool-400"><span class="text-wool-200 font-medium" x-text="stats.inProgress"></span> in progress</span>
+            </span>
+            <span class="flex items-center gap-1.5 px-2 py-1 rounded-full bg-pasture-700">
+              <span class="w-2 h-2 rounded-full bg-sage"></span>
+              <span class="text-wool-400"><span class="text-wool-200 font-medium" x-text="stats.done"></span> done</span>
+            </span>
+            <span x-show="stats.blocked > 0" class="flex items-center gap-1.5 px-2 py-1 rounded-full bg-terra/20">
+              <i data-lucide="lock" class="w-3 h-3 text-terra"></i>
+              <span class="text-terra"><span class="font-medium" x-text="stats.blocked"></span> blocked</span>
+            </span>
           </div>
         </div>
-        <div class="flex-1 overflow-y-auto space-y-1">
-          <template x-for="task in filteredTasks" :key="task.id">
-            <div
-              class="task-row p-3 rounded bg-pasture-800 hover:bg-pasture-700 cursor-pointer transition-colors"
-              @click="selectTask(task)"
-              :class="selectedTaskId === task.id ? 'ring-1 ring-amber-500' : ''"
-            >
-              <div class="flex items-start gap-2">
-                <span class="flex-shrink-0 mt-0.5" :class="{
-                  'text-wool-600': task.status === 'todo',
-                  'text-amber-500': task.status === 'doing',
-                  'text-sage': task.status === 'done'
-                }">
-                  <i x-show="task.status === 'todo'" data-lucide="circle" class="w-4 h-4"></i>
-                  <i x-show="task.status === 'doing'" data-lucide="circle-dot" class="w-4 h-4"></i>
-                  <i x-show="task.status === 'done'" data-lucide="check-circle" class="w-4 h-4"></i>
-                </span>
-                <div class="flex-1 min-w-0">
-                  <p class="text-sm text-wool-200 break-words" x-text="task.description"></p>
-                  <div class="flex items-center gap-2 mt-1 text-xs text-wool-600">
-                    <span x-show="task.claimedBy" class="flex items-center gap-1">
-                      <i data-lucide="user" class="w-3 h-3"></i>
-                      <span x-text="task.claimedBy"></span>
-                    </span>
-                    <span x-show="task.tokensUsed" class="flex items-center gap-1">
-                      <i data-lucide="hash" class="w-3 h-3"></i>
-                      <span x-text="formatTokens(task.tokensUsed)"></span>
-                    </span>
+
+        <!-- Task list -->
+        <div class="flex-1 overflow-y-auto p-4">
+          <div class="space-y-1">
+            <template x-for="task in filteredTasks" :key="task.id">
+              <div
+                :data-task-id="task.id"
+                class="task-row group rounded-lg transition-all cursor-pointer"
+                :class="{
+                  'bg-pasture-800 hover:bg-pasture-700': selectedTaskId !== task.id,
+                  'bg-amber-500/10 ring-1 ring-amber-500/50': selectedTaskId === task.id
+                }"
+                @click="selectTask(task, $event)"
+              >
+                <div class="flex items-start gap-2 p-3" :style="'padding-left: ' + (12 + task.depth * 20) + 'px'">
+                  <!-- Collapse toggle for tasks with children -->
+                  <button
+                    x-show="hasChildren(task)"
+                    @click.stop="toggleCollapse(task.id)"
+                    class="flex-shrink-0 w-5 h-5 flex items-center justify-center text-wool-500 hover:text-wool-300 transition-colors -ml-5"
+                  >
+                    <i x-show="!isCollapsed(task.id)" data-lucide="chevron-down" class="w-4 h-4"></i>
+                    <i x-show="isCollapsed(task.id)" data-lucide="chevron-right" class="w-4 h-4"></i>
+                  </button>
+
+                  <!-- Status icon -->
+                  <span class="flex-shrink-0 mt-0.5" :class="{
+                    'text-wool-600': task.status === 'todo' && !task.isBlocked,
+                    'text-terra': task.isBlocked,
+                    'text-amber-500': task.status === 'doing',
+                    'text-sage': task.status === 'done'
+                  }">
+                    <i x-show="task.status === 'todo' && !task.isBlocked" data-lucide="circle" class="w-4 h-4"></i>
+                    <i x-show="task.isBlocked && task.status !== 'done'" data-lucide="lock" class="w-4 h-4"></i>
+                    <i x-show="task.status === 'doing'" data-lucide="loader" class="w-4 h-4 animate-spin"></i>
+                    <i x-show="task.status === 'done'" data-lucide="check-circle-2" class="w-4 h-4"></i>
+                  </span>
+
+                  <!-- Task content -->
+                  <div class="flex-1 min-w-0">
+                    <p
+                      class="text-sm break-words leading-relaxed"
+                      :class="{
+                        'text-wool-200': task.status !== 'done' && !task.isBlocked,
+                        'text-wool-500 line-through': task.status === 'done',
+                        'text-wool-400 italic': task.isBlocked && task.status !== 'done'
+                      }"
+                      x-text="task.description"
+                    ></p>
+
+                    <!-- Task metadata -->
+                    <div class="flex items-center flex-wrap gap-x-3 gap-y-1 mt-1.5">
+                      <!-- Worker assignment -->
+                      <span x-show="task.claimedBy" class="flex items-center gap-1 text-xs text-amber-400">
+                        <i data-lucide="user" class="w-3 h-3"></i>
+                        <span x-text="task.claimedBy"></span>
+                      </span>
+                      <!-- Blocked by indicator -->
+                      <span x-show="task.isBlocked && task.blockedBy" class="flex items-center gap-1 text-xs text-terra">
+                        <i data-lucide="git-branch" class="w-3 h-3"></i>
+                        <span>blocked by <span x-text="task.blockedBy?.length || 0"></span> task(s)</span>
+                      </span>
+                      <!-- Subtask indicator -->
+                      <span x-show="task.parentId" class="flex items-center gap-1 text-xs text-wool-600">
+                        <i data-lucide="corner-down-right" class="w-3 h-3"></i>
+                        <span>subtask</span>
+                      </span>
+                      <!-- Tokens used -->
+                      <span x-show="task.tokensUsed" class="flex items-center gap-1 text-xs text-wool-600">
+                        <i data-lucide="sparkles" class="w-3 h-3"></i>
+                        <span x-text="formatTokens(task.tokensUsed)"></span>
+                      </span>
+                      <!-- Time claimed -->
+                      <span x-show="task.claimedAt" class="flex items-center gap-1 text-xs text-wool-600">
+                        <i data-lucide="clock" class="w-3 h-3"></i>
+                        <span x-text="formatTime(task.claimedAt)"></span>
+                      </span>
+                    </div>
+                  </div>
+
+                  <!-- Quick actions (visible on hover) -->
+                  <div class="flex-shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      x-show="task.status !== 'done'"
+                      @click.stop="markTaskDone(task)"
+                      class="p-1.5 rounded hover:bg-pasture-600 text-wool-500 hover:text-sage transition-colors"
+                      data-tooltip="Mark as done"
+                      data-side="top"
+                    >
+                      <i data-lucide="check" class="w-4 h-4"></i>
+                    </button>
+                    <button
+                      x-show="task.status === 'done'"
+                      @click.stop="reopenTask(task)"
+                      class="p-1.5 rounded hover:bg-pasture-600 text-wool-500 hover:text-amber-400 transition-colors"
+                      data-tooltip="Reopen task"
+                      data-side="top"
+                    >
+                      <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+                    </button>
                   </div>
                 </div>
               </div>
+            </template>
+          </div>
+
+          <!-- Empty state -->
+          <div x-show="filteredTasks.length === 0 && tasks.length > 0" class="text-center text-wool-500 py-12">
+            <i data-lucide="filter-x" class="w-8 h-8 mx-auto mb-3 text-wool-600"></i>
+            <p class="text-sm">No tasks match the current filter</p>
+            <button @click="filter = 'all'; searchQuery = ''" class="mt-2 text-xs text-amber-500 hover:underline">Clear filters</button>
+          </div>
+
+          <div x-show="tasks.length === 0" class="text-center text-wool-500 py-12">
+            <svg class="w-12 h-12 mx-auto mb-3 text-wool-600">
+              <use href="#sheep-sleeping"/>
+            </svg>
+            <p class="text-sm">No tasks yet</p>
+            <p class="text-xs mt-1 text-wool-600">Tasks will appear as workers create them</p>
+          </div>
+        </div>
+
+        <!-- Task Detail Popover -->
+        <div
+          x-show="showTaskPopover && selectedTask"
+          x-transition:enter="transition ease-out duration-150"
+          x-transition:enter-start="opacity-0 scale-95"
+          x-transition:enter-end="opacity-100 scale-100"
+          x-transition:leave="transition ease-in duration-100"
+          x-transition:leave-start="opacity-100 scale-100"
+          x-transition:leave-end="opacity-0 scale-95"
+          class="fixed z-50 w-80 bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl overflow-hidden"
+          :style="'top: ' + popoverPosition.y + 'px; left: ' + popoverPosition.x + 'px; max-height: calc(100vh - 100px);'"
+          @click.stop
+        >
+          <!-- Popover header -->
+          <div class="p-3 border-b border-pasture-700 flex items-start justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <span :class="{
+                'text-wool-600': selectedTask?.status === 'todo' && !selectedTask?.isBlocked,
+                'text-terra': selectedTask?.isBlocked,
+                'text-amber-500': selectedTask?.status === 'doing',
+                'text-sage': selectedTask?.status === 'done'
+              }">
+                <i x-show="selectedTask?.status === 'todo' && !selectedTask?.isBlocked" data-lucide="circle" class="w-5 h-5"></i>
+                <i x-show="selectedTask?.isBlocked && selectedTask?.status !== 'done'" data-lucide="lock" class="w-5 h-5"></i>
+                <i x-show="selectedTask?.status === 'doing'" data-lucide="loader" class="w-5 h-5 animate-spin"></i>
+                <i x-show="selectedTask?.status === 'done'" data-lucide="check-circle-2" class="w-5 h-5"></i>
+              </span>
+              <span
+                class="text-xs px-2 py-0.5 rounded-full font-medium"
+                :class="{
+                  'bg-wool-600/20 text-wool-400': selectedTask?.status === 'todo' && !selectedTask?.isBlocked,
+                  'bg-terra/20 text-terra': selectedTask?.isBlocked,
+                  'bg-amber-500/20 text-amber-400': selectedTask?.status === 'doing',
+                  'bg-sage/20 text-sage': selectedTask?.status === 'done'
+                }"
+                x-text="selectedTask?.isBlocked ? 'Blocked' : getStatusLabel(selectedTask?.status)"
+              ></span>
             </div>
-          </template>
-          <div x-show="filteredTasks.length === 0" class="text-center text-wool-500 py-8">
-            <p class="text-sm">No tasks match the filter</p>
+            <button
+              @click="closeTaskPopover()"
+              class="p-1 rounded hover:bg-pasture-700 text-wool-500 hover:text-wool-300 transition-colors"
+            >
+              <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+          </div>
+
+          <!-- Popover content -->
+          <div class="p-4 overflow-y-auto" style="max-height: 400px;">
+            <!-- Description -->
+            <p class="text-sm text-wool-200 leading-relaxed" x-text="selectedTask?.description"></p>
+
+            <!-- Metadata grid -->
+            <div class="mt-4 space-y-3">
+              <!-- Assigned worker -->
+              <div x-show="selectedTask?.claimedBy" class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-full bg-amber-500/20 flex items-center justify-center">
+                  <i data-lucide="user" class="w-4 h-4 text-amber-400"></i>
+                </div>
+                <div>
+                  <p class="text-xs text-wool-500">Assigned to</p>
+                  <p class="text-sm text-wool-200 font-medium" x-text="selectedTask?.claimedBy"></p>
+                </div>
+              </div>
+
+              <!-- Parent task -->
+              <div x-show="selectedTask?.parentId">
+                <div class="flex items-center gap-3">
+                  <div class="w-8 h-8 rounded-full bg-pasture-700 flex items-center justify-center">
+                    <i data-lucide="corner-up-left" class="w-4 h-4 text-wool-500"></i>
+                  </div>
+                  <div class="flex-1">
+                    <p class="text-xs text-wool-500">Parent task</p>
+                    <button
+                      x-show="getParentTask(selectedTask)"
+                      @click="navigateToTask(selectedTask?.parentId)"
+                      class="text-sm text-amber-400 hover:underline truncate block text-left"
+                      x-text="getParentTask(selectedTask)?.description?.slice(0, 50) + (getParentTask(selectedTask)?.description?.length > 50 ? '...' : '')"
+                    ></button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Blocked by -->
+              <div x-show="selectedTask?.isBlocked && getBlockers(selectedTask).length > 0">
+                <div class="flex items-start gap-3">
+                  <div class="w-8 h-8 rounded-full bg-terra/20 flex items-center justify-center flex-shrink-0">
+                    <i data-lucide="lock" class="w-4 h-4 text-terra"></i>
+                  </div>
+                  <div class="flex-1">
+                    <p class="text-xs text-wool-500 mb-1">Blocked by</p>
+                    <div class="space-y-1">
+                      <template x-for="blocker in getBlockers(selectedTask)" :key="blocker.id">
+                        <button
+                          @click="navigateToTask(blocker.id)"
+                          class="flex items-center gap-2 text-sm text-terra hover:text-terra/80 w-full text-left"
+                        >
+                          <i data-lucide="circle-dot" class="w-3 h-3 flex-shrink-0"></i>
+                          <span class="truncate" x-text="blocker.description.slice(0, 40) + (blocker.description.length > 40 ? '...' : '')"></span>
+                        </button>
+                      </template>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Children count -->
+              <div x-show="hasChildren(selectedTask)" class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-full bg-pasture-700 flex items-center justify-center">
+                  <i data-lucide="list-tree" class="w-4 h-4 text-wool-500"></i>
+                </div>
+                <div>
+                  <p class="text-xs text-wool-500">Subtasks</p>
+                  <p class="text-sm text-wool-200" x-text="selectedTask?.children?.length + ' subtask(s)'"></p>
+                </div>
+              </div>
+
+              <!-- Tokens used -->
+              <div x-show="selectedTask?.tokensUsed" class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-full bg-pasture-700 flex items-center justify-center">
+                  <i data-lucide="sparkles" class="w-4 h-4 text-wool-500"></i>
+                </div>
+                <div>
+                  <p class="text-xs text-wool-500">Tokens used</p>
+                  <p class="text-sm text-wool-200" x-text="formatTokens(selectedTask?.tokensUsed)"></p>
+                </div>
+              </div>
+
+              <!-- Timestamps -->
+              <div class="pt-3 border-t border-pasture-700 space-y-2 text-xs text-wool-500">
+                <p class="flex justify-between">
+                  <span>Created</span>
+                  <span class="text-wool-400" x-text="formatFullTime(selectedTask?.createdAt)"></span>
+                </p>
+                <p x-show="selectedTask?.claimedAt" class="flex justify-between">
+                  <span>Claimed</span>
+                  <span class="text-wool-400" x-text="formatFullTime(selectedTask?.claimedAt)"></span>
+                </p>
+                <p x-show="selectedTask?.pendingDoneAt" class="flex justify-between">
+                  <span>Pending done</span>
+                  <span class="text-wool-400" x-text="formatFullTime(selectedTask?.pendingDoneAt)"></span>
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Popover actions -->
+          <div class="p-3 border-t border-pasture-700 flex items-center justify-between gap-2 bg-pasture-850">
+            <div class="flex items-center gap-1">
+              <button
+                x-show="selectedTask?.status !== 'done'"
+                @click="markTaskDone(selectedTask)"
+                class="btn btn-sm flex items-center gap-1.5"
+              >
+                <i data-lucide="check" class="w-3.5 h-3.5"></i>
+                <span>Mark Done</span>
+              </button>
+              <button
+                x-show="selectedTask?.status === 'done'"
+                @click="reopenTask(selectedTask)"
+                class="btn btn-sm flex items-center gap-1.5"
+              >
+                <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                <span>Reopen</span>
+              </button>
+              <button
+                x-show="selectedTask?.claimedBy"
+                @click="unclaimTask(selectedTask)"
+                class="btn btn-sm btn-ghost flex items-center gap-1.5"
+              >
+                <i data-lucide="user-minus" class="w-3.5 h-3.5"></i>
+                <span>Unclaim</span>
+              </button>
+            </div>
+            <button
+              @click="deleteTask(selectedTask)"
+              class="btn btn-sm btn-ghost text-terra hover:bg-terra/10"
+            >
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            </button>
           </div>
         </div>
       </div>
@@ -1444,80 +1807,181 @@ Example:
       </div>
       <!-- END EVAL SPEC TAB -->
 
-      <!-- EVAL TAB: Evaluation history and results -->
-      <div x-show="runName && activeTab === 'eval'" class="flex-1 flex flex-col overflow-hidden p-4" x-data="evalTab()">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-semibold text-wool-200">Evaluations</h3>
-          <button
-            @click="runEval()"
-            class="px-3 py-1.5 text-sm rounded bg-amber-600 hover:bg-amber-500 text-white font-medium"
-            :disabled="isRunning"
-          >
-            <span x-show="!isRunning">Run Eval</span>
-            <span x-show="isRunning" class="animate-pulse">Running...</span>
-          </button>
+      <!-- EVALS TAB: Split view with list and detail pane -->
+      <div x-show="runName && activeTab === 'evals'" class="flex-1 flex overflow-hidden" @keydown.a.prevent="selectedEval && attachEval()">
+        <!-- Eval List (left side) -->
+        <div class="w-1/3 min-w-[280px] border-r border-pasture-700 flex flex-col overflow-hidden">
+          <div class="p-3 border-b border-pasture-700">
+            <h3 class="text-sm font-semibold text-wool-300">Evaluations</h3>
+          </div>
+          <div class="flex-1 overflow-y-auto p-2">
+            <div class="space-y-1">
+              <template x-for="evalItem in evals" :key="evalItem.id">
+                <button
+                  @click="selectEval(evalItem)"
+                  class="w-full px-3 py-2 text-left rounded-md transition-colors"
+                  :class="selectedEval?.id === evalItem.id ? 'bg-pasture-600 border border-amber-500/50' : 'bg-pasture-800 hover:bg-pasture-700 border border-transparent'"
+                >
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                      <i
+                        :data-lucide="getEvalStatusIcon(evalItem.status)"
+                        class="w-4 h-4"
+                        :class="getEvalStatusClass(evalItem.status)"
+                      ></i>
+                      <span class="text-sm font-medium text-wool-200" x-text="evalItem.evalName || 'Unnamed Eval'"></span>
+                    </div>
+                    <span
+                      class="text-[10px] font-medium px-1.5 py-0.5 rounded"
+                      :class="{
+                        'bg-sage/20 text-sage': evalItem.status === 'passed',
+                        'bg-terra/20 text-terra': evalItem.status === 'failed',
+                        'bg-amber-500/20 text-amber-500': evalItem.status === 'running'
+                      }"
+                      x-text="evalItem.status"
+                    ></span>
+                  </div>
+                  <div class="flex items-center gap-3 mt-1 text-[11px] text-wool-500">
+                    <span x-text="formatEvalTime(evalItem.startedAt)"></span>
+                    <span x-show="evalItem.finishedAt" x-text="getEvalDuration(evalItem)"></span>
+                  </div>
+                </button>
+              </template>
+            </div>
+
+            <div x-show="evals.length === 0" class="text-center text-wool-500 py-8">
+              <i data-lucide="clipboard-check" class="w-12 h-12 mx-auto mb-3 text-wool-600"></i>
+              <p class="text-sm">No evaluations yet</p>
+            </div>
+          </div>
         </div>
-        <div class="flex-1 overflow-y-auto space-y-2">
-          <template x-for="evalItem in evals" :key="evalItem.id">
-            <div class="eval-row p-3 rounded bg-pasture-800 hover:bg-pasture-700 transition-colors">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-2">
-                  <span class="w-2 h-2 rounded-full" :class="{
-                    'bg-amber-500 animate-pulse': evalItem.status === 'running',
-                    'bg-sage': evalItem.status === 'passed',
-                    'bg-terra': evalItem.status === 'failed'
-                  }"></span>
-                  <span class="text-sm font-medium text-wool-200" x-text="evalItem.evalName || 'Evaluation'"></span>
+
+        <!-- Eval Detail (right side) -->
+        <div class="flex-1 flex flex-col overflow-hidden">
+          <!-- No eval selected -->
+          <div x-show="!selectedEval" class="flex-1 flex items-center justify-center text-wool-500">
+            <div class="text-center">
+              <i data-lucide="mouse-pointer-click" class="w-12 h-12 mx-auto mb-3 text-wool-600"></i>
+              <p class="text-sm">Select an evaluation to view details</p>
+            </div>
+          </div>
+
+          <!-- Eval selected -->
+          <div x-show="selectedEval" class="flex-1 flex flex-col overflow-hidden">
+            <!-- Header with attach button -->
+            <div class="p-3 border-b border-pasture-700 flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <i
+                  :data-lucide="getEvalStatusIcon(selectedEval?.status)"
+                  class="w-5 h-5"
+                  :class="getEvalStatusClass(selectedEval?.status)"
+                ></i>
+                <div>
+                  <h3 class="text-base font-semibold text-wool-200" x-text="selectedEval?.evalName || 'Unnamed Eval'"></h3>
+                  <div class="flex items-center gap-3 text-xs text-wool-500">
+                    <span x-text="formatEvalTime(selectedEval?.startedAt)"></span>
+                    <span x-show="selectedEval?.finishedAt" x-text="getEvalDuration(selectedEval)"></span>
+                    <span class="flex items-center gap-1">
+                      <i data-lucide="git-branch" class="w-3 h-3"></i>
+                      <span x-text="selectedEval?.branch || 'staging'"></span>
+                    </span>
+                  </div>
                 </div>
-                <span class="text-xs text-wool-500" x-text="formatTime(evalItem.startedAt)"></span>
               </div>
-              <div class="mt-2 text-xs text-wool-500">
-                <span x-text="'Branch: ' + evalItem.branch"></span>
+              <button
+                @click="attachEval()"
+                class="px-3 py-1.5 text-sm font-medium bg-pasture-700 hover:bg-pasture-600 text-wool-200 rounded-md transition-colors flex items-center gap-2"
+                title="Attach to view full output (a)"
+              >
+                <i data-lucide="terminal" class="w-4 h-4"></i>
+                Attach
+                <kbd class="text-[10px] px-1 py-0.5 bg-pasture-800 rounded text-wool-400">a</kbd>
+              </button>
+            </div>
+
+            <!-- Status badge -->
+            <div class="px-4 py-2 border-b border-pasture-700">
+              <span
+                class="text-sm font-medium px-3 py-1 rounded-full"
+                :class="{
+                  'bg-sage/20 text-sage': selectedEval?.status === 'passed',
+                  'bg-terra/20 text-terra': selectedEval?.status === 'failed',
+                  'bg-amber-500/20 text-amber-500': selectedEval?.status === 'running'
+                }"
+                x-text="selectedEval?.status === 'passed' ? '✓ All checks passed' : selectedEval?.status === 'failed' ? '✗ Checks failed' : 'Running...'"
+              ></span>
+            </div>
+
+            <!-- Feedback content -->
+            <div class="flex-1 overflow-y-auto p-4">
+              <!-- Feedback section -->
+              <div x-show="selectedEval?.feedback">
+                <h4 class="text-sm font-medium text-wool-300 mb-2">Feedback</h4>
+                <div class="text-sm text-wool-400 bg-pasture-800 rounded-lg p-3 whitespace-pre-wrap" x-text="selectedEval?.feedback"></div>
               </div>
-              <div x-show="evalItem.feedback" class="mt-2 p-2 bg-pasture-900 rounded text-xs text-wool-400">
-                <span x-text="evalItem.feedback"></span>
+
+              <!-- No feedback - prompt to attach -->
+              <div x-show="!selectedEval?.feedback" class="text-center text-wool-500 py-8">
+                <i data-lucide="terminal" class="w-10 h-10 mx-auto mb-3 text-wool-600"></i>
+                <p class="text-sm">Press <kbd class="px-1.5 py-0.5 bg-pasture-700 rounded font-mono">a</kbd> to attach and view full output</p>
               </div>
             </div>
-          </template>
-          <div x-show="evals.length === 0" class="text-center text-wool-500 py-8">
-            <svg class="w-12 h-12 mx-auto mb-3 text-wool-600">
-              <use href="#sheep-sleeping"/>
-            </svg>
-            <p class="text-sm">No evaluations yet</p>
-            <p class="text-xs mt-1 text-wool-600">Run an eval to test the work</p>
           </div>
         </div>
       </div>
-      <!-- END EVAL TAB -->
+      <!-- END EVALS TAB -->
 
       <!-- MESSAGES TAB -->
-      <div x-show="runName && activeTab === 'messages'" class="flex-1 flex overflow-hidden" x-data="chatPanel()">
+      <div x-show="runName && activeTab === 'messages'" class="flex-1 flex overflow-hidden" x-data="chatPanel()"
+           x-effect="if (activeTab === 'messages' && runName) { onRunSelected(runName); }">
         <!-- Thread sidebar -->
         <div class="w-48 border-r border-pasture-600 flex flex-col bg-pasture-800/50">
-          <div class="p-3 border-b border-pasture-700">
-            <h3 class="text-sm font-medium text-wool-300">Threads</h3>
-          </div>
           <div class="flex-1 overflow-y-auto">
-            <!-- Show existing threads -->
-            <template x-for="thread in threads" :key="thread.name">
-              <button
-                @click="selectThread(thread.name)"
-                class="w-full px-3 py-2 text-left text-sm hover:bg-pasture-700 transition-colors flex items-center justify-between"
-                :class="{ 'bg-pasture-700 border-l-2 border-amber-500': selectedThread === thread.name }"
-              >
-                <span class="truncate" x-text="thread.name"></span>
-                <span x-show="thread.unreadCount > 0" class="ml-2 min-w-[18px] h-[18px] bg-terra rounded-full text-[10px] text-white font-bold flex items-center justify-center px-1" x-text="thread.unreadCount"></span>
-              </button>
-            </template>
-            <!-- Default 'user' thread when no threads exist -->
-            <button
-              x-show="threads.length === 0"
-              @click="selectedThread = 'user'"
-              class="w-full px-3 py-2 text-left text-sm hover:bg-pasture-700 transition-colors flex items-center justify-between bg-pasture-700 border-l-2 border-amber-500"
-            >
-              <span class="truncate">user</span>
-              <span class="text-[10px] text-wool-500">new</span>
-            </button>
+            <!-- Group Chats Section -->
+            <div class="p-2 border-b border-pasture-700">
+              <h4 class="text-[10px] font-semibold text-wool-500 uppercase tracking-wider px-1">Group Chats</h4>
+            </div>
+            <div class="py-1">
+              <template x-for="thread in groupChats" :key="thread.name">
+                <button
+                  @click="selectThread(thread.name)"
+                  class="w-full px-3 py-1.5 text-left text-sm hover:bg-pasture-700 transition-colors flex items-center justify-between"
+                  :class="{ 'bg-pasture-700 border-l-2 border-amber-500': selectedThread === thread.name }"
+                >
+                  <span class="flex items-center gap-2">
+                    <i data-lucide="hash" class="w-3 h-3 text-wool-500"></i>
+                    <span class="truncate" x-text="thread.name"></span>
+                  </span>
+                  <span x-show="thread.unreadCount > 0" class="ml-2 min-w-[18px] h-[18px] bg-terra rounded-full text-[10px] text-white font-bold flex items-center justify-center px-1" x-text="thread.unreadCount"></span>
+                </button>
+              </template>
+              <div x-show="groupChats.length === 0" class="px-3 py-2 text-xs text-wool-600 italic">
+                No group chats yet
+              </div>
+            </div>
+
+            <!-- DMs Section -->
+            <div class="p-2 border-b border-t border-pasture-700">
+              <h4 class="text-[10px] font-semibold text-wool-500 uppercase tracking-wider px-1">Direct Messages</h4>
+            </div>
+            <div class="py-1">
+              <template x-for="dm in dmThreads" :key="dm.name">
+                <button
+                  @click="selectThread(dm.name)"
+                  class="w-full px-3 py-1.5 text-left text-sm hover:bg-pasture-700 transition-colors flex items-center justify-between"
+                  :class="{ 'bg-pasture-700 border-l-2 border-amber-500': selectedThread === dm.name }"
+                >
+                  <span class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-wool-600"></span>
+                    <span class="truncate" x-text="dm.name"></span>
+                  </span>
+                  <span x-show="dm.thread?.unreadCount > 0" class="ml-2 min-w-[18px] h-[18px] bg-terra rounded-full text-[10px] text-white font-bold flex items-center justify-center px-1" x-text="dm.thread.unreadCount"></span>
+                </button>
+              </template>
+              <div x-show="dmThreads.length === 0" class="px-3 py-2 text-xs text-wool-600 italic">
+                No workers in this run
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1526,7 +1990,7 @@ Example:
           <!-- Messages header -->
           <div class="p-3 border-b border-pasture-700 flex items-center justify-between">
             <h3 class="text-sm font-medium text-wool-300">
-              <span x-show="selectedThread" x-text="'#' + selectedThread"></span>
+              <span x-show="selectedThread" x-text="selectedThread"></span>
               <span x-show="!selectedThread" class="text-wool-500">Select a thread</span>
             </h3>
           </div>
@@ -1585,6 +2049,64 @@ Example:
       </div>
       <!-- END MESSAGES TAB -->
 
+      <!-- Deliver Modal -->
+      <div
+        x-show="deliverModalOpen"
+        x-transition:enter="transition ease-out duration-150"
+        x-transition:enter-start="opacity-0"
+        x-transition:enter-end="opacity-100"
+        x-transition:leave="transition ease-in duration-100"
+        x-transition:leave-start="opacity-100"
+        x-transition:leave-end="opacity-0"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+        @click.self="closeDeliverModal()"
+        @keydown.escape.window="closeDeliverModal()"
+      >
+        <div
+          class="modal-content bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl w-full max-w-md mx-4"
+          @click.stop
+        >
+          <div class="p-4 border-b border-pasture-600">
+            <h3 class="text-lg font-semibold text-wool-200">Deliver Run</h3>
+            <p class="text-sm text-wool-500 mt-1">Push changes to a branch on the remote repository.</p>
+          </div>
+          <div class="p-4">
+            <label class="block text-sm font-medium text-wool-300 mb-2">
+              Branch Name
+            </label>
+            <input
+              type="text"
+              x-model="deliverBranch"
+              @keydown.enter="confirmDeliver()"
+              class="w-full px-3 py-2 bg-pasture-700 border border-pasture-600 rounded text-wool-200 placeholder-wool-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500"
+              placeholder="hirsel/my-feature"
+            />
+            <p class="text-xs text-wool-500 mt-2">
+              This branch will be created or updated on the remote.
+            </p>
+          </div>
+          <div class="p-4 border-t border-pasture-600 flex justify-end gap-3">
+            <button
+              @click="closeDeliverModal()"
+              class="px-4 py-2 text-sm text-wool-400 hover:text-wool-200 transition-colors"
+              :disabled="deliverLoading"
+            >
+              Cancel
+            </button>
+            <button
+              @click="confirmDeliver()"
+              :disabled="!deliverBranch.trim() || deliverLoading"
+              class="px-4 py-2 text-sm bg-sage hover:bg-sage/80 text-pasture-900 font-medium rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+            >
+              <span x-show="deliverLoading" class="animate-spin">
+                <i data-lucide="loader-2" class="w-4 h-4"></i>
+              </span>
+              <span x-text="deliverLoading ? 'Delivering...' : 'Deliver'"></span>
+            </button>
+          </div>
+        </div>
+      </div>
+
     </section>
 
     <!-- Right Panel: Gyp (slide-out drawer) -->
@@ -1609,24 +2131,28 @@ Example:
           <span
             x-show="connected"
             class="w-2 h-2 rounded-full bg-sage"
-            title="Connected"
+            data-tooltip="Connected"
+            data-side="bottom"
           ></span>
           <span
             x-show="!connected && !loading"
             class="w-2 h-2 rounded-full bg-wool-600"
-            title="Disconnected"
+            data-tooltip="Disconnected"
+            data-side="bottom"
           ></span>
           <span
             x-show="loading"
             class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"
-            title="Connecting..."
+            data-tooltip="Connecting..."
+            data-side="bottom"
           ></span>
         </div>
         <div class="flex items-center gap-1">
           <button
             @click="disconnect(); aiChatOpen = false"
             class="p-1.5 rounded hover:bg-pasture-700 text-wool-500 hover:text-wool-300"
-            title="Close"
+            data-tooltip="Close"
+            data-side="bottom"
           >
             <i data-lucide="x" class="w-4 h-4"></i>
           </button>
@@ -1718,25 +2244,26 @@ Example:
                   ></p>
 
                   <!-- Tool calls -->
-                  <div x-show="msg.toolCalls && msg.toolCalls.length > 0" class="mt-2 space-y-1.5">
+                  <div x-show="msg.toolCalls && msg.toolCalls.length > 0" class="mt-3 space-y-1">
                     <template x-for="tool in (msg.toolCalls || [])" :key="tool.id">
                       <div
-                        class="ai-chat-tool-card px-3 py-2 text-xs"
+                        class="ai-chat-tool-card rounded-md border text-xs"
                         :class="{
-                          'ai-chat-tool-card-pending': tool.status === 'pending',
-                          'ai-chat-tool-card-running': tool.status === 'in_progress',
-                          'ai-chat-tool-card-completed': tool.status === 'completed',
-                          'ai-chat-tool-card-failed': tool.status === 'failed'
+                          'border-wool-700 bg-wool-800/30': tool.status === 'pending',
+                          'border-amber-500/40 bg-amber-900/10': tool.status === 'in_progress',
+                          'border-sage/30 bg-sage/5': tool.status === 'completed',
+                          'border-terra/40 bg-terra/10': tool.status === 'failed'
                         }"
                       >
-                        <div class="flex items-center gap-2">
-                          <span x-text="getToolIcon(tool.kind)"></span>
-                          <span class="font-medium text-wool-300" x-text="tool.title"></span>
+                        <div class="flex items-center gap-2 px-3 py-2">
+                          <span class="flex-shrink-0 text-wool-400" :class="{'animate-pulse': tool.status === 'in_progress'}" x-html="getToolIcon(tool.kind)"></span>
+                          <span class="font-medium text-wool-300 truncate" x-text="tool.title"></span>
                           <span
-                            class="ml-auto text-[10px] uppercase tracking-wide"
+                            class="ml-auto flex-shrink-0 flex items-center gap-1"
                             :class="getToolStatusClass(tool.status)"
-                            x-text="tool.status"
-                          ></span>
+                          >
+                            <span x-html="getToolStatusIcon(tool.status)"></span>
+                          </span>
                         </div>
                       </div>
                     </template>
@@ -1825,12 +2352,12 @@ Example:
   <footer class="status-bar px-4 py-1.5 border-t border-pasture-600 flex items-center justify-between text-xs">
     <div class="flex items-center gap-3 text-wool-600">
       <!-- Remote indicator -->
-      <span x-show="currentRunDetail?.remoteUrl" class="flex items-center gap-1.5 text-amber-400" :title="currentRunDetail?.remoteUrl">
+      <span x-show="currentRunDetail?.remoteUrl" class="flex items-center gap-1.5 text-amber-400" :data-tooltip="currentRunDetail?.remoteUrl" data-side="top">
         <i data-lucide="cloud" class="w-3 h-3 flex-shrink-0"></i>
         <span class="truncate max-w-[200px]" x-text="currentRunDetail?.remoteUrl?.replace(/^https?:\/\//, '').replace(/\.git$/, '').split('/').slice(-2).join('/') || 'remote'"></span>
       </span>
       <!-- Project path (truncated) - only show for local repos -->
-      <span x-show="currentRunDetail?.projectPath && !currentRunDetail?.remoteUrl" class="flex items-center gap-1.5 max-w-md truncate" :title="currentRunDetail?.projectPath">
+      <span x-show="currentRunDetail?.projectPath && !currentRunDetail?.remoteUrl" class="flex items-center gap-1.5 max-w-md truncate" :data-tooltip="currentRunDetail?.projectPath" data-side="top">
         <i data-lucide="folder" class="w-3 h-3 flex-shrink-0"></i>
         <span class="truncate" x-text="currentRunDetail?.projectPath?.split('/').slice(-2).join('/') || ''"></span>
       </span>
@@ -1856,6 +2383,128 @@ Example:
       </span>
     </div>
   </footer>
+
+  <!-- Worker Output Viewer Panel -->
+  <div
+    x-data="workerOutputViewer()"
+    x-cloak
+    x-show="visible"
+    x-transition:enter="transition ease-out duration-200"
+    x-transition:enter-start="translate-x-full"
+    x-transition:enter-end="translate-x-0"
+    x-transition:leave="transition ease-in duration-150"
+    x-transition:leave-start="translate-x-0"
+    x-transition:leave-end="translate-x-full"
+    class="fixed right-0 top-0 bottom-0 w-[600px] max-w-[90vw] bg-pasture-900 border-l border-pasture-600 shadow-2xl flex flex-col z-50"
+  >
+    <!-- Header -->
+    <div class="p-4 border-b border-pasture-600 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="text-wool-400" x-html="getIcon('terminal', 18)"></span>
+        <h2 class="text-sm font-medium text-wool-200">
+          Worker Output
+        </h2>
+        <span class="text-xs text-wool-500" x-text="workerName"></span>
+      </div>
+      <button
+        @click="hide()"
+        class="p-1.5 rounded hover:bg-pasture-700 text-wool-400 hover:text-wool-200 transition-colors"
+      >
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+    </div>
+
+    <!-- Loading state -->
+    <div x-show="loading" class="flex-1 flex items-center justify-center">
+      <div class="text-wool-500 flex items-center gap-2">
+        <i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i>
+        <span>Loading output...</span>
+      </div>
+    </div>
+
+    <!-- Error state -->
+    <div x-show="error && !loading" class="flex-1 flex items-center justify-center p-4">
+      <div class="text-center">
+        <div class="text-terra mb-2" x-text="error"></div>
+        <button @click="show(runName, workerName)" class="text-xs text-wool-400 hover:text-wool-200 underline">
+          Retry
+        </button>
+      </div>
+    </div>
+
+    <!-- Messages -->
+    <div x-show="!loading && !error" class="flex-1 overflow-y-auto output-messages p-4 space-y-3">
+      <!-- Empty state -->
+      <div x-show="messages.length === 0" class="text-center text-wool-500 py-8">
+        No output yet
+      </div>
+
+      <!-- Message list -->
+      <template x-for="msg in messages" :key="msg.id">
+        <div class="space-y-2">
+          <!-- Thinking block (collapsible) -->
+          <div x-show="msg.thinking && showThinking" class="text-xs">
+            <details class="group">
+              <summary class="cursor-pointer text-wool-500 hover:text-wool-400 flex items-center gap-1">
+                <i data-lucide="brain" class="w-3 h-3"></i>
+                <span>Thinking...</span>
+              </summary>
+              <div class="mt-1 pl-4 border-l border-wool-700 text-wool-400 whitespace-pre-wrap" x-text="msg.thinking"></div>
+            </details>
+          </div>
+
+          <!-- Content -->
+          <div
+            x-show="msg.content"
+            class="text-sm text-wool-200 whitespace-pre-wrap"
+            :class="{ 'ai-chat-streaming': msg.streaming }"
+            x-text="msg.content"
+          ></div>
+
+          <!-- Tool calls -->
+          <div x-show="msg.toolCalls && msg.toolCalls.length > 0" class="space-y-1">
+            <template x-for="tool in (msg.toolCalls || [])" :key="tool.id">
+              <div
+                class="rounded-md border text-xs"
+                :class="{
+                  'border-wool-700 bg-wool-800/30': tool.status === 'pending',
+                  'border-amber-500/40 bg-amber-900/10': tool.status === 'in_progress',
+                  'border-sage/30 bg-sage/5': tool.status === 'completed',
+                  'border-terra/40 bg-terra/10': tool.status === 'failed'
+                }"
+              >
+                <div class="flex items-center gap-2 px-3 py-2">
+                  <span class="flex-shrink-0 text-wool-400" :class="{'animate-pulse': tool.status === 'in_progress'}" x-html="getToolIcon(tool.kind)"></span>
+                  <span class="font-medium text-wool-300 truncate" x-text="tool.title"></span>
+                  <span class="ml-auto flex-shrink-0" :class="getToolStatusClass(tool.status)">
+                    <span x-html="getToolStatusIcon(tool.status)"></span>
+                  </span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Footer -->
+    <div class="p-3 border-t border-pasture-600 flex items-center justify-between text-xs text-wool-500">
+      <div class="flex items-center gap-3">
+        <label class="label gap-1.5 cursor-pointer">
+          <input type="checkbox" x-model="showThinking" class="input">
+          <span>Show thinking</span>
+        </label>
+        <label class="label gap-1.5 cursor-pointer">
+          <input type="checkbox" x-model="autoScroll" class="input">
+          <span>Auto-scroll</span>
+        </label>
+      </div>
+      <span x-show="streaming" class="flex items-center gap-1 text-amber-400">
+        <i data-lucide="loader-2" class="w-3 h-3 animate-spin"></i>
+        Streaming...
+      </span>
+    </div>
+  </div>
 
   <!-- Help Modal -->
   <div
@@ -1923,8 +2572,8 @@ Example:
             <div class="flex items-end gap-4">
               <!-- Theme Family Selector -->
               <div class="grid gap-2 flex-1">
-                <label>Theme</label>
-                <select x-model="familyValue" @change="switchFamily($event.target.value)">
+                <label class="label">Theme</label>
+                <select class="input" x-model="familyValue" @change="switchFamily($event.target.value)">
                   <option value="hirsel">Hirsel</option>
                   <option value="catppuccin">Catppuccin</option>
                 </select>
@@ -1932,7 +2581,7 @@ Example:
 
               <!-- Light/Dark Toggle -->
               <div class="grid gap-2">
-                <label>Mode</label>
+                <label class="label">Mode</label>
                 <button
                   @click="toggleDarkMode()"
                   class="btn h-10 px-4 flex items-center gap-2"
@@ -1946,8 +2595,8 @@ Example:
 
             <!-- Dark Variant Selector (Catppuccin only) -->
             <div x-show="familyValue === 'catppuccin' && isDarkMode" class="grid gap-2">
-              <label>Dark Variant</label>
-              <select x-model="darkVariantValue" @change="selectDarkVariant($event.target.value)">
+              <label class="label">Dark Variant</label>
+              <select class="input" x-model="darkVariantValue" @change="selectDarkVariant($event.target.value)">
                 <option value="catppuccin-mocha">Mocha (darkest)</option>
                 <option value="catppuccin-macchiato">Macchiato (medium)</option>
                 <option value="catppuccin-frappe">Frappé (lighter)</option>
@@ -1959,9 +2608,10 @@ Example:
 
           <!-- Agent Command -->
           <div class="grid gap-2">
-            <label>Agent Command</label>
+            <label class="label">Agent Command</label>
             <input
               type="text"
+              class="input"
               x-model="settings.agentCommand"
               placeholder="claude-code-acp"
             />
@@ -1970,9 +2620,10 @@ Example:
 
           <!-- Eval Timeout -->
           <div class="grid gap-2">
-            <label>Eval Timeout (seconds)</label>
+            <label class="label">Eval Timeout (seconds)</label>
             <input
               type="number"
+              class="input"
               x-model.number="settings.evalTimeout"
               min="60"
               step="60"
@@ -1988,6 +2639,7 @@ Example:
             <input
               type="checkbox"
               role="switch"
+              class="input"
               :checked="settings.humanInTheLoop"
               @change="settings.humanInTheLoop = $event.target.checked"
             />
@@ -2002,6 +2654,7 @@ Example:
             <input
               type="checkbox"
               role="switch"
+              class="input"
               :checked="settings.autoLearn"
               @change="settings.autoLearn = $event.target.checked"
             />
@@ -2009,9 +2662,10 @@ Example:
 
           <!-- Max Iterations -->
           <div class="grid gap-2">
-            <label>Max Iterations</label>
+            <label class="label">Max Iterations</label>
             <input
               type="number"
+              class="input"
               x-model.number="settings.maxIterations"
               placeholder="No limit"
               min="1"
@@ -2021,8 +2675,8 @@ Example:
 
           <!-- User Message Pause -->
           <div class="grid gap-2">
-            <label>Pause on User Message</label>
-            <select x-model="settings.userMessagePause">
+            <label class="label">Pause on User Message</label>
+            <select class="input" x-model="settings.userMessagePause">
               <option value="sender">Sender only</option>
               <option value="all">All workers</option>
               <option value="none">None</option>
@@ -2031,9 +2685,10 @@ Example:
 
           <!-- Compaction Threshold -->
           <div class="grid gap-2">
-            <label>Compaction Threshold (tokens)</label>
+            <label class="label">Compaction Threshold (tokens)</label>
             <input
               type="number"
+              class="input"
               x-model.number="settings.compactionThreshold"
               placeholder="10000"
               min="1000"
@@ -2043,23 +2698,27 @@ Example:
 
           <!-- Context Warning Threshold -->
           <div class="grid gap-2">
-            <label>Context Warning Threshold</label>
+            <div class="flex items-center justify-between">
+              <label class="label mb-0">Context Warning Threshold</label>
+              <span class="text-sm text-wool-300" x-text="Math.round((settings.contextWarningThreshold || 0.5) * 100) + '%'"></span>
+            </div>
             <input
-              type="number"
+              type="range"
+              class="input"
               x-model.number="settings.contextWarningThreshold"
-              placeholder="0.5"
               min="0.1"
               max="0.9"
               step="0.1"
             />
-            <p class="text-muted-foreground text-sm">Context utilization percentage to trigger warning (0.1-0.9)</p>
+            <p class="text-muted-foreground text-sm">Context utilization percentage to trigger warning</p>
           </div>
 
           <!-- Coordinator Port -->
           <div class="grid gap-2">
-            <label>Coordinator Port</label>
+            <label class="label">Coordinator Port</label>
             <input
               type="number"
+              class="input"
               x-model.number="settings.coordinatorPort"
               min="1024"
               max="65535"
@@ -2111,7 +2770,7 @@ Example:
           </div>
         </div>
         <div class="flex items-center gap-2">
-          <button @click="reset()" class="text-xs px-2 py-1 rounded bg-terra/20 text-terra hover:bg-terra/30 transition-colors" title="Reset game">
+          <button @click="reset()" class="text-xs px-2 py-1 rounded bg-terra/20 text-terra hover:bg-terra/30 transition-colors" data-tooltip="Reset game" data-side="bottom">
             Reset
           </button>
           <button @click="close()" class="text-wool-500 hover:text-wool-300 transition-colors">
@@ -2233,6 +2892,20 @@ Example:
       </div>
     </div>
   </div>
+
+  <!-- Confirm Dialog -->
+  <dialog id="confirm-dialog" class="dialog w-full max-w-md">
+    <div>
+      <header>
+        <h2 data-confirm-title class="text-lg font-semibold tracking-tight text-wool-100">Confirm</h2>
+        <p data-confirm-message class="text-sm text-wool-400">Are you sure?</p>
+      </header>
+      <footer>
+        <button data-confirm-cancel class="btn-secondary">Cancel</button>
+        <button data-confirm-ok class="btn-destructive">Confirm</button>
+      </footer>
+    </div>
+  </dialog>
 
   <!-- Basecoat Toaster -->
   <div id="toaster" class="toaster"></div>

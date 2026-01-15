@@ -152,3 +152,45 @@ export function getWorkerStatusIcon(status: string, size = 16): string {
   const iconName = WORKER_STATUS_ICON_NAMES[status] || 'circle';
   return getIcon(iconName, size);
 }
+
+/**
+ * Icon name mappings for tool kinds (AI tool calls)
+ */
+export const TOOL_KIND_ICON_NAMES: Record<string, string> = {
+  read: 'file-text',
+  edit: 'pencil',
+  delete: 'trash-2',
+  move: 'move',
+  search: 'search',
+  execute: 'terminal',
+  think: 'brain',
+  fetch: 'globe',
+  switch_mode: 'toggle-left',
+  default: 'wrench',
+};
+
+/**
+ * Icon name mappings for tool call status
+ */
+export const TOOL_STATUS_ICON_NAMES: Record<string, string> = {
+  pending: 'clock',
+  in_progress: 'loader-2',
+  completed: 'check',
+  failed: 'x',
+};
+
+/**
+ * Get tool kind icon SVG
+ */
+export function getToolKindIcon(kind: string | null, size = 14): string {
+  const iconName = TOOL_KIND_ICON_NAMES[kind || ''] || TOOL_KIND_ICON_NAMES.default;
+  return getIcon(iconName, size);
+}
+
+/**
+ * Get tool status icon SVG
+ */
+export function getToolStatusIcon(status: string, size = 12): string {
+  const iconName = TOOL_STATUS_ICON_NAMES[status] || 'clock';
+  return getIcon(iconName, size);
+}

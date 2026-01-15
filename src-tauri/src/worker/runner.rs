@@ -100,7 +100,12 @@ impl WorkerConfig {
     }
 
     /// Create a worker configuration with explicit values.
-    pub fn new(worker_name: String, run_name: String, run_dir: PathBuf, agent_command: Vec<String>) -> Self {
+    pub fn new(
+        worker_name: String,
+        run_name: String,
+        run_dir: PathBuf,
+        agent_command: Vec<String>,
+    ) -> Self {
         Self {
             worker_name,
             run_name,
@@ -156,7 +161,9 @@ impl WorkerRunner {
 
     /// Update worker heartbeat in the database.
     pub fn heartbeat(&mut self) -> WorkerResult<()> {
-        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.6f").to_string();
+        let now = chrono::Utc::now()
+            .format("%Y-%m-%dT%H:%M:%S%.6f")
+            .to_string();
         self.state
             .update_worker(
                 &self.config.worker_name,
@@ -381,10 +388,8 @@ impl WorkerRunner {
             .map_err(WorkerError::State)?;
 
         // Check if all workers are now inactive - if so, trigger eval
-        let eval_triggered = maybe_trigger_eval(
-            &self.config.run_name,
-            &self.config.run_dir,
-        ).unwrap_or(false);
+        let eval_triggered =
+            maybe_trigger_eval(&self.config.run_name, &self.config.run_dir).unwrap_or(false);
 
         Ok(serde_json::json!({
             "available_tasks": claimable.len(),
@@ -496,10 +501,8 @@ impl WorkerRunner {
         self.set_status(WorkerStatus::Awaiting)?;
 
         // Check if all workers are now inactive - if so, trigger eval
-        let eval_triggered = maybe_trigger_eval(
-            &self.config.run_name,
-            &self.config.run_dir,
-        ).unwrap_or(false);
+        let eval_triggered =
+            maybe_trigger_eval(&self.config.run_name, &self.config.run_dir).unwrap_or(false);
 
         Ok(serde_json::json!({
             "success": true,

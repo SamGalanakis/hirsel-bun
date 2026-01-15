@@ -12,10 +12,10 @@ async function main() {
   try {
     // Connect to the Tauri socket server at startup
     await initializeSocket();
-    
+
     // Register all tools with the server
     registerAllTools(server);
-    
+
     // Connect the server to stdio transport
     const transport = new StdioServerTransport();
     await server.connect(transport);

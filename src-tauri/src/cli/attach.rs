@@ -12,7 +12,10 @@ pub fn run_attach(run_name: &str, target: Option<&str>, json: bool) -> anyhow::R
 
     if !run_dir.exists() {
         if json {
-            println!(r#"{{"success": false, "error": "Run '{}' not found"}}"#, run_name);
+            println!(
+                r#"{{"success": false, "error": "Run '{}' not found"}}"#,
+                run_name
+            );
         } else {
             eprintln!("Run '{}' not found", run_name);
         }
@@ -27,7 +30,10 @@ pub fn run_attach(run_name: &str, target: Option<&str>, json: bool) -> anyhow::R
 
     if workers.is_empty() && evals.is_empty() {
         if json {
-            println!(r#"{{"success": false, "error": "No workers or evals for run '{}'"}}"#, run_name);
+            println!(
+                r#"{{"success": false, "error": "No workers or evals for run '{}'"}}"#,
+                run_name
+            );
         } else {
             eprintln!("No workers or evals for run '{}'", run_name);
         }
@@ -58,14 +64,20 @@ pub fn run_attach(run_name: &str, target: Option<&str>, json: bool) -> anyhow::R
         } else {
             // Check if it's an eval name
             let eval_match = evals.iter().find(|e| {
-                let eval_name = e.eval_name.clone().unwrap_or_else(|| format!("eval_{}", e.id));
+                let eval_name = e
+                    .eval_name
+                    .clone()
+                    .unwrap_or_else(|| format!("eval_{}", e.id));
                 eval_name == target_name
             });
             if eval_match.is_some() {
                 ("eval", target_name.to_string())
             } else {
                 if json {
-                    println!(r#"{{"success": false, "error": "'{}' not found as worker or eval"}}"#, target_name);
+                    println!(
+                        r#"{{"success": false, "error": "'{}' not found as worker or eval"}}"#,
+                        target_name
+                    );
                 } else {
                     eprintln!("'{}' not found as worker or eval", target_name);
                 }
@@ -89,31 +101,44 @@ pub fn run_attach(run_name: &str, target: Option<&str>, json: bool) -> anyhow::R
                 }));
             }
             for e in &evals {
-                let eval_name = e.eval_name.clone().unwrap_or_else(|| format!("eval_{}", e.id));
+                let eval_name = e
+                    .eval_name
+                    .clone()
+                    .unwrap_or_else(|| format!("eval_{}", e.id));
                 targets.push(serde_json::json!({
                     "type": "eval",
                     "name": eval_name,
                     "status": e.status.as_str()
                 }));
             }
-            println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                "success": false,
-                "error": "Multiple targets available, specify one",
-                "targets": targets
-            }))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "success": false,
+                    "error": "Multiple targets available, specify one",
+                    "targets": targets
+                }))?
+            );
         } else {
             println!("Multiple targets available. Specify one:");
             println!();
             println!("Workers:");
             for w in &workers {
-                let leader_mark = if leader.as_ref() == Some(&w.name) { " (leader)" } else { "" };
+                let leader_mark = if leader.as_ref() == Some(&w.name) {
+                    " (leader)"
+                } else {
+                    ""
+                };
                 println!("  {} [{}]{}", w.name, w.status, leader_mark);
             }
             if !evals.is_empty() {
                 println!();
                 println!("Evals:");
                 for e in &evals {
-                    let eval_name = e.eval_name.clone().unwrap_or_else(|| format!("eval_{}", e.id));
+                    let eval_name = e
+                        .eval_name
+                        .clone()
+                        .unwrap_or_else(|| format!("eval_{}", e.id));
                     println!("  {} [{}]", eval_name, e.status);
                 }
             }
@@ -141,8 +166,11 @@ pub fn run_attach(run_name: &str, target: Option<&str>, json: bool) -> anyhow::R
             );
         } else {
             eprintln!("No tmux session '{}' found.", session_name);
-            eprintln!("{} '{}' may not be running.", selection_type, selection_name);
-            
+            eprintln!(
+                "{} '{}' may not be running.",
+                selection_type, selection_name
+            );
+
             // Check if there's a log file we can tail instead
             let log_file = run_dir.join("logs").join(format!("{}.log", selection_name));
             if log_file.exists() {
@@ -206,7 +234,9 @@ pub fn list_targets(run_name: &str) -> anyhow::Result<Vec<String>> {
     }
 
     for eval in state.get_evals(10)? {
-        let eval_name = eval.eval_name.unwrap_or_else(|| format!("eval_{}", eval.id));
+        let eval_name = eval
+            .eval_name
+            .unwrap_or_else(|| format!("eval_{}", eval.id));
         targets.push(eval_name);
     }
 

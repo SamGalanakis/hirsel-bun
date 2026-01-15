@@ -60,9 +60,7 @@ pub fn run_summary(
     // If regenerate requested or no summary exists, generate one
     let summary_text = if regenerate || existing_summary.is_none() {
         let generated = generate_summary(&state, run_name)?;
-        state
-            .set_summary(&generated)
-            .map_err(SummaryError::State)?;
+        state.set_summary(&generated).map_err(SummaryError::State)?;
         Some(generated)
     } else {
         existing_summary
@@ -73,7 +71,10 @@ pub fn run_summary(
     let tasks = state.get_tasks().map_err(SummaryError::State)?;
     let workers = state.get_workers().map_err(SummaryError::State)?;
 
-    let tasks_completed = tasks.iter().filter(|t| t.status == TaskStatus::Done).count();
+    let tasks_completed = tasks
+        .iter()
+        .filter(|t| t.status == TaskStatus::Done)
+        .count();
 
     if json_output {
         let summary = RunSummary {
@@ -187,11 +188,7 @@ fn generate_summary(state: &SQLiteState, run_name: &str) -> Result<String, Summa
     // Worker summary
     summary.push_str("## Workers\n");
     for worker in &workers {
-        summary.push_str(&format!(
-            "- {} ({})\n",
-            worker.name,
-            worker.status.as_str()
-        ));
+        summary.push_str(&format!("- {} ({})\n", worker.name, worker.status.as_str()));
     }
     summary.push('\n');
 

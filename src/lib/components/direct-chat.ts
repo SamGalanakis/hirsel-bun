@@ -23,6 +23,7 @@ import {
   stopChatSession,
   listenChatEvents,
 } from '../api';
+import { getToolKindIcon, getToolStatusIcon as getToolStatusIconSvg } from '../icons';
 
 /**
  * Direct chat Alpine component
@@ -360,7 +361,7 @@ Be concise.`;
     handleError(message: string) {
       this.error = message;
       this.streaming = false;
-      window.toast?.error(message, 'Chat Error');
+      window.toast?.error(message);
     },
 
     handleSessionEnded() {
@@ -427,21 +428,17 @@ Be concise.`;
     },
 
     getToolIcon(kind: string | null): string {
-      const icons: Record<string, string> = {
-        read: '\u{1F4C4}',     // 📄
-        edit: '\u{270F}',      // ✏️
-        execute: '\u{25B6}',   // ▶
-        search: '\u{1F50D}',   // 🔍
-        think: '\u{1F4AD}',    // 💭
-        fetch: '\u{1F310}',    // 🌐
-      };
-      return icons[kind || ''] || '\u{1F527}'; // 🔧
+      return getToolKindIcon(kind, 14);
+    },
+
+    getToolStatusIcon(status: string): string {
+      return getToolStatusIconSvg(status, 12);
     },
 
     getToolStatusClass(status: string): string {
       const classes: Record<string, string> = {
         pending: 'text-wool-500',
-        in_progress: 'text-amber-500 animate-pulse',
+        in_progress: 'text-amber-400',
         completed: 'text-sage',
         failed: 'text-terra',
       };

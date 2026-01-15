@@ -56,9 +56,7 @@ struct Usage {
 /// Get the path to a Claude session file
 fn get_session_file(session_id: &str, project_path: &str) -> PathBuf {
     // Claude stores sessions in ~/.claude/projects/<escaped-path>/<session-id>.jsonl
-    let escaped_path = project_path
-        .replace('/', "-")
-        .replace('.', "-");
+    let escaped_path = project_path.replace('/', "-").replace('.', "-");
 
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -155,24 +153,23 @@ pub fn get_session_metrics(session_id: Option<&str>, project_path: Option<&str>)
 
     // Calculate context utilization for Claude models
     let config = Config::default();
-    let (context_window, context_utilization) = if model.is_some()
-        && config.agent.agent_type() == AgentType::Claude
-    {
-        let model_name = model.as_ref().unwrap();
-        let window = get_context_window(model_name);
+    let (context_window, context_utilization) =
+        if model.is_some() && config.agent.agent_type() == AgentType::Claude {
+            let model_name = model.as_ref().unwrap();
+            let window = get_context_window(model_name);
 
-        // Current context size is approximately last input + output
-        let current_context = last_input_tokens + last_output_tokens;
-        let utilization = if window > 0 {
-            Some(current_context as f64 / window as f64)
+            // Current context size is approximately last input + output
+            let current_context = last_input_tokens + last_output_tokens;
+            let utilization = if window > 0 {
+                Some(current_context as f64 / window as f64)
+            } else {
+                None
+            };
+
+            (Some(window), utilization)
         } else {
-            None
+            (None, None)
         };
-
-        (Some(window), utilization)
-    } else {
-        (None, None)
-    };
 
     let metrics = SessionMetrics {
         turns,
@@ -197,10 +194,7 @@ pub fn get_run_metrics(workers: &[(Option<String>, Option<String>)]) -> SessionM
     let mut total = SessionMetrics::default();
 
     for (session_id, work_dir) in workers {
-        let metrics = get_session_metrics(
-            session_id.as_deref(),
-            work_dir.as_deref(),
-        );
+        let metrics = get_session_metrics(session_id.as_deref(), work_dir.as_deref());
 
         total.turns += metrics.turns;
         total.input_tokens += metrics.input_tokens;

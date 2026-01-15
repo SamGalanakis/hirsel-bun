@@ -32,7 +32,11 @@ pub fn execute(run_name: &str, json: bool) -> Result<(), Box<dyn std::error::Err
 }
 
 /// Print run status as JSON
-fn print_json(state: &SQLiteState, run_name: &str, files: &Files) -> Result<(), Box<dyn std::error::Error>> {
+fn print_json(
+    state: &SQLiteState,
+    run_name: &str,
+    files: &Files,
+) -> Result<(), Box<dyn std::error::Error>> {
     use crate::core::state::TaskStatus;
 
     let status = state.status()?;
@@ -46,37 +50,55 @@ fn print_json(state: &SQLiteState, run_name: &str, files: &Files) -> Result<(), 
     let summary = state.get_summary()?;
 
     // Build worker data with claimed tasks
-    let worker_data: Vec<_> = workers.iter().map(|w| {
-        let claimed_task = tasks.iter().find(|t| t.claimed_by.as_ref() == Some(&w.name));
-        serde_json::json!({
-            "name": w.name,
-            "status": w.status.as_str(),
-            "pid": w.pid,
-            "claimed_task": claimed_task.map(|t| &t.id),
+    let worker_data: Vec<_> = workers
+        .iter()
+        .map(|w| {
+            let claimed_task = tasks
+                .iter()
+                .find(|t| t.claimed_by.as_ref() == Some(&w.name));
+            serde_json::json!({
+                "name": w.name,
+                "status": w.status.as_str(),
+                "pid": w.pid,
+                "claimed_task": claimed_task.map(|t| &t.id),
+            })
         })
-    }).collect();
+        .collect();
 
     // Build task data
-    let task_data: Vec<_> = tasks.iter().map(|t| {
-        serde_json::json!({
-            "id": t.id,
-            "name": t.name,
-            "status": t.status.as_str(),
-            "claimed_by": t.claimed_by,
+    let task_data: Vec<_> = tasks
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "id": t.id,
+                "name": t.name,
+                "status": t.status.as_str(),
+                "claimed_by": t.claimed_by,
+            })
         })
-    }).collect();
+        .collect();
 
     // Build history data
-    let history_data: Vec<_> = history.iter().rev().map(|h| {
-        serde_json::json!({
-            "timestamp": h.timestamp,
-            "action": h.action,
-            "detail": h.detail,
+    let history_data: Vec<_> = history
+        .iter()
+        .rev()
+        .map(|h| {
+            serde_json::json!({
+                "timestamp": h.timestamp,
+                "action": h.action,
+                "detail": h.detail,
+            })
         })
-    }).collect();
+        .collect();
 
-    let tasks_done = tasks.iter().filter(|t| t.status == TaskStatus::Done).count();
-    let tasks_doing = tasks.iter().filter(|t| t.status == TaskStatus::Doing).count();
+    let tasks_done = tasks
+        .iter()
+        .filter(|t| t.status == TaskStatus::Done)
+        .count();
+    let tasks_doing = tasks
+        .iter()
+        .filter(|t| t.status == TaskStatus::Doing)
+        .count();
 
     let output = serde_json::json!({
         "name": run_name,
@@ -112,7 +134,11 @@ fn print_json(state: &SQLiteState, run_name: &str, files: &Files) -> Result<(), 
 }
 
 /// Print run status as formatted text
-fn print_text(state: &SQLiteState, files: &Files, run_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn print_text(
+    state: &SQLiteState,
+    files: &Files,
+    run_name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     use crate::core::state::TaskStatus;
 
     let status = state.status()?;
@@ -141,7 +167,10 @@ fn print_text(state: &SQLiteState, files: &Files, run_name: &str) -> Result<(), 
         let limit = time.limit_minutes;
         let remaining = time.remaining_minutes as i64;
         let pct = time.percent_elapsed as i64;
-        println!("  time     {}/{}m ({}% elapsed, {}m remaining)", elapsed, limit, pct, remaining);
+        println!(
+            "  time     {}/{}m ({}% elapsed, {}m remaining)",
+            elapsed, limit, pct, remaining
+        );
     }
 
     // Mode
@@ -155,11 +184,19 @@ fn print_text(state: &SQLiteState, files: &Files, run_name: &str) -> Result<(), 
 
         for worker in &workers {
             let status_icon = format_worker_status_icon(&worker.status);
-            let claimed_task = tasks.iter().find(|t| t.claimed_by.as_ref() == Some(&worker.name));
-            let task_str = claimed_task.map(|t| {
-                let name = if t.name.len() > 25 { &t.name[..25] } else { &t.name };
-                format!(" -> {}", name)
-            }).unwrap_or_default();
+            let claimed_task = tasks
+                .iter()
+                .find(|t| t.claimed_by.as_ref() == Some(&worker.name));
+            let task_str = claimed_task
+                .map(|t| {
+                    let name = if t.name.len() > 25 {
+                        &t.name[..25]
+                    } else {
+                        &t.name
+                    };
+                    format!(" -> {}", name)
+                })
+                .unwrap_or_default();
 
             let waiting_str = if worker.status == crate::core::state::WorkerStatus::Waiting {
                 " (waiting)"
@@ -167,7 +204,10 @@ fn print_text(state: &SQLiteState, files: &Files, run_name: &str) -> Result<(), 
                 ""
             };
 
-            println!("    {} {:<12}{}{}", status_icon, worker.name, task_str, waiting_str);
+            println!(
+                "    {} {:<12}{}{}",
+                status_icon, worker.name, task_str, waiting_str
+            );
         }
         println!();
     }
@@ -180,7 +220,10 @@ fn print_text(state: &SQLiteState, files: &Files, run_name: &str) -> Result<(), 
 
     // Tasks with progress
     if !tasks.is_empty() {
-        let tasks_done = tasks.iter().filter(|t| t.status == TaskStatus::Done).count();
+        let tasks_done = tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Done)
+            .count();
         let total = tasks.len();
 
         // Progress bar
@@ -192,7 +235,11 @@ fn print_text(state: &SQLiteState, files: &Files, run_name: &str) -> Result<(), 
         let mut task_iter = tasks.iter().enumerate().peekable();
         while let Some((i, t)) = task_iter.next() {
             let icon = format_task_status_icon(&t.status);
-            let name = if t.name.len() > 20 { &t.name[..20] } else { &t.name };
+            let name = if t.name.len() > 20 {
+                &t.name[..20]
+            } else {
+                &t.name
+            };
             let task_text = format!("{} {:<20}", icon, name);
 
             if i % 2 == 0 {
@@ -290,10 +337,20 @@ fn format_task_status_icon(status: &crate::core::state::TaskStatus) -> &'static 
 
 /// Create a progress bar with count
 fn format_progress(done: usize, total: usize, width: usize) -> String {
-    let pct = if total > 0 { (done as f64 / total as f64) * 100.0 } else { 0.0 };
+    let pct = if total > 0 {
+        (done as f64 / total as f64) * 100.0
+    } else {
+        0.0
+    };
     let filled = ((pct / 100.0) * width as f64).round() as usize;
     let empty = width.saturating_sub(filled);
-    format!("[{}{}] {}/{}", "=".repeat(filled), " ".repeat(empty), done, total)
+    format!(
+        "[{}{}] {}/{}",
+        "=".repeat(filled),
+        " ".repeat(empty),
+        done,
+        total
+    )
 }
 
 /// Create an ASCII progress bar (percentage)
@@ -301,7 +358,12 @@ fn format_progress(done: usize, total: usize, width: usize) -> String {
 fn progress_bar(percent: f64, width: usize) -> String {
     let filled = ((percent / 100.0) * width as f64).round() as usize;
     let empty = width.saturating_sub(filled);
-    format!("[{}{}] {:3.0}%", "=".repeat(filled), " ".repeat(empty), percent)
+    format!(
+        "[{}{}] {:3.0}%",
+        "=".repeat(filled),
+        " ".repeat(empty),
+        percent
+    )
 }
 
 #[cfg(test)]

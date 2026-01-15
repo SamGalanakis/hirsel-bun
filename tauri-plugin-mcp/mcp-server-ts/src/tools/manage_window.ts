@@ -31,7 +31,7 @@ export function registerManageWindowTool(server: McpServer) {
           width,
           height
         })}`);
-        
+
         await socketClient.sendCommand('manage_window', {
           operation,
           window_label,
@@ -40,7 +40,7 @@ export function registerManageWindowTool(server: McpServer) {
           width,
           height
         });
-        
+
         return {
           content: [
             {
@@ -63,4 +63,4 @@ export function registerManageWindowTool(server: McpServer) {
       }
     },
   );
-} 
+}

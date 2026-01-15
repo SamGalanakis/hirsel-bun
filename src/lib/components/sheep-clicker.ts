@@ -216,8 +216,14 @@ export function sheepClickerGame() {
       }
     },
 
-    reset() {
-      if (!confirm('Reset all progress? This cannot be undone!')) return;
+    async reset() {
+      const confirmed = await (window as any).confirmDialog?.show({
+        title: 'Reset progress?',
+        message: 'This will reset all your sheep clicker progress. This cannot be undone!',
+        confirmText: 'Reset',
+        danger: true,
+      }) ?? confirm('Reset all progress? This cannot be undone!');
+      if (!confirmed) return;
       this.wool = 0;
       this.totalWool = 0;
       this.woolPerClick = 1;

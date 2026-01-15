@@ -107,4 +107,4 @@ Using the `take_screenshot` tool from an MCP client:
 }
 ```
 
-The response will include base64-encoded image data that can be rendered or saved as a JPEG file. 
+The response will include base64-encoded image data that can be rendered or saved as a JPEG file.

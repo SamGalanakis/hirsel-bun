@@ -80,10 +80,140 @@ pub fn repo_name_from_url(url: &str) -> Option<String> {
     }
 }
 
+/// Result of parsing a GitHub URL
+#[derive(Debug, Clone)]
+pub struct ParsedRepoUrl {
+    /// The base repository URL (without branch path)
+    pub repo_url: String,
+    /// The branch name if specified in the URL (e.g., from /tree/branch-name)
+    pub branch: Option<String>,
+}
+
+/// Parse a GitHub URL and extract the base repo URL and optional branch
+///
+/// Handles URLs like:
+/// - https://github.com/user/repo
+/// - https://github.com/user/repo/tree/branch-name
+/// - https://github.com/user/repo/tree/feature/nested-branch
+/// - git@github.com:user/repo.git
+pub fn parse_github_url(url: &str) -> ParsedRepoUrl {
+    let trimmed = url.trim();
+
+    // Handle SSH format - no branch extraction possible
+    if trimmed.starts_with("git@") || trimmed.starts_with("ssh://") {
+        return ParsedRepoUrl {
+            repo_url: trimmed.to_string(),
+            branch: None,
+        };
+    }
+
+    // Handle HTTPS GitHub URLs with /tree/branch pattern
+    if let Some(tree_idx) = trimmed.find("/tree/") {
+        let repo_url = trimmed[..tree_idx].to_string();
+        let branch = trimmed[tree_idx + 6..].to_string(); // Skip "/tree/"
+
+        // Remove trailing slashes from branch
+        let branch = branch.trim_end_matches('/').to_string();
+
+        return ParsedRepoUrl {
+            repo_url,
+            branch: if branch.is_empty() {
+                None
+            } else {
+                Some(branch)
+            },
+        };
+    }
+
+    // Handle /blob/branch pattern (less common but valid)
+    if let Some(blob_idx) = trimmed.find("/blob/") {
+        let repo_url = trimmed[..blob_idx].to_string();
+        // Extract just the branch part (before any file path)
+        let rest = &trimmed[blob_idx + 6..];
+        let branch = rest.split('/').next().unwrap_or("").to_string();
+
+        return ParsedRepoUrl {
+            repo_url,
+            branch: if branch.is_empty() {
+                None
+            } else {
+                Some(branch)
+            },
+        };
+    }
+
+    // No branch in URL
+    ParsedRepoUrl {
+        repo_url: trimmed.trim_end_matches('/').to_string(),
+        branch: None,
+    }
+}
+
+/// List branches from a remote repository
+///
+/// Uses git ls-remote to fetch branch names without cloning.
+pub fn list_remote_branches(url: &str) -> Result<Vec<String>> {
+    use std::process::Command;
+
+    let output = Command::new("git")
+        .args(["ls-remote", "--heads", url])
+        .output()
+        .map_err(|e| GitError::Other(format!("Failed to run git ls-remote: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(GitError::Other(format!("git ls-remote failed: {}", stderr)));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut branches: Vec<String> = stdout
+        .lines()
+        .filter_map(|line| {
+            // Format: <sha>\trefs/heads/<branch-name>
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 2 {
+                parts[1].strip_prefix("refs/heads/").map(|s| s.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    branches.sort();
+    Ok(branches)
+}
+
+/// Check if a branch exists on a remote repository
+pub fn remote_branch_exists(url: &str, branch: &str) -> Result<bool> {
+    let branches = list_remote_branches(url)?;
+    Ok(branches.iter().any(|b| b == branch))
+}
+
+/// Checkout a specific branch in a repository
+///
+/// Opens the repository at the given path and checks out the specified branch.
+pub fn checkout_branch_at_path(repo_path: &Path, branch_name: &str) -> Result<()> {
+    let repo = get_repo(Some(repo_path))?;
+    checkout_branch(&repo, branch_name)
+}
+
 /// Clone a remote repository to a local directory
 ///
+/// Optionally checks out a specific branch after cloning.
 /// Returns the path to the cloned repository.
 pub fn clone_remote(url: &str, target_dir: &Path) -> Result<PathBuf> {
+    clone_remote_with_branch(url, target_dir, None)
+}
+
+/// Clone a remote repository to a local directory with optional branch checkout
+///
+/// If branch is specified, checks out that branch after cloning.
+/// Returns the path to the cloned repository.
+pub fn clone_remote_with_branch(
+    url: &str,
+    target_dir: &Path,
+    branch: Option<&str>,
+) -> Result<PathBuf> {
     if target_dir.exists() {
         info!("Clone target already exists: {:?}", target_dir);
         return Ok(target_dir.to_path_buf());
@@ -94,6 +224,12 @@ pub fn clone_remote(url: &str, target_dir: &Path) -> Result<PathBuf> {
     info!("Cloning {} to {:?}", url, target_dir);
 
     let repo = Repository::clone(url, target_dir)?;
+
+    // Checkout specific branch if requested
+    if let Some(branch_name) = branch {
+        info!("Checking out branch: {}", branch_name);
+        checkout_branch(&repo, branch_name)?;
+    }
 
     // Ensure we have a working directory
     let work_dir = repo
@@ -108,7 +244,11 @@ pub fn clone_remote(url: &str, target_dir: &Path) -> Result<PathBuf> {
 /// Push staging branch to a remote repository
 ///
 /// Creates or updates a branch on the remote.
-pub fn push_to_remote(work_dir: &Path, remote_url: &str, branch_name: &str) -> Result<(bool, String)> {
+pub fn push_to_remote(
+    work_dir: &Path,
+    remote_url: &str,
+    branch_name: &str,
+) -> Result<(bool, String)> {
     let repo = get_repo(Some(work_dir))?;
 
     // Make sure we're on staging
@@ -160,11 +300,7 @@ pub fn push_to_remote(work_dir: &Path, remote_url: &str, branch_name: &str) -> R
 
         // Try git credential helper for HTTPS
         if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
-            return git2::Cred::credential_helper(
-                &repo.config()?,
-                _url,
-                username_from_url,
-            );
+            return git2::Cred::credential_helper(&repo.config()?, _url, username_from_url);
         }
 
         Err(git2::Error::from_str("no credentials available"))
@@ -177,7 +313,10 @@ pub fn push_to_remote(work_dir: &Path, remote_url: &str, branch_name: &str) -> R
             // Clean up remote
             let _ = repo.remote_delete(remote_name);
             info!("Pushed to remote {} as branch {}", remote_url, branch_name);
-            Ok((true, format!("Pushed to branch '{}' on remote", branch_name)))
+            Ok((
+                true,
+                format!("Pushed to branch '{}' on remote", branch_name),
+            ))
         }
         Err(e) => {
             let _ = repo.remote_delete(remote_name);
@@ -192,9 +331,9 @@ pub fn push_to_remote(work_dir: &Path, remote_url: &str, branch_name: &str) -> R
 
 /// Open a git repository, searching parent directories if needed
 pub fn get_repo(cwd: Option<&Path>) -> Result<Repository> {
-    let path = cwd.map(|p| p.to_path_buf()).unwrap_or_else(|| {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-    });
+    let path = cwd
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
     Repository::discover(&path).map_err(|_| GitError::NotARepository(path))
 }
@@ -448,7 +587,10 @@ pub fn create_task_branch(work_dir: &Path, task_id: &str) -> Result<(bool, Strin
     checkout_branch(&repo, &branch_name)?;
 
     info!("Created task branch: {}", branch_name);
-    Ok((true, format!("Created branch '{}' from staging", branch_name)))
+    Ok((
+        true,
+        format!("Created branch '{}' from staging", branch_name),
+    ))
 }
 
 /// Get current task branch name if on a task/ branch
@@ -469,10 +611,7 @@ pub fn checkout_staging(work_dir: &Path) -> Result<(bool, String)> {
 }
 
 /// Merge a task branch to staging
-pub fn merge_task_to_staging(
-    work_dir: &Path,
-    task_id: Option<&str>,
-) -> Result<(bool, String)> {
+pub fn merge_task_to_staging(work_dir: &Path, task_id: Option<&str>) -> Result<(bool, String)> {
     let repo = get_repo(Some(work_dir))?;
 
     // Determine which branch to merge
@@ -497,7 +636,10 @@ pub fn merge_task_to_staging(
     // Commit any uncommitted changes first
     if is_dirty(&repo)? {
         add_all(&repo)?;
-        commit(&repo, &format!("WIP: uncommitted changes from {}", branch_name))?;
+        commit(
+            &repo,
+            &format!("WIP: uncommitted changes from {}", branch_name),
+        )?;
     }
 
     // Switch to staging
@@ -517,7 +659,10 @@ pub fn merge_task_to_staging(
                 let _ = branch.delete();
             }
             info!("Merged {} to staging and deleted branch", branch_name);
-            Ok((true, format!("Merged '{}' to staging successfully", branch_name)))
+            Ok((
+                true,
+                format!("Merged '{}' to staging successfully", branch_name),
+            ))
         }
         Err(GitError::MergeConflict(files)) => {
             let conflict_list = files.join("\n  - ");
@@ -653,7 +798,8 @@ pub fn push_staging_as_branch(
     }
 
     // Create the new branch from fetched staging
-    let remote_ref = project_repo.find_reference(&format!("refs/remotes/{}/staging", remote_name))?;
+    let remote_ref =
+        project_repo.find_reference(&format!("refs/remotes/{}/staging", remote_name))?;
     let commit = remote_ref.peel_to_commit()?;
     project_repo.branch(branch_name, &commit, false)?;
 
@@ -671,11 +817,7 @@ pub fn push_staging_as_branch(
 }
 
 /// Remove worker worktree and associated metadata
-pub fn remove_worker_worktree(
-    run_name: &str,
-    worker_name: &str,
-    runs_dir: &Path,
-) -> Result<()> {
+pub fn remove_worker_worktree(run_name: &str, worker_name: &str, runs_dir: &Path) -> Result<()> {
     let run_dir = runs_dir.join(run_name);
     let worker_dir = run_dir.join("work").join(worker_name);
     let staging_dir = run_dir.join("work").join("staging");
@@ -840,7 +982,9 @@ fn commit(repo: &Repository, message: &str) -> Result<Oid> {
 fn get_signature(repo: &Repository) -> Result<Signature<'static>> {
     // Try to get from repo config first
     if let Ok(config) = repo.config() {
-        let name = config.get_string("user.name").unwrap_or_else(|_| "hirsel".to_string());
+        let name = config
+            .get_string("user.name")
+            .unwrap_or_else(|_| "hirsel".to_string());
         let email = config
             .get_string("user.email")
             .unwrap_or_else(|_| "hirsel@localhost".to_string());
@@ -875,7 +1019,10 @@ fn perform_merge(repo: &Repository, their_commit: &Commit, branch_name: &str) ->
         // Fast-forward merge
         let refname = format!("refs/heads/{}", get_current_branch_from_repo(repo)?);
         let mut reference = repo.find_reference(&refname)?;
-        reference.set_target(their_commit.id(), &format!("Fast-forward to {}", branch_name))?;
+        reference.set_target(
+            their_commit.id(),
+            &format!("Fast-forward to {}", branch_name),
+        )?;
         repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
         return Ok(());
     }
@@ -937,7 +1084,11 @@ fn count_commits_between(repo: &Repository, base: Oid, head: Oid) -> Result<usiz
 }
 
 /// Generate diff between two repositories
-fn diff_between_repos(project_path: &Path, work_dir: &Path, stat_only: bool) -> Result<Option<String>> {
+fn diff_between_repos(
+    project_path: &Path,
+    work_dir: &Path,
+    stat_only: bool,
+) -> Result<Option<String>> {
     let project_repo = get_repo(Some(project_path))?;
     let work_branch = get_current_branch(work_dir)?;
 
@@ -956,7 +1107,8 @@ fn diff_between_repos(project_path: &Path, work_dir: &Path, stat_only: bool) -> 
 
     // Get trees for diff
     let head_tree = project_repo.head()?.peel_to_tree()?;
-    let remote_ref = project_repo.find_reference(&format!("refs/remotes/{}/{}", remote_name, work_branch))?;
+    let remote_ref =
+        project_repo.find_reference(&format!("refs/remotes/{}/{}", remote_name, work_branch))?;
     let remote_tree = remote_ref.peel_to_tree()?;
 
     // Generate diff

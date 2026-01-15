@@ -24,8 +24,6 @@ export function appState() {
     tasksDone: 0,
     tasksTotal: 0,
     isDarkTheme: isDarkTheme(),
-    isMaximized: false,
-    isWayland: false,
     sidebarCollapsed: false,
     _focusedRunIndex: -1,
 
@@ -40,44 +38,6 @@ export function appState() {
 
     toggleAiChat() {
       this.aiChatOpen = !this.aiChatOpen;
-    },
-
-    // Window controls (for frameless window)
-    async minimizeWindow() {
-      try {
-        if (window.tauriGetCurrentWindow) {
-          await window.tauriGetCurrentWindow().minimize();
-        }
-      } catch (e) {
-        console.error('minimize failed', e);
-      }
-    },
-
-    async toggleMaximize() {
-      try {
-        if (window.tauriGetCurrentWindow) {
-          const win = window.tauriGetCurrentWindow();
-          this.isMaximized = await win.isMaximized();
-          if (this.isMaximized) {
-            await win.unmaximize();
-          } else {
-            await win.maximize();
-          }
-          this.isMaximized = !this.isMaximized;
-        }
-      } catch (e) {
-        console.error('maximize failed', e);
-      }
-    },
-
-    async closeWindow() {
-      try {
-        if (window.tauriGetCurrentWindow) {
-          await window.tauriGetCurrentWindow().close();
-        }
-      } catch (e) {
-        console.error('close failed', e);
-      }
     },
 
     // Theme
@@ -120,13 +80,23 @@ export function appState() {
     getStatusBadgeClass,
     getStatusDotClass,
 
-    // Run actions (implemented in run-detail.ts)
+    // Run actions
     async pauseRun() {
-      // Stub - use run-detail component actions
+      if (!this.selectedRun || !window.tauriInvoke) return;
+      try {
+        await window.tauriInvoke('pause_run', { runName: this.selectedRun });
+      } catch (e) {
+        console.error('Failed to pause run:', e);
+      }
     },
 
     async resumeRun() {
-      // Stub - use run-detail component actions
+      if (!this.selectedRun || !window.tauriInvoke) return;
+      try {
+        await window.tauriInvoke('resume_run', { runName: this.selectedRun });
+      } catch (e) {
+        console.error('Failed to resume run:', e);
+      }
     },
 
     // Keyboard navigation
@@ -158,45 +128,29 @@ export function appState() {
     },
 
     async attachToWorker() {
-      if (window.tauriInvoke) {
-        try {
-          const workers = await window.tauriInvoke<Array<{ name: string }>>('get_workers', {
-            runName: this.selectedRun,
-          });
-          if (workers && workers.length > 0) {
-            await window.tauriInvoke('attach_worker', {
+      if (!this.selectedRun || !window.tauriInvoke) return;
+      try {
+        const workers = await window.tauriInvoke<Array<{ name: string }>>('get_workers', {
+          runName: this.selectedRun,
+        });
+        if (workers && workers.length > 0) {
+          // Show worker output viewer
+          window.dispatchEvent(new CustomEvent('show-worker-output', {
+            detail: {
               runName: this.selectedRun,
               workerName: workers[0].name,
-            });
-          }
-        } catch (e) {
-          const error = e as Error;
-          window.toast.error(error.message || String(e), 'Failed to attach');
+            },
+          }));
         }
+      } catch (e) {
+        const error = e as Error;
+        window.toast?.error('Failed to attach to run');
       }
     },
 
     // Initialization
     async init() {
       this.initTheme();
-
-      // Check if running on Wayland (minimize/maximize don't work there)
-      if (window.tauriInvoke) {
-        try {
-          this.isWayland = await window.tauriInvoke<boolean>('is_wayland');
-        } catch (e) {
-          console.warn('Failed to check Wayland:', e);
-        }
-      }
-
-      // Initialize window state
-      if (window.tauriGetCurrentWindow) {
-        try {
-          this.isMaximized = await window.tauriGetCurrentWindow().isMaximized();
-        } catch (e) {
-          console.warn('Failed to get window state:', e);
-        }
-      }
 
       // Listen for run selection
       window.addEventListener('run-selected', async (e: Event) => {

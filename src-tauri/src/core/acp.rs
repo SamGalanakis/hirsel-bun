@@ -200,12 +200,7 @@ pub fn create_hirsel_mcp_config(
 ) -> MCPServerConfig {
     let hirsel = hirsel_path.unwrap_or("hirsel");
 
-    MCPServerConfig::new(
-        "hirsel",
-        hirsel,
-        vec!["worker".into(), "mcp".into()],
-    )
-    .with_env(HashMap::from([
+    MCPServerConfig::new("hirsel", hirsel, vec!["__worker-mcp".into()]).with_env(HashMap::from([
         ("HIRSEL_RUN".into(), run_name.into()),
         ("HIRSEL_WORKER".into(), worker_name.into()),
     ]))
@@ -274,11 +269,15 @@ mod tests {
         let config = create_hirsel_mcp_config("my-run", "alpha", None);
         assert_eq!(config.name, "hirsel");
         assert_eq!(config.command, "hirsel");
-        assert_eq!(config.args, vec!["worker", "mcp"]);
+        assert_eq!(config.args, vec!["__worker-mcp"]);
 
         let env = config.env.unwrap();
-        assert!(env.iter().any(|e| e.name == "HIRSEL_RUN" && e.value == "my-run"));
-        assert!(env.iter().any(|e| e.name == "HIRSEL_WORKER" && e.value == "alpha"));
+        assert!(env
+            .iter()
+            .any(|e| e.name == "HIRSEL_RUN" && e.value == "my-run"));
+        assert!(env
+            .iter()
+            .any(|e| e.name == "HIRSEL_WORKER" && e.value == "alpha"));
     }
 
     #[test]

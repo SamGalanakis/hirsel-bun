@@ -272,7 +272,10 @@ impl AuthConfig {
 }
 
 /// Get credentials for an agent type as environment variables
-pub fn get_agent_env_vars(agent_type: AgentType, auth_config: &AuthConfig) -> HashMap<String, String> {
+pub fn get_agent_env_vars(
+    agent_type: AgentType,
+    auth_config: &AuthConfig,
+) -> HashMap<String, String> {
     let agent_auth = auth_config.get_auth_for(agent_type);
     agent_auth.get_credentials(agent_type)
 }
@@ -615,7 +618,9 @@ impl Config {
 
         let content = fs::read_to_string(&config_path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::PermissionDenied {
-                ConfigError::PermissionDenied { path: config_path.clone() }
+                ConfigError::PermissionDenied {
+                    path: config_path.clone(),
+                }
             } else {
                 ConfigError::ReadError {
                     path: config_path.clone(),
@@ -624,12 +629,13 @@ impl Config {
             }
         })?;
 
-        let data: toml::Value = content.parse().map_err(|e: toml::de::Error| {
-            ConfigError::InvalidToml {
-                path: config_path.clone(),
-                message: e.to_string(),
-            }
-        })?;
+        let data: toml::Value =
+            content
+                .parse()
+                .map_err(|e: toml::de::Error| ConfigError::InvalidToml {
+                    path: config_path.clone(),
+                    message: e.to_string(),
+                })?;
 
         let table = match data.as_table() {
             Some(t) => t,

@@ -11,14 +11,14 @@ pub mod worker;
 
 // Re-export commonly used types
 pub use cli::{parse_cli, parse_worker_cli, Cli, Commands, WorkerCli, WorkerCommands};
-pub use core::Files;
 pub use core::state;
-pub use worker::{WorkerRunner, WorkerConfig, WorkerError};
+pub use core::Files;
+pub use worker::{WorkerConfig, WorkerError, WorkerRunner};
 
 /// Run the CLI commands (called when invoked with arguments)
 pub fn run_cli() -> i32 {
-    use cli::*;
     use clap::Parser;
+    use cli::*;
 
     let cli = Cli::parse();
 
@@ -53,14 +53,22 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
             let result = run_go(&args)?;
             if json {
                 // Serialize manually since GoOutput doesn't derive Serialize
-                println!("{{\"run_name\": \"{}\", \"run_dir\": \"{}\", \"worker_count\": {}}}",
-                    result.run_name, result.run_dir.display(), result.worker_count);
+                println!(
+                    "{{\"run_name\": \"{}\", \"run_dir\": \"{}\", \"worker_count\": {}}}",
+                    result.run_name,
+                    result.run_dir.display(),
+                    result.worker_count
+                );
             } else {
                 println!("Started run: {}", result.run_name);
             }
         }
         Commands::Log(args) => {
-            let format = if json { OutputFormat::Json } else { OutputFormat::Pretty };
+            let format = if json {
+                OutputFormat::Json
+            } else {
+                OutputFormat::Pretty
+            };
             match run_log(&args.run_name, args.follow, args.limit, format) {
                 log::LogResult::Success => {}
                 log::LogResult::Empty => println!("No activity yet"),
@@ -113,8 +121,10 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
         Commands::Diff(args) => {
             let result = cli::diff::run_diff(&args.run_name, false)?;
             if json {
-                println!("{{\"run_name\": \"{}\", \"has_changes\": {}}}",
-                    result.run_name, result.has_changes);
+                println!(
+                    "{{\"run_name\": \"{}\", \"has_changes\": {}}}",
+                    result.run_name, result.has_changes
+                );
             } else if let Some(diff) = result.diff {
                 println!("{}", diff);
             } else {
@@ -143,7 +153,19 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
             }
         }
         Commands::Mode(args) => {
-            cli::view::execute(&args.run_name, json)?; // TODO: implement mode change
+            let run_dir = core::config::run_dir(&args.run_name);
+            let files = core::Files::new(&run_dir);
+            let state = core::state::SQLiteState::new(files.db_path())
+                .map_err(|e| format!("Failed to open database: {}", e))?;
+            let hitl = args.new_mode.to_lowercase() == "hitl";
+            state
+                .set_human_in_the_loop(hitl)
+                .map_err(|e| format!("Failed to set mode: {}", e))?;
+            if json {
+                println!(r#"{{"mode": "{}"}}"#, if hitl { "hitl" } else { "yolo" });
+            } else {
+                println!("Mode set to {}", if hitl { "hitl" } else { "yolo" });
+            }
         }
         Commands::Amend(args) => {
             let run_dir = core::config::run_dir(&args.run_name);
@@ -217,7 +239,10 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
             let agent_command: Vec<String> = serde_json::from_str(&args.agent_command)
                 .map_err(|e| format!("Invalid agent_command JSON: {}", e))?;
             let teammates = args.teammates.map(|t| {
-                t.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+                t.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
             });
 
             let config = worker::WorkerRunConfig {
@@ -238,14 +263,49 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
             let rt = tokio::runtime::Runtime::new()
                 .map_err(|e| format!("Failed to create runtime: {}", e))?;
             rt.block_on(async {
-                tokio::task::LocalSet::new().run_until(async {
-                    worker::run_acp_worker(config).await
-                }).await
-            }).map_err(|e| format!("Worker error: {}", e))?;
+                tokio::task::LocalSet::new()
+                    .run_until(async { worker::run_acp_worker(config).await })
+                    .await
+            })
+            .map_err(|e| format!("Worker error: {}", e))?;
         }
         Commands::EvalMcp => {
             // Internal command for eval MCP server
             worker::run_eval_mcp_server();
+        }
+        Commands::WorkerMcp => {
+            // Internal command for worker MCP server
+            worker::run_mcp_server().map_err(|e| format!("Worker MCP error: {}", e))?;
+        }
+        Commands::EvalRun(args) => {
+            // Internal command to run eval agent
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| format!("Failed to create runtime: {}", e))?;
+            rt.block_on(async {
+                tokio::task::LocalSet::new()
+                    .run_until(async {
+                        core::eval::run_eval_from_args(
+                            &args.run,
+                            &args.run_dir,
+                            &args.spec,
+                            &args.eval_spec,
+                            &args.agent_command,
+                        )
+                        .await
+                    })
+                    .await
+            })
+            .map_err(|e| format!("Eval error: {}", e))?;
+        }
+        Commands::Test(args) => {
+            cli::test::execute(
+                args.scenario.as_deref(),
+                args.run_name.as_deref(),
+                Some(&args.workers),
+                args.yolo,
+                json,
+            )
+            .map_err(|e| format!("Test error: {}", e))?;
         }
         // Completion helpers - handled by cli/mod.rs
         Commands::CompleteRuns | Commands::CompleteWorkers(_) | Commands::CompleteThreads(_) => {
@@ -262,8 +322,7 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
 pub fn run() {
     use std::sync::Arc;
 
-    let mut builder = tauri::Builder::default()
-        .plugin(tauri_plugin_log::Builder::new().build());
+    let mut builder = tauri::Builder::default().plugin(tauri_plugin_log::Builder::new().build());
 
     // Enable MCP plugin in debug builds for AI agent debugging
     #[cfg(debug_assertions)]
@@ -271,7 +330,7 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_mcp::init_with_config(
             tauri_plugin_mcp::PluginConfig::new("Hirsel".to_string())
                 .start_socket_server(true)
-                .socket_path("/tmp/hirsel-mcp.sock".into())
+                .socket_path("/tmp/hirsel-mcp.sock".into()),
         ));
     }
 
@@ -282,9 +341,9 @@ pub fn run() {
         .manage(chat_manager)
         .invoke_handler(gui::get_handlers())
         .setup(|app| {
-            // Set window background color to match app theme (prevents white flash on resize)
             use tauri::Manager;
             if let Some(window) = app.get_webview_window("main") {
+                // Set window background color to match app theme (prevents white flash on resize)
                 // Dark background color #1a1a1a = rgb(26, 26, 26)
                 let _ = window.set_background_color(Some(tauri::window::Color(26, 26, 26, 255)));
             }

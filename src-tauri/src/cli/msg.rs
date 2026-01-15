@@ -128,10 +128,7 @@ pub fn run(args: &MsgArgs) -> MsgResult<MsgOutput> {
             })
             .collect();
 
-        return Ok(MsgOutput::ThreadList {
-            run_name,
-            threads,
-        });
+        return Ok(MsgOutput::ThreadList { run_name, threads });
     }
 
     // Check thread exists
@@ -189,12 +186,17 @@ fn resume_waiting_workers(state: &SQLiteState, thread: &str) -> MsgResult<Vec<St
     let mut resumed = Vec::new();
 
     for worker in workers {
-        if worker.status == WorkerStatus::Waiting && worker.waiting_thread.as_deref() == Some(thread) {
+        if worker.status == WorkerStatus::Waiting
+            && worker.waiting_thread.as_deref() == Some(thread)
+        {
             // Clear waiting thread
-            state.update_worker(&worker.name, WorkerUpdate {
-                waiting_thread: Some(String::new()), // Clear waiting thread
-                ..Default::default()
-            })?;
+            state.update_worker(
+                &worker.name,
+                WorkerUpdate {
+                    waiting_thread: Some(String::new()), // Clear waiting thread
+                    ..Default::default()
+                },
+            )?;
             resumed.push(worker.name.clone());
 
             // Note: Actual worker resumption (spawning ACP client) would happen here

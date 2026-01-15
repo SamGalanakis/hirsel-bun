@@ -112,11 +112,10 @@ pub fn read_template_eval(template: &Template) -> Result<Option<String>, Templat
     }
 
     let eval_path = template.path.join("eval.md");
-    let content =
-        std::fs::read_to_string(&eval_path).map_err(|e| TemplateError::ReadError {
-            name: template.name.clone(),
-            reason: e.to_string(),
-        })?;
+    let content = std::fs::read_to_string(&eval_path).map_err(|e| TemplateError::ReadError {
+        name: template.name.clone(),
+        reason: e.to_string(),
+    })?;
 
     Ok(Some(content))
 }
@@ -135,7 +134,10 @@ pub fn run_templates(json_output: bool) -> Result<String, TemplateError> {
     }
 
     if templates.is_empty() {
-        return Ok("No templates found\n\nCreate templates in ~/.hirsel/templates/<name>/spec.md".to_string());
+        return Ok(
+            "No templates found\n\nCreate templates in ~/.hirsel/templates/<name>/spec.md"
+                .to_string(),
+        );
     }
 
     let mut output = String::from("Available Templates\n\n");

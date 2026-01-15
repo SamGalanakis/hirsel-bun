@@ -92,10 +92,7 @@ pub fn run_eval(
     // Create log file for this eval
     let logs_dir = run_dir.join("logs");
     fs::create_dir_all(&logs_dir)?;
-    let log_file = logs_dir.join(format!(
-        "eval_{}.log",
-        eval_name.unwrap_or("unnamed")
-    ));
+    let log_file = logs_dir.join(format!("eval_{}.log", eval_name.unwrap_or("unnamed")));
 
     // Start eval in database
     let eval_id = state.start_eval(
@@ -141,10 +138,7 @@ pub fn run_eval(
 }
 
 /// Execute the eval script and capture output
-fn execute_eval_script(
-    config: &EvalConfig,
-    log_file: &Path,
-) -> Result<EvalResult, EvalError> {
+fn execute_eval_script(config: &EvalConfig, log_file: &Path) -> Result<EvalResult, EvalError> {
     let script_path = Path::new(&config.script_path);
 
     // Determine how to run the script
@@ -502,6 +496,127 @@ pub struct EvalAcpResult {
     pub eval_name: String,
 }
 
+/// Entry point for the `__eval-run` CLI command.
+///
+/// This function is called by the background subprocess spawned by `maybe_trigger_eval`.
+/// It sets up the eval configuration and runs the ACP-based eval agent.
+pub async fn run_eval_from_args(
+    run_name: &str,
+    run_dir: &str,
+    spec_path: &str,
+    eval_spec_path: &str,
+    agent_command_json: &str,
+) -> Result<(), EvalError> {
+    use crate::core::Files;
+    use tracing::info;
+
+    let run_dir = std::path::PathBuf::from(run_dir);
+    let files = Files::new(&run_dir);
+
+    // Read spec and eval_spec content
+    let spec = fs::read_to_string(spec_path).map_err(|e| EvalError::Io(e))?;
+    let eval_spec = fs::read_to_string(eval_spec_path).map_err(|e| EvalError::Io(e))?;
+
+    // Parse agent command
+    let agent_command: Vec<String> = serde_json::from_str(agent_command_json)
+        .map_err(|e| EvalError::ProcessFailed(format!("Invalid agent command JSON: {}", e)))?;
+
+    // Get or create eval record in database
+    let state = SQLiteState::new(files.db_path())?;
+
+    // Create eval name based on sequential number (eval_1, eval_2, etc.)
+    let existing_evals = state.get_evals(1000)?;
+    let eval_number = existing_evals.len() + 1;
+    let eval_name = format!("eval_{}", eval_number);
+
+    // Create logs directory
+    let logs_dir = run_dir.join("logs");
+    fs::create_dir_all(&logs_dir)?;
+
+    // Create log and result files
+    let log_file = logs_dir.join(format!("{}.log", eval_name));
+    let result_file = run_dir
+        .join("tmp")
+        .join(format!("{}_result.json", eval_name));
+    fs::create_dir_all(run_dir.join("tmp"))?;
+
+    // Start eval in database
+    let eval_id = state.start_eval(
+        "staging",
+        Some(&eval_name),
+        Some(log_file.to_string_lossy().as_ref()),
+    )?;
+
+    info!(
+        "[{}] Starting eval {} (id={}) for run {}",
+        eval_name, eval_name, eval_id, run_name
+    );
+
+    // Build config for ACP eval
+    let staging_dir = run_dir.join("work").join("staging");
+    let config = EvalAcpConfig {
+        run_name: run_name.to_string(),
+        eval_name: eval_name.clone(),
+        eval_id,
+        spec,
+        eval_spec,
+        work_dir: staging_dir,
+        run_dir: run_dir.clone(),
+        result_file,
+        log_file,
+        timeout_secs: 600, // 10 minute timeout
+        agent_command,
+    };
+
+    // Run the eval
+    let result = run_eval_acp(config).await?;
+
+    // Update eval record with result
+    state.complete_eval(eval_id, result.success, &result.feedback)?;
+
+    // Update run status based on result
+    if result.success {
+        info!("[{}] Eval PASSED - marking run as Done", eval_name);
+        state.set_status(Status::Done)?;
+    } else {
+        // Check retry count
+        let evals = state.get_evals(100)?;
+        let failed_count = evals
+            .iter()
+            .filter(|e| e.status == EvalStatus::Failed)
+            .count();
+
+        if failed_count >= 3 {
+            info!(
+                "[{}] Eval FAILED ({} failures) - marking run as EvalFailed",
+                eval_name, failed_count
+            );
+            state.set_status(Status::EvalFailed)?;
+        } else {
+            info!(
+                "[{}] Eval FAILED ({} failures) - resuming workers for retry",
+                eval_name, failed_count
+            );
+
+            // Add feedback as a remediation task
+            let task_id = format!("eval_fix_{}", failed_count);
+            let task_desc = format!("Fix eval failures:\n\n{}", result.feedback);
+            state.add_task(&task_id, &task_desc, None, None)?;
+
+            // Set back to Working status to resume workers
+            state.set_status(Status::Working)?;
+
+            // Resume awaiting workers
+            let (cfg, _) = crate::core::Config::load()
+                .unwrap_or_else(|_| (crate::core::Config::default(), vec![]));
+            let agent_cmd = cfg.agent.command.clone();
+            let _ = crate::core::workers::resume_awaiting_workers(run_name, &run_dir, &agent_cmd);
+        }
+    }
+
+    Ok(())
+}
+
 /// Run an evaluation using an ACP agent.
 ///
 /// This spawns an AI agent with an eval MCP server that provides eval_pass/eval_fail
@@ -509,18 +624,18 @@ pub struct EvalAcpResult {
 /// tools to submit its verdict.
 pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalError> {
     use agent_client_protocol::{
-        Agent, ClientSideConnection, InitializeRequest, NewSessionRequest,
-        PromptRequest, SetSessionModeRequest, McpServer, McpServerStdio,
-        Implementation, ContentBlock, TextContent, ProtocolVersion, EnvVariable,
+        Agent, ClientSideConnection, ContentBlock, EnvVariable, Implementation, InitializeRequest,
+        McpServer, McpServerStdio, NewSessionRequest, PromptRequest, ProtocolVersion,
+        SetSessionModeRequest, TextContent,
     };
+    use std::sync::Arc;
     use tokio::process::Command;
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
-    use std::sync::Arc;
-    use tracing::{info, error};
+    use tracing::{error, info};
 
     // Build the full prompt
     let base_prompt = get_eval_prompt();
-    let time_context = ""; // TODO: Add time context if needed
+    let time_context = "";
     let full_prompt = format!(
         "{}\n\n## Run\n{}\n\n## Eval Name\n{}\n{}\n## Original Spec (what workers were asked to build)\n{}\n\n## Eval Specification (what to verify)\n{}\n\n## Work Directory\n{}\n\nYou are positioned in the project directory. Evaluate the code according to the specifications above. Use the eval tools to submit your verdict.",
         base_prompt,
@@ -533,21 +648,25 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
     );
 
     // Write log file header
-    fs::write(&config.log_file, format!(
-        "# Eval {} (id={})\n# Started: {}\n\n",
-        config.eval_name,
-        config.eval_id,
-        chrono::Local::now().format("%Y-%m-%dT%H:%M:%S")
-    ))?;
+    fs::write(
+        &config.log_file,
+        format!(
+            "# Eval {} (id={})\n# Started: {}\n\n",
+            config.eval_name,
+            config.eval_id,
+            chrono::Local::now().format("%Y-%m-%dT%H:%M:%S")
+        ),
+    )?;
 
     // Get the hirsel executable for eval MCP server
     let hirsel_exe = std::env::current_exe()
         .map_err(|e| EvalError::ProcessFailed(format!("Failed to get current exe: {}", e)))?;
 
     // Create MCP server config for eval
-    let mcp_env = vec![
-        EnvVariable::new("HIRSEL_EVAL_RESULT_FILE", config.result_file.to_string_lossy().as_ref()),
-    ];
+    let mcp_env = vec![EnvVariable::new(
+        "HIRSEL_EVAL_RESULT_FILE",
+        config.result_file.to_string_lossy().as_ref(),
+    )];
 
     let mcp_stdio = McpServerStdio::new("eval", hirsel_exe.to_string_lossy().as_ref())
         .args(vec!["__eval-mcp".to_string()])
@@ -556,7 +675,9 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
 
     // Spawn the agent process
     if config.agent_command.is_empty() {
-        return Err(EvalError::ProcessFailed("Agent command is empty".to_string()));
+        return Err(EvalError::ProcessFailed(
+            "Agent command is empty".to_string(),
+        ));
     }
 
     let mut cmd = Command::new(&config.agent_command[0]);
@@ -570,15 +691,24 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
         .stderr(std::process::Stdio::null())
         .env("ACP_PERMISSION_MODE", "bypassPermissions");
 
-    let mut child = cmd.spawn()
+    let mut child = cmd
+        .spawn()
         .map_err(|e| EvalError::ProcessFailed(format!("Failed to spawn agent: {}", e)))?;
 
-    let stdin = child.stdin.take()
+    let stdin = child
+        .stdin
+        .take()
         .ok_or_else(|| EvalError::ProcessFailed("Failed to get stdin".to_string()))?;
-    let stdout = child.stdout.take()
+    let stdout = child
+        .stdout
+        .take()
         .ok_or_else(|| EvalError::ProcessFailed("Failed to get stdout".to_string()))?;
 
-    info!("[{}] Eval agent process started, pid={}", config.eval_name, child.id().unwrap_or(0));
+    info!(
+        "[{}] Eval agent process started, pid={}",
+        config.eval_name,
+        child.id().unwrap_or(0)
+    );
 
     // Convert tokio streams to futures-compatible streams
     let stdin_compat = stdin.compat_write();
@@ -586,15 +716,17 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
 
     // Create the client
     let db_path = config.run_dir.join("hirsel.db");
-    let client = Arc::new(crate::worker::acp_client::HirselClient::new(&config.eval_name, &config.log_file, &db_path));
+    let client = Arc::new(crate::worker::acp_client::HirselClient::new(
+        &config.eval_name,
+        &config.log_file,
+        &db_path,
+    ));
 
     // Create ACP connection
-    let (conn, io_task) = ClientSideConnection::new(
-        client.clone(),
-        stdin_compat,
-        stdout_compat,
-        |fut| { tokio::task::spawn_local(fut); },
-    );
+    let (conn, io_task) =
+        ClientSideConnection::new(client.clone(), stdin_compat, stdout_compat, |fut| {
+            tokio::task::spawn_local(fut);
+        });
 
     // Spawn the IO task
     let io_handle = tokio::task::spawn_local(async move {
@@ -604,25 +736,33 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
     });
 
     // Initialize
-    let init_request = InitializeRequest::new(ProtocolVersion::LATEST)
-        .client_info(Implementation::new("hirsel-eval", env!("CARGO_PKG_VERSION")));
+    let init_request = InitializeRequest::new(ProtocolVersion::LATEST).client_info(
+        Implementation::new("hirsel-eval", env!("CARGO_PKG_VERSION")),
+    );
 
-    conn.initialize(init_request).await
+    conn.initialize(init_request)
+        .await
         .map_err(|e| EvalError::ProcessFailed(format!("ACP initialize failed: {}", e)))?;
 
     // Create session with MCP server
     let session_request = NewSessionRequest::new(config.work_dir.to_string_lossy().to_string())
         .mcp_servers(vec![mcp_server]);
 
-    let session = conn.new_session(session_request).await
+    let session = conn
+        .new_session(session_request)
+        .await
         .map_err(|e| EvalError::ProcessFailed(format!("Failed to create session: {}", e)))?;
 
     let session_id = session.session_id;
-    info!("[{}] Created eval session: {}", config.eval_name, session_id);
+    info!(
+        "[{}] Created eval session: {}",
+        config.eval_name, session_id
+    );
 
     // Set to bypass permissions mode
     let mode_request = SetSessionModeRequest::new(session_id.clone(), "bypassPermissions");
-    conn.set_session_mode(mode_request).await
+    conn.set_session_mode(mode_request)
+        .await
         .map_err(|e| EvalError::ProcessFailed(format!("Failed to set mode: {}", e)))?;
 
     // Prompt loop with retries
@@ -631,9 +771,7 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
 
     loop {
         // Build prompt content
-        let prompt_content = vec![
-            ContentBlock::Text(TextContent::new(current_prompt.clone()))
-        ];
+        let prompt_content = vec![ContentBlock::Text(TextContent::new(current_prompt.clone()))];
         let prompt_request = PromptRequest::new(session_id.clone(), prompt_content);
 
         let timeout = tokio::time::Duration::from_secs(config.timeout_secs);
@@ -679,8 +817,7 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
     }
 
     // Read result file
-    let result_content = fs::read_to_string(&config.result_file)
-        .map_err(|e| EvalError::Io(e))?;
+    let result_content = fs::read_to_string(&config.result_file).map_err(|e| EvalError::Io(e))?;
 
     #[derive(serde::Deserialize)]
     struct ResultFile {
@@ -695,7 +832,10 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
     let _ = child.kill().await;
     io_handle.abort();
 
-    info!("[{}] Eval completed: success={}", config.eval_name, result.success);
+    info!(
+        "[{}] Eval completed: success={}",
+        config.eval_name, result.success
+    );
 
     Ok(EvalAcpResult {
         success: result.success,

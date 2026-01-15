@@ -89,7 +89,9 @@ impl Files {
 
     /// Path to a worker's log file in tmp/.
     pub fn worker_log(&self, worker_name: &str) -> PathBuf {
-        self.run_dir.join("tmp").join(format!("{}.log", worker_name))
+        self.run_dir
+            .join("tmp")
+            .join(format!("{}.log", worker_name))
     }
 
     /// Path to a chat thread file.
@@ -139,7 +141,8 @@ impl Files {
     pub fn init_tasks_md(&self) -> io::Result<()> {
         let tasks_md = self.tasks_md();
         if !tasks_md.exists() {
-            let header = "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n";
+            let header =
+                "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n";
             fs::write(&tasks_md, header)?;
         }
         Ok(())
@@ -210,7 +213,11 @@ impl Files {
 
         for line in content.lines() {
             if let Some(captures) = TASK_ROW_RE.captures(line.trim()) {
-                let claimed_by = captures.get(3).map(|m| m.as_str().trim()).filter(|s| !s.is_empty()).map(String::from);
+                let claimed_by = captures
+                    .get(3)
+                    .map(|m| m.as_str().trim())
+                    .filter(|s| !s.is_empty())
+                    .map(String::from);
 
                 tasks.push(ParsedTask {
                     id: captures[1].to_string(),
@@ -477,7 +484,9 @@ mod tests {
 
         // Should not overwrite existing
         fs::write(files.task_detail("my_task"), "modified content").unwrap();
-        files.create_task_detail("my_task", "Different Name").unwrap();
+        files
+            .create_task_detail("my_task", "Different Name")
+            .unwrap();
         let content = fs::read_to_string(files.task_detail("my_task")).unwrap();
         assert_eq!(content, "modified content");
     }
@@ -487,14 +496,12 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let files = Files::new(temp.path());
 
-        let tasks = vec![
-            ParsedTask {
-                id: "task_one".to_string(),
-                status: "todo".to_string(),
-                claimed_by: None,
-                name: "First task".to_string(),
-            },
-        ];
+        let tasks = vec![ParsedTask {
+            id: "task_one".to_string(),
+            status: "todo".to_string(),
+            claimed_by: None,
+            name: "First task".to_string(),
+        }];
 
         files.update_tasks_md(&tasks).unwrap();
 

@@ -4,9 +4,14 @@
 
 /**
  * Format elapsed time in minutes to human-readable string
+ * Shows seconds for times under 1 minute
  */
 export function formatElapsed(minutes: number | null | undefined): string {
-  if (!minutes) return '0m';
+  if (minutes === null || minutes === undefined) return '0s';
+  if (minutes < 1) {
+    const seconds = Math.round(minutes * 60);
+    return seconds + 's';
+  }
   const m = Math.round(minutes);
   if (m < 60) return m + 'm';
   const h = Math.floor(m / 60);
@@ -75,4 +80,33 @@ export function calculateTimeProgress(
 ): number {
   if (!limit || !elapsed) return 0;
   return Math.min(100, Math.round((elapsed / limit) * 100));
+}
+
+/**
+ * Format a timestamp as relative time (e.g., "2h ago", "3d ago")
+ */
+export function formatRelativeTime(timestamp: string | null | undefined): string {
+  if (!timestamp) return '';
+  // Timestamps from backend are UTC but without 'Z' suffix - add it for proper parsing
+  const utcTimestamp = timestamp.endsWith('Z') ? timestamp : timestamp + 'Z';
+  const now = Date.now();
+  const then = new Date(utcTimestamp).getTime();
+  const diffMs = now - then;
+  const diffMins = Math.floor(diffMs / 60000);
+
+  if (diffMins < 1) return 'just now';
+  if (diffMins < 60) return diffMins + 'm ago';
+
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return diffHours + 'h ago';
+
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) return diffDays + 'd ago';
+
+  const diffWeeks = Math.floor(diffDays / 7);
+  if (diffWeeks < 4) return diffWeeks + 'w ago';
+
+  // For older dates, show the actual date
+  const d = new Date(utcTimestamp);
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 }

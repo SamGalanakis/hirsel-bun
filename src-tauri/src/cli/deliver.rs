@@ -7,7 +7,11 @@
 use crate::core::{config, git, state::SQLiteState, state::Status, Files};
 
 /// Execute the deliver command for a run
-pub fn execute(run_name: &str, branch: Option<&str>, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+pub fn execute(
+    run_name: &str,
+    branch: Option<&str>,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Check run exists
     if !config::run_exists(run_name) {
         return Err(format!("Run '{}' not found", run_name).into());
@@ -72,7 +76,9 @@ pub fn execute(run_name: &str, branch: Option<&str>, json: bool) -> Result<(), B
     }
 
     // Determine branch name
-    let branch_name = branch.unwrap_or(&format!("hirsel/{}", run_name)).to_string();
+    let branch_name = branch
+        .unwrap_or(&format!("hirsel/{}", run_name))
+        .to_string();
 
     // Deliver based on whether it's a remote or local repo
     let (success, message, is_remote) = if let Some(ref url) = remote_url {
@@ -91,14 +97,18 @@ pub fn execute(run_name: &str, branch: Option<&str>, json: bool) -> Result<(), B
                 });
                 println!("{}", serde_json::to_string_pretty(&output)?);
             } else {
-                eprintln!("Branch '{}' already exists in project repository", branch_name);
+                eprintln!(
+                    "Branch '{}' already exists in project repository",
+                    branch_name
+                );
                 eprintln!("Use --branch to specify a different name, or delete the existing branch first.");
             }
             return Ok(());
         }
 
         // Push staging as branch to local repo
-        let (success, message) = git::push_staging_as_branch(&work_dir, &project_path, &branch_name)?;
+        let (success, message) =
+            git::push_staging_as_branch(&work_dir, &project_path, &branch_name)?;
         (success, message, false)
     };
 
@@ -140,7 +150,11 @@ pub fn execute(run_name: &str, branch: Option<&str>, json: bool) -> Result<(), B
             println!("The branch has been pushed to the remote repository.");
             println!("Create a pull request to merge the changes.");
         } else {
-            println!("Delivered to branch '{}' in {}", branch_name, project_path.display());
+            println!(
+                "Delivered to branch '{}' in {}",
+                branch_name,
+                project_path.display()
+            );
             println!();
             println!("To review: git checkout {}", branch_name);
             println!("To merge:  git checkout main && git merge {}", branch_name);

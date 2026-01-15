@@ -16,18 +16,18 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
-    Draft,       // Configured but not started (no workers spawned)
+    Draft, // Configured but not started (no workers spawned)
     Idle,
     Working,
-    Paused,      // Manually paused by user
-    Runaway,     // Auto-paused due to max_iterations exceeded
-    TimedOut,    // Auto-paused due to time limit exceeded
+    Paused,   // Manually paused by user
+    Runaway,  // Auto-paused due to max_iterations exceeded
+    TimedOut, // Auto-paused due to time limit exceeded
     Eval,
-    EvalFailed,  // Max eval attempts reached
+    EvalFailed, // Max eval attempts reached
     Waiting,
     Done,
     Delivered,
-    Merged,      // Work merged to staging/main
+    Merged, // Work merged to staging/main
 }
 
 impl Status {
@@ -113,10 +113,10 @@ impl std::fmt::Display for EvalStatus {
 pub enum WorkerStatus {
     Idle,
     Working,
-    Waiting,   // Waiting for user reply
-    Awaiting,  // No work to do (no tasks available OR all work complete)
-    Paused,    // Worker paused (run is paused/runaway)
-    Error,     // Worker process died unexpectedly
+    Waiting,  // Waiting for user reply
+    Awaiting, // No work to do (no tasks available OR all work complete)
+    Paused,   // Worker paused (run is paused/runaway)
+    Error,    // Worker process died unexpectedly
 }
 
 impl WorkerStatus {
@@ -412,6 +412,7 @@ CREATE TABLE IF NOT EXISTS state (
     request TEXT,
     project_path TEXT,
     remote_url TEXT,
+    branch TEXT,
     unread_count INTEGER DEFAULT 0,
     human_in_the_loop INTEGER DEFAULT 1,
     summary TEXT,
@@ -552,6 +553,29 @@ impl SQLiteState {
 
     fn init_db(&mut self) -> StateResult<()> {
         self.db.execute_batch(SCHEMA)?;
+        self.run_migrations()?;
+        Ok(())
+    }
+
+    /// Run database migrations for schema changes
+    fn run_migrations(&mut self) -> StateResult<()> {
+        // Migration: Add branch column to state table (if not exists)
+        // SQLite doesn't have ADD COLUMN IF NOT EXISTS, so we check first
+        let has_branch_column: bool = self
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('state') WHERE name = 'branch'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0)
+            > 0;
+
+        if !has_branch_column {
+            self.db
+                .execute("ALTER TABLE state ADD COLUMN branch TEXT", [])?;
+        }
+
         Ok(())
     }
 
@@ -573,11 +597,12 @@ impl SQLiteState {
 
     /// Get the current run status
     pub fn status(&self) -> StateResult<Status> {
-        let status: String = self.db.query_row(
-            "SELECT status FROM state WHERE id = 1",
-            [],
-            |row| row.get(0),
-        ).unwrap_or_else(|_| "idle".to_string());
+        let status: String = self
+            .db
+            .query_row("SELECT status FROM state WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap_or_else(|_| "idle".to_string());
 
         Ok(Status::from_str(&status).unwrap_or(Status::Idle))
     }
@@ -619,11 +644,11 @@ impl SQLiteState {
 
     /// Get the request text
     pub fn get_request(&self) -> StateResult<Option<String>> {
-        match self.db.query_row(
-            "SELECT request FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-        ) {
+        match self
+            .db
+            .query_row("SELECT request FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
             Ok(val) => Ok(val),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(StateError::Sqlite(e)),
@@ -641,11 +666,11 @@ impl SQLiteState {
 
     /// Get the waiting reason
     pub fn get_waiting_reason(&self) -> StateResult<Option<String>> {
-        match self.db.query_row(
-            "SELECT waiting_reason FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-        ) {
+        match self
+            .db
+            .query_row("SELECT waiting_reason FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
             Ok(val) => Ok(val),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(StateError::Sqlite(e)),
@@ -663,11 +688,11 @@ impl SQLiteState {
 
     /// Get project path
     pub fn get_project_path(&self) -> StateResult<Option<String>> {
-        match self.db.query_row(
-            "SELECT project_path FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-        ) {
+        match self
+            .db
+            .query_row("SELECT project_path FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
             Ok(val) => Ok(val),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(StateError::Sqlite(e)),
@@ -685,11 +710,11 @@ impl SQLiteState {
 
     /// Get remote URL (for remote git repos)
     pub fn get_remote_url(&self) -> StateResult<Option<String>> {
-        match self.db.query_row(
-            "SELECT remote_url FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-        ) {
+        match self
+            .db
+            .query_row("SELECT remote_url FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
             Ok(val) => Ok(val),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(StateError::Sqlite(e)),
@@ -705,13 +730,48 @@ impl SQLiteState {
         Ok(())
     }
 
+    /// Get branch (source branch for the run)
+    pub fn get_branch(&self) -> StateResult<Option<String>> {
+        match self
+            .db
+            .query_row("SELECT branch FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set branch (source branch for the run)
+    pub fn set_branch(&self, branch: Option<&str>) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET branch = ?1, updated_at = ?2 WHERE id = 1",
+            params![branch, self.now()],
+        )?;
+        Ok(())
+    }
+
     /// Get created_at timestamp
     pub fn get_created_at(&self) -> StateResult<Option<String>> {
-        match self.db.query_row(
-            "SELECT created_at FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-        ) {
+        match self
+            .db
+            .query_row("SELECT created_at FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Get updated_at timestamp
+    pub fn get_updated_at(&self) -> StateResult<Option<String>> {
+        match self
+            .db
+            .query_row("SELECT updated_at FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
             Ok(val) => Ok(val),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(StateError::Sqlite(e)),
@@ -720,11 +780,11 @@ impl SQLiteState {
 
     /// Get summary
     pub fn get_summary(&self) -> StateResult<Option<String>> {
-        match self.db.query_row(
-            "SELECT summary FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-        ) {
+        match self
+            .db
+            .query_row("SELECT summary FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
             Ok(val) => Ok(val),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(StateError::Sqlite(e)),
@@ -743,11 +803,11 @@ impl SQLiteState {
 
     /// Get worker scale
     pub fn get_worker_scale(&self) -> StateResult<Option<String>> {
-        match self.db.query_row(
-            "SELECT worker_scale FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-        ) {
+        match self
+            .db
+            .query_row("SELECT worker_scale FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
             Ok(val) => Ok(val),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(StateError::Sqlite(e)),
@@ -823,11 +883,11 @@ impl SQLiteState {
 
     /// Get started_at timestamp
     pub fn get_started_at(&self) -> StateResult<Option<String>> {
-        match self.db.query_row(
-            "SELECT started_at FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-        ) {
+        match self
+            .db
+            .query_row("SELECT started_at FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
             Ok(val) => Ok(val),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(StateError::Sqlite(e)),
@@ -836,7 +896,9 @@ impl SQLiteState {
 
     /// Set started_at timestamp
     pub fn set_started_at(&self, timestamp: Option<&str>) -> StateResult<()> {
-        let ts = timestamp.map(|s| s.to_string()).unwrap_or_else(|| self.now());
+        let ts = timestamp
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| self.now());
         self.db.execute(
             "UPDATE state SET started_at = ?1, updated_at = ?2 WHERE id = 1",
             params![ts, self.now()],
@@ -877,18 +939,23 @@ impl SQLiteState {
 
     /// Get time info
     pub fn get_time_info(&self) -> StateResult<Option<TimeInfo>> {
-        let row: Option<(Option<i64>, Option<String>)> = self.db.query_row(
-            "SELECT time_limit_minutes, started_at FROM state WHERE id = 1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).ok();
+        let row: Option<(Option<i64>, Option<String>)> = self
+            .db
+            .query_row(
+                "SELECT time_limit_minutes, started_at FROM state WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
 
         match row {
             Some((Some(limit_minutes), Some(started_at_str))) => {
                 let started_at = DateTime::parse_from_rfc3339(&started_at_str)
                     .or_else(|_| DateTime::parse_from_str(&started_at_str, "%Y-%m-%dT%H:%M:%S%.f"))
                     .map(|dt| dt.with_timezone(&Local))
-                    .map_err(|_| StateError::InvalidState("Invalid started_at timestamp".to_string()))?;
+                    .map_err(|_| {
+                        StateError::InvalidState("Invalid started_at timestamp".to_string())
+                    })?;
 
                 let now = Local::now();
                 let elapsed = now.signed_duration_since(started_at);
@@ -947,11 +1014,11 @@ impl SQLiteState {
 
     /// Get max iterations
     pub fn get_max_iterations(&self) -> StateResult<Option<i64>> {
-        match self.db.query_row(
-            "SELECT max_iterations FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<i64>>(0),
-        ) {
+        match self
+            .db
+            .query_row("SELECT max_iterations FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<i64>>(0)
+            }) {
             Ok(val) => Ok(val),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(StateError::Sqlite(e)),
@@ -991,11 +1058,11 @@ impl SQLiteState {
 
     /// Get pause mode ("sender" or "all")
     pub fn get_pause_mode(&self) -> StateResult<String> {
-        match self.db.query_row(
-            "SELECT pause_mode FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-        ) {
+        match self
+            .db
+            .query_row("SELECT pause_mode FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
             Ok(Some(val)) => Ok(val),
             Ok(None) => Ok("sender".to_string()),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok("sender".to_string()),
@@ -1020,7 +1087,8 @@ impl SQLiteState {
         Ok(Task {
             id: row.get("id")?,
             name: row.get("name")?,
-            status: TaskStatus::from_str(&row.get::<_, String>("status")?).unwrap_or(TaskStatus::Todo),
+            status: TaskStatus::from_str(&row.get::<_, String>("status")?)
+                .unwrap_or(TaskStatus::Todo),
             created_at: row.get("created_at")?,
             completed_at: row.get("completed_at")?,
             claimed_by: row.get("claimed_by")?,
@@ -1053,7 +1121,8 @@ impl SQLiteState {
         let mut stmt = self.db.prepare(
             "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by FROM tasks WHERE parent_id = ?1 ORDER BY created_at"
         )?;
-        let tasks = stmt.query_map(params![task_id], Self::task_from_row)?
+        let tasks = stmt
+            .query_map(params![task_id], Self::task_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(tasks)
     }
@@ -1080,7 +1149,10 @@ impl SQLiteState {
         if let Some(pid) = parent_id {
             let parent_depth = self.get_task_depth(pid)?;
             if parent_depth == 0 {
-                return Err(StateError::NotFound(format!("Parent task '{}' not found", pid)));
+                return Err(StateError::NotFound(format!(
+                    "Parent task '{}' not found",
+                    pid
+                )));
             }
             if parent_depth >= 3 {
                 return Err(StateError::InvalidState(format!(
@@ -1119,7 +1191,8 @@ impl SQLiteState {
         let mut stmt = self.db.prepare(
             "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by FROM tasks ORDER BY created_at"
         )?;
-        let tasks = stmt.query_map([], Self::task_from_row)?
+        let tasks = stmt
+            .query_map([], Self::task_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(tasks)
     }
@@ -1150,7 +1223,11 @@ impl SQLiteState {
             _ => return Ok(false),
         };
 
-        for blocker_id in blocked_by.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        for blocker_id in blocked_by
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
             if let Some(blocker) = self.get_task(blocker_id)? {
                 if blocker.status != TaskStatus::Done {
                     return Ok(true);
@@ -1173,7 +1250,11 @@ impl SQLiteState {
         };
 
         let mut incomplete = vec![];
-        for blocker_id in blocked_by.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        for blocker_id in blocked_by
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
             if let Some(blocker) = self.get_task(blocker_id)? {
                 if blocker.status != TaskStatus::Done {
                     incomplete.push(blocker_id.to_string());
@@ -1214,7 +1295,12 @@ impl SQLiteState {
         let result = (|| -> StateResult<()> {
             let task = match self.get_task(task_id)? {
                 Some(t) => t,
-                None => return Err(StateError::NotFound(format!("Task '{}' not found", task_id))),
+                None => {
+                    return Err(StateError::NotFound(format!(
+                        "Task '{}' not found",
+                        task_id
+                    )))
+                }
             };
 
             if task.status != TaskStatus::Todo {
@@ -1232,11 +1318,14 @@ impl SQLiteState {
             }
 
             // Check if worker already has a claimed task
-            let existing: Option<String> = self.db.query_row(
-                "SELECT id FROM tasks WHERE claimed_by = ?1 AND status = ?2",
-                params![worker_name, TaskStatus::Doing.as_str()],
-                |row| row.get(0),
-            ).ok();
+            let existing: Option<String> = self
+                .db
+                .query_row(
+                    "SELECT id FROM tasks WHERE claimed_by = ?1 AND status = ?2",
+                    params![worker_name, TaskStatus::Doing.as_str()],
+                    |row| row.get(0),
+                )
+                .ok();
 
             if let Some(existing_id) = existing {
                 return Err(StateError::InvalidState(format!(
@@ -1250,7 +1339,10 @@ impl SQLiteState {
                 params![TaskStatus::Doing.as_str(), worker_name, self.now(), task_id],
             )?;
 
-            self.log_history("task_claim", Some(&format!("{} by {}", task_id, worker_name)))?;
+            self.log_history(
+                "task_claim",
+                Some(&format!("{} by {}", task_id, worker_name)),
+            )?;
             Ok(())
         })();
 
@@ -1270,7 +1362,12 @@ impl SQLiteState {
     pub fn unclaim_task(&self, task_id: &str, worker_name: &str) -> StateResult<()> {
         let task = match self.get_task(task_id)? {
             Some(t) => t,
-            None => return Err(StateError::NotFound(format!("Task '{}' not found", task_id))),
+            None => {
+                return Err(StateError::NotFound(format!(
+                    "Task '{}' not found",
+                    task_id
+                )))
+            }
         };
 
         if task.status != TaskStatus::Doing || task.claimed_by.as_deref() != Some(worker_name) {
@@ -1285,7 +1382,10 @@ impl SQLiteState {
             params![TaskStatus::Todo.as_str(), task_id],
         )?;
 
-        self.log_history("task_unclaim", Some(&format!("{} by {}", task_id, worker_name)))?;
+        self.log_history(
+            "task_unclaim",
+            Some(&format!("{} by {}", task_id, worker_name)),
+        )?;
         Ok(())
     }
 
@@ -1293,7 +1393,12 @@ impl SQLiteState {
     pub fn complete_task(&self, task_id: &str, worker_name: &str) -> StateResult<()> {
         let task = match self.get_task(task_id)? {
             Some(t) => t,
-            None => return Err(StateError::NotFound(format!("Task '{}' not found", task_id))),
+            None => {
+                return Err(StateError::NotFound(format!(
+                    "Task '{}' not found",
+                    task_id
+                )))
+            }
         };
 
         if task.status != TaskStatus::Doing || task.claimed_by.as_deref() != Some(worker_name) {
@@ -1308,7 +1413,10 @@ impl SQLiteState {
             params![TaskStatus::Done.as_str(), self.now(), task_id],
         )?;
 
-        self.log_history("task_done", Some(&format!("{} by {}", task_id, worker_name)))?;
+        self.log_history(
+            "task_done",
+            Some(&format!("{} by {}", task_id, worker_name)),
+        )?;
 
         // Auto-complete parent if all siblings are done
         if let Some(parent_id) = &task.parent_id {
@@ -1343,7 +1451,10 @@ impl SQLiteState {
             params![TaskStatus::Done.as_str(), self.now(), parent_id],
         )?;
 
-        self.log_history("task_done", Some(&format!("{} (auto-completed)", parent_id)))?;
+        self.log_history(
+            "task_done",
+            Some(&format!("{} (auto-completed)", parent_id)),
+        )?;
 
         // Recursively check grandparent
         if let Some(grandparent_id) = &parent.parent_id {
@@ -1357,7 +1468,12 @@ impl SQLiteState {
     pub fn reopen_task(&self, task_id: &str) -> StateResult<()> {
         let task = match self.get_task(task_id)? {
             Some(t) => t,
-            None => return Err(StateError::NotFound(format!("Task '{}' not found", task_id))),
+            None => {
+                return Err(StateError::NotFound(format!(
+                    "Task '{}' not found",
+                    task_id
+                )))
+            }
         };
 
         if task.status != TaskStatus::Done {
@@ -1398,7 +1514,12 @@ impl SQLiteState {
     pub fn delete_task(&self, task_id: &str) -> StateResult<()> {
         let task = match self.get_task(task_id)? {
             Some(t) => t,
-            None => return Err(StateError::NotFound(format!("Task '{}' not found", task_id))),
+            None => {
+                return Err(StateError::NotFound(format!(
+                    "Task '{}' not found",
+                    task_id
+                )))
+            }
         };
 
         if task.status == TaskStatus::Doing {
@@ -1438,8 +1559,13 @@ impl SQLiteState {
         let all_tasks = self.get_tasks()?;
         for t in all_tasks {
             if let Some(blocked_by) = &t.blocked_by {
-                let blockers: Vec<&str> = blocked_by.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
-                let new_blockers: Vec<&str> = blockers.into_iter()
+                let blockers: Vec<&str> = blocked_by
+                    .split(',')
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                let new_blockers: Vec<&str> = blockers
+                    .into_iter()
                     .filter(|b| !all_to_delete.contains(&b.to_string()))
                     .collect();
                 if new_blockers.len() != blocked_by.split(',').count() {
@@ -1458,7 +1584,8 @@ impl SQLiteState {
 
         // Delete all tasks
         for tid in &all_to_delete {
-            self.db.execute("DELETE FROM tasks WHERE id = ?1", params![tid])?;
+            self.db
+                .execute("DELETE FROM tasks WHERE id = ?1", params![tid])?;
         }
 
         let detail = if all_to_delete.len() > 1 {
@@ -1512,7 +1639,12 @@ impl SQLiteState {
     pub fn admin_complete_task(&self, task_id: &str) -> StateResult<()> {
         let task = match self.get_task(task_id)? {
             Some(t) => t,
-            None => return Err(StateError::NotFound(format!("Task '{}' not found", task_id))),
+            None => {
+                return Err(StateError::NotFound(format!(
+                    "Task '{}' not found",
+                    task_id
+                )))
+            }
         };
 
         if task.status == TaskStatus::Done {
@@ -1538,7 +1670,12 @@ impl SQLiteState {
     pub fn admin_unclaim_task(&self, task_id: &str) -> StateResult<()> {
         let task = match self.get_task(task_id)? {
             Some(t) => t,
-            None => return Err(StateError::NotFound(format!("Task '{}' not found", task_id))),
+            None => {
+                return Err(StateError::NotFound(format!(
+                    "Task '{}' not found",
+                    task_id
+                )))
+            }
         };
 
         if task.status != TaskStatus::Doing {
@@ -1550,10 +1687,7 @@ impl SQLiteState {
             params![TaskStatus::Todo.as_str(), task_id],
         )?;
 
-        self.log_history(
-            "task_unclaim",
-            Some(&format!("{} (admin)", task_id)),
-        )?;
+        self.log_history("task_unclaim", Some(&format!("{} (admin)", task_id)))?;
         Ok(())
     }
 
@@ -1568,18 +1702,29 @@ impl SQLiteState {
             pid: row.get("pid")?,
             session_id: row.get("session_id")?,
             session_started_at: row.get("session_started_at")?,
-            status: WorkerStatus::from_str(&row.get::<_, String>("status")?).unwrap_or(WorkerStatus::Idle),
+            status: WorkerStatus::from_str(&row.get::<_, String>("status")?)
+                .unwrap_or(WorkerStatus::Idle),
             work_dir: row.get("work_dir")?,
             waiting_thread: row.get("waiting_thread")?,
-            needs_restart: row.get::<_, Option<i64>>("needs_restart")?.map(|v| v != 0).unwrap_or(false),
-            location: row.get::<_, Option<String>>("location")?.unwrap_or_else(|| "local".to_string()),
+            needs_restart: row
+                .get::<_, Option<i64>>("needs_restart")?
+                .map(|v| v != 0)
+                .unwrap_or(false),
+            location: row
+                .get::<_, Option<String>>("location")?
+                .unwrap_or_else(|| "local".to_string()),
             last_heartbeat: row.get("last_heartbeat")?,
             created_at: row.get("created_at")?,
         })
     }
 
     /// Add a new worker
-    pub fn add_worker(&self, name: &str, work_dir: &str, location: &str) -> StateResult<Option<Worker>> {
+    pub fn add_worker(
+        &self,
+        name: &str,
+        work_dir: &str,
+        location: &str,
+    ) -> StateResult<Option<Worker>> {
         match self.db.execute(
             "INSERT INTO workers (name, status, work_dir, location, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![name, WorkerStatus::Idle.as_str(), work_dir, location, self.now()],
@@ -1614,7 +1759,8 @@ impl SQLiteState {
         let mut stmt = self.db.prepare(
             "SELECT id, name, pid, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at FROM workers ORDER BY id"
         )?;
-        let workers = stmt.query_map([], Self::worker_from_row)?
+        let workers = stmt
+            .query_map([], Self::worker_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(workers)
     }
@@ -1624,10 +1770,14 @@ impl SQLiteState {
         let mut stmt = self.db.prepare(
             "SELECT id, name, pid, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at FROM workers WHERE status NOT IN (?1, ?2) ORDER BY id"
         )?;
-        let workers = stmt.query_map(
-            params![WorkerStatus::Awaiting.as_str(), WorkerStatus::Error.as_str()],
-            Self::worker_from_row
-        )?
+        let workers = stmt
+            .query_map(
+                params![
+                    WorkerStatus::Awaiting.as_str(),
+                    WorkerStatus::Error.as_str()
+                ],
+                Self::worker_from_row,
+            )?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(workers)
     }
@@ -1681,7 +1831,8 @@ impl SQLiteState {
             set_clauses.join(", ")
         );
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
         self.db.execute(&sql, params_refs.as_slice())?;
         Ok(())
     }
@@ -1690,7 +1841,10 @@ impl SQLiteState {
     pub fn all_workers_inactive(&self) -> StateResult<bool> {
         let count: i64 = self.db.query_row(
             "SELECT COUNT(*) FROM workers WHERE status NOT IN (?1, ?2)",
-            params![WorkerStatus::Awaiting.as_str(), WorkerStatus::Error.as_str()],
+            params![
+                WorkerStatus::Awaiting.as_str(),
+                WorkerStatus::Error.as_str()
+            ],
             |row| row.get(0),
         )?;
         Ok(count == 0)
@@ -1704,14 +1858,21 @@ impl SQLiteState {
         let workers = self.get_workers()?;
         for w in workers {
             if w.status == WorkerStatus::Working {
-                self.update_worker(&w.name, WorkerUpdate {
-                    status: Some(WorkerStatus::Paused),
-                    ..Default::default()
-                })?;
+                self.update_worker(
+                    &w.name,
+                    WorkerUpdate {
+                        status: Some(WorkerStatus::Paused),
+                        ..Default::default()
+                    },
+                )?;
             }
         }
 
-        let detail = if reason.len() > 100 { &reason[..100] } else { reason };
+        let detail = if reason.len() > 100 {
+            &reason[..100]
+        } else {
+            reason
+        };
         self.log_history("pause_all", Some(detail))?;
         Ok(())
     }
@@ -1724,10 +1885,13 @@ impl SQLiteState {
         let workers = self.get_workers()?;
         for w in workers {
             if w.status == WorkerStatus::Paused {
-                self.update_worker(&w.name, WorkerUpdate {
-                    status: Some(WorkerStatus::Working),
-                    ..Default::default()
-                })?;
+                self.update_worker(
+                    &w.name,
+                    WorkerUpdate {
+                        status: Some(WorkerStatus::Working),
+                        ..Default::default()
+                    },
+                )?;
             }
         }
 
@@ -1754,7 +1918,8 @@ impl SQLiteState {
             id: row.get("id")?,
             branch: row.get("branch")?,
             eval_name: row.get("eval_name")?,
-            status: EvalStatus::from_str(&row.get::<_, String>("status")?).unwrap_or(EvalStatus::Running),
+            status: EvalStatus::from_str(&row.get::<_, String>("status")?)
+                .unwrap_or(EvalStatus::Running),
             feedback: row.get("feedback")?,
             log_file: row.get("log_file")?,
             started_at: row.get("started_at")?,
@@ -1763,24 +1928,39 @@ impl SQLiteState {
     }
 
     /// Start a new eval
-    pub fn start_eval(&self, branch: &str, eval_name: Option<&str>, log_file: Option<&str>) -> StateResult<i64> {
+    pub fn start_eval(
+        &self,
+        branch: &str,
+        eval_name: Option<&str>,
+        log_file: Option<&str>,
+    ) -> StateResult<i64> {
         self.db.execute(
             "INSERT INTO evals (branch, status, started_at, eval_name, log_file) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![branch, EvalStatus::Running.as_str(), self.now(), eval_name, log_file],
         )?;
         let id = self.db.last_insert_rowid();
-        self.log_history("eval_start", Some(&format!("branch={} name={:?}", branch, eval_name)))?;
+        self.log_history(
+            "eval_start",
+            Some(&format!("branch={} name={:?}", branch, eval_name)),
+        )?;
         Ok(id)
     }
 
     /// Complete an eval
     pub fn complete_eval(&self, eval_id: i64, success: bool, feedback: &str) -> StateResult<()> {
-        let status = if success { EvalStatus::Passed } else { EvalStatus::Failed };
+        let status = if success {
+            EvalStatus::Passed
+        } else {
+            EvalStatus::Failed
+        };
         self.db.execute(
             "UPDATE evals SET status = ?1, feedback = ?2, finished_at = ?3 WHERE id = ?4",
             params![status.as_str(), feedback, self.now(), eval_id],
         )?;
-        self.log_history("eval_complete", Some(&format!("id={} status={}", eval_id, status)))?;
+        self.log_history(
+            "eval_complete",
+            Some(&format!("id={} status={}", eval_id, status)),
+        )?;
         Ok(())
     }
 
@@ -1817,7 +1997,8 @@ impl SQLiteState {
         let mut stmt = self.db.prepare(
             "SELECT id, branch, status, feedback, started_at, finished_at, eval_name, log_file FROM evals ORDER BY id ASC LIMIT ?1"
         )?;
-        let evals = stmt.query_map(params![limit], Self::eval_from_row)?
+        let evals = stmt
+            .query_map(params![limit], Self::eval_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(evals)
     }
@@ -1838,13 +2019,14 @@ impl SQLiteState {
 
     /// Cancel running evals
     pub fn cancel_running_evals(&self, reason: &str) -> StateResult<i64> {
-        let mut stmt = self.db.prepare(
-            "SELECT id, eval_name FROM evals WHERE status = ?1"
-        )?;
-        let running: Vec<(i64, Option<String>)> = stmt.query_map(
-            params![EvalStatus::Running.as_str()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?.collect::<Result<Vec<_>, _>>()?;
+        let mut stmt = self
+            .db
+            .prepare("SELECT id, eval_name FROM evals WHERE status = ?1")?;
+        let running: Vec<(i64, Option<String>)> = stmt
+            .query_map(params![EvalStatus::Running.as_str()], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
 
         for (id, name) in &running {
             self.db.execute(
@@ -1873,7 +2055,13 @@ impl SQLiteState {
     }
 
     /// Add a message
-    pub fn add_message(&self, thread: &str, sender: &str, content: &str, waiting: bool) -> StateResult<i64> {
+    pub fn add_message(
+        &self,
+        thread: &str,
+        sender: &str,
+        content: &str,
+        waiting: bool,
+    ) -> StateResult<i64> {
         self.db.execute(
             "INSERT INTO messages (thread, sender, content, timestamp, waiting) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![thread, sender, content, self.now(), if waiting { 1 } else { 0 }],
@@ -1886,25 +2074,32 @@ impl SQLiteState {
         let mut stmt = self.db.prepare(
             "SELECT id, thread, sender, content, timestamp, waiting FROM messages WHERE thread = ?1 ORDER BY id LIMIT ?2"
         )?;
-        let messages = stmt.query_map(params![thread, limit], Self::message_from_row)?
+        let messages = stmt
+            .query_map(params![thread, limit], Self::message_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(messages)
     }
 
     /// Get messages since a timestamp
-    pub fn get_messages_since(&self, since: &str, exclude_sender: Option<&str>) -> StateResult<Vec<Message>> {
+    pub fn get_messages_since(
+        &self,
+        since: &str,
+        exclude_sender: Option<&str>,
+    ) -> StateResult<Vec<Message>> {
         if let Some(sender) = exclude_sender {
             let mut stmt = self.db.prepare(
                 "SELECT id, thread, sender, content, timestamp, waiting FROM messages WHERE timestamp > ?1 AND sender != ?2 ORDER BY id"
             )?;
-            let messages = stmt.query_map(params![since, sender], Self::message_from_row)?
+            let messages = stmt
+                .query_map(params![since, sender], Self::message_from_row)?
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(messages)
         } else {
             let mut stmt = self.db.prepare(
                 "SELECT id, thread, sender, content, timestamp, waiting FROM messages WHERE timestamp > ?1 ORDER BY id"
             )?;
-            let messages = stmt.query_map(params![since], Self::message_from_row)?
+            let messages = stmt
+                .query_map(params![since], Self::message_from_row)?
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(messages)
         }
@@ -1912,16 +2107,23 @@ impl SQLiteState {
 
     /// Get unread messages for a reader in a thread
     pub fn get_unread_messages(&self, thread: &str, reader: &str) -> StateResult<Vec<Message>> {
-        let last_read_id: i64 = self.db.query_row(
-            "SELECT last_read_id FROM message_reads WHERE worker_name = ?1 AND thread = ?2",
-            params![reader, thread],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let last_read_id: i64 = self
+            .db
+            .query_row(
+                "SELECT last_read_id FROM message_reads WHERE worker_name = ?1 AND thread = ?2",
+                params![reader, thread],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
 
         let mut stmt = self.db.prepare(
             "SELECT id, thread, sender, content, timestamp, waiting FROM messages WHERE thread = ?1 AND id > ?2 AND sender != ?3 ORDER BY id"
         )?;
-        let messages = stmt.query_map(params![thread, last_read_id, reader], Self::message_from_row)?
+        let messages = stmt
+            .query_map(
+                params![thread, last_read_id, reader],
+                Self::message_from_row,
+            )?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(messages)
     }
@@ -1937,14 +2139,22 @@ impl SQLiteState {
     }
 
     /// Mark messages as read
-    pub fn mark_messages_read(&self, thread: &str, reader: &str, up_to_id: Option<i64>) -> StateResult<()> {
+    pub fn mark_messages_read(
+        &self,
+        thread: &str,
+        reader: &str,
+        up_to_id: Option<i64>,
+    ) -> StateResult<()> {
         let max_id = match up_to_id {
             Some(id) => id,
-            None => self.db.query_row(
-                "SELECT MAX(id) FROM messages WHERE thread = ?1",
-                params![thread],
-                |row| row.get::<_, Option<i64>>(0),
-            )?.unwrap_or(0),
+            None => self
+                .db
+                .query_row(
+                    "SELECT MAX(id) FROM messages WHERE thread = ?1",
+                    params![thread],
+                    |row| row.get::<_, Option<i64>>(0),
+                )?
+                .unwrap_or(0),
         };
 
         self.db.execute(
@@ -1956,8 +2166,11 @@ impl SQLiteState {
 
     /// Get all thread names
     pub fn get_threads(&self) -> StateResult<Vec<String>> {
-        let mut stmt = self.db.prepare("SELECT DISTINCT thread FROM messages ORDER BY thread")?;
-        let threads: Vec<String> = stmt.query_map([], |row| row.get(0))?
+        let mut stmt = self
+            .db
+            .prepare("SELECT DISTINCT thread FROM messages ORDER BY thread")?;
+        let threads: Vec<String> = stmt
+            .query_map([], |row| row.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(threads)
     }
@@ -1987,17 +2200,18 @@ impl SQLiteState {
 
     /// Clear unread count
     pub fn clear_unread(&self) -> StateResult<()> {
-        self.db.execute("UPDATE state SET unread_count = 0 WHERE id = 1", [])?;
+        self.db
+            .execute("UPDATE state SET unread_count = 0 WHERE id = 1", [])?;
         Ok(())
     }
 
     /// Get unread count
     pub fn get_unread_count(&self) -> StateResult<i64> {
-        match self.db.query_row(
-            "SELECT unread_count FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<i64>>(0),
-        ) {
+        match self
+            .db
+            .query_row("SELECT unread_count FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<i64>>(0)
+            }) {
             Ok(Some(val)) => Ok(val),
             Ok(None) => Ok(0),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
@@ -2012,16 +2226,18 @@ impl SQLiteState {
     /// Get history entries
     pub fn get_history(&self, limit: i64) -> StateResult<Vec<HistoryEntry>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, timestamp, action, detail FROM history ORDER BY id DESC LIMIT ?1"
+            "SELECT id, timestamp, action, detail FROM history ORDER BY id DESC LIMIT ?1",
         )?;
-        let entries: Vec<HistoryEntry> = stmt.query_map(params![limit], |row| {
-            Ok(HistoryEntry {
-                id: row.get("id")?,
-                timestamp: row.get("timestamp")?,
-                action: row.get("action")?,
-                detail: row.get("detail")?,
-            })
-        })?.collect::<Result<Vec<_>, _>>()?;
+        let entries: Vec<HistoryEntry> = stmt
+            .query_map(params![limit], |row| {
+                Ok(HistoryEntry {
+                    id: row.get("id")?,
+                    timestamp: row.get("timestamp")?,
+                    action: row.get("action")?,
+                    detail: row.get("detail")?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(entries)
     }
 
@@ -2041,27 +2257,32 @@ impl SQLiteState {
     /// Get all amendments
     pub fn get_amendments(&self) -> StateResult<Vec<Amendment>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, message, timestamp, author, spec_hash FROM amendments ORDER BY id"
+            "SELECT id, message, timestamp, author, spec_hash FROM amendments ORDER BY id",
         )?;
-        let amendments: Vec<Amendment> = stmt.query_map([], |row| {
-            Ok(Amendment {
-                id: row.get("id")?,
-                message: row.get("message")?,
-                timestamp: row.get("timestamp")?,
-                author: row.get("author")?,
-                spec_hash: row.get("spec_hash")?,
-            })
-        })?.collect::<Result<Vec<_>, _>>()?;
+        let amendments: Vec<Amendment> = stmt
+            .query_map([], |row| {
+                Ok(Amendment {
+                    id: row.get("id")?,
+                    message: row.get("message")?,
+                    timestamp: row.get("timestamp")?,
+                    author: row.get("author")?,
+                    spec_hash: row.get("spec_hash")?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(amendments)
     }
 
     /// Get last spec hash
     pub fn get_last_spec_hash(&self) -> StateResult<Option<String>> {
-        let result: Option<String> = self.db.query_row(
-            "SELECT spec_hash FROM amendments ORDER BY id DESC LIMIT 1",
-            [],
-            |row| row.get(0),
-        ).ok();
+        let result: Option<String> = self
+            .db
+            .query_row(
+                "SELECT spec_hash FROM amendments ORDER BY id DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
         Ok(result)
     }
 
@@ -2070,15 +2291,27 @@ impl SQLiteState {
     // =========================================================================
 
     /// Compact messages in a thread
-    pub fn compact_messages(&self, thread: &str, ids_to_delete: &[i64], summary_content: &str) -> StateResult<()> {
+    pub fn compact_messages(
+        &self,
+        thread: &str,
+        ids_to_delete: &[i64],
+        summary_content: &str,
+    ) -> StateResult<()> {
         if ids_to_delete.is_empty() {
             return Ok(());
         }
 
         // Delete old messages
-        let placeholders: String = ids_to_delete.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let placeholders: String = ids_to_delete
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
         let sql = format!("DELETE FROM messages WHERE id IN ({})", placeholders);
-        let params: Vec<&dyn rusqlite::ToSql> = ids_to_delete.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+        let params: Vec<&dyn rusqlite::ToSql> = ids_to_delete
+            .iter()
+            .map(|id| id as &dyn rusqlite::ToSql)
+            .collect();
         self.db.execute(&sql, params.as_slice())?;
 
         // Insert summary message
@@ -2088,11 +2321,18 @@ impl SQLiteState {
         )?;
 
         // Reset last_read_id for all workers on this thread
-        self.db.execute("DELETE FROM message_reads WHERE thread = ?1", params![thread])?;
+        self.db.execute(
+            "DELETE FROM message_reads WHERE thread = ?1",
+            params![thread],
+        )?;
 
         self.log_history(
             "compaction",
-            Some(&format!("Compacted {} messages in thread '{}'", ids_to_delete.len(), thread)),
+            Some(&format!(
+                "Compacted {} messages in thread '{}'",
+                ids_to_delete.len(),
+                thread
+            )),
         )?;
 
         Ok(())
@@ -2175,7 +2415,12 @@ impl SQLiteState {
     }
 
     /// Get worker events since a given ID (for polling)
-    pub fn get_worker_events(&self, worker_name: &str, after_id: Option<i64>, limit: i64) -> StateResult<Vec<WorkerEvent>> {
+    pub fn get_worker_events(
+        &self,
+        worker_name: &str,
+        after_id: Option<i64>,
+        limit: i64,
+    ) -> StateResult<Vec<WorkerEvent>> {
         let after = after_id.unwrap_or(0);
         let mut stmt = self.db.prepare(
             "SELECT id, worker_name, event_type, timestamp, content,
@@ -2183,33 +2428,40 @@ impl SQLiteState {
              FROM worker_events
              WHERE worker_name = ?1 AND id > ?2
              ORDER BY id ASC
-             LIMIT ?3"
+             LIMIT ?3",
         )?;
 
-        let events: Vec<WorkerEvent> = stmt.query_map(params![worker_name, after, limit], |row| {
-            let event_type_str: String = row.get("event_type")?;
-            let tool_status_str: Option<String> = row.get("tool_status")?;
+        let events: Vec<WorkerEvent> = stmt
+            .query_map(params![worker_name, after, limit], |row| {
+                let event_type_str: String = row.get("event_type")?;
+                let tool_status_str: Option<String> = row.get("tool_status")?;
 
-            Ok(WorkerEvent {
-                id: row.get("id")?,
-                worker_name: row.get("worker_name")?,
-                event_type: WorkerEventType::from_str(&event_type_str).unwrap_or(WorkerEventType::Text),
-                timestamp: row.get("timestamp")?,
-                content: row.get("content")?,
-                tool_call_id: row.get("tool_call_id")?,
-                tool_title: row.get("tool_title")?,
-                tool_kind: row.get("tool_kind")?,
-                tool_status: tool_status_str.and_then(|s| ToolCallStatus::from_str(&s)),
-                tool_input: row.get("tool_input")?,
-                tool_output: row.get("tool_output")?,
-            })
-        })?.collect::<Result<Vec<_>, _>>()?;
+                Ok(WorkerEvent {
+                    id: row.get("id")?,
+                    worker_name: row.get("worker_name")?,
+                    event_type: WorkerEventType::from_str(&event_type_str)
+                        .unwrap_or(WorkerEventType::Text),
+                    timestamp: row.get("timestamp")?,
+                    content: row.get("content")?,
+                    tool_call_id: row.get("tool_call_id")?,
+                    tool_title: row.get("tool_title")?,
+                    tool_kind: row.get("tool_kind")?,
+                    tool_status: tool_status_str.and_then(|s| ToolCallStatus::from_str(&s)),
+                    tool_input: row.get("tool_input")?,
+                    tool_output: row.get("tool_output")?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(events)
     }
 
     /// Get all events for a worker (for initial load)
-    pub fn get_all_worker_events(&self, worker_name: &str, limit: i64) -> StateResult<Vec<WorkerEvent>> {
+    pub fn get_all_worker_events(
+        &self,
+        worker_name: &str,
+        limit: i64,
+    ) -> StateResult<Vec<WorkerEvent>> {
         self.get_worker_events(worker_name, None, limit)
     }
 

@@ -11,6 +11,7 @@ import type {
   RunSummary,
   RunDetail,
   DraftUpdateRequest,
+  RepoValidation,
   Task,
   Worker,
   Message,
@@ -127,6 +128,24 @@ export async function startDraft(runName: string): Promise<RunDetail> {
   return invoke<RunDetail>('start_draft', { runName });
 }
 
+/**
+ * Validate a repository path or URL
+ *
+ * Checks if the path/URL is valid, extracts branch information from URLs,
+ * and lists available branches in the repository.
+ */
+export async function validateRepo(path: string): Promise<RepoValidation> {
+  return invoke<RepoValidation>('validate_repo', { path });
+}
+
+/**
+ * Initialize a project directory for use with Hirsel
+ * Creates the directory if needed and initializes git repository
+ */
+export async function initProjectRepo(path: string): Promise<RepoValidation> {
+  return invoke<RepoValidation>('init_project_repo', { path });
+}
+
 // =============================================================================
 // Spec/Eval File API (file-first editing)
 // =============================================================================
@@ -165,12 +184,16 @@ export async function writeEvalFile(runName: string, content: string): Promise<v
 
 /**
  * Deliver run changes to project repo as a branch
+ *
+ * @param runName - The run name
+ * @param branchName - Optional branch name (defaults to saved branch or hirsel/{runName})
+ * @returns The branch name that was created
  */
 export async function deliverRun(
-  name: string,
+  runName: string,
   branchName?: string
 ): Promise<string> {
-  return invoke<string>('deliver_run', { name, branchName });
+  return invoke<string>('deliver_run', { runName, branchName });
 }
 
 /**
@@ -259,10 +282,18 @@ export async function getWorkers(runName: string): Promise<Worker[]> {
 }
 
 /**
- * Attach to a worker's tmux session
+ * Spawn a new worker (creates worker clone and starts process)
+ * Note: This doesn't attach to terminal, it creates a new worker.
  */
 export async function attachWorker(runName: string, workerName: string): Promise<void> {
   return invoke('attach_worker', { runName: runName, workerName: workerName });
+}
+
+/**
+ * Open an external terminal attached to a worker's tmux session
+ */
+export async function openWorkerTerminal(runName: string, workerName: string): Promise<void> {
+  return invoke('open_worker_terminal', { runName: runName, workerName: workerName });
 }
 
 /**
@@ -548,13 +579,6 @@ export async function markMessagesRead(
 // =============================================================================
 // Eval API
 // =============================================================================
-
-/**
- * Get all evals for a run
- */
-export async function getEvals(runName: string): Promise<Eval[]> {
-  return invoke<Eval[]>('get_evals', { runName: runName });
-}
 
 /**
  * Get the eval spec (eval.md) content for a run

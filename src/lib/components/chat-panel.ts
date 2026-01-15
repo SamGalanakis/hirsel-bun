@@ -2,7 +2,10 @@
  * Chat panel Alpine component
  */
 
-import type { ThreadSummary, Message } from '../types';
+import type { ThreadSummary, Message, WorkerDisplay } from '../types';
+
+// Known group chat thread names
+const GROUP_CHAT_NAMES = ['learning', 'group'];
 
 /**
  * Chat panel component
@@ -10,6 +13,7 @@ import type { ThreadSummary, Message } from '../types';
 export function chatPanel() {
   return {
     threads: [] as ThreadSummary[],
+    workers: [] as WorkerDisplay[],
     selectedThread: null as string | null,
     messages: [] as Message[],
     newMessage: '',
@@ -17,6 +21,7 @@ export function chatPanel() {
     error: null as string | null,
     _pollInterval: null as ReturnType<typeof setInterval> | null,
     _threadPollInterval: null as ReturnType<typeof setInterval> | null,
+    _currentRunName: null as string | null,
 
     async init() {
       window.addEventListener('run-selected', (e: Event) => {
@@ -24,10 +29,36 @@ export function chatPanel() {
         this.onRunSelected(customEvent.detail);
       });
 
+      // Initial load if a run is already selected
       const app = this.getAppState();
       if (app && app.selectedRun) {
-        await this.fetchThreads();
+        await this.onRunSelected(app.selectedRun);
       }
+    },
+
+    // Get group chat threads (learning, group)
+    get groupChats(): ThreadSummary[] {
+      return this.threads.filter((t) => GROUP_CHAT_NAMES.includes(t.name));
+    },
+
+    // Get DM threads (worker names) - includes workers without threads yet
+    get dmThreads(): Array<{ name: string; thread: ThreadSummary | null }> {
+      const dms: Array<{ name: string; thread: ThreadSummary | null }> = [];
+
+      // Add workers that have threads
+      const workerThreads = this.threads.filter((t) => !GROUP_CHAT_NAMES.includes(t.name));
+      for (const thread of workerThreads) {
+        dms.push({ name: thread.name, thread });
+      }
+
+      // Add workers that don't have threads yet
+      for (const worker of this.workers) {
+        if (!dms.find((d) => d.name === worker.name)) {
+          dms.push({ name: worker.name, thread: null });
+        }
+      }
+
+      return dms.sort((a, b) => a.name.localeCompare(b.name));
     },
 
     getAppState(): { selectedRun?: string | null; unreadCount?: number } | null {
@@ -45,21 +76,59 @@ export function chatPanel() {
     },
 
     getSelectedRun(): string | null {
+      // Use tracked run name first, fall back to app state
+      if (this._currentRunName) {
+        return this._currentRunName;
+      }
       const app = this.getAppState();
       return app ? app.selectedRun || null : null;
     },
 
     async onRunSelected(runName: string | null) {
-      this.stopPolling();
-
       if (!runName) {
+        this.stopPolling();
         this.threads = [];
+        this.workers = [];
         this.messages = [];
+        this.selectedThread = null;
+        this._currentRunName = null;
         return;
       }
 
-      await this.fetchThreads();
-      this._threadPollInterval = setInterval(() => this.fetchThreads(), 4000);
+      // If already polling for this run, just refresh
+      if (this._currentRunName === runName && this._threadPollInterval) {
+        await Promise.all([this.fetchThreads(), this.fetchWorkers()]);
+        return;
+      }
+
+      // Stop existing polling and start fresh for new run
+      this.stopPolling();
+      this._currentRunName = runName;
+
+      await Promise.all([this.fetchThreads(), this.fetchWorkers()]);
+      this._threadPollInterval = setInterval(
+        () => Promise.all([this.fetchThreads(), this.fetchWorkers()]),
+        4000
+      );
+    },
+
+    async fetchWorkers() {
+      const runName = this.getSelectedRun();
+      if (!runName) return;
+
+      try {
+        if (window.tauriInvoke) {
+          this.workers = await window.tauriInvoke<WorkerDisplay[]>('get_workers', { runName });
+        } else {
+          // Mock data for development
+          this.workers = [
+            { name: 'worker-1', status: 'running' } as WorkerDisplay,
+            { name: 'worker-2', status: 'idle' } as WorkerDisplay,
+          ];
+        }
+      } catch (e) {
+        console.debug('Failed to fetch workers:', e);
+      }
     },
 
     async fetchThreads() {
@@ -70,12 +139,13 @@ export function chatPanel() {
         if (window.tauriInvoke) {
           this.threads = await window.tauriInvoke<ThreadSummary[]>('get_threads', { runName });
         } else {
+          // Mock data for development
           this.threads = [
             {
-              name: 'user',
+              name: 'learning',
               messageCount: 3,
               unreadCount: 1,
-              lastMessage: 'Hello!',
+              lastMessage: 'Learned something new!',
               lastTimestamp: new Date().toISOString(),
             },
             {
@@ -83,6 +153,13 @@ export function chatPanel() {
               messageCount: 5,
               unreadCount: 0,
               lastMessage: 'Task complete',
+              lastTimestamp: new Date().toISOString(),
+            },
+            {
+              name: 'worker-1',
+              messageCount: 2,
+              unreadCount: 1,
+              lastMessage: 'Working on it',
               lastTimestamp: new Date().toISOString(),
             },
           ];
@@ -94,18 +171,18 @@ export function chatPanel() {
           app.unreadCount = totalUnread;
         }
 
-        // Auto-select thread: first available, or 'user' if no threads yet
-        if (this.threads.length > 0) {
-          if (!this.selectedThread || !this.threads.find(t => t.name === this.selectedThread)) {
-            this.selectThread(this.threads[0].name);
+        // Auto-select first thread if current selection is invalid
+        if (this.selectedThread) {
+          const stillValid =
+            this.threads.find((t) => t.name === this.selectedThread) ||
+            this.workers.find((w) => w.name === this.selectedThread);
+          if (!stillValid) {
+            this.selectedThread = null;
           }
-        } else if (!this.selectedThread) {
-          // No threads exist, default to 'user' so users can start chatting
-          this.selectedThread = 'user';
         }
       } catch (e) {
         const error = e as Error;
-        window.toast.error(error.message || String(error), 'Failed to load threads');
+        window.toast.error('Failed to load threads');
         this.error = 'Failed to load threads';
       }
     },
@@ -148,7 +225,7 @@ export function chatPanel() {
         this.$nextTick(() => this.scrollToBottom());
       } catch (e) {
         const error = e as Error;
-        window.toast.error(error.message || String(error), 'Failed to load messages');
+        window.toast.error('Failed to load messages');
         this.error = 'Failed to load messages';
       } finally {
         this.loading = false;
@@ -204,7 +281,7 @@ export function chatPanel() {
         this.$nextTick(() => this.scrollToBottom());
       } catch (e) {
         const error = e as Error;
-        window.toast.error(error.message || String(error), 'Failed to send message');
+        window.toast.error('Failed to send message');
         this.error = 'Failed to send message';
         this.newMessage = content;
       }

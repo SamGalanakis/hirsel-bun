@@ -21,12 +21,12 @@ interface ToastConfig {
   action?: { label: string; onClick: () => void };
 }
 
-/** Default durations by category */
+/** Default durations by category (shorter for less intrusive UX) */
 const DEFAULT_DURATIONS: Record<ToastCategory, number> = {
-  success: 3000,
-  info: 3000,
-  warning: 5000,
-  error: 6000,
+  success: 2000,
+  info: 2000,
+  warning: 4000,
+  error: 5000,
 };
 
 /**

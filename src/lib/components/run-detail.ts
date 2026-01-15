@@ -15,7 +15,7 @@ import {
   canResume,
   canDeliver,
 } from '../utils/status';
-import type { RunDetail, Task, WorkerDisplay } from '../types';
+import type { RunDetail, Task, WorkerDisplay, Eval } from '../types';
 
 interface DiffStats {
   insertions: number;
@@ -31,13 +31,24 @@ export function runDetail() {
     detail: null as RunDetail | null,
     tasks: [] as Task[],
     workers: [] as WorkerDisplay[],
+    evals: [] as Eval[],
     diffStats: null as DiffStats | null,
     evalSpec: null as string | null,
     evalSpecLoading: false,
     loading: false,
     error: null as string | null,
     pollInterval: null as ReturnType<typeof setInterval> | null,
-    activeTab: 'overview' as 'overview' | 'tasks' | 'spec' | 'eval' | 'eval-spec' | 'messages',
+    activeTab: 'overview' as 'overview' | 'tasks' | 'spec' | 'eval-spec' | 'evals' | 'messages',
+
+    // Eval detail view
+    selectedEval: null as Eval | null,
+    evalLogContent: null as string | null,
+    evalLogLoading: false,
+
+    // Deliver modal state
+    deliverModalOpen: false,
+    deliverBranch: '',
+    deliverLoading: false,
 
     // Formatting helpers
     formatElapsed,
@@ -74,6 +85,105 @@ export function runDetail() {
       } finally {
         this.evalSpecLoading = false;
       }
+    },
+
+    async loadEvals() {
+      if (!this.runName) return;
+      try {
+        if (window.tauriInvoke) {
+          const evals = await window.tauriInvoke<Eval[]>('get_evals', {
+            runName: this.runName,
+          });
+          // Sort by startedAt descending (most recent first)
+          this.evals = evals.sort((a, b) =>
+            new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
+          );
+        }
+      } catch (err) {
+        console.error('[runDetail] Error loading evals:', err);
+        this.evals = [];
+      }
+    },
+
+    selectEval(evalItem: Eval) {
+      this.selectedEval = evalItem;
+    },
+
+    attachEval() {
+      if (!this.selectedEval || !this.runName) return;
+      // Open the worker output viewer with the eval name as worker name
+      // (eval events are stored in worker_events table with eval_name as worker_name)
+      window.dispatchEvent(new CustomEvent('show-worker-output', {
+        detail: {
+          runName: this.runName,
+          workerName: this.selectedEval.evalName || `eval_${this.selectedEval.id}`,
+        },
+      }));
+    },
+
+    clearSelectedEval() {
+      this.selectedEval = null;
+      this.evalLogContent = null;
+    },
+
+    async loadEvalLog(evalItem: Eval) {
+      if (!evalItem.logFile || this.evalLogLoading) return;
+      this.evalLogLoading = true;
+      try {
+        if (window.tauriInvoke) {
+          const response = await window.tauriInvoke<{ content: string; exists: boolean }>('get_eval_log_by_path', {
+            runName: this.runName,
+            logFile: evalItem.logFile,
+          });
+          this.evalLogContent = response.exists ? response.content : null;
+        }
+      } catch (err) {
+        console.error('[runDetail] Error loading eval log:', err);
+        this.evalLogContent = null;
+      } finally {
+        this.evalLogLoading = false;
+      }
+    },
+
+    getEvalStatusClass(status: string) {
+      switch (status) {
+        case 'passed': return 'text-sage';
+        case 'failed': return 'text-terra';
+        case 'running': return 'text-amber-500';
+        default: return 'text-wool-500';
+      }
+    },
+
+    getEvalStatusIcon(status: string) {
+      switch (status) {
+        case 'passed': return 'check-circle';
+        case 'failed': return 'x-circle';
+        case 'running': return 'loader';
+        default: return 'circle';
+      }
+    },
+
+    formatEvalTime(timestamp: string | null): string {
+      if (!timestamp) return '';
+      const date = new Date(timestamp);
+      return date.toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    },
+
+    getEvalDuration(evalItem: Eval): string {
+      if (!evalItem.startedAt) return '';
+      const start = new Date(evalItem.startedAt);
+      const end = evalItem.finishedAt ? new Date(evalItem.finishedAt) : new Date();
+      const durationMs = end.getTime() - start.getTime();
+      const seconds = Math.floor(durationMs / 1000);
+      if (seconds < 60) return `${seconds}s`;
+      const minutes = Math.floor(seconds / 60);
+      const remainingSeconds = seconds % 60;
+      return `${minutes}m ${remainingSeconds}s`;
     },
 
     getTaskProgress() {
@@ -115,11 +225,15 @@ export function runDetail() {
         await this.loadRunDetail(this.$root.selectedRun);
       }
 
-      // Watch for tab changes to load eval spec on demand
+      // Watch for tab changes to load eval spec on demand and auto-select latest eval
       // @ts-expect-error Alpine.js $watch magic property
       this.$watch('activeTab', async (newTab: string) => {
         if (newTab === 'eval-spec' && this.runName) {
           await this.loadEvalSpec();
+        }
+        // Auto-select the latest eval when switching to evals tab
+        if (newTab === 'evals' && this.evals.length > 0) {
+          await this.selectEval(this.evals[0]);
         }
       });
 
@@ -148,23 +262,31 @@ export function runDetail() {
       this.runName = name;
       this.loading = true;
       this.error = null;
-      // Reset eval spec for the new run
+      // Reset eval state for the new run
       this.evalSpec = null;
       this.evalSpecLoading = false;
+      this.evals = [];
+      this.selectedEval = null;
+      this.evalLogContent = null;
 
       // If already on eval-spec tab, load it after fetching run detail
       const wasOnEvalSpecTab = this.activeTab === 'eval-spec';
 
       try {
         if (window.tauriInvoke) {
-          const [detail, tasks, workers] = await Promise.all([
+          const [detail, tasks, workers, evals] = await Promise.all([
             window.tauriInvoke<RunDetail>('get_run_detail', { runName: name }),
             window.tauriInvoke<Task[]>('get_tasks', { runName: name }),
             window.tauriInvoke<WorkerDisplay[]>('get_workers', { runName: name }),
+            window.tauriInvoke<Eval[]>('get_evals', { runName: name }),
           ]);
           this.detail = detail;
           this.tasks = tasks;
           this.workers = workers;
+          // Sort evals by startedAt descending (most recent first)
+          this.evals = evals.sort((a, b) =>
+            new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
+          );
 
           try {
             this.diffStats = await window.tauriInvoke<DiffStats>('get_diff_stats', {
@@ -185,14 +307,18 @@ export function runDetail() {
           this.pollInterval = setInterval(async () => {
             if (!this.runName) return;
             try {
-              const [detail, tasks, workers] = await Promise.all([
+              const [detail, tasks, workers, evals] = await Promise.all([
                 window.tauriInvoke<RunDetail>('get_run_detail', { runName: this.runName }),
                 window.tauriInvoke<Task[]>('get_tasks', { runName: this.runName }),
                 window.tauriInvoke<WorkerDisplay[]>('get_workers', { runName: this.runName }),
+                window.tauriInvoke<Eval[]>('get_evals', { runName: this.runName }),
               ]);
               this.detail = detail;
               this.tasks = tasks;
               this.workers = workers;
+              this.evals = evals.sort((a, b) =>
+                new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
+              );
             } catch (err) {
               console.error('Failed to poll:', err);
             }
@@ -217,9 +343,13 @@ export function runDetail() {
       this.detail = null;
       this.tasks = [];
       this.workers = [];
+      this.evals = [];
       this.diffStats = null;
       this.evalSpec = null;
       this.evalSpecLoading = false;
+      this.selectedEval = null;
+      this.evalLogContent = null;
+      this.evalLogLoading = false;
       this.loading = false;
       this.error = null;
     },
@@ -233,7 +363,7 @@ export function runDetail() {
         }
       } catch (err) {
         const error = err as Error;
-        window.toast?.error('Failed to pause', error.message || String(error));
+        window.toast?.error('Failed to pause run');
       }
     },
 
@@ -246,24 +376,47 @@ export function runDetail() {
         }
       } catch (err) {
         const error = err as Error;
-        window.toast?.error('Failed to resume', error.message || String(error));
+        window.toast?.error('Failed to resume run');
       }
     },
 
-    async handleDeliver() {
+    openDeliverModal() {
       if (!this.runName || !this.canDeliver()) return;
+      // Default to saved branch, or generate default branch name
+      this.deliverBranch = this.detail?.branch || `hirsel/${this.runName}`;
+      this.deliverModalOpen = true;
+      this.deliverLoading = false;
+    },
+
+    closeDeliverModal() {
+      this.deliverModalOpen = false;
+      this.deliverBranch = '';
+      this.deliverLoading = false;
+    },
+
+    async handleDeliver() {
+      // Open modal instead of delivering directly
+      this.openDeliverModal();
+    },
+
+    async confirmDeliver() {
+      if (!this.runName || !this.deliverBranch.trim()) return;
+      this.deliverLoading = true;
       try {
         if (window.tauriInvoke) {
           const branch = await window.tauriInvoke<string>('deliver_run', {
             runName: this.runName,
+            branchName: this.deliverBranch.trim(),
           });
-          window.toast.success(`Delivered to branch: ${branch}`, 'Delivery complete');
+          window.toast.success(`Delivered to ${branch}`);
+          this.closeDeliverModal();
           await this.loadRunDetail(this.runName);
         }
       } catch (err) {
         const error = err as Error;
         console.error('Failed to deliver:', error);
-        window.toast.error(error.message || String(error), 'Failed to deliver');
+        window.toast.error('Failed to deliver');
+        this.deliverLoading = false;
       }
     },
 

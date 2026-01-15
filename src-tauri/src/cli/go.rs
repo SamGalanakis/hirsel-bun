@@ -4,17 +4,19 @@
 //! sets up git worktrees for workers, and spawns the worker processes.
 
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::cli::config::get_agent_command;
 use crate::cli::GoArgs;
-use crate::core::files::Files;
-use crate::core::git::{create_worker_clone, create_workspace, get_repo_root, GitError};
-use crate::core::state::{SQLiteState, StateError, Status};
 use crate::core::chats::{
     create_default_group_chat, create_default_user_chat, create_learnings_thread,
     create_worker_chat, ChatError,
 };
+use crate::core::files::Files;
+use crate::core::git::{create_worker_clone, create_workspace, get_repo_root, GitError};
+use crate::core::state::{SQLiteState, StateError, Status};
 use crate::core::workers::{spawn_worker, WorkerError, WorkerSpawnConfig};
 use tracing::info;
 
@@ -36,6 +38,7 @@ pub enum GoError {
     InvalidPauseMode(String),
     InvalidProject(String),
     NoGitRepo,
+    UserAborted,
 }
 
 impl std::fmt::Display for GoError {
@@ -53,6 +56,7 @@ impl std::fmt::Display for GoError {
             GoError::InvalidPauseMode(msg) => write!(f, "Invalid pause mode: {}", msg),
             GoError::InvalidProject(msg) => write!(f, "Invalid project: {}", msg),
             GoError::NoGitRepo => write!(f, "Not in a git repository"),
+            GoError::UserAborted => write!(f, "Aborted by user"),
         }
     }
 }
@@ -141,10 +145,7 @@ impl WorkerScale {
                 return Err("Minimum worker count must be at least 1".to_string());
             }
             if max < min {
-                return Err(format!(
-                    "Maximum ({}) must be >= minimum ({})",
-                    max, min
-                ));
+                return Err(format!("Maximum ({}) must be >= minimum ({})", max, min));
             }
             return Ok(WorkerScale {
                 min,
@@ -244,14 +245,57 @@ pub fn parse_time_limit(s: &str) -> Result<i64, String> {
 
 /// Greek hero names for workers
 const WORKER_NAMES: &[&str] = &[
-    "achilles", "hector", "ajax", "odysseus", "diomedes", "patroclus", "nestor",
-    "menelaus", "agamemnon", "paris", "priam", "aeneas", "sarpedon", "glaucus",
-    "idomeneus", "meriones", "teucer", "antilochus", "thrasymedes", "eurypylus",
-    "machaon", "podalirius", "philoctetes", "neoptolemus", "pyrrhus", "calchas",
-    "automedon", "phoenix", "stentor", "polydamas", "deiphobus", "helenus",
-    "cassandra", "andromache", "hecuba", "polyxena", "troilus", "lycaon",
-    "pandarus", "antenor", "theano", "laocoon", "sinon", "epeus", "protesilaus",
-    "palamedes", "capaneus", "amphiaraus", "tydeus", "polynices", "eteocles",
+    "achilles",
+    "hector",
+    "ajax",
+    "odysseus",
+    "diomedes",
+    "patroclus",
+    "nestor",
+    "menelaus",
+    "agamemnon",
+    "paris",
+    "priam",
+    "aeneas",
+    "sarpedon",
+    "glaucus",
+    "idomeneus",
+    "meriones",
+    "teucer",
+    "antilochus",
+    "thrasymedes",
+    "eurypylus",
+    "machaon",
+    "podalirius",
+    "philoctetes",
+    "neoptolemus",
+    "pyrrhus",
+    "calchas",
+    "automedon",
+    "phoenix",
+    "stentor",
+    "polydamas",
+    "deiphobus",
+    "helenus",
+    "cassandra",
+    "andromache",
+    "hecuba",
+    "polyxena",
+    "troilus",
+    "lycaon",
+    "pandarus",
+    "antenor",
+    "theano",
+    "laocoon",
+    "sinon",
+    "epeus",
+    "protesilaus",
+    "palamedes",
+    "capaneus",
+    "amphiaraus",
+    "tydeus",
+    "polynices",
+    "eteocles",
 ];
 
 /// Get an available worker name that's not in use
@@ -376,6 +420,115 @@ pub fn slugify(name: &str) -> String {
 }
 
 // =============================================================================
+// Project Setup Helpers
+// =============================================================================
+
+/// Prompt user for confirmation (returns true if user confirms)
+fn prompt_confirm(message: &str, yolo: bool) -> bool {
+    if yolo {
+        return true;
+    }
+
+    print!("{} [y/N] ", message);
+    io::stdout().flush().ok();
+
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_err() {
+        return false;
+    }
+
+    matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
+}
+
+/// Initialize a git repository in the given directory
+fn init_git_repo(path: &Path) -> GoResult<()> {
+    let output = Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(path)
+        .output()?;
+
+    if !output.status.success() {
+        return Err(GoError::Git(GitError::Other(format!(
+            "git init failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))));
+    }
+
+    // Create initial commit so we have a valid HEAD
+    let output = Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(path)
+        .output()?;
+
+    if !output.status.success() {
+        return Err(GoError::Git(GitError::Other(format!(
+            "git add failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))));
+    }
+
+    let output = Command::new("git")
+        .args(["commit", "-m", "Initial commit", "--allow-empty"])
+        .current_dir(path)
+        .output()?;
+
+    if !output.status.success() {
+        return Err(GoError::Git(GitError::Other(format!(
+            "git commit failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))));
+    }
+
+    Ok(())
+}
+
+/// Check if a path IS a git repository root (has .git directory)
+/// This is different from checking if it's inside a git repo
+fn is_git_repo_root(path: &Path) -> bool {
+    path.join(".git").exists()
+}
+
+/// Ensure project directory exists and is a git repo
+/// Returns the canonical project path
+fn ensure_project_ready(path: &Path, yolo: bool) -> GoResult<PathBuf> {
+    let path_str = path.display().to_string();
+
+    // Check if directory exists
+    if !path.exists() {
+        eprintln!("\n⚠️  Directory does not exist: {}\n", path_str);
+        eprintln!("   This will create a new empty project directory.");
+
+        if !prompt_confirm("Create directory?", yolo) {
+            return Err(GoError::UserAborted);
+        }
+
+        fs::create_dir_all(path)?;
+        eprintln!("   ✓ Created directory: {}", path_str);
+    }
+
+    // Canonicalize the path now that it exists
+    let canonical_path = path.canonicalize()?;
+
+    // Check if this directory itself is a git repo root (has .git)
+    // NOT just if it's inside another git repo
+    if !is_git_repo_root(&canonical_path) {
+        eprintln!("\n⚠️  Not a git repository: {}\n", canonical_path.display());
+        eprintln!("   Hirsel requires a git repository to track changes.");
+        eprintln!("   This will initialize a new git repo with 'main' branch.");
+
+        if !prompt_confirm("Initialize git repository?", yolo) {
+            return Err(GoError::UserAborted);
+        }
+
+        init_git_repo(&canonical_path)?;
+        eprintln!("   ✓ Initialized git repository");
+    }
+
+    // Return the canonical path - this IS the git root now
+    Ok(canonical_path)
+}
+
+// =============================================================================
 // Go Command Execution
 // =============================================================================
 
@@ -405,14 +558,13 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
     if let Some(ref pm) = args.pause_mode {
         if pm != "sender" && pm != "all" {
             return Err(GoError::InvalidPauseMode(
-                "pause_mode must be 'sender' or 'all'".to_string()
+                "pause_mode must be 'sender' or 'all'".to_string(),
             ));
         }
     }
 
     // Parse worker scale
-    let scale = WorkerScale::parse(&args.workers)
-        .map_err(GoError::InvalidWorkerScale)?;
+    let scale = WorkerScale::parse(&args.workers).map_err(GoError::InvalidWorkerScale)?;
 
     // Parse time limit if specified
     let time_limit_minutes = if let Some(ref tl) = args.time_limit {
@@ -478,20 +630,14 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
     // Get project path (specified, or detect from current directory)
     let project_path = if let Some(ref proj) = args.project {
         let path = Path::new(proj);
-        if !path.exists() {
-            return Err(GoError::InvalidProject(format!(
-                "Project path does not exist: {}",
-                proj
-            )));
-        }
-        get_repo_root(Some(path))
-            .map_err(|_| GoError::InvalidProject(format!(
-                "Not a git repository: {}",
-                proj
-            )))?
+        // Use ensure_project_ready for specified paths - this handles:
+        // - Creating the directory if it doesn't exist
+        // - Initializing git if it's not a repo
+        // Both with user confirmation (unless --yolo)
+        ensure_project_ready(path, args.yolo)?
     } else {
-        get_repo_root(Some(Path::new(".")))
-            .map_err(|_| GoError::NoGitRepo)?
+        // For current directory, just require it to be a git repo
+        get_repo_root(Some(Path::new("."))).map_err(|_| GoError::NoGitRepo)?
     };
 
     // Create staging directory with spec
@@ -581,7 +727,13 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
 
     for worker_name in &worker_names {
         let worker_dir = if is_multi_worker {
-            create_worker_clone(&run_name, &project_path, worker_name, Some(&workspace_dir), &runs_dir)?
+            create_worker_clone(
+                &run_name,
+                &project_path,
+                worker_name,
+                Some(&workspace_dir),
+                &runs_dir,
+            )?
         } else {
             workspace_dir.clone()
         };
@@ -652,7 +804,13 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
                 is_leader,
                 leader_name: leader.clone(),
                 teammates: if is_multi_worker {
-                    Some(teammates.iter().filter(|t| *t != worker_name).cloned().collect())
+                    Some(
+                        teammates
+                            .iter()
+                            .filter(|t| *t != worker_name)
+                            .cloned()
+                            .collect(),
+                    )
                 } else {
                     None
                 },
@@ -661,10 +819,7 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
 
             match spawn_worker(config, &state) {
                 Ok(result) => {
-                    info!(
-                        "Spawned worker {} (PID {})",
-                        result.worker_name, result.pid
-                    );
+                    info!("Spawned worker {} (PID {})", result.worker_name, result.pid);
                 }
                 Err(WorkerError::RunPaused) => {
                     // Run was paused - don't spawn more workers

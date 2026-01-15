@@ -25,22 +25,24 @@ pub mod workers;
 // Re-export commonly used types
 pub use acp::{ACPClientConfig, ACPError, MCPServerConfig, SessionUpdate};
 pub use chat_session::{
-    ChatSessionManager, ChatSessionConfig, ChatSessionError, ChatEvent,
-    UIContext, PendingPermission, PermissionResponse, PermissionOption,
+    ChatEvent, ChatSessionConfig, ChatSessionError, ChatSessionManager, PendingPermission,
+    PermissionOption, PermissionResponse, UIContext,
 };
 pub use chats::{ChatHeader, ChatMode};
 pub use config::*;
-pub use eval::{EvalConfig, EvalError, EvalResult, EvalAcpConfig, EvalAcpResult, run_eval_acp};
+pub use eval::{
+    run_eval_acp, run_eval_from_args, EvalAcpConfig, EvalAcpResult, EvalConfig, EvalError,
+    EvalResult,
+};
 pub use files::Files;
+pub use remote::{
+    parse_remote_spec, parse_remote_specs, RemoteConfig, RemoteError, RemoteResult,
+    RemoteWorkerSpawner,
+};
 pub use state::*;
 pub use workers::{
-    spawn_worker, pause_all_workers, resume_awaiting_workers, check_worker_heartbeats,
-    update_worker_heartbeat, get_agent_command, is_pid_alive,
-    check_and_send_time_notifications, handle_time_expired, check_time_expired,
-    maybe_scale_up, maybe_trigger_eval, WorkerScale,
-    WorkerError, WorkerResult, WorkerSpawnConfig, SpawnResult,
-};
-pub use remote::{
-    parse_remote_spec, parse_remote_specs,
-    RemoteConfig, RemoteError, RemoteResult, RemoteWorkerSpawner,
+    check_and_send_time_notifications, check_time_expired, check_worker_heartbeats,
+    get_agent_command, handle_time_expired, is_pid_alive, maybe_scale_up, maybe_trigger_eval,
+    pause_all_workers, resume_awaiting_workers, spawn_worker, update_worker_heartbeat, SpawnResult,
+    WorkerError, WorkerResult, WorkerScale, WorkerSpawnConfig,
 };

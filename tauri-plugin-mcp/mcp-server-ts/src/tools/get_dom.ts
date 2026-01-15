@@ -21,14 +21,14 @@ export function registerGetDomTool(server: McpServer) {
         console.error(`Getting DOM with params: ${JSON.stringify({
           window_label
         })}`);
-        
+
         // The server expects just a string, not an object
         const result = await socketClient.sendCommand('get_dom', window_label);
-        
+
         console.error(`Got DOM result type: ${typeof result}, length: ${
           typeof result === 'string' ? result.length : 'unknown'
         }`);
-        
+
         // Ensure we have a string result
         let domContent;
         if (typeof result === 'string') {
@@ -42,7 +42,7 @@ export function registerGetDomTool(server: McpServer) {
         } else {
           domContent = String(result);
         }
-        
+
         return {
           content: [
             {
@@ -65,4 +65,4 @@ export function registerGetDomTool(server: McpServer) {
       }
     },
   );
-} 
+}

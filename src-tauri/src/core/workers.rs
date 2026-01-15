@@ -7,6 +7,7 @@
 //! - Resuming workers that were awaiting tasks
 
 use crate::cli::AgentPreset;
+use crate::core::config::Config;
 use crate::core::files::Files;
 use crate::core::state::{SQLiteState, StateError, Status, WorkerStatus, WorkerUpdate};
 use std::collections::HashMap;
@@ -112,14 +113,14 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
         std::fs::create_dir_all(parent)?;
     }
 
-    debug!(
-        "[{}] Worker log file: {:?}",
-        config.worker_name, log_file
-    );
+    debug!("[{}] Worker log file: {:?}", config.worker_name, log_file);
 
     // Build environment for worker subprocess
     let mut env: HashMap<String, String> = std::env::vars().collect();
-    env.insert("ACP_PERMISSION_MODE".to_string(), "bypassPermissions".to_string());
+    env.insert(
+        "ACP_PERMISSION_MODE".to_string(),
+        "bypassPermissions".to_string(),
+    );
     env.insert("HIRSEL_WORKER_SUBPROCESS".to_string(), "1".to_string());
     env.insert("HIRSEL_RUN".to_string(), config.run_name.clone());
     env.insert("HIRSEL_WORKER".to_string(), config.worker_name.clone());
@@ -134,8 +135,9 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
         .map_err(|e| WorkerError::SpawnFailed(format!("Failed to get current exe: {}", e)))?;
 
     // Build args for hirsel __worker-run
-    let agent_command_json = serde_json::to_string(&config.agent_command)
-        .map_err(|e| WorkerError::SpawnFailed(format!("Failed to serialize agent command: {}", e)))?;
+    let agent_command_json = serde_json::to_string(&config.agent_command).map_err(|e| {
+        WorkerError::SpawnFailed(format!("Failed to serialize agent command: {}", e))
+    })?;
 
     let mut args = vec![
         "__worker-run".to_string(),
@@ -366,7 +368,10 @@ pub fn resume_awaiting_workers(
 }
 
 /// Check worker heartbeats and mark stale workers
-pub fn check_worker_heartbeats(state: &SQLiteState, timeout_seconds: i64) -> WorkerResult<Vec<String>> {
+pub fn check_worker_heartbeats(
+    state: &SQLiteState,
+    timeout_seconds: i64,
+) -> WorkerResult<Vec<String>> {
     let workers = state.get_workers()?;
     let now = chrono::Utc::now();
     let mut stale = Vec::new();
@@ -506,16 +511,17 @@ pub fn handle_time_expired(
 
     // Only the first worker to detect expiration should handle it
     if state.status()? == Status::TimedOut {
-        info!(
-            "[{}] Time already expired, skipping handler",
-            worker_name
-        );
+        info!("[{}] Time already expired, skipping handler", worker_name);
         return Ok(());
     }
 
     // Send final message
     let message = "Time limit reached. Run paused with current progress.";
-    let thread = if is_multi_worker { "group" } else { worker_name };
+    let thread = if is_multi_worker {
+        "group"
+    } else {
+        worker_name
+    };
 
     state.add_message(thread, "System", message, false)?;
 
@@ -571,7 +577,10 @@ fn spawn_background_summary(run_name: &str, worker_name: &str) {
     let hirsel_exe = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(e) => {
-            warn!("[{}] Failed to get current exe for summary: {}", worker_name, e);
+            warn!(
+                "[{}] Failed to get current exe for summary: {}",
+                worker_name, e
+            );
             return;
         }
     };
@@ -584,10 +593,16 @@ fn spawn_background_summary(run_name: &str, worker_name: &str) {
         .spawn()
     {
         Ok(_) => {
-            info!("[{}] Spawned summary generation for timed out run", worker_name);
+            info!(
+                "[{}] Spawned summary generation for timed out run",
+                worker_name
+            );
         }
         Err(e) => {
-            warn!("[{}] Failed to spawn summary generation: {}", worker_name, e);
+            warn!(
+                "[{}] Failed to spawn summary generation: {}",
+                worker_name, e
+            );
         }
     }
 }
@@ -635,7 +650,11 @@ impl WorkerScale {
             if parts.len() == 2 {
                 let min = parts[0].parse().ok()?;
                 let max = parts[1].parse().ok()?;
-                return Some(Self { min, max, autoscale });
+                return Some(Self {
+                    min,
+                    max,
+                    autoscale,
+                });
             }
         } else {
             let count = range_part.parse().ok()?;
@@ -735,7 +754,13 @@ pub fn maybe_scale_up(
     let staging_dir = run_dir.join("work").join("staging");
 
     // Create worker clone
-    let worker_dir = match create_worker_clone(run_name, &project_path, &new_name, Some(&staging_dir), run_dir) {
+    let worker_dir = match create_worker_clone(
+        run_name,
+        &project_path,
+        &new_name,
+        Some(&staging_dir),
+        run_dir,
+    ) {
         Ok(dir) => dir,
         Err(e) => {
             warn!("maybe_scale_up: failed to create worker clone: {}", e);
@@ -761,7 +786,10 @@ pub fn maybe_scale_up(
     state.add_message(
         "group",
         "System",
-        &format!("New worker **{}** has joined the team. {}", new_name, reason),
+        &format!(
+            "New worker **{}** has joined the team. {}",
+            new_name, reason
+        ),
         false,
     )?;
 
@@ -791,7 +819,10 @@ pub fn maybe_scale_up(
 
     match spawn_worker(config, &state) {
         Ok(result) => {
-            info!("Scaled up: spawned new worker {} (PID {})", new_name, result.pid);
+            info!(
+                "Scaled up: spawned new worker {} (PID {})",
+                new_name, result.pid
+            );
             Ok(Some(new_name))
         }
         Err(e) => {
@@ -808,10 +839,7 @@ pub fn maybe_scale_up(
 /// Check if all workers are inactive and maybe trigger eval.
 /// This should be called whenever a worker transitions to Awaiting or Error status.
 /// Returns true if eval was triggered.
-pub fn maybe_trigger_eval(
-    _run_name: &str,
-    run_dir: &Path,
-) -> WorkerResult<bool> {
+pub fn maybe_trigger_eval(_run_name: &str, run_dir: &Path) -> WorkerResult<bool> {
     let files = Files::new(run_dir);
     let state = SQLiteState::new(files.db_path())?;
 
@@ -824,7 +852,10 @@ pub fn maybe_trigger_eval(
     // Check if run is still in working status
     let status = state.status()?;
     if status != Status::Working {
-        debug!("maybe_trigger_eval: run status is {:?}, not Working, skipping", status);
+        debug!(
+            "maybe_trigger_eval: run status is {:?}, not Working, skipping",
+            status
+        );
         return Ok(false);
     }
 
@@ -841,9 +872,67 @@ pub fn maybe_trigger_eval(
     info!("maybe_trigger_eval: all workers inactive, triggering eval");
     state.set_status(Status::Eval)?;
 
-    // The actual eval execution is handled by the GUI/CLI when they see Eval status
-    // Or we could spawn the eval here directly
+    // Spawn the eval agent in a background process
+    spawn_eval_agent(run_dir, &files)?;
+
     Ok(true)
+}
+
+/// Spawn the eval agent as a background process.
+/// This runs the eval asynchronously and updates the run status when complete.
+fn spawn_eval_agent(run_dir: &Path, files: &Files) -> WorkerResult<()> {
+    use std::process::{Command, Stdio};
+
+    // Get the hirsel executable
+    let hirsel_exe = std::env::current_exe()
+        .map_err(|e| WorkerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+
+    // Get run name from run_dir
+    let run_name = run_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+
+    // Get agent command from config
+    let (config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
+    let agent_command = config.agent.command.clone();
+
+    // Spawn the eval subprocess
+    // The __eval-run command will handle the actual eval execution
+    let mut cmd = Command::new(&hirsel_exe);
+    cmd.arg("__eval-run")
+        .arg("--run")
+        .arg(run_name)
+        .arg("--run-dir")
+        .arg(run_dir)
+        .arg("--spec")
+        .arg(files.spec())
+        .arg("--eval-spec")
+        .arg(files.eval_spec())
+        .arg("--agent-command")
+        .arg(serde_json::to_string(&agent_command).unwrap_or_else(|_| "[]".to_string()))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    // Spawn detached
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    let child = cmd
+        .spawn()
+        .map_err(|e| WorkerError::SpawnFailed(format!("Failed to spawn eval agent: {}", e)))?;
+
+    info!(
+        "maybe_trigger_eval: spawned eval agent for run {}, pid={}",
+        run_name,
+        child.id()
+    );
+
+    Ok(())
 }
 
 #[cfg(test)]

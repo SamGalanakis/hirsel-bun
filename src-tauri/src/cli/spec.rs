@@ -37,10 +37,7 @@ pub fn read_spec(run_dir: &Path) -> Result<String, SpecError> {
 ///
 /// Amendments are appended to the spec with a special section that can be
 /// updated without affecting the main spec content.
-pub fn update_spec_amendments(
-    run_dir: &Path,
-    amendments: &[Amendment],
-) -> Result<(), SpecError> {
+pub fn update_spec_amendments(run_dir: &Path, amendments: &[Amendment]) -> Result<(), SpecError> {
     let files = Files::new(run_dir);
     let spec_path = files.spec();
 
@@ -48,8 +45,8 @@ pub fn update_spec_amendments(
         return Err(SpecError::NotFound(run_dir.to_path_buf()));
     }
 
-    let mut content = std::fs::read_to_string(&spec_path)
-        .map_err(|e| SpecError::ReadError(e.to_string()))?;
+    let mut content =
+        std::fs::read_to_string(&spec_path).map_err(|e| SpecError::ReadError(e.to_string()))?;
 
     // Remove existing amendments section if present
     let marker = "\n---\n\n## Amendments\n";
@@ -63,7 +60,10 @@ pub fn update_spec_amendments(
         for a in amendments {
             // Format timestamp as YYYY-MM-DD HH:MM
             let timestamp = &a.timestamp[..16].replace('T', " ");
-            content.push_str(&format!("\n- **#{}** ({}): {}\n", a.id, timestamp, a.message));
+            content.push_str(&format!(
+                "\n- **#{}** ({}): {}\n",
+                a.id, timestamp, a.message
+            ));
         }
     }
 

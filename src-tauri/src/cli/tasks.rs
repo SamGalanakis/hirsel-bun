@@ -155,9 +155,18 @@ pub fn run_tasks(run_name: &str, json_output: bool) -> Result<String, TaskError>
     format_task_tree(&state, &tasks, None, 0, &mut output);
 
     // Summary
-    let todo_count = tasks.iter().filter(|t| t.status == TaskStatus::Todo).count();
-    let doing_count = tasks.iter().filter(|t| t.status == TaskStatus::Doing).count();
-    let done_count = tasks.iter().filter(|t| t.status == TaskStatus::Done).count();
+    let todo_count = tasks
+        .iter()
+        .filter(|t| t.status == TaskStatus::Todo)
+        .count();
+    let doing_count = tasks
+        .iter()
+        .filter(|t| t.status == TaskStatus::Doing)
+        .count();
+    let done_count = tasks
+        .iter()
+        .filter(|t| t.status == TaskStatus::Done)
+        .count();
 
     output.push_str(&format!(
         "\n{} todo, {} in progress, {} done\n",
@@ -333,7 +342,10 @@ pub fn run_task_unclaim(
     }
 
     match claimed_by {
-        Some(owner) => Ok(format!("Task '{}' unclaimed (was held by {})\n", task_id, owner)),
+        Some(owner) => Ok(format!(
+            "Task '{}' unclaimed (was held by {})\n",
+            task_id, owner
+        )),
         None => Ok(format!("Task '{}' was not claimed\n", task_id)),
     }
 }
@@ -359,9 +371,7 @@ mod tests {
 
         // Add some test tasks
         state.add_task("task1", "First task", None, None).unwrap();
-        state
-            .add_task("task2", "Second task", None, None)
-            .unwrap();
+        state.add_task("task2", "Second task", None, None).unwrap();
         state
             .add_task("subtask1", "Subtask", Some("task1"), None)
             .unwrap();
