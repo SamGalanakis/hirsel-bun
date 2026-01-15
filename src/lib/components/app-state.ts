@@ -26,6 +26,7 @@ export function appState() {
     isDarkTheme: isDarkTheme(),
     sidebarCollapsed: false,
     _focusedRunIndex: -1,
+    _eventCleanups: [] as (() => void)[],
 
     // UI toggles
     toggleSidebar() {
@@ -62,15 +63,19 @@ export function appState() {
       this.isDarkTheme = isDarkTheme();
 
       // Listen for theme changes from settings modal
-      window.addEventListener('theme-changed', ((e: CustomEvent) => {
+      const themeChangedHandler = ((e: CustomEvent) => {
         this.currentTheme = e.detail.themeId;
         this.isDarkTheme = e.detail.theme.isDark;
-      }) as EventListener);
+      }) as EventListener;
+      window.addEventListener('theme-changed', themeChangedHandler);
+      this._eventCleanups.push(() => window.removeEventListener('theme-changed', themeChangedHandler));
 
       // Listen for close-settings event
-      window.addEventListener('close-settings', () => {
+      const closeSettingsHandler = () => {
         this.showSettings = false;
-      });
+      };
+      window.addEventListener('close-settings', closeSettingsHandler);
+      this._eventCleanups.push(() => window.removeEventListener('close-settings', closeSettingsHandler));
     },
 
     // Formatting helpers (bound to this for templates)
@@ -153,7 +158,7 @@ export function appState() {
       this.initTheme();
 
       // Listen for run selection
-      window.addEventListener('run-selected', async (e: Event) => {
+      const runSelectedHandler = async (e: Event) => {
         const customEvent = e as CustomEvent<string | null>;
         const runName = customEvent.detail;
         if (runName) {
@@ -173,10 +178,12 @@ export function appState() {
           this.tasksDone = 0;
           this.tasksTotal = 0;
         }
-      });
+      };
+      window.addEventListener('run-selected', runSelectedHandler);
+      this._eventCleanups.push(() => window.removeEventListener('run-selected', runSelectedHandler));
 
       // Keyboard shortcuts
-      document.addEventListener('keydown', (e: KeyboardEvent) => {
+      const keydownHandler = (e: KeyboardEvent) => {
         // Ignore if typing in input
         const target = e.target as HTMLElement;
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
@@ -237,7 +244,14 @@ export function appState() {
             window.dispatchEvent(new CustomEvent('toggle-activity-fullscreen'));
             break;
         }
-      });
+      };
+      document.addEventListener('keydown', keydownHandler);
+      this._eventCleanups.push(() => document.removeEventListener('keydown', keydownHandler));
+    },
+
+    destroy() {
+      this._eventCleanups.forEach(fn => fn());
+      this._eventCleanups = [];
     },
   };
 }

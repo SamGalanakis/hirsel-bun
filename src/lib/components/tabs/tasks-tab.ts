@@ -3,6 +3,7 @@
  */
 
 import type { Task, TaskDisplay } from '../../types';
+import { formatTokens, formatRelativeTime, formatFullDateTime } from '../../utils/formatters';
 
 declare const Alpine: {
   store: (name: string) => { selectedRun?: string | null } | undefined;
@@ -200,7 +201,8 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
       const rootTasks: TaskDisplay[] = [];
 
       this.tasks.forEach(t => {
-        const task = taskMap.get(t.id)!;
+        const task = taskMap.get(t.id);
+        if (!task) return; // Shouldn't happen, but be defensive
 
         // Check if blocked
         task.isBlocked = !!t.blockedBy && t.blockedBy.length > 0 && t.blockedBy.some(bid => {
@@ -209,8 +211,13 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
         });
 
         // Build hierarchy
-        if (t.parentId && taskMap.has(t.parentId)) {
-          taskMap.get(t.parentId)!.children.push(task);
+        if (t.parentId) {
+          const parent = taskMap.get(t.parentId);
+          if (parent) {
+            parent.children.push(task);
+          } else {
+            rootTasks.push(task);
+          }
         } else {
           rootTasks.push(task);
         }
@@ -318,42 +325,10 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
       }
     },
 
-    // Format helpers
-    formatTokens(tokens: number | null | undefined): string {
-      if (!tokens) return '0';
-      if (tokens >= 1000000) return (tokens / 1000000).toFixed(1) + 'M';
-      if (tokens >= 1000) return (tokens / 1000).toFixed(1) + 'k';
-      return String(tokens);
-    },
-
-    formatTime(timestamp: string | null | undefined): string {
-      if (!timestamp) return '';
-      // Timestamps from backend are UTC but without 'Z' suffix - add it for proper parsing
-      const utcTimestamp = timestamp.endsWith('Z') ? timestamp : timestamp + 'Z';
-      const date = new Date(utcTimestamp);
-      const now = new Date();
-      const diffMs = now.getTime() - date.getTime();
-      const diffMins = Math.floor(diffMs / 60000);
-
-      if (diffMins < 1) return 'just now';
-      if (diffMins < 60) return `${diffMins}m ago`;
-      const diffHours = Math.floor(diffMins / 60);
-      if (diffHours < 24) return `${diffHours}h ago`;
-      const diffDays = Math.floor(diffHours / 24);
-      return `${diffDays}d ago`;
-    },
-
-    formatFullTime(timestamp: string | null | undefined): string {
-      if (!timestamp) return 'N/A';
-      // Timestamps from backend are UTC but without 'Z' suffix - add it for proper parsing
-      const utcTimestamp = timestamp.endsWith('Z') ? timestamp : timestamp + 'Z';
-      return new Date(utcTimestamp).toLocaleString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-    },
+    // Use shared formatters
+    formatTokens,
+    formatTime: formatRelativeTime,
+    formatFullTime: formatFullDateTime,
 
     getStatusLabel(status: string): string {
       switch (status) {

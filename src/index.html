@@ -420,6 +420,7 @@
           x-show="contextMenuVisible"
           x-transition
           @click.away="hideContextMenu()"
+          @keydown.escape.window="hideContextMenu()"
           :style="'left: ' + contextMenuX + 'px; top: ' + contextMenuY + 'px'"
           class="fixed z-50 bg-pasture-700 border border-pasture-600 rounded shadow-lg py-1 min-w-[140px]"
         >
@@ -1160,6 +1161,7 @@ Example:
               <div
                 x-show="contextMenuVisible"
                 x-transition
+                @keydown.escape.window="contextMenuVisible = false"
                 :style="'left: ' + contextMenuX + 'px; top: ' + contextMenuY + 'px'"
                 class="fixed z-50 bg-pasture-700 border border-pasture-600 rounded shadow-lg py-1 min-w-[140px]"
               >
@@ -1600,6 +1602,7 @@ Example:
           class="fixed z-50 w-80 bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl overflow-hidden"
           :style="'top: ' + popoverPosition.y + 'px; left: ' + popoverPosition.x + 'px; max-height: calc(100vh - 100px);'"
           @click.stop
+          @keydown.escape.window="closeTaskPopover()"
         >
           <!-- Popover header -->
           <div class="p-3 border-b border-pasture-700 flex items-start justify-between gap-2">

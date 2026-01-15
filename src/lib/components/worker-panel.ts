@@ -3,6 +3,7 @@
  */
 
 import type { WorkerDisplay, Task } from '../types';
+import { formatTokens, formatElapsedTime } from '../utils/formatters';
 
 interface EnrichedWorker extends WorkerDisplay {
   isLeader: boolean;
@@ -140,28 +141,9 @@ export function workerPanel() {
       }
     },
 
-    formatTokens(n: number | null | undefined): string {
-      if (n == null || n === 0) return '0';
-      if (n < 1000) return String(n);
-      if (n < 1000000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
-      return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
-    },
-
-    formatElapsedTime(sessionStartedAt: string | null | undefined): string {
-      if (!sessionStartedAt) return '';
-      const start = new Date(sessionStartedAt);
-      const now = new Date();
-      const seconds = Math.floor((now.getTime() - start.getTime()) / 1000);
-      if (seconds < 60) return seconds + 's';
-      const minutes = Math.floor(seconds / 60);
-      if (minutes < 60) return minutes + 'm';
-      const hours = Math.floor(minutes / 60);
-      const mins = minutes % 60;
-      if (hours < 24) return mins > 0 ? hours + 'h ' + mins + 'm' : hours + 'h';
-      const days = Math.floor(hours / 24);
-      const hrs = hours % 24;
-      return hrs > 0 ? days + 'd ' + hrs + 'h' : days + 'd';
-    },
+    // Use shared formatters
+    formatTokens,
+    formatElapsedTime,
 
     getContextClass(utilization: number | null | undefined): string {
       if (utilization == null) return 'text-wool-600';

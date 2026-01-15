@@ -3,6 +3,7 @@
  */
 
 import type { ThreadSummary, Message, WorkerDisplay } from '../types';
+import { formatTimeHHMM, formatDate } from '../utils/formatters';
 
 // Known group chat thread names
 const GROUP_CHAT_NAMES = ['learning', 'group'];
@@ -22,6 +23,7 @@ export function chatPanel() {
     _pollInterval: null as ReturnType<typeof setInterval> | null,
     _threadPollInterval: null as ReturnType<typeof setInterval> | null,
     _currentRunName: null as string | null,
+    _isLoadingRun: false,
 
     async init() {
       window.addEventListener('run-selected', (e: Event) => {
@@ -34,6 +36,10 @@ export function chatPanel() {
       if (app && app.selectedRun) {
         await this.onRunSelected(app.selectedRun);
       }
+    },
+
+    destroy() {
+      this.stopPolling();
     },
 
     // Get group chat threads (learning, group)
@@ -92,6 +98,7 @@ export function chatPanel() {
         this.messages = [];
         this.selectedThread = null;
         this._currentRunName = null;
+        this._isLoadingRun = false;
         return;
       }
 
@@ -101,69 +108,44 @@ export function chatPanel() {
         return;
       }
 
+      // Prevent concurrent loading
+      if (this._isLoadingRun) {
+        return;
+      }
+      this._isLoadingRun = true;
+
       // Stop existing polling and start fresh for new run
       this.stopPolling();
       this._currentRunName = runName;
 
-      await Promise.all([this.fetchThreads(), this.fetchWorkers()]);
-      this._threadPollInterval = setInterval(
-        () => Promise.all([this.fetchThreads(), this.fetchWorkers()]),
-        4000
-      );
+      try {
+        await Promise.all([this.fetchThreads(), this.fetchWorkers()]);
+        this._threadPollInterval = setInterval(
+          () => Promise.all([this.fetchThreads(), this.fetchWorkers()]),
+          4000
+        );
+      } finally {
+        this._isLoadingRun = false;
+      }
     },
 
     async fetchWorkers() {
       const runName = this.getSelectedRun();
-      if (!runName) return;
+      if (!runName || !window.tauriInvoke) return;
 
       try {
-        if (window.tauriInvoke) {
-          this.workers = await window.tauriInvoke<WorkerDisplay[]>('get_workers', { runName });
-        } else {
-          // Mock data for development
-          this.workers = [
-            { name: 'worker-1', status: 'running' } as WorkerDisplay,
-            { name: 'worker-2', status: 'idle' } as WorkerDisplay,
-          ];
-        }
+        this.workers = await window.tauriInvoke<WorkerDisplay[]>('get_workers', { runName });
       } catch (e) {
-        console.debug('Failed to fetch workers:', e);
+        console.error('Failed to fetch workers:', e);
       }
     },
 
     async fetchThreads() {
       const runName = this.getSelectedRun();
-      if (!runName) return;
+      if (!runName || !window.tauriInvoke) return;
 
       try {
-        if (window.tauriInvoke) {
-          this.threads = await window.tauriInvoke<ThreadSummary[]>('get_threads', { runName });
-        } else {
-          // Mock data for development
-          this.threads = [
-            {
-              name: 'learning',
-              messageCount: 3,
-              unreadCount: 1,
-              lastMessage: 'Learned something new!',
-              lastTimestamp: new Date().toISOString(),
-            },
-            {
-              name: 'group',
-              messageCount: 5,
-              unreadCount: 0,
-              lastMessage: 'Task complete',
-              lastTimestamp: new Date().toISOString(),
-            },
-            {
-              name: 'worker-1',
-              messageCount: 2,
-              unreadCount: 1,
-              lastMessage: 'Working on it',
-              lastTimestamp: new Date().toISOString(),
-            },
-          ];
-        }
+        this.threads = await window.tauriInvoke<ThreadSummary[]>('get_threads', { runName });
 
         const totalUnread = this.threads.reduce((sum, t) => sum + t.unreadCount, 0);
         const app = this.getAppState();
@@ -181,8 +163,8 @@ export function chatPanel() {
           }
         }
       } catch (e) {
-        const error = e as Error;
-        window.toast.error('Failed to load threads');
+        console.error('Failed to load threads:', e);
+        window.toast?.error('Failed to load threads');
         this.error = 'Failed to load threads';
       }
     },
@@ -306,22 +288,9 @@ export function chatPanel() {
       }
     },
 
-    formatTime(timestamp: string | null | undefined): string {
-      if (!timestamp) return '';
-      const d = new Date(timestamp);
-      return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-    },
-
-    formatDate(timestamp: string | null | undefined): string {
-      if (!timestamp) return '';
-      const d = new Date(timestamp);
-      const today = new Date();
-      if (d.toDateString() === today.toDateString()) return 'Today';
-      const yesterday = new Date(today);
-      yesterday.setDate(yesterday.getDate() - 1);
-      if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
-      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    },
+    // Use shared formatters
+    formatTime: formatTimeHHMM,
+    formatDate,
 
     getSenderColor(sender: string): string {
       const colors: Record<string, string> = {

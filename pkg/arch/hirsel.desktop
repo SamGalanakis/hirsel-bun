@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Hirsel
+Comment=Herd your AI coding agents
+Exec=hirsel
+Icon=hirsel
+Terminal=false
+Type=Application
+Categories=Development;Utility;
+Keywords=ai;agent;coding;

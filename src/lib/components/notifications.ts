@@ -4,6 +4,7 @@
  */
 
 import type { RunSummary, Message } from '../types';
+import { formatRelativeTime } from '../utils/formatters';
 
 interface Notification {
   id: string;
@@ -164,19 +165,11 @@ export function notifications() {
       }
     },
 
+    // Use shared formatter (removes "ago" suffix for compact display)
     formatTime(timestamp: string): string {
-      const d = new Date(timestamp);
-      const now = new Date();
-      const diff = now.getTime() - d.getTime();
-
-      // Less than 1 minute
-      if (diff < 60000) return 'now';
-      // Less than 1 hour
-      if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
-      // Less than 1 day
-      if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
-      // Otherwise show date
-      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const relative = formatRelativeTime(timestamp);
+      // Remove " ago" for compact notification display
+      return relative.replace(' ago', '').replace('just now', 'now');
     },
   };
 }

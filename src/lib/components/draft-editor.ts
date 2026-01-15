@@ -8,6 +8,7 @@
 import { createDraft, updateDraft, startDraft, deleteRun, getRunDetail, readSpecFile, writeSpecFile, readEvalFile, writeEvalFile, validateRepo, initProjectRepo } from '../api';
 import type { RunDetail, DraftUpdateRequest, RepoValidation } from '../types';
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import { showConfirm } from '../confirm-dialog';
 
 declare const window: Window & {
@@ -716,11 +717,11 @@ export function draftEditor(): DraftEditorData & {
     },
 
     /**
-     * Render markdown content to HTML
+     * Render markdown content to HTML (sanitized for XSS protection)
      */
     renderMarkdown(content: string): string {
       if (!content) return '<p class="text-wool-500 italic">No content</p>';
-      return marked(content) as string;
+      return DOMPurify.sanitize(marked(content) as string);
     },
 
     /**

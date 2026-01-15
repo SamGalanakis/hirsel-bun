@@ -91,9 +91,10 @@ console.log('[Hirsel] App initialized');
 
 listen<string>('execute-js', async (event) => {
   const code = event.payload;
+  const TIMEOUT_MS = 5000; // 5 second timeout
 
   try {
-    // Execute the JavaScript code
+    // Execute the JavaScript code with timeout
     // Using Function() instead of eval() for slightly better security
     // The code runs in global scope
     const fn = new Function(`
@@ -103,7 +104,12 @@ listen<string>('execute-js', async (event) => {
       })();
     `);
 
-    const result = await fn();
+    // Race between execution and timeout
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('JavaScript execution timed out (5s limit)')), TIMEOUT_MS);
+    });
+
+    const result = await Promise.race([fn(), timeoutPromise]);
 
     // Determine the type of the result
     let resultType: string = typeof result;

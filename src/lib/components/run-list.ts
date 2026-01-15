@@ -26,6 +26,8 @@ export function runList() {
     contextMenuY: 0,
     contextMenuRun: null as string | null,
     pollInterval: null as ReturnType<typeof setInterval> | null,
+    _initTimeout: null as ReturnType<typeof setTimeout> | null,
+    _initRetries: 0,
 
     // Formatting helpers
     formatElapsed,
@@ -113,11 +115,16 @@ export function runList() {
         clearInterval(this.pollInterval);
         this.pollInterval = null;
       }
+      if (this._initTimeout) {
+        clearTimeout(this._initTimeout);
+        this._initTimeout = null;
+      }
     },
 
     async fetchRuns(autoSelectFirst = false) {
       try {
         if (window.tauriInvoke) {
+          this._initRetries = 0; // Reset retry count on success
           this.runs = await window.tauriInvoke<RunSummary[]>('get_runs');
 
           if (autoSelectFirst && this.runs.length > 0 && !this.selectedRun) {
@@ -130,7 +137,15 @@ export function runList() {
             }, 50);
           }
         } else {
-          setTimeout(() => this.fetchRuns(autoSelectFirst), 100);
+          // Retry up to 50 times (5 seconds total) waiting for Tauri
+          if (this._initRetries < 50) {
+            this._initRetries++;
+            this._initTimeout = setTimeout(() => this.fetchRuns(autoSelectFirst), 100);
+          } else {
+            console.error('[fetchRuns] Tauri not available after 50 retries');
+            this.error = 'Unable to connect to backend';
+            this.loading = false;
+          }
           return;
         }
         this.loading = false;

@@ -1,0 +1,45 @@
+# Maintainer: Your Name <your@email.com>
+# Pre-built binary package - use PKGBUILD for source build
+pkgname=hirsel-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Herd your AI coding agents (pre-built binary)"
+arch=('x86_64')
+url="https://github.com/SamGalanakis/hirsel-bun"
+license=('MIT')
+depends=(
+  'cairo'
+  'desktop-file-utils'
+  'gdk-pixbuf2'
+  'glib2'
+  'gtk3'
+  'hicolor-icon-theme'
+  'libsoup3'
+  'pango'
+  'webkit2gtk-4.1'
+  'libappindicator-gtk3'
+  'librsvg'
+  'libxdo'
+)
+provides=('hirsel')
+conflicts=('hirsel')
+source=(
+  "hirsel-$pkgver.tar.gz::$url/releases/download/v$pkgver/hirsel-linux-x86_64.tar.gz"
+  "hirsel.desktop::$url/raw/v$pkgver/pkg/arch/hirsel.desktop"
+  "hirsel-128.png::$url/raw/v$pkgver/src-tauri/icons/128x128.png"
+  "hirsel-32.png::$url/raw/v$pkgver/src-tauri/icons/32x32.png"
+)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP')
+install=hirsel.install
+
+package() {
+  # Install binary
+  install -Dm755 "hirsel" "$pkgdir/usr/bin/hirsel"
+
+  # Install desktop file
+  install -Dm644 "hirsel.desktop" "$pkgdir/usr/share/applications/hirsel.desktop"
+
+  # Install icons
+  install -Dm644 "hirsel-128.png" "$pkgdir/usr/share/icons/hicolor/128x128/apps/hirsel.png"
+  install -Dm644 "hirsel-32.png" "$pkgdir/usr/share/icons/hicolor/32x32/apps/hirsel.png"
+}
