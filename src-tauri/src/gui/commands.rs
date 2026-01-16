@@ -1083,6 +1083,17 @@ pub async fn delete_run(run_name: String) -> Result<(), String> {
         }
     }
 
+    // Delete Gyp chat history for this run
+    if let Ok(store) = GypChatStore::open() {
+        if let Err(e) = store.delete_run_messages(&run_name) {
+            tracing::warn!(
+                "Failed to delete Gyp chat history for run '{}': {}",
+                run_name,
+                e
+            );
+        }
+    }
+
     // Delete the run directory
     fs::remove_dir_all(&run_dir).map_err(|e| format!("Failed to delete run directory: {}", e))?;
 
@@ -4246,6 +4257,55 @@ pub async fn kill_orphaned_acp_processes() -> Result<serde_json::Value, String> 
 }
 
 // =============================================================================
+// Gyp Chat History Commands
+// =============================================================================
+
+use crate::core::gyp_chat::{GypChatMessage, GypChatStore};
+
+/// Get Gyp chat history for a run (or no-run if run_name is None)
+#[tauri::command]
+pub async fn get_gyp_chat_history(run_name: Option<String>) -> Result<Vec<GypChatMessage>, String> {
+    let store =
+        GypChatStore::open().map_err(|e| format!("Failed to open gyp chat store: {}", e))?;
+
+    let messages = store
+        .get_messages(run_name.as_deref())
+        .map_err(|e| format!("Failed to get gyp chat history: {}", e))?;
+
+    Ok(messages)
+}
+
+/// Save a Gyp chat message for a run (or no-run if run_name is None)
+#[tauri::command]
+pub async fn save_gyp_message(
+    run_name: Option<String>,
+    role: String,
+    chunks_json: String,
+) -> Result<i64, String> {
+    let store =
+        GypChatStore::open().map_err(|e| format!("Failed to open gyp chat store: {}", e))?;
+
+    let id = store
+        .save_message(run_name.as_deref(), &role, &chunks_json)
+        .map_err(|e| format!("Failed to save gyp message: {}", e))?;
+
+    Ok(id)
+}
+
+/// Clear Gyp chat history for a run (or no-run if run_name is None)
+#[tauri::command]
+pub async fn clear_gyp_chat_history(run_name: Option<String>) -> Result<(), String> {
+    let store =
+        GypChatStore::open().map_err(|e| format!("Failed to open gyp chat store: {}", e))?;
+
+    store
+        .clear_messages(run_name.as_deref())
+        .map_err(|e| format!("Failed to clear gyp chat history: {}", e))?;
+
+    Ok(())
+}
+
+// =============================================================================
 // Handler Registration
 // =============================================================================
 
@@ -4325,5 +4385,9 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         // Debug commands
         get_process_counts,
         kill_orphaned_acp_processes,
+        // Gyp chat history commands
+        get_gyp_chat_history,
+        save_gyp_message,
+        clear_gyp_chat_history,
     ]
 }

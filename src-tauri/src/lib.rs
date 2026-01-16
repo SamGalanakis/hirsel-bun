@@ -469,6 +469,13 @@ pub fn run() {
         .invoke_handler(gui::get_handlers())
         .setup(|app| {
             use tauri::Manager;
+
+            // In dev mode, clean up orphaned processes from previous hot-reload sessions
+            #[cfg(debug_assertions)]
+            {
+                cleanup_orphaned_dev_processes();
+            }
+
             if let Some(window) = app.get_webview_window("main") {
                 // Set window background color to match app theme (prevents white flash on resize)
                 // Dark background color #1a1a1a = rgb(26, 26, 26)
@@ -568,5 +575,32 @@ fn stop_chat_sessions(chat_manager: &std::sync::Arc<core::ChatSessionManager>) {
                 let _ = chat_manager.stop_session(&session_id).await;
             }
         });
+    }
+}
+
+/// Clean up orphaned claude-code-acp processes from previous dev sessions.
+/// This is only compiled in debug builds to handle hot-reload orphans.
+#[cfg(debug_assertions)]
+fn cleanup_orphaned_dev_processes() {
+    use std::process::Command;
+
+    tracing::info!("[DEV] Cleaning up orphaned claude-code-acp processes from previous sessions");
+
+    // Kill all claude-code-acp processes - they're orphans from previous hot-reload
+    match Command::new("pkill")
+        .args(["-f", "claude-code-acp"])
+        .output()
+    {
+        Ok(output) => {
+            if output.status.success() {
+                tracing::info!("[DEV] Killed orphaned claude-code-acp processes");
+            } else {
+                // Exit code 1 means no processes matched - that's fine
+                tracing::debug!("[DEV] No orphaned claude-code-acp processes found");
+            }
+        }
+        Err(e) => {
+            tracing::warn!("[DEV] Failed to run pkill: {}", e);
+        }
     }
 }

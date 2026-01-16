@@ -579,51 +579,54 @@
               </span>
             </button>
           </div>
-          <!-- Actions (hide on Settings tab) -->
-          <div class="ml-auto flex items-center gap-1" x-show="activeTab !== 'settings'">
-            <!-- Load File Button -->
-            <button
-              @click="openFilePicker(activeTab)"
-              class="p-1.5 text-wool-500 hover:text-wool-200 hover:bg-pasture-700 rounded transition-colors"
-              data-tooltip="Load file"
-              data-side="bottom"
-              type="button"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M9 15h6"/><path d="M12 18v-6"/></svg>
-            </button>
-            <!-- Open Assets Folder Button -->
-            <button
-              @click="openAssets()"
-              class="p-1.5 text-wool-500 hover:text-wool-200 hover:bg-pasture-700 rounded transition-colors"
-              data-tooltip="Open assets folder"
-              data-side="bottom"
-              type="button"
-            >
-              <i data-lucide="folder-open" class="w-4 h-4"></i>
-            </button>
-            <div class="w-px h-4 bg-pasture-600 mx-1"></div>
-            <!-- Preview Toggle -->
-            <button
-              @click="previewMode = !previewMode"
-              class="px-2 py-1 text-xs rounded transition-colors"
-              :class="!previewMode ? 'bg-pasture-700 text-wool-200' : 'text-wool-500 hover:text-wool-300'"
-            >
-              <i data-lucide="edit-3" class="w-3.5 h-3.5 inline-block mr-1"></i>Edit
-            </button>
-            <button
-              @click="previewMode = !previewMode"
-              class="px-2 py-1 text-xs rounded transition-colors"
-              :class="previewMode ? 'bg-pasture-700 text-wool-200' : 'text-wool-500 hover:text-wool-300'"
-            >
-              <i data-lucide="eye" class="w-3.5 h-3.5 inline-block mr-1"></i>Preview
-            </button>
-          </div>
         </div>
 
         <!-- Tab Content -->
         <div class="flex-1 overflow-hidden">
           <!-- Spec Tab -->
           <div x-show="activeTab === 'spec'" class="h-full flex flex-col min-h-0">
+            <!-- Toolbar -->
+            <div class="flex items-center justify-between px-4 py-2 border-b border-pasture-700 bg-pasture-800/50">
+              <div class="flex items-center gap-1">
+                <!-- Load File Button -->
+                <button
+                  @click="openFilePicker('spec')"
+                  class="p-1.5 text-wool-500 hover:text-wool-200 hover:bg-pasture-700 rounded transition-colors"
+                  data-tooltip="Load file"
+                  data-side="bottom"
+                  type="button"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M9 15h6"/><path d="M12 18v-6"/></svg>
+                </button>
+                <!-- Open Assets Folder Button -->
+                <button
+                  @click="openAssets()"
+                  class="p-1.5 text-wool-500 hover:text-wool-200 hover:bg-pasture-700 rounded transition-colors"
+                  data-tooltip="Open assets folder"
+                  data-side="bottom"
+                  type="button"
+                >
+                  <i data-lucide="folder-open" class="w-4 h-4"></i>
+                </button>
+              </div>
+              <!-- Edit/Preview Toggle -->
+              <div class="flex items-center gap-1">
+                <button
+                  @click="previewMode = false"
+                  class="px-2 py-1 text-xs rounded transition-colors"
+                  :class="!previewMode ? 'bg-pasture-600 text-wool-200' : 'text-wool-500 hover:text-wool-300'"
+                >
+                  <i data-lucide="edit-3" class="w-3.5 h-3.5 inline-block mr-1"></i>Edit
+                </button>
+                <button
+                  @click="previewMode = true"
+                  class="px-2 py-1 text-xs rounded transition-colors"
+                  :class="previewMode ? 'bg-pasture-600 text-wool-200' : 'text-wool-500 hover:text-wool-300'"
+                >
+                  <i data-lucide="eye" class="w-3.5 h-3.5 inline-block mr-1"></i>Preview
+                </button>
+              </div>
+            </div>
             <!-- Drop Zone Wrapper -->
             <div
               class="flex-1 min-h-0 flex flex-col relative drop-zone"
@@ -636,6 +639,7 @@
               <!-- Edit Mode -->
               <div x-show="!previewMode" class="flex-1 flex flex-col">
                 <textarea
+                  id="spec-textarea"
                   x-model="spec"
                   @input="debouncedSaveSpec(); trackCursorPosition('spec', $event)"
                   @click="trackCursorPosition('spec', $event)"
@@ -679,6 +683,48 @@ Example:
 
           <!-- Eval Tab -->
           <div x-show="activeTab === 'eval'" class="h-full flex flex-col min-h-0">
+            <!-- Toolbar -->
+            <div class="flex items-center justify-between px-4 py-2 border-b border-pasture-700 bg-pasture-800/50">
+              <div class="flex items-center gap-1">
+                <!-- Load File Button -->
+                <button
+                  @click="openFilePicker('eval')"
+                  class="p-1.5 text-wool-500 hover:text-wool-200 hover:bg-pasture-700 rounded transition-colors"
+                  data-tooltip="Load file"
+                  data-side="bottom"
+                  type="button"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M9 15h6"/><path d="M12 18v-6"/></svg>
+                </button>
+                <!-- Open Assets Folder Button -->
+                <button
+                  @click="openAssets()"
+                  class="p-1.5 text-wool-500 hover:text-wool-200 hover:bg-pasture-700 rounded transition-colors"
+                  data-tooltip="Open assets folder"
+                  data-side="bottom"
+                  type="button"
+                >
+                  <i data-lucide="folder-open" class="w-4 h-4"></i>
+                </button>
+              </div>
+              <!-- Edit/Preview Toggle -->
+              <div class="flex items-center gap-1">
+                <button
+                  @click="previewMode = false"
+                  class="px-2 py-1 text-xs rounded transition-colors"
+                  :class="!previewMode ? 'bg-pasture-600 text-wool-200' : 'text-wool-500 hover:text-wool-300'"
+                >
+                  <i data-lucide="edit-3" class="w-3.5 h-3.5 inline-block mr-1"></i>Edit
+                </button>
+                <button
+                  @click="previewMode = true"
+                  class="px-2 py-1 text-xs rounded transition-colors"
+                  :class="previewMode ? 'bg-pasture-600 text-wool-200' : 'text-wool-500 hover:text-wool-300'"
+                >
+                  <i data-lucide="eye" class="w-3.5 h-3.5 inline-block mr-1"></i>Preview
+                </button>
+              </div>
+            </div>
             <!-- Drop Zone Wrapper -->
             <div
               class="flex-1 min-h-0 flex flex-col relative drop-zone"
@@ -691,6 +737,7 @@ Example:
               <!-- Edit Mode -->
               <div x-show="!previewMode" class="flex-1 flex flex-col">
                 <textarea
+                  id="eval-textarea"
                   x-model="eval"
                   @input="debouncedSaveEval(); trackCursorPosition('eval', $event)"
                   @click="trackCursorPosition('eval', $event)"
@@ -2148,33 +2195,57 @@ Example:
       x-transition:leave-end="translate-x-full"
       class="ai-chat-panel w-96 flex-shrink-0 border-l border-pasture-600 flex flex-col bg-pasture-800"
       x-data="directChat()"
-      x-init="if (!connected && !loading) connect()"
+      x-effect="if (aiChatOpen && !connected && !loading) connect()"
       @keydown.escape.window="if (aiChatOpen && !pendingPermission) aiChatOpen = false"
     >
       <!-- Header -->
       <div class="p-3 border-b border-pasture-600 flex items-center justify-between">
         <div class="flex items-center gap-2">
           <img src="/gyp.svg" class="size-12 shrink-0 p-1" alt="Gyp" />
-          <h2 class="text-sm font-medium text-wool-300">Gyp</h2>
-          <!-- Connection status -->
-          <span
-            x-show="connected"
-            class="w-2 h-2 rounded-full bg-sage"
-            data-tooltip="Connected"
-            data-side="bottom"
-          ></span>
-          <span
-            x-show="!connected && !loading"
-            class="w-2 h-2 rounded-full bg-wool-600"
-            data-tooltip="Disconnected"
-            data-side="bottom"
-          ></span>
-          <span
-            x-show="loading"
-            class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"
-            data-tooltip="Connecting..."
-            data-side="bottom"
-          ></span>
+          <div class="flex flex-col">
+            <div class="flex items-center gap-2">
+              <h2 class="text-sm font-medium text-wool-300">Gyp</h2>
+              <!-- Connection status -->
+              <span
+                x-show="connected"
+                class="w-2 h-2 rounded-full bg-sage"
+                data-tooltip="Connected"
+                data-side="bottom"
+              ></span>
+              <span
+                x-show="!connected && !loading"
+                class="w-2 h-2 rounded-full bg-wool-600"
+                data-tooltip="Disconnected"
+                data-side="bottom"
+              ></span>
+              <span
+                x-show="loading"
+                class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"
+                data-tooltip="Connecting..."
+                data-side="bottom"
+              ></span>
+            </div>
+            <!-- Context indicator with toggle -->
+            <label
+              x-show="getSelectedRunName()"
+              class="label flex items-center gap-2 mt-0.5 cursor-pointer"
+              :data-tooltip="useRunContext ? 'Using run-specific chat' : 'Using general chat'"
+              data-side="bottom"
+            >
+              <input
+                type="checkbox"
+                role="switch"
+                class="input"
+                x-model="useRunContext"
+                @change="reloadChat()"
+              />
+              <span
+                class="text-xs truncate max-w-28"
+                :class="useRunContext ? 'text-wool-400' : 'text-wool-600'"
+                x-text="useRunContext ? getSelectedRunName() : 'General'"
+              ></span>
+            </label>
+          </div>
         </div>
         <div class="flex items-center gap-1">
           <span
@@ -3489,7 +3560,7 @@ Example:
     x-show="isOpen"
     x-cloak
     @keydown.escape.window="isOpen = false"
-    class="fixed inset-0 z-[100] bg-pasture-900/95 flex flex-col overflow-hidden"
+    class="fixed inset-0 z-[100] bg-pasture-900 flex flex-col overflow-hidden"
   >
     <!-- Header -->
     <div class="flex items-center justify-between p-4 border-b border-pasture-600">
@@ -3552,18 +3623,14 @@ Example:
             <i data-lucide="zap" class="w-5 h-5 text-amber-500"></i>
             Quick Actions
           </h2>
-          <div class="flex flex-wrap gap-2">
+          <div class="flex flex-wrap gap-3">
             <button @click="killOrphanedProcesses()" class="btn btn-destructive">
               <i data-lucide="skull" class="w-4 h-4 mr-2"></i>
               Kill All claude-code-acp
             </button>
-            <button @click="refreshCounts()" class="btn btn-outline">
+            <button @click="refreshCounts()" class="btn btn-ghost">
               <i data-lucide="refresh-cw" class="w-4 h-4 mr-2"></i>
               Refresh Now
-            </button>
-            <button @click="openLogFile()" class="btn btn-outline">
-              <i data-lucide="file-text" class="w-4 h-4 mr-2"></i>
-              Open Backend Log
             </button>
           </div>
         </div>
@@ -3574,14 +3641,14 @@ Example:
             <i data-lucide="keyboard" class="w-5 h-5 text-amber-500"></i>
             Debug Shortcuts
           </h2>
-          <div class="grid grid-cols-2 gap-2 text-sm">
-            <div class="flex justify-between">
+          <div class="flex gap-6 text-sm">
+            <div class="flex items-center gap-3">
+              <kbd class="kbd">Ctrl+D</kbd>
               <span class="text-wool-400">Toggle debug panel</span>
-              <kbd class="bg-pasture-700 px-2 py-0.5 rounded text-wool-300">Ctrl+D</kbd>
             </div>
-            <div class="flex justify-between">
+            <div class="flex items-center gap-3">
+              <kbd class="kbd">Esc</kbd>
               <span class="text-wool-400">Close panel</span>
-              <kbd class="bg-pasture-700 px-2 py-0.5 rounded text-wool-300">Esc</kbd>
             </div>
           </div>
         </div>

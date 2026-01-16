@@ -19,6 +19,7 @@ pub mod eval;
 pub mod files;
 pub mod git;
 pub mod git_http;
+pub mod gyp_chat;
 pub mod metrics;
 pub mod names;
 pub mod process;
@@ -44,6 +45,7 @@ pub use eval::{
     EvalResult,
 };
 pub use files::Files;
+pub use gyp_chat::{GypChatError, GypChatMessage, GypChatResult, GypChatStore};
 pub use names::{generate_unique_names, generate_worker_name};
 pub use remote::{
     parse_remote_spec, parse_remote_specs, RemoteConfig, RemoteError, RemoteResult,

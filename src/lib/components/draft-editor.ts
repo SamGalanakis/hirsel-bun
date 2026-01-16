@@ -1106,6 +1106,7 @@ export function draftEditor(): DraftEditorData & {
             if (!confirmed) return;
           }
 
+          // Set the content and trigger save
           if (type === 'spec') {
             this.spec = content;
             this.debouncedSaveSpec();
@@ -1113,6 +1114,18 @@ export function draftEditor(): DraftEditorData & {
             this.eval = content;
             this.debouncedSaveEval();
           }
+
+          // Force textarea to update by dispatching input event
+          // This ensures x-model binding syncs properly from external changes
+          this.$nextTick(() => {
+            const textarea = document.getElementById(
+              type === 'spec' ? 'spec-textarea' : 'eval-textarea'
+            ) as HTMLTextAreaElement | null;
+            if (textarea) {
+              textarea.value = content;
+              textarea.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+          });
 
           window.toast?.success(`Loaded "${file.name}" into ${fieldName.toLowerCase()}`);
         } catch (err) {

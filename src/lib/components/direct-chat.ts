@@ -21,6 +21,8 @@ import {
   respondChatPermission,
   stopChatSession,
   listenChatEvents,
+  getGypChatHistory,
+  saveGypMessage,
 } from '../api';
 import { chunkRendererHelpers, type OutputChunk } from './chunk-renderer';
 
@@ -59,6 +61,9 @@ export function directChat() {
     _currentMessage: null as ChatMessageWithChunks | null,
     _lastChunkType: null as 'text' | 'thinking' | null,
     _toolsById: new Map() as Map<string, MessageChunk>,
+    _currentRunName: null as string | null,
+    // Toggle for run-specific vs general chat (only matters when a run is selected)
+    useRunContext: true,
 
     async init() {
       // Listen for run selection changes
@@ -69,6 +74,73 @@ export function directChat() {
 
     destroy() {
       this.disconnect();
+    },
+
+    /** Get the currently selected run name from app state */
+    getSelectedRunName(): string | null {
+      return this.getAppState()?.selectedRun || null;
+    },
+
+    /** Get the effective run name based on toggle state */
+    getEffectiveRunName(): string | null {
+      const selectedRun = this.getSelectedRunName();
+      // If no run selected or toggle is off, use general chat
+      if (!selectedRun || !this.useRunContext) {
+        return null;
+      }
+      return selectedRun;
+    },
+
+    /** Toggle between run-specific and general chat */
+    async toggleContext() {
+      this.useRunContext = !this.useRunContext;
+      // Reload chat with new context
+      await this.reloadChat();
+    },
+
+    /** Reload chat history for current context */
+    async reloadChat() {
+      const runName = this.getEffectiveRunName();
+      this._currentRunName = runName;
+
+      // Load history for new context
+      try {
+        const history = await getGypChatHistory(runName);
+        if (history.length > 0) {
+          this.messages = history.map(msg => ({
+            id: crypto.randomUUID(),
+            role: msg.role as 'user' | 'assistant' | 'system',
+            chunks: JSON.parse(msg.chunksJson),
+            timestamp: new Date(msg.timestamp),
+          }));
+          console.log(`[DirectChat] Loaded ${history.length} messages for context: ${runName || 'general'}`);
+        } else {
+          // Show welcome message for empty history
+          this.messages = [{
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            chunks: [{
+              id: crypto.randomUUID(),
+              type: 'text',
+              content: `Hello! I'm Gyp, your AI assistant for Hirsel. I can help you manage runs, tasks, and workers using the hirsel tools.\n\nWhat would you like to do today?`,
+            }],
+            timestamp: new Date(),
+          }];
+        }
+      } catch (e) {
+        console.warn('[DirectChat] Failed to load chat history:', e);
+        this.messages = [{
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          chunks: [{
+            id: crypto.randomUUID(),
+            type: 'text',
+            content: `Hello! I'm Gyp, your AI assistant for Hirsel. I can help you manage runs, tasks, and workers using the hirsel tools.\n\nWhat would you like to do today?`,
+          }],
+          timestamp: new Date(),
+        }];
+      }
+      this.scrollToBottom();
     },
 
     getAppState(): {
@@ -148,30 +220,51 @@ export function directChat() {
           }
         });
 
-        // Get context
-        const app = this.getAppState();
-        const runName = app?.selectedRun || undefined;
+        // Get context - use effective run name based on toggle
+        const runName = this.getEffectiveRunName();
+        this._currentRunName = runName;
 
-        // Start the session
+        // Start the session (pass selected run for MCP tools, regardless of chat context)
         const sessionId = await startChatSession(this.agentCommand, {
-          runName,
+          runName: this.getSelectedRunName() || undefined,
           systemPrompt: this.getSystemPrompt(),
         });
         this.sessionId = sessionId;
 
         this.connected = true;
 
-        // Add static welcome message (no model tokens used)
-        this.messages = [{
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          chunks: [{
+        // Load chat history for effective context
+        let loadedHistory = false;
+        try {
+          const history = await getGypChatHistory(runName);
+          if (history.length > 0) {
+            // Restore messages from history
+            this.messages = history.map(msg => ({
+              id: crypto.randomUUID(),
+              role: msg.role as 'user' | 'assistant' | 'system',
+              chunks: JSON.parse(msg.chunksJson),
+              timestamp: new Date(msg.timestamp),
+            }));
+            loadedHistory = true;
+            console.log(`[DirectChat] Loaded ${history.length} messages for context: ${runName || 'general'}`);
+          }
+        } catch (e) {
+          console.warn('[DirectChat] Failed to load chat history:', e);
+        }
+
+        // Add static welcome message only if no history loaded
+        if (!loadedHistory) {
+          this.messages = [{
             id: crypto.randomUUID(),
-            type: 'text',
-            content: `Hello! I'm Gyp, your AI assistant for Hirsel. I can help you manage runs, tasks, and workers using the hirsel tools.\n\nWhat would you like to do today?`,
-          }],
-          timestamp: new Date(),
-        }];
+            role: 'assistant',
+            chunks: [{
+              id: crypto.randomUUID(),
+              type: 'text',
+              content: `Hello! I'm Gyp, your AI assistant for Hirsel. I can help you manage runs, tasks, and workers using the hirsel tools.\n\nWhat would you like to do today?`,
+            }],
+            timestamp: new Date(),
+          }];
+        }
       } catch (e) {
         const error = e as Error;
         this.error = error.message || 'Failed to connect';
@@ -201,6 +294,7 @@ export function directChat() {
       this._currentMessage = null;
       this._lastChunkType = null;
       this._toolsById.clear();
+      this._currentRunName = null;
     },
 
     getSystemPrompt(): string {
@@ -438,6 +532,13 @@ Be concise.`;
       if (this._currentMessage) {
         this._currentMessage.streaming = false;
         this.messages = [...this.messages];
+
+        // Save assistant message to history if we have a run
+        if (this._currentRunName) {
+          const msgToSave = this._currentMessage;
+          saveGypMessage(this._currentRunName, 'assistant', JSON.stringify(msgToSave.chunks))
+            .catch(e => console.warn('[DirectChat] Failed to save assistant message:', e));
+        }
       }
 
       this._currentMessage = null;
@@ -491,8 +592,16 @@ Be concise.`;
 
     async sendMessage() {
       const content = this.inputText.trim();
-      if (!content || !this.sessionId || this.streaming) {
+      if (!content || this.streaming) {
         return;
+      }
+
+      // Lazy connect on first message
+      if (!this.sessionId && !this.loading) {
+        await this.connect();
+        if (!this.sessionId) {
+          return; // Connection failed
+        }
       }
 
       // Add user message to display (reassign for Alpine reactivity)
@@ -511,9 +620,19 @@ Be concise.`;
       this.inputText = '';
       this.scrollToBottom();
 
+      // Save user message to history if we have a run
+      if (this._currentRunName) {
+        try {
+          await saveGypMessage(this._currentRunName, 'user', JSON.stringify(userMessage.chunks));
+        } catch (e) {
+          console.warn('[DirectChat] Failed to save user message:', e);
+        }
+      }
+
       try {
         // Send with UI context (invisible to user)
-        await sendChatMessage(this.sessionId, content, this.getUIContext());
+        // sessionId is guaranteed non-null here due to checks above
+        await sendChatMessage(this.sessionId!, content, this.getUIContext());
       } catch (e) {
         const error = e as Error;
         console.error('[DirectChat] Failed to send:', e);

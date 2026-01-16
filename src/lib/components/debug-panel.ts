@@ -39,7 +39,7 @@ export function debugPanel() {
 
       // Listen for Ctrl+D to toggle
       window.addEventListener('keydown', (e: KeyboardEvent) => {
-        if (e.ctrlKey && e.key === 'd') {
+        if (e.ctrlKey && e.key.toLowerCase() === 'd') {
           e.preventDefault();
           this.toggle();
         }

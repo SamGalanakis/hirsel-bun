@@ -1000,3 +1000,51 @@ export async function listenChatEvents(
 
   return unlisten;
 }
+
+// =============================================================================
+// Gyp Chat History API
+// =============================================================================
+
+/** Gyp chat message stored in database */
+export interface GypChatMessage {
+  id: number;
+  runName: string | null;
+  role: string;
+  timestamp: string;
+  chunksJson: string;
+}
+
+/**
+ * Get Gyp chat history for a run (or no-run if null)
+ *
+ * @param runName - The run name, or null for no-run conversations
+ * @returns Array of saved chat messages
+ */
+export async function getGypChatHistory(runName: string | null): Promise<GypChatMessage[]> {
+  return invoke<GypChatMessage[]>('get_gyp_chat_history', { runName });
+}
+
+/**
+ * Save a Gyp chat message for a run (or no-run if null)
+ *
+ * @param runName - The run name, or null for no-run conversations
+ * @param role - Message role ('user', 'assistant', 'system')
+ * @param chunksJson - JSON-encoded chunks array
+ * @returns The saved message ID
+ */
+export async function saveGypMessage(
+  runName: string | null,
+  role: string,
+  chunksJson: string
+): Promise<number> {
+  return invoke<number>('save_gyp_message', { runName, role, chunksJson });
+}
+
+/**
+ * Clear Gyp chat history for a run (or no-run if null)
+ *
+ * @param runName - The run name, or null for no-run conversations
+ */
+export async function clearGypChatHistory(runName: string | null): Promise<void> {
+  return invoke('clear_gyp_chat_history', { runName });
+}
