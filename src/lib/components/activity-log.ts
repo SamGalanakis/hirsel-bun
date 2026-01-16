@@ -2,9 +2,10 @@
  * Activity log Alpine component
  */
 
-import type { HistoryEntry } from '../types';
+import type { HistoryEntry, WorkerDisplay } from '../types';
 import { getActionIcon as getActionIconSvg } from '../icons';
 import { dataCache, DATA_EVENTS } from '../data-cache';
+import { generateSheepSvg } from '../sheep-avatar';
 
 export type SortDirection = 'asc' | 'desc';
 
@@ -69,10 +70,24 @@ const ACTION_BG_CLASSES: Record<string, string> = {
 /**
  * Activity log component
  */
+// Actions that are worker-specific (check detail for worker name)
+const WORKER_ACTIONS = new Set([
+  'worker_status',
+  'worker_started',
+  'worker_stopped',
+  'worker_error',
+  'worker_paused',
+  'worker_resumed',
+  'task_claimed',
+  'task_done',
+  'task_unclaimed',
+]);
+
 export function activityLog() {
   return {
     runName: null as string | null,
     entries: [] as HistoryEntry[],
+    workers: [] as WorkerDisplay[],
     loading: false,
     error: null as string | null,
     autoScroll: true,
@@ -127,12 +142,21 @@ export function activityLog() {
       window.addEventListener(DATA_EVENTS.HISTORY_UPDATED, historyUpdatedHandler);
       this._eventCleanups.push(() => window.removeEventListener(DATA_EVENTS.HISTORY_UPDATED, historyUpdatedHandler));
 
+      // Listen for workers updates from cache
+      const workersUpdatedHandler = (e: Event) => {
+        const customEvent = e as CustomEvent<WorkerDisplay[]>;
+        this.workers = customEvent.detail;
+      };
+      window.addEventListener(DATA_EVENTS.WORKERS_UPDATED, workersUpdatedHandler);
+      this._eventCleanups.push(() => window.removeEventListener(DATA_EVENTS.WORKERS_UPDATED, workersUpdatedHandler));
+
       // Listen for run selection changes
       const runSelectedHandler = (e: Event) => {
         const customEvent = e as CustomEvent<string | null>;
         if (customEvent.detail) {
           this.runName = customEvent.detail;
           this.loading = true;
+          this.workers = dataCache.getWorkers();
           // Get initial history from cache
           const cachedHistory = dataCache.getHistory();
           if (cachedHistory.length > 0) {
@@ -169,6 +193,7 @@ export function activityLog() {
       const selectedRun = dataCache.getSelectedRun();
       if (selectedRun) {
         this.runName = selectedRun;
+        this.workers = dataCache.getWorkers();
         const cachedHistory = dataCache.getHistory();
         if (cachedHistory.length > 0) {
           this.entries = cachedHistory;
@@ -221,6 +246,53 @@ export function activityLog() {
 
     formatActionLabel(action: string): string {
       return action.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    },
+
+    // Extract worker name from entry if this is a worker-related action
+    getWorkerName(entry: HistoryEntry): string | null {
+      const normalized = entry.action.toLowerCase().replace(/[\s-]+/g, '_');
+      if (!WORKER_ACTIONS.has(normalized)) {
+        return null;
+      }
+
+      // Worker status: detail is "worker-name status"
+      // Task claimed/done: detail might contain worker name
+      if (entry.detail) {
+        // For worker_status, the worker name is the first word
+        if (normalized === 'worker_status') {
+          const parts = entry.detail.split(/\s+/);
+          if (parts.length > 0) {
+            return parts[0];
+          }
+        }
+        // For task actions, look for worker name pattern (adjective-breed)
+        const workerMatch = entry.detail.match(/\b([a-z]+-[a-z]+)\b/i);
+        if (workerMatch) {
+          return workerMatch[1];
+        }
+      }
+
+      return null;
+    },
+
+    // Get avatar SVG for a worker, or cog icon for system events
+    getEntryAvatar(entry: HistoryEntry): string {
+      const workerName = this.getWorkerName(entry);
+
+      if (workerName) {
+        const worker = this.workers.find(w => w.name === workerName);
+        if (worker?.sheepConfig) {
+          return generateSheepSvg(worker.sheepConfig, 20, worker.status);
+        }
+      }
+
+      // System event - return cog icon
+      return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-wool-500"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`;
+    },
+
+    // Check if entry is worker-related (for styling)
+    isWorkerEntry(entry: HistoryEntry): boolean {
+      return this.getWorkerName(entry) !== null;
     },
 
     scrollToBottom() {

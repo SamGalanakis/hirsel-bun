@@ -77,7 +77,13 @@ export function workerOutputViewer() {
       try {
         // Load existing events from DB
         const response = await getWorkerEvents(runName, workerName);
+        console.log('[WorkerOutput] Initial load:', {
+          eventCount: response.events.length,
+          workerStatus: response.workerStatus,
+          firstEvent: response.events[0]
+        });
         this.processEvents(response.events);
+        console.log('[WorkerOutput] After processEvents, chunks:', this.chunks.length);
         this.updateStreamingState(response.workerStatus);
 
         // Start polling for real-time updates
@@ -118,6 +124,7 @@ export function workerOutputViewer() {
      * Handle a single worker event
      */
     handleEvent(event: WorkerEvent) {
+      console.log('[WorkerOutput] handleEvent:', event.eventType, event);
       switch (event.eventType) {
         case 'text':
           this.handleTextDelta(event.content || '');
