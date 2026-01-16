@@ -329,8 +329,9 @@ export function runList() {
 
         this.hideCloneDialog();
       } catch (err) {
-        const error = err as Error;
-        window.toast.error(error.message || 'Failed to clone run');
+        // Tauri returns error strings directly, not Error objects
+        const message = typeof err === 'string' ? err : (err as Error).message || 'Failed to clone run';
+        window.toast.error(message, 'Failed to clone run');
         this.cloneLoading = false;
       }
     },

@@ -22,6 +22,7 @@ pub mod man;
 pub mod msg;
 pub mod pause;
 pub mod prune;
+pub mod reset;
 pub mod resume;
 pub mod runs;
 pub mod spec;
@@ -49,6 +50,7 @@ pub use man::run_man;
 pub use msg::{get_available_threads, run as run_msg, MsgError, MsgOutput, MsgResult, ThreadInfo};
 pub use pause::run_pause;
 pub use prune::execute as run_prune;
+pub use reset::{run_reset, ResetTarget};
 pub use resume::{parse_time_limit, run_resume};
 pub use runs::list_runs;
 pub use spec::{read_spec, run_spec, update_spec_amendments, Amendment, SpecError};
@@ -168,6 +170,9 @@ pub enum Commands {
 
     /// Update project memory from learnings
     Improve(ImproveArgs),
+
+    /// Reset runs and/or config (requires typing 'reset' to confirm)
+    Reset(ResetArgs),
 
     /// Run e2e test scenarios
     Test(TestArgs),
@@ -570,6 +575,26 @@ pub struct ManArgs {
 pub struct ImproveArgs {
     /// Run name (optional, uses current directory context if not provided)
     pub run_name: Option<String>,
+}
+
+/// Arguments for `hirsel reset`
+#[derive(Args, Debug)]
+pub struct ResetArgs {
+    /// Only delete runs, keep config
+    #[arg(long, conflicts_with_all = ["config", "all"])]
+    pub runs: bool,
+
+    /// Only reset config to defaults, keep runs
+    #[arg(long, conflicts_with_all = ["runs", "all"])]
+    pub config: bool,
+
+    /// Reset everything (runs and config)
+    #[arg(long, conflicts_with_all = ["runs", "config"])]
+    pub all: bool,
+
+    /// Confirmation string (must be "reset" to proceed)
+    #[arg(long, short = 'y')]
+    pub confirm: Option<String>,
 }
 
 /// Arguments for `hirsel test`
@@ -1243,6 +1268,44 @@ pub fn run_cli() -> anyhow::Result<bool> {
             if let Err(e) = improve::execute(args.run_name.as_deref(), json) {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
+            }
+        }
+        Commands::Reset(args) => {
+            // Determine target
+            let target = if args.all {
+                reset::ResetTarget::All
+            } else if args.config {
+                reset::ResetTarget::Config
+            } else if args.runs {
+                reset::ResetTarget::Runs
+            } else {
+                // Default to showing help if no target specified
+                eprintln!("Please specify what to reset: --runs, --config, or --all");
+                eprintln!();
+                eprintln!("Examples:");
+                eprintln!("  hirsel reset --runs     Delete all runs");
+                eprintln!("  hirsel reset --config   Reset config to defaults");
+                eprintln!("  hirsel reset --all      Delete everything");
+                std::process::exit(1);
+            };
+
+            // Check for confirmation flag
+            if let Some(confirm) = &args.confirm {
+                if confirm == "reset" {
+                    if let Err(e) = reset::execute_reset_confirmed(target, json) {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                } else {
+                    eprintln!("Invalid confirmation. Use --confirm reset");
+                    std::process::exit(1);
+                }
+            } else {
+                // Interactive mode
+                if let Err(e) = reset::run_reset(target, json) {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
             }
         }
         Commands::Test(args) => {

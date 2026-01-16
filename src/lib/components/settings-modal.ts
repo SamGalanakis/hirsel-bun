@@ -15,6 +15,13 @@ import {
   type ThemeFamily,
   type ThemeFamilyInfo,
 } from '../theme';
+import {
+  startChatSession,
+  sendChatMessage,
+  stopChatSession,
+  listenChatEvents,
+} from '../api';
+import type { ChatEvent } from '../types';
 
 type AuthMethod = 'env' | 'apiKey' | 'oauth';
 
@@ -85,6 +92,13 @@ export function settingsModal() {
     saving: false,
     error: null as string | null,
     activeTab: 'general' as 'general' | 'auth' | 'remotes',
+
+    // Test connection state
+    testing: false,
+    testResult: '' as string,
+    showTestDialog: false,
+    _testSessionId: null as string | null,
+    _testUnlisten: null as (() => void) | null,
     settings: {
       agentCommand: 'claude-code-acp',
       evalTimeout: 1800,
@@ -442,6 +456,80 @@ export function settingsModal() {
         case 'goose': return 'ANTHROPIC_API_KEY';
         default: return '';
       }
+    },
+
+    // Test agent connection
+    async testConnection() {
+      this.testing = true;
+      this.testResult = '';
+      this.showTestDialog = true;
+      this._testSessionId = null;
+
+      try {
+        // Parse agent command
+        const agentCommand = this.settings.agentCommand
+          .split(/\s+/)
+          .filter((s: string) => s.length > 0);
+
+        if (agentCommand.length === 0) {
+          throw new Error('No agent command configured');
+        }
+
+        // Set up event listener
+        const self = this;
+        this._testUnlisten = await listenChatEvents((event: ChatEvent) => {
+          if (event.sessionId !== self._testSessionId) return;
+
+          if (event.type === 'textDelta') {
+            self.testResult += event.text;
+          } else if (event.type === 'messageComplete') {
+            self.testing = false;
+            self.stopTestSession();
+          } else if (event.type === 'error') {
+            self.testResult = `Error: ${event.message}`;
+            self.testing = false;
+            self.stopTestSession();
+          }
+        });
+
+        // Start session
+        this._testSessionId = await startChatSession(agentCommand, {
+          systemPrompt: 'You are a friendly assistant. Keep responses very brief.',
+        });
+
+        // Send test message
+        await sendChatMessage(this._testSessionId, 'Hey there, all good?!');
+
+        // Set a timeout in case no response
+        setTimeout(() => {
+          if (this.testing && !this.testResult) {
+            this.testResult = 'Timeout - no response received';
+            this.testing = false;
+            this.stopTestSession();
+          }
+        }, 30000);
+
+      } catch (err) {
+        const error = err as Error;
+        this.testResult = `Failed: ${error.message || String(error)}`;
+        this.testing = false;
+      }
+    },
+
+    stopTestSession() {
+      if (this._testUnlisten) {
+        this._testUnlisten();
+        this._testUnlisten = null;
+      }
+      if (this._testSessionId) {
+        stopChatSession(this._testSessionId).catch(() => {});
+        this._testSessionId = null;
+      }
+    },
+
+    closeTestDialog() {
+      this.showTestDialog = false;
+      this.stopTestSession();
     },
   };
 }

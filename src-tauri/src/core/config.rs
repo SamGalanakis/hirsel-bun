@@ -147,9 +147,9 @@ impl std::fmt::Display for AgentType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum AuthMethod {
-    #[default]
     Env,
     ApiKey,
+    #[default]
     OAuth,
 }
 

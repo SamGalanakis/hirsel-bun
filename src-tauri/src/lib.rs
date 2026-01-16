@@ -251,6 +251,27 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
         Commands::Improve(args) => {
             cli::improve::execute(args.run_name.as_deref(), json)?;
         }
+        Commands::Reset(args) => {
+            let target = if args.all {
+                cli::reset::ResetTarget::All
+            } else if args.config {
+                cli::reset::ResetTarget::Config
+            } else if args.runs {
+                cli::reset::ResetTarget::Runs
+            } else {
+                return Err("Please specify: --runs, --config, or --all".into());
+            };
+
+            if let Some(confirm) = &args.confirm {
+                if confirm == "reset" {
+                    cli::reset::execute_reset_confirmed(target, json)?;
+                } else {
+                    return Err("Invalid confirmation. Use --confirm reset".into());
+                }
+            } else {
+                cli::reset::run_reset(target, json)?;
+            }
+        }
         Commands::WorkerRun(args) => {
             // Internal command for worker subprocess
             use std::path::PathBuf;
