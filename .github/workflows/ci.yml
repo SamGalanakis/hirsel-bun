@@ -74,25 +74,44 @@ jobs:
       - name: Run tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
-      - name: Upload macOS artifact
+      - name: Upload macOS DMG
         if: matrix.platform == 'macos-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: hirsel-macos-aarch64
-          path: |
-            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
-            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
+          name: hirsel-macos-dmg
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: warn
 
-      - name: Upload Linux artifacts
+      - name: Upload macOS App
+        if: matrix.platform == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hirsel-macos-app
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
+          if-no-files-found: warn
+
+      - name: Upload Linux DEB
         if: matrix.platform == 'ubuntu-22.04'
         uses: actions/upload-artifact@v4
         with:
-          name: hirsel-linux-x86_64
-          path: |
-            src-tauri/target/release/bundle/deb/*.deb
-            src-tauri/target/release/bundle/appimage/*.AppImage
-            src-tauri/target/release/hirsel
+          name: hirsel-linux-deb
+          path: src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: warn
+
+      - name: Upload Linux AppImage
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hirsel-linux-appimage
+          path: src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: warn
+
+      - name: Upload Linux binary
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hirsel-linux-binary
+          path: src-tauri/target/release/hirsel
           if-no-files-found: warn
 
       - name: Job summary
@@ -104,7 +123,10 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
           if [ "${{ matrix.platform }}" == "macos-latest" ]; then
-            echo "- hirsel-macos-aarch64 (DMG, App bundle)" >> $GITHUB_STEP_SUMMARY
+            echo "- hirsel-macos-dmg" >> $GITHUB_STEP_SUMMARY
+            echo "- hirsel-macos-app" >> $GITHUB_STEP_SUMMARY
           else
-            echo "- hirsel-linux-x86_64 (DEB, AppImage, binary)" >> $GITHUB_STEP_SUMMARY
+            echo "- hirsel-linux-deb" >> $GITHUB_STEP_SUMMARY
+            echo "- hirsel-linux-appimage" >> $GITHUB_STEP_SUMMARY
+            echo "- hirsel-linux-binary" >> $GITHUB_STEP_SUMMARY
           fi
