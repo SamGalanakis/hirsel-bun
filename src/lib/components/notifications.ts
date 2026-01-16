@@ -37,8 +37,12 @@ export function notifications() {
       // Poll less frequently since this is a summary view (10 seconds)
       this._pollInterval = setInterval(() => this.fetchNotifications(), 10000);
 
-      // Set up intersection observer for auto-marking as read
-      this._setupObserver();
+      // Observer will be set up when dropdown opens with proper root
+    },
+
+    // Called from x-ref when dropdown opens to set the scroll container
+    setScrollRoot(el: HTMLElement | null) {
+      this._setupObserver(el);
     },
 
     destroy() {
@@ -61,7 +65,12 @@ export function notifications() {
       this._visibleTimers.clear();
     },
 
-    _setupObserver() {
+    _setupObserver(root: HTMLElement | null = null) {
+      // Disconnect existing observer if any
+      if (this._observer) {
+        this._observer.disconnect();
+      }
+
       // Create intersection observer that marks notifications as read when visible
       this._observer = new IntersectionObserver(
         (entries) => {
@@ -89,7 +98,7 @@ export function notifications() {
           });
         },
         {
-          root: null, // viewport
+          root: root, // Use the scrollable container as root
           threshold: 0.5, // 50% visible
         }
       );
