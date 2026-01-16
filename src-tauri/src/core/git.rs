@@ -1263,7 +1263,10 @@ mod tests {
     fn test_get_repo_root() {
         let (dir, _repo) = create_test_repo();
         let root = get_repo_root(Some(dir.path())).unwrap();
-        assert_eq!(root, dir.path());
+        // Canonicalize both to handle macOS /var -> /private/var symlink
+        let expected = dir.path().canonicalize().unwrap();
+        let actual = root.canonicalize().unwrap();
+        assert_eq!(actual, expected);
     }
 
     #[test]
