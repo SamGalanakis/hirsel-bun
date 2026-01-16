@@ -15,6 +15,38 @@ import {
   type ThemeFamily,
   type ThemeFamilyInfo,
 } from '../theme';
+import {
+  startChatSession,
+  sendChatMessage,
+  stopChatSession,
+  listenChatEvents,
+} from '../api';
+import type { ChatEvent } from '../types';
+
+type AuthMethod = 'env' | 'apiKey' | 'oauth';
+
+interface AgentAuth {
+  method: AuthMethod;
+  apiKey: string | null;
+  envVar: string | null;
+}
+
+interface AuthConfig {
+  defaultMethod: AuthMethod;
+  claude: AgentAuth | null;
+  gemini: AgentAuth | null;
+  codex: AgentAuth | null;
+  goose: AgentAuth | null;
+}
+
+interface RemoteConfig {
+  host: string;
+  sshKey: string | null;
+  sshPort: number;
+  workBase: string;
+  pythonPath: string;
+  location: string | null;
+}
 
 interface Settings {
   agentCommand: string;
@@ -23,11 +55,33 @@ interface Settings {
   maxIterations: number | null;
   userMessagePause: string;
   humanInTheLoop: boolean;
+  compactionEnabled: boolean;
   compactionThreshold: number | null;
   compactionKeepMessages: number;
+  autoImprove: boolean;
   contextWarningThreshold: number;
   coordinatorPort: number;
+  auth: AuthConfig;
+  remotes: Record<string, RemoteConfig>;
+  defaultRemote: string | null;
 }
+
+// Default agent auth
+const defaultAgentAuth = (): AgentAuth => ({
+  method: 'env',
+  apiKey: null,
+  envVar: null,
+});
+
+// Default remote config
+const defaultRemoteConfig = (): RemoteConfig => ({
+  host: '',
+  sshKey: null,
+  sshPort: 22,
+  workBase: '/tmp/hirsel-remote',
+  pythonPath: 'python3',
+  location: null,
+});
 
 /**
  * Settings modal component
@@ -37,6 +91,14 @@ export function settingsModal() {
     loading: false,
     saving: false,
     error: null as string | null,
+    activeTab: 'general' as 'general' | 'auth' | 'remotes',
+
+    // Test connection state
+    testing: false,
+    testResult: '' as string,
+    showTestDialog: false,
+    _testSessionId: null as string | null,
+    _testUnlisten: null as (() => void) | null,
     settings: {
       agentCommand: 'claude-code-acp',
       evalTimeout: 1800,
@@ -44,11 +106,33 @@ export function settingsModal() {
       maxIterations: null,
       userMessagePause: 'sender',
       humanInTheLoop: true,
+      compactionEnabled: true,
       compactionThreshold: 10000,
       compactionKeepMessages: 40,
+      autoImprove: true,
       contextWarningThreshold: 0.5,
       coordinatorPort: 19700,
+      auth: {
+        defaultMethod: 'env' as AuthMethod,
+        claude: null,
+        gemini: null,
+        codex: null,
+        goose: null,
+      },
+      remotes: {} as Record<string, RemoteConfig>,
+      defaultRemote: null,
     } as Settings,
+
+    // Editing state for remotes
+    editingRemote: null as string | null,
+    newRemoteName: '',
+    editRemoteData: defaultRemoteConfig(),
+
+    // Cascading auth editor state
+    selectedAuthProvider: '' as '' | 'claude' | 'gemini' | 'codex' | 'goose',
+    selectedAuthMethod: 'env' as AuthMethod,
+    authEnvVar: '',
+    authApiKey: '',
 
     // Theme settings - stored as reactive properties for proper Alpine binding
     selectedTheme: getTheme() as ThemeId,
@@ -76,6 +160,11 @@ export function settingsModal() {
     // Check if family has multiple dark variants
     get hasMultipleDarkVariants(): boolean {
       return this.currentFamilyInfo.darkThemes.length > 1;
+    },
+
+    // Get remote names as sorted array
+    get remoteNames(): string[] {
+      return Object.keys(this.settings.remotes).sort();
     },
 
     // Switch theme family (preserves light/dark mode)
@@ -124,6 +213,105 @@ export function settingsModal() {
       setTheme(themeId);
     },
 
+    // When provider changes, load existing config if any
+    onAuthProviderChange() {
+      if (!this.selectedAuthProvider) {
+        this.selectedAuthMethod = 'env';
+        this.authEnvVar = '';
+        this.authApiKey = '';
+        return;
+      }
+
+      const existing = this.settings.auth[this.selectedAuthProvider];
+      if (existing) {
+        this.selectedAuthMethod = existing.method;
+        this.authEnvVar = existing.envVar || '';
+        this.authApiKey = ''; // Don't show existing key
+      } else {
+        // Default to OAuth for Claude, env for others
+        this.selectedAuthMethod = this.selectedAuthProvider === 'claude' ? 'oauth' : 'env';
+        this.authEnvVar = '';
+        this.authApiKey = '';
+      }
+    },
+
+    // Find and select the first configured provider (called after settings load)
+    initAuthProvider() {
+      for (const provider of ['claude', 'gemini', 'codex', 'goose'] as const) {
+        if (this.settings.auth[provider]) {
+          this.selectedAuthProvider = provider;
+          this.onAuthProviderChange();
+          return;
+        }
+      }
+      // No provider configured, leave empty
+      this.selectedAuthProvider = '';
+    },
+
+    // Get existing masked API key for display
+    getExistingAuthKey(provider: string): string | null {
+      const auth = this.settings.auth[provider as keyof AuthConfig['claude']];
+      if (auth && typeof auth === 'object' && 'apiKey' in auth && auth.apiKey) {
+        return auth.apiKey; // Already masked from server
+      }
+      return null;
+    },
+
+    // Clear agent auth config
+    clearAgentAuth(agent: string) {
+      (this.settings.auth as Record<string, AgentAuth | null>)[agent] = null;
+    },
+
+    // Start adding a new remote
+    startAddRemote() {
+      this.editingRemote = '__new__';
+      this.newRemoteName = '';
+      this.editRemoteData = defaultRemoteConfig();
+    },
+
+    // Start editing an existing remote
+    startEditRemote(name: string) {
+      this.editingRemote = name;
+      this.newRemoteName = name;
+      this.editRemoteData = { ...this.settings.remotes[name] };
+    },
+
+    // Save remote config
+    saveRemote() {
+      const name = this.editingRemote === '__new__' ? this.newRemoteName.trim() : this.editingRemote;
+      if (!name) {
+        window.toast?.error('Remote name is required');
+        return;
+      }
+
+      // Validate host
+      if (!this.editRemoteData.host.trim()) {
+        window.toast?.error('Host is required');
+        return;
+      }
+
+      // If renaming, delete old entry
+      if (this.editingRemote !== '__new__' && this.editingRemote !== name) {
+        delete this.settings.remotes[this.editingRemote!];
+      }
+
+      this.settings.remotes[name] = { ...this.editRemoteData };
+      this.editingRemote = null;
+    },
+
+    // Cancel editing remote
+    cancelEditRemote() {
+      this.editingRemote = null;
+    },
+
+    // Delete a remote
+    deleteRemote(name: string) {
+      delete this.settings.remotes[name];
+      if (this.settings.defaultRemote === name) {
+        this.settings.defaultRemote = null;
+      }
+    },
+
     async loadSettings() {
       this.loading = true;
       this.error = null;
@@ -142,10 +330,16 @@ export function settingsModal() {
             maxIterations: number | null;
             userMessagePause: string;
             humanInTheLoop: boolean;
+            compactionEnabled: boolean;
             compactionThreshold: number | null;
             compactionKeepMessages: number;
+            compactionCooldownMinutes: number;
+            autoImprove: boolean;
             contextWarningThreshold: number;
             coordinatorPort: number;
+            auth: AuthConfig;
+            remotes: Record<string, RemoteConfig>;
+            defaultRemote: string | null;
           }>('get_config');
 
           this.settings = {
@@ -155,11 +349,19 @@ export function settingsModal() {
             maxIterations: config.maxIterations,
             userMessagePause: config.userMessagePause,
             humanInTheLoop: config.humanInTheLoop,
+            compactionEnabled: config.compactionEnabled,
             compactionThreshold: config.compactionThreshold,
             compactionKeepMessages: config.compactionKeepMessages,
+            autoImprove: config.autoImprove,
             contextWarningThreshold: config.contextWarningThreshold,
             coordinatorPort: config.coordinatorPort,
+            auth: config.auth,
+            remotes: config.remotes,
+            defaultRemote: config.defaultRemote,
           };
+
+          // Auto-select configured provider if any
+          this.initAuthProvider();
         }
       } catch (err) {
         const error = err as Error;
@@ -184,6 +386,20 @@ export function settingsModal() {
             .split(/\s+/)
             .filter((s: string) => s.length > 0);
 
+          // Build auth update - save the selected provider's config
+          const authUpdate: Record<string, unknown> = {
+            defaultMethod: 'env', // Not used anymore but keep for compatibility
+          };
+
+          // Only save the currently selected provider
+          if (this.selectedAuthProvider) {
+            authUpdate[this.selectedAuthProvider] = {
+              method: this.selectedAuthMethod,
+              apiKey: this.authApiKey || null,
+              envVar: this.authEnvVar || null,
+            };
+          }
+
           await window.tauriInvoke('save_config', {
             updates: {
               agentCommand,
@@ -192,10 +408,15 @@ export function settingsModal() {
               maxIterations: this.settings.maxIterations || null,
               userMessagePause: this.settings.userMessagePause,
               humanInTheLoop: this.settings.humanInTheLoop,
+              compactionEnabled: this.settings.compactionEnabled,
               compactionThreshold: this.settings.compactionThreshold || null,
               compactionKeepMessages: this.settings.compactionKeepMessages,
+              autoImprove: this.settings.autoImprove,
               contextWarningThreshold: this.settings.contextWarningThreshold,
               coordinatorPort: this.settings.coordinatorPort,
+              auth: authUpdate,
+              remotes: this.settings.remotes,
+              defaultRemote: this.settings.defaultRemote,
             },
           });
 
@@ -214,6 +435,101 @@ export function settingsModal() {
       } finally {
         this.saving = false;
       }
+    },
+
+    // Get display text for auth method
+    getAuthMethodLabel(method: AuthMethod): string {
+      switch (method) {
+        case 'env': return 'Environment Variable';
+        case 'apiKey': return 'API Key';
+        case 'oauth': return 'OAuth';
+        default: return method;
+      }
+    },
+
+    // Get default env var for an agent
+    getDefaultEnvVar(agent: string): string {
+      switch (agent) {
+        case 'claude': return 'ANTHROPIC_API_KEY';
+        case 'gemini': return 'GOOGLE_API_KEY';
+        case 'codex': return 'OPENAI_API_KEY';
+        case 'goose': return 'ANTHROPIC_API_KEY';
+        default: return '';
+      }
+    },
+
+    // Test agent connection
+    async testConnection() {
+      this.testing = true;
+      this.testResult = '';
+      this.showTestDialog = true;
+      this._testSessionId = null;
+
+      try {
+        // Parse agent command
+        const agentCommand = this.settings.agentCommand
+          .split(/\s+/)
+          .filter((s: string) => s.length > 0);
+
+        if (agentCommand.length === 0) {
+          throw new Error('No agent command configured');
+        }
+
+        // Set up event listener
+        const self = this;
+        this._testUnlisten = await listenChatEvents((event: ChatEvent) => {
+          if (event.sessionId !== self._testSessionId) return;
+
+          if (event.type === 'textDelta') {
+            self.testResult += event.text;
+          } else if (event.type === 'messageComplete') {
+            self.testing = false;
+            self.stopTestSession();
+          } else if (event.type === 'error') {
+            self.testResult = `Error: ${event.message}`;
+            self.testing = false;
+            self.stopTestSession();
+          }
+        });
+
+        // Start session
+        this._testSessionId = await startChatSession(agentCommand, {
+          systemPrompt: 'You are a friendly assistant. Keep responses very brief.',
+        });
+
+        // Send test message
+        await sendChatMessage(this._testSessionId, 'Hey there, all good?!');
+
+        // Set a timeout in case no response
+        setTimeout(() => {
+          if (this.testing && !this.testResult) {
+            this.testResult = 'Timeout - no response received';
+            this.testing = false;
+            this.stopTestSession();
+          }
+        }, 30000);
+
+      } catch (err) {
+        const error = err as Error;
+        this.testResult = `Failed: ${error.message || String(error)}`;
+        this.testing = false;
+      }
+    },
+
+    stopTestSession() {
+      if (this._testUnlisten) {
+        this._testUnlisten();
+        this._testUnlisten = null;
+      }
+      if (this._testSessionId) {
+        stopChatSession(this._testSessionId).catch(() => {});
+        this._testSessionId = null;
+      }
+    },
+
+    closeTestDialog() {
+      this.showTestDialog = false;
+      this.stopTestSession();
     },
   };
 }

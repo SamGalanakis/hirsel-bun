@@ -3,6 +3,8 @@
 //! This module provides the core state management functionality for tracking
 //! runs, tasks, workers, evals, and messages.
 
+#![allow(clippy::should_implement_trait)]
+
 use chrono::{DateTime, Local, Utc};
 use rusqlite::{params, Connection, Row};
 use serde::{Deserialize, Serialize};
@@ -273,6 +275,22 @@ pub struct Amendment {
     pub spec_hash: String,
 }
 
+/// Summary data for displaying a run in a list (optimized fetch)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunStateSummary {
+    pub status: Status,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub started_at: Option<String>,
+    pub time_limit_minutes: Option<i64>,
+    pub unread_count: i64,
+    pub tasks_done: u32,
+    pub tasks_total: u32,
+    pub workers_active: u32,
+    pub workers_total: u32,
+    pub elapsed_minutes: f64,
+}
+
 /// Type of worker output event
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -422,6 +440,7 @@ CREATE TABLE IF NOT EXISTS state (
     started_at TEXT,
     last_time_notification_pct INTEGER,
     learnings_processed_at TEXT,
+    last_compaction_at TEXT,
     iteration_count INTEGER DEFAULT 0,
     max_iterations INTEGER,
     pause_mode TEXT DEFAULT 'sender'
@@ -1056,6 +1075,28 @@ impl SQLiteState {
         Ok(())
     }
 
+    /// Get last compaction timestamp
+    pub fn get_last_compaction_at(&self) -> StateResult<Option<String>> {
+        match self.db.query_row(
+            "SELECT last_compaction_at FROM state WHERE id = 1",
+            [],
+            |row| row.get::<_, Option<String>>(0),
+        ) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set last compaction timestamp
+    pub fn set_last_compaction_at(&self, timestamp: &str) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET last_compaction_at = ?1, updated_at = ?2 WHERE id = 1",
+            params![timestamp, self.now()],
+        )?;
+        Ok(())
+    }
+
     /// Get pause mode ("sender" or "all")
     pub fn get_pause_mode(&self) -> StateResult<String> {
         match self
@@ -1265,8 +1306,14 @@ impl SQLiteState {
     }
 
     /// Get tasks that can be claimed
+    /// Optimized to avoid N+1 queries by building a status lookup map
     pub fn get_claimable_tasks(&self) -> StateResult<Vec<Task>> {
         let tasks = self.get_tasks()?;
+
+        // Build a map of task_id -> status for O(1) blocking checks
+        let status_map: std::collections::HashMap<String, TaskStatus> =
+            tasks.iter().map(|t| (t.id.clone(), t.status)).collect();
+
         let mut claimable = vec![];
 
         for task in tasks {
@@ -1279,8 +1326,23 @@ impl SQLiteState {
             if task.id == "scope" {
                 continue;
             }
-            if self.is_task_blocked(&task.id)? {
-                continue;
+            // Check blocking using the pre-built map instead of separate queries
+            if let Some(blocked_by) = &task.blocked_by {
+                if !blocked_by.is_empty() {
+                    let is_blocked = blocked_by
+                        .split(',')
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                        .any(|blocker_id| {
+                            status_map
+                                .get(blocker_id)
+                                .map(|status| *status != TaskStatus::Done)
+                                .unwrap_or(false)
+                        });
+                    if is_blocked {
+                        continue;
+                    }
+                }
             }
             claimable.push(task);
         }
@@ -2080,6 +2142,16 @@ impl SQLiteState {
         Ok(messages)
     }
 
+    /// Get count of messages in a thread (avoids fetching all messages)
+    pub fn get_messages_count(&self, thread: &str) -> StateResult<i64> {
+        let count: i64 = self.db.query_row(
+            "SELECT COUNT(*) FROM messages WHERE thread = ?1",
+            params![thread],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
     /// Get messages since a timestamp
     pub fn get_messages_since(
         &self,
@@ -2217,6 +2289,95 @@ impl SQLiteState {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
             Err(e) => Err(StateError::Sqlite(e)),
         }
+    }
+
+    /// Get all run summary data in an optimized single fetch
+    /// This fetches state, task counts, and worker counts in 3 queries instead of ~9
+    pub fn get_run_summary(&self) -> StateResult<RunStateSummary> {
+        // Query 1: Get all needed state columns in one query
+        let (status, created_at, updated_at, started_at, time_limit_minutes, unread_count): (
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<i64>,
+            i64,
+        ) = self.db.query_row(
+            "SELECT status, created_at, updated_at, started_at, time_limit_minutes, COALESCE(unread_count, 0) FROM state WHERE id = 1",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )?;
+
+        // Query 2: Get task counts in one aggregate query
+        let (tasks_total, tasks_done): (u32, u32) = self.db.query_row(
+            "SELECT COUNT(*), SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) FROM tasks",
+            [],
+            |row| {
+                let total: i64 = row.get(0)?;
+                let done: Option<i64> = row.get(1)?;
+                Ok((total as u32, done.unwrap_or(0) as u32))
+            },
+        )?;
+
+        // Query 3: Get worker counts in one aggregate query
+        let (workers_total, workers_active): (u32, u32) = self.db.query_row(
+            "SELECT COUNT(*), SUM(CASE WHEN status = 'working' THEN 1 ELSE 0 END) FROM workers",
+            [],
+            |row| {
+                let total: i64 = row.get(0)?;
+                let active: Option<i64> = row.get(1)?;
+                Ok((total as u32, active.unwrap_or(0) as u32))
+            },
+        )?;
+
+        // Parse status
+        let status = Status::from_str(&status).unwrap_or(Status::Idle);
+
+        // Calculate elapsed minutes based on status
+        let elapsed_minutes = if status == Status::Draft {
+            0.0
+        } else if let Some(ref sa) = started_at {
+            // Calculate elapsed from started_at
+            if let Ok(start_time) = DateTime::parse_from_rfc3339(sa) {
+                let elapsed = Local::now().signed_duration_since(start_time);
+                elapsed.num_seconds() as f64 / 60.0
+            } else {
+                0.0
+            }
+        } else if let Some(ref ca) = created_at {
+            // Fallback to created_at
+            if let Ok(start_time) = DateTime::parse_from_rfc3339(ca) {
+                let elapsed = Local::now().signed_duration_since(start_time);
+                elapsed.num_seconds() as f64 / 60.0
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
+        Ok(RunStateSummary {
+            status,
+            created_at,
+            updated_at,
+            started_at,
+            time_limit_minutes,
+            unread_count,
+            tasks_done,
+            tasks_total,
+            workers_active,
+            workers_total,
+            elapsed_minutes,
+        })
     }
 
     // =========================================================================

@@ -11,7 +11,6 @@
 
 import type {
   ChatEvent,
-  ChatMessage,
   ChatToolCall,
   PendingPermission,
   UIContext,
@@ -25,13 +24,30 @@ import {
 } from '../api';
 import { getToolKindIcon, getToolStatusIcon as getToolStatusIconSvg } from '../icons';
 
+/** A chunk of content in a message - text, thinking, or tool */
+interface MessageChunk {
+  id: string;
+  type: 'text' | 'thinking' | 'tool';
+  content?: string;
+  tool?: ChatToolCall;
+}
+
+/** A chat message with chronologically ordered chunks */
+interface ChatMessageWithChunks {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  chunks: MessageChunk[];
+  timestamp: Date;
+  streaming?: boolean;
+}
+
 /**
  * Direct chat Alpine component
  */
 export function directChat() {
   return {
     sessionId: null as string | null,
-    messages: [] as ChatMessage[],
+    messages: [] as ChatMessageWithChunks[],
     inputText: '',
     loading: false,
     streaming: false,
@@ -41,8 +57,9 @@ export function directChat() {
     showThinking: false,
     agentCommand: ['claude-code-acp'] as string[],
     _unlisten: null as (() => void) | null,
-    _currentMessage: null as ChatMessage | null,
-    _currentToolCalls: new Map() as Map<string, ChatToolCall>,
+    _currentMessage: null as ChatMessageWithChunks | null,
+    _lastChunkType: null as 'text' | 'thinking' | null,
+    _toolsById: new Map() as Map<string, MessageChunk>,
 
     async init() {
       // Listen for run selection changes
@@ -149,7 +166,11 @@ export function directChat() {
         this.messages = [{
           id: crypto.randomUUID(),
           role: 'assistant',
-          content: `Hello! I'm Gyp, your AI assistant for Hirsel. I can help you manage runs, tasks, and workers using the hirsel tools.\n\nWhat would you like to do today?`,
+          chunks: [{
+            id: crypto.randomUUID(),
+            type: 'text',
+            content: `Hello! I'm Gyp, your AI assistant for Hirsel. I can help you manage runs, tasks, and workers using the hirsel tools.\n\nWhat would you like to do today?`,
+          }],
           timestamp: new Date(),
         }];
       } catch (e) {
@@ -179,7 +200,8 @@ export function directChat() {
       this.connected = false;
       this.streaming = false;
       this._currentMessage = null;
-      this._currentToolCalls.clear();
+      this._lastChunkType = null;
+      this._toolsById.clear();
     },
 
     getSystemPrompt(): string {
@@ -238,8 +260,7 @@ Be concise.`;
         this._currentMessage = {
           id: crypto.randomUUID(),
           role: 'assistant',
-          content: '',
-          toolCalls: [],
+          chunks: [],
           timestamp: new Date(),
           streaming: true,
         };
@@ -247,15 +268,27 @@ Be concise.`;
         this.streaming = true;
       }
 
-      // Update content and force Alpine reactivity by replacing the message object
-      this._currentMessage.content += text;
-      const idx = this.messages.findIndex(m => m.id === this._currentMessage!.id);
-      if (idx !== -1) {
-        // Create new object to trigger Alpine reactivity
-        this._currentMessage = { ...this._currentMessage };
-        this.messages[idx] = this._currentMessage;
-        this.messages = [...this.messages];
+      // If last chunk was text, append to it; otherwise create new text chunk
+      const chunks = this._currentMessage.chunks;
+      if (this._lastChunkType === 'text' && chunks.length > 0) {
+        const lastChunk = chunks[chunks.length - 1];
+        if (lastChunk.type === 'text') {
+          lastChunk.content = (lastChunk.content || '') + text;
+          this.messages = [...this.messages];
+          this.scrollToBottom();
+          return;
+        }
       }
+
+      // Create new text chunk
+      const chunk: MessageChunk = {
+        id: crypto.randomUUID(),
+        type: 'text',
+        content: text,
+      };
+      this._currentMessage.chunks = [...chunks, chunk];
+      this._lastChunkType = 'text';
+      this.messages = [...this.messages];
       this.scrollToBottom();
     },
 
@@ -264,9 +297,7 @@ Be concise.`;
         this._currentMessage = {
           id: crypto.randomUUID(),
           role: 'assistant',
-          content: '',
-          thinking: '',
-          toolCalls: [],
+          chunks: [],
           timestamp: new Date(),
           streaming: true,
         };
@@ -274,16 +305,44 @@ Be concise.`;
         this.streaming = true;
       }
 
-      this._currentMessage.thinking = (this._currentMessage.thinking || '') + text;
-      const idx = this.messages.findIndex(m => m.id === this._currentMessage!.id);
-      if (idx !== -1) {
-        this._currentMessage = { ...this._currentMessage };
-        this.messages[idx] = this._currentMessage;
-        this.messages = [...this.messages];
+      // If last chunk was thinking, append to it; otherwise create new thinking chunk
+      const chunks = this._currentMessage.chunks;
+      if (this._lastChunkType === 'thinking' && chunks.length > 0) {
+        const lastChunk = chunks[chunks.length - 1];
+        if (lastChunk.type === 'thinking') {
+          lastChunk.content = (lastChunk.content || '') + text;
+          this.messages = [...this.messages];
+          return;
+        }
       }
+
+      // Create new thinking chunk
+      const chunk: MessageChunk = {
+        id: crypto.randomUUID(),
+        type: 'thinking',
+        content: text,
+      };
+      this._currentMessage.chunks = [...chunks, chunk];
+      this._lastChunkType = 'thinking';
+      this.messages = [...this.messages];
     },
 
     handleToolCallStart(id: string, title: string, kind: string | null) {
+      // Tool call breaks the text/thinking stream
+      this._lastChunkType = null;
+
+      if (!this._currentMessage) {
+        this._currentMessage = {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          chunks: [],
+          timestamp: new Date(),
+          streaming: true,
+        };
+        this.messages = [...this.messages, this._currentMessage];
+        this.streaming = true;
+      }
+
       const toolCall: ChatToolCall = {
         id,
         title,
@@ -292,24 +351,24 @@ Be concise.`;
         output: null,
       };
 
-      this._currentToolCalls.set(id, toolCall);
+      const chunk: MessageChunk = {
+        id,
+        type: 'tool',
+        tool: toolCall,
+      };
 
-      if (this._currentMessage) {
-        this._currentMessage.toolCalls = Array.from(this._currentToolCalls.values());
-        this.messages = [...this.messages];
-      }
+      this._toolsById.set(id, chunk);
+      this._currentMessage.chunks = [...this._currentMessage.chunks, chunk];
+      this.messages = [...this.messages];
+      this.scrollToBottom();
     },
 
     handleToolCallUpdate(id: string, status: string, output: string | null) {
-      const toolCall = this._currentToolCalls.get(id);
-      if (toolCall) {
-        toolCall.status = status;
-        toolCall.output = output;
-
-        if (this._currentMessage) {
-          this._currentMessage.toolCalls = Array.from(this._currentToolCalls.values());
-          this.messages = [...this.messages];
-        }
+      const chunk = this._toolsById.get(id);
+      if (chunk && chunk.tool) {
+        chunk.tool.status = status;
+        chunk.tool.output = output;
+        this.messages = [...this.messages];
       }
     },
 
@@ -340,7 +399,8 @@ Be concise.`;
       }
 
       this._currentMessage = null;
-      this._currentToolCalls.clear();
+      this._lastChunkType = null;
+      this._toolsById.clear();
       this.streaming = false;
 
       // Refresh draft if we edited spec/eval files
@@ -368,7 +428,8 @@ Be concise.`;
       this.connected = false;
       this.streaming = false;
       this._currentMessage = null;
-      this._currentToolCalls.clear();
+      this._lastChunkType = null;
+      this._toolsById.clear();
       this.addSystemMessage('Session ended');
     },
 
@@ -376,7 +437,11 @@ Be concise.`;
       this.messages = [...this.messages, {
         id: crypto.randomUUID(),
         role: 'system',
-        content,
+        chunks: [{
+          id: crypto.randomUUID(),
+          type: 'text',
+          content,
+        }],
         timestamp: new Date(),
       }];
       this.scrollToBottom();
@@ -389,10 +454,14 @@ Be concise.`;
       }
 
       // Add user message to display (reassign for Alpine reactivity)
-      const userMessage = {
+      const userMessage: ChatMessageWithChunks = {
         id: crypto.randomUUID(),
-        role: 'user' as const,
-        content,
+        role: 'user',
+        chunks: [{
+          id: crypto.randomUUID(),
+          type: 'text',
+          content,
+        }],
         timestamp: new Date(),
       };
       this.messages = [...this.messages, userMessage];

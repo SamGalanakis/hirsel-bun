@@ -1,15 +1,50 @@
 //! Improve command - update project memory from learnings
 //!
 //! Analyzes learnings from hirsel runs and updates project memory files
-//! (CLAUDE.md or AGENTS.md) by spawning an AI agent to identify patterns
-//! and add rules.
+//! (CLAUDE.md or AGENTS.md) by spawning an AI agent via ACP to identify
+//! patterns and add rules.
 
 use crate::core::{config, state::SQLiteState, Files};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::process::Command;
+use tokio::sync::Mutex;
+use tokio::time::timeout;
+use tracing::{debug, info, warn};
+
+// ACP imports
+use agent_client_protocol::{
+    Agent, Client, ClientSideConnection, ContentBlock, CreateTerminalRequest,
+    CreateTerminalResponse, Implementation, InitializeRequest, KillTerminalCommandRequest,
+    KillTerminalCommandResponse, NewSessionRequest, PermissionOptionKind, PromptRequest,
+    ProtocolVersion, ReadTextFileRequest, ReadTextFileResponse, ReleaseTerminalRequest,
+    ReleaseTerminalResponse, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, SelectedPermissionOutcome, SessionNotification, SessionUpdate,
+    TerminalOutputRequest, TerminalOutputResponse, TextContent, WaitForTerminalExitRequest,
+    WaitForTerminalExitResponse, WriteTextFileRequest, WriteTextFileResponse,
+};
+use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+/// Default timeout for improve agent (120 seconds - it may need to do more work)
+const IMPROVE_TIMEOUT_SECS: u64 = 120;
 
 /// Execute the improve command
 pub fn execute(run_name: Option<&str>, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    // Create runtime for async execution
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async {
+        tokio::task::LocalSet::new()
+            .run_until(execute_async(run_name, json))
+            .await
+    })
+}
+
+/// Async implementation of the improve command
+async fn execute_async(
+    run_name: Option<&str>,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     // If run_name provided, check it exists
     if let Some(name) = run_name {
         if !config::run_exists(name) {
@@ -130,8 +165,14 @@ Analyze the learnings above and update {} with any patterns you find.
 
     let full_prompt = format!("{}\n\n{}", base_prompt, context);
 
-    // Spawn improve agent
-    let result = run_improve_agent(&project_path, &full_prompt, &memory_file);
+    // Get agent command from config
+    let (global_config, _) =
+        config::Config::load().unwrap_or_else(|_| (config::Config::default(), vec![]));
+    let agent_command = &global_config.agent.command;
+
+    // Spawn improve agent via ACP
+    let result =
+        run_improve_agent_acp(&project_path, &full_prompt, &memory_file, agent_command).await;
 
     match result {
         Ok(output) => {
@@ -175,6 +216,7 @@ Analyze the learnings above and update {} with any patterns you find.
 }
 
 /// Collect learnings from a specific run
+#[allow(clippy::type_complexity)]
 fn collect_learnings_from_run(
     run_name: &str,
 ) -> Result<
@@ -227,6 +269,7 @@ fn collect_learnings_from_run(
 }
 
 /// Collect learnings from all runs
+#[allow(clippy::type_complexity)]
 fn collect_all_learnings() -> Result<
     (
         std::collections::HashMap<String, Vec<Learning>>,
@@ -318,14 +361,11 @@ struct Learning {
 /// Detect the project memory file (CLAUDE.md or AGENTS.md)
 fn detect_memory_file(project_path: &Path) -> PathBuf {
     let claude_md = project_path.join("CLAUDE.md");
-    let agents_md = project_path.join("AGENTS.md");
-
     if claude_md.exists() {
         claude_md
-    } else if agents_md.exists() {
-        agents_md
     } else {
-        agents_md // Default to AGENTS.md
+        // Default to AGENTS.md (whether it exists or not)
+        project_path.join("AGENTS.md")
     }
 }
 
@@ -359,12 +399,14 @@ fn get_improve_prompt() -> String {
 
 You analyze learnings from hirsel runs and update project memory (CLAUDE.md or AGENTS.md).
 
+IMPORTANT: This task requires you to update the project memory file. You MUST use the file write tool to save your changes. Do NOT just describe the changes - actually write them to the file.
+
 ## Your Task
 
 1. Read the learnings messages provided
 2. Identify patterns (2+ occurrences = pattern, 3+ = strong pattern)
 3. Check existing project memory for rule violations
-4. Update project memory with new rules
+4. Update project memory with new rules by WRITING to the file
 
 ## Process
 
@@ -408,16 +450,201 @@ After updating, report:
 - **Patterns matter** - Single observations don't become rules
 - **Preserve structure** - If the file has sections, maintain them
 - **Don't duplicate** - Check existing rules before adding
+- **WRITE THE FILE** - Use the file write tool to save changes
 "#
     .to_string()
 }
 
-/// Run the improve agent (spawns claude CLI)
-fn run_improve_agent(
+// =============================================================================
+// ACP Client for Improve Agent
+// =============================================================================
+
+/// An ACP client for the improve agent that allows file read/write
+/// but denies terminal operations.
+struct ImproveClient {
+    collected_text: Mutex<String>,
+    project_path: PathBuf,
+}
+
+impl ImproveClient {
+    fn new(project_path: &Path) -> Self {
+        Self {
+            collected_text: Mutex::new(String::new()),
+            project_path: project_path.to_path_buf(),
+        }
+    }
+
+    async fn get_text(&self) -> String {
+        self.collected_text.lock().await.clone()
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+impl Client for ImproveClient {
+    async fn request_permission(
+        &self,
+        args: RequestPermissionRequest,
+    ) -> std::result::Result<RequestPermissionResponse, agent_client_protocol::Error> {
+        // Auto-approve permissions for improve agent
+        let option_id = args
+            .options
+            .iter()
+            .find(|o| o.kind == PermissionOptionKind::AllowAlways)
+            .or_else(|| {
+                args.options
+                    .iter()
+                    .find(|o| o.kind == PermissionOptionKind::AllowOnce)
+            })
+            .map(|o| o.option_id.clone())
+            .unwrap_or_else(|| "allow".into());
+        Ok(RequestPermissionResponse::new(
+            RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option_id)),
+        ))
+    }
+
+    async fn session_notification(
+        &self,
+        args: SessionNotification,
+    ) -> std::result::Result<(), agent_client_protocol::Error> {
+        // Collect text output from agent
+        if let SessionUpdate::AgentMessageChunk(chunk) = &args.update {
+            if let ContentBlock::Text(text) = &chunk.content {
+                let mut collected = self.collected_text.lock().await;
+                collected.push_str(&text.text);
+            }
+        }
+        Ok(())
+    }
+
+    async fn read_text_file(
+        &self,
+        args: ReadTextFileRequest,
+    ) -> std::result::Result<ReadTextFileResponse, agent_client_protocol::Error> {
+        // Allow file reads within the project
+        let path = PathBuf::from(&args.path);
+
+        // Security check: only allow reading files within project path
+        let canonical_project = self
+            .project_path
+            .canonicalize()
+            .unwrap_or_else(|_| self.project_path.clone());
+        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.clone());
+
+        if !canonical_path.starts_with(&canonical_project) {
+            warn!(
+                "Improve agent attempted to read file outside project: {}",
+                args.path.display()
+            );
+            return Err(agent_client_protocol::Error::internal_error());
+        }
+
+        match std::fs::read_to_string(&path) {
+            Ok(content) => Ok(ReadTextFileResponse::new(content)),
+            Err(e) => {
+                debug!("Failed to read file {}: {}", args.path.display(), e);
+                Err(agent_client_protocol::Error::internal_error())
+            }
+        }
+    }
+
+    async fn write_text_file(
+        &self,
+        args: WriteTextFileRequest,
+    ) -> std::result::Result<WriteTextFileResponse, agent_client_protocol::Error> {
+        // Allow file writes within the project
+        let path = PathBuf::from(&args.path);
+
+        // Security check: only allow writing files within project path
+        let canonical_project = self
+            .project_path
+            .canonicalize()
+            .unwrap_or_else(|_| self.project_path.clone());
+
+        // For new files, check parent directory
+        let check_path = if path.exists() {
+            path.canonicalize().unwrap_or_else(|_| path.clone())
+        } else {
+            path.parent()
+                .and_then(|p| p.canonicalize().ok())
+                .unwrap_or_else(|| path.clone())
+        };
+
+        if !check_path.starts_with(&canonical_project) {
+            warn!(
+                "Improve agent attempted to write file outside project: {}",
+                args.path.display()
+            );
+            return Err(agent_client_protocol::Error::internal_error());
+        }
+
+        match std::fs::write(&path, &args.content) {
+            Ok(()) => {
+                info!("Improve agent wrote file: {}", args.path.display());
+                Ok(WriteTextFileResponse::new())
+            }
+            Err(e) => {
+                warn!("Failed to write file {}: {}", args.path.display(), e);
+                Err(agent_client_protocol::Error::internal_error())
+            }
+        }
+    }
+
+    async fn create_terminal(
+        &self,
+        _args: CreateTerminalRequest,
+    ) -> std::result::Result<CreateTerminalResponse, agent_client_protocol::Error> {
+        // Deny terminal creation - improve agent shouldn't need shell access
+        Err(agent_client_protocol::Error::internal_error())
+    }
+
+    async fn terminal_output(
+        &self,
+        _args: TerminalOutputRequest,
+    ) -> std::result::Result<TerminalOutputResponse, agent_client_protocol::Error> {
+        Err(agent_client_protocol::Error::internal_error())
+    }
+
+    async fn release_terminal(
+        &self,
+        _args: ReleaseTerminalRequest,
+    ) -> std::result::Result<ReleaseTerminalResponse, agent_client_protocol::Error> {
+        Err(agent_client_protocol::Error::internal_error())
+    }
+
+    async fn wait_for_terminal_exit(
+        &self,
+        _args: WaitForTerminalExitRequest,
+    ) -> std::result::Result<WaitForTerminalExitResponse, agent_client_protocol::Error> {
+        Err(agent_client_protocol::Error::internal_error())
+    }
+
+    async fn kill_terminal_command(
+        &self,
+        _args: KillTerminalCommandRequest,
+    ) -> std::result::Result<KillTerminalCommandResponse, agent_client_protocol::Error> {
+        Err(agent_client_protocol::Error::internal_error())
+    }
+}
+
+/// Run the improve agent via ACP
+async fn run_improve_agent_acp(
     project_path: &Path,
     prompt: &str,
     memory_file: &Path,
+    agent_command: &[String],
 ) -> Result<String, Box<dyn std::error::Error>> {
+    use crate::core::acp::collect_agent_env;
+    use std::process::Stdio;
+
+    if agent_command.is_empty() {
+        return Err("Empty agent command".into());
+    }
+
+    info!(
+        "Running improve agent via ACP to update {}",
+        memory_file.display()
+    );
+
     let task = format!(
         "Analyze the learnings and update {}. Report what you changed.",
         memory_file
@@ -426,30 +653,106 @@ fn run_improve_agent(
             .to_string_lossy()
     );
 
-    let output = Command::new("claude")
-        .args([
-            "--system-prompt",
-            prompt,
-            "--dangerously-skip-permissions",
-            "-p",
-            &task,
-        ])
-        .current_dir(project_path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()?;
+    // Create improve client
+    let client = Arc::new(ImproveClient::new(project_path));
 
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!(
-            "Agent exited with code {:?}: {}",
-            output.status.code(),
-            stderr
-        )
-        .into())
+    // Spawn agent process
+    let mut cmd = Command::new(&agent_command[0]);
+    if agent_command.len() > 1 {
+        cmd.args(&agent_command[1..]);
     }
+    cmd.current_dir(project_path);
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::null());
+
+    // Pass through API keys
+    for (key, value) in collect_agent_env() {
+        cmd.env(&key, &value);
+    }
+
+    let mut child = cmd.spawn()?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "Failed to get stdin".to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Failed to get stdout".to_string())?;
+
+    debug!("Agent process started for improve");
+
+    // Convert to futures-compatible streams
+    let stdin_compat = stdin.compat_write();
+    let stdout_compat = stdout.compat();
+
+    // Create ACP connection
+    let (conn, io_task) =
+        ClientSideConnection::new(client.clone(), stdin_compat, stdout_compat, |fut| {
+            tokio::task::spawn_local(fut);
+        });
+
+    // Spawn IO task
+    let io_handle = tokio::task::spawn_local(async move {
+        if let Err(e) = io_task.await {
+            debug!("ACP IO task ended: {:?}", e);
+        }
+    });
+
+    // Run with timeout
+    let result = timeout(Duration::from_secs(IMPROVE_TIMEOUT_SECS), async {
+        // Initialize
+        let init_request = InitializeRequest::new(ProtocolVersion::LATEST).client_info(
+            Implementation::new("hirsel-improve", env!("CARGO_PKG_VERSION")),
+        );
+        conn.initialize(init_request).await?;
+
+        // Create session with NO MCP servers
+        let session_request = NewSessionRequest::new(project_path.to_string_lossy().to_string());
+        let session = conn.new_session(session_request).await?;
+        let session_id = session.session_id;
+
+        debug!("ACP session created for improve: {}", session_id);
+
+        // Send system prompt first, then the task
+        let full_message = format!("{}\n\n---\n\n{}", prompt, task);
+        let prompt_request = PromptRequest::new(
+            session_id,
+            vec![ContentBlock::Text(TextContent::new(full_message))],
+        );
+        conn.prompt(prompt_request).await?;
+
+        Ok::<(), agent_client_protocol::Error>(())
+    })
+    .await;
+
+    // Clean up
+    drop(conn);
+    let _ = io_handle.await;
+    let _ = child.kill().await;
+
+    // Check result
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            return Err(format!("ACP error: {}", e).into());
+        }
+        Err(_) => {
+            return Err(format!("Timeout after {} seconds", IMPROVE_TIMEOUT_SECS).into());
+        }
+    }
+
+    // Get collected text output
+    let output = client.get_text().await;
+
+    if output.is_empty() {
+        return Err("Agent returned no output".into());
+    }
+
+    info!("Improve agent completed successfully");
+
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -474,5 +777,6 @@ mod tests {
         let prompt = get_improve_prompt();
         assert!(prompt.contains("Improve Agent"));
         assert!(prompt.contains("pattern"));
+        assert!(prompt.contains("WRITE THE FILE"));
     }
 }

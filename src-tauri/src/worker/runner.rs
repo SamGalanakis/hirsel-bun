@@ -6,11 +6,17 @@
 //! - Handles task claim/done cycle
 //! - Manages heartbeats and status updates
 //! - Coordinates with other workers via messaging
+//!
+//! Workers are state-agnostic - they don't know if they're accessing state
+//! locally (SQLiteState) or remotely (HttpState). The HIRSEL_API_URL
+//! environment variable determines which backend is used.
 
 use crate::cli::{MsgSubcommands, TaskSubcommands, WorkerCommands};
 use crate::core::state::{SQLiteState, StateError, WorkerStatus, WorkerUpdate};
+use crate::core::state_access::{StateAccess, StateAccessError};
 use crate::core::workers::maybe_trigger_eval;
 use crate::core::Files;
+use crate::worker::http_state::HttpState;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -26,6 +32,9 @@ pub enum WorkerError {
 
     #[error("State error: {0}")]
     State(#[from] StateError),
+
+    #[error("State access error: {0}")]
+    StateAccess(#[from] StateAccessError),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -116,32 +125,73 @@ impl WorkerConfig {
     }
 }
 
+/// State backend enum - either local SQLite or remote HTTP.
+enum StateBackend {
+    Local(SQLiteState),
+    Remote {
+        state: HttpState,
+        runtime: tokio::runtime::Runtime,
+    },
+}
+
 /// The main worker subprocess runner.
+///
+/// Workers are state-agnostic - they don't know if they're accessing state
+/// locally or remotely. The backend is chosen based on HIRSEL_API_URL.
 pub struct WorkerRunner {
     config: WorkerConfig,
-    state: SQLiteState,
-    _files: Files,
+    backend: StateBackend,
+    _files: Option<Files>,
     last_heartbeat: Instant,
 }
 
 impl WorkerRunner {
     /// Create a new worker runner.
+    ///
+    /// If HIRSEL_API_URL is set, uses HttpState to communicate with a
+    /// remote coordinator. Otherwise, uses SQLiteState for local access.
     pub fn new(config: WorkerConfig) -> WorkerResult<Self> {
-        let files = Files::new(&config.run_dir);
-        let state = SQLiteState::new(files.db_path()).map_err(WorkerError::State)?;
+        // Check if we should use remote state
+        if let Ok(api_url) = std::env::var("HIRSEL_API_URL") {
+            // Remote mode - use HttpState
+            let runtime = tokio::runtime::Runtime::new()
+                .map_err(|e| WorkerError::Config(format!("Failed to create runtime: {}", e)))?;
 
-        // Verify worker exists in database
-        let workers = state.get_workers().map_err(WorkerError::State)?;
-        if !workers.iter().any(|w| w.name == config.worker_name) {
-            return Err(WorkerError::WorkerNotRegistered(config.worker_name.clone()));
+            let state = HttpState::new(&api_url, &config.worker_name, 30);
+
+            // Verify connection and worker exists
+            let workers = runtime
+                .block_on(state.get_workers())
+                .map_err(|e| WorkerError::StateAccess(e.into()))?;
+
+            if !workers.iter().any(|w| w.name == config.worker_name) {
+                return Err(WorkerError::WorkerNotRegistered(config.worker_name.clone()));
+            }
+
+            Ok(Self {
+                config,
+                backend: StateBackend::Remote { state, runtime },
+                _files: None,
+                last_heartbeat: Instant::now(),
+            })
+        } else {
+            // Local mode - use SQLiteState
+            let files = Files::new(&config.run_dir);
+            let state = SQLiteState::new(files.db_path()).map_err(WorkerError::State)?;
+
+            // Verify worker exists in database
+            let workers = state.get_workers().map_err(WorkerError::State)?;
+            if !workers.iter().any(|w| w.name == config.worker_name) {
+                return Err(WorkerError::WorkerNotRegistered(config.worker_name.clone()));
+            }
+
+            Ok(Self {
+                config,
+                backend: StateBackend::Local(state),
+                _files: Some(files),
+                last_heartbeat: Instant::now(),
+            })
         }
-
-        Ok(Self {
-            config,
-            state,
-            _files: files,
-            last_heartbeat: Instant::now(),
-        })
     }
 
     /// Get the worker name.
@@ -155,8 +205,35 @@ impl WorkerRunner {
     }
 
     /// Get access to the state for direct queries.
-    pub fn state(&self) -> &SQLiteState {
-        &self.state
+    /// Returns None if using remote state (HttpState).
+    pub fn local_state(&self) -> Option<&SQLiteState> {
+        match &self.backend {
+            StateBackend::Local(state) => Some(state),
+            StateBackend::Remote { .. } => None,
+        }
+    }
+
+    /// Execute an async operation on the state backend.
+    fn run_async<F, T>(&self, f: F) -> T
+    where
+        F: std::future::Future<Output = T>,
+    {
+        match &self.backend {
+            StateBackend::Local(_) => {
+                // For local state, we create a minimal runtime just to execute the future.
+                // Since SQLiteState's async methods are just sync wrappers, this is fast.
+                futures::executor::block_on(f)
+            }
+            StateBackend::Remote { runtime, .. } => runtime.block_on(f),
+        }
+    }
+
+    /// Get a reference to the state as a trait object for async operations.
+    fn state(&self) -> &dyn StateAccess {
+        match &self.backend {
+            StateBackend::Local(state) => state,
+            StateBackend::Remote { state, .. } => state,
+        }
     }
 
     /// Update worker heartbeat in the database.
@@ -164,15 +241,12 @@ impl WorkerRunner {
         let now = chrono::Utc::now()
             .format("%Y-%m-%dT%H:%M:%S%.6f")
             .to_string();
-        self.state
-            .update_worker(
-                &self.config.worker_name,
-                WorkerUpdate {
-                    last_heartbeat: Some(now),
-                    ..Default::default()
-                },
-            )
-            .map_err(WorkerError::State)?;
+        let worker_name = self.config.worker_name.clone();
+        let update = WorkerUpdate {
+            last_heartbeat: Some(now),
+            ..Default::default()
+        };
+        self.run_async(self.state().update_worker(&worker_name, update))?;
         self.last_heartbeat = Instant::now();
         Ok(())
     }
@@ -184,15 +258,13 @@ impl WorkerRunner {
 
     /// Set worker status.
     pub fn set_status(&self, status: WorkerStatus) -> WorkerResult<()> {
-        self.state
-            .update_worker(
-                &self.config.worker_name,
-                WorkerUpdate {
-                    status: Some(status),
-                    ..Default::default()
-                },
-            )
-            .map_err(WorkerError::State)
+        let worker_name = self.config.worker_name.clone();
+        let update = WorkerUpdate {
+            status: Some(status),
+            ..Default::default()
+        };
+        self.run_async(self.state().update_worker(&worker_name, update))?;
+        Ok(())
     }
 
     // =========================================================================
@@ -201,32 +273,33 @@ impl WorkerRunner {
 
     /// List all tasks.
     pub fn task_list(&self) -> WorkerResult<String> {
-        let tasks = self.state.get_tasks().map_err(WorkerError::State)?;
+        let tasks = self.run_async(self.state().get_tasks())?;
 
-        let output = serde_json::json!({
-            "tasks": tasks.iter().map(|t| {
-                let blocked = self.state.is_task_blocked(&t.id).unwrap_or(false);
-                serde_json::json!({
-                    "id": t.id,
-                    "name": t.name,
-                    "status": t.status.as_str(),
-                    "claimed_by": t.claimed_by,
-                    "parent": t.parent_id,
-                    "blocked_by": t.blocked_by,
-                    "blocked": blocked,
-                })
-            }).collect::<Vec<_>>()
-        });
+        let mut task_outputs = Vec::new();
+        for t in &tasks {
+            let blocked = self
+                .run_async(self.state().is_task_blocked(&t.id))
+                .unwrap_or(false);
+            task_outputs.push(serde_json::json!({
+                "id": t.id,
+                "name": t.name,
+                "status": t.status.as_str(),
+                "claimed_by": t.claimed_by,
+                "parent": t.parent_id,
+                "blocked_by": t.blocked_by,
+                "blocked": blocked,
+            }));
+        }
 
+        let output = serde_json::json!({ "tasks": task_outputs });
         serde_json::to_string_pretty(&output)
             .map_err(|e| WorkerError::Config(format!("Serialization error: {}", e)))
     }
 
     /// Claim a task.
     pub fn task_claim(&self, task_id: &str) -> WorkerResult<String> {
-        self.state
-            .claim_task(task_id, &self.config.worker_name)
-            .map_err(WorkerError::State)?;
+        let worker_name = self.config.worker_name.clone();
+        self.run_async(self.state().claim_task(task_id, &worker_name))?;
 
         Ok(serde_json::json!({
             "success": true,
@@ -238,22 +311,19 @@ impl WorkerRunner {
 
     /// Mark a task as done.
     pub fn task_done(&self, task_id: Option<&str>) -> WorkerResult<String> {
+        let worker_name = self.config.worker_name.clone();
         let tid = match task_id {
             Some(id) => id.to_string(),
             None => {
                 // Get currently claimed task
                 let task = self
-                    .state
-                    .get_claimed_task(&self.config.worker_name)
-                    .map_err(WorkerError::State)?
+                    .run_async(self.state().get_claimed_task(&worker_name))?
                     .ok_or(WorkerError::NoTaskClaimed)?;
                 task.id
             }
         };
 
-        self.state
-            .complete_task(&tid, &self.config.worker_name)
-            .map_err(WorkerError::State)?;
+        self.run_async(self.state().complete_task(&tid, &worker_name))?;
 
         // Completing a task might unblock other tasks, so wake awaiting workers
         self.try_resume_awaiting_workers();
@@ -267,21 +337,18 @@ impl WorkerRunner {
 
     /// Unclaim a task.
     pub fn task_unclaim(&self, task_id: Option<&str>) -> WorkerResult<String> {
+        let worker_name = self.config.worker_name.clone();
         let tid = match task_id {
             Some(id) => id.to_string(),
             None => {
                 let task = self
-                    .state
-                    .get_claimed_task(&self.config.worker_name)
-                    .map_err(WorkerError::State)?
+                    .run_async(self.state().get_claimed_task(&worker_name))?
                     .ok_or(WorkerError::NoTaskClaimed)?;
                 task.id
             }
         };
 
-        self.state
-            .unclaim_task(&tid, &self.config.worker_name)
-            .map_err(WorkerError::State)?;
+        self.run_async(self.state().unclaim_task(&tid, &worker_name))?;
 
         // Unclaiming a task makes it available, so wake awaiting workers
         self.try_resume_awaiting_workers();
@@ -303,18 +370,16 @@ impl WorkerRunner {
     ) -> WorkerResult<String> {
         let blocked_refs: Vec<&str> = blocked_by.iter().map(|s| s.as_str()).collect();
 
-        self.state
-            .add_task(
-                task_id,
-                name,
-                parent,
-                if blocked_refs.is_empty() {
-                    None
-                } else {
-                    Some(blocked_refs.as_slice())
-                },
-            )
-            .map_err(WorkerError::State)?;
+        self.run_async(self.state().add_task(
+            task_id,
+            name,
+            parent,
+            if blocked_refs.is_empty() {
+                None
+            } else {
+                Some(blocked_refs.as_slice())
+            },
+        ))?;
 
         // New task might be claimable, so wake awaiting workers
         if blocked_refs.is_empty() {
@@ -352,9 +417,7 @@ impl WorkerRunner {
 
     /// Delete a task.
     pub fn task_delete(&self, task_id: &str) -> WorkerResult<String> {
-        self.state
-            .delete_task(task_id)
-            .map_err(WorkerError::State)?;
+        self.run_async(self.state().delete_task(task_id))?;
 
         Ok(serde_json::json!({
             "success": true,
@@ -365,9 +428,7 @@ impl WorkerRunner {
 
     /// Reopen a completed task.
     pub fn task_undone(&self, task_id: &str) -> WorkerResult<String> {
-        self.state
-            .reopen_task(task_id)
-            .map_err(WorkerError::State)?;
+        self.run_async(self.state().reopen_task(task_id))?;
 
         Ok(serde_json::json!({
             "success": true,
@@ -382,10 +443,7 @@ impl WorkerRunner {
         self.set_status(WorkerStatus::Awaiting)?;
 
         // Check for available tasks
-        let claimable = self
-            .state
-            .get_claimable_tasks()
-            .map_err(WorkerError::State)?;
+        let claimable = self.run_async(self.state().get_claimable_tasks())?;
 
         // Check if all workers are now inactive - if so, trigger eval
         let eval_triggered =
@@ -408,9 +466,8 @@ impl WorkerRunner {
 
     /// Send a message to a thread.
     pub fn msg_send(&self, thread: &str, message: &str, wait: bool) -> WorkerResult<String> {
-        self.state
-            .add_message(thread, &self.config.worker_name, message, wait)
-            .map_err(WorkerError::State)?;
+        let worker_name = self.config.worker_name.clone();
+        self.run_async(self.state().add_message(thread, &worker_name, message))?;
 
         if wait {
             self.set_status(WorkerStatus::Waiting)?;
@@ -426,15 +483,12 @@ impl WorkerRunner {
 
     /// Read messages from a thread (or all threads).
     pub fn msg_read(&self, thread: Option<&str>) -> WorkerResult<String> {
+        let worker_name = self.config.worker_name.clone();
         let messages = if let Some(t) = thread {
-            self.state
-                .get_unread_messages(t, &self.config.worker_name)
-                .map_err(WorkerError::State)?
+            self.run_async(self.state().get_unread_messages(t, &worker_name))?
         } else {
             // Read from all threads
-            self.state
-                .get_all_unread_messages(&self.config.worker_name)
-                .map_err(WorkerError::State)?
+            self.run_async(self.state().get_all_unread_messages(&worker_name))?
         };
 
         Ok(serde_json::json!({
@@ -451,7 +505,7 @@ impl WorkerRunner {
 
     /// List available message threads.
     pub fn msg_list(&self) -> WorkerResult<String> {
-        let threads = self.state.get_threads().map_err(WorkerError::State)?;
+        let threads = self.run_async(self.state().get_threads())?;
 
         Ok(serde_json::json!({
             "threads": threads,
@@ -461,14 +515,13 @@ impl WorkerRunner {
 
     /// Check inbox for new messages.
     pub fn msg_inbox(&self) -> WorkerResult<String> {
-        let threads = self.state.get_threads().map_err(WorkerError::State)?;
+        let worker_name = self.config.worker_name.clone();
+        let threads = self.run_async(self.state().get_threads())?;
 
         let mut inbox = Vec::new();
         for thread in &threads {
-            let messages = self
-                .state
-                .get_unread_messages(thread, &self.config.worker_name)
-                .map_err(WorkerError::State)?;
+            let messages =
+                self.run_async(self.state().get_unread_messages(thread, &worker_name))?;
 
             if !messages.is_empty() {
                 inbox.push(serde_json::json!({
@@ -511,6 +564,15 @@ impl WorkerRunner {
             "eval_triggered": eval_triggered,
         })
         .to_string())
+    }
+
+    // =========================================================================
+    // Time Status
+    // =========================================================================
+
+    /// Get time information for the run.
+    pub fn get_time_info(&self) -> WorkerResult<Option<crate::core::state::TimeInfo>> {
+        Ok(self.run_async(self.state().get_time_info())?)
     }
 
     // =========================================================================

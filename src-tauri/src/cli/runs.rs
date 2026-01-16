@@ -5,7 +5,6 @@
 use crate::core::{Config, SQLiteState, Status, TaskStatus, WorkerStatus};
 use serde::Serialize;
 use std::fs;
-use std::path::PathBuf;
 
 /// Run summary for display
 #[derive(Debug, Clone, Serialize)]
@@ -65,7 +64,7 @@ pub fn list_runs(json: bool) -> anyhow::Result<()> {
 }
 
 /// Get info for a single run
-fn get_run_info(name: &str, run_dir: &PathBuf) -> Option<RunInfo> {
+fn get_run_info(name: &str, run_dir: &std::path::Path) -> Option<RunInfo> {
     let db_path = run_dir.join("hirsel.db");
 
     if !db_path.exists() {

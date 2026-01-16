@@ -3,7 +3,7 @@
 //! Removes a hirsel run, killing any running workers and cleaning up
 //! worktrees, directories, and database files.
 
-use crate::core::{config, state::SQLiteState, Files};
+use crate::core::{config, state::SQLiteState, workers::kill_all_workers, Files};
 use std::fs;
 
 /// Execute the delete command for a run
@@ -28,12 +28,10 @@ pub fn execute(run_name: &str, json: bool) -> Result<(), Box<dyn std::error::Err
     // Try to get project path and kill workers
     let files = Files::new(&run_dir);
     let project_path = if let Ok(state) = SQLiteState::new(files.db_path()) {
-        // Kill any running worker processes
-        if let Ok(workers) = state.get_workers() {
-            for worker in workers {
-                if let Some(pid) = worker.pid {
-                    kill_process(pid as u32);
-                }
+        // Kill any running worker processes (forcefully)
+        if let Ok(killed) = kill_all_workers(&state) {
+            if !killed.is_empty() && !json {
+                println!("Killed {} worker(s): {:?}", killed.len(), killed);
             }
         }
 
@@ -69,25 +67,6 @@ pub fn execute(run_name: &str, json: bool) -> Result<(), Box<dyn std::error::Err
     }
 
     Ok(())
-}
-
-/// Kill a process by PID (best effort, ignore errors)
-fn kill_process(pid: u32) {
-    #[cfg(unix)]
-    {
-        // Use kill command on Unix
-        let _ = std::process::Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .output();
-    }
-
-    #[cfg(windows)]
-    {
-        // On Windows, use taskkill
-        let _ = std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/F"])
-            .output();
-    }
 }
 
 #[cfg(test)]

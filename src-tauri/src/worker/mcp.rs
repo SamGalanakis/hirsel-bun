@@ -287,9 +287,7 @@ impl McpServer {
         let id = request.id.clone();
 
         // Notifications (no id) don't need a response
-        if id.is_none() {
-            return None;
-        }
+        id.as_ref()?;
 
         let response = match request.method.as_str() {
             "initialize" => self.handle_initialize(id),
@@ -428,11 +426,7 @@ impl McpServer {
     /// Get time status for the run.
     fn time_status(&self) -> Result<String, WorkerError> {
         // Get time info from state
-        let time_info = self
-            .runner
-            .state()
-            .get_time_info()
-            .map_err(WorkerError::State)?;
+        let time_info = self.runner.get_time_info()?;
 
         match time_info {
             Some(info) => {

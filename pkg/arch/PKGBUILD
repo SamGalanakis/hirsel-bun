@@ -1,0 +1,73 @@
+# Maintainer: Your Name <your@email.com>
+pkgname=hirsel
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Herd your AI coding agents"
+arch=('x86_64')
+url="https://github.com/SamGalanakis/hirsel-bun"
+license=('MIT')
+depends=(
+  'cairo'
+  'desktop-file-utils'
+  'gdk-pixbuf2'
+  'glib2'
+  'gtk3'
+  'hicolor-icon-theme'
+  'libsoup3'
+  'pango'
+  'webkit2gtk-4.1'
+  'libappindicator-gtk3'
+  'librsvg'
+  'libxdo'
+)
+makedepends=(
+  'cargo'
+  'rust'
+  'nodejs'
+  'npm'
+  'git'
+  'openssl'
+  'patchelf'
+)
+# Disable LTO to avoid linking errors with Tauri
+options=('!lto' '!strip')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+install=hirsel.install
+
+build() {
+  cd "$pkgname-$pkgver"
+
+  # Set cargo home to avoid permission issues
+  export CARGO_HOME="$srcdir/cargo-home"
+
+  # Install npm dependencies
+  npm ci
+
+  # Build frontend
+  npm run vite:build
+
+  # Build Tauri app (binary only, skip bundling)
+  cd src-tauri
+  cargo build --release
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+
+  # Install binary
+  install -Dm755 "src-tauri/target/release/hirsel" "$pkgdir/usr/bin/hirsel"
+
+  # Install desktop file
+  install -Dm644 "pkg/arch/hirsel.desktop" "$pkgdir/usr/share/applications/hirsel.desktop"
+
+  # Install icons
+  install -Dm644 "src-tauri/icons/icon.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/hirsel.png"
+  install -Dm644 "src-tauri/icons/128x128.png" "$pkgdir/usr/share/icons/hicolor/128x128/apps/hirsel.png"
+  install -Dm644 "src-tauri/icons/32x32.png" "$pkgdir/usr/share/icons/hicolor/32x32/apps/hirsel.png"
+
+  # Install license if present
+  if [ -f "LICENSE" ]; then
+    install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  fi
+}

@@ -5,9 +5,12 @@
  * Provides controls for spec, worker scale, time limit, HITL mode, and project path.
  */
 
-import { createDraft, updateDraft, startDraft, deleteRun, getRunDetail, readSpecFile, writeSpecFile, readEvalFile, writeEvalFile, validateRepo, initProjectRepo } from '../api';
+import { createDraft, updateDraft, startDraft, deleteRun, getRunDetail, readSpecFile, writeSpecFile, readEvalFile, writeEvalFile, validateRepo, initProjectRepo, saveAsset, importAssetFromPath, openAssetsFolder, getAssetsPath } from '../api';
+import { convertFileSrc } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { RunDetail, DraftUpdateRequest, RepoValidation } from '../types';
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import { showConfirm } from '../confirm-dialog';
 
 declare const window: Window & {
@@ -57,6 +60,18 @@ export interface DraftEditorData {
   // Project setup flags (non-git directory handling)
   needsDirCreate: boolean;
   needsGitInit: boolean;
+  // File drop state
+  specDragOver: boolean;
+  evalDragOver: boolean;
+  specDragCounter: number;
+  // Assets path for image rendering
+  assetsPath: string;
+  evalDragCounter: number;
+  // Tauri event unlisten function
+  _unlistenDragDrop: UnlistenFn | null;
+  // Cursor position tracking for insertion
+  specCursorPos: number;
+  evalCursorPos: number;
 }
 
 /**
@@ -210,6 +225,14 @@ export function draftEditor(): DraftEditorData & {
   validateTimeLimit(): boolean;
   validateWorkerScale(): boolean;
   hasValidationErrors(): boolean;
+  handleFileDrop(type: 'spec' | 'eval', event: DragEvent): Promise<void>;
+  handleDragEnter(type: 'spec' | 'eval', event: DragEvent): void;
+  handleDragOver(type: 'spec' | 'eval', event: DragEvent): void;
+  handleDragLeave(type: 'spec' | 'eval', event: DragEvent): void;
+  handleNativeFileDrop(paths: string[], position: { x: number; y: number }): Promise<void>;
+  trackCursorPosition(type: 'spec' | 'eval', event: Event): void;
+  openFilePicker(type: 'spec' | 'eval'): void;
+  openAssets(): Promise<void>;
 } {
   return {
     runName: null,
@@ -246,6 +269,16 @@ export function draftEditor(): DraftEditorData & {
     // Project setup flags (non-git directory handling)
     needsDirCreate: false,
     needsGitInit: false,
+    // File drop state
+    specDragOver: false,
+    evalDragOver: false,
+    specDragCounter: 0,
+    evalDragCounter: 0,
+    assetsPath: '',
+    _unlistenDragDrop: null,
+    // Cursor position (end of content by default)
+    specCursorPos: 0,
+    evalCursorPos: 0,
 
     /**
      * Initialize the component
@@ -272,6 +305,52 @@ export function draftEditor(): DraftEditorData & {
           this.refreshFiles();
         }
       }) as EventListener);
+
+      // Listen for Tauri native file drop events
+      listen<{ paths: string[]; position: { x: number; y: number } }>('tauri://drag-drop', (event) => {
+        this.handleNativeFileDrop(event.payload.paths, event.payload.position);
+      }).then((unlisten) => {
+        this._unlistenDragDrop = unlisten;
+      });
+
+      // Debounced visual feedback for native drag events
+      let dragShowTimeout: ReturnType<typeof setTimeout> | null = null;
+      let dragHideTimeout: ReturnType<typeof setTimeout> | null = null;
+
+      listen('tauri://drag-enter', () => {
+        // Clear any pending hide
+        if (dragHideTimeout) {
+          clearTimeout(dragHideTimeout);
+          dragHideTimeout = null;
+        }
+        // Debounce show - wait 100ms before showing indicator
+        if (!dragShowTimeout && this.runName) {
+          dragShowTimeout = setTimeout(() => {
+            if (this.activeTab === 'spec') {
+              this.specDragOver = true;
+            } else {
+              this.evalDragOver = true;
+            }
+            dragShowTimeout = null;
+          }, 100);
+        }
+      });
+
+      listen('tauri://drag-leave', () => {
+        // Clear any pending show
+        if (dragShowTimeout) {
+          clearTimeout(dragShowTimeout);
+          dragShowTimeout = null;
+        }
+        // Debounce hide - wait 50ms before hiding (handles flickering)
+        if (!dragHideTimeout) {
+          dragHideTimeout = setTimeout(() => {
+            this.specDragOver = false;
+            this.evalDragOver = false;
+            dragHideTimeout = null;
+          }, 50);
+        }
+      });
     },
 
     /**
@@ -289,6 +368,10 @@ export function draftEditor(): DraftEditorData & {
       if (this.repoValidateTimeout) {
         clearTimeout(this.repoValidateTimeout);
         this.repoValidateTimeout = null;
+      }
+      if (this._unlistenDragDrop) {
+        this._unlistenDragDrop();
+        this._unlistenDragDrop = null;
       }
     },
 
@@ -310,13 +393,15 @@ export function draftEditor(): DraftEditorData & {
         this.humanInTheLoop = detail.humanInTheLoop;
         this.projectPath = detail.projectPath || '';
 
-        // Load spec and eval from files (file-first editing)
-        const [specContent, evalContent] = await Promise.all([
+        // Load spec, eval, and assets path (file-first editing)
+        const [specContent, evalContent, assetsPath] = await Promise.all([
           readSpecFile(name),
           readEvalFile(name),
+          getAssetsPath(name),
         ]);
         this.spec = specContent;
         this.eval = evalContent;
+        this.assetsPath = assetsPath;
 
         this.loading = false;
 
@@ -370,6 +455,13 @@ export function draftEditor(): DraftEditorData & {
       // Reset setup flags
       this.needsDirCreate = false;
       this.needsGitInit = false;
+      // Reset drag state
+      this.specDragOver = false;
+      this.evalDragOver = false;
+      this.specDragCounter = 0;
+      this.evalDragCounter = 0;
+      // Reset assets path
+      this.assetsPath = '';
     },
 
     /**
@@ -647,7 +739,7 @@ export function draftEditor(): DraftEditorData & {
     async deleteDraft(): Promise<void> {
       if (!this.runName) return;
 
-      const confirmed = await (window as any).confirmDialog?.delete(this.name, 'draft')
+      const confirmed = await window.confirmDialog?.delete(this.name, 'draft')
         ?? confirm(`Delete draft "${this.name}"? This cannot be undone.`);
       if (!confirmed) return;
 
@@ -716,11 +808,32 @@ export function draftEditor(): DraftEditorData & {
     },
 
     /**
-     * Render markdown content to HTML
+     * Render markdown content to HTML (sanitized for XSS protection)
+     * Rewrites assets/ image URLs to Tauri asset URLs for webview
      */
     renderMarkdown(content: string): string {
       if (!content) return '<p class="text-wool-500 italic">No content</p>';
-      return marked(content) as string;
+
+      let html = marked(content) as string;
+
+      // Rewrite assets/ URLs to Tauri asset URLs for webview
+      if (this.assetsPath) {
+        // Match src="assets/..." or src='assets/...'
+        html = html.replace(
+          /src=(["'])assets\/([^"']+)\1/g,
+          (_match, quote, filename) => {
+            const filePath = `${this.assetsPath}/${filename}`;
+            const fileUrl = convertFileSrc(filePath);
+            return `src=${quote}${fileUrl}${quote}`;
+          }
+        );
+      }
+
+      // Sanitize but allow Tauri's asset protocol URLs
+      return DOMPurify.sanitize(html, {
+        ADD_URI_SAFE_ATTR: ['src'],
+        ALLOWED_URI_REGEXP: /^(?:(?:https?|asset|tauri):\/\/|data:image\/)/i,
+      });
     },
 
     /**
@@ -748,7 +861,14 @@ export function draftEditor(): DraftEditorData & {
       this.needsGitInit = false;
 
       try {
-        const result = await validateRepo(path);
+        // Add timeout to prevent hanging on slow/unresponsive remotes
+        const timeoutMs = 15000;
+        const result = await Promise.race([
+          validateRepo(path),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Validation timed out')), timeoutMs)
+          )
+        ]);
 
         this.repoIsRemote = result.isRemote;
         this.normalizedRepoUrl = result.repoUrl;
@@ -835,6 +955,309 @@ export function draftEditor(): DraftEditorData & {
         !this.workerScaleError &&
         !this.timeLimitError
       );
+    },
+
+    /**
+     * Handle drag enter event - increment counter to track nested elements
+     */
+    handleDragEnter(type: 'spec' | 'eval', event: DragEvent): void {
+      event.preventDefault();
+      event.stopPropagation();
+
+      // Only handle file drags
+      if (!event.dataTransfer?.types.includes('Files')) return;
+
+      if (type === 'spec') {
+        this.specDragCounter++;
+        this.specDragOver = true;
+      } else {
+        this.evalDragCounter++;
+        this.evalDragOver = true;
+      }
+    },
+
+    /**
+     * Handle drag over event - just prevent default to allow drop
+     */
+    handleDragOver(type: 'spec' | 'eval', event: DragEvent): void {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.dataTransfer?.types.includes('Files')) {
+        event.dataTransfer.dropEffect = 'copy';
+      }
+    },
+
+    /**
+     * Handle drag leave event - decrement counter
+     */
+    handleDragLeave(type: 'spec' | 'eval', event: DragEvent): void {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (type === 'spec') {
+        this.specDragCounter--;
+        if (this.specDragCounter <= 0) {
+          this.specDragCounter = 0;
+          this.specDragOver = false;
+        }
+      } else {
+        this.evalDragCounter--;
+        if (this.evalDragCounter <= 0) {
+          this.evalDragCounter = 0;
+          this.evalDragOver = false;
+        }
+      }
+    },
+
+    /**
+     * Open file picker to select a file
+     */
+    openFilePicker(type: 'spec' | 'eval'): void {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.md,.txt,.markdown,text/*';
+      input.onchange = async () => {
+        const file = input.files?.[0];
+        if (!file) return;
+
+        try {
+          const content = await file.text();
+          const currentContent = type === 'spec' ? this.spec : this.eval;
+          const fieldName = type === 'spec' ? 'Specification' : 'Evaluation';
+
+          if (currentContent.trim()) {
+            const confirmed = await showConfirm({
+              title: `Replace ${fieldName}?`,
+              message: `This will replace the current ${fieldName.toLowerCase()} content with the contents of "${file.name}". This cannot be undone.`,
+              confirmText: 'Replace',
+              cancelText: 'Cancel',
+              danger: true,
+            });
+
+            if (!confirmed) return;
+          }
+
+          if (type === 'spec') {
+            this.spec = content;
+            this.debouncedSaveSpec();
+          } else {
+            this.eval = content;
+            this.debouncedSaveEval();
+          }
+
+          window.toast?.success(`Loaded "${file.name}" into ${fieldName.toLowerCase()}`);
+        } catch (err) {
+          console.error('Failed to read file:', err);
+          window.toast?.error('Failed to read file');
+        }
+      };
+      input.click();
+    },
+
+    /**
+     * Handle file drop for spec or eval
+     * Any file dropped is saved to assets/ and a reference is inserted.
+     * Images use markdown image syntax, other files use link syntax.
+     */
+    async handleFileDrop(type: 'spec' | 'eval', event: DragEvent): Promise<void> {
+      event.preventDefault();
+      event.stopPropagation();
+
+      // Reset drag state
+      this.specDragOver = false;
+      this.evalDragOver = false;
+      this.specDragCounter = 0;
+      this.evalDragCounter = 0;
+
+      const files = event.dataTransfer?.files;
+      if (!files || files.length === 0) return;
+      if (!this.runName) {
+        window.toast?.error('No run selected');
+        return;
+      }
+
+      // Process all dropped files
+      for (const file of Array.from(files)) {
+        try {
+          // Save file to assets
+          const arrayBuffer = await file.arrayBuffer();
+          const data = Array.from(new Uint8Array(arrayBuffer));
+          const savedFilename = await saveAsset(this.runName, file.name, data);
+
+          // Determine if it's an image for markdown syntax
+          const isImage = file.type.startsWith('image/') ||
+            /\.(png|jpg|jpeg|gif|webp|svg|bmp|ico)$/i.test(file.name);
+
+          // Create appropriate markdown reference
+          const markdownRef = isImage
+            ? `![${savedFilename}](assets/${savedFilename})`
+            : `[${savedFilename}](assets/${savedFilename})`;
+
+          // Insert reference
+          if (type === 'spec') {
+            this.spec = this.spec ? `${this.spec}\n\n${markdownRef}` : markdownRef;
+          } else {
+            this.eval = this.eval ? `${this.eval}\n\n${markdownRef}` : markdownRef;
+          }
+
+          window.toast?.success(`Added: ${savedFilename}`);
+        } catch (err) {
+          console.error('Failed to save file:', err);
+          window.toast?.error(`Failed to save: ${file.name}`);
+        }
+      }
+
+      // Save after all files processed
+      if (type === 'spec') {
+        this.debouncedSaveSpec();
+      } else {
+        this.debouncedSaveEval();
+      }
+    },
+
+    /**
+     * Track cursor position in textarea for insertion
+     */
+    trackCursorPosition(type: 'spec' | 'eval', event: Event): void {
+      const textarea = event.target as HTMLTextAreaElement;
+      if (textarea && typeof textarea.selectionStart === 'number') {
+        if (type === 'spec') {
+          this.specCursorPos = textarea.selectionStart;
+        } else {
+          this.evalCursorPos = textarea.selectionStart;
+        }
+      }
+    },
+
+    /**
+     * Handle native file drop from Tauri (file manager drag-drop)
+     * Uses filesystem paths directly instead of transferring file contents
+     * Inserts at the drop position (calculated from screen coordinates)
+     */
+    async handleNativeFileDrop(paths: string[], position: { x: number; y: number }): Promise<void> {
+      // Reset drag state
+      this.specDragOver = false;
+      this.evalDragOver = false;
+
+      if (!paths || paths.length === 0) return;
+      if (!this.runName) {
+        window.toast?.error('No run selected');
+        return;
+      }
+
+      // Determine which tab to add to based on active tab
+      const type = this.activeTab;
+
+      // Build all markdown references first
+      const markdownRefs: string[] = [];
+      for (const filePath of paths) {
+        try {
+          // Import file from path (Tauri handles the file reading)
+          const savedFilename = await importAssetFromPath(this.runName, filePath);
+
+          // Determine if it's an image for markdown syntax
+          const isImage = /\.(png|jpg|jpeg|gif|webp|svg|bmp|ico)$/i.test(savedFilename);
+
+          // Create appropriate markdown reference
+          const markdownRef = isImage
+            ? `![${savedFilename}](assets/${savedFilename})`
+            : `[${savedFilename}](assets/${savedFilename})`;
+
+          markdownRefs.push(markdownRef);
+          window.toast?.success(`Added: ${savedFilename}`);
+        } catch (err) {
+          console.error('Failed to import file:', err);
+          const filename = filePath.split('/').pop() || filePath;
+          window.toast?.error(`Failed to import: ${filename}`);
+        }
+      }
+
+      if (markdownRefs.length === 0) return;
+
+      const content = type === 'spec' ? this.spec : this.eval;
+      const insertion = markdownRefs.join('\n');
+
+      // Try to find the textarea and calculate drop line from position
+      const textareaSelector = type === 'spec'
+        ? 'textarea[x-model="spec"]'
+        : 'textarea[x-model="eval"]';
+      const textarea = document.querySelector(textareaSelector) as HTMLTextAreaElement | null;
+
+      let insertPos = content.length; // Default to end
+
+      if (textarea) {
+        const rect = textarea.getBoundingClientRect();
+        const relativeY = position.y - rect.top;
+
+        // Get computed style for line height
+        const style = window.getComputedStyle(textarea);
+        const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.2;
+        const paddingTop = parseFloat(style.paddingTop) || 0;
+
+        // Calculate which line was dropped on (accounting for scroll)
+        const scrollTop = textarea.scrollTop;
+        const adjustedY = relativeY + scrollTop - paddingTop;
+        const targetLine = Math.max(0, Math.floor(adjustedY / lineHeight));
+
+        // Find the character position at the start of that line
+        const lines = content.split('\n');
+        let charPos = 0;
+        for (let i = 0; i < Math.min(targetLine, lines.length); i++) {
+          charPos += lines[i].length + 1; // +1 for newline
+        }
+        insertPos = Math.min(charPos, content.length);
+      }
+
+      // Get the line at insert position
+      const before = content.slice(0, insertPos);
+      const after = content.slice(insertPos);
+
+      // Check if we're at the start of a line
+      const atLineStart = insertPos === 0 || content[insertPos - 1] === '\n';
+
+      // Find end of current line
+      const nextNewline = after.indexOf('\n');
+      const currentLineContent = nextNewline === -1 ? after : after.slice(0, nextNewline);
+      const isLineEmpty = currentLineContent.trim() === '';
+
+      let newContent: string;
+
+      if (atLineStart && isLineEmpty) {
+        // At start of empty line - just insert
+        newContent = before + insertion + after;
+      } else if (atLineStart) {
+        // At start of non-empty line - insert before with newline after
+        newContent = before + insertion + '\n' + after;
+      } else {
+        // In middle of content - insert on new line
+        newContent = before + '\n' + insertion + after;
+      }
+
+      // Update content
+      if (type === 'spec') {
+        this.spec = newContent;
+        this.debouncedSaveSpec();
+      } else {
+        this.eval = newContent;
+        this.debouncedSaveEval();
+      }
+    },
+
+    /**
+     * Open the assets folder for this run in the system file browser
+     */
+    async openAssets(): Promise<void> {
+      if (!this.runName) {
+        window.toast?.error('No run selected');
+        return;
+      }
+      try {
+        await openAssetsFolder(this.runName);
+      } catch (err) {
+        console.error('Failed to open assets folder:', err);
+        window.toast?.error('Failed to open assets folder');
+      }
     },
   };
 }

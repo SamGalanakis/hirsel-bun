@@ -56,7 +56,7 @@ struct Usage {
 /// Get the path to a Claude session file
 fn get_session_file(session_id: &str, project_path: &str) -> PathBuf {
     // Claude stores sessions in ~/.claude/projects/<escaped-path>/<session-id>.jsonl
-    let escaped_path = project_path.replace('/', "-").replace('.', "-");
+    let escaped_path = project_path.replace(['/', '.'], "-");
 
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -153,9 +153,10 @@ pub fn get_session_metrics(session_id: Option<&str>, project_path: Option<&str>)
 
     // Calculate context utilization for Claude models
     let config = Config::default();
-    let (context_window, context_utilization) =
-        if model.is_some() && config.agent.agent_type() == AgentType::Claude {
-            let model_name = model.as_ref().unwrap();
+    let (context_window, context_utilization) = if let Some(model_name) = model.as_ref() {
+        if config.agent.agent_type() != AgentType::Claude {
+            (None, None)
+        } else {
             let window = get_context_window(model_name);
 
             // Current context size is approximately last input + output
@@ -167,9 +168,10 @@ pub fn get_session_metrics(session_id: Option<&str>, project_path: Option<&str>)
             };
 
             (Some(window), utilization)
-        } else {
-            (None, None)
-        };
+        }
+    } else {
+        (None, None)
+    };
 
     let metrics = SessionMetrics {
         turns,

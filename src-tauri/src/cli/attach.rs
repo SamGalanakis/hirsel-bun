@@ -1,9 +1,9 @@
 //! Implementation of the `hirsel attach` command.
 //!
-//! Attaches to a worker's tmux session to view live output.
+//! Attaches to a worker to view live output using a TUI.
 
+use crate::cli::tui::AttachTui;
 use crate::core::{Config, SQLiteState};
-use std::process::Command;
 
 /// Run the attach command
 pub fn run_attach(run_name: &str, target: Option<&str>, json: bool) -> anyhow::Result<()> {
@@ -23,7 +23,7 @@ pub fn run_attach(run_name: &str, target: Option<&str>, json: bool) -> anyhow::R
     }
 
     let db_path = run_dir.join("hirsel.db");
-    let state = SQLiteState::new(db_path)?;
+    let state = SQLiteState::new(db_path.clone())?;
 
     let workers = state.get_workers()?;
     let evals = state.get_evals(10)?;
@@ -148,67 +148,47 @@ pub fn run_attach(run_name: &str, target: Option<&str>, json: bool) -> anyhow::R
         return Ok(());
     };
 
-    // Get tmux session name
-    let session_name = format!("hirsel-{}-{}", run_name, selection_name);
-
-    // Check if tmux session exists
-    let session_exists = Command::new("tmux")
-        .args(["has-session", "-t", &session_name])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if !session_exists {
+    // Handle based on type
+    if selection_type == "worker" {
         if json {
+            // Can't run TUI in JSON mode
             println!(
-                r#"{{"success": false, "error": "No tmux session '{}' found. {} may not be running."}}"#,
-                session_name, selection_name
+                r#"{{"success": true, "worker": "{}", "hint": "Run without --json to view live output"}}"#,
+                selection_name
             );
         } else {
-            eprintln!("No tmux session '{}' found.", session_name);
-            eprintln!(
-                "{} '{}' may not be running.",
-                selection_type, selection_name
-            );
+            // Launch TUI for worker
+            let state = SQLiteState::new(db_path)?;
+            let mut tui = AttachTui::new(run_name.to_string(), selection_name.clone(), state);
 
-            // Check if there's a log file we can tail instead
-            let log_file = run_dir.join("logs").join(format!("{}.log", selection_name));
-            if log_file.exists() {
-                eprintln!();
-                eprintln!("You can view the log file with:");
-                eprintln!("  tail -f {}", log_file.display());
+            if let Err(e) = tui.run() {
+                eprintln!("TUI error: {}", e);
             }
         }
-        return Ok(());
-    }
-
-    if json {
-        // Can't attach interactively in JSON mode
-        println!(
-            r#"{{"success": true, "session": "{}", "command": "tmux attach-session -t {}"}}"#,
-            session_name, session_name
-        );
     } else {
-        // Attach to tmux session
-        println!("Attaching to {} '{}'...", selection_type, selection_name);
-        println!("(Detach with Ctrl-b d)");
-        println!();
+        // Eval - show log file path (evals don't have streaming events)
+        let log_file = run_dir.join("logs").join(format!("{}.log", selection_name));
 
-        let status = Command::new("tmux")
-            .args(["attach-session", "-t", &session_name])
-            .status();
-
-        match status {
-            Ok(s) if s.success() => {
-                println!();
-                println!("Detached from session.");
+        if json {
+            if log_file.exists() {
+                println!(
+                    r#"{{"success": true, "eval": "{}", "log_file": "{}"}}"#,
+                    selection_name,
+                    log_file.display()
+                );
+            } else {
+                println!(
+                    r#"{{"success": false, "error": "Log file not found for eval '{}'"}}"#,
+                    selection_name
+                );
             }
-            Ok(_) => {
-                eprintln!("tmux attach failed");
-            }
-            Err(e) => {
-                eprintln!("Failed to run tmux: {}", e);
-            }
+        } else if log_file.exists() {
+            println!("Eval '{}' log file:", selection_name);
+            println!("  {}", log_file.display());
+            println!();
+            println!("View with: tail -f {}", log_file.display());
+        } else {
+            eprintln!("Log file not found for eval '{}'", selection_name);
         }
     }
 

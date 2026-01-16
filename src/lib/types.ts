@@ -63,6 +63,9 @@ export interface RunDetail {
   workersActive: number;
   workersTotal: number;
   elapsedMinutes: number;
+  // Learnings info
+  learningsCount: number;
+  learningsProcessedAt: string | null;
 }
 
 /** Request to update a draft run */
@@ -165,6 +168,28 @@ export type WorkerStatus =
 /** Worker location */
 export type WorkerLocation = 'local' | 'remote';
 
+/** Deterministic sheep avatar configuration - generated from worker name */
+export interface SheepConfig {
+  /** Hat type: 0=none, 1=crown, 2=cowboy, 3=tophat, 4=beanie, 5=wizard, 6=chef, 7=hardhat */
+  hat: number;
+  /** Wool fluffiness level (0-3) */
+  fluffiness: number;
+  /** Body width modifier (-2 to +2) */
+  bodyWidth: number;
+  /** Body height modifier (-2 to +2) */
+  bodyHeight: number;
+  /** Ear position modifier (-1 to +1) */
+  earPosition: number;
+  /** Leg length modifier (-1 to +1) */
+  legLength: number;
+  /** Hue shift for wool color (0-359 degrees) */
+  hueShift: number;
+  /** Glasses: 0=none, 1=round, 2=square, 3=sunglasses, 4=eyepatch */
+  glasses: number;
+  /** Bow tie: 0=none, 1=red, 2=blue, 3=gold, 4=pink */
+  bowtie: number;
+}
+
 /** Worker from the database */
 export interface Worker {
   id: number;
@@ -189,6 +214,8 @@ export interface WorkerDisplay extends Worker {
   outputTokens: number | null;
   turns: number | null;
   currentTask: string | null;
+  /** Sheep avatar configuration */
+  sheepConfig: SheepConfig;
 }
 
 // =============================================================================
@@ -213,6 +240,22 @@ export interface ThreadSummary {
   unreadCount: number;
   lastMessage: string | null;
   lastTimestamp: string | null;
+}
+
+/** Unread notification from backend */
+export interface UnreadNotification {
+  id: string;
+  runName: string;
+  thread: string;
+  sender: string;
+  content: string;
+  timestamp: string;
+}
+
+/** Response for get_all_unread_notifications */
+export interface UnreadNotificationsResponse {
+  notifications: UnreadNotification[];
+  totalRunsWithUnread: number;
 }
 
 // =============================================================================
@@ -482,6 +525,8 @@ export interface WorkerEvent {
 export interface WorkerEventsResponse {
   events: WorkerEvent[];
   lastId: number | null;
+  /** Worker status for determining if still streaming */
+  workerStatus: WorkerStatus | null;
 }
 
 // =============================================================================
@@ -611,4 +656,79 @@ export interface ChatMessage {
   toolCalls?: ChatToolCall[];
   timestamp: Date;
   streaming?: boolean;
+}
+
+// =============================================================================
+// Global Window Extensions
+// =============================================================================
+
+import type Alpine from 'alpinejs';
+
+/** Toast API */
+export interface ToastAPI {
+  success: (message: string, icon?: string) => void;
+  error: (message: string, icon?: string) => void;
+  info: (message: string, icon?: string) => void;
+  warning: (message: string, icon?: string) => void;
+}
+
+/** Confirm dialog API */
+export interface ConfirmDialogAPI {
+  show: (options: {
+    title: string;
+    message: string;
+    confirmText?: string;
+    cancelText?: string;
+    danger?: boolean;
+  }) => Promise<boolean>;
+  delete: (itemName: string, itemType?: string) => Promise<boolean>;
+}
+
+/** Extend the global Window interface */
+declare global {
+  interface Window {
+    // Alpine.js
+    Alpine: typeof Alpine;
+
+    // Tauri APIs
+    tauriInvoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+    tauriGetCurrentWindow: () => ReturnType<typeof import('@tauri-apps/api/window').getCurrentWindow>;
+
+    // Icon utilities
+    getIcon: (name: string) => string;
+    getActionIcon: (action: string) => string;
+    getTaskStatusIcon: (status: string) => string;
+    getWorkerStatusIcon: (status: string) => string;
+
+    // Sheep avatar utilities
+    generateSheepSvg: (config: SheepConfig) => string;
+    getWorkerSheepSvg: (workerName: string) => string;
+    getHatName: (hatIndex: number) => string;
+    generateAgentSheepSvg: () => string;
+
+    // Alpine components (functions that return component data)
+    appState: () => Record<string, unknown>;
+    runList: () => Record<string, unknown>;
+    runDetail: () => Record<string, unknown>;
+    draftEditor: () => Record<string, unknown>;
+    workerPanel: () => Record<string, unknown>;
+    taskPanel: () => Record<string, unknown>;
+    activityLog: () => Record<string, unknown>;
+    chatPanel: () => Record<string, unknown>;
+    directChat: () => Record<string, unknown>;
+    permissionModal: () => Record<string, unknown>;
+    notifications: () => Record<string, unknown>;
+    tasksTab: () => Record<string, unknown>;
+    sheepClickerGame: () => Record<string, unknown>;
+    settingsModal: () => Record<string, unknown>;
+    aiMessageStream: () => Record<string, unknown>;
+    workerOutputViewer: () => Record<string, unknown>;
+    toastContainer: () => Record<string, unknown>;
+    sortToggle: () => Record<string, unknown>;
+    sortButton: () => Record<string, unknown>;
+
+    // UI utilities
+    toast: ToastAPI;
+    confirmDialog: ConfirmDialogAPI;
+  }
 }

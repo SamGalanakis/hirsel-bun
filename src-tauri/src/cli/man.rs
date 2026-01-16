@@ -43,8 +43,9 @@ RUN MANAGEMENT
         --yolo                  Skip confirmation prompts
 
     hirsel view <run>           View run status
-    hirsel attach <run>         Watch worker live (tmux)
+    hirsel attach <run>         Watch worker live output (TUI)
     hirsel log <run> [-f]       View activity log
+    hirsel diff <run>           Show code changes (git diff)
     hirsel pause <run>          Pause all workers
     hirsel resume <run>         Resume paused run
     hirsel deliver <run>        Push branch to original repo
@@ -52,6 +53,13 @@ RUN MANAGEMENT
     hirsel prune                Remove all delivered runs
     hirsel runs                 List all runs
     hirsel summary <run>        Generate/view run summary
+
+SPEC & MODE
+    hirsel spec <run>           View run specification
+    hirsel spec <run> --edit    Edit spec in $EDITOR
+    hirsel amend <run> <text>   Add amendment to spec
+    hirsel mode <run> hitl      Set human-in-the-loop mode
+    hirsel mode <run> yolo      Set autonomous mode
 
 MESSAGING
     hirsel msg <run> <message>  Send message to run
@@ -67,6 +75,8 @@ TASK MANAGEMENT (Admin)
     hirsel task-done <run> <id> Mark task done
     hirsel task-reopen <run> <id>
                                 Reopen completed task
+    hirsel task-unclaim <run> <id>
+                                Unclaim a task from worker
 
 CONFIGURATION
     hirsel config [agent]       Configure agent (interactive or direct)
@@ -74,18 +84,37 @@ CONFIGURATION
     hirsel completions          Install shell completions
     hirsel man                  Show this manual
     hirsel improve [run]        Update project memory from learnings
+    hirsel reset --runs         Delete all runs (requires typing 'reset')
+    hirsel reset --config       Reset config to defaults
+    hirsel reset --all          Reset everything
+
+TESTING
+    hirsel test <scenario>      Run e2e test scenario
+        --list                  List available scenarios
 
 WORKER COMMANDS (for AI agents)
-    hirsel-worker task list     List tasks
+    hirsel-worker task list     List all tasks
     hirsel-worker task claim <id>
-                                Claim a task
+                                Claim a task to work on
     hirsel-worker task done [id]
-                                Complete task
+                                Mark current/specified task done
+    hirsel-worker task undone <id>
+                                Reopen a completed task
     hirsel-worker task add <id> <name>
                                 Add follow-up task
-    hirsel-worker task await    Wait for available tasks
+    hirsel-worker task delete <id>
+                                Delete a task
+    hirsel-worker task unclaim [id]
+                                Release current/specified task
+    hirsel-worker task await    Wait for tasks to become available
+
     hirsel-worker msg send <thread> <msg>
-                                Send message
+                                Send message to thread
+    hirsel-worker msg read [thread]
+                                Read messages from thread
+    hirsel-worker msg list      List available threads
+    hirsel-worker msg inbox     Check for new messages
+
     hirsel-worker done          Signal all work complete
 
 ENVIRONMENT

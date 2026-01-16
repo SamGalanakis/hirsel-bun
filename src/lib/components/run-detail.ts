@@ -3,6 +3,7 @@
  */
 
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import {
   formatElapsed,
   formatTimeRemaining,
@@ -16,6 +17,13 @@ import {
   canDeliver,
 } from '../utils/status';
 import type { RunDetail, Task, WorkerDisplay, Eval } from '../types';
+
+// Helper to sort evals by startedAt descending (most recent first)
+function sortEvals(evals: Eval[]): Eval[] {
+  return evals.sort((a, b) =>
+    new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
+  );
+}
 
 interface DiffStats {
   insertions: number;
@@ -94,10 +102,7 @@ export function runDetail() {
           const evals = await window.tauriInvoke<Eval[]>('get_evals', {
             runName: this.runName,
           });
-          // Sort by startedAt descending (most recent first)
-          this.evals = evals.sort((a, b) =>
-            new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
-          );
+          this.evals = sortEvals(evals);
         }
       } catch (err) {
         console.error('[runDetail] Error loading evals:', err);
@@ -283,10 +288,7 @@ export function runDetail() {
           this.detail = detail;
           this.tasks = tasks;
           this.workers = workers;
-          // Sort evals by startedAt descending (most recent first)
-          this.evals = evals.sort((a, b) =>
-            new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
-          );
+          this.evals = sortEvals(evals);
 
           try {
             this.diffStats = await window.tauriInvoke<DiffStats>('get_diff_stats', {
@@ -316,9 +318,7 @@ export function runDetail() {
               this.detail = detail;
               this.tasks = tasks;
               this.workers = workers;
-              this.evals = evals.sort((a, b) =>
-                new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
-              );
+              this.evals = sortEvals(evals);
             } catch (err) {
               console.error('Failed to poll:', err);
             }
@@ -421,11 +421,11 @@ export function runDetail() {
     },
 
     /**
-     * Render markdown content to HTML
+     * Render markdown content to HTML (sanitized for XSS protection)
      */
     renderMarkdown(content: string | null | undefined): string {
       if (!content) return '<p class="text-wool-500 italic">No content</p>';
-      return marked(content) as string;
+      return DOMPurify.sanitize(marked(content) as string);
     },
   };
 }

@@ -3,6 +3,8 @@
  */
 
 import type { WorkerDisplay, Task } from '../types';
+import { formatTokens, formatElapsedTime } from '../utils/formatters';
+import { dataCache, DATA_EVENTS } from '../data-cache';
 
 interface EnrichedWorker extends WorkerDisplay {
   isLeader: boolean;
@@ -18,26 +20,62 @@ export function workerPanel() {
     loading: false,
     error: null as string | null,
     selectedRun: null as string | null,
-    _pollInterval: null as ReturnType<typeof setInterval> | null,
+    _eventCleanups: [] as (() => void)[],
+    _cacheUnsubscribe: null as (() => void) | null,
     selectedWorker: null as EnrichedWorker | null,
     showWorkerDetail: false,
 
     async init() {
-      window.addEventListener('run-selected', (e: Event) => {
+      // Subscribe to shared cache
+      this._cacheUnsubscribe = dataCache.subscribe();
+
+      // Listen for workers updates from cache
+      const workersUpdatedHandler = (e: Event) => {
+        const customEvent = e as CustomEvent<WorkerDisplay[]>;
+        this.enrichAndSetWorkers(customEvent.detail);
+      };
+      window.addEventListener(DATA_EVENTS.WORKERS_UPDATED, workersUpdatedHandler);
+      this._eventCleanups.push(() => window.removeEventListener(DATA_EVENTS.WORKERS_UPDATED, workersUpdatedHandler));
+
+      // Listen for tasks updates (to show current task per worker)
+      const tasksUpdatedHandler = (e: Event) => {
+        const customEvent = e as CustomEvent<Task[]>;
+        this.updateCurrentTasks(customEvent.detail);
+      };
+      window.addEventListener(DATA_EVENTS.TASKS_UPDATED, tasksUpdatedHandler);
+      this._eventCleanups.push(() => window.removeEventListener(DATA_EVENTS.TASKS_UPDATED, tasksUpdatedHandler));
+
+      // Listen for run selection
+      const runSelectedHandler = (e: Event) => {
         const customEvent = e as CustomEvent<string | null>;
-        this.onRunSelected(customEvent.detail);
-      });
+        this.selectedRun = customEvent.detail;
+        if (!customEvent.detail) {
+          this.workers = [];
+          this.loading = false;
+          this.error = null;
+        }
+      };
+      window.addEventListener('run-selected', runSelectedHandler);
+      this._eventCleanups.push(() => window.removeEventListener('run-selected', runSelectedHandler));
+
+      // Get initial data from cache
+      const cachedWorkers = dataCache.getWorkers();
+      if (cachedWorkers.length > 0) {
+        this.enrichAndSetWorkers(cachedWorkers);
+      }
 
       const app = this.getAppState();
       if (app && app.selectedRun) {
-        await this.onRunSelected(app.selectedRun);
+        this.selectedRun = app.selectedRun;
       }
     },
 
     destroy() {
-      if (this._pollInterval) {
-        clearInterval(this._pollInterval);
-        this._pollInterval = null;
+      this._eventCleanups.forEach(fn => fn());
+      this._eventCleanups = [];
+      if (this._cacheUnsubscribe) {
+        this._cacheUnsubscribe();
+        this._cacheUnsubscribe = null;
       }
     },
 
@@ -55,113 +93,62 @@ export function workerPanel() {
       return null;
     },
 
-    async onRunSelected(runName: string | null) {
-      if (this._pollInterval) {
-        clearInterval(this._pollInterval);
-        this._pollInterval = null;
-      }
-
-      this.selectedRun = runName;
-
-      if (!runName) {
-        this.workers = [];
-        this.loading = false;
-        this.error = null;
-        return;
-      }
-
-      await this.fetchWorkers();
-
-      this._pollInterval = setInterval(() => {
-        this.fetchWorkers();
-      }, 2000);
-    },
-
-    async fetchWorkers() {
-      if (!this.selectedRun) return;
-
-      if (this.workers.length === 0) {
-        this.loading = true;
-      }
-
-      try {
-        if (!window.tauriInvoke) {
-          this.workers = [];
-          this.loading = false;
-          return;
+    /**
+     * Enrich workers with isLeader and currentTask, then sort and set
+     */
+    enrichAndSetWorkers(workers: WorkerDisplay[]) {
+      const tasks = dataCache.getTasks();
+      const taskByWorker = new Map<string, string>();
+      for (const task of tasks) {
+        if (task.claimedBy && task.status === 'doing') {
+          taskByWorker.set(task.claimedBy, task.id);
         }
+      }
 
-        const workers = await window.tauriInvoke<WorkerDisplay[]>('get_workers', {
-          runName: this.selectedRun,
-        });
+      const enrichedWorkers: EnrichedWorker[] = workers.map((worker, index) => {
+        const isLeader = worker.name.endsWith('-0') || index === 0;
+        const currentTask = taskByWorker.get(worker.name) || null;
 
-        let tasks: Task[] = [];
-        try {
-          tasks = await window.tauriInvoke<Task[]>('get_tasks', {
-            runName: this.selectedRun,
-          });
-        } catch {
-          // Ignore task fetch errors
+        return {
+          ...worker,
+          isLeader,
+          currentTask,
+        };
+      });
+
+      const activeStatuses = ['working', 'waiting', 'awaiting'];
+      this.workers = enrichedWorkers.sort((a, b) => {
+        const aActive = activeStatuses.includes(a.status);
+        const bActive = activeStatuses.includes(b.status);
+        if (aActive && !bActive) return -1;
+        if (!aActive && bActive) return 1;
+        return a.name.localeCompare(b.name);
+      });
+
+      this.loading = false;
+      this.error = null;
+    },
+
+    /**
+     * Update current tasks when tasks change
+     */
+    updateCurrentTasks(tasks: Task[]) {
+      const taskByWorker = new Map<string, string>();
+      for (const task of tasks) {
+        if (task.claimedBy && task.status === 'doing') {
+          taskByWorker.set(task.claimedBy, task.id);
         }
+      }
 
-        const taskByWorker = new Map<string, string>();
-        for (const task of tasks) {
-          if (task.claimedBy && task.status === 'doing') {
-            taskByWorker.set(task.claimedBy, task.id);
-          }
-        }
-
-        const enrichedWorkers: EnrichedWorker[] = workers.map((worker, index) => {
-          const isLeader = worker.name.endsWith('-0') || index === 0;
-          const currentTask = taskByWorker.get(worker.name) || null;
-
-          return {
-            ...worker,
-            isLeader,
-            currentTask,
-          };
-        });
-
-        const activeStatuses = ['working', 'waiting', 'awaiting'];
-        this.workers = enrichedWorkers.sort((a, b) => {
-          const aActive = activeStatuses.includes(a.status);
-          const bActive = activeStatuses.includes(b.status);
-          if (aActive && !bActive) return -1;
-          if (!aActive && bActive) return 1;
-          return a.name.localeCompare(b.name);
-        });
-
-        this.loading = false;
-        this.error = null;
-      } catch (err) {
-        const error = err as Error;
-        this.error = error.message || String(error);
-        this.loading = false;
+      // Update current task for each worker
+      for (const worker of this.workers) {
+        worker.currentTask = taskByWorker.get(worker.name) || null;
       }
     },
 
-    formatTokens(n: number | null | undefined): string {
-      if (n == null || n === 0) return '0';
-      if (n < 1000) return String(n);
-      if (n < 1000000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
-      return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
-    },
-
-    formatElapsedTime(sessionStartedAt: string | null | undefined): string {
-      if (!sessionStartedAt) return '';
-      const start = new Date(sessionStartedAt);
-      const now = new Date();
-      const seconds = Math.floor((now.getTime() - start.getTime()) / 1000);
-      if (seconds < 60) return seconds + 's';
-      const minutes = Math.floor(seconds / 60);
-      if (minutes < 60) return minutes + 'm';
-      const hours = Math.floor(minutes / 60);
-      const mins = minutes % 60;
-      if (hours < 24) return mins > 0 ? hours + 'h ' + mins + 'm' : hours + 'h';
-      const days = Math.floor(hours / 24);
-      const hrs = hours % 24;
-      return hrs > 0 ? days + 'd ' + hrs + 'h' : days + 'd';
-    },
+    // Use shared formatters
+    formatTokens,
+    formatElapsedTime,
 
     getContextClass(utilization: number | null | undefined): string {
       if (utilization == null) return 'text-wool-600';

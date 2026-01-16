@@ -217,7 +217,7 @@ export function sheepClickerGame() {
     },
 
     async reset() {
-      const confirmed = await (window as any).confirmDialog?.show({
+      const confirmed = await window.confirmDialog?.show({
         title: 'Reset progress?',
         message: 'This will reset all your sheep clicker progress. This cannot be undone!',
         confirmText: 'Reset',

@@ -26,6 +26,13 @@ export function appState() {
     isDarkTheme: isDarkTheme(),
     sidebarCollapsed: false,
     _focusedRunIndex: -1,
+    _eventCleanups: [] as (() => void)[],
+
+    // Attach picker state
+    attachPickerOpen: false,
+    attachPickerWorkers: [] as Array<{ name: string; status: string }>,
+    attachPickerEvals: [] as Array<{ id: number; evalName: string; status: string }>,
+    attachPickerLoading: false,
 
     // UI toggles
     toggleSidebar() {
@@ -62,15 +69,19 @@ export function appState() {
       this.isDarkTheme = isDarkTheme();
 
       // Listen for theme changes from settings modal
-      window.addEventListener('theme-changed', ((e: CustomEvent) => {
+      const themeChangedHandler = ((e: CustomEvent) => {
         this.currentTheme = e.detail.themeId;
         this.isDarkTheme = e.detail.theme.isDark;
-      }) as EventListener);
+      }) as EventListener;
+      window.addEventListener('theme-changed', themeChangedHandler);
+      this._eventCleanups.push(() => window.removeEventListener('theme-changed', themeChangedHandler));
 
       // Listen for close-settings event
-      window.addEventListener('close-settings', () => {
+      const closeSettingsHandler = () => {
         this.showSettings = false;
-      });
+      };
+      window.addEventListener('close-settings', closeSettingsHandler);
+      this._eventCleanups.push(() => window.removeEventListener('close-settings', closeSettingsHandler));
     },
 
     // Formatting helpers (bound to this for templates)
@@ -127,25 +138,76 @@ export function appState() {
       }
     },
 
-    async attachToWorker() {
+    async handleAttach() {
       if (!this.selectedRun || !window.tauriInvoke) return;
-      try {
-        const workers = await window.tauriInvoke<Array<{ name: string }>>('get_workers', {
-          runName: this.selectedRun,
-        });
-        if (workers && workers.length > 0) {
-          // Show worker output viewer
+
+      // Check if we're on evals tab with a selected eval
+      const runDetailEl = document.querySelector('[x-data*="runDetail"]') as HTMLElement & { _x_dataStack?: Array<{ selectedEval: { evalName: string } | null; activeTab: string }> };
+      if (runDetailEl?._x_dataStack?.[0]) {
+        const runDetailData = runDetailEl._x_dataStack[0];
+        if (runDetailData.activeTab === 'evals' && runDetailData.selectedEval) {
           window.dispatchEvent(new CustomEvent('show-worker-output', {
             detail: {
               runName: this.selectedRun,
-              workerName: workers[0].name,
+              workerName: runDetailData.selectedEval.evalName,
             },
           }));
+          return;
         }
-      } catch (e) {
-        const error = e as Error;
-        window.toast?.error('Failed to attach to run');
       }
+
+      // Check if we're on overview with a selected worker in the panel
+      const workerPanelEl = document.querySelector('[x-data*="workerPanel"]') as HTMLElement & { _x_dataStack?: Array<{ selectedWorker: { name: string } | null }> };
+      if (workerPanelEl?._x_dataStack?.[0]?.selectedWorker) {
+        window.dispatchEvent(new CustomEvent('show-worker-output', {
+          detail: {
+            runName: this.selectedRun,
+            workerName: workerPanelEl._x_dataStack[0].selectedWorker.name,
+          },
+        }));
+        return;
+      }
+
+      // Neither selected - show the attach picker
+      await this.openAttachPicker();
+    },
+
+    async openAttachPicker() {
+      if (!this.selectedRun || !window.tauriInvoke) return;
+      this.attachPickerLoading = true;
+      this.attachPickerOpen = true;
+
+      try {
+        const [workers, evals] = await Promise.all([
+          window.tauriInvoke<Array<{ name: string; status: string }>>('get_workers', { runName: this.selectedRun }),
+          window.tauriInvoke<Array<{ id: number; evalName: string; status: string }>>('get_evals', { runName: this.selectedRun }),
+        ]);
+        this.attachPickerWorkers = workers || [];
+        this.attachPickerEvals = evals || [];
+      } catch (e) {
+        console.error('Failed to load attach picker data:', e);
+        this.attachPickerWorkers = [];
+        this.attachPickerEvals = [];
+      } finally {
+        this.attachPickerLoading = false;
+      }
+    },
+
+    closeAttachPicker() {
+      this.attachPickerOpen = false;
+      this.attachPickerWorkers = [];
+      this.attachPickerEvals = [];
+    },
+
+    attachToTarget(type: 'worker' | 'eval', name: string) {
+      if (!this.selectedRun) return;
+      window.dispatchEvent(new CustomEvent('show-worker-output', {
+        detail: {
+          runName: this.selectedRun,
+          workerName: name,
+        },
+      }));
+      this.closeAttachPicker();
     },
 
     // Initialization
@@ -153,7 +215,7 @@ export function appState() {
       this.initTheme();
 
       // Listen for run selection
-      window.addEventListener('run-selected', async (e: Event) => {
+      const runSelectedHandler = async (e: Event) => {
         const customEvent = e as CustomEvent<string | null>;
         const runName = customEvent.detail;
         if (runName) {
@@ -173,10 +235,12 @@ export function appState() {
           this.tasksDone = 0;
           this.tasksTotal = 0;
         }
-      });
+      };
+      window.addEventListener('run-selected', runSelectedHandler);
+      this._eventCleanups.push(() => window.removeEventListener('run-selected', runSelectedHandler));
 
       // Keyboard shortcuts
-      document.addEventListener('keydown', (e: KeyboardEvent) => {
+      const keydownHandler = (e: KeyboardEvent) => {
         // Ignore if typing in input
         const target = e.target as HTMLElement;
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
@@ -192,7 +256,7 @@ export function appState() {
             this.selectFocusedRun();
             break;
           case 'a':
-            if (this.selectedRun) this.attachToWorker();
+            if (this.selectedRun && !this.attachPickerOpen) this.handleAttach();
             break;
           case 'c':
             // Switch to messages tab
@@ -237,7 +301,14 @@ export function appState() {
             window.dispatchEvent(new CustomEvent('toggle-activity-fullscreen'));
             break;
         }
-      });
+      };
+      document.addEventListener('keydown', keydownHandler);
+      this._eventCleanups.push(() => document.removeEventListener('keydown', keydownHandler));
+    },
+
+    destroy() {
+      this._eventCleanups.forEach(fn => fn());
+      this._eventCleanups = [];
     },
   };
 }

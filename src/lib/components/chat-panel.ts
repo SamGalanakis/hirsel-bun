@@ -2,10 +2,48 @@
  * Chat panel Alpine component
  */
 
-import type { ThreadSummary, Message, WorkerDisplay } from '../types';
+import type { ThreadSummary, Message, WorkerDisplay, SheepConfig } from '../types';
+import { formatTimeHHMM, formatDate } from '../utils/formatters';
+import { generateSheepSvg } from '../sheep-avatar';
+import { getIcon } from '../icons';
 
-// Known group chat thread names
-const GROUP_CHAT_NAMES = ['learning', 'group'];
+// Known group chat thread names (user is the channel for workers to message the human)
+const GROUP_CHAT_NAMES = ['user', 'group', 'learnings'];
+
+// Memoization cache for sender color hashing
+const senderColorCache = new Map<string, string>();
+
+// Pre-defined colors for known senders
+const SENDER_COLORS: Record<string, string> = {
+  user: 'text-amber-500',
+  admin: 'text-amber-500',
+  system: 'text-wool-500',
+};
+
+// Colors for workers (assigned by hash)
+const WORKER_COLORS = ['text-sage', 'text-sky-400', 'text-pink-400', 'text-purple-400', 'text-golden'];
+
+// Get color for a sender (memoized)
+function getSenderColorCached(sender: string): string {
+  // Check cache first
+  const cached = senderColorCache.get(sender);
+  if (cached) return cached;
+
+  // Check known senders
+  if (SENDER_COLORS[sender]) {
+    senderColorCache.set(sender, SENDER_COLORS[sender]);
+    return SENDER_COLORS[sender];
+  }
+
+  // Compute hash for worker colors
+  let hash = 0;
+  for (let i = 0; i < sender.length; i++) {
+    hash = sender.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const color = WORKER_COLORS[Math.abs(hash) % WORKER_COLORS.length];
+  senderColorCache.set(sender, color);
+  return color;
+}
 
 /**
  * Chat panel component
@@ -22,18 +60,28 @@ export function chatPanel() {
     _pollInterval: null as ReturnType<typeof setInterval> | null,
     _threadPollInterval: null as ReturnType<typeof setInterval> | null,
     _currentRunName: null as string | null,
+    _isLoadingRun: false,
+    _eventCleanups: [] as (() => void)[],
 
     async init() {
-      window.addEventListener('run-selected', (e: Event) => {
+      const runSelectedHandler = (e: Event) => {
         const customEvent = e as CustomEvent<string | null>;
         this.onRunSelected(customEvent.detail);
-      });
+      };
+      window.addEventListener('run-selected', runSelectedHandler);
+      this._eventCleanups.push(() => window.removeEventListener('run-selected', runSelectedHandler));
 
       // Initial load if a run is already selected
       const app = this.getAppState();
       if (app && app.selectedRun) {
         await this.onRunSelected(app.selectedRun);
       }
+    },
+
+    destroy() {
+      this.stopPolling();
+      this._eventCleanups.forEach(fn => fn());
+      this._eventCleanups = [];
     },
 
     // Get group chat threads (learning, group)
@@ -92,6 +140,7 @@ export function chatPanel() {
         this.messages = [];
         this.selectedThread = null;
         this._currentRunName = null;
+        this._isLoadingRun = false;
         return;
       }
 
@@ -101,69 +150,44 @@ export function chatPanel() {
         return;
       }
 
+      // Prevent concurrent loading
+      if (this._isLoadingRun) {
+        return;
+      }
+      this._isLoadingRun = true;
+
       // Stop existing polling and start fresh for new run
       this.stopPolling();
       this._currentRunName = runName;
 
-      await Promise.all([this.fetchThreads(), this.fetchWorkers()]);
-      this._threadPollInterval = setInterval(
-        () => Promise.all([this.fetchThreads(), this.fetchWorkers()]),
-        4000
-      );
+      try {
+        await Promise.all([this.fetchThreads(), this.fetchWorkers()]);
+        this._threadPollInterval = setInterval(
+          () => Promise.all([this.fetchThreads(), this.fetchWorkers()]),
+          4000
+        );
+      } finally {
+        this._isLoadingRun = false;
+      }
     },
 
     async fetchWorkers() {
       const runName = this.getSelectedRun();
-      if (!runName) return;
+      if (!runName || !window.tauriInvoke) return;
 
       try {
-        if (window.tauriInvoke) {
-          this.workers = await window.tauriInvoke<WorkerDisplay[]>('get_workers', { runName });
-        } else {
-          // Mock data for development
-          this.workers = [
-            { name: 'worker-1', status: 'running' } as WorkerDisplay,
-            { name: 'worker-2', status: 'idle' } as WorkerDisplay,
-          ];
-        }
+        this.workers = await window.tauriInvoke<WorkerDisplay[]>('get_workers', { runName });
       } catch (e) {
-        console.debug('Failed to fetch workers:', e);
+        console.error('Failed to fetch workers:', e);
       }
     },
 
     async fetchThreads() {
       const runName = this.getSelectedRun();
-      if (!runName) return;
+      if (!runName || !window.tauriInvoke) return;
 
       try {
-        if (window.tauriInvoke) {
-          this.threads = await window.tauriInvoke<ThreadSummary[]>('get_threads', { runName });
-        } else {
-          // Mock data for development
-          this.threads = [
-            {
-              name: 'learning',
-              messageCount: 3,
-              unreadCount: 1,
-              lastMessage: 'Learned something new!',
-              lastTimestamp: new Date().toISOString(),
-            },
-            {
-              name: 'group',
-              messageCount: 5,
-              unreadCount: 0,
-              lastMessage: 'Task complete',
-              lastTimestamp: new Date().toISOString(),
-            },
-            {
-              name: 'worker-1',
-              messageCount: 2,
-              unreadCount: 1,
-              lastMessage: 'Working on it',
-              lastTimestamp: new Date().toISOString(),
-            },
-          ];
-        }
+        this.threads = await window.tauriInvoke<ThreadSummary[]>('get_threads', { runName });
 
         const totalUnread = this.threads.reduce((sum, t) => sum + t.unreadCount, 0);
         const app = this.getAppState();
@@ -181,8 +205,8 @@ export function chatPanel() {
           }
         }
       } catch (e) {
-        const error = e as Error;
-        window.toast.error('Failed to load threads');
+        console.error('Failed to load threads:', e);
+        window.toast?.error('Failed to load threads');
         this.error = 'Failed to load threads';
       }
     },
@@ -269,14 +293,17 @@ export function chatPanel() {
 
       try {
         if (window.tauriInvoke) {
-          await window.tauriInvoke('send_message', {
+          // Send message and get the created message back (avoids full refetch)
+          const newMsg = await window.tauriInvoke<Message>('send_message', {
             runName,
             threadName: this.selectedThread,
             content,
           });
+
+          // Append to local messages instead of refetching all
+          this.messages.push(newMsg);
         }
 
-        await this.fetchMessages();
         // @ts-expect-error Alpine.js $nextTick magic method
         this.$nextTick(() => this.scrollToBottom());
       } catch (e) {
@@ -306,36 +333,31 @@ export function chatPanel() {
       }
     },
 
-    formatTime(timestamp: string | null | undefined): string {
-      if (!timestamp) return '';
-      const d = new Date(timestamp);
-      return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-    },
+    // Use shared formatters
+    formatTime: formatTimeHHMM,
+    formatDate,
 
-    formatDate(timestamp: string | null | undefined): string {
-      if (!timestamp) return '';
-      const d = new Date(timestamp);
-      const today = new Date();
-      if (d.toDateString() === today.toDateString()) return 'Today';
-      const yesterday = new Date(today);
-      yesterday.setDate(yesterday.getDate() - 1);
-      if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
-      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    },
+    getSenderColor: getSenderColorCached,
 
-    getSenderColor(sender: string): string {
-      const colors: Record<string, string> = {
-        user: 'text-amber-500',
-        admin: 'text-amber-500',
-        system: 'text-wool-500',
-      };
-      if (colors[sender]) return colors[sender];
-      const workerColors = ['text-sage', 'text-sky-400', 'text-pink-400', 'text-purple-400', 'text-golden'];
-      let hash = 0;
-      for (let i = 0; i < sender.length; i++) {
-        hash = sender.charCodeAt(i) + ((hash << 5) - hash);
+    // Get sheep avatar SVG for a worker
+    getWorkerAvatar(workerName: string): string {
+      const worker = this.workers.find(w => w.name === workerName);
+      if (worker?.sheepConfig) {
+        return generateSheepSvg(worker.sheepConfig, 16);
       }
-      return workerColors[Math.abs(hash) % workerColors.length];
+      // Fallback - grey circle
+      return '<svg class="w-4 h-4"><circle cx="8" cy="8" r="6" fill="#6b7280"/></svg>';
+    },
+
+    // Get icon SVG for group chat threads
+    getGroupChatIcon(threadName: string): string {
+      const iconNames: Record<string, string> = {
+        user: 'user',
+        group: 'users',
+        learnings: 'library',
+      };
+      const iconName = iconNames[threadName] || 'hash';
+      return getIcon(iconName, 12);
     },
   };
 }

@@ -4,6 +4,9 @@
 
 import type { HistoryEntry } from '../types';
 import { getActionIcon as getActionIconSvg } from '../icons';
+import { dataCache, DATA_EVENTS } from '../data-cache';
+
+export type SortDirection = 'asc' | 'desc';
 
 const ACTION_COLORS: Record<string, string> = {
   task_claimed: 'text-amber-400',
@@ -72,9 +75,34 @@ export function activityLog() {
     entries: [] as HistoryEntry[],
     loading: false,
     error: null as string | null,
-    pollInterval: null as ReturnType<typeof setInterval> | null,
     autoScroll: true,
     isFullscreen: false,
+    sortDirection: 'desc' as SortDirection,
+    _eventCleanups: [] as (() => void)[],
+    _cacheUnsubscribe: null as (() => void) | null,
+
+    // Computed: sorted entries based on direction
+    get sortedEntries(): HistoryEntry[] {
+      if (this.sortDirection === 'asc') {
+        return [...this.entries].reverse();
+      }
+      return this.entries;
+    },
+
+    get sortLabel(): string {
+      return this.sortDirection === 'desc' ? 'Latest' : 'Oldest';
+    },
+
+    get sortIcon(): string {
+      return this.sortDirection === 'desc' ? '↓' : '↑';
+    },
+
+    toggleSort() {
+      this.sortDirection = this.sortDirection === 'desc' ? 'asc' : 'desc';
+      // When switching to "latest first", enable auto-scroll
+      // When switching to "oldest first", disable it
+      this.autoScroll = this.sortDirection === 'desc';
+    },
 
     toggleFullscreen() {
       this.isFullscreen = !this.isFullscreen;
@@ -82,90 +110,86 @@ export function activityLog() {
     },
 
     async init() {
-      window.addEventListener('run-selected', async (e: Event) => {
+      // Subscribe to shared cache
+      this._cacheUnsubscribe = dataCache.subscribe();
+
+      // Listen for history updates from cache
+      const historyUpdatedHandler = (e: Event) => {
+        const customEvent = e as CustomEvent<HistoryEntry[]>;
+        const prevLength = this.entries.length;
+        this.entries = customEvent.detail;
+        this.loading = false;
+        if (this.entries.length > prevLength && this.autoScroll) {
+          // @ts-expect-error Alpine.js $nextTick magic method
+          this.$nextTick(() => this.scrollToBottom());
+        }
+      };
+      window.addEventListener(DATA_EVENTS.HISTORY_UPDATED, historyUpdatedHandler);
+      this._eventCleanups.push(() => window.removeEventListener(DATA_EVENTS.HISTORY_UPDATED, historyUpdatedHandler));
+
+      // Listen for run selection changes
+      const runSelectedHandler = (e: Event) => {
         const customEvent = e as CustomEvent<string | null>;
         if (customEvent.detail) {
-          await this.loadHistory(customEvent.detail);
+          this.runName = customEvent.detail;
+          this.loading = true;
+          // Get initial history from cache
+          const cachedHistory = dataCache.getHistory();
+          if (cachedHistory.length > 0) {
+            this.entries = cachedHistory;
+            this.loading = false;
+            if (this.autoScroll) {
+              // @ts-expect-error Alpine.js $nextTick magic method
+              this.$nextTick(() => this.scrollToBottom());
+            }
+          }
         } else {
           this.clearHistory();
         }
-      });
+      };
+      window.addEventListener('run-selected', runSelectedHandler);
+      this._eventCleanups.push(() => window.removeEventListener('run-selected', runSelectedHandler));
 
-      document.addEventListener('keydown', (e: KeyboardEvent) => {
+      const keydownHandler = (e: KeyboardEvent) => {
         if (e.key === 'Escape' && this.isFullscreen) {
           this.isFullscreen = false;
           window.dispatchEvent(new CustomEvent('activity-fullscreen', { detail: false }));
         }
-      });
+      };
+      document.addEventListener('keydown', keydownHandler);
+      this._eventCleanups.push(() => document.removeEventListener('keydown', keydownHandler));
 
-      window.addEventListener('toggle-activity-fullscreen', () => {
+      const toggleFullscreenHandler = () => {
         this.toggleFullscreen();
-      });
+      };
+      window.addEventListener('toggle-activity-fullscreen', toggleFullscreenHandler);
+      this._eventCleanups.push(() => window.removeEventListener('toggle-activity-fullscreen', toggleFullscreenHandler));
+
+      // Get initial data from cache if a run is already selected
+      const selectedRun = dataCache.getSelectedRun();
+      if (selectedRun) {
+        this.runName = selectedRun;
+        const cachedHistory = dataCache.getHistory();
+        if (cachedHistory.length > 0) {
+          this.entries = cachedHistory;
+          if (this.autoScroll) {
+            // @ts-expect-error Alpine.js $nextTick magic method
+            this.$nextTick(() => this.scrollToBottom());
+          }
+        }
+      }
     },
 
     destroy() {
-      if (this.pollInterval) {
-        clearInterval(this.pollInterval);
-        this.pollInterval = null;
-      }
-    },
-
-    async loadHistory(name: string) {
-      if (this.pollInterval) {
-        clearInterval(this.pollInterval);
-        this.pollInterval = null;
-      }
-
-      this.runName = name;
-      this.loading = true;
-      this.error = null;
-
-      try {
-        if (window.tauriInvoke) {
-          this.entries = await window.tauriInvoke<HistoryEntry[]>('get_history', {
-            runName: name,
-            limit: 100,
-          });
-        } else {
-          this.entries = [];
-        }
-        this.loading = false;
-
-        if (this.autoScroll) {
-          // @ts-expect-error Alpine.js $nextTick magic method
-          this.$nextTick(() => this.scrollToBottom());
-        }
-
-        this.pollInterval = setInterval(async () => {
-          if (!this.runName) return;
-          try {
-            const prevLength = this.entries.length;
-            if (window.tauriInvoke) {
-              this.entries = await window.tauriInvoke<HistoryEntry[]>('get_history', {
-                runName: this.runName,
-                limit: 100,
-              });
-            }
-            if (this.entries.length > prevLength && this.autoScroll) {
-              // @ts-expect-error Alpine.js $nextTick magic method
-              this.$nextTick(() => this.scrollToBottom());
-            }
-          } catch (err) {
-            console.error('Failed to poll history:', err);
-          }
-        }, 2000);
-      } catch (err) {
-        const error = err as Error;
-        this.error = error.message || String(error);
-        this.loading = false;
+      this._eventCleanups.forEach(fn => fn());
+      this._eventCleanups = [];
+      if (this._cacheUnsubscribe) {
+        this._cacheUnsubscribe();
+        this._cacheUnsubscribe = null;
       }
     },
 
     clearHistory() {
-      if (this.pollInterval) {
-        clearInterval(this.pollInterval);
-        this.pollInterval = null;
-      }
       this.runName = null;
       this.entries = [];
       this.loading = false;

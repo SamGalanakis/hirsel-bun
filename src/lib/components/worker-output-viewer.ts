@@ -2,13 +2,20 @@
  * Worker Output Viewer - Shows AI model output for a worker
  *
  * This component displays the streaming output from a worker's AI model,
- * including text, tool calls, and thinking blocks. Uses the shared
- * AI message stream component for consistent rendering.
+ * including text, tool calls, and thinking blocks in chronological order.
  */
 
-import type { ChatMessage, ChatToolCall, WorkerEvent } from '../types';
+import type { ChatToolCall, WorkerEvent } from '../types';
 import { getIcon, getToolKindIcon, getToolStatusIcon as getToolStatusIconSvg } from '../icons';
 import { getWorkerEvents, createWorkerEventsPoller } from '../api';
+
+/** A chunk of content in the output stream */
+interface OutputChunk {
+  id: string;
+  type: 'text' | 'thinking' | 'tool';
+  content?: string;
+  tool?: ChatToolCall;
+}
 
 /**
  * Worker Output Viewer Alpine component
@@ -22,11 +29,11 @@ export function workerOutputViewer() {
     error: null as string | null,
     visible: false,
 
-    // Messages
-    messages: [] as ChatMessage[],
+    // Output chunks in chronological order
+    chunks: [] as OutputChunk[],
     streaming: false,
-    _currentMessage: null as ChatMessage | null,
-    _currentToolCalls: new Map() as Map<string, ChatToolCall>,
+    _lastChunkType: null as 'text' | 'thinking' | null,
+    _toolsById: new Map() as Map<string, OutputChunk>,
     _poller: null as { start: () => void; stop: () => void } | null,
 
     // Configuration
@@ -58,9 +65,9 @@ export function workerOutputViewer() {
 
     async show(runName: string, workerName: string) {
       this.cleanup();
-      this.messages = [];
-      this._currentMessage = null;
-      this._currentToolCalls.clear();
+      this.chunks = [];
+      this._lastChunkType = null;
+      this._toolsById.clear();
       this.runName = runName;
       this.workerName = workerName;
       this.loading = true;
@@ -71,12 +78,14 @@ export function workerOutputViewer() {
         // Load existing events from DB
         const response = await getWorkerEvents(runName, workerName);
         this.processEvents(response.events);
+        this.updateStreamingState(response.workerStatus);
 
         // Start polling for real-time updates
-        this._poller = createWorkerEventsPoller(runName, workerName, (events, isNew) => {
+        this._poller = createWorkerEventsPoller(runName, workerName, (events, isNew, workerStatus) => {
           if (isNew) {
             this.processEvents(events);
           }
+          this.updateStreamingState(workerStatus);
         }, 200);
         this._poller.start();
       } catch (e) {
@@ -93,7 +102,7 @@ export function workerOutputViewer() {
       this.visible = false;
       this.runName = null;
       this.workerName = null;
-      this.messages = [];
+      this.chunks = [];
     },
 
     /**
@@ -134,54 +143,54 @@ export function workerOutputViewer() {
     },
 
     handleTextDelta(text: string) {
-      if (!this._currentMessage) {
-        this._currentMessage = {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content: '',
-          toolCalls: [],
-          timestamp: new Date(),
-          streaming: true,
-        };
-        this.messages = [...this.messages, this._currentMessage];
-        this.streaming = true;
+      // If last chunk was text, append to it; otherwise create new text chunk
+      if (this._lastChunkType === 'text' && this.chunks.length > 0) {
+        const lastChunk = this.chunks[this.chunks.length - 1];
+        if (lastChunk.type === 'text') {
+          lastChunk.content = (lastChunk.content || '') + text;
+          this.chunks = [...this.chunks]; // Trigger reactivity
+          if (this.autoScroll) this.scrollToBottom();
+          return;
+        }
       }
 
-      this._currentMessage.content += text;
-      const idx = this.messages.findIndex(m => m.id === this._currentMessage!.id);
-      if (idx !== -1) {
-        this._currentMessage = { ...this._currentMessage };
-        this.messages[idx] = this._currentMessage;
-        this.messages = [...this.messages];
-      }
+      // Create new text chunk
+      const chunk: OutputChunk = {
+        id: crypto.randomUUID(),
+        type: 'text',
+        content: text,
+      };
+      this.chunks = [...this.chunks, chunk];
+      this._lastChunkType = 'text';
+      this.streaming = true;
       if (this.autoScroll) this.scrollToBottom();
     },
 
     handleThinkingDelta(text: string) {
-      if (!this._currentMessage) {
-        this._currentMessage = {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content: '',
-          thinking: '',
-          toolCalls: [],
-          timestamp: new Date(),
-          streaming: true,
-        };
-        this.messages = [...this.messages, this._currentMessage];
-        this.streaming = true;
+      // If last chunk was thinking, append to it; otherwise create new thinking chunk
+      if (this._lastChunkType === 'thinking' && this.chunks.length > 0) {
+        const lastChunk = this.chunks[this.chunks.length - 1];
+        if (lastChunk.type === 'thinking') {
+          lastChunk.content = (lastChunk.content || '') + text;
+          this.chunks = [...this.chunks]; // Trigger reactivity
+          return;
+        }
       }
 
-      this._currentMessage.thinking = (this._currentMessage.thinking || '') + text;
-      const idx = this.messages.findIndex(m => m.id === this._currentMessage!.id);
-      if (idx !== -1) {
-        this._currentMessage = { ...this._currentMessage };
-        this.messages[idx] = this._currentMessage;
-        this.messages = [...this.messages];
-      }
+      // Create new thinking chunk
+      const chunk: OutputChunk = {
+        id: crypto.randomUUID(),
+        type: 'thinking',
+        content: text,
+      };
+      this.chunks = [...this.chunks, chunk];
+      this._lastChunkType = 'thinking';
     },
 
     handleToolCallStart(id: string, title: string, kind: string | null) {
+      // Tool call breaks the text/thinking stream
+      this._lastChunkType = null;
+
       const toolCall: ChatToolCall = {
         id,
         title,
@@ -190,36 +199,38 @@ export function workerOutputViewer() {
         output: null,
       };
 
-      this._currentToolCalls.set(id, toolCall);
+      const chunk: OutputChunk = {
+        id,
+        type: 'tool',
+        tool: toolCall,
+      };
 
-      if (this._currentMessage) {
-        this._currentMessage.toolCalls = Array.from(this._currentToolCalls.values());
-        this.messages = [...this.messages];
-      }
+      this._toolsById.set(id, chunk);
+      this.chunks = [...this.chunks, chunk];
+      if (this.autoScroll) this.scrollToBottom();
     },
 
     handleToolCallUpdate(id: string, status: string, output: string | null) {
-      const toolCall = this._currentToolCalls.get(id);
-      if (toolCall) {
-        toolCall.status = status;
-        toolCall.output = output;
-
-        if (this._currentMessage) {
-          this._currentMessage.toolCalls = Array.from(this._currentToolCalls.values());
-          this.messages = [...this.messages];
-        }
+      const chunk = this._toolsById.get(id);
+      if (chunk && chunk.tool) {
+        chunk.tool.status = status;
+        chunk.tool.output = output;
+        this.chunks = [...this.chunks]; // Trigger reactivity
       }
     },
 
     handleMessageComplete() {
-      if (this._currentMessage) {
-        this._currentMessage.streaming = false;
-        this.messages = [...this.messages];
-      }
-
-      this._currentMessage = null;
-      this._currentToolCalls.clear();
+      this._lastChunkType = null;
       this.streaming = false;
+    },
+
+    /**
+     * Update streaming state based on worker status
+     * Only show streaming when worker is actively working
+     */
+    updateStreamingState(workerStatus: string | null) {
+      // Worker is streaming only when actively working
+      this.streaming = workerStatus === 'working';
     },
 
     scrollToBottom() {

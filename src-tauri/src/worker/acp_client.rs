@@ -512,6 +512,7 @@ pub async fn run_acp_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_worker_prompt(
     worker_name: &str,
     run_name: &str,
@@ -538,7 +539,11 @@ fn build_worker_prompt(
         "- **Work directory:** {} (git worktree - write code here)\n",
         work_dir.display()
     ));
-    prompt.push_str(&format!("- **Run directory:** {}\n\n", run_dir.display()));
+    prompt.push_str(&format!("- **Run directory:** {}\n", run_dir.display()));
+    prompt.push_str(&format!(
+        "- **Assets directory:** {} (images & files referenced in spec)\n\n",
+        run_dir.join("assets").display()
+    ));
 
     // Spec
     prompt.push_str("## Spec\n\n");

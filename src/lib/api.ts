@@ -91,6 +91,16 @@ export async function deleteRun(name: string): Promise<void> {
   return invoke('delete_run', { runName: name });
 }
 
+/**
+ * Clone a run to a new draft
+ *
+ * Creates a new draft run with the same settings, spec, and eval as the source run.
+ * Does not copy messages, tasks, workers, or any runtime state.
+ */
+export async function cloneRun(sourceRun: string, newName: string): Promise<RunDetail> {
+  return invoke<RunDetail>('clone_run', { sourceRun, newName });
+}
+
 // =============================================================================
 // Draft Management API
 // =============================================================================
@@ -176,6 +186,40 @@ export async function readEvalFile(runName: string): Promise<string> {
  */
 export async function writeEvalFile(runName: string, content: string): Promise<void> {
   return invoke('write_eval_file', { runName, content });
+}
+
+// =============================================================================
+// Asset API
+// =============================================================================
+
+/**
+ * Save an asset file (image, etc.) to a run's assets directory
+ * @returns The filename that was saved (may differ from original if name conflict)
+ */
+export async function saveAsset(runName: string, filename: string, data: number[]): Promise<string> {
+  return invoke<string>('save_asset', { runName, filename, data });
+}
+
+/**
+ * Import an asset from a filesystem path (used for native drag-drop)
+ * @returns The filename that was saved (may differ from original if name conflict)
+ */
+export async function importAssetFromPath(runName: string, filePath: string): Promise<string> {
+  return invoke<string>('import_asset_from_path', { runName, filePath });
+}
+
+/**
+ * Open the assets folder for a run in the system file browser
+ */
+export async function openAssetsFolder(runName: string): Promise<void> {
+  return invoke('open_assets_folder', { runName });
+}
+
+/**
+ * Get the assets directory path for a run
+ */
+export async function getAssetsPath(runName: string): Promise<string> {
+  return invoke<string>('get_assets_path', { runName });
 }
 
 // =============================================================================
@@ -488,7 +532,7 @@ export async function clearWorkerEvents(
 export function createWorkerEventsPoller(
   runName: string,
   workerName: string,
-  onEvents: (events: WorkerEvent[], isNew: boolean) => void,
+  onEvents: (events: WorkerEvent[], isNew: boolean, workerStatus: string | null) => void,
   intervalMs: number = 200
 ): { start: () => void; stop: () => void } {
   let intervalId: ReturnType<typeof setInterval> | null = null;
@@ -501,8 +545,10 @@ export function createWorkerEventsPoller(
         afterId: lastId ?? undefined,
       });
 
+      // Always call onEvents to update worker status (even if no new events)
+      onEvents(response.events, !isFirstPoll && response.events.length > 0, response.workerStatus);
+
       if (response.events.length > 0) {
-        onEvents(response.events, !isFirstPoll);
         lastId = response.lastId;
       }
 

@@ -6,7 +6,7 @@
 use crate::core::{Config, EvalStatus, SQLiteState, Status};
 use std::fs;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -111,7 +111,13 @@ pub fn run_eval(
 
     // Update run status based on result
     if result.passed {
+        // Kill any remaining worker processes before marking as Done
+        let _ = crate::core::workers::kill_all_workers(&state);
+
         state.set_status(Status::Done)?;
+
+        // Trigger auto-improve if enabled
+        let _ = crate::core::workers::maybe_run_improve(run_name, &global_config);
     } else {
         // Check retry count
         let evals = state.get_evals(100)?;
@@ -122,6 +128,9 @@ pub fn run_eval(
 
         // After 3 failed evals, mark as EvalFailed
         if failed_count >= 3 {
+            // Kill any remaining worker processes before marking as EvalFailed
+            let _ = crate::core::workers::kill_all_workers(&state);
+
             state.set_status(Status::EvalFailed)?;
         } else {
             // Go back to working for retry
@@ -169,20 +178,24 @@ fn execute_eval_script(config: &EvalConfig, log_file: &Path) -> Result<EvalResul
     let mut child = command.spawn()?;
 
     // Capture output with timeout
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| EvalError::ProcessFailed("Failed to capture stdout".to_string()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| EvalError::ProcessFailed("Failed to capture stderr".to_string()))?;
 
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = mpsc::channel::<(&str, Vec<String>)>();
     let tx_err = tx.clone();
 
     // Thread to read stdout
     let stdout_handle = thread::spawn(move || {
         let reader = BufReader::new(stdout);
-        let mut lines = Vec::new();
-        for line in reader.lines() {
-            if let Ok(line) = line {
-                lines.push(line);
-            }
+        let mut lines: Vec<String> = Vec::new();
+        for line in reader.lines().map_while(Result::ok) {
+            lines.push(line);
         }
         let _ = tx.send(("stdout", lines));
     });
@@ -190,11 +203,9 @@ fn execute_eval_script(config: &EvalConfig, log_file: &Path) -> Result<EvalResul
     // Thread to read stderr
     let stderr_handle = thread::spawn(move || {
         let reader = BufReader::new(stderr);
-        let mut lines = Vec::new();
-        for line in reader.lines() {
-            if let Ok(line) = line {
-                lines.push(line);
-            }
+        let mut lines: Vec<String> = Vec::new();
+        for line in reader.lines().map_while(Result::ok) {
+            lines.push(line);
         }
         let _ = tx_err.send(("stderr", lines));
     });
@@ -210,8 +221,8 @@ fn execute_eval_script(config: &EvalConfig, log_file: &Path) -> Result<EvalResul
                 let _ = stdout_handle.join();
                 let _ = stderr_handle.join();
 
-                let mut stdout_lines = Vec::new();
-                let mut stderr_lines = Vec::new();
+                let mut stdout_lines: Vec<String> = Vec::new();
+                let mut stderr_lines: Vec<String> = Vec::new();
 
                 // Collect output from channels
                 while let Ok((stream, lines)) = rx.try_recv() {
@@ -429,60 +440,193 @@ Please call the appropriate tool NOW to submit your verdict."#;
 
 /// Get the eval prompt template.
 fn get_eval_prompt() -> String {
-    r#"# hirsel Eval Mode
+    r#"# Hirsel Eval Mode
 
-You are an eval agent verifying work done by other agents.
+You are an eval agent verifying work done by workers.
 
-## CRITICAL: You MUST Submit a Verdict
+## Your Task
 
-Your evaluation is NOT complete until you call one of these MCP tools:
+Verify the code in your current directory matches what was specified.
 
-- **`mcp__eval__eval_pass`** - Call if all checks pass. No parameters needed.
-- **`mcp__eval__eval_fail`** - Call if any check fails. Requires `feedback` parameter.
+## How to Submit Your Verdict
 
-Writing text output is NOT enough. You MUST call one of these tools to submit your verdict. If you don't call a tool, your evaluation will be marked as failed.
+You MUST call one of these MCP tools to complete your evaluation:
 
-## Process
+- `mcp__eval__eval_pass` - Call if all checks pass
+- `mcp__eval__eval_fail(feedback)` - Call if any check fails. Include specific feedback.
 
-1. Read the eval specification below
-2. Examine the code in the current directory
-3. Run any checks specified (tests, startup, file existence, etc.)
-4. **Call `mcp__eval__eval_pass` or `mcp__eval__eval_fail` to submit your verdict**
+Your evaluation is NOT complete until you call one of these tools.
 
 ## Guidelines
 
 - Be thorough but focused on the spec
 - Don't modify any code - you are read-only
 - If a check is ambiguous, fail with clear explanation
-- Be specific in your feedback about what failed and how to fix it
+- Be specific about what failed and how to fix it
+- You do NOT have git access - work only with the files in your directory
 
 ## Feedback Format (for eval_fail)
 
 ```
 Checks:
-- [PASS] Server starts on port 8000
-- [PASS] /healthz returns {"status": "ok"}
-- [FAIL] POST /api/vote returns 500 error
+- [PASS] Check 1 description
+- [FAIL] Check 2 description: explanation of failure
 
-To fix: The vote handler references undefined variable `user_id`. Change line 45 to use `current_user.id` instead.
+To fix: Specific actionable instructions
 ```
+"#
+    .to_string()
+}
 
-Remember: Call `mcp__eval__eval_pass` or `mcp__eval__eval_fail` when done!
-"#.to_string()
+/// Context gathered for eval agent.
+pub struct EvalContext {
+    pub spec: String,
+    pub eval_spec: String,
+    pub assets_path: PathBuf,
+    pub learnings: String,
+    pub group_chat: String,
+    pub previous_failures: Vec<EvalFailure>,
+}
+
+/// A previous failed eval's feedback.
+pub struct EvalFailure {
+    pub eval_name: String,
+    pub feedback: String,
+}
+
+/// Build eval context from run state.
+fn build_eval_context(files: &crate::core::Files, state: &SQLiteState) -> EvalContext {
+    // Read spec
+    let spec = fs::read_to_string(files.spec()).unwrap_or_default();
+
+    // Read eval spec
+    let eval_spec = fs::read_to_string(files.eval_spec()).unwrap_or_default();
+
+    // Get assets path
+    let assets_path = files.assets();
+
+    // Get learnings messages
+    let learnings = match state.get_messages("learnings", 500) {
+        Ok(msgs) => format_messages(&msgs),
+        Err(_) => String::new(),
+    };
+
+    // Get group chat messages (NOT DMs)
+    let group_chat = match state.get_messages("group", 500) {
+        Ok(msgs) => format_messages(&msgs),
+        Err(_) => String::new(),
+    };
+
+    // Get previous failed evals
+    let previous_failures = match state.get_evals(100) {
+        Ok(evals) => evals
+            .iter()
+            .filter(|e| e.status == EvalStatus::Failed)
+            .filter_map(|e| {
+                Some(EvalFailure {
+                    eval_name: e.eval_name.clone()?,
+                    feedback: e.feedback.clone()?,
+                })
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+
+    EvalContext {
+        spec,
+        eval_spec,
+        assets_path,
+        learnings,
+        group_chat,
+        previous_failures,
+    }
+}
+
+/// Format messages for prompt inclusion.
+fn format_messages(msgs: &[crate::core::state::Message]) -> String {
+    msgs.iter()
+        .map(|m| format!("[{}] {}: {}", m.timestamp, m.sender, m.content))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Copy directory recursively, excluding .git.
+fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = match path.file_name() {
+            Some(n) => n,
+            None => continue,
+        };
+
+        // Skip .git directory (no git access for eval)
+        if name == ".git" {
+            continue;
+        }
+
+        let dst_path = dst.join(name);
+        if path.is_dir() {
+            copy_dir_all(&path, &dst_path)?;
+        } else {
+            fs::copy(&path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Build full eval prompt with context.
+fn build_eval_prompt(ctx: &EvalContext) -> String {
+    let mut prompt = get_eval_prompt();
+
+    prompt.push_str("\n## Original Spec (what workers were asked to build)\n\n");
+    prompt.push_str(&ctx.spec);
+
+    prompt.push_str("\n\n## Eval Specification (what to verify)\n\n");
+    prompt.push_str(&ctx.eval_spec);
+
+    prompt.push_str(&format!(
+        "\n\n## Assets Directory\n\n{}\n",
+        ctx.assets_path.display()
+    ));
+    prompt.push_str("Images and files referenced in spec/eval are available here.\n");
+
+    if !ctx.learnings.is_empty() {
+        prompt.push_str("\n\n## Learnings (discoveries made during implementation)\n\n");
+        prompt.push_str(&ctx.learnings);
+    }
+
+    if !ctx.group_chat.is_empty() {
+        prompt.push_str("\n\n## Team Discussion\n\n");
+        prompt.push_str(&ctx.group_chat);
+    }
+
+    if !ctx.previous_failures.is_empty() {
+        prompt.push_str("\n\n## Previous Eval Failures\n\n");
+        prompt.push_str("These evals have already failed. Learn from their feedback:\n\n");
+        for failure in &ctx.previous_failures {
+            prompt.push_str(&format!(
+                "### {}\n{}\n\n",
+                failure.eval_name, failure.feedback
+            ));
+        }
+    }
+
+    prompt.push_str("\n\nBegin your evaluation by examining the code.\n");
+
+    prompt
 }
 
 /// Configuration for running an ACP-based eval.
 #[derive(Debug, Clone)]
 pub struct EvalAcpConfig {
-    pub run_name: String,
     pub eval_name: String,
     pub eval_id: i64,
-    pub spec: String,
-    pub eval_spec: String,
-    pub work_dir: std::path::PathBuf,
-    pub run_dir: std::path::PathBuf,
-    pub result_file: std::path::PathBuf,
-    pub log_file: std::path::PathBuf,
+    pub work_dir: PathBuf,
+    pub run_dir: PathBuf,
+    pub result_file: PathBuf,
+    pub log_file: PathBuf,
     pub timeout_secs: u64,
     pub agent_command: Vec<String>,
 }
@@ -500,6 +644,7 @@ pub struct EvalAcpResult {
 ///
 /// This function is called by the background subprocess spawned by `maybe_trigger_eval`.
 /// It sets up the eval configuration and runs the ACP-based eval agent.
+#[allow(unused_variables)]
 pub async fn run_eval_from_args(
     run_name: &str,
     run_dir: &str,
@@ -510,12 +655,8 @@ pub async fn run_eval_from_args(
     use crate::core::Files;
     use tracing::info;
 
-    let run_dir = std::path::PathBuf::from(run_dir);
+    let run_dir = PathBuf::from(run_dir);
     let files = Files::new(&run_dir);
-
-    // Read spec and eval_spec content
-    let spec = fs::read_to_string(spec_path).map_err(|e| EvalError::Io(e))?;
-    let eval_spec = fs::read_to_string(eval_spec_path).map_err(|e| EvalError::Io(e))?;
 
     // Parse agent command
     let agent_command: Vec<String> = serde_json::from_str(agent_command_json)
@@ -540,6 +681,18 @@ pub async fn run_eval_from_args(
         .join(format!("{}_result.json", eval_name));
     fs::create_dir_all(run_dir.join("tmp"))?;
 
+    // Create isolated eval worktree - full copy including untracked files
+    let eval_work_dir = run_dir.join("work").join(&eval_name);
+    if eval_work_dir.exists() {
+        fs::remove_dir_all(&eval_work_dir)?;
+    }
+    let staging_dir = run_dir.join("work").join("staging");
+    copy_dir_all(&staging_dir, &eval_work_dir)?;
+    info!(
+        "[{}] Created isolated eval worktree at {:?}",
+        eval_name, eval_work_dir
+    );
+
     // Start eval in database
     let eval_id = state.start_eval(
         "staging",
@@ -548,19 +701,15 @@ pub async fn run_eval_from_args(
     )?;
 
     info!(
-        "[{}] Starting eval {} (id={}) for run {}",
-        eval_name, eval_name, eval_id, run_name
+        "[{}] Starting eval (id={}) for run {}",
+        eval_name, eval_id, run_name
     );
 
     // Build config for ACP eval
-    let staging_dir = run_dir.join("work").join("staging");
     let config = EvalAcpConfig {
-        run_name: run_name.to_string(),
         eval_name: eval_name.clone(),
         eval_id,
-        spec,
-        eval_spec,
-        work_dir: staging_dir,
+        work_dir: eval_work_dir.clone(),
         run_dir: run_dir.clone(),
         result_file,
         log_file,
@@ -569,15 +718,39 @@ pub async fn run_eval_from_args(
     };
 
     // Run the eval
-    let result = run_eval_acp(config).await?;
+    let result = run_eval_acp(config).await;
+
+    // Cleanup eval worktree
+    if let Err(e) = fs::remove_dir_all(&eval_work_dir) {
+        tracing::warn!("[{}] Failed to cleanup eval worktree: {}", eval_name, e);
+    }
+
+    let result = result?;
 
     // Update eval record with result
     state.complete_eval(eval_id, result.success, &result.feedback)?;
 
     // Update run status based on result
     if result.success {
+        // Kill any remaining worker processes before marking as Done
+        let killed = crate::core::workers::kill_all_workers(&state).unwrap_or_else(|e| {
+            tracing::warn!("[{}] Failed to kill workers: {}", eval_name, e);
+            vec![]
+        });
+        if !killed.is_empty() {
+            info!(
+                "[{}] Killed {} remaining worker(s)",
+                eval_name,
+                killed.len()
+            );
+        }
+
         info!("[{}] Eval PASSED - marking run as Done", eval_name);
         state.set_status(Status::Done)?;
+
+        // Trigger auto-improve if enabled
+        let (global_config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
+        let _ = crate::core::workers::maybe_run_improve(run_name, &global_config);
     } else {
         // Check retry count
         let evals = state.get_evals(100)?;
@@ -587,6 +760,19 @@ pub async fn run_eval_from_args(
             .count();
 
         if failed_count >= 3 {
+            // Kill any remaining worker processes before marking as EvalFailed
+            let killed = crate::core::workers::kill_all_workers(&state).unwrap_or_else(|e| {
+                tracing::warn!("[{}] Failed to kill workers: {}", eval_name, e);
+                vec![]
+            });
+            if !killed.is_empty() {
+                info!(
+                    "[{}] Killed {} remaining worker(s)",
+                    eval_name,
+                    killed.len()
+                );
+            }
+
             info!(
                 "[{}] Eval FAILED ({} failures) - marking run as EvalFailed",
                 eval_name, failed_count
@@ -623,6 +809,7 @@ pub async fn run_eval_from_args(
 /// tools. The agent is sent the eval prompt and is expected to call one of these
 /// tools to submit its verdict.
 pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalError> {
+    use crate::core::Files;
     use agent_client_protocol::{
         Agent, ClientSideConnection, ContentBlock, EnvVariable, Implementation, InitializeRequest,
         McpServer, McpServerStdio, NewSessionRequest, PromptRequest, ProtocolVersion,
@@ -633,19 +820,13 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
     use tracing::{error, info};
 
-    // Build the full prompt
-    let base_prompt = get_eval_prompt();
-    let time_context = "";
-    let full_prompt = format!(
-        "{}\n\n## Run\n{}\n\n## Eval Name\n{}\n{}\n## Original Spec (what workers were asked to build)\n{}\n\n## Eval Specification (what to verify)\n{}\n\n## Work Directory\n{}\n\nYou are positioned in the project directory. Evaluate the code according to the specifications above. Use the eval tools to submit your verdict.",
-        base_prompt,
-        config.run_name,
-        config.eval_name,
-        time_context,
-        config.spec,
-        config.eval_spec,
-        config.work_dir.display()
-    );
+    // Build context from run state
+    let files = Files::new(&config.run_dir);
+    let state = SQLiteState::new(files.db_path())?;
+    let ctx = build_eval_context(&files, &state);
+
+    // Build the full prompt from context
+    let full_prompt = build_eval_prompt(&ctx);
 
     // Write log file header
     fs::write(
@@ -817,7 +998,7 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
     }
 
     // Read result file
-    let result_content = fs::read_to_string(&config.result_file).map_err(|e| EvalError::Io(e))?;
+    let result_content = fs::read_to_string(&config.result_file).map_err(EvalError::Io)?;
 
     #[derive(serde::Deserialize)]
     struct ResultFile {

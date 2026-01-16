@@ -36,31 +36,94 @@ export function formatTimeRemaining(
 }
 
 /**
- * Format timestamp to 24-hour time string
+ * Ensure timestamp is parsed as UTC
+ */
+function parseUtcTimestamp(timestamp: string): Date {
+  // Timestamps from backend are UTC but without 'Z' suffix - add it for proper parsing
+  const utcTimestamp = timestamp.endsWith('Z') ? timestamp : timestamp + 'Z';
+  return new Date(utcTimestamp);
+}
+
+/**
+ * Format timestamp to 24-hour time string (HH:MM:SS)
  */
 export function formatTime(timestamp: string | null | undefined): string {
   if (!timestamp) return '';
-  const d = new Date(timestamp);
+  const d = parseUtcTimestamp(timestamp);
   return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 /**
- * Format timestamp to short 24-hour time (no seconds)
+ * Format timestamp to short 24-hour time (HH:MM, no seconds)
  */
 export function formatTimeShort(timestamp: string | null | undefined): string {
   if (!timestamp) return '';
-  const d = new Date(timestamp);
+  const d = parseUtcTimestamp(timestamp);
   return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+}
+
+/**
+ * Format timestamp to short 24-hour time (HH:MM) - alias for formatTimeShort
+ */
+export function formatTimeHHMM(timestamp: string | null | undefined): string {
+  return formatTimeShort(timestamp);
+}
+
+/**
+ * Format timestamp to date string (e.g., "Today", "Yesterday", "Jan 15")
+ */
+export function formatDate(timestamp: string | null | undefined): string {
+  if (!timestamp) return '';
+  const d = parseUtcTimestamp(timestamp);
+  const today = new Date();
+  if (d.toDateString() === today.toDateString()) return 'Today';
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+/**
+ * Format timestamp to full date/time (e.g., "Jan 15, 10:30")
+ */
+export function formatFullDateTime(timestamp: string | null | undefined): string {
+  if (!timestamp) return 'N/A';
+  const d = parseUtcTimestamp(timestamp);
+  return d.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/**
+ * Format elapsed time from a session start timestamp
+ */
+export function formatElapsedTime(sessionStartedAt: string | null | undefined): string {
+  if (!sessionStartedAt) return '';
+  const start = parseUtcTimestamp(sessionStartedAt);
+  const now = new Date();
+  const seconds = Math.floor((now.getTime() - start.getTime()) / 1000);
+  if (seconds < 60) return seconds + 's';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return minutes + 'm';
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (hours < 24) return mins > 0 ? hours + 'h ' + mins + 'm' : hours + 'h';
+  const days = Math.floor(hours / 24);
+  const hrs = hours % 24;
+  return hrs > 0 ? days + 'd ' + hrs + 'h' : days + 'd';
 }
 
 /**
  * Format token count to human-readable string (e.g., 1.5M, 12k)
  */
 export function formatTokens(tokens: number | null | undefined): string {
-  if (!tokens) return '0';
-  if (tokens >= 1000000) return (tokens / 1000000).toFixed(1) + 'M';
-  if (tokens >= 1000) return (tokens / 1000).toFixed(1) + 'k';
-  return String(tokens);
+  if (tokens == null || tokens === 0) return '0';
+  if (tokens < 1000) return String(tokens);
+  if (tokens < 1000000) return (tokens / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+  return (tokens / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
 }
 
 /**
@@ -87,11 +150,9 @@ export function calculateTimeProgress(
  */
 export function formatRelativeTime(timestamp: string | null | undefined): string {
   if (!timestamp) return '';
-  // Timestamps from backend are UTC but without 'Z' suffix - add it for proper parsing
-  const utcTimestamp = timestamp.endsWith('Z') ? timestamp : timestamp + 'Z';
+  const d = parseUtcTimestamp(timestamp);
   const now = Date.now();
-  const then = new Date(utcTimestamp).getTime();
-  const diffMs = now - then;
+  const diffMs = now - d.getTime();
   const diffMins = Math.floor(diffMs / 60000);
 
   if (diffMins < 1) return 'just now';
@@ -107,6 +168,5 @@ export function formatRelativeTime(timestamp: string | null | undefined): string
   if (diffWeeks < 4) return diffWeeks + 'w ago';
 
   // For older dates, show the actual date
-  const d = new Date(utcTimestamp);
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 }

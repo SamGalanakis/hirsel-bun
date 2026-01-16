@@ -25,9 +25,7 @@ pub fn execute(
     let project_path_str = state.get_project_path()?;
     let remote_url = state.get_remote_url()?;
 
-    let project_path = project_path_str
-        .as_ref()
-        .map(|s| std::path::PathBuf::from(s));
+    let project_path = project_path_str.as_ref().map(std::path::PathBuf::from);
 
     let project_path = match project_path {
         Some(p) if p.exists() => p,
@@ -128,6 +126,11 @@ pub fn execute(
 
     // Update run status to delivered
     state.set_status(Status::Delivered)?;
+
+    // Trigger auto-improve if enabled
+    let (global_config, _) =
+        config::Config::load().unwrap_or_else(|_| (config::Config::default(), vec![]));
+    let _ = crate::core::workers::maybe_run_improve(run_name, &global_config);
 
     // Output result
     if json {

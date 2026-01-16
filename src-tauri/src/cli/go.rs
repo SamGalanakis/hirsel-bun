@@ -3,6 +3,7 @@
 //! This command initializes a new hirsel run with the specified spec,
 //! sets up git worktrees for workers, and spawns the worker processes.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -14,9 +15,13 @@ use crate::core::chats::{
     create_default_group_chat, create_default_user_chat, create_learnings_thread,
     create_worker_chat, ChatError,
 };
+use crate::core::coordinator_api::CoordinatorServer;
 use crate::core::files::Files;
 use crate::core::git::{create_worker_clone, create_workspace, get_repo_root, GitError};
+use crate::core::names;
+use crate::core::remote::{parse_remote_spec, RemoteConfig, RemoteError, RemoteWorkerSpawner};
 use crate::core::state::{SQLiteState, StateError, Status};
+use crate::core::tunnel::{TunnelError, TunnelManager};
 use crate::core::workers::{spawn_worker, WorkerError, WorkerSpawnConfig};
 use tracing::info;
 
@@ -31,6 +36,8 @@ pub enum GoError {
     State(StateError),
     Chat(ChatError),
     Worker(WorkerError),
+    Remote(RemoteError),
+    Tunnel(TunnelError),
     InvalidSpec(String),
     RunExists(String),
     InvalidTimeLimit(String),
@@ -39,6 +46,7 @@ pub enum GoError {
     InvalidProject(String),
     NoGitRepo,
     UserAborted,
+    CoordinatorError(String),
 }
 
 impl std::fmt::Display for GoError {
@@ -49,6 +57,8 @@ impl std::fmt::Display for GoError {
             GoError::State(e) => write!(f, "State error: {}", e),
             GoError::Chat(e) => write!(f, "Chat error: {}", e),
             GoError::Worker(e) => write!(f, "Worker error: {}", e),
+            GoError::Remote(e) => write!(f, "Remote error: {}", e),
+            GoError::Tunnel(e) => write!(f, "Tunnel error: {}", e),
             GoError::InvalidSpec(msg) => write!(f, "Invalid spec: {}", msg),
             GoError::RunExists(name) => write!(f, "Run '{}' already exists and is active", name),
             GoError::InvalidTimeLimit(msg) => write!(f, "Invalid time limit: {}", msg),
@@ -57,6 +67,7 @@ impl std::fmt::Display for GoError {
             GoError::InvalidProject(msg) => write!(f, "Invalid project: {}", msg),
             GoError::NoGitRepo => write!(f, "Not in a git repository"),
             GoError::UserAborted => write!(f, "Aborted by user"),
+            GoError::CoordinatorError(msg) => write!(f, "Coordinator error: {}", msg),
         }
     }
 }
@@ -93,6 +104,18 @@ impl From<WorkerError> for GoError {
     }
 }
 
+impl From<RemoteError> for GoError {
+    fn from(e: RemoteError) -> Self {
+        GoError::Remote(e)
+    }
+}
+
+impl From<TunnelError> for GoError {
+    fn from(e: TunnelError) -> Self {
+        GoError::Tunnel(e)
+    }
+}
+
 pub type GoResult<T> = Result<T, GoError>;
 
 // =============================================================================
@@ -116,8 +139,7 @@ impl WorkerScale {
         let s = s.trim();
 
         // Check for "N+" pattern (autoscale from N)
-        if s.ends_with('+') {
-            let num_str = &s[..s.len() - 1];
+        if let Some(num_str) = s.strip_suffix('+') {
             let min: u32 = num_str
                 .parse()
                 .map_err(|_| format!("Invalid worker count: {}", num_str))?;
@@ -243,71 +265,22 @@ pub fn parse_time_limit(s: &str) -> Result<i64, String> {
 // Worker Names
 // =============================================================================
 
-/// Greek hero names for workers
-const WORKER_NAMES: &[&str] = &[
-    "achilles",
-    "hector",
-    "ajax",
-    "odysseus",
-    "diomedes",
-    "patroclus",
-    "nestor",
-    "menelaus",
-    "agamemnon",
-    "paris",
-    "priam",
-    "aeneas",
-    "sarpedon",
-    "glaucus",
-    "idomeneus",
-    "meriones",
-    "teucer",
-    "antilochus",
-    "thrasymedes",
-    "eurypylus",
-    "machaon",
-    "podalirius",
-    "philoctetes",
-    "neoptolemus",
-    "pyrrhus",
-    "calchas",
-    "automedon",
-    "phoenix",
-    "stentor",
-    "polydamas",
-    "deiphobus",
-    "helenus",
-    "cassandra",
-    "andromache",
-    "hecuba",
-    "polyxena",
-    "troilus",
-    "lycaon",
-    "pandarus",
-    "antenor",
-    "theano",
-    "laocoon",
-    "sinon",
-    "epeus",
-    "protesilaus",
-    "palamedes",
-    "capaneus",
-    "amphiaraus",
-    "tydeus",
-    "polynices",
-    "eteocles",
-];
+/// Maximum attempts to generate a unique name before falling back
+const MAX_NAME_ATTEMPTS: usize = 100;
 
-/// Get an available worker name that's not in use
+/// Get an available worker name that's not in use.
+/// Uses sheep breed names (adjective-breed format) for the hirsel theme.
 pub fn get_available_name(used: &[String]) -> String {
-    for name in WORKER_NAMES {
-        if !used.iter().any(|u| u == *name) {
-            return name.to_string();
+    // Try generating random names until we find one not in use
+    for _ in 0..MAX_NAME_ATTEMPTS {
+        let name = names::generate_worker_name();
+        if !used.iter().any(|u| u == &name) {
+            return name;
         }
     }
     // Fallback: generate a numbered name
     for i in 1.. {
-        let name = format!("worker_{}", i);
+        let name = format!("worker-{}", i);
         if !used.iter().any(|u| u == &name) {
             return name;
         }
@@ -315,18 +288,32 @@ pub fn get_available_name(used: &[String]) -> String {
     unreachable!()
 }
 
-/// Get multiple available worker names
+/// Get multiple available worker names.
+/// Ensures all returned names are unique and not in the used list.
 pub fn get_available_names(count: u32, used: &[String]) -> Vec<String> {
-    let mut names = Vec::with_capacity(count as usize);
-    let mut all_used = used.to_vec();
+    let mut result = Vec::with_capacity(count as usize);
+    let mut all_used: std::collections::HashSet<String> = used.iter().cloned().collect();
 
-    for _ in 0..count {
-        let name = get_available_name(&all_used);
-        all_used.push(name.clone());
-        names.push(name);
+    // First try to get unique names from the batch generator
+    let candidates = names::generate_unique_names(count as usize * 2);
+    for name in candidates {
+        if result.len() >= count as usize {
+            break;
+        }
+        if !all_used.contains(&name) {
+            all_used.insert(name.clone());
+            result.push(name);
+        }
     }
 
-    names
+    // If we still need more names, generate them one by one
+    while result.len() < count as usize {
+        let name = get_available_name(&all_used.iter().cloned().collect::<Vec<_>>());
+        all_used.insert(name.clone());
+        result.push(name);
+    }
+
+    result
 }
 
 // =============================================================================
@@ -679,12 +666,32 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
         copy_dir_recursive(&tasks_dir, &dest_tasks)?;
     }
 
-    // Get worker names
-    let initial_count = scale.initial_count();
-    let worker_names = get_available_names(initial_count, &[]);
+    // Parse remote specs if provided
+    let remote_specs: Vec<(String, u32)> = if let Some(ref remote_str) = args.remote {
+        // Support multiple remote specs separated by commas
+        remote_str
+            .split(',')
+            .map(|s| parse_remote_spec(s.trim()))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let total_remote_workers: u32 = remote_specs.iter().map(|(_, count)| *count).sum();
+
+    // Get worker names for local workers
+    let local_count = scale.initial_count();
+    let local_worker_names = get_available_names(local_count, &[]);
+
+    // Get worker names for remote workers
+    let remote_worker_names = get_available_names(total_remote_workers, &local_worker_names);
+
+    // Combine all worker names
+    let mut worker_names = local_worker_names.clone();
+    worker_names.extend(remote_worker_names.clone());
 
     // Determine if multi-worker mode
-    let is_multi_worker = initial_count > 1 || scale.autoscale;
+    let total_workers = local_count + total_remote_workers;
+    let is_multi_worker = total_workers > 1 || scale.autoscale;
     let leader = if is_multi_worker {
         Some(worker_names[0].clone())
     } else {
@@ -706,7 +713,7 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
     fs::remove_dir_all(&staging_dir)?;
 
     // Initialize state
-    let state = SQLiteState::new(db_path)?;
+    let state = SQLiteState::new(db_path.clone())?;
     state.init_state(Some(project_path.to_str().unwrap_or(".")))?;
     state.set_request(Some(&spec_content))?;
     state.set_worker_scale(&scale.to_string())?;
@@ -722,10 +729,10 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
     let runs_dir = get_hirsel_dir().join("runs");
     let workspace_dir = create_workspace(&run_name, &project_path, &runs_dir)?;
 
-    // Create worker clones/worktrees
-    let mut worker_dirs: Vec<(String, PathBuf)> = Vec::new();
+    // Create worker clones/worktrees for LOCAL workers only
+    let mut local_worker_dirs: Vec<(String, PathBuf)> = Vec::new();
 
-    for worker_name in &worker_names {
+    for worker_name in &local_worker_names {
         let worker_dir = if is_multi_worker {
             create_worker_clone(
                 &run_name,
@@ -738,12 +745,21 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
             workspace_dir.clone()
         };
 
-        worker_dirs.push((worker_name.clone(), worker_dir.clone()));
+        local_worker_dirs.push((worker_name.clone(), worker_dir.clone()));
 
-        // Register worker in state
+        // Register local worker in state
         state.add_worker(worker_name, worker_dir.to_str().unwrap_or("."), "local")?;
 
         // Create individual worker chat
+        create_worker_chat(&chats_dir, worker_name)?;
+    }
+
+    // Register remote workers in state (work_dir is set to remote base path)
+    for worker_name in &remote_worker_names {
+        // Remote workers have work_dir set on the remote machine
+        state.add_worker(worker_name, "/tmp/hirsel-remote", "remote")?;
+
+        // Create individual worker chat for remote workers too
         create_worker_chat(&chats_dir, worker_name)?;
     }
 
@@ -786,13 +802,50 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
         }
     }
 
+    // Copy assets folder if specified
+    if let Some(ref assets_path) = args.assets {
+        let assets_src = PathBuf::from(assets_path);
+        if !assets_src.exists() {
+            return Err(GoError::InvalidSpec(format!(
+                "Assets folder not found: {}",
+                assets_path
+            )));
+        }
+        if !assets_src.is_dir() {
+            return Err(GoError::InvalidSpec(format!(
+                "Assets path is not a directory: {}",
+                assets_path
+            )));
+        }
+
+        let assets_dest = run_dir.join("assets");
+        fs::create_dir_all(&assets_dest)?;
+
+        // Copy all files from assets folder
+        let mut count = 0;
+        for entry in fs::read_dir(&assets_src)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(filename) = path.file_name() {
+                    fs::copy(&path, assets_dest.join(filename))?;
+                    count += 1;
+                }
+            }
+        }
+        if count > 0 {
+            info!("Copied {} asset(s) from {}", count, assets_path);
+        }
+    }
+
     // Spawn worker processes (skip for draft runs)
     if !args.draft {
         let agent_command = get_agent_command();
         let spec_path = run_dir.join("spec.md");
         let teammates: Vec<String> = worker_names.clone();
 
-        for (i, (worker_name, work_dir)) in worker_dirs.iter().enumerate() {
+        // Spawn LOCAL workers
+        for (i, (worker_name, work_dir)) in local_worker_dirs.iter().enumerate() {
             let is_leader = i == 0 && is_multi_worker;
             let config = WorkerSpawnConfig {
                 run_name: run_name.clone(),
@@ -819,7 +872,10 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
 
             match spawn_worker(config, &state) {
                 Ok(result) => {
-                    info!("Spawned worker {} (PID {})", result.worker_name, result.pid);
+                    info!(
+                        "Spawned local worker {} (PID {})",
+                        result.worker_name, result.pid
+                    );
                 }
                 Err(WorkerError::RunPaused) => {
                     // Run was paused - don't spawn more workers
@@ -831,6 +887,22 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
                 }
             }
         }
+
+        // Spawn REMOTE workers if any remote specs were provided
+        if !remote_specs.is_empty() {
+            spawn_remote_workers(
+                &run_name,
+                &run_dir,
+                &db_path,
+                &workspace_dir,
+                &remote_specs,
+                &remote_worker_names,
+                &agent_command,
+                is_multi_worker,
+                leader.as_deref(),
+                &teammates,
+            )?;
+        }
     }
 
     Ok(GoOutput {
@@ -838,9 +910,159 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
         project_path,
         run_dir,
         worker_names,
-        worker_count: initial_count,
+        worker_count: total_workers,
         time_limit_minutes,
     })
+}
+
+/// Spawn remote workers via SSH with coordinator API and tunnels
+#[allow(clippy::too_many_arguments)]
+fn spawn_remote_workers(
+    run_name: &str,
+    _run_dir: &Path,
+    db_path: &Path,
+    workspace_dir: &Path,
+    remote_specs: &[(String, u32)],
+    remote_worker_names: &[String],
+    agent_command: &[String],
+    is_multi_worker: bool,
+    leader_name: Option<&str>,
+    all_teammates: &[String],
+) -> GoResult<()> {
+    const COORDINATOR_PORT: u16 = 19700;
+    const TUNNEL_BASE_PORT: u16 = 19800;
+
+    info!(
+        "Starting coordinator API for remote workers on port {}",
+        COORDINATOR_PORT
+    );
+
+    // Create the SQLite state for the coordinator
+    let state = SQLiteState::new(db_path.to_path_buf())
+        .map_err(|e| GoError::CoordinatorError(format!("Failed to open database: {}", e)))?;
+
+    // Create and start the coordinator server
+    let mut coordinator = CoordinatorServer::new(
+        state,
+        "127.0.0.1".to_string(),
+        COORDINATOR_PORT,
+        Some(workspace_dir.to_path_buf()),
+    );
+
+    // Start the coordinator in a background thread
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| GoError::CoordinatorError(format!("Failed to create runtime: {}", e)))?;
+
+    let coordinator_handle = std::thread::spawn(move || {
+        rt.block_on(async {
+            if let Err(e) = coordinator.start().await {
+                eprintln!("Coordinator server error: {}", e);
+            }
+        });
+    });
+
+    // Give the server a moment to start
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Create tunnel manager
+    let mut tunnel_manager = TunnelManager::new(TUNNEL_BASE_PORT);
+
+    // Collect environment variables to forward (API keys)
+    let env_vars: HashMap<String, String> = std::env::vars()
+        .filter(|(k, _)| {
+            k.starts_with("ANTHROPIC_")
+                || k.starts_with("OPENAI_")
+                || k.starts_with("CLAUDE_")
+                || k == "ACP_PERMISSION_MODE"
+        })
+        .collect();
+
+    // Track which remote worker name we're on
+    let mut remote_worker_idx = 0;
+
+    // Spawn remote workers for each host
+    for (host, worker_count) in remote_specs {
+        info!("Setting up {} remote worker(s) on {}", worker_count, host);
+
+        // Create SSH tunnel for this host
+        let tunnel = tunnel_manager.create_tunnel(host, None, 22, Some(COORDINATOR_PORT))?;
+        let tunnel_port = tunnel.remote_port;
+
+        info!(
+            "Created tunnel to {} (remote port {} -> local {})",
+            host, tunnel_port, COORDINATOR_PORT
+        );
+
+        // Create remote config
+        let config = RemoteConfig::new(host.clone())
+            .with_work_base(format!("/tmp/hirsel-remote/{}", run_name));
+
+        // Create spawner for this host
+        let spawner = RemoteWorkerSpawner::new(config, tunnel_port);
+
+        // Git HTTP URL for cloning (via tunnel)
+        let git_url = format!("http://127.0.0.1:{}/git", tunnel_port);
+
+        // Spawn workers on this host
+        for _ in 0..*worker_count {
+            if remote_worker_idx >= remote_worker_names.len() {
+                eprintln!("Warning: Not enough worker names for remote workers");
+                break;
+            }
+
+            let worker_name = &remote_worker_names[remote_worker_idx];
+            remote_worker_idx += 1;
+
+            // First worker is leader if we're in multi-worker mode and have no local workers
+            let is_leader =
+                remote_worker_idx == 1 && is_multi_worker && leader_name == Some(worker_name);
+
+            // Build teammates list (exclude self)
+            let teammates: Option<Vec<String>> = if is_multi_worker {
+                Some(
+                    all_teammates
+                        .iter()
+                        .filter(|t| *t != worker_name)
+                        .cloned()
+                        .collect(),
+                )
+            } else {
+                None
+            };
+
+            info!("Spawning remote worker {} on {}", worker_name, host);
+
+            match spawner.spawn_worker(
+                run_name,
+                worker_name,
+                &git_url,
+                agent_command,
+                Some(&env_vars),
+                is_leader,
+                leader_name,
+                teammates.as_deref(),
+            ) {
+                Ok(pid) => {
+                    info!(
+                        "Remote worker {} started on {} (PID {})",
+                        worker_name, host, pid
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to spawn remote worker {} on {}: {}",
+                        worker_name, host, e
+                    );
+                }
+            }
+        }
+    }
+
+    // Don't wait for the coordinator thread - it will keep running
+    // The coordinator will be shut down when the main process exits
+    drop(coordinator_handle);
+
+    Ok(())
 }
 
 /// Recursively copy a directory
@@ -933,17 +1155,49 @@ mod tests {
 
     #[test]
     fn test_get_available_name() {
-        let used = vec!["achilles".to_string(), "hector".to_string()];
+        let used = vec!["bonnie-cheviot".to_string(), "braw-merino".to_string()];
         let name = get_available_name(&used);
-        assert_eq!(name, "ajax");
+        // Should return a name not in the used list
+        assert!(!used.contains(&name));
+        // Should have adjective-breed format
+        assert!(name.contains('-'));
+    }
+
+    #[test]
+    fn test_get_available_name_avoids_used() {
+        // Generate some names and make sure new ones don't collide
+        let mut used = Vec::new();
+        for _ in 0..10 {
+            let name = get_available_name(&used);
+            assert!(!used.contains(&name), "Name {} was already used", name);
+            used.push(name);
+        }
     }
 
     #[test]
     fn test_get_available_names() {
-        let names = get_available_names(3, &[]);
+        let names = get_available_names(5, &[]);
+        assert_eq!(names.len(), 5);
+        // All names should be unique
+        let mut seen = std::collections::HashSet::new();
+        for name in &names {
+            assert!(seen.insert(name.clone()), "Duplicate name: {}", name);
+            assert!(
+                name.contains('-'),
+                "Name should have adjective-breed format: {}",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_available_names_avoids_used() {
+        let used = vec!["bonnie-cheviot".to_string(), "misty-gotland".to_string()];
+        let names = get_available_names(3, &used);
         assert_eq!(names.len(), 3);
-        assert_eq!(names[0], "achilles");
-        assert_eq!(names[1], "hector");
-        assert_eq!(names[2], "ajax");
+        // None should be in the used list
+        for name in &names {
+            assert!(!used.contains(name), "Name {} was in used list", name);
+        }
     }
 }

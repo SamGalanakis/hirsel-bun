@@ -14,12 +14,17 @@ pub mod chat_session;
 pub mod chats;
 pub mod compaction;
 pub mod config;
+pub mod coordinator_api;
 pub mod eval;
 pub mod files;
 pub mod git;
+pub mod git_http;
 pub mod metrics;
+pub mod names;
 pub mod remote;
 pub mod state;
+pub mod state_access;
+pub mod tunnel;
 pub mod workers;
 
 // Re-export commonly used types
@@ -35,11 +40,13 @@ pub use eval::{
     EvalResult,
 };
 pub use files::Files;
+pub use names::{generate_unique_names, generate_worker_name};
 pub use remote::{
     parse_remote_spec, parse_remote_specs, RemoteConfig, RemoteError, RemoteResult,
     RemoteWorkerSpawner,
 };
 pub use state::*;
+pub use state_access::{StateAccess, StateAccessError, StateAccessResult};
 pub use workers::{
     check_and_send_time_notifications, check_time_expired, check_worker_heartbeats,
     get_agent_command, handle_time_expired, is_pid_alive, maybe_scale_up, maybe_trigger_eval,

@@ -43,8 +43,9 @@ function showToast(config: ToastConfig): void {
           title: config.title,
           description: config.description,
           duration,
-          cancel: config.cancel ?? { label: 'Dismiss' },
-          action: config.action,
+          // Only include cancel/action if explicitly provided
+          ...(config.cancel && { cancel: config.cancel }),
+          ...(config.action && { action: config.action }),
         },
       },
     })
@@ -109,8 +110,7 @@ export const toast = {
   fromGuiError,
 };
 
-// Make available globally for components
+// Make available globally for components (Window interface is in types.ts)
 if (typeof window !== 'undefined') {
-  // @ts-expect-error Adding toast to window for global access
   window.toast = toast;
 }

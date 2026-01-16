@@ -4,6 +4,15 @@
 
 use crate::core::{Config, SQLiteState, Status, WorkerStatus, WorkerUpdate};
 use regex::Regex;
+use std::sync::LazyLock;
+
+/// Regex patterns for time limit parsing
+static TIME_HOUR_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\d+)h$").expect("invalid regex"));
+static TIME_MIN_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\d+)m$").expect("invalid regex"));
+static TIME_HOUR_MIN_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\d+)h(\d+)m$").expect("invalid regex"));
 
 /// Run the resume command
 pub fn run_resume(run_name: &str, time_limit: Option<&str>, json: bool) -> anyhow::Result<()> {
@@ -147,16 +156,12 @@ pub fn parse_time_limit(time_str: &str) -> Result<i64, String> {
     }
 
     // Try patterns like "1h", "30m", "1h30m"
-    let hour_re = Regex::new(r"^(\d+)h$").unwrap();
-    let min_re = Regex::new(r"^(\d+)m$").unwrap();
-    let hour_min_re = Regex::new(r"^(\d+)h(\d+)m$").unwrap();
-
-    if let Some(caps) = hour_re.captures(time_str) {
+    if let Some(caps) = TIME_HOUR_RE.captures(time_str) {
         let hours: i64 = caps[1].parse().unwrap();
         return Ok(hours * 60);
     }
 
-    if let Some(caps) = min_re.captures(time_str) {
+    if let Some(caps) = TIME_MIN_RE.captures(time_str) {
         let minutes: i64 = caps[1].parse().unwrap();
         if minutes < 1 {
             return Err("Time limit must be at least 1 minute".to_string());
@@ -164,7 +169,7 @@ pub fn parse_time_limit(time_str: &str) -> Result<i64, String> {
         return Ok(minutes);
     }
 
-    if let Some(caps) = hour_min_re.captures(time_str) {
+    if let Some(caps) = TIME_HOUR_MIN_RE.captures(time_str) {
         let hours: i64 = caps[1].parse().unwrap();
         let minutes: i64 = caps[2].parse().unwrap();
         return Ok(hours * 60 + minutes);
