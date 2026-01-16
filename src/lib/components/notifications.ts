@@ -132,12 +132,22 @@ export function notifications() {
           'get_all_unread_notifications'
         );
 
-        // Convert to internal notification format
-        this.notifications = response.notifications.map(n => ({
+        // Keep existing read notifications
+        const existingRead = this.notifications.filter(n => n.read);
+
+        // Convert new unread to internal format
+        const newUnread: Notification[] = response.notifications.map(n => ({
           ...n,
           read: false,
         }));
-        this.totalUnread = response.totalRunsWithUnread;
+
+        // Merge: new unread first, then existing read (avoid duplicates)
+        const unreadIds = new Set(newUnread.map(n => n.id));
+        const filteredRead = existingRead.filter(n => !unreadIds.has(n.id));
+
+        // Combine and cap at 100
+        this.notifications = [...newUnread, ...filteredRead].slice(0, 100);
+        this.totalUnread = newUnread.length;
 
         // Update app state
         this.updateAppState(response.totalRunsWithUnread);

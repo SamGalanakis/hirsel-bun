@@ -210,13 +210,13 @@
             <template x-for="notif in notifications" :key="notif.id">
               <div
                 :data-notif-id="notif.id"
-                x-init="observeNotification($el)"
+                x-init="if (!notif.read) observeNotification($el)"
                 @click="goToRun(notif.runName); open = false"
-                class="p-3 hover:bg-pasture-700 cursor-pointer border-b border-pasture-700 last:border-0 transition-opacity duration-300 group relative"
-                :class="{ 'bg-pasture-700/50': !notif.read, 'opacity-50': notif.read }"
+                class="p-3 hover:bg-pasture-700 cursor-pointer border-b border-pasture-700 last:border-0 transition-all duration-300 group relative"
+                :class="{ 'bg-amber-500/10 border-l-2 border-l-amber-500': !notif.read, 'opacity-60 bg-pasture-800': notif.read }"
               >
                 <div class="flex items-center gap-2 mb-1">
-                  <span class="text-xs font-medium text-amber-500" x-text="notif.runName"></span>
+                  <span class="text-xs font-medium" :class="notif.read ? 'text-wool-500' : 'text-amber-500'" x-text="notif.runName"></span>
                   <span class="text-xs text-wool-600" x-text="notif.thread"></span>
                   <span class="text-xs text-wool-600 ml-auto" x-text="formatTime(notif.timestamp)"></span>
                   <!-- Dismiss button (only for unread) -->
@@ -229,9 +229,9 @@
                     <i data-lucide="x" class="w-3 h-3"></i>
                   </button>
                   <!-- Read indicator -->
-                  <span x-show="notif.read" class="text-xs text-wool-600">read</span>
+                  <span x-show="notif.read" class="text-[10px] text-wool-600 uppercase tracking-wide">read</span>
                 </div>
-                <p class="text-sm text-wool-300 truncate" x-text="notif.content"></p>
+                <p class="text-sm truncate" :class="notif.read ? 'text-wool-500' : 'text-wool-300'" x-text="notif.content"></p>
                 <p class="text-xs text-wool-500 mt-0.5" x-text="notif.sender"></p>
               </div>
             </template>

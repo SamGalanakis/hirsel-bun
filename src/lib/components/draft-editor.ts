@@ -760,7 +760,7 @@ export function draftEditor(): DraftEditorData & {
      * Rename the draft
      */
     async renameDraft(newName: string): Promise<void> {
-      if (!this.runName || !newName.trim() || newName === this.name) {
+      if (!this.runName || !newName.trim() || newName.trim() === this.runName) {
         this.name = this.runName || '';
         return;
       }
