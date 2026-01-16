@@ -1337,7 +1337,7 @@ pub fn run_cli() -> anyhow::Result<bool> {
                         .filter_map(|e| e.ok())
                         .filter_map(|e| {
                             let path = e.path();
-                            if path.extension().map_or(false, |ext| ext == "md") {
+                            if path.extension().is_some_and(|ext| ext == "md") {
                                 path.file_stem().and_then(|s| s.to_str()).map(String::from)
                             } else {
                                 None

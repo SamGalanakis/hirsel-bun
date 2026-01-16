@@ -216,6 +216,7 @@ Analyze the learnings above and update {} with any patterns you find.
 }
 
 /// Collect learnings from a specific run
+#[allow(clippy::type_complexity)]
 fn collect_learnings_from_run(
     run_name: &str,
 ) -> Result<
@@ -268,6 +269,7 @@ fn collect_learnings_from_run(
 }
 
 /// Collect learnings from all runs
+#[allow(clippy::type_complexity)]
 fn collect_all_learnings() -> Result<
     (
         std::collections::HashMap<String, Vec<Learning>>,
@@ -359,14 +361,11 @@ struct Learning {
 /// Detect the project memory file (CLAUDE.md or AGENTS.md)
 fn detect_memory_file(project_path: &Path) -> PathBuf {
     let claude_md = project_path.join("CLAUDE.md");
-    let agents_md = project_path.join("AGENTS.md");
-
     if claude_md.exists() {
         claude_md
-    } else if agents_md.exists() {
-        agents_md
     } else {
-        agents_md // Default to AGENTS.md
+        // Default to AGENTS.md (whether it exists or not)
+        project_path.join("AGENTS.md")
     }
 }
 

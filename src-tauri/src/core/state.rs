@@ -3,6 +3,8 @@
 //! This module provides the core state management functionality for tracking
 //! runs, tasks, workers, evals, and messages.
 
+#![allow(clippy::should_implement_trait)]
+
 use chrono::{DateTime, Local, Utc};
 use rusqlite::{params, Connection, Row};
 use serde::{Deserialize, Serialize};
@@ -1309,10 +1311,8 @@ impl SQLiteState {
         let tasks = self.get_tasks()?;
 
         // Build a map of task_id -> status for O(1) blocking checks
-        let status_map: std::collections::HashMap<String, TaskStatus> = tasks
-            .iter()
-            .map(|t| (t.id.clone(), t.status.clone()))
-            .collect();
+        let status_map: std::collections::HashMap<String, TaskStatus> =
+            tasks.iter().map(|t| (t.id.clone(), t.status)).collect();
 
         let mut claimable = vec![];
 

@@ -512,6 +512,7 @@ pub async fn run_acp_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_worker_prompt(
     worker_name: &str,
     run_name: &str,

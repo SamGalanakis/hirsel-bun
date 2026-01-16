@@ -133,7 +133,7 @@ pub fn format_message(message: &Message) -> String {
     let time_str = message.timestamp.format("%Y-%m-%d %H:%M").to_string();
     let waiting_marker = if message.waiting { " [WAITING]" } else { "" };
 
-    let lines = vec![
+    let lines = [
         format!(
             "### {} \u{00b7} {}{}",
             message.sender, time_str, waiting_marker

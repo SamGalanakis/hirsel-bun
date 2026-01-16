@@ -17,6 +17,7 @@ use crate::worker::http_state::HttpState;
 /// This is the entry point for `hirsel __remote-worker` on remote machines.
 /// It runs the same ACP worker loop as local workers, but the MCP server
 /// spawned by the agent will detect HIRSEL_API_URL and use HttpState.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_remote_worker(
     api_url: &str,
     run_name: &str,

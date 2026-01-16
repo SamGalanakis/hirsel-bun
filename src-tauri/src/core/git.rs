@@ -973,12 +973,10 @@ pub fn get_branch_graph(work_dir: &Path, max_lines: usize) -> Result<String> {
     revwalk.set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)?;
 
     // Start from all branches
-    for branch in repo.branches(Some(BranchType::Local))? {
-        if let Ok((branch, _)) = branch {
-            if let Ok(reference) = branch.get().resolve() {
-                if let Some(oid) = reference.target() {
-                    let _ = revwalk.push(oid);
-                }
+    for (branch, _) in (repo.branches(Some(BranchType::Local))?).flatten() {
+        if let Ok(reference) = branch.get().resolve() {
+            if let Some(oid) = reference.target() {
+                let _ = revwalk.push(oid);
             }
         }
     }

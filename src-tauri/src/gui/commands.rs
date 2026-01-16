@@ -1003,7 +1003,7 @@ pub async fn deliver_run(run_name: String, branch_name: Option<String>) -> Resul
 
     let project_path = project_path_str
         .as_ref()
-        .map(|s| std::path::PathBuf::from(s))
+        .map(std::path::PathBuf::from)
         .filter(|p| p.exists())
         .ok_or_else(|| format!("Project path not found for run '{}'", run_name))?;
 
@@ -2191,7 +2191,7 @@ pub async fn add_task(
     let blocked_by_refs: Option<Vec<&str>> = blocked_by
         .as_ref()
         .map(|v| v.iter().map(|s| s.as_str()).collect());
-    let blocked_by_slice: Option<&[&str]> = blocked_by_refs.as_ref().map(|v| v.as_slice());
+    let blocked_by_slice: Option<&[&str]> = blocked_by_refs.as_deref();
 
     // Add the task
     state
@@ -3128,8 +3128,8 @@ pub async fn get_worker_log(
         .map_err(|e| format!("Failed to read log file: {}", e))?;
 
     // If lines limit is specified and no offset was given, return only the last N lines
-    if lines.is_some() && from_offset.is_none() {
-        let limit = lines.unwrap() as usize;
+    if let (Some(limit), None) = (lines, from_offset) {
+        let limit = limit as usize;
         let all_lines: Vec<&str> = content.lines().collect();
         if all_lines.len() > limit {
             content = all_lines[all_lines.len() - limit..].join("\n");
@@ -3239,8 +3239,8 @@ pub async fn get_eval_log(
     file.read_to_string(&mut content)
         .map_err(|e| format!("Failed to read eval log: {}", e))?;
 
-    if lines.is_some() && from_offset.is_none() {
-        let limit = lines.unwrap() as usize;
+    if let (Some(limit), None) = (lines, from_offset) {
+        let limit = limit as usize;
         let all_lines: Vec<&str> = content.lines().collect();
         if all_lines.len() > limit {
             content = all_lines[all_lines.len() - limit..].join("\n");

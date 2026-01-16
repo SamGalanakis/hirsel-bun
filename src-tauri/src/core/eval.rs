@@ -194,10 +194,8 @@ fn execute_eval_script(config: &EvalConfig, log_file: &Path) -> Result<EvalResul
     let stdout_handle = thread::spawn(move || {
         let reader = BufReader::new(stdout);
         let mut lines: Vec<String> = Vec::new();
-        for line in reader.lines() {
-            if let Ok(line) = line {
-                lines.push(line);
-            }
+        for line in reader.lines().map_while(Result::ok) {
+            lines.push(line);
         }
         let _ = tx.send(("stdout", lines));
     });
@@ -206,10 +204,8 @@ fn execute_eval_script(config: &EvalConfig, log_file: &Path) -> Result<EvalResul
     let stderr_handle = thread::spawn(move || {
         let reader = BufReader::new(stderr);
         let mut lines: Vec<String> = Vec::new();
-        for line in reader.lines() {
-            if let Ok(line) = line {
-                lines.push(line);
-            }
+        for line in reader.lines().map_while(Result::ok) {
+            lines.push(line);
         }
         let _ = tx_err.send(("stderr", lines));
     });
@@ -1002,7 +998,7 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
     }
 
     // Read result file
-    let result_content = fs::read_to_string(&config.result_file).map_err(|e| EvalError::Io(e))?;
+    let result_content = fs::read_to_string(&config.result_file).map_err(EvalError::Io)?;
 
     #[derive(serde::Deserialize)]
     struct ResultFile {

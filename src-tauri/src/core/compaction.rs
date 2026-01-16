@@ -103,8 +103,8 @@ pub fn compact_thread_with_summary(
     threshold: Option<u32>,
     keep_count: Option<u32>,
 ) -> StateResult<bool> {
-    // Load config defaults if not specified
-    let config = Config::default();
+    // Load actual config from file, fall back to defaults if load fails
+    let config = Config::load().map(|(c, _)| c).unwrap_or_default();
     let threshold = threshold.unwrap_or(config.compaction_threshold.unwrap_or(10000));
     let keep_count = keep_count.unwrap_or(config.compaction_keep_messages);
 

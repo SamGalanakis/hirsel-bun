@@ -85,13 +85,13 @@ pub fn run_diff(run_name: &str, stat_only: bool) -> Result<DiffResult, DiffError
 }
 
 /// Get the project path for a run from the database
-fn get_project_path(db_path: &PathBuf) -> Result<PathBuf, DiffError> {
+fn get_project_path(db_path: &std::path::Path) -> Result<PathBuf, DiffError> {
     if !db_path.exists() {
         return Err(DiffError::NoProjectPath);
     }
 
-    let state =
-        SQLiteState::new(db_path.clone()).map_err(|e| DiffError::DatabaseError(e.to_string()))?;
+    let state = SQLiteState::new(db_path.to_path_buf())
+        .map_err(|e| DiffError::DatabaseError(e.to_string()))?;
 
     let project_path = state
         .get_project_path()

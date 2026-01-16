@@ -287,9 +287,7 @@ impl McpServer {
         let id = request.id.clone();
 
         // Notifications (no id) don't need a response
-        if id.is_none() {
-            return None;
-        }
+        id.as_ref()?;
 
         let response = match request.method.as_str() {
             "initialize" => self.handle_initialize(id),

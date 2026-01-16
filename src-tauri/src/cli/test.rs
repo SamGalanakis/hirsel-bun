@@ -260,28 +260,26 @@ pub fn execute(
                     })
                     .collect();
                 println!("{}", serde_json::to_string_pretty(&json_output).unwrap());
+            } else if scenarios.is_empty() {
+                println!("No test scenarios found.");
+                println!("Scenarios should be in: {}", get_scenarios_dir().display());
             } else {
-                if scenarios.is_empty() {
-                    println!("No test scenarios found.");
-                    println!("Scenarios should be in: {}", get_scenarios_dir().display());
-                } else {
-                    println!("Available test scenarios:\n");
-                    for s in &scenarios {
-                        let indicators = format!(
-                            "{}{}",
-                            if s.has_eval { "E" } else { " " },
-                            if s.has_project { "P" } else { " " }
-                        );
-                        println!("  [{}] {}", indicators, s.name);
-                        if !s.description.is_empty() {
-                            println!("       {}", s.description);
-                        }
+                println!("Available test scenarios:\n");
+                for s in &scenarios {
+                    let indicators = format!(
+                        "{}{}",
+                        if s.has_eval { "E" } else { " " },
+                        if s.has_project { "P" } else { " " }
+                    );
+                    println!("  [{}] {}", indicators, s.name);
+                    if !s.description.is_empty() {
+                        println!("       {}", s.description);
                     }
-                    println!();
-                    println!("Legend: E=has eval, P=has project");
-                    println!();
-                    println!("Run a scenario with: hirsel test <scenario-name>");
                 }
+                println!();
+                println!("Legend: E=has eval, P=has project");
+                println!();
+                println!("Run a scenario with: hirsel test <scenario-name>");
             }
         }
     }

@@ -140,6 +140,7 @@ impl RemoteWorkerSpawner {
     ///
     /// # Returns
     /// Remote PID on success
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn_worker(
         &self,
         run_name: &str,
@@ -216,6 +217,7 @@ echo "Workspace ready at {work_dir}"
     }
 
     /// Build the script to start the worker process
+    #[allow(clippy::too_many_arguments)]
     fn build_worker_script(
         &self,
         run_name: &str,

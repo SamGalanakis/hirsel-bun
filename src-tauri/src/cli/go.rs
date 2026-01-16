@@ -139,8 +139,7 @@ impl WorkerScale {
         let s = s.trim();
 
         // Check for "N+" pattern (autoscale from N)
-        if s.ends_with('+') {
-            let num_str = &s[..s.len() - 1];
+        if let Some(num_str) = s.strip_suffix('+') {
             let min: u32 = num_str
                 .parse()
                 .map_err(|_| format!("Invalid worker count: {}", num_str))?;
@@ -917,6 +916,7 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
 }
 
 /// Spawn remote workers via SSH with coordinator API and tunnels
+#[allow(clippy::too_many_arguments)]
 fn spawn_remote_workers(
     run_name: &str,
     _run_dir: &Path,

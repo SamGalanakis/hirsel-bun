@@ -313,6 +313,7 @@ impl HttpState {
         Ok(result.worker)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_worker(
         &self,
         name: &str,

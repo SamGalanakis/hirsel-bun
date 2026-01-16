@@ -182,15 +182,13 @@ pub fn run_attach(run_name: &str, target: Option<&str>, json: bool) -> anyhow::R
                     selection_name
                 );
             }
+        } else if log_file.exists() {
+            println!("Eval '{}' log file:", selection_name);
+            println!("  {}", log_file.display());
+            println!();
+            println!("View with: tail -f {}", log_file.display());
         } else {
-            if log_file.exists() {
-                println!("Eval '{}' log file:", selection_name);
-                println!("  {}", log_file.display());
-                println!();
-                println!("View with: tail -f {}", log_file.display());
-            } else {
-                eprintln!("Log file not found for eval '{}'", selection_name);
-            }
+            eprintln!("Log file not found for eval '{}'", selection_name);
         }
     }
 

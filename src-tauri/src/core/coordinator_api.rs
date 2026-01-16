@@ -404,10 +404,10 @@ async fn complete_task(
     Json(req): Json<WorkerNameRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let success = state
+    state
         .complete_task(&task_id, &req.worker_name)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
-    Ok(Json(serde_json::json!({ "success": success })))
+    Ok(Json(serde_json::json!({ "success": () })))
 }
 
 async fn unclaim_task(
@@ -416,10 +416,10 @@ async fn unclaim_task(
     Json(req): Json<WorkerNameRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let success = state
+    state
         .unclaim_task(&task_id, &req.worker_name)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
-    Ok(Json(serde_json::json!({ "success": success })))
+    Ok(Json(serde_json::json!({ "success": () })))
 }
 
 async fn is_task_blocked(
@@ -493,10 +493,10 @@ async fn reopen_task(
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let success = state
+    state
         .reopen_task(&task_id)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
-    Ok(Json(serde_json::json!({ "success": success })))
+    Ok(Json(serde_json::json!({ "success": () })))
 }
 
 async fn set_task_tokens(

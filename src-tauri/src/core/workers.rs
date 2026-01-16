@@ -715,8 +715,8 @@ pub struct WorkerScale {
 impl WorkerScale {
     /// Parse a scale string like "1", "1-3", "1-3:auto"
     pub fn parse(s: &str) -> Option<Self> {
-        let (range_part, autoscale) = if s.ends_with(":auto") {
-            (&s[..s.len() - 5], true)
+        let (range_part, autoscale) = if let Some(stripped) = s.strip_suffix(":auto") {
+            (stripped, true)
         } else {
             (s, false)
         };
@@ -974,8 +974,8 @@ fn spawn_eval_agent(run_dir: &Path, files: &Files) -> WorkerResult<()> {
     use std::process::{Command, Stdio};
 
     // Get the hirsel executable
-    let hirsel_exe = std::env::current_exe()
-        .map_err(|e| WorkerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    let hirsel_exe =
+        std::env::current_exe().map_err(|e| WorkerError::Io(std::io::Error::other(e)))?;
 
     // Get run name from run_dir
     let run_name = run_dir

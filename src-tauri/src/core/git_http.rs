@@ -205,6 +205,7 @@ async fn run_git_cgi(
 }
 
 /// Parse CGI response format: headers separated from body by blank line.
+#[allow(clippy::type_complexity)]
 fn parse_cgi_response(
     data: &[u8],
 ) -> Result<(StatusCode, Vec<(String, String)>, Vec<u8>), anyhow::Error> {
