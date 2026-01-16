@@ -20,6 +20,9 @@ export { taskPanel } from './task-panel';
 // Activity log
 export { activityLog } from './activity-log';
 
+// Reusable components
+export { sortToggle, sortButton } from './sort-toggle';
+
 // Chat
 export { chatPanel } from './chat-panel';
 export { directChat } from './direct-chat';

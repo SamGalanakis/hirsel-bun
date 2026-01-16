@@ -267,7 +267,9 @@ pub fn is_pid_alive(pid: u32) -> bool {
     }
 }
 
-/// Pause all workers in a run by sending SIGTERM
+/// Pause all workers in a run by killing their processes.
+///
+/// Workers can be resumed later from their saved session state.
 pub fn pause_all_workers(state: &SQLiteState) -> WorkerResult<Vec<String>> {
     let workers = state.get_workers()?;
     let mut paused = Vec::new();
@@ -277,11 +279,24 @@ pub fn pause_all_workers(state: &SQLiteState) -> WorkerResult<Vec<String>> {
             if is_pid_alive(pid as u32) {
                 #[cfg(unix)]
                 {
+                    // Send SIGTERM first for graceful shutdown
                     unsafe {
                         libc::kill(pid as i32, libc::SIGTERM);
                     }
                 }
-                info!("Paused worker {} (PID {})", worker.name, pid);
+                // Brief wait for graceful shutdown
+                std::thread::sleep(std::time::Duration::from_millis(100));
+
+                // Force kill if still alive
+                if is_pid_alive(pid as u32) {
+                    #[cfg(unix)]
+                    {
+                        unsafe {
+                            libc::kill(pid as i32, libc::SIGKILL);
+                        }
+                    }
+                }
+                info!("Killed worker {} (PID {})", worker.name, pid);
             }
         }
 
@@ -300,6 +315,56 @@ pub fn pause_all_workers(state: &SQLiteState) -> WorkerResult<Vec<String>> {
     }
 
     Ok(paused)
+}
+
+/// Kill all workers in a run by sending SIGKILL.
+///
+/// This is a forceful cleanup used when a run reaches a terminal state
+/// (Done, EvalFailed, TimedOut) to ensure no orphaned worker processes remain.
+pub fn kill_all_workers(state: &SQLiteState) -> WorkerResult<Vec<String>> {
+    let workers = state.get_workers()?;
+    let mut killed = Vec::new();
+
+    for worker in workers {
+        if let Some(pid) = worker.pid {
+            if is_pid_alive(pid as u32) {
+                #[cfg(unix)]
+                {
+                    // First try SIGTERM for graceful shutdown
+                    unsafe {
+                        libc::kill(pid as i32, libc::SIGTERM);
+                    }
+                }
+                // Give a brief moment for graceful shutdown
+                std::thread::sleep(std::time::Duration::from_millis(100));
+
+                // Then force kill if still alive
+                if is_pid_alive(pid as u32) {
+                    #[cfg(unix)]
+                    {
+                        unsafe {
+                            libc::kill(pid as i32, libc::SIGKILL);
+                        }
+                    }
+                }
+                info!("Killed worker {} (PID {})", worker.name, pid);
+                killed.push(worker.name.clone());
+            }
+        }
+
+        // Clear PID from database
+        if worker.pid.is_some() {
+            let _ = state.update_worker(
+                &worker.name,
+                WorkerUpdate {
+                    pid: None,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
+    Ok(killed)
 }
 
 /// Resume workers that are in the awaiting state (waiting for tasks)
@@ -534,7 +599,18 @@ pub fn handle_time_expired(
         );
     }
 
-    // Set all active workers to PAUSED
+    // Kill all worker processes and mark them as paused
+    let killed = kill_all_workers(state)?;
+    if !killed.is_empty() {
+        info!(
+            "[{}] Killed {} worker(s) on timeout: {:?}",
+            worker_name,
+            killed.len(),
+            killed
+        );
+    }
+
+    // Set all active workers to PAUSED status
     let workers = state.get_workers()?;
     for worker in workers {
         if matches!(
@@ -862,9 +938,23 @@ pub fn maybe_trigger_eval(_run_name: &str, run_dir: &Path) -> WorkerResult<bool>
     // Check if there's an eval script configured
     let eval_path = files.eval_spec();
     if !eval_path.exists() {
-        // No eval script - set run to Done status
+        // No eval script - kill any remaining workers and set run to Done status
+        let killed = kill_all_workers(&state)?;
+        if !killed.is_empty() {
+            info!(
+                "maybe_trigger_eval: killed {} remaining worker(s): {:?}",
+                killed.len(),
+                killed
+            );
+        }
+
         info!("maybe_trigger_eval: all workers inactive, no eval script, marking run as Done");
         state.set_status(Status::Done)?;
+
+        // Trigger auto-improve if enabled
+        let (config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
+        let _ = maybe_run_improve(_run_name, &config);
+
         return Ok(false);
     }
 
@@ -933,6 +1023,135 @@ fn spawn_eval_agent(run_dir: &Path, files: &Files) -> WorkerResult<()> {
     );
 
     Ok(())
+}
+
+/// Internal cooldown for compaction checks (10 seconds)
+const COMPACTION_INTERNAL_COOLDOWN_SECONDS: i64 = 10;
+
+/// Check if learnings compaction should run, and if so, trigger it.
+///
+/// This function checks:
+/// 1. If compaction is enabled in config
+/// 2. If the internal cooldown (10s) has elapsed since the last compaction
+/// 3. If there are enough messages to warrant compaction
+///
+/// If all conditions are met, it spawns an async task to perform compaction.
+/// Returns true if compaction was triggered.
+pub async fn maybe_compact_learnings(
+    state: &SQLiteState,
+    files: &Files,
+    config: &Config,
+) -> WorkerResult<bool> {
+    use chrono::{DateTime, Utc};
+
+    // Quick check: is compaction enabled?
+    if !config.compaction_enabled {
+        debug!("maybe_compact_learnings: compaction disabled");
+        return Ok(false);
+    }
+
+    // Internal cooldown check (10 seconds) - just to prevent rapid-fire triggers
+    if let Some(last_compaction) = state.get_last_compaction_at()? {
+        if let Ok(last_time) = DateTime::parse_from_rfc3339(&last_compaction) {
+            let now = Utc::now();
+            let elapsed_seconds = (now - last_time.with_timezone(&Utc)).num_seconds();
+
+            if elapsed_seconds < COMPACTION_INTERNAL_COOLDOWN_SECONDS {
+                warn!(
+                    "maybe_compact_learnings: triggered within {}s of last compaction ({}s ago)",
+                    COMPACTION_INTERNAL_COOLDOWN_SECONDS, elapsed_seconds
+                );
+                return Ok(false);
+            }
+        }
+    }
+
+    // Try to run compaction
+    use crate::core::compaction::{compact_learnings_with_agent, CompactionError};
+
+    match compact_learnings_with_agent(state, files, config).await {
+        Ok(result) => {
+            info!(
+                "maybe_compact_learnings: compacted {} messages",
+                result.messages_compacted
+            );
+
+            // Update the last compaction timestamp
+            let now = Utc::now().to_rfc3339();
+            if let Err(e) = state.set_last_compaction_at(&now) {
+                warn!("Failed to update last_compaction_at: {}", e);
+            }
+
+            Ok(true)
+        }
+        Err(CompactionError::NotNeeded) => {
+            debug!("maybe_compact_learnings: compaction not needed");
+            Ok(false)
+        }
+        Err(e) => {
+            warn!("maybe_compact_learnings: compaction failed: {}", e);
+            Ok(false)
+        }
+    }
+}
+
+/// Run the improve agent to update project memory from learnings.
+///
+/// This should be called when a run completes (status changes to Done/Delivered).
+/// If auto_improve is enabled in config, it spawns the improve agent to analyze
+/// learnings and update the project memory file (CLAUDE.md or AGENTS.md).
+pub fn maybe_run_improve(run_name: &str, config: &Config) -> WorkerResult<bool> {
+    // Check if auto-improve is enabled
+    if !config.auto_improve {
+        debug!("maybe_run_improve: auto_improve disabled");
+        return Ok(false);
+    }
+
+    info!(
+        "maybe_run_improve: auto-improve enabled, running improve for {}",
+        run_name
+    );
+
+    // Spawn the improve as a separate process to not block
+    // Use the CLI improve command with json output
+    let hirsel_exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => {
+            warn!("maybe_run_improve: failed to get current exe: {}", e);
+            return Ok(false);
+        }
+    };
+
+    let mut cmd = Command::new(&hirsel_exe);
+    cmd.arg("improve")
+        .arg("--run")
+        .arg(run_name)
+        .arg("--json")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    // Spawn detached
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    match cmd.spawn() {
+        Ok(child) => {
+            info!(
+                "maybe_run_improve: spawned improve agent for {}, pid={}",
+                run_name,
+                child.id()
+            );
+            Ok(true)
+        }
+        Err(e) => {
+            warn!("maybe_run_improve: failed to spawn improve agent: {}", e);
+            Ok(false)
+        }
+    }
 }
 
 #[cfg(test)]

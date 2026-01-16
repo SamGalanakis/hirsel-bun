@@ -28,6 +28,12 @@ export function appState() {
     _focusedRunIndex: -1,
     _eventCleanups: [] as (() => void)[],
 
+    // Attach picker state
+    attachPickerOpen: false,
+    attachPickerWorkers: [] as Array<{ name: string; status: string }>,
+    attachPickerEvals: [] as Array<{ id: number; evalName: string; status: string }>,
+    attachPickerLoading: false,
+
     // UI toggles
     toggleSidebar() {
       this.sidebarCollapsed = !this.sidebarCollapsed;
@@ -132,25 +138,76 @@ export function appState() {
       }
     },
 
-    async attachToWorker() {
+    async handleAttach() {
       if (!this.selectedRun || !window.tauriInvoke) return;
-      try {
-        const workers = await window.tauriInvoke<Array<{ name: string }>>('get_workers', {
-          runName: this.selectedRun,
-        });
-        if (workers && workers.length > 0) {
-          // Show worker output viewer
+
+      // Check if we're on evals tab with a selected eval
+      const runDetailEl = document.querySelector('[x-data*="runDetail"]') as HTMLElement & { _x_dataStack?: Array<{ selectedEval: { evalName: string } | null; activeTab: string }> };
+      if (runDetailEl?._x_dataStack?.[0]) {
+        const runDetailData = runDetailEl._x_dataStack[0];
+        if (runDetailData.activeTab === 'evals' && runDetailData.selectedEval) {
           window.dispatchEvent(new CustomEvent('show-worker-output', {
             detail: {
               runName: this.selectedRun,
-              workerName: workers[0].name,
+              workerName: runDetailData.selectedEval.evalName,
             },
           }));
+          return;
         }
-      } catch (e) {
-        const error = e as Error;
-        window.toast?.error('Failed to attach to run');
       }
+
+      // Check if we're on overview with a selected worker in the panel
+      const workerPanelEl = document.querySelector('[x-data*="workerPanel"]') as HTMLElement & { _x_dataStack?: Array<{ selectedWorker: { name: string } | null }> };
+      if (workerPanelEl?._x_dataStack?.[0]?.selectedWorker) {
+        window.dispatchEvent(new CustomEvent('show-worker-output', {
+          detail: {
+            runName: this.selectedRun,
+            workerName: workerPanelEl._x_dataStack[0].selectedWorker.name,
+          },
+        }));
+        return;
+      }
+
+      // Neither selected - show the attach picker
+      await this.openAttachPicker();
+    },
+
+    async openAttachPicker() {
+      if (!this.selectedRun || !window.tauriInvoke) return;
+      this.attachPickerLoading = true;
+      this.attachPickerOpen = true;
+
+      try {
+        const [workers, evals] = await Promise.all([
+          window.tauriInvoke<Array<{ name: string; status: string }>>('get_workers', { runName: this.selectedRun }),
+          window.tauriInvoke<Array<{ id: number; evalName: string; status: string }>>('get_evals', { runName: this.selectedRun }),
+        ]);
+        this.attachPickerWorkers = workers || [];
+        this.attachPickerEvals = evals || [];
+      } catch (e) {
+        console.error('Failed to load attach picker data:', e);
+        this.attachPickerWorkers = [];
+        this.attachPickerEvals = [];
+      } finally {
+        this.attachPickerLoading = false;
+      }
+    },
+
+    closeAttachPicker() {
+      this.attachPickerOpen = false;
+      this.attachPickerWorkers = [];
+      this.attachPickerEvals = [];
+    },
+
+    attachToTarget(type: 'worker' | 'eval', name: string) {
+      if (!this.selectedRun) return;
+      window.dispatchEvent(new CustomEvent('show-worker-output', {
+        detail: {
+          runName: this.selectedRun,
+          workerName: name,
+        },
+      }));
+      this.closeAttachPicker();
     },
 
     // Initialization
@@ -199,7 +256,7 @@ export function appState() {
             this.selectFocusedRun();
             break;
           case 'a':
-            if (this.selectedRun) this.attachToWorker();
+            if (this.selectedRun && !this.attachPickerOpen) this.handleAttach();
             break;
           case 'c':
             // Switch to messages tab

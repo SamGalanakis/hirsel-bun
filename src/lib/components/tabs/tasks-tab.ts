@@ -2,8 +2,10 @@
  * Tasks tab Alpine component - Enhanced task list view with nesting and details
  */
 
-import type { Task, TaskDisplay } from '../../types';
+import type { Task, TaskDisplay, WorkerDisplay } from '../../types';
 import { formatTokens, formatRelativeTime, formatFullDateTime } from '../../utils/formatters';
+import { dataCache, DATA_EVENTS } from '../../data-cache';
+import { generateSheepSvg } from '../../sheep-avatar';
 
 declare const Alpine: {
   store: (name: string) => { selectedRun?: string | null } | undefined;
@@ -26,15 +28,17 @@ export interface TasksTabData {
   tasks: Task[];
   taskTree: TaskDisplay[];
   flatTasks: TaskDisplay[];
+  workers: WorkerDisplay[];
   filter: 'all' | 'todo' | 'doing' | 'done' | 'blocked';
   selectedTaskId: string | null;
   selectedTask: TaskDisplay | null;
-  showTaskPopover: boolean;
-  popoverPosition: { x: number; y: number };
+  showTaskModal: boolean;
   collapsedTasks: Set<string>;
-  pollInterval: ReturnType<typeof setInterval> | null;
   searchQuery: string;
   currentRunName: string | null;
+  _eventCleanups: (() => void)[];
+  _cacheUnsubscribe: (() => void) | null;
+  _parentIds: Set<string>; // Set of task IDs that have children (for O(1) hasChildren lookup)
 }
 
 /**
@@ -45,15 +49,17 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
     tasks: [],
     taskTree: [],
     flatTasks: [],
+    workers: [] as WorkerDisplay[],
     filter: 'all',
     selectedTaskId: null,
     selectedTask: null,
-    showTaskPopover: false,
-    popoverPosition: { x: 0, y: 0 },
+    showTaskModal: false,
     collapsedTasks: new Set<string>(),
-    pollInterval: null,
     searchQuery: '',
     currentRunName: null,
+    _eventCleanups: [],
+    _cacheUnsubscribe: null,
+    _parentIds: new Set<string>(),
 
     // Computed: filtered tasks based on filter and search
     get filteredTasks(): TaskDisplay[] {
@@ -89,21 +95,72 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
     },
 
     async init() {
+      // Subscribe to shared cache
+      this._cacheUnsubscribe = dataCache.subscribe();
+
+      // Listen for tasks updates from cache
+      const tasksUpdatedHandler = (e: Event) => {
+        const customEvent = e as CustomEvent<Task[]>;
+        const prevSelected = this.selectedTaskId;
+        this.tasks = customEvent.detail;
+        this.buildTaskTree();
+        // Update selected task if still exists
+        if (prevSelected && this.selectedTask) {
+          const updated = this.flatTasks.find(t => t.id === prevSelected);
+          if (updated) {
+            this.selectedTask = updated;
+          }
+        }
+      };
+      window.addEventListener(DATA_EVENTS.TASKS_UPDATED, tasksUpdatedHandler);
+      this._eventCleanups.push(() => window.removeEventListener(DATA_EVENTS.TASKS_UPDATED, tasksUpdatedHandler));
+
+      // Listen for workers updates from cache
+      const workersUpdatedHandler = (e: Event) => {
+        const customEvent = e as CustomEvent<WorkerDisplay[]>;
+        this.workers = customEvent.detail;
+      };
+      window.addEventListener(DATA_EVENTS.WORKERS_UPDATED, workersUpdatedHandler);
+      this._eventCleanups.push(() => window.removeEventListener(DATA_EVENTS.WORKERS_UPDATED, workersUpdatedHandler));
+
       // Listen for run selection changes
-      window.addEventListener('run-selected', async (e: Event) => {
+      const runSelectedHandler = (e: Event) => {
         const customEvent = e as CustomEvent<string | null>;
         if (customEvent.detail) {
-          await this.loadTasks(customEvent.detail);
+          this.currentRunName = customEvent.detail;
+          // Get initial data from cache
+          const cachedTasks = dataCache.getTasks();
+          if (cachedTasks.length > 0) {
+            this.tasks = cachedTasks;
+            this.buildTaskTree();
+          }
+          this.workers = dataCache.getWorkers();
         } else {
           this.clearTasks();
         }
-      });
+      };
+      window.addEventListener('run-selected', runSelectedHandler);
+      this._eventCleanups.push(() => window.removeEventListener('run-selected', runSelectedHandler));
+
+      // Get initial data from cache if a run is already selected
+      const selectedRun = dataCache.getSelectedRun();
+      if (selectedRun) {
+        this.currentRunName = selectedRun;
+        const cachedTasks = dataCache.getTasks();
+        if (cachedTasks.length > 0) {
+          this.tasks = cachedTasks;
+          this.buildTaskTree();
+        }
+        this.workers = dataCache.getWorkers();
+      }
     },
 
     destroy() {
-      if (this.pollInterval) {
-        clearInterval(this.pollInterval);
-        this.pollInterval = null;
+      this._eventCleanups.forEach(fn => fn());
+      this._eventCleanups = [];
+      if (this._cacheUnsubscribe) {
+        this._cacheUnsubscribe();
+        this._cacheUnsubscribe = null;
       }
     },
 
@@ -116,76 +173,26 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
     },
 
     clearTasks() {
-      if (this.pollInterval) {
-        clearInterval(this.pollInterval);
-        this.pollInterval = null;
-      }
       this.tasks = [];
       this.taskTree = [];
       this.flatTasks = [];
+      this.workers = [];
       this.selectedTaskId = null;
       this.selectedTask = null;
-      this.showTaskPopover = false;
+      this.showTaskModal = false;
       this.currentRunName = null;
-    },
-
-    async loadTasks(runName: string) {
-      if (!runName) return;
-
-      // If already polling for this run, just do a refresh
-      if (this.currentRunName === runName && this.pollInterval) {
-        try {
-          if (window.tauriInvoke) {
-            this.tasks = await window.tauriInvoke<Task[]>('get_tasks', { runName });
-            this.buildTaskTree();
-          }
-        } catch (e) {
-          console.error('Failed to refresh tasks:', e);
-        }
-        return;
-      }
-
-      // Stop existing polling
-      if (this.pollInterval) {
-        clearInterval(this.pollInterval);
-        this.pollInterval = null;
-      }
-
-      // Update current run
-      this.currentRunName = runName;
-
-      try {
-        if (window.tauriInvoke) {
-          this.tasks = await window.tauriInvoke<Task[]>('get_tasks', { runName });
-          this.buildTaskTree();
-        }
-
-        // Start polling
-        this.pollInterval = setInterval(async () => {
-          if (window.tauriInvoke && this.currentRunName) {
-            try {
-              const prevSelected = this.selectedTaskId;
-              this.tasks = await window.tauriInvoke<Task[]>('get_tasks', { runName: this.currentRunName });
-              this.buildTaskTree();
-              // Update selected task if still exists
-              if (prevSelected && this.selectedTask) {
-                const updated = this.flatTasks.find(t => t.id === prevSelected);
-                if (updated) {
-                  this.selectedTask = updated;
-                }
-              }
-            } catch (e) {
-              console.error('Failed to poll tasks:', e);
-            }
-          }
-        }, 2000); // Poll every 2 seconds for more responsive updates
-      } catch (e) {
-        console.error('Failed to load tasks:', e);
-      }
     },
 
     buildTaskTree() {
       const taskMap = new Map<string, TaskDisplay>();
+
+      // Build parent IDs set for O(1) hasChildren lookup
+      this._parentIds = new Set<string>();
+      this.tasks.forEach(t => {
+        if (t.parentId) {
+          this._parentIds.add(t.parentId);
+        }
+      });
 
       // First pass: create TaskDisplay objects
       this.tasks.forEach(t => {
@@ -268,33 +275,36 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
     },
 
     hasChildren(task: TaskDisplay): boolean {
-      // Check original task data for children
-      return this.tasks.some(t => t.parentId === task.id);
+      // O(1) lookup using pre-built parent IDs Set
+      return this._parentIds.has(task.id);
     },
 
     selectTask(task: TaskDisplay, event: MouseEvent) {
       event.stopPropagation();
 
-      if (this.selectedTaskId === task.id && this.showTaskPopover) {
-        // Clicking same task again closes popover
-        this.closeTaskPopover();
+      if (this.selectedTaskId === task.id && this.showTaskModal) {
+        // Clicking same task again closes modal
+        this.closeTaskModal();
         return;
       }
 
       this.selectedTaskId = task.id;
       this.selectedTask = task;
-
-      // Position popover near click, but ensure it stays in viewport
-      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-      this.popoverPosition = {
-        x: Math.min(rect.right + 8, window.innerWidth - 350),
-        y: Math.max(rect.top, 60),
-      };
-      this.showTaskPopover = true;
+      this.showTaskModal = true;
     },
 
-    closeTaskPopover() {
-      this.showTaskPopover = false;
+    closeTaskModal() {
+      this.showTaskModal = false;
+    },
+
+    // Get worker avatar SVG by worker name
+    getWorkerAvatar(workerName: string, size = 32): string {
+      const worker = this.workers.find(w => w.name === workerName);
+      if (worker?.sheepConfig) {
+        return generateSheepSvg(worker.sheepConfig, size, worker.status);
+      }
+      // Fallback - return empty string (will show default icon in HTML)
+      return '';
     },
 
     // Get the blocker tasks for a task
@@ -336,6 +346,19 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
         case 'doing': return 'In Progress';
         case 'done': return 'Done';
         default: return status;
+      }
+    },
+
+    // Load tasks from backend and update cache
+    async loadTasks(runName: string) {
+      try {
+        if (window.tauriInvoke) {
+          const tasks = await window.tauriInvoke<Task[]>('get_tasks', { runName });
+          this.tasks = tasks;
+          this.buildTaskTree();
+        }
+      } catch (err) {
+        console.error('Failed to load tasks:', err);
       }
     },
 
@@ -396,7 +419,7 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
       try {
         if (window.tauriInvoke) {
           await window.tauriInvoke('delete_task', { runName, taskId: task.id });
-          this.closeTaskPopover();
+          this.closeTaskModal();
           await this.loadTasks(runName);
         }
       } catch (err) {

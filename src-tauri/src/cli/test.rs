@@ -205,6 +205,7 @@ pub fn run_scenario(
         max_iterations: None,
         pause_mode: None,
         draft: false,
+        assets: None,
     };
 
     // Run the scenario

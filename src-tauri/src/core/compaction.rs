@@ -5,14 +5,37 @@
 //! removes the old messages.
 
 use std::path::Path;
-use tracing::{info, warn};
+use std::process::Stdio;
+use std::sync::Arc;
+use std::time::Duration;
+use thiserror::Error;
+use tokio::process::Command;
+use tokio::time::timeout;
+use tracing::{debug, info, warn};
 
 use crate::core::config::Config;
 use crate::core::files::Files;
-use crate::core::state::{Message, SQLiteState, StateResult};
+use crate::core::state::{Message, SQLiteState, StateError, StateResult};
+
+/// Error type for compaction operations
+#[derive(Error, Debug)]
+pub enum CompactionError {
+    #[error("Agent failed: {0}")]
+    AgentError(String),
+    #[error("Timeout generating summary after {0} seconds")]
+    Timeout(u64),
+    #[error("State error: {0}")]
+    State(#[from] StateError),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Compaction not needed")]
+    NotNeeded,
+}
 
 /// Prompt template for generating compaction summaries
 const COMPACTION_PROMPT: &str = r#"You are summarizing a chat thread for an AI coding agent system.
+
+IMPORTANT: This is a text-only task. Do NOT use any tools - no file reads, no terminal commands, no searches. Simply read the messages below and output your summary directly as text.
 
 Below are messages from a shared learnings chat where workers record discoveries, patterns, and gotchas about a codebase.
 
@@ -24,7 +47,7 @@ Summarize ALL the learnings into a concise bullet-point list:
 - Group related items if it improves clarity
 - Order by importance/usefulness
 
-Output ONLY the bullet points, no preamble or explanation.
+Output ONLY the bullet points, no preamble or explanation. Do not use any tools.
 
 Messages to summarize:
 "#;
@@ -142,12 +165,15 @@ pub fn compact_thread_with_summary(
 
 /// Check if the learnings thread needs compaction
 /// Returns the messages to compact and the prompt if compaction is needed
-pub fn check_learnings_compaction(
+pub fn check_learnings_compaction_with_config(
     state: &SQLiteState,
+    config: &Config,
 ) -> StateResult<Option<(Vec<Message>, String)>> {
-    let config = Config::default();
-
     // Check if compaction is enabled
+    if !config.compaction_enabled {
+        return Ok(None);
+    }
+
     let threshold = match config.compaction_threshold {
         Some(t) => t,
         None => return Ok(None),
@@ -176,6 +202,15 @@ pub fn check_learnings_compaction(
     Ok(Some((messages_to_compact, prompt)))
 }
 
+/// Check if the learnings thread needs compaction (using default config)
+/// Returns the messages to compact and the prompt if compaction is needed
+pub fn check_learnings_compaction(
+    state: &SQLiteState,
+) -> StateResult<Option<(Vec<Message>, String)>> {
+    let config = Config::default();
+    check_learnings_compaction_with_config(state, &config)
+}
+
 /// Rewrite a chat file with new messages
 fn rewrite_chat_file(path: &Path, messages: &[Message]) -> std::io::Result<()> {
     use std::fs::File;
@@ -191,6 +226,324 @@ fn rewrite_chat_file(path: &Path, messages: &[Message]) -> std::io::Result<()> {
     }
 
     Ok(())
+}
+
+/// Default timeout for summary generation (60 seconds)
+const SUMMARY_TIMEOUT_SECS: u64 = 60;
+
+// ============================================================================
+// Text-only ACP Client for Compaction
+// ============================================================================
+
+use agent_client_protocol::{
+    Agent, Client, ClientSideConnection, ContentBlock, CreateTerminalRequest,
+    CreateTerminalResponse, Implementation, InitializeRequest, KillTerminalCommandRequest,
+    KillTerminalCommandResponse, NewSessionRequest, PromptRequest, ProtocolVersion,
+    ReadTextFileRequest, ReadTextFileResponse, ReleaseTerminalRequest, ReleaseTerminalResponse,
+    RequestPermissionRequest, RequestPermissionResponse, SessionNotification, SessionUpdate,
+    TerminalOutputRequest, TerminalOutputResponse, TextContent, WaitForTerminalExitRequest,
+    WaitForTerminalExitResponse, WriteTextFileRequest, WriteTextFileResponse,
+};
+use tokio::sync::Mutex;
+
+/// A minimal ACP client for text-only operations (no tools).
+/// All tool requests are denied - we only want text output.
+struct TextOnlyClient {
+    collected_text: Mutex<String>,
+}
+
+impl TextOnlyClient {
+    fn new() -> Self {
+        Self {
+            collected_text: Mutex::new(String::new()),
+        }
+    }
+
+    async fn get_text(&self) -> String {
+        self.collected_text.lock().await.clone()
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+impl Client for TextOnlyClient {
+    async fn request_permission(
+        &self,
+        _args: RequestPermissionRequest,
+    ) -> std::result::Result<RequestPermissionResponse, agent_client_protocol::Error> {
+        // Deny all permission requests - text only mode
+        Err(agent_client_protocol::Error::internal_error())
+    }
+
+    async fn session_notification(
+        &self,
+        args: SessionNotification,
+    ) -> std::result::Result<(), agent_client_protocol::Error> {
+        // Collect text output from agent
+        if let SessionUpdate::AgentMessageChunk(chunk) = &args.update {
+            if let ContentBlock::Text(text) = &chunk.content {
+                let mut collected = self.collected_text.lock().await;
+                collected.push_str(&text.text);
+            }
+        }
+        Ok(())
+    }
+
+    async fn read_text_file(
+        &self,
+        _args: ReadTextFileRequest,
+    ) -> std::result::Result<ReadTextFileResponse, agent_client_protocol::Error> {
+        // Deny file reads - text only mode
+        Err(agent_client_protocol::Error::internal_error())
+    }
+
+    async fn write_text_file(
+        &self,
+        _args: WriteTextFileRequest,
+    ) -> std::result::Result<WriteTextFileResponse, agent_client_protocol::Error> {
+        // Deny file writes - text only mode
+        Err(agent_client_protocol::Error::internal_error())
+    }
+
+    async fn create_terminal(
+        &self,
+        _args: CreateTerminalRequest,
+    ) -> std::result::Result<CreateTerminalResponse, agent_client_protocol::Error> {
+        Err(agent_client_protocol::Error::internal_error())
+    }
+
+    async fn terminal_output(
+        &self,
+        _args: TerminalOutputRequest,
+    ) -> std::result::Result<TerminalOutputResponse, agent_client_protocol::Error> {
+        Err(agent_client_protocol::Error::internal_error())
+    }
+
+    async fn release_terminal(
+        &self,
+        _args: ReleaseTerminalRequest,
+    ) -> std::result::Result<ReleaseTerminalResponse, agent_client_protocol::Error> {
+        Err(agent_client_protocol::Error::internal_error())
+    }
+
+    async fn wait_for_terminal_exit(
+        &self,
+        _args: WaitForTerminalExitRequest,
+    ) -> std::result::Result<WaitForTerminalExitResponse, agent_client_protocol::Error> {
+        Err(agent_client_protocol::Error::internal_error())
+    }
+
+    async fn kill_terminal_command(
+        &self,
+        _args: KillTerminalCommandRequest,
+    ) -> std::result::Result<KillTerminalCommandResponse, agent_client_protocol::Error> {
+        Err(agent_client_protocol::Error::internal_error())
+    }
+}
+
+/// Generate a compaction summary using an AI agent via ACP.
+///
+/// Spawns the configured agent and uses ACP protocol to send a prompt
+/// and collect text output. No tools are enabled - text only mode.
+pub async fn generate_compaction_summary(
+    messages: &[Message],
+    project_path: &Path,
+    agent_command: &[String],
+) -> Result<String, CompactionError> {
+    use crate::core::acp::collect_agent_env;
+    use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+    if messages.is_empty() {
+        return Err(CompactionError::AgentError(
+            "No messages to summarize".to_string(),
+        ));
+    }
+
+    if agent_command.is_empty() {
+        return Err(CompactionError::AgentError(
+            "Empty agent command".to_string(),
+        ));
+    }
+
+    info!(
+        "Generating compaction summary for {} messages via ACP",
+        messages.len()
+    );
+
+    // Build the prompt with messages to summarize
+    let prompt = get_compaction_prompt(messages);
+
+    // Create text-only client
+    let client = Arc::new(TextOnlyClient::new());
+
+    // Spawn agent process
+    let mut cmd = Command::new(&agent_command[0]);
+    if agent_command.len() > 1 {
+        cmd.args(&agent_command[1..]);
+    }
+    cmd.current_dir(project_path);
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::null());
+
+    // Pass through API keys
+    for (key, value) in collect_agent_env() {
+        cmd.env(&key, &value);
+    }
+
+    let mut child = cmd.spawn()?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| CompactionError::AgentError("Failed to get stdin".to_string()))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| CompactionError::AgentError("Failed to get stdout".to_string()))?;
+
+    debug!("Agent process started for compaction");
+
+    // Convert to futures-compatible streams
+    let stdin_compat = stdin.compat_write();
+    let stdout_compat = stdout.compat();
+
+    // Create ACP connection
+    let (conn, io_task) =
+        ClientSideConnection::new(client.clone(), stdin_compat, stdout_compat, |fut| {
+            tokio::task::spawn_local(fut);
+        });
+
+    // Spawn IO task
+    let io_handle = tokio::task::spawn_local(async move {
+        if let Err(e) = io_task.await {
+            debug!("ACP IO task ended: {:?}", e);
+        }
+    });
+
+    // Run with timeout
+    let result = timeout(Duration::from_secs(SUMMARY_TIMEOUT_SECS), async {
+        // Initialize
+        let init_request = InitializeRequest::new(ProtocolVersion::LATEST).client_info(
+            Implementation::new("hirsel-compaction", env!("CARGO_PKG_VERSION")),
+        );
+        conn.initialize(init_request).await?;
+
+        // Create session with NO MCP servers (text-only)
+        let session_request = NewSessionRequest::new(project_path.to_string_lossy().to_string());
+        let session = conn.new_session(session_request).await?;
+        let session_id = session.session_id;
+
+        debug!("ACP session created for compaction: {}", session_id);
+
+        // Send prompt
+        let prompt_request = PromptRequest::new(
+            session_id,
+            vec![ContentBlock::Text(TextContent::new(prompt))],
+        );
+        conn.prompt(prompt_request).await?;
+
+        Ok::<(), agent_client_protocol::Error>(())
+    })
+    .await;
+
+    // Clean up
+    drop(conn);
+    let _ = io_handle.await;
+    let _ = child.kill().await;
+
+    // Check result
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            return Err(CompactionError::AgentError(format!("ACP error: {}", e)));
+        }
+        Err(_) => {
+            return Err(CompactionError::Timeout(SUMMARY_TIMEOUT_SECS));
+        }
+    }
+
+    // Get collected text
+    let summary = client.get_text().await.trim().to_string();
+
+    if summary.is_empty() {
+        return Err(CompactionError::AgentError(
+            "Agent returned empty summary".to_string(),
+        ));
+    }
+
+    info!(
+        "Generated compaction summary ({} chars) for {} messages",
+        summary.len(),
+        messages.len()
+    );
+
+    Ok(summary)
+}
+
+/// Result of a successful compaction operation
+#[derive(Debug)]
+pub struct CompactionResult {
+    /// Whether compaction was performed
+    pub compacted: bool,
+    /// Number of messages that were compacted
+    pub messages_compacted: usize,
+    /// Preview of the generated summary (first 200 chars)
+    pub summary_preview: String,
+}
+
+/// Compact the learnings thread using an AI agent to generate the summary
+///
+/// This is the main entry point for automatic compaction. It:
+/// 1. Checks if compaction is needed
+/// 2. Generates a summary using the configured AI agent
+/// 3. Performs the compaction in the database
+pub async fn compact_learnings_with_agent(
+    state: &SQLiteState,
+    files: &Files,
+    config: &Config,
+) -> Result<CompactionResult, CompactionError> {
+    // Check if compaction is needed and get messages to compact
+    // (this also checks if compaction is enabled via config)
+    let (messages_to_compact, _prompt) =
+        match check_learnings_compaction_with_config(state, config)? {
+            Some(result) => result,
+            None => return Err(CompactionError::NotNeeded),
+        };
+
+    let messages_count = messages_to_compact.len();
+
+    // Get project path for agent context
+    let project_path = state.get_project_path().ok().flatten();
+    let project_path = project_path
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| files.run_dir().to_path_buf());
+
+    // Generate summary using AI agent
+    let summary =
+        generate_compaction_summary(&messages_to_compact, &project_path, &config.agent.command)
+            .await?;
+
+    // Create summary preview
+    let summary_preview = if summary.len() > 200 {
+        format!("{}...", &summary[..200])
+    } else {
+        summary.clone()
+    };
+
+    // Perform the compaction
+    compact_thread_with_summary(
+        state,
+        files,
+        "learnings",
+        &summary,
+        config.compaction_threshold,
+        Some(config.compaction_keep_messages),
+    )?;
+
+    Ok(CompactionResult {
+        compacted: true,
+        messages_compacted: messages_count,
+        summary_preview,
+    })
 }
 
 #[cfg(test)]

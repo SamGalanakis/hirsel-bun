@@ -72,6 +72,11 @@ impl Files {
         self.run_dir.join("eval.md")
     }
 
+    /// Path to assets/ directory - contains images and other assets for spec/eval.
+    pub fn assets(&self) -> PathBuf {
+        self.run_dir.join("assets")
+    }
+
     /// Path to tmp/eval_log.md - the evaluation log.
     pub fn eval_log(&self) -> PathBuf {
         self.run_dir.join("tmp").join("eval_log.md")

@@ -4,8 +4,9 @@
 
 import { formatElapsed, formatProgress, formatRelativeTime } from '../utils/formatters';
 import { getStatusBadgeClass, getStatusLabel, getProgressBarClass } from '../utils/status';
-import { createDraft } from '../api';
+import { createDraft, cloneRun } from '../api';
 import type { RunSummary } from '../types';
+import { dataCache, DATA_EVENTS } from '../data-cache';
 
 declare const Alpine: {
   store: (name: string) => { selectedRun?: string | null } | undefined;
@@ -25,9 +26,14 @@ export function runList() {
     contextMenuX: 0,
     contextMenuY: 0,
     contextMenuRun: null as string | null,
-    pollInterval: null as ReturnType<typeof setInterval> | null,
-    _initTimeout: null as ReturnType<typeof setTimeout> | null,
-    _initRetries: 0,
+    contextMenuStatus: null as string | null,
+    // Clone dialog state
+    cloneDialogVisible: false,
+    cloneSourceRun: null as string | null,
+    cloneNewName: '',
+    cloneLoading: false,
+    _eventCleanups: [] as (() => void)[],
+    _cacheUnsubscribe: null as (() => void) | null,
 
     // Formatting helpers
     formatElapsed,
@@ -92,70 +98,60 @@ export function runList() {
     },
 
     async init() {
-      await this.fetchRuns(true);
+      // Subscribe to shared cache
+      this._cacheUnsubscribe = dataCache.subscribe();
 
-      this.pollInterval = setInterval(() => {
-        this.fetchRuns(false);
-      }, 2000);
+      // Listen for runs updates from cache
+      const runsUpdatedHandler = (e: Event) => {
+        const customEvent = e as CustomEvent<RunSummary[]>;
+        this.runs = customEvent.detail;
+        this.loading = false;
+        this.error = null;
 
-      window.addEventListener('run-selected', (e: Event) => {
+        // Auto-select first run if none selected
+        if (this.runs.length > 0 && !this.selectedRun) {
+          setTimeout(() => {
+            if (!this.selectedRun && this.runs.length > 0) {
+              const firstRun = this.runs[0];
+              this.selectRunWithDraft(firstRun.name, firstRun.status);
+            }
+          }, 50);
+        }
+      };
+      window.addEventListener(DATA_EVENTS.RUNS_UPDATED, runsUpdatedHandler);
+      this._eventCleanups.push(() => window.removeEventListener(DATA_EVENTS.RUNS_UPDATED, runsUpdatedHandler));
+
+      // Get initial data from cache
+      const cachedRuns = dataCache.getRuns();
+      if (cachedRuns.length > 0) {
+        this.runs = cachedRuns;
+        this.loading = false;
+      }
+
+      // Listen for run selection
+      const runSelectedHandler = (e: Event) => {
         const customEvent = e as CustomEvent<string | null>;
         this.selectedRun = customEvent.detail;
         const index = this.runs.findIndex(r => r.name === customEvent.detail);
         if (index >= 0) this.selectedIndex = index;
-      });
+      };
+      window.addEventListener('run-selected', runSelectedHandler);
+      this._eventCleanups.push(() => window.removeEventListener('run-selected', runSelectedHandler));
 
-      document.addEventListener('click', () => {
+      // Close context menu on click
+      const clickHandler = () => {
         this.hideContextMenu();
-      });
+      };
+      document.addEventListener('click', clickHandler);
+      this._eventCleanups.push(() => document.removeEventListener('click', clickHandler));
     },
 
     destroy() {
-      if (this.pollInterval) {
-        clearInterval(this.pollInterval);
-        this.pollInterval = null;
-      }
-      if (this._initTimeout) {
-        clearTimeout(this._initTimeout);
-        this._initTimeout = null;
-      }
-    },
-
-    async fetchRuns(autoSelectFirst = false) {
-      try {
-        if (window.tauriInvoke) {
-          this._initRetries = 0; // Reset retry count on success
-          this.runs = await window.tauriInvoke<RunSummary[]>('get_runs');
-
-          if (autoSelectFirst && this.runs.length > 0 && !this.selectedRun) {
-            // Delay auto-select to ensure app-state event listener is ready
-            setTimeout(() => {
-              if (!this.selectedRun && this.runs.length > 0) {
-                const firstRun = this.runs[0];
-                this.selectRunWithDraft(firstRun.name, firstRun.status);
-              }
-            }, 50);
-          }
-        } else {
-          // Retry up to 50 times (5 seconds total) waiting for Tauri
-          if (this._initRetries < 50) {
-            this._initRetries++;
-            this._initTimeout = setTimeout(() => this.fetchRuns(autoSelectFirst), 100);
-          } else {
-            console.error('[fetchRuns] Tauri not available after 50 retries');
-            this.error = 'Unable to connect to backend';
-            this.loading = false;
-          }
-          return;
-        }
-        this.loading = false;
-        this.error = null;
-      } catch (err) {
-        const error = err as Error;
-        console.error('[fetchRuns] error:', error);
-        this.error = error.message || String(error);
-        this.loading = false;
-        this.runs = [];
+      this._eventCleanups.forEach(fn => fn());
+      this._eventCleanups = [];
+      if (this._cacheUnsubscribe) {
+        this._cacheUnsubscribe();
+        this._cacheUnsubscribe = null;
       }
     },
 
@@ -170,18 +166,49 @@ export function runList() {
     },
 
     // Context menu
-    showContextMenu(event: MouseEvent, runName: string) {
+    showContextMenu(event: MouseEvent, run: RunSummary) {
       event.preventDefault();
       event.stopPropagation();
       this.contextMenuX = event.clientX;
       this.contextMenuY = event.clientY;
-      this.contextMenuRun = runName;
+      this.contextMenuRun = run.name;
+      this.contextMenuStatus = run.status;
       this.contextMenuVisible = true;
     },
 
     hideContextMenu() {
       this.contextMenuVisible = false;
       this.contextMenuRun = null;
+      this.contextMenuStatus = null;
+    },
+
+    // Context menu visibility helpers
+    canPause(): boolean {
+      const status = this.contextMenuStatus;
+      // Can pause active runs (working, idle, waiting, eval)
+      return ['working', 'idle', 'waiting', 'eval'].includes(status || '');
+    },
+
+    canResume(): boolean {
+      const status = this.contextMenuStatus;
+      // Can resume paused runs
+      return status === 'paused';
+    },
+
+    canDeliver(): boolean {
+      const status = this.contextMenuStatus;
+      // Can deliver completed runs (done, but not already delivered/merged)
+      // Also allow delivering paused runs
+      return ['done', 'paused', 'working', 'idle', 'waiting', 'timed_out'].includes(status || '');
+    },
+
+    canClone(): boolean {
+      // Can clone any run
+      return this.contextMenuRun !== null;
+    },
+
+    isDraftRun(): boolean {
+      return this.contextMenuStatus === 'draft';
     },
 
     async contextPause() {
@@ -189,10 +216,9 @@ export function runList() {
       try {
         if (window.tauriInvoke) {
           await window.tauriInvoke('pause_run', { runName: this.contextMenuRun });
-          await this.fetchRuns();
+          await dataCache.invalidateRuns();
         }
       } catch (err) {
-        const error = err as Error;
         window.toast.error('Failed to pause run');
       }
       this.hideContextMenu();
@@ -203,10 +229,9 @@ export function runList() {
       try {
         if (window.tauriInvoke) {
           await window.tauriInvoke('resume_run', { runName: this.contextMenuRun });
-          await this.fetchRuns();
+          await dataCache.invalidateRuns();
         }
       } catch (err) {
-        const error = err as Error;
         window.toast.error('Failed to resume run');
       }
       this.hideContextMenu();
@@ -217,7 +242,7 @@ export function runList() {
       const runToDelete = this.contextMenuRun;
       this.hideContextMenu();
 
-      const confirmed = await (window as any).confirmDialog?.delete(runToDelete, 'run')
+      const confirmed = await window.confirmDialog?.delete(runToDelete, 'run')
         ?? confirm(`Delete run "${runToDelete}"?`);
       if (!confirmed) return;
 
@@ -229,10 +254,9 @@ export function runList() {
             this.selectedIndex = -1;
             window.dispatchEvent(new CustomEvent('run-selected', { detail: null }));
           }
-          await this.fetchRuns();
+          await dataCache.invalidateRuns();
         }
       } catch (err) {
-        const error = err as Error;
         window.toast.error('Failed to delete run');
       }
     },
@@ -245,13 +269,70 @@ export function runList() {
             runName: this.contextMenuRun,
           });
           window.toast.success(`Delivered to ${branch}`);
-          await this.fetchRuns();
+          await dataCache.invalidateRuns();
         }
       } catch (err) {
-        const error = err as Error;
         window.toast.error('Failed to deliver');
       }
       this.hideContextMenu();
+    },
+
+    /**
+     * Show clone dialog for context menu run
+     */
+    showCloneDialog() {
+      if (!this.contextMenuRun) return;
+      this.cloneSourceRun = this.contextMenuRun;
+      this.cloneNewName = this.contextMenuRun + '-copy';
+      this.cloneDialogVisible = true;
+      this.hideContextMenu();
+
+      // Focus the input after dialog opens
+      setTimeout(() => {
+        const input = document.getElementById('clone-name-input') as HTMLInputElement;
+        if (input) {
+          input.focus();
+          input.select();
+        }
+      }, 100);
+    },
+
+    /**
+     * Hide clone dialog
+     */
+    hideCloneDialog() {
+      this.cloneDialogVisible = false;
+      this.cloneSourceRun = null;
+      this.cloneNewName = '';
+      this.cloneLoading = false;
+    },
+
+    /**
+     * Execute the clone operation
+     */
+    async executeClone() {
+      if (!this.cloneSourceRun || !this.cloneNewName.trim()) return;
+
+      this.cloneLoading = true;
+      try {
+        const detail = await cloneRun(this.cloneSourceRun, this.cloneNewName.trim());
+        window.toast.success(`Cloned to "${detail.name}"`);
+
+        // Refresh runs list via cache
+        await dataCache.invalidateRuns();
+
+        // Select the new draft
+        this.selectRun(detail.name);
+
+        // Dispatch draft-selected event for the draft editor
+        window.dispatchEvent(new CustomEvent('draft-selected', { detail: detail.name }));
+
+        this.hideCloneDialog();
+      } catch (err) {
+        const error = err as Error;
+        window.toast.error(error.message || 'Failed to clone run');
+        this.cloneLoading = false;
+      }
     },
 
     /**
@@ -262,8 +343,8 @@ export function runList() {
         const detail = await createDraft();
         window.toast.success(`Draft "${detail.name}" created`);
 
-        // Refresh runs list
-        await this.fetchRuns(false);
+        // Refresh runs list via cache
+        await dataCache.invalidateRuns();
 
         // Select the new draft
         this.selectRun(detail.name);
@@ -271,7 +352,6 @@ export function runList() {
         // Dispatch draft-selected event for the draft editor
         window.dispatchEvent(new CustomEvent('draft-selected', { detail: detail.name }));
       } catch (err) {
-        const error = err as Error;
         window.toast.error('Failed to create draft');
       }
     },

@@ -27,6 +27,9 @@ pub enum GitError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("Push failed: {0}")]
+    PushFailed(String),
+
     #[error("{0}")]
     Other(String),
 }
@@ -152,11 +155,19 @@ pub fn parse_github_url(url: &str) -> ParsedRepoUrl {
 /// List branches from a remote repository
 ///
 /// Uses git ls-remote to fetch branch names without cloning.
+/// Sets environment variables to prevent hanging on credential prompts.
 pub fn list_remote_branches(url: &str) -> Result<Vec<String>> {
     use std::process::Command;
 
     let output = Command::new("git")
         .args(["ls-remote", "--heads", url])
+        // Prevent git from prompting for credentials (would hang)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        // Prevent SSH from prompting for passwords (would hang)
+        .env(
+            "GIT_SSH_COMMAND",
+            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
+        )
         .output()
         .map_err(|e| GitError::Other(format!("Failed to run git ls-remote: {}", e)))?;
 
@@ -273,10 +284,21 @@ pub fn push_to_remote(
     // Set up credentials callback for SSH/HTTPS auth
     let mut callbacks = git2::RemoteCallbacks::new();
     callbacks.credentials(|_url, username_from_url, allowed_types| {
+        tracing::debug!(
+            "Git credentials requested for URL: {:?}, username: {:?}, allowed_types: {:?}",
+            _url,
+            username_from_url,
+            allowed_types
+        );
+
         // Try SSH agent first
         if allowed_types.contains(git2::CredentialType::SSH_KEY) {
             if let Some(username) = username_from_url {
-                return git2::Cred::ssh_key_from_agent(username);
+                tracing::debug!("Trying SSH agent for user '{}'", username);
+                match git2::Cred::ssh_key_from_agent(username) {
+                    Ok(cred) => return Ok(cred),
+                    Err(e) => tracing::debug!("SSH agent failed: {}", e),
+                }
             }
         }
 
@@ -294,16 +316,29 @@ pub fn push_to_remote(
 
             if key_path.exists() {
                 let username = username_from_url.unwrap_or("git");
-                return git2::Cred::ssh_key(username, None, &key_path, None);
+                tracing::debug!("Trying SSH key at {:?} for user '{}'", key_path, username);
+                match git2::Cred::ssh_key(username, None, &key_path, None) {
+                    Ok(cred) => return Ok(cred),
+                    Err(e) => tracing::debug!("SSH key failed: {}", e),
+                }
+            } else {
+                tracing::debug!("No SSH key found at {:?}", key_path);
             }
         }
 
         // Try git credential helper for HTTPS
         if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
-            return git2::Cred::credential_helper(&repo.config()?, _url, username_from_url);
+            tracing::debug!("Trying git credential helper");
+            match git2::Cred::credential_helper(&repo.config()?, _url, username_from_url) {
+                Ok(cred) => return Ok(cred),
+                Err(e) => tracing::debug!("Credential helper failed: {}", e),
+            }
         }
 
-        Err(git2::Error::from_str("no credentials available"))
+        tracing::warn!("No git credentials available - authentication will fail");
+        Err(git2::Error::from_str(
+            "no credentials available - check SSH keys or git credential helper",
+        ))
     });
 
     push_opts.remote_callbacks(callbacks);
@@ -320,7 +355,29 @@ pub fn push_to_remote(
         }
         Err(e) => {
             let _ = repo.remote_delete(remote_name);
-            Ok((false, format!("Failed to push: {}", e)))
+            // Parse error to provide better user feedback
+            let error_str = e.to_string();
+            let user_message = if error_str.contains("authentication")
+                || error_str.contains("credential")
+                || error_str.contains("permission denied")
+                || error_str.contains("publickey")
+            {
+                format!(
+                    "Git authentication failed: {}. Check your SSH keys or git credentials.",
+                    error_str
+                )
+            } else if error_str.contains("could not read")
+                || error_str.contains("network")
+                || error_str.contains("connection")
+            {
+                format!(
+                    "Git network error: {}. Check your internet connection.",
+                    error_str
+                )
+            } else {
+                format!("Git push failed: {}", error_str)
+            };
+            Err(GitError::PushFailed(user_message))
         }
     }
 }
@@ -524,7 +581,7 @@ pub fn create_worker_clone(
     // Initialize fresh git repo
     let repo = Repository::init(&worker_dir)?;
 
-    // Create initial branch named staging
+    // Create initial commit on a temporary branch
     {
         let sig = get_signature(&repo)?;
         let tree_id = {
@@ -535,6 +592,20 @@ pub fn create_worker_clone(
         };
         let tree = repo.find_tree(tree_id)?;
         repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])?;
+    }
+
+    // Rename the default branch to 'staging'
+    // git2 doesn't have a rename API, so we create staging and delete the old branch
+    let head_commit = repo.head()?.peel_to_commit()?;
+    repo.branch("staging", &head_commit, false)?;
+    repo.set_head("refs/heads/staging")?;
+
+    // Delete the old default branch (master/main)
+    if let Ok(mut head_ref) = repo.find_reference("refs/heads/master") {
+        let _ = head_ref.delete();
+    }
+    if let Ok(mut head_ref) = repo.find_reference("refs/heads/main") {
+        let _ = head_ref.delete();
     }
 
     // Add staging as origin remote

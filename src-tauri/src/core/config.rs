@@ -13,7 +13,16 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 use thiserror::Error;
+
+/// Regex patterns for worker scale parsing
+static WORKER_SCALE_PLUS_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\d+)\+$").expect("invalid regex"));
+static WORKER_SCALE_RANGE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\d+)-(\d+)$").expect("invalid regex"));
+static WORKER_SCALE_FIXED_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\d+)$").expect("invalid regex"));
 
 /// Context window sizes per model (in tokens)
 pub const CONTEXT_WINDOWS: &[(&str, u32)] = &[
@@ -298,8 +307,7 @@ impl WorkerScale {
     pub fn parse(value: &str) -> Result<Self, ConfigError> {
         let value = value.trim();
 
-        let plus_re = Regex::new(r"^(\d+)\+$").unwrap();
-        if let Some(caps) = plus_re.captures(value) {
+        if let Some(caps) = WORKER_SCALE_PLUS_RE.captures(value) {
             let min_val: u32 = caps[1].parse().unwrap();
             if min_val < 1 {
                 return Err(ConfigError::MinWorkersTooLow);
@@ -311,8 +319,7 @@ impl WorkerScale {
             });
         }
 
-        let range_re = Regex::new(r"^(\d+)-(\d+)$").unwrap();
-        if let Some(caps) = range_re.captures(value) {
+        if let Some(caps) = WORKER_SCALE_RANGE_RE.captures(value) {
             let min_val: u32 = caps[1].parse().unwrap();
             let max_val: u32 = caps[2].parse().unwrap();
             if min_val < 1 {
@@ -328,8 +335,7 @@ impl WorkerScale {
             });
         }
 
-        let fixed_re = Regex::new(r"^(\d+)$").unwrap();
-        if let Some(caps) = fixed_re.captures(value) {
+        if let Some(caps) = WORKER_SCALE_FIXED_RE.captures(value) {
             let count: u32 = caps[1].parse().unwrap();
             if count < 1 {
                 return Err(ConfigError::MinWorkersTooLow);
@@ -466,11 +472,17 @@ pub struct Config {
     #[serde(default = "default_human_in_the_loop")]
     pub human_in_the_loop: bool,
 
+    #[serde(default = "default_compaction_enabled")]
+    pub compaction_enabled: bool,
+
     #[serde(default = "default_compaction_threshold")]
     pub compaction_threshold: Option<u32>,
 
     #[serde(default = "default_compaction_keep_messages")]
     pub compaction_keep_messages: u32,
+
+    #[serde(default = "default_auto_improve")]
+    pub auto_improve: bool,
 
     #[serde(default = "default_context_warning_threshold")]
     pub context_warning_threshold: f64,
@@ -505,12 +517,20 @@ fn default_human_in_the_loop() -> bool {
     true
 }
 
+fn default_compaction_enabled() -> bool {
+    true
+}
+
 fn default_compaction_threshold() -> Option<u32> {
     Some(10000)
 }
 
 fn default_compaction_keep_messages() -> u32 {
     40
+}
+
+fn default_auto_improve() -> bool {
+    true
 }
 
 fn default_context_warning_threshold() -> f64 {
@@ -532,8 +552,10 @@ impl Default for Config {
             max_iterations: None,
             user_message_pause: default_user_message_pause(),
             human_in_the_loop: default_human_in_the_loop(),
+            compaction_enabled: default_compaction_enabled(),
             compaction_threshold: default_compaction_threshold(),
             compaction_keep_messages: default_compaction_keep_messages(),
+            auto_improve: default_auto_improve(),
             context_warning_threshold: default_context_warning_threshold(),
             remotes: HashMap::new(),
             coordinator_port: default_coordinator_port(),

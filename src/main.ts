@@ -23,6 +23,8 @@ import {
   aiMessageStream,
   workerOutputViewer,
   toastContainer,
+  sortToggle,
+  sortButton,
 } from './lib/components';
 
 // Initialize toast system (uses basecoat toaster)
@@ -30,6 +32,9 @@ import './lib/toast';
 
 // Initialize confirm dialog
 import { initConfirmDialog } from './lib/confirm-dialog';
+
+// Initialize shared data cache
+import { dataCache } from './lib/data-cache';
 
 // Import Lucide icons
 import {
@@ -40,37 +45,51 @@ import {
   getWorkerStatusIcon,
 } from './lib/icons';
 
+// Import sheep avatar utilities
+import { generateSheepSvg, getWorkerSheepSvg, getHatName, generateAgentSheepSvg } from './lib/sheep-avatar';
+
+// Import types to extend global Window interface
+import './lib/types';
+
 // Make Alpine available globally
-(window as any).Alpine = Alpine;
+window.Alpine = Alpine;
 
 // Export Tauri APIs globally
-(window as any).tauriInvoke = invoke;
-(window as any).tauriGetCurrentWindow = getCurrentWindow;
+window.tauriInvoke = invoke;
+window.tauriGetCurrentWindow = getCurrentWindow;
 
 // Export icon utilities globally for Alpine templates
-(window as any).getIcon = getIcon;
-(window as any).getActionIcon = getActionIcon;
-(window as any).getTaskStatusIcon = getTaskStatusIcon;
-(window as any).getWorkerStatusIcon = getWorkerStatusIcon;
+window.getIcon = getIcon;
+window.getActionIcon = getActionIcon;
+window.getTaskStatusIcon = getTaskStatusIcon;
+window.getWorkerStatusIcon = getWorkerStatusIcon;
+
+// Export sheep avatar utilities globally for Alpine templates
+window.generateSheepSvg = generateSheepSvg;
+window.getWorkerSheepSvg = getWorkerSheepSvg;
+window.getHatName = getHatName;
+window.generateAgentSheepSvg = generateAgentSheepSvg;
 
 // Export Alpine components globally for x-data bindings
-(window as any).appState = appState;
-(window as any).runList = runList;
-(window as any).runDetail = runDetail;
-(window as any).draftEditor = draftEditor;
-(window as any).workerPanel = workerPanel;
-(window as any).taskPanel = taskPanel;
-(window as any).activityLog = activityLog;
-(window as any).chatPanel = chatPanel;
-(window as any).directChat = directChat;
-(window as any).permissionModal = permissionModal;
-(window as any).notifications = notifications;
-(window as any).tasksTab = tasksTab;
-(window as any).sheepClickerGame = sheepClickerGame;
-(window as any).settingsModal = settingsModal;
-(window as any).aiMessageStream = aiMessageStream;
-(window as any).workerOutputViewer = workerOutputViewer;
-(window as any).toastContainer = toastContainer;
+window.appState = appState;
+window.runList = runList;
+window.runDetail = runDetail;
+window.draftEditor = draftEditor;
+window.workerPanel = workerPanel;
+window.taskPanel = taskPanel;
+window.activityLog = activityLog;
+window.chatPanel = chatPanel;
+window.directChat = directChat;
+window.permissionModal = permissionModal;
+window.notifications = notifications;
+window.tasksTab = tasksTab;
+window.sheepClickerGame = sheepClickerGame;
+window.settingsModal = settingsModal;
+window.aiMessageStream = aiMessageStream;
+window.workerOutputViewer = workerOutputViewer;
+window.toastContainer = toastContainer;
+window.sortToggle = sortToggle;
+window.sortButton = sortButton;
 
 // Initialize Lucide icons
 initLucideIcons();
@@ -80,6 +99,21 @@ Alpine.start();
 
 // Initialize confirm dialog after DOM is ready
 initConfirmDialog();
+
+// Start shared data cache polling
+dataCache.start();
+
+// Right-click to dismiss toasts
+document.addEventListener('contextmenu', (e) => {
+  const toast = (e.target as HTMLElement).closest('.toaster .toast');
+  if (toast) {
+    e.preventDefault();
+    // Trigger the toast's dismiss by setting aria-hidden
+    toast.setAttribute('aria-hidden', 'true');
+    // Remove after animation
+    setTimeout(() => toast.remove(), 300);
+  }
+});
 
 console.log('[Hirsel] App initialized');
 

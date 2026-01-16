@@ -2,11 +2,48 @@
  * Chat panel Alpine component
  */
 
-import type { ThreadSummary, Message, WorkerDisplay } from '../types';
+import type { ThreadSummary, Message, WorkerDisplay, SheepConfig } from '../types';
 import { formatTimeHHMM, formatDate } from '../utils/formatters';
+import { generateSheepSvg } from '../sheep-avatar';
+import { getIcon } from '../icons';
 
-// Known group chat thread names
-const GROUP_CHAT_NAMES = ['learning', 'group'];
+// Known group chat thread names (user is the channel for workers to message the human)
+const GROUP_CHAT_NAMES = ['user', 'group', 'learnings'];
+
+// Memoization cache for sender color hashing
+const senderColorCache = new Map<string, string>();
+
+// Pre-defined colors for known senders
+const SENDER_COLORS: Record<string, string> = {
+  user: 'text-amber-500',
+  admin: 'text-amber-500',
+  system: 'text-wool-500',
+};
+
+// Colors for workers (assigned by hash)
+const WORKER_COLORS = ['text-sage', 'text-sky-400', 'text-pink-400', 'text-purple-400', 'text-golden'];
+
+// Get color for a sender (memoized)
+function getSenderColorCached(sender: string): string {
+  // Check cache first
+  const cached = senderColorCache.get(sender);
+  if (cached) return cached;
+
+  // Check known senders
+  if (SENDER_COLORS[sender]) {
+    senderColorCache.set(sender, SENDER_COLORS[sender]);
+    return SENDER_COLORS[sender];
+  }
+
+  // Compute hash for worker colors
+  let hash = 0;
+  for (let i = 0; i < sender.length; i++) {
+    hash = sender.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const color = WORKER_COLORS[Math.abs(hash) % WORKER_COLORS.length];
+  senderColorCache.set(sender, color);
+  return color;
+}
 
 /**
  * Chat panel component
@@ -24,12 +61,15 @@ export function chatPanel() {
     _threadPollInterval: null as ReturnType<typeof setInterval> | null,
     _currentRunName: null as string | null,
     _isLoadingRun: false,
+    _eventCleanups: [] as (() => void)[],
 
     async init() {
-      window.addEventListener('run-selected', (e: Event) => {
+      const runSelectedHandler = (e: Event) => {
         const customEvent = e as CustomEvent<string | null>;
         this.onRunSelected(customEvent.detail);
-      });
+      };
+      window.addEventListener('run-selected', runSelectedHandler);
+      this._eventCleanups.push(() => window.removeEventListener('run-selected', runSelectedHandler));
 
       // Initial load if a run is already selected
       const app = this.getAppState();
@@ -40,6 +80,8 @@ export function chatPanel() {
 
     destroy() {
       this.stopPolling();
+      this._eventCleanups.forEach(fn => fn());
+      this._eventCleanups = [];
     },
 
     // Get group chat threads (learning, group)
@@ -251,14 +293,17 @@ export function chatPanel() {
 
       try {
         if (window.tauriInvoke) {
-          await window.tauriInvoke('send_message', {
+          // Send message and get the created message back (avoids full refetch)
+          const newMsg = await window.tauriInvoke<Message>('send_message', {
             runName,
             threadName: this.selectedThread,
             content,
           });
+
+          // Append to local messages instead of refetching all
+          this.messages.push(newMsg);
         }
 
-        await this.fetchMessages();
         // @ts-expect-error Alpine.js $nextTick magic method
         this.$nextTick(() => this.scrollToBottom());
       } catch (e) {
@@ -292,19 +337,27 @@ export function chatPanel() {
     formatTime: formatTimeHHMM,
     formatDate,
 
-    getSenderColor(sender: string): string {
-      const colors: Record<string, string> = {
-        user: 'text-amber-500',
-        admin: 'text-amber-500',
-        system: 'text-wool-500',
-      };
-      if (colors[sender]) return colors[sender];
-      const workerColors = ['text-sage', 'text-sky-400', 'text-pink-400', 'text-purple-400', 'text-golden'];
-      let hash = 0;
-      for (let i = 0; i < sender.length; i++) {
-        hash = sender.charCodeAt(i) + ((hash << 5) - hash);
+    getSenderColor: getSenderColorCached,
+
+    // Get sheep avatar SVG for a worker
+    getWorkerAvatar(workerName: string): string {
+      const worker = this.workers.find(w => w.name === workerName);
+      if (worker?.sheepConfig) {
+        return generateSheepSvg(worker.sheepConfig, 16);
       }
-      return workerColors[Math.abs(hash) % workerColors.length];
+      // Fallback - grey circle
+      return '<svg class="w-4 h-4"><circle cx="8" cy="8" r="6" fill="#6b7280"/></svg>';
+    },
+
+    // Get icon SVG for group chat threads
+    getGroupChatIcon(threadName: string): string {
+      const iconNames: Record<string, string> = {
+        user: 'user',
+        group: 'users',
+        learnings: 'library',
+      };
+      const iconName = iconNames[threadName] || 'hash';
+      return getIcon(iconName, 12);
     },
   };
 }

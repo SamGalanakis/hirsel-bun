@@ -331,7 +331,7 @@ export function taskPanel() {
       const taskToDelete = this.contextMenuTask.id;
       this.hideContextMenu();
 
-      const confirmed = await (window as any).confirmDialog?.delete(taskToDelete, 'task')
+      const confirmed = await window.confirmDialog?.delete(taskToDelete, 'task')
         ?? confirm(`Delete task "${taskToDelete}"?`);
       if (!confirmed) return;
 

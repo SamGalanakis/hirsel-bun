@@ -7,6 +7,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
+
+use serde_json;
 use thiserror::Error;
 use tracing::{debug, error, info};
 
@@ -132,6 +134,9 @@ impl RemoteWorkerSpawner {
     /// * `project_url` - Git HTTP URL to clone from coordinator's staging repo
     /// * `agent_command` - Command to run the agent (e.g., ["claude-code-acp"])
     /// * `env_vars` - Environment variables to forward (e.g., API keys)
+    /// * `is_leader` - Whether this worker is the leader
+    /// * `leader_name` - Name of the leader worker (if any)
+    /// * `teammates` - List of teammate worker names
     ///
     /// # Returns
     /// Remote PID on success
@@ -142,6 +147,9 @@ impl RemoteWorkerSpawner {
         project_url: &str,
         agent_command: &[String],
         env_vars: Option<&HashMap<String, String>>,
+        is_leader: bool,
+        leader_name: Option<&str>,
+        teammates: Option<&[String]>,
     ) -> RemoteResult<u32> {
         let work_dir = format!("{}/{}/{}", self.config.work_base, run_name, worker_name);
 
@@ -161,8 +169,16 @@ impl RemoteWorkerSpawner {
 
         // Step 2: Start worker process
         info!("Starting worker {} on {}", worker_name, self.config.host);
-        let worker_script =
-            self.build_worker_script(run_name, worker_name, &work_dir, agent_command, env_vars);
+        let worker_script = self.build_worker_script(
+            run_name,
+            worker_name,
+            &work_dir,
+            agent_command,
+            env_vars,
+            is_leader,
+            leader_name,
+            teammates,
+        );
 
         let pid = self.spawn_remote_process(&worker_script)?;
         info!(
@@ -207,6 +223,9 @@ echo "Workspace ready at {work_dir}"
         work_dir: &str,
         agent_command: &[String],
         env_vars: Option<&HashMap<String, String>>,
+        is_leader: bool,
+        leader_name: Option<&str>,
+        teammates: Option<&[String]>,
     ) -> String {
         let api_url = format!("http://127.0.0.1:{}", self.tunnel_port);
 
@@ -229,11 +248,23 @@ echo "Workspace ready at {work_dir}"
         }
 
         let env_block = env_exports.join("\n");
-        let _cmd_str = agent_command
-            .iter()
-            .map(|s| shell_escape(s))
-            .collect::<Vec<_>>()
-            .join(" ");
+
+        // Build agent command as JSON for passing to hirsel __remote-worker
+        let agent_command_json =
+            serde_json::to_string(agent_command).unwrap_or_else(|_| "[]".to_string());
+        let agent_command_escaped = agent_command_json.replace('\'', "'\\''");
+
+        // Build optional args
+        let leader_arg = if is_leader { "--is-leader" } else { "" };
+        let leader_name_arg = leader_name
+            .map(|n| format!("--leader-name '{}'", n))
+            .unwrap_or_default();
+        let teammates_arg = teammates
+            .map(|t| format!("--teammates '{}'", t.join(",")))
+            .unwrap_or_default();
+
+        // Spec path is in the work directory
+        let spec_path = format!("{}/spec.md", work_dir);
 
         format!(
             r#"
@@ -242,13 +273,28 @@ cd {work_dir}
 # Set environment
 {env_block}
 
-# Run worker in background
-nohup {python} -m hirsel.remote_worker > worker.log 2>&1 &
+# Run worker in background using hirsel Rust binary
+nohup hirsel __remote-worker \
+    --api-url '{api_url}' \
+    --run-name '{run_name}' \
+    --worker-name '{worker_name}' \
+    --work-dir '{work_dir}' \
+    --spec '{spec_path}' \
+    --agent-command '{agent_command}' \
+    {leader_arg} {leader_name_arg} {teammates_arg} \
+    > worker.log 2>&1 &
 echo $!
 "#,
             work_dir = work_dir,
             env_block = env_block,
-            python = self.config.python_path
+            api_url = api_url,
+            run_name = run_name,
+            worker_name = worker_name,
+            spec_path = spec_path,
+            agent_command = agent_command_escaped,
+            leader_arg = leader_arg,
+            leader_name_arg = leader_name_arg,
+            teammates_arg = teammates_arg,
         )
     }
 
@@ -364,6 +410,7 @@ echo $!
 }
 
 /// Escape a string for shell use
+#[allow(dead_code)] // Reserved for future remote command escaping
 fn shell_escape(s: &str) -> String {
     if s.chars()
         .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/')

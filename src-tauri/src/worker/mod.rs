@@ -18,8 +18,10 @@
 
 pub mod acp_client;
 pub mod eval_mcp;
+pub mod http_state;
 pub mod mcp;
 pub mod msg;
+pub mod remote_runner;
 pub mod runner;
 
 pub use acp_client::{run_acp_worker, WorkerRunConfig};
@@ -27,4 +29,5 @@ pub use eval_mcp::{run_eval_mcp_server, EvalMcpServer};
 pub use mcp::{run_mcp_server, McpServer};
 pub use msg::{execute_inbox, execute_list, execute_read, execute_send};
 pub use msg::{inbox, list, read, send, MsgError, MsgResult};
+pub use remote_runner::run_remote_worker;
 pub use runner::{WorkerConfig, WorkerError, WorkerRunner};

@@ -129,6 +129,11 @@ pub fn execute(
     // Update run status to delivered
     state.set_status(Status::Delivered)?;
 
+    // Trigger auto-improve if enabled
+    let (global_config, _) =
+        config::Config::load().unwrap_or_else(|_| (config::Config::default(), vec![]));
+    let _ = crate::core::workers::maybe_run_improve(run_name, &global_config);
+
     // Output result
     if json {
         let mut output = serde_json::json!({

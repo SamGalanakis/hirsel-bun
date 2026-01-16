@@ -60,6 +60,83 @@ fn is_completed_status(status: &RunStatus) -> bool {
     )
 }
 
+/// Internal cooldown for compaction checks (10 seconds)
+const COMPACTION_INTERNAL_COOLDOWN_SECONDS: i64 = 10;
+
+/// Trigger automatic learnings compaction if needed.
+/// This is called from get_run_detail polling. It spawns a subprocess
+/// to handle compaction (like improve does) to avoid Send issues with ACP.
+fn trigger_compaction_if_needed(run_name: &str) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+
+    let run_dir = config::run_dir(run_name);
+    let files = crate::core::Files::new(&run_dir);
+    let state =
+        SQLiteState::new(files.db_path()).map_err(|e| format!("Failed to open database: {}", e))?;
+
+    let (global_config, _) =
+        config::Config::load().unwrap_or_else(|_| (config::Config::default(), vec![]));
+
+    // Quick checks before spawning subprocess
+    if !global_config.compaction_enabled {
+        return Ok(());
+    }
+
+    // Internal cooldown check (10 seconds) - just to prevent rapid-fire triggers
+    if let Ok(Some(last_compaction)) = state.get_last_compaction_at() {
+        if let Ok(last_time) = chrono::DateTime::parse_from_rfc3339(&last_compaction) {
+            let now = Utc::now();
+            let elapsed_seconds = (now - last_time.with_timezone(&Utc)).num_seconds();
+            if elapsed_seconds < COMPACTION_INTERNAL_COOLDOWN_SECONDS {
+                tracing::warn!(
+                    "Compaction triggered within {}s of last compaction ({}s ago) for run '{}'",
+                    COMPACTION_INTERNAL_COOLDOWN_SECONDS,
+                    elapsed_seconds,
+                    run_name
+                );
+                return Ok(()); // Internal cooldown not elapsed
+            }
+        }
+    }
+
+    // Check if compaction is actually needed (threshold check)
+    let check_result =
+        crate::core::compaction::check_learnings_compaction_with_config(&state, &global_config);
+    if !matches!(check_result, Ok(Some(_))) {
+        return Ok(()); // Not needed
+    }
+
+    // Spawn compaction subprocess
+    let hirsel_exe =
+        std::env::current_exe().map_err(|e| format!("Failed to get current exe: {}", e))?;
+
+    let mut cmd = Command::new(&hirsel_exe);
+    cmd.arg("__compact-learnings")
+        .arg(run_name)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    // Spawn detached
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    match cmd.spawn() {
+        Ok(child) => {
+            tracing::info!(
+                "Spawned compaction process for '{}', pid={}",
+                run_name,
+                child.id()
+            );
+            Ok(())
+        }
+        Err(e) => Err(format!("Failed to spawn compaction: {}", e)),
+    }
+}
+
 // =============================================================================
 // Status Enums (match TypeScript types)
 // =============================================================================
@@ -167,6 +244,9 @@ pub struct RunDetail {
     pub workers_active: u32,
     pub workers_total: u32,
     pub elapsed_minutes: f64,
+    // Learnings and compaction status
+    pub learnings_count: u32,
+    pub learnings_processed_at: Option<String>,
 }
 
 /// Task from the database
@@ -183,6 +263,58 @@ pub struct Task {
     pub tokens_used: Option<u64>,
     pub created_at: String,
     pub pending_done_at: Option<String>,
+}
+
+/// Sheep avatar configuration - deterministically generated from worker name
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SheepConfig {
+    /// Hat type (0=none, 1=crown, 2=cowboy, 3=tophat, 4=beanie, 5=wizard, 6=chef, 7=hardhat)
+    pub hat: u8,
+    /// Wool fluffiness (0-3, affects wool layer count/opacity)
+    pub fluffiness: u8,
+    /// Body width modifier (-2 to +2)
+    pub body_width: i8,
+    /// Body height modifier (-2 to +2)
+    pub body_height: i8,
+    /// Ear position modifier (-1 to +1 for forward/back positioning)
+    pub ear_position: i8,
+    /// Leg length modifier (-1 to +1)
+    pub leg_length: i8,
+    /// Wool color hue shift (0-359 degrees, applied as CSS filter)
+    pub hue_shift: u16,
+    /// Glasses type (0=none, 1=round, 2=square, 3=sunglasses, 4=eyepatch)
+    pub glasses: u8,
+    /// Bow tie (0=none, 1=red, 2=blue, 3=gold, 4=pink)
+    pub bowtie: u8,
+}
+
+impl SheepConfig {
+    /// Generate deterministic config from worker name
+    pub fn from_name(name: &str, is_leader: bool) -> Self {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        name.hash(&mut hasher);
+        let hash = hasher.finish();
+
+        // Use different parts of the hash for different attributes
+        let bytes = hash.to_le_bytes();
+
+        SheepConfig {
+            // Leaders always get crown (1), others get random hat (0-7, where 0=none)
+            hat: if is_leader { 1 } else { bytes[0] % 8 },
+            fluffiness: bytes[1] % 4,                 // 0-3
+            body_width: ((bytes[2] % 5) as i8) - 2,   // -2 to +2
+            body_height: ((bytes[3] % 5) as i8) - 2,  // -2 to +2
+            ear_position: ((bytes[4] % 3) as i8) - 1, // -1 to +1
+            leg_length: ((bytes[5] % 3) as i8) - 1,   // -1 to +1
+            hue_shift: 0,                             // disabled - looks odd
+            glasses: bytes[6] % 5,                    // 0-4 (0=none most common)
+            bowtie: bytes[7] % 5,                     // 0-4 (0=none most common)
+        }
+    }
 }
 
 /// Worker from the database
@@ -208,6 +340,8 @@ pub struct Worker {
     pub output_tokens: Option<u64>,
     pub turns: Option<u32>,
     pub current_task: Option<String>,
+    /// Sheep avatar configuration
+    pub sheep_config: SheepConfig,
 }
 
 /// Message from the database
@@ -232,6 +366,26 @@ pub struct ThreadSummary {
     pub unread_count: u32,
     pub last_message: Option<String>,
     pub last_timestamp: Option<String>,
+}
+
+/// Unread notification aggregated across all runs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnreadNotification {
+    pub id: String,
+    pub run_name: String,
+    pub thread: String,
+    pub sender: String,
+    pub content: String,
+    pub timestamp: String,
+}
+
+/// Response for get_all_unread_notifications
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnreadNotificationsResponse {
+    pub notifications: Vec<UnreadNotification>,
+    pub total_runs_with_unread: u32,
 }
 
 /// History entry for activity log
@@ -267,6 +421,109 @@ pub struct AgentPreset {
     pub mcp_config: Option<serde_json::Value>,
 }
 
+/// Authentication method for frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthMethodResponse {
+    Env,
+    ApiKey,
+    OAuth,
+}
+
+impl From<config::AuthMethod> for AuthMethodResponse {
+    fn from(method: config::AuthMethod) -> Self {
+        match method {
+            config::AuthMethod::Env => Self::Env,
+            config::AuthMethod::ApiKey => Self::ApiKey,
+            config::AuthMethod::OAuth => Self::OAuth,
+        }
+    }
+}
+
+impl From<AuthMethodResponse> for config::AuthMethod {
+    fn from(method: AuthMethodResponse) -> Self {
+        match method {
+            AuthMethodResponse::Env => Self::Env,
+            AuthMethodResponse::ApiKey => Self::ApiKey,
+            AuthMethodResponse::OAuth => Self::OAuth,
+        }
+    }
+}
+
+/// Agent auth configuration for frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentAuthResponse {
+    pub method: AuthMethodResponse,
+    pub api_key: Option<String>,
+    pub env_var: Option<String>,
+}
+
+impl From<config::AgentAuth> for AgentAuthResponse {
+    fn from(auth: config::AgentAuth) -> Self {
+        Self {
+            method: auth.method.into(),
+            // Don't expose full API key, just indicate if one is set
+            api_key: auth.api_key.map(|k| {
+                if k.len() > 8 {
+                    format!("{}...{}", &k[..4], &k[k.len() - 4..])
+                } else {
+                    "****".to_string()
+                }
+            }),
+            env_var: auth.env_var,
+        }
+    }
+}
+
+/// Auth configuration for frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthConfigResponse {
+    pub default_method: AuthMethodResponse,
+    pub claude: Option<AgentAuthResponse>,
+    pub gemini: Option<AgentAuthResponse>,
+    pub codex: Option<AgentAuthResponse>,
+    pub goose: Option<AgentAuthResponse>,
+}
+
+impl From<config::AuthConfig> for AuthConfigResponse {
+    fn from(auth: config::AuthConfig) -> Self {
+        Self {
+            default_method: auth.default_method.into(),
+            claude: auth.claude.map(|a| a.into()),
+            gemini: auth.gemini.map(|a| a.into()),
+            codex: auth.codex.map(|a| a.into()),
+            goose: auth.goose.map(|a| a.into()),
+        }
+    }
+}
+
+/// Remote configuration for frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteConfigResponse {
+    pub host: String,
+    pub ssh_key: Option<String>,
+    pub ssh_port: u16,
+    pub work_base: String,
+    pub python_path: String,
+    pub location: Option<String>,
+}
+
+impl From<config::RemoteConfig> for RemoteConfigResponse {
+    fn from(remote: config::RemoteConfig) -> Self {
+        Self {
+            host: remote.host,
+            ssh_key: remote.ssh_key,
+            ssh_port: remote.ssh_port,
+            work_base: remote.work_base,
+            python_path: remote.python_path,
+            location: remote.location,
+        }
+    }
+}
+
 /// Application configuration for frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -278,10 +535,72 @@ pub struct ConfigResponse {
     pub max_iterations: Option<u32>,
     pub user_message_pause: String,
     pub human_in_the_loop: bool,
+    pub compaction_enabled: bool,
     pub compaction_threshold: Option<u32>,
     pub compaction_keep_messages: u32,
+    pub auto_improve: bool,
     pub context_warning_threshold: f64,
     pub coordinator_port: u16,
+    pub auth: AuthConfigResponse,
+    pub remotes: std::collections::HashMap<String, RemoteConfigResponse>,
+    pub default_remote: Option<String>,
+}
+
+/// Agent auth update request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentAuthUpdate {
+    pub method: AuthMethodResponse,
+    pub api_key: Option<String>,
+    pub env_var: Option<String>,
+}
+
+impl From<AgentAuthUpdate> for config::AgentAuth {
+    fn from(update: AgentAuthUpdate) -> Self {
+        Self {
+            method: update.method.into(),
+            api_key: update.api_key,
+            env_var: update.env_var,
+        }
+    }
+}
+
+/// Auth config update request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthConfigUpdate {
+    pub default_method: Option<AuthMethodResponse>,
+    pub claude: Option<AgentAuthUpdate>,
+    pub gemini: Option<AgentAuthUpdate>,
+    pub codex: Option<AgentAuthUpdate>,
+    pub goose: Option<AgentAuthUpdate>,
+}
+
+/// Remote config update request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteConfigUpdate {
+    pub host: String,
+    pub ssh_key: Option<String>,
+    pub ssh_port: Option<u16>,
+    pub work_base: Option<String>,
+    pub python_path: Option<String>,
+    pub location: Option<String>,
+}
+
+impl From<RemoteConfigUpdate> for config::RemoteConfig {
+    fn from(update: RemoteConfigUpdate) -> Self {
+        Self {
+            host: update.host,
+            ssh_key: update.ssh_key,
+            ssh_port: update.ssh_port.unwrap_or(22),
+            work_base: update
+                .work_base
+                .unwrap_or_else(|| "/tmp/hirsel-remote".to_string()),
+            python_path: update.python_path.unwrap_or_else(|| "python3".to_string()),
+            location: update.location,
+        }
+    }
 }
 
 /// Request to update configuration
@@ -294,10 +613,15 @@ pub struct ConfigUpdateRequest {
     pub max_iterations: Option<Option<u32>>,
     pub user_message_pause: Option<String>,
     pub human_in_the_loop: Option<bool>,
+    pub compaction_enabled: Option<bool>,
     pub compaction_threshold: Option<Option<u32>>,
     pub compaction_keep_messages: Option<u32>,
+    pub auto_improve: Option<bool>,
     pub context_warning_threshold: Option<f64>,
     pub coordinator_port: Option<u16>,
+    pub auth: Option<AuthConfigUpdate>,
+    pub remotes: Option<std::collections::HashMap<String, RemoteConfigUpdate>>,
+    pub default_remote: Option<Option<String>>,
 }
 
 /// Result of validating a repository path/URL
@@ -331,6 +655,7 @@ pub struct RepoValidation {
 // =============================================================================
 
 /// Get list of all runs
+/// Optimized to use get_run_summary which fetches all data in 3 queries per run
 #[tauri::command]
 pub async fn get_runs() -> Result<Vec<RunSummary>, String> {
     let run_names = config::list_runs().map_err(|e| format!("list_runs error: {}", e))?;
@@ -344,23 +669,14 @@ pub async fn get_runs() -> Result<Vec<RunSummary>, String> {
 
         match SQLiteState::new(db_path.clone()) {
             Ok(state) => {
-                let status = state.status().unwrap_or(crate::core::state::Status::Idle);
-                let tasks = state.get_tasks().unwrap_or_default();
-                let workers = state.get_workers().unwrap_or_default();
+                // Use optimized summary fetch (3 queries instead of ~9)
+                let summary = match state.get_run_summary() {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
 
-                let tasks_done = tasks
-                    .iter()
-                    .filter(|t| t.status == crate::core::state::TaskStatus::Done)
-                    .count() as u32;
-                let tasks_total = tasks.len() as u32;
-                let workers_active = workers
-                    .iter()
-                    .filter(|w| w.status == crate::core::state::WorkerStatus::Working)
-                    .count() as u32;
-                let workers_total = workers.len() as u32;
-
-                // Convert core Status to GUI RunStatus first (needed for elapsed calc)
-                let run_status = match status {
+                // Convert core Status to GUI RunStatus
+                let run_status = match summary.status {
                     crate::core::state::Status::Draft => RunStatus::Draft,
                     crate::core::state::Status::Idle => RunStatus::Idle,
                     crate::core::state::Status::Working => RunStatus::Working,
@@ -375,58 +691,36 @@ pub async fn get_runs() -> Result<Vec<RunSummary>, String> {
                     crate::core::state::Status::Merged => RunStatus::Merged,
                 };
 
-                // Calculate elapsed minutes based on run status
-                // - For completed runs: duration from started_at (or created_at) to updated_at
-                // - For drafts: 0 (we show created date in frontend instead)
-                // - For active runs: duration from started_at to now
-                let started_at = state.get_started_at().ok().flatten();
-                let created_at_ts = state.get_created_at().ok().flatten();
-                let updated_at = state.get_updated_at().ok().flatten();
-
-                let elapsed_minutes = if run_status == RunStatus::Draft {
-                    0.0
-                } else if is_completed_status(&run_status) {
-                    // For completed runs, use duration from start to completion
-                    // Fall back to created_at if started_at is not set
-                    let start = started_at.as_deref().or(created_at_ts.as_deref());
-                    if let (Some(start), Some(end)) = (start, updated_at.as_deref()) {
+                // For completed runs, recalculate elapsed as duration (start to completion)
+                // The summary returns elapsed from start to now, which is correct for active runs
+                let elapsed_minutes = if is_completed_status(&run_status) {
+                    let start = summary
+                        .started_at
+                        .as_deref()
+                        .or(summary.created_at.as_deref());
+                    if let (Some(start), Some(end)) = (start, summary.updated_at.as_deref()) {
                         calculate_duration_minutes(start, end)
                     } else {
-                        0.0
+                        summary.elapsed_minutes
                     }
-                } else if let Ok(Some(time_info)) = state.get_time_info() {
-                    time_info.elapsed_minutes
-                } else if let Some(ref sa) = started_at {
-                    parse_elapsed_minutes(sa)
-                } else if let Some(ref ca) = created_at_ts {
-                    parse_elapsed_minutes(ca)
                 } else {
-                    0.0
+                    summary.elapsed_minutes
                 };
 
-                // Get time limit
-                let time_limit_minutes = state
-                    .get_time_limit_minutes()
-                    .ok()
-                    .flatten()
-                    .map(|m| m as u32);
-
-                // Check for unread messages
-                let has_unread_messages = state.get_unread_count().unwrap_or(0) > 0;
-
-                // Use created_at for sorting (already fetched above)
-                let created_at = created_at_ts.unwrap_or_else(|| Utc::now().to_rfc3339());
+                let created_at = summary
+                    .created_at
+                    .unwrap_or_else(|| Utc::now().to_rfc3339());
 
                 runs.push(RunSummary {
                     name,
                     status: run_status,
-                    tasks_done,
-                    tasks_total,
-                    workers_active,
-                    workers_total,
+                    tasks_done: summary.tasks_done,
+                    tasks_total: summary.tasks_total,
+                    workers_active: summary.workers_active,
+                    workers_total: summary.workers_total,
                     elapsed_minutes,
-                    time_limit_minutes,
-                    has_unread_messages,
+                    time_limit_minutes: summary.time_limit_minutes.map(|m| m as u32),
+                    has_unread_messages: summary.unread_count > 0,
                     created_at,
                 });
             }
@@ -517,6 +811,21 @@ pub async fn get_run_detail(run_name: String) -> Result<RunDetail, String> {
     // Get branch if set
     let branch = state.get_branch().ok().flatten();
 
+    // Get learnings count (efficient COUNT query instead of fetching all)
+    let learnings_count = state.get_messages_count("learnings").unwrap_or(0) as u32;
+    let learnings_processed_at = state.get_learnings_processed_at().ok().flatten();
+
+    // Trigger automatic compaction check (spawns subprocess if needed)
+    // Only when run is in an active state
+    if matches!(
+        run_status,
+        RunStatus::Working | RunStatus::Eval | RunStatus::Done
+    ) {
+        if let Err(e) = trigger_compaction_if_needed(&run_name) {
+            tracing::debug!("Compaction check failed: {}", e);
+        }
+    }
+
     Ok(RunDetail {
         name: run_name,
         status: run_status,
@@ -540,6 +849,8 @@ pub async fn get_run_detail(run_name: String) -> Result<RunDetail, String> {
         workers_active,
         workers_total,
         elapsed_minutes,
+        learnings_count,
+        learnings_processed_at,
     })
 }
 
@@ -633,7 +944,7 @@ pub async fn resume_run(run_name: String) -> Result<(), String> {
 /// Delete a run
 #[tauri::command]
 pub async fn delete_run(run_name: String) -> Result<(), String> {
-    use crate::core::workers::pause_all_workers;
+    use crate::core::workers::kill_all_workers;
     use std::fs;
 
     let run_dir = config::run_dir(&run_name);
@@ -642,11 +953,15 @@ pub async fn delete_run(run_name: String) -> Result<(), String> {
         return Err(format!("Run '{}' not found", run_name));
     }
 
-    // Try to stop any running workers first
+    // Kill any running workers first
     let db_path = run_dir.join("hirsel.db");
     if db_path.exists() {
         if let Ok(state) = SQLiteState::new(db_path) {
-            let _ = pause_all_workers(&state);
+            if let Ok(killed) = kill_all_workers(&state) {
+                if !killed.is_empty() {
+                    tracing::info!("Killed {} worker(s) before deleting run", killed.len());
+                }
+            }
         }
     }
 
@@ -1137,6 +1452,165 @@ pub async fn create_draft(project_path: Option<String>) -> Result<RunDetail, Str
         workers_active: 0,
         workers_total: 0,
         elapsed_minutes: 0.0,
+        learnings_count: 0,
+        learnings_processed_at: None,
+    })
+}
+
+/// Clone an existing run to a new draft
+///
+/// Creates a new draft run with the same settings, spec, and eval as the source run.
+/// Does not copy messages, tasks (except scope), workers, or any runtime state.
+#[tauri::command]
+pub async fn clone_run(source_run: String, new_name: String) -> Result<RunDetail, String> {
+    use crate::core::Files;
+    use std::fs;
+
+    // Validate new name
+    let new_name = new_name.trim().to_string();
+    if new_name.is_empty() {
+        return Err("New run name cannot be empty".to_string());
+    }
+
+    // Check source exists
+    let source_dir = config::run_dir(&source_run);
+    let source_db_path = source_dir.join("hirsel.db");
+    if !source_db_path.exists() {
+        return Err(format!("Source run '{}' not found", source_run));
+    }
+
+    // Check new name doesn't exist
+    let new_dir = config::run_dir(&new_name);
+    if new_dir.exists() {
+        return Err(format!("Run '{}' already exists", new_name));
+    }
+
+    // Open source database to read settings
+    let source_state = SQLiteState::new(source_db_path)
+        .map_err(|e| format!("Failed to open source database: {}", e))?;
+
+    // Read settings from source
+    let project_path = source_state.get_project_path().ok().flatten();
+    let worker_scale = source_state
+        .get_worker_scale()
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "1".to_string());
+    let time_limit = source_state.get_time_limit_minutes().ok().flatten();
+    let human_in_the_loop = source_state.get_human_in_the_loop().unwrap_or(true);
+    let max_iterations = source_state.get_max_iterations().ok().flatten();
+
+    // Read spec.md from source
+    let source_spec_path = source_dir.join("spec.md");
+    let spec_content = if source_spec_path.exists() {
+        fs::read_to_string(&source_spec_path)
+            .map_err(|e| format!("Failed to read source spec: {}", e))?
+    } else {
+        "# Specification\n\nDescribe the task for the AI workers...\n".to_string()
+    };
+
+    // Read eval.md from source (optional)
+    let source_eval_path = source_dir.join("eval.md");
+    let eval_content = if source_eval_path.exists() {
+        Some(
+            fs::read_to_string(&source_eval_path)
+                .map_err(|e| format!("Failed to read source eval: {}", e))?,
+        )
+    } else {
+        None
+    };
+
+    // Create new run directory
+    fs::create_dir_all(&new_dir).map_err(|e| format!("Failed to create run directory: {}", e))?;
+
+    // Initialize Files helper and create required directories
+    let files = Files::new(&new_dir);
+    files
+        .init_dirs()
+        .map_err(|e| format!("Failed to init dirs: {}", e))?;
+
+    // Write spec.md
+    fs::write(new_dir.join("spec.md"), &spec_content)
+        .map_err(|e| format!("Failed to create spec file: {}", e))?;
+
+    // Write eval.md if exists
+    if let Some(eval) = &eval_content {
+        fs::write(new_dir.join("eval.md"), eval)
+            .map_err(|e| format!("Failed to create eval file: {}", e))?;
+    }
+
+    // Create tasks.md
+    fs::write(
+        new_dir.join("tasks.md"),
+        "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n| scope | TODO | | Read spec, create exploration tasks |\n",
+    ).map_err(|e| format!("Failed to create tasks file: {}", e))?;
+
+    // Initialize database
+    let db_path = new_dir.join("hirsel.db");
+    let state =
+        SQLiteState::new(db_path).map_err(|e| format!("Failed to create database: {}", e))?;
+
+    // Initialize state with Draft status
+    state
+        .init_state(project_path.as_deref())
+        .map_err(|e| format!("Failed to init state: {}", e))?;
+    state
+        .set_status(crate::core::state::Status::Draft)
+        .map_err(|e| format!("Failed to set draft status: {}", e))?;
+
+    // Copy settings
+    state
+        .set_worker_scale(&worker_scale)
+        .map_err(|e| format!("Failed to set worker scale: {}", e))?;
+    state
+        .set_human_in_the_loop(human_in_the_loop)
+        .map_err(|e| format!("Failed to set HITL: {}", e))?;
+    if let Some(limit) = time_limit {
+        state
+            .set_time_limit_minutes(Some(limit))
+            .map_err(|e| format!("Failed to set time limit: {}", e))?;
+    }
+    if let Some(max_iter) = max_iterations {
+        state
+            .set_max_iterations(Some(max_iter))
+            .map_err(|e| format!("Failed to set max iterations: {}", e))?;
+    }
+    // Store spec content as request
+    state
+        .set_request(Some(&spec_content))
+        .map_err(|e| format!("Failed to set request: {}", e))?;
+
+    // Add scope task
+    let _ = state.add_task("scope", "Read spec, create exploration tasks", None, None);
+
+    // Return the run detail
+    let created_at = chrono::Utc::now().to_rfc3339();
+
+    Ok(RunDetail {
+        name: new_name,
+        status: RunStatus::Draft,
+        request: Some(spec_content),
+        project_path,
+        remote_url: None,
+        branch: None,
+        worker_scale: Some(worker_scale),
+        time_limit_minutes: time_limit.map(|t| t as u32),
+        started_at: None,
+        summary: None,
+        created_at: created_at.clone(),
+        updated_at: created_at,
+        iteration_count: 0,
+        max_iterations: max_iterations.map(|m| m as u32),
+        human_in_the_loop,
+        waiting_reason: None,
+        unread_count: 0,
+        tasks_done: 0,
+        tasks_total: 1,
+        workers_active: 0,
+        workers_total: 0,
+        elapsed_minutes: 0.0,
+        learnings_count: 0,
+        learnings_processed_at: None,
     })
 }
 
@@ -1482,6 +1956,169 @@ pub async fn write_eval_file(run_name: String, content: String) -> Result<(), St
 }
 
 // =============================================================================
+// Asset Commands
+// =============================================================================
+
+/// Save an asset file (image, etc.) to a run's assets directory
+/// Returns the filename that was saved (may differ from original if name conflict)
+#[tauri::command]
+pub async fn save_asset(
+    run_name: String,
+    filename: String,
+    data: Vec<u8>,
+) -> Result<String, String> {
+    use crate::core::files::Files;
+
+    let run_dir = config::run_dir(&run_name);
+    if !run_dir.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let files = Files::new(&run_dir);
+    let assets_dir = files.assets();
+
+    // Create assets directory if it doesn't exist
+    std::fs::create_dir_all(&assets_dir)
+        .map_err(|e| format!("Failed to create assets directory: {}", e))?;
+
+    // Find a unique filename
+    let dest_filename = find_unique_asset_filename(&assets_dir, &filename);
+    let dest_path = assets_dir.join(&dest_filename);
+
+    // Write the file
+    std::fs::write(&dest_path, &data).map_err(|e| format!("Failed to write asset: {}", e))?;
+
+    Ok(dest_filename)
+}
+
+/// Find a unique filename in the assets directory
+fn find_unique_asset_filename(dir: &std::path::Path, filename: &str) -> String {
+    let dest = dir.join(filename);
+    if !dest.exists() {
+        return filename.to_string();
+    }
+
+    let path = std::path::Path::new(filename);
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(filename);
+    let ext = path.extension().and_then(|s| s.to_str());
+
+    let mut counter = 1;
+    loop {
+        let new_name = match ext {
+            Some(e) => format!("{}-{}.{}", stem, counter, e),
+            None => format!("{}-{}", stem, counter),
+        };
+
+        if !dir.join(&new_name).exists() {
+            return new_name;
+        }
+        counter += 1;
+    }
+}
+
+/// Import a file from a filesystem path into a run's assets directory
+/// Used by drag-and-drop from native file manager
+#[tauri::command]
+pub async fn import_asset_from_path(run_name: String, file_path: String) -> Result<String, String> {
+    use crate::core::files::Files;
+
+    let run_dir = config::run_dir(&run_name);
+    if !run_dir.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let source_path = std::path::PathBuf::from(&file_path);
+    if !source_path.exists() {
+        return Err(format!("File not found: {}", file_path));
+    }
+
+    if !source_path.is_file() {
+        return Err(format!("Not a file: {}", file_path));
+    }
+
+    let filename = source_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file")
+        .to_string();
+
+    let files = Files::new(&run_dir);
+    let assets_dir = files.assets();
+
+    // Create assets directory if it doesn't exist
+    std::fs::create_dir_all(&assets_dir)
+        .map_err(|e| format!("Failed to create assets directory: {}", e))?;
+
+    // Find a unique filename
+    let dest_filename = find_unique_asset_filename(&assets_dir, &filename);
+    let dest_path = assets_dir.join(&dest_filename);
+
+    // Copy the file
+    std::fs::copy(&source_path, &dest_path).map_err(|e| format!("Failed to copy asset: {}", e))?;
+
+    Ok(dest_filename)
+}
+
+/// Open the assets folder for a run in the system file browser
+#[tauri::command]
+pub async fn open_assets_folder(run_name: String) -> Result<(), String> {
+    use crate::core::files::Files;
+    use std::process::Command;
+
+    let run_dir = config::run_dir(&run_name);
+    if !run_dir.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let files = Files::new(&run_dir);
+    let assets_dir = files.assets();
+
+    // Create assets directory if it doesn't exist
+    std::fs::create_dir_all(&assets_dir)
+        .map_err(|e| format!("Failed to create assets directory: {}", e))?;
+
+    // Open in system file browser (cross-platform)
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&assets_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open assets folder: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(&assets_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open assets folder: {}", e))?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(&assets_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open assets folder: {}", e))?;
+    }
+
+    Ok(())
+}
+
+/// Get the assets base URL for a run (for rendering images in markdown)
+#[tauri::command]
+pub async fn get_assets_path(run_name: String) -> Result<String, String> {
+    use crate::core::files::Files;
+
+    let run_dir = config::run_dir(&run_name);
+    let files = Files::new(&run_dir);
+    let assets_dir = files.assets();
+
+    Ok(assets_dir.to_string_lossy().to_string())
+}
+
+// =============================================================================
 // Task Commands
 // =============================================================================
 
@@ -1752,6 +2389,7 @@ pub async fn get_workers(run_name: String) -> Result<Vec<Worker>, String> {
                 output_tokens: Some(session_metrics.output_tokens),
                 turns: Some(session_metrics.turns),
                 current_task,
+                sheep_config: SheepConfig::from_name(&w.name, is_leader),
             }
         })
         .collect();
@@ -1859,7 +2497,7 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
 
     Ok(Worker {
         id: worker.id as u32,
-        name: worker.name,
+        name: worker.name.clone(),
         pid: worker.pid.map(|p| p as u32),
         session_id: worker.session_id,
         status: match worker.status {
@@ -1883,6 +2521,7 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
         output_tokens: None,
         turns: None,
         current_task: None,
+        sheep_config: SheepConfig::from_name(&worker.name, false),
     })
 }
 
@@ -2192,6 +2831,73 @@ pub async fn get_threads(run_name: String) -> Result<Vec<ThreadSummary>, String>
     }
 
     Ok(threads)
+}
+
+/// Get all unread notifications across all runs
+/// This is a single query replacement for the N+1 query pattern
+#[tauri::command]
+pub async fn get_all_unread_notifications() -> Result<UnreadNotificationsResponse, String> {
+    // Get all run directories
+    let run_names = config::list_runs().unwrap_or_default();
+
+    let mut all_notifications: Vec<UnreadNotification> = Vec::new();
+    let mut runs_with_unread = 0;
+
+    for run_name in run_names {
+        let db_path = config::run_dir(&run_name).join("hirsel.db");
+        if !db_path.exists() {
+            continue;
+        }
+
+        let state = match SQLiteState::new(db_path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        // Get all unread messages for the user in this run
+        let unread_messages = match state.get_all_unread_messages("user") {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        if !unread_messages.is_empty() {
+            runs_with_unread += 1;
+
+            for msg in unread_messages {
+                // Skip user messages (they're not notifications)
+                if msg.sender == "user" || msg.sender == "admin" || msg.sender == "system" {
+                    continue;
+                }
+
+                all_notifications.push(UnreadNotification {
+                    id: format!("{}-{}-{}", run_name, msg.thread, msg.id),
+                    run_name: run_name.clone(),
+                    thread: msg.thread,
+                    sender: msg.sender,
+                    content: msg.content,
+                    timestamp: msg.timestamp,
+                });
+            }
+        }
+    }
+
+    // Sort by timestamp, newest first
+    all_notifications.sort_by(|a, b| {
+        let a_time = parse_timestamp(&a.timestamp);
+        let b_time = parse_timestamp(&b.timestamp);
+        match (b_time, a_time) {
+            (Some(bt), Some(at)) => bt.cmp(&at),
+            _ => std::cmp::Ordering::Equal,
+        }
+    });
+
+    // Limit to 20 most recent
+    all_notifications.truncate(20);
+
+    Ok(UnreadNotificationsResponse {
+        notifications: all_notifications,
+        total_runs_with_unread: runs_with_unread,
+    })
 }
 
 /// Send a message to a thread
@@ -2644,6 +3350,8 @@ pub struct WorkerEventResponse {
 pub struct WorkerEventsResponse {
     pub events: Vec<WorkerEventResponse>,
     pub last_id: Option<i64>,
+    /// Worker status for determining if still streaming
+    pub worker_status: Option<String>,
 }
 
 /// Get worker events for real-time streaming
@@ -2662,6 +3370,7 @@ pub async fn get_worker_events(
         return Ok(WorkerEventsResponse {
             events: Vec::new(),
             last_id: None,
+            worker_status: None,
         });
     }
 
@@ -2673,6 +3382,13 @@ pub async fn get_worker_events(
         .map_err(|e| format!("Failed to get worker events: {}", e))?;
 
     let last_id = events.last().map(|e| e.id);
+
+    // Get worker status to determine if still streaming
+    let worker_status = state
+        .get_worker(&worker_name)
+        .ok()
+        .flatten()
+        .map(|w| w.status.as_str().to_string());
 
     let events: Vec<WorkerEventResponse> = events
         .into_iter()
@@ -2691,7 +3407,11 @@ pub async fn get_worker_events(
         })
         .collect();
 
-    Ok(WorkerEventsResponse { events, last_id })
+    Ok(WorkerEventsResponse {
+        events,
+        last_id,
+        worker_status,
+    })
 }
 
 /// Clear worker events (for cleanup when attaching/detaching)
@@ -2731,10 +3451,19 @@ pub async fn get_config() -> Result<ConfigResponse, String> {
         max_iterations: cfg.max_iterations,
         user_message_pause: cfg.user_message_pause,
         human_in_the_loop: cfg.human_in_the_loop,
+        compaction_enabled: cfg.compaction_enabled,
         compaction_threshold: cfg.compaction_threshold,
         compaction_keep_messages: cfg.compaction_keep_messages,
+        auto_improve: cfg.auto_improve,
         context_warning_threshold: cfg.context_warning_threshold,
         coordinator_port: cfg.coordinator_port,
+        auth: cfg.auth.into(),
+        remotes: cfg
+            .remotes
+            .into_iter()
+            .map(|(k, v)| (k, v.into()))
+            .collect(),
+        default_remote: cfg.default_remote,
     })
 }
 
@@ -2766,17 +3495,52 @@ pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
     if let Some(hitl) = updates.human_in_the_loop {
         cfg.human_in_the_loop = hitl;
     }
+    if let Some(enabled) = updates.compaction_enabled {
+        cfg.compaction_enabled = enabled;
+    }
     if let Some(threshold) = updates.compaction_threshold {
         cfg.compaction_threshold = threshold;
     }
     if let Some(keep) = updates.compaction_keep_messages {
         cfg.compaction_keep_messages = keep;
     }
+    if let Some(auto) = updates.auto_improve {
+        cfg.auto_improve = auto;
+    }
     if let Some(warning) = updates.context_warning_threshold {
         cfg.context_warning_threshold = warning;
     }
     if let Some(port) = updates.coordinator_port {
         cfg.coordinator_port = port;
+    }
+
+    // Apply auth updates
+    if let Some(auth_update) = updates.auth {
+        if let Some(method) = auth_update.default_method {
+            cfg.auth.default_method = method.into();
+        }
+        if let Some(claude) = auth_update.claude {
+            cfg.auth.claude = Some(claude.into());
+        }
+        if let Some(gemini) = auth_update.gemini {
+            cfg.auth.gemini = Some(gemini.into());
+        }
+        if let Some(codex) = auth_update.codex {
+            cfg.auth.codex = Some(codex.into());
+        }
+        if let Some(goose) = auth_update.goose {
+            cfg.auth.goose = Some(goose.into());
+        }
+    }
+
+    // Apply remotes updates (replace entire map if provided)
+    if let Some(remotes) = updates.remotes {
+        cfg.remotes = remotes.into_iter().map(|(k, v)| (k, v.into())).collect();
+    }
+
+    // Apply default_remote update
+    if let Some(default_remote) = updates.default_remote {
+        cfg.default_remote = default_remote;
     }
 
     // Serialize to TOML
@@ -2925,6 +3689,7 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         validate_repo,
         init_project_repo,
         create_draft,
+        clone_run,
         update_draft,
         start_draft,
         // Spec/Eval file commands
@@ -2932,6 +3697,11 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         write_spec_file,
         read_eval_file,
         write_eval_file,
+        // Asset commands
+        save_asset,
+        import_asset_from_path,
+        open_assets_folder,
+        get_assets_path,
         // Task commands
         get_tasks,
         add_task,
@@ -2957,6 +3727,7 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         // Message commands
         get_messages,
         get_threads,
+        get_all_unread_notifications,
         send_message,
         mark_messages_read,
         // History commands

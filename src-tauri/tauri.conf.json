@@ -21,11 +21,16 @@
         "fullscreen": false,
         "center": true,
         "decorations": true,
-        "transparent": false
+        "transparent": false,
+        "dragDropEnabled": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$HOME/.hirsel/**", "/**"]
+      }
     }
   },
   "bundle": {

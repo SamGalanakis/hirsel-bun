@@ -118,8 +118,9 @@ export const confirmDialog = {
   delete: confirmDelete,
 };
 
+// Window interface is declared in types.ts
+
 // Make available globally
 if (typeof window !== 'undefined') {
-  // @ts-expect-error Adding confirmDialog to window for global access
   window.confirmDialog = confirmDialog;
 }

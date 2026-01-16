@@ -143,6 +143,11 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
         Commands::Delete(args) => {
             run_delete(&args.run_name, json)?;
         }
+        Commands::Clone(_) => {
+            // Clone is fully handled by cli/mod.rs
+            // This should not be reached via lib.rs
+            unreachable!("Clone command should be handled by CLI module");
+        }
         Commands::Prune => {
             run_prune(json)?;
         }
@@ -184,6 +189,20 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
             let run_dir = core::config::run_dir(&args.run_name);
             let spec = run_spec(&run_dir)?;
             println!("{}", spec);
+        }
+        Commands::Asset(args) => {
+            let added = cli::run_asset(&args.run_name, &args.paths)?;
+            if json {
+                println!("{}", serde_json::json!({ "added": added }));
+            } else {
+                for file in &added {
+                    println!("Added: assets/{}", file);
+                }
+                println!(
+                    "\nReference in spec.md: ![description](assets/{})",
+                    added.first().unwrap_or(&String::new())
+                );
+            }
         }
         Commands::Tasks(args) => {
             let output = cli::tasks::run_tasks(&args.run_name, json)?;
@@ -296,6 +315,51 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
                     .await
             })
             .map_err(|e| format!("Eval error: {}", e))?;
+        }
+        Commands::CompactLearnings(args) => {
+            // Internal command to run learnings compaction
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| format!("Failed to create runtime: {}", e))?;
+            rt.block_on(async {
+                tokio::task::LocalSet::new()
+                    .run_until(async { cli::compact::execute(&args.run_name).await })
+                    .await
+            })
+            .map_err(|e| format!("Compaction error: {}", e))?;
+        }
+        Commands::RemoteWorker(args) => {
+            // Internal command for remote worker subprocess
+            let agent_command: Vec<String> = serde_json::from_str(&args.agent_command)
+                .map_err(|e| format!("Invalid agent_command JSON: {}", e))?;
+            let teammates = args.teammates.map(|t| {
+                t.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            });
+
+            // Run the async remote worker
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| format!("Failed to create runtime: {}", e))?;
+            rt.block_on(async {
+                tokio::task::LocalSet::new()
+                    .run_until(async {
+                        worker::run_remote_worker(
+                            &args.api_url,
+                            &args.run_name,
+                            &args.worker_name,
+                            &args.work_dir,
+                            &args.spec,
+                            &agent_command,
+                            args.is_leader,
+                            args.leader_name.as_deref(),
+                            teammates,
+                        )
+                        .await
+                    })
+                    .await
+            })
+            .map_err(|e| format!("Remote worker error: {}", e))?;
         }
         Commands::Test(args) => {
             cli::test::execute(
