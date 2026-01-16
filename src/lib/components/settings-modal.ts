@@ -24,6 +24,7 @@ import {
 import type { ChatEvent } from '../types';
 
 type AuthMethod = 'env' | 'apiKey' | 'oauth';
+type RunnerType = 'ssh' | 'sprite';
 
 interface AgentAuth {
   method: AuthMethod;
@@ -39,6 +40,7 @@ interface AuthConfig {
   goose: AgentAuth | null;
 }
 
+// Legacy remote config (SSH)
 interface RemoteConfig {
   host: string;
   sshKey: string | null;
@@ -47,6 +49,27 @@ interface RemoteConfig {
   pythonPath: string;
   location: string | null;
 }
+
+// New runner configs
+interface SshRunnerConfig {
+  type: 'ssh';
+  host: string;
+  sshKey: string | null;
+  sshPort: number;
+  workBase: string;
+  location: string | null;
+}
+
+interface SpriteRunnerConfig {
+  type: 'sprite';
+  apiToken: string | null;
+  baseCheckpoint: string | null;
+  autoDestroy: boolean;
+  idleTimeoutSecs: number;
+  apiUrl: string;
+}
+
+type RunnerConfig = { type: 'local' } | SshRunnerConfig | SpriteRunnerConfig;
 
 interface Settings {
   agentCommand: string;
@@ -64,6 +87,10 @@ interface Settings {
   auth: AuthConfig;
   remotes: Record<string, RemoteConfig>;
   defaultRemote: string | null;
+  // New runner config
+  runners: Record<string, RunnerConfig>;
+  defaultRunner: string | null;
+  workerRunners: Record<string, string>;
 }
 
 // Default agent auth
@@ -73,7 +100,7 @@ const defaultAgentAuth = (): AgentAuth => ({
   envVar: null,
 });
 
-// Default remote config
+// Default remote config (legacy)
 const defaultRemoteConfig = (): RemoteConfig => ({
   host: '',
   sshKey: null,
@@ -81,6 +108,26 @@ const defaultRemoteConfig = (): RemoteConfig => ({
   workBase: '/tmp/hirsel-remote',
   pythonPath: 'python3',
   location: null,
+});
+
+// Default SSH runner config
+const defaultSshRunnerConfig = (): SshRunnerConfig => ({
+  type: 'ssh',
+  host: '',
+  sshKey: null,
+  sshPort: 22,
+  workBase: '/tmp/hirsel-remote',
+  location: null,
+});
+
+// Default Sprite runner config
+const defaultSpriteRunnerConfig = (): SpriteRunnerConfig => ({
+  type: 'sprite',
+  apiToken: null,
+  baseCheckpoint: null,
+  autoDestroy: true,
+  idleTimeoutSecs: 30,
+  apiUrl: 'https://api.sprites.dev',
 });
 
 /**
@@ -91,7 +138,7 @@ export function settingsModal() {
     loading: false,
     saving: false,
     error: null as string | null,
-    activeTab: 'general' as 'general' | 'auth' | 'remotes',
+    activeTab: 'general' as 'general' | 'auth' | 'runners',
 
     // Test connection state
     testing: false,
@@ -121,12 +168,21 @@ export function settingsModal() {
       },
       remotes: {} as Record<string, RemoteConfig>,
       defaultRemote: null,
+      runners: {} as Record<string, RunnerConfig>,
+      defaultRunner: null,
+      workerRunners: {} as Record<string, string>,
     } as Settings,
 
-    // Editing state for remotes
+    // Editing state for remotes (legacy)
     editingRemote: null as string | null,
     newRemoteName: '',
     editRemoteData: defaultRemoteConfig(),
+
+    // Editing state for runners
+    editingRunner: null as string | null,
+    newRunnerName: '',
+    newRunnerType: 'ssh' as RunnerType,
+    editRunnerData: defaultSshRunnerConfig() as SshRunnerConfig | SpriteRunnerConfig,
 
     // Cascading auth editor state
     selectedAuthProvider: '' as '' | 'claude' | 'gemini' | 'codex' | 'goose',
@@ -165,6 +221,29 @@ export function settingsModal() {
     // Get remote names as sorted array
     get remoteNames(): string[] {
       return Object.keys(this.settings.remotes).sort();
+    },
+
+    // Get runner names as sorted array
+    get runnerNames(): string[] {
+      return Object.keys(this.settings.runners).sort();
+    },
+
+    // Get runner type icon
+    getRunnerIcon(type: string): string {
+      switch (type) {
+        case 'ssh': return 'server';
+        case 'sprite': return 'cloud';
+        default: return 'cpu';
+      }
+    },
+
+    // Get runner type label
+    getRunnerTypeLabel(type: string): string {
+      switch (type) {
+        case 'ssh': return 'SSH';
+        case 'sprite': return 'Sprites';
+        default: return type;
+      }
     },
 
     // Switch theme family (preserves light/dark mode)
@@ -312,6 +391,100 @@ export function settingsModal() {
       }
     },
 
+    // ==================== RUNNER METHODS ====================
+
+    // Start adding a new runner
+    startAddRunner() {
+      this.editingRunner = '__new__';
+      this.newRunnerName = '';
+      this.newRunnerType = 'ssh';
+      this.editRunnerData = defaultSshRunnerConfig();
+    },
+
+    // Change runner type when adding new
+    onRunnerTypeChange() {
+      if (this.newRunnerType === 'ssh') {
+        this.editRunnerData = defaultSshRunnerConfig();
+      } else if (this.newRunnerType === 'sprite') {
+        this.editRunnerData = defaultSpriteRunnerConfig();
+      }
+    },
+
+    // Start editing an existing runner
+    startEditRunner(name: string) {
+      const runner = this.settings.runners[name];
+      if (!runner) return;
+
+      this.editingRunner = name;
+      this.newRunnerName = name;
+      this.newRunnerType = runner.type as RunnerType;
+      // Merge with defaults to ensure all required fields are present
+      if (runner.type === 'sprite') {
+        this.editRunnerData = { ...defaultSpriteRunnerConfig(), ...runner };
+      } else if (runner.type === 'ssh') {
+        this.editRunnerData = { ...defaultSshRunnerConfig(), ...runner };
+      } else {
+        this.editRunnerData = { ...runner } as SshRunnerConfig | SpriteRunnerConfig;
+      }
+    },
+
+    // Save runner config
+    saveRunner() {
+      const name = this.editingRunner === '__new__' ? this.newRunnerName.trim() : this.editingRunner;
+      if (!name) {
+        window.toast?.error('Runner name is required');
+        return;
+      }
+
+      // Validate based on type
+      if (this.editRunnerData.type === 'ssh') {
+        const ssh = this.editRunnerData as SshRunnerConfig;
+        if (!ssh.host?.trim()) {
+          window.toast?.error('SSH host is required');
+          return;
+        }
+      } else if (this.editRunnerData.type === 'sprite') {
+        const sprite = this.editRunnerData as SpriteRunnerConfig;
+        if (!sprite.apiToken?.trim()) {
+          window.toast?.error('API token is required');
+          return;
+        }
+      }
+
+      // If renaming, delete old entry
+      if (this.editingRunner !== '__new__' && this.editingRunner !== name) {
+        delete this.settings.runners[this.editingRunner!];
+        // Update any worker assignments
+        for (const [worker, runner] of Object.entries(this.settings.workerRunners)) {
+          if (runner === this.editingRunner) {
+            this.settings.workerRunners[worker] = name;
+          }
+        }
+      }
+
+      this.settings.runners[name] = { ...this.editRunnerData };
+      this.editingRunner = null;
+    },
+
+    // Cancel editing runner
+    cancelEditRunner() {
+      this.editingRunner = null;
+    },
+
+    // Delete a runner
+    deleteRunner(name: string) {
+      delete this.settings.runners[name];
+      if (this.settings.defaultRunner === name) {
+        this.settings.defaultRunner = null;
+      }
+      // Remove any worker assignments using this runner
+      for (const [worker, runner] of Object.entries(this.settings.workerRunners)) {
+        if (runner === name) {
+          delete this.settings.workerRunners[worker];
+        }
+      }
+    },
+
     async loadSettings() {
       this.loading = true;
       this.error = null;
@@ -340,6 +513,9 @@ export function settingsModal() {
             auth: AuthConfig;
             remotes: Record<string, RemoteConfig>;
             defaultRemote: string | null;
+            runners: Record<string, RunnerConfig>;
+            defaultRunner: string | null;
+            workerRunners: Record<string, string>;
           }>('get_config');
 
           this.settings = {
@@ -358,6 +534,9 @@ export function settingsModal() {
             auth: config.auth,
             remotes: config.remotes,
             defaultRemote: config.defaultRemote,
+            runners: config.runners || {},
+            defaultRunner: config.defaultRunner || null,
+            workerRunners: config.workerRunners || {},
           };
 
           // Auto-select configured provider if any
@@ -417,6 +596,9 @@ export function settingsModal() {
               auth: authUpdate,
               remotes: this.settings.remotes,
               defaultRemote: this.settings.defaultRemote,
+              runners: this.settings.runners,
+              defaultRunner: this.settings.defaultRunner,
+              workerRunners: this.settings.workerRunners,
             },
           });
 

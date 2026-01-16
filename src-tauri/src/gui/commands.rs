@@ -6,6 +6,7 @@
 use crate::core::{config, metrics, state::SQLiteState};
 use chrono::{NaiveDateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 /// Parse a timestamp string and return a DateTime<Utc>
 fn parse_timestamp(timestamp: &str) -> Option<chrono::DateTime<Utc>> {
@@ -258,11 +259,11 @@ pub struct Task {
     pub status: TaskStatus,
     pub claimed_by: Option<String>,
     pub claimed_at: Option<String>,
+    pub completed_at: Option<String>,
     pub parent_id: Option<String>,
     pub blocked_by: Option<Vec<String>>,
     pub tokens_used: Option<u64>,
     pub created_at: String,
-    pub pending_done_at: Option<String>,
 }
 
 /// Sheep avatar configuration - deterministically generated from worker name
@@ -291,6 +292,7 @@ pub struct SheepConfig {
 
 impl SheepConfig {
     /// Generate deterministic config from worker name
+    /// Hat 8 (detective) is reserved for eval agents
     pub fn from_name(name: &str, is_leader: bool) -> Self {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -304,6 +306,7 @@ impl SheepConfig {
 
         SheepConfig {
             // Leaders always get crown (1), others get random hat (0-7, where 0=none)
+            // Hat 8 (detective) is reserved for eval agents
             hat: if is_leader { 1 } else { bytes[0] % 8 },
             fluffiness: bytes[1] % 4,                 // 0-3
             body_width: ((bytes[2] % 5) as i8) - 2,   // -2 to +2
@@ -311,6 +314,31 @@ impl SheepConfig {
             ear_position: ((bytes[4] % 3) as i8) - 1, // -1 to +1
             leg_length: ((bytes[5] % 3) as i8) - 1,   // -1 to +1
             hue_shift: 0,                             // disabled - looks odd
+            glasses: bytes[6] % 5,                    // 0-4 (0=none most common)
+            bowtie: bytes[7] % 5,                     // 0-4 (0=none most common)
+        }
+    }
+
+    /// Generate deterministic config for an eval agent
+    /// Always uses detective hat (8), unique appearance based on eval id
+    pub fn for_eval(eval_id: u32) -> Self {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        eval_id.hash(&mut hasher);
+        let hash = hasher.finish();
+
+        let bytes = hash.to_le_bytes();
+
+        SheepConfig {
+            hat: 8,                                   // Always detective hat
+            fluffiness: bytes[1] % 4,                 // 0-3
+            body_width: ((bytes[2] % 5) as i8) - 2,   // -2 to +2
+            body_height: ((bytes[3] % 5) as i8) - 2,  // -2 to +2
+            ear_position: ((bytes[4] % 3) as i8) - 1, // -1 to +1
+            leg_length: ((bytes[5] % 3) as i8) - 1,   // -1 to +1
+            hue_shift: 0,                             // disabled
             glasses: bytes[6] % 5,                    // 0-4 (0=none most common)
             bowtie: bytes[7] % 5,                     // 0-4 (0=none most common)
         }
@@ -410,6 +438,8 @@ pub struct Eval {
     pub log_file: Option<String>,
     pub started_at: String,
     pub finished_at: Option<String>,
+    /// Sheep avatar configuration (detective hat)
+    pub sheep_config: SheepConfig,
 }
 
 /// Agent preset configuration
@@ -524,6 +554,88 @@ impl From<config::RemoteConfig> for RemoteConfigResponse {
     }
 }
 
+/// Runner configuration for frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum RunnerConfigResponse {
+    #[serde(rename = "local")]
+    Local,
+    #[serde(rename = "ssh")]
+    Ssh {
+        host: String,
+        ssh_key: Option<String>,
+        ssh_port: u16,
+        work_base: String,
+        location: Option<String>,
+    },
+    #[serde(rename = "sprite")]
+    Sprite {
+        api_token: Option<String>,
+        base_checkpoint: Option<String>,
+        auto_destroy: bool,
+        idle_timeout_secs: u32,
+        api_url: String,
+    },
+}
+
+impl From<crate::core::runner::RunnerConfig> for RunnerConfigResponse {
+    fn from(cfg: crate::core::runner::RunnerConfig) -> Self {
+        match cfg {
+            crate::core::runner::RunnerConfig::Local => RunnerConfigResponse::Local,
+            crate::core::runner::RunnerConfig::Ssh(ssh) => RunnerConfigResponse::Ssh {
+                host: ssh.host,
+                ssh_key: ssh.ssh_key,
+                ssh_port: ssh.ssh_port,
+                work_base: ssh.work_base,
+                location: ssh.location,
+            },
+            crate::core::runner::RunnerConfig::Sprite(sprite) => RunnerConfigResponse::Sprite {
+                api_token: sprite.api_token,
+                base_checkpoint: sprite.base_checkpoint,
+                auto_destroy: sprite.auto_destroy,
+                idle_timeout_secs: sprite.idle_timeout_secs,
+                api_url: sprite.api_url,
+            },
+        }
+    }
+}
+
+impl From<RunnerConfigResponse> for crate::core::runner::RunnerConfig {
+    fn from(cfg: RunnerConfigResponse) -> Self {
+        match cfg {
+            RunnerConfigResponse::Local => crate::core::runner::RunnerConfig::Local,
+            RunnerConfigResponse::Ssh {
+                host,
+                ssh_key,
+                ssh_port,
+                work_base,
+                location,
+            } => crate::core::runner::RunnerConfig::Ssh(crate::core::runner::SshRunnerConfig {
+                host,
+                ssh_key,
+                ssh_port,
+                work_base,
+                location,
+            }),
+            RunnerConfigResponse::Sprite {
+                api_token,
+                base_checkpoint,
+                auto_destroy,
+                idle_timeout_secs,
+                api_url,
+            } => {
+                crate::core::runner::RunnerConfig::Sprite(crate::core::runner::SpriteRunnerConfig {
+                    api_token,
+                    base_checkpoint,
+                    auto_destroy,
+                    idle_timeout_secs,
+                    api_url,
+                })
+            }
+        }
+    }
+}
+
 /// Application configuration for frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -544,6 +656,9 @@ pub struct ConfigResponse {
     pub auth: AuthConfigResponse,
     pub remotes: std::collections::HashMap<String, RemoteConfigResponse>,
     pub default_remote: Option<String>,
+    pub runners: std::collections::HashMap<String, RunnerConfigResponse>,
+    pub default_runner: Option<String>,
+    pub worker_runners: std::collections::HashMap<String, String>,
 }
 
 /// Agent auth update request
@@ -622,6 +737,9 @@ pub struct ConfigUpdateRequest {
     pub auth: Option<AuthConfigUpdate>,
     pub remotes: Option<std::collections::HashMap<String, RemoteConfigUpdate>>,
     pub default_remote: Option<Option<String>>,
+    pub runners: Option<std::collections::HashMap<String, RunnerConfigResponse>>,
+    pub default_runner: Option<Option<String>>,
+    pub worker_runners: Option<std::collections::HashMap<String, String>>,
 }
 
 /// Result of validating a repository path/URL
@@ -2159,11 +2277,11 @@ pub async fn get_tasks(run_name: String) -> Result<Vec<Task>, String> {
                 status,
                 claimed_by: t.claimed_by,
                 claimed_at: t.claimed_at,
+                completed_at: t.completed_at,
                 parent_id: t.parent_id,
                 blocked_by,
                 tokens_used: t.tokens_used.map(|n| n as u64),
                 created_at: t.created_at,
-                pending_done_at: t.pending_done_at,
             }
         })
         .collect();
@@ -2231,11 +2349,11 @@ pub async fn add_task(
         },
         claimed_by: task.claimed_by,
         claimed_at: task.claimed_at,
+        completed_at: task.completed_at,
         parent_id: task.parent_id,
         blocked_by: blocked_by_vec,
         tokens_used: task.tokens_used.map(|t| t as u64),
         created_at: task.created_at,
-        pending_done_at: task.pending_done_at,
     })
 }
 
@@ -2891,8 +3009,8 @@ pub async fn get_all_unread_notifications() -> Result<UnreadNotificationsRespons
         }
     });
 
-    // Limit to 20 most recent
-    all_notifications.truncate(20);
+    // Limit to 100 most recent (frontend also caps at 100)
+    all_notifications.truncate(100);
 
     Ok(UnreadNotificationsResponse {
         notifications: all_notifications,
@@ -3033,13 +3151,14 @@ pub async fn get_evals(run_name: String) -> Result<Vec<Eval>, String> {
 
             Eval {
                 id: e.id as u32,
-                branch: e.branch,
+                branch: e.branch.clone(),
                 eval_name: e.eval_name,
                 status,
                 feedback: e.feedback,
                 log_file: e.log_file,
                 started_at: e.started_at,
                 finished_at: e.finished_at,
+                sheep_config: SheepConfig::for_eval(e.id as u32),
             }
         })
         .collect();
@@ -3432,6 +3551,320 @@ pub async fn clear_worker_events(run_name: String, worker_name: String) -> Resul
 }
 
 // =============================================================================
+// Worker Event Streaming
+// =============================================================================
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+use tokio::sync::oneshot;
+
+/// Manages active worker event streams
+pub struct WorkerEventStreamManager {
+    /// Active streams: (run_name, worker_name) -> cancel sender
+    streams: Mutex<HashMap<(String, String), oneshot::Sender<()>>>,
+}
+
+impl WorkerEventStreamManager {
+    pub fn new() -> Self {
+        Self {
+            streams: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Check if a stream is active for this worker
+    pub fn is_active(&self, run_name: &str, worker_name: &str) -> bool {
+        let streams = self.streams.lock().unwrap();
+        streams.contains_key(&(run_name.to_string(), worker_name.to_string()))
+    }
+
+    /// Register a new stream
+    pub fn register(&self, run_name: &str, worker_name: &str, cancel_tx: oneshot::Sender<()>) {
+        let mut streams = self.streams.lock().unwrap();
+        streams.insert((run_name.to_string(), worker_name.to_string()), cancel_tx);
+    }
+
+    /// Stop and remove a stream
+    pub fn stop(&self, run_name: &str, worker_name: &str) -> bool {
+        let mut streams = self.streams.lock().unwrap();
+        if let Some(cancel_tx) = streams.remove(&(run_name.to_string(), worker_name.to_string())) {
+            // Send cancel signal (ignore error if receiver dropped)
+            let _ = cancel_tx.send(());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Remove a stream without sending cancel (for cleanup after stream ends)
+    pub fn remove(&self, run_name: &str, worker_name: &str) {
+        let mut streams = self.streams.lock().unwrap();
+        streams.remove(&(run_name.to_string(), worker_name.to_string()));
+    }
+}
+
+impl Default for WorkerEventStreamManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Worker event emitted to frontend
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerEventEmit {
+    pub run_name: String,
+    pub worker_name: String,
+    #[serde(flatten)]
+    pub event: WorkerEventResponse,
+}
+
+/// Stream status event emitted to frontend
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type")]
+pub enum WorkerStreamEvent {
+    /// Initial batch of historical events
+    #[serde(rename = "history")]
+    History {
+        #[serde(rename = "runName")]
+        run_name: String,
+        #[serde(rename = "workerName")]
+        worker_name: String,
+        events: Vec<WorkerEventResponse>,
+        #[serde(rename = "workerStatus")]
+        worker_status: Option<String>,
+    },
+    /// New event during live streaming
+    #[serde(rename = "event")]
+    Event {
+        #[serde(rename = "runName")]
+        run_name: String,
+        #[serde(rename = "workerName")]
+        worker_name: String,
+        event: WorkerEventResponse,
+    },
+    /// Worker status update
+    #[serde(rename = "status")]
+    Status {
+        #[serde(rename = "runName")]
+        run_name: String,
+        #[serde(rename = "workerName")]
+        worker_name: String,
+        #[serde(rename = "workerStatus")]
+        worker_status: Option<String>,
+    },
+    /// Stream ended
+    #[serde(rename = "ended")]
+    Ended {
+        #[serde(rename = "runName")]
+        run_name: String,
+        #[serde(rename = "workerName")]
+        worker_name: String,
+    },
+}
+
+/// Start streaming worker events to the frontend
+///
+/// This fetches historical events first, then polls for new ones.
+/// Events are emitted as `worker-event` Tauri events.
+#[tauri::command]
+pub async fn start_worker_event_stream(
+    app: tauri::AppHandle,
+    stream_manager: tauri::State<'_, std::sync::Arc<WorkerEventStreamManager>>,
+    run_name: String,
+    worker_name: String,
+) -> Result<(), String> {
+    use tauri::Emitter;
+
+    info!(
+        "[WorkerStream] start_worker_event_stream called for {}/{}",
+        run_name, worker_name
+    );
+
+    // Stop any existing stream for this worker
+    stream_manager.stop(&run_name, &worker_name);
+
+    let db_path = config::run_dir(&run_name).join("hirsel.db");
+    info!(
+        "[WorkerStream] DB path: {:?}, exists: {}",
+        db_path,
+        db_path.exists()
+    );
+    if !db_path.exists() {
+        return Err(format!("Run database not found: {}", run_name));
+    }
+
+    // Create cancel channel
+    let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
+    stream_manager.register(&run_name, &worker_name, cancel_tx);
+
+    let run_name_clone = run_name.clone();
+    let worker_name_clone = worker_name.clone();
+    let stream_manager_clone = stream_manager.inner().clone();
+    let app_clone = app.clone();
+
+    // Spawn background task to stream events
+    info!("[WorkerStream] Spawning background task");
+    tokio::spawn(async move {
+        let app = app_clone;
+        info!(
+            "[WorkerStream] Background task started for {}/{}",
+            run_name_clone, worker_name_clone
+        );
+        let mut last_id: Option<i64> = None;
+        let poll_interval = tokio::time::Duration::from_millis(200);
+        let mut first_poll = true;
+
+        loop {
+            // Check for cancellation
+            if cancel_rx.try_recv().is_ok() {
+                info!(
+                    "[WorkerStream] Cancelled for {}/{}",
+                    run_name_clone, worker_name_clone
+                );
+                break;
+            }
+
+            // Poll for events
+            let state = match SQLiteState::new(db_path.clone()) {
+                Ok(s) => s,
+                Err(e) => {
+                    info!("[WorkerStream] Failed to open database: {}", e);
+                    break;
+                }
+            };
+
+            let events = match state.get_worker_events(&worker_name_clone, last_id, 1000) {
+                Ok(e) => e,
+                Err(e) => {
+                    info!("[WorkerStream] Failed to get events: {}", e);
+                    break;
+                }
+            };
+
+            if first_poll {
+                info!(
+                    "[WorkerStream] First poll: got {} events, worker_status query next",
+                    events.len()
+                );
+            }
+
+            // Get worker status
+            let worker_status = state
+                .get_worker(&worker_name_clone)
+                .ok()
+                .flatten()
+                .map(|w| w.status.as_str().to_string());
+
+            if !events.is_empty() {
+                last_id = events.last().map(|e| e.id);
+
+                let responses: Vec<WorkerEventResponse> = events
+                    .into_iter()
+                    .map(|e| WorkerEventResponse {
+                        id: e.id,
+                        worker_name: e.worker_name,
+                        event_type: e.event_type.as_str().to_string(),
+                        timestamp: e.timestamp,
+                        content: e.content,
+                        tool_call_id: e.tool_call_id,
+                        tool_title: e.tool_title,
+                        tool_kind: e.tool_kind,
+                        tool_status: e.tool_status.map(|s| s.as_str().to_string()),
+                        tool_input: e.tool_input,
+                        tool_output: e.tool_output,
+                    })
+                    .collect();
+
+                if first_poll {
+                    // Send all historical events as a batch
+                    info!(
+                        "[WorkerStream] Emitting history with {} events",
+                        responses.len()
+                    );
+                    let event = WorkerStreamEvent::History {
+                        run_name: run_name_clone.clone(),
+                        worker_name: worker_name_clone.clone(),
+                        events: responses,
+                        worker_status: worker_status.clone(),
+                    };
+                    match app.emit("worker-event", &event) {
+                        Ok(_) => info!("[WorkerStream] History emitted successfully"),
+                        Err(e) => info!("[WorkerStream] Failed to emit history: {}", e),
+                    }
+                    first_poll = false;
+                } else {
+                    // Send individual events
+                    for response in responses {
+                        let event = WorkerStreamEvent::Event {
+                            run_name: run_name_clone.clone(),
+                            worker_name: worker_name_clone.clone(),
+                            event: response,
+                        };
+                        if let Err(e) = app.emit("worker-event", &event) {
+                            info!("[WorkerStream] Failed to emit event: {}", e);
+                        }
+                    }
+                }
+            } else if first_poll {
+                // Even if no events, send empty history to indicate stream started
+                info!("[WorkerStream] Emitting empty history (no events found)");
+                let event = WorkerStreamEvent::History {
+                    run_name: run_name_clone.clone(),
+                    worker_name: worker_name_clone.clone(),
+                    events: vec![],
+                    worker_status: worker_status.clone(),
+                };
+                match app.emit("worker-event", &event) {
+                    Ok(_) => info!("[WorkerStream] Empty history emitted successfully"),
+                    Err(e) => info!("[WorkerStream] Failed to emit empty history: {}", e),
+                }
+                first_poll = false;
+            }
+
+            // Check if worker is done (not actively working)
+            let is_done = worker_status
+                .as_ref()
+                .map(|s| !matches!(s.as_str(), "working" | "waiting" | "awaiting"))
+                .unwrap_or(false);
+
+            if is_done && !first_poll {
+                // Send status update and end stream for completed workers
+                let status_event = WorkerStreamEvent::Status {
+                    run_name: run_name_clone.clone(),
+                    worker_name: worker_name_clone.clone(),
+                    worker_status,
+                };
+                let _ = app.emit("worker-event", &status_event);
+                break;
+            }
+
+            tokio::time::sleep(poll_interval).await;
+        }
+
+        // Clean up and notify stream ended
+        stream_manager_clone.remove(&run_name_clone, &worker_name_clone);
+        let end_event = WorkerStreamEvent::Ended {
+            run_name: run_name_clone,
+            worker_name: worker_name_clone,
+        };
+        let _ = app.emit("worker-event", &end_event);
+    });
+
+    Ok(())
+}
+
+/// Stop streaming worker events
+#[tauri::command]
+pub async fn stop_worker_event_stream(
+    stream_manager: tauri::State<'_, std::sync::Arc<WorkerEventStreamManager>>,
+    run_name: String,
+    worker_name: String,
+) -> Result<(), String> {
+    stream_manager.stop(&run_name, &worker_name);
+    Ok(())
+}
+
+// =============================================================================
 // Config Commands
 // =============================================================================
 
@@ -3464,6 +3897,13 @@ pub async fn get_config() -> Result<ConfigResponse, String> {
             .map(|(k, v)| (k, v.into()))
             .collect(),
         default_remote: cfg.default_remote,
+        runners: cfg
+            .runners
+            .into_iter()
+            .map(|(k, v)| (k, v.into()))
+            .collect(),
+        default_runner: cfg.default_runner,
+        worker_runners: cfg.worker_runners,
     })
 }
 
@@ -3541,6 +3981,21 @@ pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
     // Apply default_remote update
     if let Some(default_remote) = updates.default_remote {
         cfg.default_remote = default_remote;
+    }
+
+    // Apply runners updates (replace entire map if provided)
+    if let Some(runners) = updates.runners {
+        cfg.runners = runners.into_iter().map(|(k, v)| (k, v.into())).collect();
+    }
+
+    // Apply default_runner update
+    if let Some(default_runner) = updates.default_runner {
+        cfg.default_runner = default_runner;
+    }
+
+    // Apply worker_runners update
+    if let Some(worker_runners) = updates.worker_runners {
+        cfg.worker_runners = worker_runners;
     }
 
     // Serialize to TOML
@@ -3672,6 +4127,22 @@ pub async fn list_chat_sessions(
 }
 
 // =============================================================================
+// Frontend Logging (dev mode)
+// =============================================================================
+
+/// Log a message from the frontend to the backend log file
+/// This allows debugging frontend issues by checking the same log file
+#[tauri::command]
+pub async fn log_frontend(level: String, message: String) {
+    match level.as_str() {
+        "ERROR" => tracing::error!("[Frontend] {}", message),
+        "WARN" => tracing::warn!("[Frontend] {}", message),
+        "DEBUG" => tracing::debug!("[Frontend] {}", message),
+        _ => tracing::info!("[Frontend] {}", message),
+    }
+}
+
+// =============================================================================
 // Handler Registration
 // =============================================================================
 
@@ -3724,6 +4195,8 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         // Worker events commands (ACP-based streaming)
         get_worker_events,
         clear_worker_events,
+        start_worker_event_stream,
+        stop_worker_event_stream,
         // Message commands
         get_messages,
         get_threads,
@@ -3744,5 +4217,7 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         respond_chat_permission,
         stop_chat_session,
         list_chat_sessions,
+        // Frontend logging (dev mode)
+        log_frontend,
     ]
 }

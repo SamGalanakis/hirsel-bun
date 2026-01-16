@@ -386,6 +386,10 @@ pub struct GoArgs {
     /// Path to assets folder (copies contents to run's assets/)
     #[arg(long)]
     pub assets: Option<String>,
+
+    /// Runner to use for workers (e.g., "local", "sprites", or a named runner from config)
+    #[arg(long)]
+    pub runner: Option<String>,
 }
 
 /// Simple run name argument
@@ -614,6 +618,14 @@ pub struct TestArgs {
     /// YOLO mode (skip confirmation prompts)
     #[arg(long)]
     pub yolo: bool,
+
+    /// Remote worker spec (e.g., "user@host:2")
+    #[arg(long)]
+    pub remote: Option<String>,
+
+    /// Runner to use for workers (e.g., "local", "sprites", or a named runner from config)
+    #[arg(long)]
+    pub runner: Option<String>,
 }
 
 // ========== Worker CLI (hirsel-worker) ==========
@@ -1315,6 +1327,8 @@ pub fn run_cli() -> anyhow::Result<bool> {
                 Some(&args.workers),
                 args.yolo,
                 json,
+                args.remote.as_deref(),
+                args.runner.as_deref(),
             ) {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);

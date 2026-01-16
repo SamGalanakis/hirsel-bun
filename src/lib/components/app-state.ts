@@ -156,16 +156,21 @@ export function appState() {
         }
       }
 
-      // Check if we're on overview with a selected worker in the panel
-      const workerPanelEl = document.querySelector('[x-data*="workerPanel"]') as HTMLElement & { _x_dataStack?: Array<{ selectedWorker: { name: string } | null }> };
-      if (workerPanelEl?._x_dataStack?.[0]?.selectedWorker) {
-        window.dispatchEvent(new CustomEvent('show-worker-output', {
-          detail: {
-            runName: this.selectedRun,
-            workerName: workerPanelEl._x_dataStack[0].selectedWorker.name,
-          },
-        }));
-        return;
+      // Check if we're on overview with a highlighted or selected worker in the panel
+      const workerPanelEl = document.querySelector('[x-data*="workerPanel"]') as HTMLElement & { _x_dataStack?: Array<{ highlightedWorker: string | null; selectedWorker: { name: string } | null }> };
+      if (workerPanelEl?._x_dataStack?.[0]) {
+        const panelData = workerPanelEl._x_dataStack[0];
+        // Prefer highlighted worker (single-click selection), then fall back to modal selection
+        const workerName = panelData.highlightedWorker || panelData.selectedWorker?.name;
+        if (workerName) {
+          window.dispatchEvent(new CustomEvent('show-worker-output', {
+            detail: {
+              runName: this.selectedRun,
+              workerName,
+            },
+          }));
+          return;
+        }
       }
 
       // Neither selected - show the attach picker
@@ -174,22 +179,35 @@ export function appState() {
 
     async openAttachPicker() {
       if (!this.selectedRun || !window.tauriInvoke) return;
-      this.attachPickerLoading = true;
-      this.attachPickerOpen = true;
 
       try {
         const [workers, evals] = await Promise.all([
           window.tauriInvoke<Array<{ name: string; status: string }>>('get_workers', { runName: this.selectedRun }),
           window.tauriInvoke<Array<{ id: number; evalName: string; status: string }>>('get_evals', { runName: this.selectedRun }),
         ]);
-        this.attachPickerWorkers = workers || [];
-        this.attachPickerEvals = evals || [];
+
+        const workerList = workers || [];
+        const evalList = evals || [];
+        const totalChoices = workerList.length + evalList.length;
+
+        // If only one choice, attach directly without showing picker
+        if (totalChoices === 1) {
+          if (workerList.length === 1) {
+            this.attachToTarget('worker', workerList[0].name);
+          } else if (evalList.length === 1) {
+            this.attachToTarget('eval', evalList[0].evalName);
+          }
+          return;
+        }
+
+        // Multiple choices - show picker
+        this.attachPickerWorkers = workerList;
+        this.attachPickerEvals = evalList;
+        this.attachPickerOpen = true;
       } catch (e) {
         console.error('Failed to load attach picker data:', e);
         this.attachPickerWorkers = [];
         this.attachPickerEvals = [];
-      } finally {
-        this.attachPickerLoading = false;
       }
     },
 

@@ -158,6 +158,8 @@ pub fn run_scenario(
     run_name: Option<&str>,
     workers: Option<&str>,
     yolo: bool,
+    remote: Option<&str>,
+    runner: Option<&str>,
 ) -> TestResult<String> {
     let scenarios_dir = get_scenarios_dir();
     let scenario_path = scenarios_dir.join(scenario_name);
@@ -188,7 +190,7 @@ pub fn run_scenario(
         spec: spec_path.to_str().unwrap_or("").to_string(),
         workers: workers.unwrap_or("1").to_string(),
         time_limit: None,
-        remote: None,
+        remote: remote.map(|s| s.to_string()),
         sandbox: false,
         yolo,
         eval: if eval_path.exists() {
@@ -206,10 +208,19 @@ pub fn run_scenario(
         pause_mode: None,
         draft: false,
         assets: None,
+        runner: runner.map(|s| s.to_string()),
     };
 
     // Run the scenario
     let output = run_go(&args)?;
+
+    // Mark this run as a test run (auto-cleanup after eval completes)
+    let (config, _) = crate::core::Config::load().unwrap_or_default();
+    let run_dir = config.runs_dir().join(&output.run_name);
+    let db_path = run_dir.join("hirsel.db");
+    if let Ok(state) = crate::core::SQLiteState::new(db_path) {
+        let _ = state.set_is_test(true);
+    }
 
     Ok(output.run_name)
 }
@@ -225,11 +236,13 @@ pub fn execute(
     workers: Option<&str>,
     yolo: bool,
     json: bool,
+    remote: Option<&str>,
+    runner: Option<&str>,
 ) -> TestResult<()> {
     match scenario {
         Some(name) => {
             // Run specific scenario
-            let run_name = run_scenario(name, run_name, workers, yolo)?;
+            let run_name = run_scenario(name, run_name, workers, yolo, remote, runner)?;
             if json {
                 println!(
                     "{}",

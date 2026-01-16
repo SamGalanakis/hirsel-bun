@@ -41,6 +41,63 @@ The app uses Alpine.js for reactivity. Components are defined in `src/lib/compon
 
 Backend is Rust with Tauri v2. Commands are invoked via `window.tauriInvoke()`.
 
+## Hirsel CLI
+
+The Rust CLI is built as part of the Tauri app. The binary serves as both GUI (no args) and CLI (with subcommands).
+
+### Location
+
+```bash
+# Debug build (use during development)
+./src-tauri/target/debug/hirsel
+
+# After cargo build
+cargo build  # builds to src-tauri/target/debug/hirsel
+```
+
+### Common Commands
+
+```bash
+# List all runs
+./src-tauri/target/debug/hirsel runs
+
+# View run status
+./src-tauri/target/debug/hirsel view <run-name>
+
+# Watch worker output (TUI)
+./src-tauri/target/debug/hirsel attach <run-name>
+
+# Start a run
+./src-tauri/target/debug/hirsel go <run-name> <spec-file>
+
+# Delete a run
+./src-tauri/target/debug/hirsel delete <run-name>
+```
+
+### Running E2E Tests
+
+Test scenarios are in `tests/scenarios/`. Each has a spec, optional eval, and project folder.
+
+```bash
+# List available test scenarios
+./src-tauri/target/debug/hirsel test
+
+# Run calculator test (creates test-calculator run)
+./src-tauri/target/debug/hirsel test calculator --yolo
+
+# Run with custom name
+./src-tauri/target/debug/hirsel test calculator --run-name my-test --yolo
+
+# Run with multiple workers
+./src-tauri/target/debug/hirsel test calculator --workers 2 --yolo
+```
+
+The `--yolo` flag skips confirmation prompts.
+
+### Data Location
+
+Runs are stored in `~/.hirsel/runs/`. Both the CLI and Tauri GUI share this directory.
+
 ## Development & Debugging
 
 When running or testing the app, use `./dev.sh` which sets up the proper environment for debugging:
@@ -50,3 +107,50 @@ When running or testing the app, use `./dev.sh` which sets up the proper environ
 ```
 
 This is especially important when spawning agents or running in development mode.
+
+### Backend Logs
+
+Backend logs are written to:
+```
+~/.local/share/app.hirsel/logs/Hirsel.log
+```
+
+Use `tracing::info!`, `tracing::warn!`, `tracing::error!` for logging in Rust code. View logs with:
+```bash
+tail -f ~/.local/share/app.hirsel/logs/Hirsel.log
+```
+
+Or filter for specific components:
+```bash
+tail -f ~/.local/share/app.hirsel/logs/Hirsel.log | grep WorkerStream
+```
+
+### Frontend Console Logs
+
+In dev mode, frontend `console.log/warn/error` calls are also written to the backend log file with `[Frontend]` prefix:
+```bash
+tail -f ~/.local/share/app.hirsel/logs/Hirsel.log | grep Frontend
+```
+
+This allows debugging frontend issues alongside backend logs in a single file.
+
+## Subprocess Process Groups
+
+When spawning detached subprocesses that run AI agents (workers, eval, compaction, improve), we use `process_group(0)` to create a new process group. This allows killing all descendant processes when the subprocess exits.
+
+**IMPORTANT:** Any subprocess spawned with `process_group(0)` MUST call the cleanup function before exiting:
+
+```rust
+// At the end of the subprocess entry function:
+crate::core::process::cleanup_process_group("my-subprocess-name");
+```
+
+This ensures grandchild processes (like `node claude-code-acp` spawned by `claude`) are properly terminated. Without this, orphaned processes will accumulate.
+
+**Current subprocesses with cleanup:**
+- Worker (`acp_client.rs`)
+- Eval (`eval.rs`)
+- Compaction (`compact.rs`)
+- Improve (`improve.rs`)
+
+See `src/core/process.rs` for the implementation.

@@ -33,11 +33,16 @@ const IMPROVE_TIMEOUT_SECS: u64 = 120;
 pub fn execute(run_name: Option<&str>, json: bool) -> Result<(), Box<dyn std::error::Error>> {
     // Create runtime for async execution
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async {
+    let result = rt.block_on(async {
         tokio::task::LocalSet::new()
             .run_until(execute_async(run_name, json))
             .await
-    })
+    });
+
+    // Clean up any remaining child processes (e.g., grandchildren like node claude-code-acp)
+    crate::core::process::cleanup_process_group("improve");
+
+    result
 }
 
 /// Async implementation of the improve command

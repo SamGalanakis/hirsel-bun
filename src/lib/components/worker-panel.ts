@@ -24,6 +24,7 @@ export function workerPanel() {
     _cacheUnsubscribe: null as (() => void) | null,
     selectedWorker: null as EnrichedWorker | null,
     showWorkerDetail: false,
+    highlightedWorker: null as string | null, // Worker name for highlight (separate from modal selection)
 
     async init() {
       // Subscribe to shared cache
@@ -49,6 +50,7 @@ export function workerPanel() {
       const runSelectedHandler = (e: Event) => {
         const customEvent = e as CustomEvent<string | null>;
         this.selectedRun = customEvent.detail;
+        this.highlightedWorker = null; // Clear highlight when run changes
         if (!customEvent.detail) {
           this.workers = [];
           this.loading = false;
@@ -100,7 +102,7 @@ export function workerPanel() {
       const tasks = dataCache.getTasks();
       const taskByWorker = new Map<string, string>();
       for (const task of tasks) {
-        if (task.claimedBy && task.status === 'doing') {
+        if (task && task.claimedBy && task.status === 'doing') {
           taskByWorker.set(task.claimedBy, task.id);
         }
       }
@@ -135,7 +137,7 @@ export function workerPanel() {
     updateCurrentTasks(tasks: Task[]) {
       const taskByWorker = new Map<string, string>();
       for (const task of tasks) {
-        if (task.claimedBy && task.status === 'doing') {
+        if (task && task.claimedBy && task.status === 'doing') {
           taskByWorker.set(task.claimedBy, task.id);
         }
       }
@@ -172,6 +174,21 @@ export function workerPanel() {
       }
     },
 
+    /**
+     * Highlight a worker (single click) - for quick attach with 'a' key
+     */
+    highlightWorker(worker: EnrichedWorker) {
+      // Toggle highlight if clicking same worker
+      if (this.highlightedWorker === worker.name) {
+        this.highlightedWorker = null;
+      } else {
+        this.highlightedWorker = worker.name;
+      }
+    },
+
+    /**
+     * Open worker detail modal (double click)
+     */
     openWorkerDetail(worker: EnrichedWorker) {
       this.selectedWorker = worker;
       this.showWorkerDetail = true;
@@ -180,6 +197,13 @@ export function workerPanel() {
     closeWorkerDetail() {
       this.showWorkerDetail = false;
       this.selectedWorker = null;
+    },
+
+    /**
+     * Clear highlight (e.g., when clicking elsewhere)
+     */
+    clearHighlight() {
+      this.highlightedWorker = null;
     },
 
     async attachAndClose(name: string) {

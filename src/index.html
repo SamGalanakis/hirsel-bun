@@ -6,7 +6,7 @@
   <title>Hirsel</title>
   <style>html,body{background:#1a1a1a!important}</style>
   <link rel="stylesheet" href="./styles/main.css">
-  <script defer src="https://cdn.jsdelivr.net/npm/basecoat-css@0.3/dist/js/all.min.js"></script>
+  <script defer src="/basecoat.js"></script>
 </head>
 <body class="h-screen flex flex-col overflow-hidden" x-data="appState()" style="background:#1a1a1a">
 
@@ -211,7 +211,7 @@
               <div
                 :data-notif-id="notif.id"
                 x-init="if (!notif.read) observeNotification($el)"
-                @click="goToRun(notif.runName); open = false"
+                @click="markOneRead(notif.id); goToRun(notif.runName); open = false"
                 class="p-3 hover:bg-pasture-700 cursor-pointer border-b border-pasture-700 last:border-0 transition-all duration-300 group relative"
                 :class="{ 'bg-amber-500/10 border-l-2 border-l-amber-500': !notif.read, 'opacity-60 bg-pasture-800': notif.read }"
               >
@@ -1069,8 +1069,10 @@ Example:
             <div class="flex-1 overflow-y-auto p-2 space-y-2" x-data="workerPanel()">
               <template x-for="worker in workers" :key="worker.id">
                 <div
-                  @click="openWorkerDetail(worker)"
-                  class="worker-card p-3 rounded-lg bg-pasture-800 hover:bg-pasture-700 cursor-pointer transition-colors"
+                  @click="highlightWorker(worker)"
+                  @dblclick="openWorkerDetail(worker)"
+                  class="worker-card p-3 rounded-lg cursor-pointer transition-colors"
+                  :class="highlightedWorker === worker.name ? 'bg-amber-500/20 ring-1 ring-amber-500/50' : 'bg-pasture-800 hover:bg-pasture-700'"
                 >
                   <div class="flex items-center gap-3">
                     <!-- Sheep avatar -->
@@ -1633,32 +1635,42 @@ Example:
 
         <!-- Task list -->
         <div class="flex-1 overflow-y-auto p-4">
-          <div class="space-y-1">
+          <div class="space-y-0.5">
             <template x-for="task in filteredTasks" :key="task.id">
               <div
                 :data-task-id="task.id"
-                class="task-row group rounded-lg transition-all cursor-pointer"
+                class="task-row group transition-all cursor-pointer relative"
                 :class="{
-                  'bg-pasture-800 hover:bg-pasture-700': selectedTaskId !== task.id,
-                  'bg-amber-500/10 ring-1 ring-amber-500/50': selectedTaskId === task.id
+                  'hover:bg-pasture-700/50': selectedTaskId !== task.id,
+                  'bg-amber-500/10': selectedTaskId === task.id
                 }"
                 @click="selectTask(task, $event)"
               >
-                <div class="flex items-start gap-2 p-3" :style="'padding-left: ' + (12 + task.depth * 20) + 'px'">
+                <!-- Nesting indent guides -->
+                <template x-for="i in task.depth" :key="i">
+                  <div
+                    class="absolute top-0 bottom-0 w-px bg-pasture-600/50"
+                    :style="'left: ' + (8 + (i - 1) * 24) + 'px'"
+                  ></div>
+                </template>
+
+                <div class="flex items-center gap-3 py-2.5 px-3 rounded-lg" :style="'margin-left: ' + (task.depth * 24) + 'px'">
                   <!-- Collapse toggle for tasks with children -->
                   <button
                     x-show="hasChildren(task)"
                     @click.stop="toggleCollapse(task.id)"
-                    class="flex-shrink-0 w-5 h-5 flex items-center justify-center text-wool-500 hover:text-wool-300 transition-colors -ml-5"
+                    class="flex-shrink-0 w-4 h-4 flex items-center justify-center text-wool-500 hover:text-wool-300 transition-colors"
                   >
-                    <i x-show="!isCollapsed(task.id)" data-lucide="chevron-down" class="w-4 h-4"></i>
-                    <i x-show="isCollapsed(task.id)" data-lucide="chevron-right" class="w-4 h-4"></i>
+                    <i x-show="!isCollapsed(task.id)" data-lucide="chevron-down" class="w-3.5 h-3.5"></i>
+                    <i x-show="isCollapsed(task.id)" data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
                   </button>
+                  <!-- Spacer when no children -->
+                  <span x-show="!hasChildren(task)" class="flex-shrink-0 w-4"></span>
 
-                  <!-- Status icon -->
-                  <span class="flex-shrink-0 mt-0.5" :class="{
+                  <!-- Status indicator -->
+                  <span class="flex-shrink-0" :class="{
                     'text-wool-600': task.status === 'todo' && !task.isBlocked,
-                    'text-terra': task.isBlocked,
+                    'text-terra': task.isBlocked && task.status !== 'done',
                     'text-amber-500': task.status === 'doing',
                     'text-sage': task.status === 'done'
                   }">
@@ -1668,68 +1680,87 @@ Example:
                     <i x-show="task.status === 'done'" data-lucide="check-circle-2" class="w-4 h-4"></i>
                   </span>
 
-                  <!-- Task content -->
-                  <div class="flex-1 min-w-0">
-                    <p
-                      class="text-sm break-words leading-relaxed"
-                      :class="{
-                        'text-wool-200': task.status !== 'done' && !task.isBlocked,
-                        'text-wool-500': task.status === 'done',
-                        'text-wool-400 italic': task.isBlocked && task.status !== 'done'
-                      }"
-                      x-text="task.description"
-                    ></p>
+                  <!-- Task description - fixed width for alignment -->
+                  <span
+                    class="w-[320px] flex-shrink-0 text-sm truncate"
+                    :class="{
+                      'text-wool-200': task.status !== 'done' && !task.isBlocked,
+                      'text-wool-500 line-through decoration-wool-600': task.status === 'done',
+                      'text-wool-400': task.isBlocked && task.status !== 'done'
+                    }"
+                    x-text="task.description"
+                    :title="task.description"
+                  ></span>
 
-                    <!-- Task metadata -->
-                    <div class="flex items-center flex-wrap gap-x-3 gap-y-1 mt-1.5">
-                      <!-- Worker assignment with avatar -->
-                      <span x-show="task.claimedBy" class="flex items-center gap-1.5 text-xs text-amber-400">
-                        <template x-if="getWorkerAvatar(task.claimedBy)">
-                          <span x-html="getWorkerAvatar(task.claimedBy, 16)" class="flex-shrink-0"></span>
-                        </template>
-                        <template x-if="!getWorkerAvatar(task.claimedBy)">
-                          <i data-lucide="user" class="w-3.5 h-3.5 flex-shrink-0"></i>
-                        </template>
-                        <span x-text="task.claimedBy"></span>
-                      </span>
-                      <!-- Blocked by indicator -->
-                      <span x-show="task.isBlocked && task.blockedBy && task.status !== 'done'" class="flex items-center gap-1 text-xs text-terra">
-                        <i data-lucide="alert-triangle" class="w-3 h-3"></i>
-                        <span>waiting on <span x-text="task.blockedBy?.length || 0"></span></span>
-                      </span>
-                      <!-- Tokens used -->
-                      <span x-show="task.tokensUsed" class="flex items-center gap-1 text-xs text-wool-600">
-                        <i data-lucide="sparkles" class="w-3 h-3"></i>
-                        <span x-text="formatTokens(task.tokensUsed)"></span>
-                      </span>
-                      <!-- Time -->
-                      <span x-show="task.claimedAt" class="flex items-center gap-1 text-xs text-wool-600">
-                        <i data-lucide="clock" class="w-3 h-3"></i>
-                        <span x-text="formatTime(task.claimedAt)"></span>
-                      </span>
+                  <!-- Right side: worker + times + status -->
+                  <div class="flex items-center gap-4 text-xs ml-auto">
+                    <!-- Worker assignment -->
+                    <span x-show="task.claimedBy" class="flex items-center gap-1.5 text-amber-400 w-24">
+                      <template x-if="getWorkerAvatar(task.claimedBy)">
+                        <span x-html="getWorkerAvatar(task.claimedBy, 16)" class="flex-shrink-0"></span>
+                      </template>
+                      <span x-text="task.claimedBy" class="truncate"></span>
+                    </span>
+                    <span x-show="!task.claimedBy" class="w-24"></span>
+
+                    <!-- Start time (when claimed) -->
+                    <span
+                      x-show="task.claimedAt"
+                      class="flex items-center gap-1 text-wool-500 w-16 tabular-nums"
+                      :title="'Started: ' + formatFullTime(task.claimedAt)"
+                    >
+                      <i data-lucide="play" class="w-3 h-3"></i>
+                      <span x-text="formatTime(task.claimedAt)"></span>
+                    </span>
+                    <span x-show="!task.claimedAt" class="w-16"></span>
+
+                    <!-- Duration (elapsed time) -->
+                    <span
+                      x-show="task.claimedAt && (task.status === 'doing' || task.status === 'done')"
+                      class="flex items-center gap-1 text-wool-400 w-16 tabular-nums"
+                    >
+                      <i data-lucide="timer" class="w-3 h-3"></i>
+                      <span x-text="formatDuration(task.claimedAt, task.completedAt)"></span>
+                    </span>
+                    <span x-show="!task.claimedAt || task.status === 'todo'" class="w-16"></span>
+
+                    <!-- Status badge -->
+                    <span class="w-16 text-center">
+                      <span
+                        x-show="task.status === 'doing'"
+                        class="inline-block px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide rounded bg-amber-500/20 text-amber-400"
+                      >Active</span>
+                      <span
+                        x-show="task.status === 'done'"
+                        class="inline-block px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide rounded bg-sage/20 text-sage"
+                      >Done</span>
+                      <span
+                        x-show="task.isBlocked && task.status !== 'done'"
+                        class="inline-block px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide rounded bg-terra/20 text-terra"
+                      >Blocked</span>
+                    </span>
+
+                    <!-- Quick actions (visible on hover) -->
+                    <div class="flex items-center gap-0.5 w-8 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        x-show="task.status !== 'done'"
+                        @click.stop="markTaskDone(task)"
+                        class="p-1 rounded hover:bg-pasture-600 text-wool-500 hover:text-sage transition-colors"
+                        data-tooltip="Mark as done"
+                        data-side="top"
+                      >
+                        <i data-lucide="check" class="w-3.5 h-3.5"></i>
+                      </button>
+                      <button
+                        x-show="task.status === 'done'"
+                        @click.stop="reopenTask(task)"
+                        class="p-1 rounded hover:bg-pasture-600 text-wool-500 hover:text-amber-400 transition-colors"
+                        data-tooltip="Reopen task"
+                        data-side="top"
+                      >
+                        <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                      </button>
                     </div>
-                  </div>
-
-                  <!-- Quick actions (visible on hover) -->
-                  <div class="flex-shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      x-show="task.status !== 'done'"
-                      @click.stop="markTaskDone(task)"
-                      class="p-1.5 rounded hover:bg-pasture-600 text-wool-500 hover:text-sage transition-colors"
-                      data-tooltip="Mark as done"
-                      data-side="top"
-                    >
-                      <i data-lucide="check" class="w-4 h-4"></i>
-                    </button>
-                    <button
-                      x-show="task.status === 'done'"
-                      @click.stop="reopenTask(task)"
-                      class="p-1.5 rounded hover:bg-pasture-600 text-wool-500 hover:text-amber-400 transition-colors"
-                      data-tooltip="Reopen task"
-                      data-side="top"
-                    >
-                      <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
-                    </button>
                   </div>
                 </div>
               </div>
@@ -1995,28 +2026,48 @@ Example:
               <template x-for="evalItem in evals" :key="evalItem.id">
                 <button
                   @click="selectEval(evalItem)"
-                  class="w-full p-3 text-left rounded-lg transition-all"
-                  :class="selectedEval?.id === evalItem.id
-                    ? 'bg-pasture-600 ring-1 ring-amber-500/50 shadow-lg'
-                    : 'bg-pasture-800/50 hover:bg-pasture-700/50'"
+                  class="w-full p-3 text-left rounded-lg transition-all border-l-4"
+                  :class="{
+                    'bg-pasture-600 ring-1 ring-amber-500/50 shadow-lg': selectedEval?.id === evalItem.id,
+                    'bg-pasture-800/50 hover:bg-pasture-700/50': selectedEval?.id !== evalItem.id,
+                    'border-l-sage': evalItem.status === 'passed',
+                    'border-l-terra': evalItem.status === 'failed',
+                    'border-l-amber-500': evalItem.status === 'running'
+                  }"
                 >
                   <div class="flex items-center gap-3">
-                    <div
-                      class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
-                      :class="{
-                        'bg-sage/20': evalItem.status === 'passed',
-                        'bg-terra/20': evalItem.status === 'failed',
-                        'bg-amber-500/20': evalItem.status === 'running'
-                      }"
-                    >
-                      <i
-                        :data-lucide="getEvalStatusIcon(evalItem.status)"
-                        class="w-4 h-4"
-                        :class="getEvalStatusClass(evalItem.status)"
-                      ></i>
+                    <!-- Eval sheep avatar (detective hat) with status indicator -->
+                    <div class="relative flex-shrink-0">
+                      <div class="w-10 h-10" x-html="generateSheepSvg(evalItem.sheepConfig, 40)"></div>
+                      <!-- Status indicator dot -->
+                      <div class="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border-2 border-pasture-800 flex items-center justify-center"
+                        :class="{
+                          'bg-sage': evalItem.status === 'passed',
+                          'bg-terra': evalItem.status === 'failed',
+                          'bg-amber-500': evalItem.status === 'running'
+                        }">
+                        <i x-show="evalItem.status === 'passed'" data-lucide="check" class="w-2.5 h-2.5 text-white"></i>
+                        <i x-show="evalItem.status === 'failed'" data-lucide="x" class="w-2.5 h-2.5 text-white"></i>
+                        <i x-show="evalItem.status === 'running'" data-lucide="loader" class="w-2.5 h-2.5 text-white animate-spin"></i>
+                      </div>
                     </div>
                     <div class="flex-1 min-w-0">
-                      <div class="text-sm font-medium text-wool-200 truncate" x-text="evalItem.evalName"></div>
+                      <div class="flex items-center gap-2">
+                        <span class="text-sm font-medium text-wool-200 truncate" x-text="evalItem.evalName"></span>
+                        <!-- Status badge -->
+                        <span
+                          x-show="evalItem.status === 'passed'"
+                          class="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide rounded bg-sage/20 text-sage border border-sage/30"
+                        >Passed</span>
+                        <span
+                          x-show="evalItem.status === 'failed'"
+                          class="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide rounded bg-terra/20 text-terra border border-terra/30"
+                        >Failed</span>
+                        <span
+                          x-show="evalItem.status === 'running'"
+                          class="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide rounded bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                        >Running</span>
+                      </div>
                       <div class="text-xs text-wool-500" x-text="getEvalDuration(evalItem)"></div>
                     </div>
                   </div>
@@ -2146,7 +2197,7 @@ Example:
                     <span class="w-4 h-4 flex-shrink-0" x-html="getWorkerAvatar(dm.name)"></span>
                     <span class="truncate" x-text="dm.name"></span>
                   </span>
-                  <span x-show="dm.thread?.unreadCount > 0" class="ml-2 min-w-[18px] h-[18px] bg-terra rounded-full text-[10px] text-white font-bold flex items-center justify-center px-1" x-text="dm.thread.unreadCount"></span>
+                  <span x-show="dm.thread?.unreadCount > 0" class="ml-2 min-w-[18px] h-[18px] bg-terra rounded-full text-[10px] text-white font-bold flex items-center justify-center px-1" x-text="dm.thread?.unreadCount"></span>
                 </button>
               </template>
               <div x-show="dmThreads.length === 0" class="px-3 py-2 text-xs text-wool-600 italic">
@@ -2409,15 +2460,49 @@ Example:
                           'border-terra/40 bg-terra/10': chunk.tool?.status === 'failed'
                         }"
                       >
-                        <div class="flex items-center gap-2 px-3 py-2">
+                        <!-- Tool header -->
+                        <div
+                          class="flex items-center gap-2 px-3 py-2"
+                          :class="{'cursor-pointer hover:bg-white/5 rounded-t-md': hasExpandableContent(chunk.tool)}"
+                          @click="hasExpandableContent(chunk.tool) && toggleToolExpanded(chunk.tool?.id)"
+                        >
                           <span class="flex-shrink-0 text-wool-400" :class="{'animate-pulse': chunk.tool?.status === 'in_progress'}" x-html="getToolIcon(chunk.tool?.kind)"></span>
                           <span class="font-medium text-wool-300 truncate" x-text="chunk.tool?.title"></span>
+                          <!-- Command preview (for terminal tools, hide when expanded) -->
+                          <template x-if="getCommandPreview(chunk.tool) && !chunk.tool?.expanded">
+                            <code class="flex-1 min-w-0 font-mono text-wool-500 truncate text-[11px]" x-text="getCommandPreview(chunk.tool)"></code>
+                          </template>
+                          <!-- Expand indicator for tools with expandable content -->
+                          <template x-if="hasExpandableContent(chunk.tool)">
+                            <span class="text-wool-500 flex-shrink-0" x-html="getExpandIcon(chunk.tool?.expanded)"></span>
+                          </template>
                           <span
                             class="ml-auto flex-shrink-0 flex items-center gap-1"
                             :class="getToolStatusClass(chunk.tool?.status || '')"
                           >
                             <span x-html="getToolStatusIcon(chunk.tool?.status || '')"></span>
                           </span>
+                        </div>
+                        <!-- Expanded view (result/output) -->
+                        <div
+                          x-show="chunk.tool?.expanded && hasExpandableContent(chunk.tool)"
+                          x-transition
+                          class="px-3 pb-2 border-t border-wool-700/50"
+                        >
+                          <!-- Result/Output -->
+                          <template x-if="hasToolOutput(chunk.tool)">
+                            <div class="mt-2">
+                              <div class="text-[10px] text-wool-500 mb-1">Result</div>
+                              <pre class="font-mono text-[11px] text-wool-400 bg-pasture-900/50 rounded px-2 py-1.5 overflow-x-auto whitespace-pre-wrap break-all max-h-48 overflow-y-auto" x-text="getToolOutput(chunk.tool)"></pre>
+                            </div>
+                          </template>
+                          <!-- Command (only if title doesn't already show it) -->
+                          <template x-if="getCommandPreview(chunk.tool) && !hasToolOutput(chunk.tool)">
+                            <div class="mt-2">
+                              <div class="text-[10px] text-wool-500 mb-1">Command</div>
+                              <pre class="font-mono text-[11px] text-wool-400 bg-pasture-900/50 rounded px-2 py-1.5 overflow-x-auto whitespace-pre-wrap break-all" x-text="getToolCommand(chunk.tool)"></pre>
+                            </div>
+                          </template>
                         </div>
                       </div>
                     </div>
@@ -2542,12 +2627,18 @@ Example:
   >
     <!-- Header -->
     <div class="p-4 border-b border-pasture-600 flex items-center justify-between">
-      <div class="flex items-center gap-2">
-        <span class="text-wool-400" x-html="getIcon('terminal', 18)"></span>
-        <h2 class="text-sm font-medium text-wool-200">
-          Worker Output
-        </h2>
-        <span class="text-xs text-wool-500" x-text="workerName"></span>
+      <div class="flex items-center gap-3">
+        <!-- Sheep avatar -->
+        <template x-if="sheepConfig">
+          <div class="w-8 h-8 flex-shrink-0" x-html="generateSheepSvg(sheepConfig, 32)"></div>
+        </template>
+        <template x-if="!sheepConfig">
+          <span class="text-wool-400" x-html="getIcon('terminal', 18)"></span>
+        </template>
+        <div>
+          <h2 class="text-sm font-medium text-wool-200" x-text="workerName"></h2>
+          <span class="text-xs text-wool-500">Worker Output</span>
+        </div>
       </div>
       <button
         @click="hide()"
@@ -2607,7 +2698,7 @@ Example:
           <!-- Tool chunk -->
           <div
             x-show="chunk.type === 'tool' && chunk.tool"
-            class="rounded-md border text-xs"
+            class="ai-chat-tool-card rounded-md border text-xs my-2"
             :class="{
               'border-wool-700 bg-wool-800/30': chunk.tool?.status === 'pending',
               'border-amber-500/40 bg-amber-900/10': chunk.tool?.status === 'in_progress',
@@ -2615,12 +2706,49 @@ Example:
               'border-terra/40 bg-terra/10': chunk.tool?.status === 'failed'
             }"
           >
-            <div class="flex items-center gap-2 px-3 py-2">
+            <!-- Tool header -->
+            <div
+              class="flex items-center gap-2 px-3 py-2"
+              :class="{'cursor-pointer hover:bg-white/5 rounded-t-md': hasExpandableContent(chunk.tool)}"
+              @click="hasExpandableContent(chunk.tool) && toggleToolExpanded(chunk.tool?.id)"
+            >
               <span class="flex-shrink-0 text-wool-400" :class="{'animate-pulse': chunk.tool?.status === 'in_progress'}" x-html="getToolIcon(chunk.tool?.kind)"></span>
               <span class="font-medium text-wool-300 truncate" x-text="chunk.tool?.title"></span>
-              <span class="ml-auto flex-shrink-0" :class="getToolStatusClass(chunk.tool?.status)">
-                <span x-html="getToolStatusIcon(chunk.tool?.status)"></span>
+              <!-- Command preview (for terminal tools, hide when expanded) -->
+              <template x-if="getCommandPreview(chunk.tool) && !chunk.tool?.expanded">
+                <code class="flex-1 min-w-0 font-mono text-wool-500 truncate text-[11px]" x-text="getCommandPreview(chunk.tool)"></code>
+              </template>
+              <!-- Expand indicator for tools with expandable content -->
+              <template x-if="hasExpandableContent(chunk.tool)">
+                <span class="text-wool-500 flex-shrink-0" x-html="getExpandIcon(chunk.tool?.expanded)"></span>
+              </template>
+              <span
+                class="ml-auto flex-shrink-0 flex items-center gap-1"
+                :class="getToolStatusClass(chunk.tool?.status || '')"
+              >
+                <span x-html="getToolStatusIcon(chunk.tool?.status || '')"></span>
               </span>
+            </div>
+            <!-- Expanded view (result/output) -->
+            <div
+              x-show="chunk.tool?.expanded && hasExpandableContent(chunk.tool)"
+              x-transition
+              class="px-3 pb-2 border-t border-wool-700/50"
+            >
+              <!-- Result/Output -->
+              <template x-if="hasToolOutput(chunk.tool)">
+                <div class="mt-2">
+                  <div class="text-[10px] text-wool-500 mb-1">Result</div>
+                  <pre class="font-mono text-[11px] text-wool-400 bg-pasture-900/50 rounded px-2 py-1.5 overflow-x-auto whitespace-pre-wrap break-all max-h-48 overflow-y-auto" x-text="getToolOutput(chunk.tool)"></pre>
+                </div>
+              </template>
+              <!-- Command (only if title doesn't already show it) -->
+              <template x-if="getCommandPreview(chunk.tool) && !hasToolOutput(chunk.tool)">
+                <div class="mt-2">
+                  <div class="text-[10px] text-wool-500 mb-1">Command</div>
+                  <pre class="font-mono text-[11px] text-wool-400 bg-pasture-900/50 rounded px-2 py-1.5 overflow-x-auto whitespace-pre-wrap break-all" x-text="getToolCommand(chunk.tool)"></pre>
+                </div>
+              </template>
             </div>
           </div>
         </div>
@@ -2725,27 +2853,18 @@ Example:
                 class="w-full px-3 py-2.5 text-left rounded-lg hover:bg-pasture-700 transition-colors flex items-center justify-between group"
               >
                 <div class="flex items-center gap-3">
-                  <i
-                    class="w-4 h-4"
-                    :data-lucide="evalItem.status === 'passed' ? 'check-circle' : evalItem.status === 'failed' ? 'x-circle' : 'loader'"
+                  <span
+                    class="w-2 h-2 rounded-full"
                     :class="{
-                      'text-sage': evalItem.status === 'passed',
-                      'text-terra': evalItem.status === 'failed',
-                      'text-amber-500 animate-spin': evalItem.status === 'running'
+                      'bg-sage': evalItem.status === 'passed',
+                      'bg-terra': evalItem.status === 'failed',
+                      'bg-amber-500': evalItem.status === 'running'
                     }"
-                  ></i>
+                  ></span>
                   <span class="text-sm font-medium text-wool-200" x-text="evalItem.evalName"></span>
                 </div>
                 <div class="flex items-center gap-2">
-                  <span
-                    class="text-xs px-1.5 py-0.5 rounded"
-                    :class="{
-                      'bg-sage/20 text-sage': evalItem.status === 'passed',
-                      'bg-terra/20 text-terra': evalItem.status === 'failed',
-                      'bg-amber-500/20 text-amber-500': evalItem.status === 'running'
-                    }"
-                    x-text="evalItem.status"
-                  ></span>
+                  <span class="text-xs text-wool-500" x-text="evalItem.status"></span>
                   <i data-lucide="chevron-right" class="w-4 h-4 text-wool-600 group-hover:text-wool-400 transition-colors"></i>
                 </div>
               </button>
@@ -2838,16 +2957,16 @@ Example:
           :class="activeTab === 'auth' ? 'border-b-2 border-amber-500 text-wool-100' : 'text-wool-400 hover:text-wool-200'"
           class="px-4 py-2 text-sm font-medium transition-colors"
         >
-          <i data-lucide="key" class="w-4 h-4 inline-block mr-1.5"></i>
-          Authentication
+          <i data-lucide="bot" class="w-4 h-4 inline-block mr-1.5"></i>
+          Agents
         </button>
         <button
-          @click="activeTab = 'remotes'"
-          :class="activeTab === 'remotes' ? 'border-b-2 border-amber-500 text-wool-100' : 'text-wool-400 hover:text-wool-200'"
+          @click="activeTab = 'runners'"
+          :class="activeTab === 'runners' ? 'border-b-2 border-amber-500 text-wool-100' : 'text-wool-400 hover:text-wool-200'"
           class="px-4 py-2 text-sm font-medium transition-colors"
         >
-          <i data-lucide="server" class="w-4 h-4 inline-block mr-1.5"></i>
-          Remotes
+          <i data-lucide="cpu" class="w-4 h-4 inline-block mr-1.5"></i>
+          Runners
         </button>
       </div>
 
@@ -2889,48 +3008,40 @@ Example:
             <p class="text-muted-foreground text-sm" x-text="themes.find(t => t.id === selectedTheme)?.description"></p>
           </div>
 
-          <!-- Agent Command -->
-          <div class="grid gap-2">
-            <label class="label">Agent Command</label>
-            <input type="text" class="input" x-model="settings.agentCommand" placeholder="claude-code-acp" />
-            <p class="text-muted-foreground text-sm">Command used to spawn workers</p>
-          </div>
-
           <!-- Eval Timeout -->
-          <div class="grid gap-2">
-            <label class="label">Eval Timeout (seconds)</label>
-            <input type="number" class="input" x-model.number="settings.evalTimeout" min="60" step="60" />
+          <div role="group" class="field">
+            <label for="eval-timeout">Eval Timeout (seconds)</label>
+            <input id="eval-timeout" type="number" x-model.number="settings.evalTimeout" min="60" step="60" />
           </div>
 
-          <!-- Toggles Row -->
-          <div class="grid gap-4">
-            <div class="flex items-center justify-between">
-              <div class="grid gap-1">
-                <label class="mb-0">Human in the Loop</label>
-                <p class="text-muted-foreground text-sm">Pause for human review at checkpoints</p>
-              </div>
-              <input type="checkbox" role="switch" class="input" :checked="settings.humanInTheLoop" @change="settings.humanInTheLoop = $event.target.checked" />
-            </div>
-            <div class="flex items-center justify-between">
-              <div class="grid gap-1">
-                <label class="mb-0">Auto Learn</label>
-                <p class="text-muted-foreground text-sm">Automatically learn from successful runs</p>
-              </div>
-              <input type="checkbox" role="switch" class="input" :checked="settings.autoLearn" @change="settings.autoLearn = $event.target.checked" />
-            </div>
+          <!-- Toggles -->
+          <div role="group" class="field" data-orientation="horizontal">
+            <section>
+              <label for="hitl">Human in the Loop</label>
+              <p>Pause for human review at checkpoints</p>
+            </section>
+            <input id="hitl" type="checkbox" role="switch" :checked="settings.humanInTheLoop" @change="settings.humanInTheLoop = $event.target.checked" />
+          </div>
+
+          <div role="group" class="field" data-orientation="horizontal">
+            <section>
+              <label for="auto-learn">Auto Learn</label>
+              <p>Automatically learn from successful runs</p>
+            </section>
+            <input id="auto-learn" type="checkbox" role="switch" :checked="settings.autoLearn" @change="settings.autoLearn = $event.target.checked" />
           </div>
 
           <!-- Max Iterations -->
-          <div class="grid gap-2">
-            <label class="label">Max Iterations</label>
-            <input type="number" class="input" x-model.number="settings.maxIterations" placeholder="No limit" min="1" />
-            <p class="text-muted-foreground text-sm">Maximum eval/fix iterations (leave empty for no limit)</p>
+          <div role="group" class="field">
+            <label for="max-iter">Max Iterations</label>
+            <input id="max-iter" type="number" x-model.number="settings.maxIterations" placeholder="No limit" min="1" aria-describedby="max-iter-desc" />
+            <p id="max-iter-desc">Maximum eval/fix iterations (leave empty for no limit)</p>
           </div>
 
           <!-- User Message Pause -->
-          <div class="grid gap-2">
-            <label class="label">Pause on User Message</label>
-            <select class="select" x-model="settings.userMessagePause">
+          <div role="group" class="field">
+            <label for="pause-mode">Pause on User Message</label>
+            <select id="pause-mode" class="select w-full" x-model="settings.userMessagePause">
               <option value="sender">Sender only</option>
               <option value="all">All workers</option>
               <option value="none">None</option>
@@ -2938,58 +3049,61 @@ Example:
           </div>
 
           <!-- Memory & Learnings Section -->
-          <div class="grid gap-4 p-4 bg-pasture-700/30 rounded-lg">
-            <h3 class="text-sm font-medium text-wool-200 border-b border-pasture-600 pb-2">Memory & Learnings</h3>
-            <div class="flex items-center justify-between">
-              <div class="grid gap-1">
-                <label class="mb-0">Auto-compact learnings</label>
-                <p class="text-muted-foreground text-sm">Automatically summarize old learnings</p>
-              </div>
-              <input type="checkbox" role="switch" class="input" :checked="settings.compactionEnabled" @change="settings.compactionEnabled = $event.target.checked" />
+          <fieldset class="fieldset p-4 bg-pasture-700/30 rounded-lg">
+            <legend>Memory & Learnings</legend>
+
+            <div role="group" class="field" data-orientation="horizontal">
+              <section>
+                <label for="compaction">Auto-compact learnings</label>
+                <p>Automatically summarize old learnings</p>
+              </section>
+              <input id="compaction" type="checkbox" role="switch" :checked="settings.compactionEnabled" @change="settings.compactionEnabled = $event.target.checked" />
             </div>
-            <div x-show="settings.compactionEnabled" x-cloak class="grid gap-4 pl-4 border-l-2 border-pasture-600">
-              <div class="grid gap-2">
-                <label class="label">Compaction threshold (characters)</label>
-                <input type="number" class="input w-40" x-model.number="settings.compactionThreshold" placeholder="10000" min="1000" max="100000" step="1000" />
+
+            <div x-show="settings.compactionEnabled" x-cloak class="grid gap-4 pl-4 border-l-2 border-pasture-600 mt-4">
+              <div role="group" class="field">
+                <label for="compact-threshold">Compaction threshold (characters)</label>
+                <input id="compact-threshold" type="number" class="w-40" x-model.number="settings.compactionThreshold" placeholder="10000" min="1000" max="100000" step="1000" />
               </div>
-              <div class="grid gap-2">
-                <label class="label">Messages to keep</label>
-                <input type="number" class="input w-40" x-model.number="settings.compactionKeepMessages" min="5" max="200" step="5" />
+              <div role="group" class="field">
+                <label for="keep-messages">Messages to keep</label>
+                <input id="keep-messages" type="number" class="w-40" x-model.number="settings.compactionKeepMessages" min="5" max="200" step="5" />
               </div>
             </div>
-            <div class="flex items-center justify-between mt-2">
-              <div class="grid gap-1">
-                <label class="mb-0">Auto-improve on completion</label>
-                <p class="text-muted-foreground text-sm">Update project memory when runs complete</p>
-              </div>
-              <input type="checkbox" role="switch" class="input" :checked="settings.autoImprove" @change="settings.autoImprove = $event.target.checked" />
+
+            <div role="group" class="field mt-4" data-orientation="horizontal">
+              <section>
+                <label for="auto-improve">Auto-improve on completion</label>
+                <p>Update project memory when runs complete</p>
+              </section>
+              <input id="auto-improve" type="checkbox" role="switch" :checked="settings.autoImprove" @change="settings.autoImprove = $event.target.checked" />
             </div>
-          </div>
+          </fieldset>
 
           <!-- Context Warning Threshold -->
-          <div class="grid gap-2">
+          <div role="group" class="field">
             <div class="flex items-center justify-between">
-              <label class="label mb-0">Context Warning Threshold</label>
+              <label for="context-threshold">Context Warning Threshold</label>
               <span class="text-sm text-wool-300" x-text="Math.round((settings.contextWarningThreshold || 0.5) * 100) + '%'"></span>
             </div>
-            <input type="range" class="input w-full" x-model.number="settings.contextWarningThreshold" min="0.1" max="0.9" step="0.1" x-effect="$el.style.setProperty('--slider-value', ((settings.contextWarningThreshold - 0.1) / 0.8) * 100 + '%')" />
+            <input id="context-threshold" type="range" x-model.number="settings.contextWarningThreshold" min="0.1" max="0.9" step="0.1" x-effect="$el.style.setProperty('--slider-value', ((settings.contextWarningThreshold - 0.1) / 0.8) * 100 + '%')" />
           </div>
 
           <!-- Coordinator Port -->
-          <div class="grid gap-2">
-            <label class="label">Coordinator Port</label>
-            <input type="number" class="input" x-model.number="settings.coordinatorPort" min="1024" max="65535" />
+          <div role="group" class="field">
+            <label for="coord-port">Coordinator Port</label>
+            <input id="coord-port" type="number" x-model.number="settings.coordinatorPort" min="1024" max="65535" />
           </div>
         </div>
 
-        <!-- ==================== AUTH TAB ==================== -->
+        <!-- ==================== AGENTS TAB ==================== -->
         <div x-show="!loading && activeTab === 'auth'" class="form grid gap-6">
           <p class="text-muted-foreground text-sm">Select your AI provider and configure authentication.</p>
 
           <!-- Provider Select -->
-          <div class="grid gap-2">
-            <label class="label">Provider</label>
-            <select class="select" x-model="selectedAuthProvider" @change="onAuthProviderChange()">
+          <div role="group" class="field">
+            <label for="provider">Provider</label>
+            <select id="provider" class="select w-full" x-model="selectedAuthProvider" @change="onAuthProviderChange()">
               <option value="">Select a provider...</option>
               <option value="claude">Claude (Anthropic)</option>
               <option value="gemini">Gemini (Google)</option>
@@ -3001,9 +3115,9 @@ Example:
           <!-- Auth config (appears after provider selected) -->
           <div x-show="selectedAuthProvider" x-cloak class="grid gap-4">
             <!-- Method Select -->
-            <div class="grid gap-2">
-              <label class="label">Authentication Method</label>
-              <select class="select" x-model="selectedAuthMethod">
+            <div role="group" class="field">
+              <label for="auth-method">Authentication Method</label>
+              <select id="auth-method" class="select w-full" x-model="selectedAuthMethod">
                 <option value="env">Environment Variable</option>
                 <option value="apiKey">API Key</option>
                 <option x-show="selectedAuthProvider === 'claude'" value="oauth">OAuth</option>
@@ -3011,21 +3125,21 @@ Example:
             </div>
 
             <!-- Method-specific fields -->
-            <div class="grid gap-4 p-4 bg-pasture-700/30 rounded-lg">
+            <div class="p-4 bg-pasture-700/30 rounded-lg">
               <!-- Env method -->
-              <div x-show="selectedAuthMethod === 'env'" class="grid gap-2">
-                <label class="label">Environment Variable Name</label>
-                <input type="text" class="input" x-model="authEnvVar" :placeholder="getDefaultEnvVar(selectedAuthProvider)" />
-                <p class="text-xs text-wool-500">Leave empty to use default: <span x-text="getDefaultEnvVar(selectedAuthProvider)"></span></p>
+              <div x-show="selectedAuthMethod === 'env'" role="group" class="field">
+                <label for="env-var">Environment Variable Name</label>
+                <p id="env-var-desc">Leave empty to use default: <span x-text="getDefaultEnvVar(selectedAuthProvider)"></span></p>
+                <input id="env-var" type="text" x-model="authEnvVar" :placeholder="getDefaultEnvVar(selectedAuthProvider)" aria-describedby="env-var-desc" />
               </div>
 
               <!-- API Key method -->
-              <div x-show="selectedAuthMethod === 'apiKey'" class="grid gap-2">
-                <label class="label">API Key</label>
-                <input type="password" class="input" x-model="authApiKey" placeholder="sk-..." />
-                <p class="text-xs text-wool-500" x-show="getExistingAuthKey(selectedAuthProvider)">
+              <div x-show="selectedAuthMethod === 'apiKey'" role="group" class="field">
+                <label for="api-key">API Key</label>
+                <p x-show="getExistingAuthKey(selectedAuthProvider)">
                   Current: <span x-text="getExistingAuthKey(selectedAuthProvider)"></span>
                 </p>
+                <input id="api-key" type="password" x-model="authApiKey" placeholder="••••••••" />
               </div>
 
               <!-- OAuth method (Claude only) -->
@@ -3037,94 +3151,179 @@ Example:
           </div>
         </div>
 
-        <!-- ==================== REMOTES TAB ==================== -->
-        <div x-show="!loading && activeTab === 'remotes'" class="form grid gap-6">
-          <p class="text-muted-foreground text-sm">Configure remote machines for distributed worker execution over SSH.</p>
+        <!-- ==================== RUNNERS TAB ==================== -->
+        <div x-show="!loading && activeTab === 'runners'" class="form grid gap-6">
+          <p class="text-muted-foreground text-sm">Configure where workers run: local machine, SSH remotes, or Sprites cloud VMs.</p>
 
-          <!-- Default Remote -->
-          <div class="grid gap-2">
-            <label class="label">Default Remote</label>
-            <select class="select" x-model="settings.defaultRemote">
-              <option :value="null">Local (no remote)</option>
-              <template x-for="name in remoteNames" :key="name">
+          <!-- Default Runner -->
+          <div role="group" class="field">
+            <label for="default-runner">Default Runner</label>
+            <select id="default-runner" class="select w-full" x-model="settings.defaultRunner" aria-describedby="default-runner-desc">
+              <option :value="null">Local (built-in)</option>
+              <template x-for="name in runnerNames" :key="name">
                 <option :value="name" x-text="name"></option>
               </template>
             </select>
-            <p class="text-muted-foreground text-sm">Default machine for spawning workers</p>
+            <p id="default-runner-desc">Where to spawn new workers by default</p>
           </div>
 
-          <!-- Remotes List -->
+          <!-- Runners List -->
           <div class="grid gap-3">
             <div class="flex items-center justify-between">
-              <h3 class="text-sm font-medium text-wool-200">Remote Machines</h3>
-              <button @click="startAddRemote()" class="btn btn-ghost btn-sm">
+              <h3 class="text-sm font-medium text-wool-200">Configured Runners</h3>
+              <button @click="startAddRunner()" class="btn btn-ghost btn-sm">
                 <i data-lucide="plus" class="w-4 h-4"></i>
-                Add Remote
+                Add Runner
               </button>
             </div>
 
-            <!-- Empty state -->
-            <div x-show="remoteNames.length === 0" class="p-6 text-center bg-pasture-700/30 rounded-lg">
-              <i data-lucide="server-off" class="w-8 h-8 mx-auto text-wool-500 mb-2"></i>
-              <p class="text-wool-400">No remotes configured</p>
-              <p class="text-xs text-wool-500 mt-1">Add a remote to run workers on other machines</p>
+            <!-- Local runner (always shown) -->
+            <div class="p-3 bg-pasture-700/30 rounded-lg border border-pasture-600/50">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <i data-lucide="cpu" class="w-4 h-4 text-sage"></i>
+                  <span class="font-medium text-wool-200">Local</span>
+                  <span class="text-xs px-2 py-0.5 bg-pasture-600 text-wool-400 rounded">Built-in</span>
+                  <span x-show="!settings.defaultRunner" class="text-xs px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded">default</span>
+                </div>
+              </div>
+              <div class="mt-2 text-xs text-wool-500">
+                <span>Run workers as subprocesses on this machine</span>
+              </div>
             </div>
 
-            <!-- Remote cards -->
-            <template x-for="name in remoteNames" :key="name">
+            <!-- Remote runner cards -->
+            <template x-for="name in runnerNames" :key="name">
               <div class="p-3 bg-pasture-700/30 rounded-lg">
                 <div class="flex items-center justify-between">
                   <div class="flex items-center gap-2">
-                    <i data-lucide="server" class="w-4 h-4 text-sage"></i>
+                    <!-- Sprites custom logo -->
+                    <template x-if="settings.runners[name]?.type === 'sprite'">
+                      <svg class="w-4 h-4" viewBox="0 0 724 582" fill-rule="evenodd">
+                        <g>
+                          <path d="M205.594 197.898h322.661v108.263H205.594z"></path>
+                          <path d="M578.582 508.799h-72.323v72.686h72.323v-72.686zm-361.614 0h-72.323v72.686h72.323v-72.686zm361.614-290.742h72.323v145.371h-72.323v72.686h-74.229 1.906v72.685H216.968v-72.685h-72.323v-72.686H72.323V218.057h72.322v-73.163h72.323V72.686h72.323v72.685h144.645V72.686h72.323v72.685h72.323v72.686zM72.323 508.799V363.428H0v145.371h72.323zm650.904 0V363.428h-72.322v145.371h72.322zM289.423 290.742h-.132.132zm-72.455-72.685h72.323v72.685h-72.323v-72.685zm216.968 0h72.323v72.685h-72.323v-72.685zM578.582 0h-72.323v72.686h72.323V0zM216.968 0h-72.323v72.686h72.323V0z" class="fill-green-600"></path>
+                          <path d="M144.645 363.428V218.057h72.323v-72.686h289.291v72.686h72.323v72.685l-.001.001v72.685h-72.322v72.686h-72.323V508.8H289.291v-72.686h-72.323v-72.686h-72.323zm144.646-72.686h-72.323v-72.685h72.323v72.685zm216.968 0h-72.323v-72.685h72.323v72.685z" class="fill-green-500"></path>
+                        </g>
+                      </svg>
+                    </template>
+                    <!-- Lucide icon for other runner types -->
+                    <template x-if="settings.runners[name]?.type !== 'sprite'">
+                      <i :data-lucide="getRunnerIcon(settings.runners[name]?.type)" class="w-4 h-4 text-sage"></i>
+                    </template>
                     <span class="font-medium text-wool-200" x-text="name"></span>
-                    <span x-show="settings.defaultRemote === name" class="text-xs px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded">default</span>
+                    <span class="text-xs px-2 py-0.5 bg-pasture-600 text-wool-400 rounded" x-text="getRunnerTypeLabel(settings.runners[name]?.type)"></span>
+                    <span x-show="settings.defaultRunner === name" class="text-xs px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded">default</span>
                   </div>
                   <div class="flex items-center gap-2">
-                    <button @click="deleteRemote(name)" class="btn btn-ghost btn-sm text-wool-400 hover:text-terra">
+                    <button @click="deleteRunner(name)" class="btn btn-ghost btn-sm text-wool-400 hover:text-terra">
                       <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                     </button>
-                    <button @click="startEditRemote(name)" class="btn btn-ghost btn-sm">
+                    <button @click="startEditRunner(name)" class="btn btn-ghost btn-sm">
                       <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
                       Edit
                     </button>
                   </div>
                 </div>
-                <div class="mt-2 text-xs text-wool-500 grid gap-1">
-                  <div class="flex items-center gap-2">
-                    <span class="text-wool-600">Host:</span>
-                    <span x-text="settings.remotes[name]?.host"></span>
+                <!-- SSH runner details -->
+                <template x-if="settings.runners[name]?.type === 'ssh'">
+                  <div class="mt-2 text-xs text-wool-500 grid gap-1">
+                    <div class="flex items-center gap-2">
+                      <span class="text-wool-600">Host:</span>
+                      <span x-text="settings.runners[name]?.host"></span>
+                    </div>
+                    <div class="flex items-center gap-2" x-show="settings.runners[name]?.sshKey">
+                      <span class="text-wool-600">Key:</span>
+                      <span x-text="settings.runners[name]?.sshKey"></span>
+                    </div>
                   </div>
-                  <div class="flex items-center gap-2" x-show="settings.remotes[name]?.sshKey">
-                    <span class="text-wool-600">Key:</span>
-                    <span x-text="settings.remotes[name]?.sshKey"></span>
+                </template>
+                <!-- Sprite runner details -->
+                <template x-if="settings.runners[name]?.type === 'sprite'">
+                  <div class="mt-2 text-xs text-wool-500 grid gap-1">
+                    <div class="flex items-center gap-2">
+                      <span class="text-wool-600">API Token:</span>
+                      <span x-text="settings.runners[name]?.apiToken ? '••••••••' : 'Not configured'"></span>
+                    </div>
+                    <div class="flex items-center gap-2" x-show="settings.runners[name]?.baseCheckpoint">
+                      <span class="text-wool-600">Checkpoint:</span>
+                      <span x-text="settings.runners[name]?.baseCheckpoint"></span>
+                    </div>
                   </div>
-                  <div class="flex items-center gap-2" x-show="settings.remotes[name]?.sshPort !== 22">
-                    <span class="text-wool-600">Port:</span>
-                    <span x-text="settings.remotes[name]?.sshPort"></span>
-                  </div>
-                </div>
+                </template>
               </div>
             </template>
           </div>
 
-          <!-- Remote Edit Dialog -->
-          <div x-show="editingRemote" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]" @click.self="cancelEditRemote()">
-            <div class="bg-pasture-800 rounded-lg shadow-xl w-[380px] p-4" @click.stop>
-              <h3 class="text-lg font-semibold text-wool-100 mb-4" x-text="editingRemote === '__new__' ? 'Add Remote' : 'Edit Remote'"></h3>
-              <div class="grid gap-4">
-                <div class="grid gap-2">
-                  <label class="label">Name</label>
-                  <input type="text" class="input" x-model="newRemoteName" placeholder="build-server" :disabled="editingRemote !== '__new__'" />
+          <!-- Runner Edit Dialog -->
+          <div x-show="editingRunner" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]" @click.self="cancelEditRunner()">
+            <div class="bg-pasture-800 rounded-lg shadow-xl w-[420px] p-4 border border-pasture-600" @click.stop>
+              <h3 class="text-lg font-semibold text-wool-100 mb-4" x-text="editingRunner === '__new__' ? 'Add Runner' : 'Edit Runner'"></h3>
+              <div class="form grid gap-4">
+                <!-- Name -->
+                <div role="group" class="field">
+                  <label for="runner-name">Name</label>
+                  <input id="runner-name" type="text" x-model="newRunnerName" placeholder="my-runner" :disabled="editingRunner !== '__new__'" />
                 </div>
-                <div class="grid gap-2">
-                  <label class="label">SSH Host <span class="text-terra">*</span></label>
-                  <input type="text" class="input" x-model="editRemoteData.host" placeholder="user@hostname" />
-                  <p class="text-xs text-wool-500">e.g. sam@192.168.1.100 or deploy@server.com</p>
+
+                <!-- Type (only when adding new) -->
+                <div role="group" class="field" x-show="editingRunner === '__new__'">
+                  <label for="runner-type">Type</label>
+                  <select id="runner-type" class="select w-full" x-model="newRunnerType" @change="onRunnerTypeChange()">
+                    <option value="ssh">SSH Remote</option>
+                    <option value="sprite">Sprites Cloud</option>
+                  </select>
                 </div>
+
+                <!-- SSH Fields -->
+                <template x-if="editRunnerData.type === 'ssh'">
+                  <div class="grid gap-4">
+                    <div role="group" class="field">
+                      <label for="ssh-host">SSH Host <span class="text-terra">*</span></label>
+                      <p id="ssh-host-desc">e.g. sam@192.168.1.100 or deploy@server.com</p>
+                      <input id="ssh-host" type="text" x-model="editRunnerData.host" placeholder="user@hostname" aria-describedby="ssh-host-desc" />
+                    </div>
+                    <div role="group" class="field">
+                      <label for="ssh-key">SSH Key (optional)</label>
+                      <input id="ssh-key" type="text" x-model="editRunnerData.sshKey" placeholder="~/.ssh/id_rsa" />
+                    </div>
+                    <div role="group" class="field">
+                      <label for="ssh-port">SSH Port</label>
+                      <input id="ssh-port" type="number" x-model.number="editRunnerData.sshPort" placeholder="22" />
+                    </div>
+                    <div role="group" class="field">
+                      <label for="work-dir">Work Directory</label>
+                      <input id="work-dir" type="text" x-model="editRunnerData.workBase" placeholder="/tmp/hirsel-remote" />
+                    </div>
+                  </div>
+                </template>
+
+                <!-- Sprite Fields -->
+                <template x-if="editRunnerData.type === 'sprite'">
+                  <div class="grid gap-4">
+                    <div role="group" class="field">
+                      <label for="sprite-token">API Token <span class="text-terra">*</span></label>
+                      <p id="sprite-token-desc">Get your token from <a href="https://sprites.dev" target="_blank" class="text-amber-500 hover:underline">sprites.dev</a></p>
+                      <input id="sprite-token" type="password" x-model="editRunnerData.apiToken" placeholder="••••••••" aria-describedby="sprite-token-desc" />
+                    </div>
+                    <div role="group" class="field">
+                      <label for="sprite-checkpoint">Base Checkpoint (optional)</label>
+                      <p id="sprite-checkpoint-desc">Pre-configured VM checkpoint to clone from</p>
+                      <input id="sprite-checkpoint" type="text" x-model="editRunnerData.baseCheckpoint" placeholder="hirsel-worker-v1" aria-describedby="sprite-checkpoint-desc" />
+                    </div>
+                    <div role="group" class="field" data-orientation="horizontal">
+                      <section>
+                        <label for="auto-destroy">Auto-destroy sprite</label>
+                        <p>Destroy sprite VM when worker completes</p>
+                      </section>
+                      <input id="auto-destroy" type="checkbox" role="switch" x-model="editRunnerData.autoDestroy" />
+                    </div>
+                  </div>
+                </template>
               </div>
               <div class="flex justify-end gap-2 mt-4">
-                <button @click="cancelEditRemote()" class="btn btn-ghost">Cancel</button>
-                <button @click="saveRemote()" class="btn">Save</button>
+                <button @click="cancelEditRunner()" class="btn btn-ghost">Cancel</button>
+                <button @click="saveRunner()" class="btn">Save</button>
               </div>
             </div>
           </div>
@@ -3136,11 +3335,12 @@ Example:
 
       <!-- Footer -->
       <div class="p-4 border-t border-border flex justify-between flex-shrink-0">
-        <button @click="testConnection()" :disabled="testing" class="btn btn-ghost">
+        <button x-show="activeTab === 'auth'" @click="testConnection()" :disabled="testing" class="btn btn-ghost">
           <i data-lucide="plug" class="w-4 h-4 mr-1.5"></i>
           <span x-show="!testing">Test Connection</span>
           <span x-show="testing">Testing...</span>
         </button>
+        <div x-show="activeTab !== 'auth'"></div>
         <div class="flex gap-3">
           <button @click="showSettings = false" class="btn btn-ghost">Cancel</button>
           <button @click="saveSettings()" :disabled="saving" class="btn">

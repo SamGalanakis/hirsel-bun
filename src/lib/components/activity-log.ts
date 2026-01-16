@@ -72,6 +72,10 @@ const ACTION_BG_CLASSES: Record<string, string> = {
  */
 // Actions that are worker-specific (check detail for worker name)
 // These must match the action names used in backend log_history calls
+// Detail formats:
+//   worker_add: "{worker_name}"
+//   worker_status: "{worker_name} → {status}"
+//   task_claim/done/unclaim: "{task_id} by {worker_name}"
 const WORKER_ACTIONS = new Set([
   'worker_status',
   'worker_add',
@@ -252,21 +256,30 @@ export function activityLog() {
         return null;
       }
 
-      // Worker status: detail is "worker-name status"
-      // Task claimed/done: detail might contain worker name
-      if (entry.detail) {
-        // For worker_status, the worker name is the first word
-        if (normalized === 'worker_status') {
-          const parts = entry.detail.split(/\s+/);
-          if (parts.length > 0) {
-            return parts[0];
-          }
+      if (!entry.detail) {
+        return null;
+      }
+
+      // worker_add: detail is just the worker name
+      if (normalized === 'worker_add') {
+        return entry.detail.trim();
+      }
+
+      // worker_status: format is "{worker_name} → {status}"
+      if (normalized === 'worker_status') {
+        const arrowIdx = entry.detail.indexOf(' → ');
+        if (arrowIdx > 0) {
+          return entry.detail.substring(0, arrowIdx).trim();
         }
-        // For task actions, look for worker name pattern (adjective-breed)
-        const workerMatch = entry.detail.match(/\b([a-z]+-[a-z]+)\b/i);
-        if (workerMatch) {
-          return workerMatch[1];
-        }
+        // Fallback: first word
+        const parts = entry.detail.split(/\s+/);
+        return parts[0] || null;
+      }
+
+      // task_claim/done/unclaim: format is "{task_id} by {worker_name}"
+      const byMatch = entry.detail.match(/\s+by\s+(.+?)(?:\s*\(|$)/i);
+      if (byMatch) {
+        return byMatch[1].trim();
       }
 
       return null;

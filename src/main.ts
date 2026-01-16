@@ -30,6 +30,10 @@ import {
 // Initialize toast system (uses basecoat toaster)
 import './lib/toast';
 
+// Initialize dev logger (must be early to capture all console logs)
+import { initDevLogger } from './lib/dev-logger';
+initDevLogger();
+
 // Initialize confirm dialog
 import { initConfirmDialog } from './lib/confirm-dialog';
 

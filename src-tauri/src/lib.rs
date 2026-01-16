@@ -389,6 +389,8 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
                 Some(&args.workers),
                 args.yolo,
                 json,
+                args.remote.as_deref(),
+                args.runner.as_deref(),
             )
             .map_err(|e| format!("Test error: {}", e))?;
         }
@@ -407,7 +409,18 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
 pub fn run() {
     use std::sync::Arc;
 
-    let mut builder = tauri::Builder::default().plugin(tauri_plugin_log::Builder::new().build());
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_log::Builder::new().build())
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // When a second instance tries to launch, focus the existing window
+            use tauri::Manager;
+            tracing::info!("Second instance attempted with args: {:?}", args);
+            if let Some(window) = app.get_webview_window("main") {
+                // Unminimize if minimized, then focus
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }));
 
     // Enable MCP plugin in debug builds for AI agent debugging
     #[cfg(debug_assertions)]
@@ -422,8 +435,12 @@ pub fn run() {
     // Create chat session manager as shared state
     let chat_manager = Arc::new(core::ChatSessionManager::new());
 
+    // Create worker event stream manager as shared state
+    let worker_stream_manager = Arc::new(gui::WorkerEventStreamManager::new());
+
     builder
         .manage(chat_manager)
+        .manage(worker_stream_manager)
         .invoke_handler(gui::get_handlers())
         .setup(|app| {
             use tauri::Manager;

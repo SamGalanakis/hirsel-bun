@@ -497,6 +497,18 @@ pub struct Config {
 
     #[serde(default)]
     pub auth: AuthConfig,
+
+    /// Named runners that can be referenced by workers
+    #[serde(default)]
+    pub runners: HashMap<String, crate::core::runner::RunnerConfig>,
+
+    /// Default runner for workers (defaults to "local")
+    #[serde(default)]
+    pub default_runner: Option<String>,
+
+    /// Per-worker runner assignments (worker_name -> runner_name)
+    #[serde(default)]
+    pub worker_runners: HashMap<String, String>,
 }
 
 fn default_root() -> PathBuf {
@@ -561,6 +573,9 @@ impl Default for Config {
             coordinator_port: default_coordinator_port(),
             default_remote: None,
             auth: AuthConfig::default(),
+            runners: HashMap::new(),
+            default_runner: None,
+            worker_runners: HashMap::new(),
         }
     }
 }
@@ -651,18 +666,13 @@ impl Config {
             }
         })?;
 
-        let data: toml::Value =
+        let table: toml::Table =
             content
                 .parse()
                 .map_err(|e: toml::de::Error| ConfigError::InvalidToml {
                     path: config_path.clone(),
                     message: e.to_string(),
                 })?;
-
-        let table = match data.as_table() {
-            Some(t) => t,
-            None => return Ok(warnings),
-        };
 
         // Load agent config
         if let Some(agent_data) = table.get("agent") {
@@ -888,6 +898,50 @@ impl Config {
             }
         }
 
+        // Load runners configuration
+        if let Some(runners_data) = table.get("runners") {
+            if let Some(runners_table) = runners_data.as_table() {
+                for (name, runner_data) in runners_table {
+                    // Serialize TOML value to string, then parse as RunnerConfig
+                    let toml_str = toml::to_string(runner_data).unwrap_or_default();
+                    match toml::from_str::<crate::core::runner::RunnerConfig>(&toml_str) {
+                        Ok(runner_config) => {
+                            self.runners.insert(name.clone(), runner_config);
+                        }
+                        Err(e) => {
+                            warnings.push(format!(
+                                "Config warning: [runners.{}] invalid config: {}",
+                                name, e
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Load default_runner
+        if let Some(val) = table.get("default_runner") {
+            if let Some(s) = val.as_str() {
+                if s == "local" || s.is_empty() {
+                    self.default_runner = None;
+                } else {
+                    self.default_runner = Some(s.to_string());
+                }
+            }
+        }
+
+        // Load worker_runners assignments
+        if let Some(worker_runners_data) = table.get("worker_runners") {
+            if let Some(worker_runners_table) = worker_runners_data.as_table() {
+                for (worker_name, runner_name_val) in worker_runners_table {
+                    if let Some(runner_name) = runner_name_val.as_str() {
+                        self.worker_runners
+                            .insert(worker_name.clone(), runner_name.to_string());
+                    }
+                }
+            }
+        }
+
         Ok(warnings)
     }
 
@@ -901,6 +955,49 @@ impl Config {
             return Err(ConfigError::RunNameHasPathSeparators);
         }
         Ok(())
+    }
+
+    /// Get the runner configuration for a specific worker
+    ///
+    /// Checks worker_runners first for a specific assignment,
+    /// then falls back to default_runner, then to local.
+    pub fn get_runner_for_worker(&self, worker_name: &str) -> crate::core::runner::RunnerConfig {
+        // Check for specific worker assignment
+        if let Some(runner_name) = self.worker_runners.get(worker_name) {
+            if let Some(runner_config) = self.runners.get(runner_name) {
+                return runner_config.clone();
+            }
+        }
+
+        // Check default runner
+        if let Some(ref default_name) = self.default_runner {
+            if let Some(runner_config) = self.runners.get(default_name) {
+                return runner_config.clone();
+            }
+        }
+
+        // Fall back to local
+        crate::core::runner::RunnerConfig::Local
+    }
+
+    /// Get a runner by name
+    pub fn get_runner(&self, name: &str) -> Option<crate::core::runner::RunnerConfig> {
+        if name == "local" {
+            return Some(crate::core::runner::RunnerConfig::Local);
+        }
+        self.runners.get(name).cloned()
+    }
+
+    /// Check if a named runner exists
+    pub fn has_runner(&self, name: &str) -> bool {
+        name == "local" || self.runners.contains_key(name)
+    }
+
+    /// Get all configured runner names
+    pub fn runner_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.runners.keys().cloned().collect();
+        names.insert(0, "local".to_string());
+        names
     }
 }
 

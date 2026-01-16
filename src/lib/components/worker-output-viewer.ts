@@ -3,28 +3,23 @@
  *
  * This component displays the streaming output from a worker's AI model,
  * including text, tool calls, and thinking blocks in chronological order.
+ * Uses Tauri event streaming for real-time updates (same pattern as Gyp chat).
  */
 
-import type { ChatToolCall, WorkerEvent } from '../types';
-import { getIcon, getToolKindIcon, getToolStatusIcon as getToolStatusIconSvg } from '../icons';
-import { getWorkerEvents, createWorkerEventsPoller } from '../api';
-
-/** A chunk of content in the output stream */
-interface OutputChunk {
-  id: string;
-  type: 'text' | 'thinking' | 'tool';
-  content?: string;
-  tool?: ChatToolCall;
-}
+import type { ChatToolCall, WorkerEvent, WorkerStreamEvent, WorkerDisplay, SheepConfig } from '../types';
+import { startWorkerEventStream, stopWorkerEventStream, listenWorkerEvents, getWorkers } from '../api';
+import { chunkRendererHelpers, type OutputChunk } from './chunk-renderer';
 
 /**
  * Worker Output Viewer Alpine component
  */
 export function workerOutputViewer() {
+  console.log('[WorkerOutput] Component factory called');
   return {
     // State
     runName: null as string | null,
     workerName: null as string | null,
+    sheepConfig: null as SheepConfig | null,
     loading: false,
     error: null as string | null,
     visible: false,
@@ -34,7 +29,7 @@ export function workerOutputViewer() {
     streaming: false,
     _lastChunkType: null as 'text' | 'thinking' | null,
     _toolsById: new Map() as Map<string, OutputChunk>,
-    _poller: null as { start: () => void; stop: () => void } | null,
+    _unlisten: null as (() => void) | null,
 
     // Configuration
     showThinking: true,
@@ -58,64 +53,123 @@ export function workerOutputViewer() {
       this.cleanup();
     },
 
-    cleanup() {
-      if (this._poller) {
-        this._poller.stop();
-        this._poller = null;
+    async cleanup() {
+      // Stop listening for events
+      if (this._unlisten) {
+        this._unlisten();
+        this._unlisten = null;
+      }
+
+      // Stop the backend stream
+      if (this.runName && this.workerName) {
+        try {
+          await stopWorkerEventStream(this.runName, this.workerName);
+        } catch (e) {
+          console.error('[WorkerOutput] Error stopping stream:', e);
+        }
       }
     },
 
     async show(runName: string, workerName: string) {
-      this.cleanup();
+      await this.cleanup();
       this.chunks = [];
       this._lastChunkType = null;
       this._toolsById.clear();
       this.runName = runName;
       this.workerName = workerName;
+      this.sheepConfig = null;
       this.loading = true;
       this.error = null;
       this.visible = true;
 
       try {
-        // Load existing events from DB
-        console.log('[WorkerOutput] Fetching events for:', runName, workerName);
-        const response = await getWorkerEvents(runName, workerName);
-        console.log('[WorkerOutput] Got response:', JSON.stringify(response, null, 2).slice(0, 500));
-        console.log('[WorkerOutput] Event count:', response.events?.length, 'Status:', response.workerStatus);
-        if (response.events && response.events.length > 0) {
-          console.log('[WorkerOutput] First event:', JSON.stringify(response.events[0]));
-        }
-        this.processEvents(response.events || []);
-        console.log('[WorkerOutput] After processEvents, chunks:', this.chunks.length);
-        this.updateStreamingState(response.workerStatus);
-
-        // Start polling for real-time updates
-        this._poller = createWorkerEventsPoller(runName, workerName, (events, isNew, workerStatus) => {
-          if (isNew) {
-            this.processEvents(events);
+        // Fetch worker data for sheep avatar (don't block on this)
+        getWorkers(runName).then(workers => {
+          const worker = workers.find(w => w.name === workerName) as WorkerDisplay | undefined;
+          if (worker?.sheepConfig) {
+            this.sheepConfig = worker.sheepConfig;
           }
-          this.updateStreamingState(workerStatus);
-        }, 200);
-        this._poller.start();
+        }).catch(() => {
+          // Ignore errors fetching worker data
+        });
+
+        // Set up event listener first (before starting stream to not miss events)
+        const self = this;
+        this._unlisten = await listenWorkerEvents((event) => {
+          try {
+            self.handleStreamEvent(event);
+          } catch (err) {
+            console.error('[WorkerOutput] Error handling event:', err);
+          }
+        });
+
+        // Start the backend stream (will emit history first, then live events)
+        await startWorkerEventStream(runName, workerName);
+
+        // Set a timeout to clear loading if no history received within 5 seconds
+        setTimeout(() => {
+          if (this.loading && this.runName === runName && this.workerName === workerName) {
+            console.warn('[WorkerOutput] Timeout waiting for history, showing empty state');
+            this.loading = false;
+          }
+        }, 5000);
       } catch (e) {
         const error = e as Error;
         this.error = error.message || 'Failed to load worker output';
         console.error('[WorkerOutput] Error:', e);
-      } finally {
         this.loading = false;
       }
     },
 
-    hide() {
-      this.cleanup();
+    async hide() {
+      await this.cleanup();
       this.visible = false;
       this.runName = null;
       this.workerName = null;
+      this.sheepConfig = null;
       this.chunks = [];
     },
 
     /**
-     * Process batch of events from DB
+     * Handle stream events from backend
+     */
+    handleStreamEvent(event: WorkerStreamEvent) {
+      // Filter events for our worker
+      if (event.runName !== this.runName || event.workerName !== this.workerName) {
+        return;
+      }
+
+      console.log('[WorkerOutput] Stream event:', event.type);
+
+      switch (event.type) {
+        case 'history':
+          // Process all historical events
+          console.log('[WorkerOutput] Received history with', event.events.length, 'events');
+          this.processEvents(event.events);
+          this.updateStreamingState(event.workerStatus);
+          this.loading = false;
+          break;
+
+        case 'event':
+          // Process a single new event
+          this.handleEvent(event.event);
+          break;
+
+        case 'status':
+          // Update streaming state
+          this.updateStreamingState(event.workerStatus);
+          break;
+
+        case 'ended':
+          // Stream has ended
+          console.log('[WorkerOutput] Stream ended');
+          this.streaming = false;
+          break;
+      }
+    },
+
+    /**
+     * Process batch of events
      */
     processEvents(events: WorkerEvent[]) {
       for (const event of events) {
@@ -127,7 +181,6 @@ export function workerOutputViewer() {
      * Handle a single worker event
      */
     handleEvent(event: WorkerEvent) {
-      console.log('[WorkerOutput] handleEvent:', event.eventType, event);
       switch (event.eventType) {
         case 'text':
           this.handleTextDelta(event.content || '');
@@ -139,7 +192,8 @@ export function workerOutputViewer() {
           this.handleToolCallStart(
             event.toolCallId || crypto.randomUUID(),
             event.toolTitle || 'Unknown tool',
-            event.toolKind || null
+            event.toolKind || null,
+            event.toolInput || null
           );
           break;
         case 'tool_update':
@@ -197,16 +251,23 @@ export function workerOutputViewer() {
       this._lastChunkType = 'thinking';
     },
 
-    handleToolCallStart(id: string, title: string, kind: string | null) {
+    handleToolCallStart(id: string, title: string, kind: string | null, input: string | null) {
       // Tool call breaks the text/thinking stream
       this._lastChunkType = null;
+
+      // Skip if this tool already exists (can happen with history replay)
+      if (this._toolsById.has(id)) {
+        return;
+      }
 
       const toolCall: ChatToolCall = {
         id,
         title,
         kind,
         status: 'in_progress',
+        input,
         output: null,
+        expanded: false,
       };
 
       const chunk: OutputChunk = {
@@ -239,8 +300,22 @@ export function workerOutputViewer() {
      * Only show streaming when worker is actively working
      */
     updateStreamingState(workerStatus: string | null) {
-      // Worker is streaming only when actively working
-      this.streaming = workerStatus === 'working';
+      const isWorking = workerStatus === 'working';
+      this.streaming = isWorking;
+
+      // When worker is done, mark any in_progress tools as completed
+      if (!isWorking && workerStatus) {
+        let updated = false;
+        for (const chunk of this._toolsById.values()) {
+          if (chunk.tool && chunk.tool.status === 'in_progress') {
+            chunk.tool.status = 'completed';
+            updated = true;
+          }
+        }
+        if (updated) {
+          this.chunks = [...this.chunks]; // Trigger reactivity
+        }
+      }
     },
 
     scrollToBottom() {
@@ -261,26 +336,30 @@ export function workerOutputViewer() {
       return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
     },
 
-    getIcon(name: string, size = 16): string {
-      return getIcon(name, size);
+    /**
+     * Toggle tool expanded state - searches all chunks
+     */
+    toggleToolExpanded(toolId: string) {
+      // First check the active map
+      let chunk = this._toolsById.get(toolId);
+
+      // If not found, search through all chunks
+      if (!chunk) {
+        for (const c of this.chunks) {
+          if (c.type === 'tool' && c.tool?.id === toolId) {
+            chunk = c;
+            break;
+          }
+        }
+      }
+
+      if (chunk?.tool) {
+        chunk.tool.expanded = !chunk.tool.expanded;
+        this.chunks = [...this.chunks]; // Trigger reactivity
+      }
     },
 
-    getToolIcon(kind: string | null): string {
-      return getToolKindIcon(kind, 14);
-    },
-
-    getToolStatusIcon(status: string): string {
-      return getToolStatusIconSvg(status, 12);
-    },
-
-    getToolStatusClass(status: string): string {
-      const classes: Record<string, string> = {
-        pending: 'text-wool-500',
-        in_progress: 'text-amber-400',
-        completed: 'text-sage',
-        failed: 'text-terra',
-      };
-      return classes[status] || 'text-wool-500';
-    },
+    // Spread shared chunk renderer helpers
+    ...chunkRendererHelpers(),
   };
 }

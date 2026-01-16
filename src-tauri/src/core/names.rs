@@ -99,6 +99,55 @@ pub fn get_adjectives() -> &'static [&'static str] {
     ADJECTIVES
 }
 
+// =============================================================================
+// Eval Agent Names (Detective/QA themed)
+// =============================================================================
+
+/// QA/Detective titles for eval agents
+const EVAL_TITLES: &[&str] = &[
+    "inspector",
+    "detective",
+    "auditor",
+    "examiner",
+    "analyst",
+    "reviewer",
+    "checker",
+    "verifier",
+];
+
+/// Adjectives for eval agents (subset that sounds "inspector-like")
+/// These are distinct from worker adjectives to avoid name collisions
+const EVAL_ADJECTIVES: &[&str] = &[
+    "keen",
+    "sharp",
+    "careful",
+    "diligent",
+    "thorough",
+    "vigilant",
+    "watchful",
+    "precise",
+    "astute",
+    "meticulous",
+];
+
+/// Generate an eval agent name with sequential number
+/// Format: title-adjective-N (e.g., "inspector-keen-1", "detective-sharp-2")
+pub fn generate_eval_name(eval_number: usize) -> String {
+    let mut rng = rand::rng();
+    let title = EVAL_TITLES.choose(&mut rng).unwrap_or(&"inspector");
+    let adj = EVAL_ADJECTIVES.choose(&mut rng).unwrap_or(&"keen");
+    format!("{}-{}-{}", title, adj, eval_number)
+}
+
+/// Generate a deterministic eval name based on eval ID
+pub fn generate_eval_name_seeded(eval_id: u64, eval_number: usize) -> String {
+    use rand::SeedableRng;
+    let mut rng = rand::rngs::StdRng::seed_from_u64(eval_id);
+    let title = EVAL_TITLES.choose(&mut rng).unwrap_or(&"inspector");
+    let adj = EVAL_ADJECTIVES.choose(&mut rng).unwrap_or(&"keen");
+    format!("{}-{}-{}", title, adj, eval_number)
+}
+
 /// Generate multiple unique names
 pub fn generate_unique_names(count: usize) -> Vec<String> {
     let mut names = Vec::with_capacity(count);

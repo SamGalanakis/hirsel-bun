@@ -146,6 +146,37 @@ export function calculateTimeProgress(
 }
 
 /**
+ * Format duration between two timestamps (or from start to now if end is null)
+ * Returns formats like "2m", "1h 15m", "3h", "2d 4h"
+ */
+export function formatDuration(
+  startTimestamp: string | null | undefined,
+  endTimestamp: string | null | undefined = null
+): string {
+  if (!startTimestamp) return '';
+  const start = parseUtcTimestamp(startTimestamp);
+  const end = endTimestamp ? parseUtcTimestamp(endTimestamp) : new Date();
+  const diffMs = end.getTime() - start.getTime();
+  if (diffMs < 0) return '';
+
+  const diffSecs = Math.floor(diffMs / 1000);
+  if (diffSecs < 60) return diffSecs + 's';
+
+  const diffMins = Math.floor(diffSecs / 60);
+  if (diffMins < 60) return diffMins + 'm';
+
+  const diffHours = Math.floor(diffMins / 60);
+  const remMins = diffMins % 60;
+  if (diffHours < 24) {
+    return remMins > 0 ? diffHours + 'h ' + remMins + 'm' : diffHours + 'h';
+  }
+
+  const diffDays = Math.floor(diffHours / 24);
+  const remHours = diffHours % 24;
+  return remHours > 0 ? diffDays + 'd ' + remHours + 'h' : diffDays + 'd';
+}
+
+/**
  * Format a timestamp as relative time (e.g., "2h ago", "3d ago")
  */
 export function formatRelativeTime(timestamp: string | null | undefined): string {

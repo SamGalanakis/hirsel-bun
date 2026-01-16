@@ -20,9 +20,11 @@ import type { RunDetail, Task, WorkerDisplay, Eval } from '../types';
 
 // Helper to sort evals by startedAt descending (most recent first)
 function sortEvals(evals: Eval[]): Eval[] {
-  return evals.sort((a, b) =>
-    new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
-  );
+  return (evals || [])
+    .filter((e): e is Eval => e != null && e.startedAt != null)
+    .sort((a, b) =>
+      new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
+    );
 }
 
 interface DiffStats {
@@ -179,8 +181,8 @@ export function runDetail() {
       });
     },
 
-    getEvalDuration(evalItem: Eval): string {
-      if (!evalItem.startedAt) return '';
+    getEvalDuration(evalItem: Eval | null): string {
+      if (!evalItem || !evalItem.startedAt) return '';
       const start = new Date(evalItem.startedAt);
       const end = evalItem.finishedAt ? new Date(evalItem.finishedAt) : new Date();
       const durationMs = end.getTime() - start.getTime();
@@ -192,16 +194,16 @@ export function runDetail() {
     },
 
     getTaskProgress() {
-      const done = this.tasks.filter(t => t.status === 'done').length;
-      const total = this.tasks.length;
+      const done = this.tasks.filter(t => t && t.status === 'done').length;
+      const total = this.tasks.filter(t => t != null).length;
       const percentage = total > 0 ? Math.round((done / total) * 100) : 0;
       return { done, total, percentage };
     },
 
     getWorkerCount() {
       const activeStatuses = ['working', 'waiting', 'eval'];
-      const active = this.workers.filter(w => activeStatuses.includes(w.status)).length;
-      return { active, total: this.workers.length };
+      const active = this.workers.filter(w => w && activeStatuses.includes(w.status)).length;
+      return { active, total: this.workers.filter(w => w != null).length };
     },
 
     async init() {
@@ -286,8 +288,8 @@ export function runDetail() {
             window.tauriInvoke<Eval[]>('get_evals', { runName: name }),
           ]);
           this.detail = detail;
-          this.tasks = tasks;
-          this.workers = workers;
+          this.tasks = (tasks || []).filter((t): t is Task => t != null);
+          this.workers = (workers || []).filter((w): w is WorkerDisplay => w != null);
           this.evals = sortEvals(evals);
 
           try {
@@ -316,8 +318,8 @@ export function runDetail() {
                 window.tauriInvoke<Eval[]>('get_evals', { runName: this.runName }),
               ]);
               this.detail = detail;
-              this.tasks = tasks;
-              this.workers = workers;
+              this.tasks = (tasks || []).filter((t): t is Task => t != null);
+              this.workers = (workers || []).filter((w): w is WorkerDisplay => w != null);
               this.evals = sortEvals(evals);
             } catch (err) {
               console.error('Failed to poll:', err);

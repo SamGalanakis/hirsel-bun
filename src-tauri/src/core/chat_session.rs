@@ -153,6 +153,7 @@ pub enum ChatEvent {
         tool_call_id: String,
         title: String,
         kind: Option<String>,
+        input: Option<String>,
     },
     /// Tool call updated (status, output)
     #[serde(rename_all = "camelCase")]
@@ -160,6 +161,7 @@ pub enum ChatEvent {
         session_id: String,
         tool_call_id: String,
         status: String,
+        title: Option<String>,
         output: Option<String>,
     },
     /// Permission request (needs user response)
@@ -414,11 +416,18 @@ impl Client for ChatClient {
                     _ => None,
                 };
 
+                // Serialize input if present
+                let input = tc
+                    .raw_input
+                    .as_ref()
+                    .and_then(|v| serde_json::to_string(v).ok());
+
                 let _ = self.event_tx.send(ChatEvent::ToolCallStart {
                     session_id: self.session_id.clone(),
                     tool_call_id: tc.tool_call_id.to_string(),
                     title: tc.title.clone(),
                     kind: kind.map(|s| s.to_string()),
+                    input,
                 });
             }
             SessionUpdate::ToolCallUpdate(update) => {
@@ -434,16 +443,14 @@ impl Client for ChatClient {
                     })
                     .unwrap_or("unknown");
 
-                let output = update
-                    .fields
-                    .raw_output
-                    .as_ref()
-                    .and_then(|v| serde_json::to_string(v).ok());
+                // Extract output using shared utility
+                let output = crate::core::acp::extract_tool_output(&update.fields);
 
                 let _ = self.event_tx.send(ChatEvent::ToolCallUpdate {
                     session_id: self.session_id.clone(),
                     tool_call_id: update.tool_call_id.to_string(),
                     status: status.to_string(),
+                    title: update.fields.title.clone(),
                     output,
                 });
             }
@@ -783,7 +790,8 @@ async fn run_chat_session_loop(
         state.clone(),
     ));
 
-    // Spawn agent process
+    // Spawn agent process in its own process group
+    // This allows us to kill the entire process tree when stopping the session
     let mut cmd = Command::new(&config.agent_command[0]);
     if config.agent_command.len() > 1 {
         cmd.args(&config.agent_command[1..]);
@@ -797,6 +805,10 @@ async fn run_chat_session_loop(
     for (key, value) in collect_agent_env() {
         cmd.env(&key, &value);
     }
+
+    // Create a new process group so we can kill all child processes
+    #[cfg(unix)]
+    cmd.process_group(0);
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -989,10 +1001,24 @@ async fn run_chat_session_loop(
         }
     }
 
-    // Clean up
+    // Clean up - kill the entire process group
     {
         let mut s = state.lock().await;
         if let Some(ref mut child) = s.child {
+            // Kill the process group to ensure all child processes are terminated
+            #[cfg(unix)]
+            if let Some(pid) = child.id() {
+                unsafe {
+                    // Kill the entire process group using negative PID
+                    libc::kill(-(pid as i32), libc::SIGTERM);
+                }
+                // Brief wait then force kill
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                unsafe {
+                    libc::kill(-(pid as i32), libc::SIGKILL);
+                }
+            }
+            // Also call kill on the child handle for good measure
             let _ = child.kill().await;
         }
     }

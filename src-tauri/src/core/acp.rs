@@ -230,6 +230,39 @@ pub fn collect_agent_env() -> HashMap<String, String> {
     env
 }
 
+/// Extract tool output from ACP ToolCallUpdateFields.
+///
+/// Tries raw_output first (JSON serialized), then falls back to extracting
+/// text content from the content field.
+pub fn extract_tool_output(fields: &agent_client_protocol::ToolCallUpdateFields) -> Option<String> {
+    // Try raw_output first
+    if let Some(ref raw) = fields.raw_output {
+        if let Ok(s) = serde_json::to_string(raw) {
+            return Some(s);
+        }
+    }
+
+    // Fall back to extracting text from content
+    fields.content.as_ref().and_then(|contents| {
+        use agent_client_protocol::{ContentBlock, ToolCallContent};
+        let texts: Vec<String> = contents
+            .iter()
+            .filter_map(|c| match c {
+                ToolCallContent::Content(content) => match &content.content {
+                    ContentBlock::Text(t) => Some(t.text.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        if texts.is_empty() {
+            None
+        } else {
+            Some(texts.join("\n"))
+        }
+    })
+}
+
 // Note: The actual ACP client implementation requires async runtime support
 // and the agent-client-protocol crate. The types above provide the interface
 // that will be used by the worker system.

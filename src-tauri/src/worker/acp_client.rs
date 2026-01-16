@@ -183,12 +183,8 @@ impl Client for HirselClient {
                     }
                 }
 
-                // Serialize output if present
-                let output = update
-                    .fields
-                    .raw_output
-                    .as_ref()
-                    .and_then(|v| serde_json::to_string(v).ok());
+                // Extract output using shared utility
+                let output = crate::core::acp::extract_tool_output(&update.fields);
 
                 // Write to database
                 if let Some(state) = self.get_state() {
@@ -509,6 +505,10 @@ pub async fn run_acp_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
     let _ = child.wait().await;
 
     info!("[{}] Worker finished", config.worker_name);
+
+    // Clean up any remaining child processes (e.g., grandchildren like node claude-code-acp)
+    crate::core::process::cleanup_process_group(&config.worker_name);
+
     Ok(())
 }
 

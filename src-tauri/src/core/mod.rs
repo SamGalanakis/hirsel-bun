@@ -21,7 +21,9 @@ pub mod git;
 pub mod git_http;
 pub mod metrics;
 pub mod names;
+pub mod process;
 pub mod remote;
+pub mod runner;
 pub mod state;
 pub mod state_access;
 pub mod tunnel;
@@ -44,6 +46,11 @@ pub use names::{generate_unique_names, generate_worker_name};
 pub use remote::{
     parse_remote_spec, parse_remote_specs, RemoteConfig, RemoteError, RemoteResult,
     RemoteWorkerSpawner,
+};
+pub use runner::{
+    create_runner, LocalRunner, Runner, RunnerConfig, RunnerError, RunnerResult,
+    SpawnResult as RunnerSpawnResult, SpriteRunner, SpriteRunnerConfig, SshRunner, SshRunnerConfig,
+    WorkerHandle, WorkerSpawnConfig as RunnerSpawnConfig,
 };
 pub use state::*;
 pub use state_access::{StateAccess, StateAccessError, StateAccessResult};

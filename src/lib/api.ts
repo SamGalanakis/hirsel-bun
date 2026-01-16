@@ -7,6 +7,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type {
   RunSummary,
   RunDetail,
@@ -25,6 +26,9 @@ import type {
   ParsedLogLine,
   WorkerEvent,
   WorkerEventsResponse,
+  WorkerStreamEvent,
+  ChatEvent,
+  UIContext,
 } from './types';
 import { toast } from './toast';
 
@@ -577,6 +581,48 @@ export function createWorkerEventsPoller(
 }
 
 // =============================================================================
+// Worker Event Streaming API (Tauri events)
+// =============================================================================
+
+/**
+ * Start streaming worker events via Tauri events
+ *
+ * This starts a background task that polls the database and emits
+ * `worker-event` events. Use listenWorkerEvents to receive them.
+ */
+export async function startWorkerEventStream(
+  runName: string,
+  workerName: string
+): Promise<void> {
+  return invoke('start_worker_event_stream', { runName, workerName });
+}
+
+/**
+ * Stop streaming worker events
+ */
+export async function stopWorkerEventStream(
+  runName: string,
+  workerName: string
+): Promise<void> {
+  return invoke('stop_worker_event_stream', { runName, workerName });
+}
+
+/**
+ * Listen for worker events from a stream
+ *
+ * @param handler - Function to handle worker stream events
+ * @returns Cleanup function to stop listening
+ */
+export async function listenWorkerEvents(
+  handler: (event: WorkerStreamEvent) => void
+): Promise<() => void> {
+  const unlisten = await listen<WorkerStreamEvent>('worker-event', (event) => {
+    handler(event.payload);
+  });
+  return unlisten;
+}
+
+// =============================================================================
 // Message/Chat API
 // =============================================================================
 
@@ -861,9 +907,6 @@ export function onEvent<T>(
 // =============================================================================
 // Direct Chat Session API (ACP-based AI chat)
 // =============================================================================
-
-import { listen } from '@tauri-apps/api/event';
-import type { ChatEvent, UIContext } from './types';
 
 /**
  * Start a new direct chat session with an AI agent

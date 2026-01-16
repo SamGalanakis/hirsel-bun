@@ -22,6 +22,8 @@ const HATS: Record<number, { svg: string; y: number }> = {
   6: { svg: `<ellipse cx="0" cy="-5" rx="5" ry="4" fill="#FAFAFA"/><ellipse cx="-3" cy="-6" rx="3" ry="3" fill="#FAFAFA"/><ellipse cx="3" cy="-6" rx="3" ry="3" fill="#FAFAFA"/><rect x="-4" y="-1" width="8" height="2.5" fill="#FAFAFA"/>`, y: 0 },
   // Hard hat
   7: { svg: `<path d="M-5 0 Q0 -7 5 0" fill="#FFC107"/><rect x="-5" y="-1.5" width="10" height="2" fill="#FFC107"/>`, y: 0 },
+  // Detective hat (reserved for eval agents)
+  8: { svg: `<ellipse cx="0" cy="0" rx="7" ry="1.8" fill="#4A4A4A"/><path d="M-4.5 0 Q-4.5 -5 0 -6 Q4.5 -5 4.5 0" fill="#5D5D5D"/><rect x="-5" y="-1" width="10" height="1.5" fill="#3D3D3D"/>`, y: 0 },
 };
 
 // Glasses - positioned over eyes (left eye: 27,43, right eye: 50,47)
@@ -202,7 +204,7 @@ export function getWorkerSheepSvg(
  * Get hat name by ID
  */
 export function getHatName(id: number): string {
-  return ['None', 'Crown', 'Cowboy', 'Top Hat', 'Beanie', 'Wizard', 'Chef', 'Hard Hat'][id] || 'Unknown';
+  return ['None', 'Crown', 'Cowboy', 'Top Hat', 'Beanie', 'Wizard', 'Chef', 'Hard Hat', 'Detective'][id] || 'Unknown';
 }
 
 /**

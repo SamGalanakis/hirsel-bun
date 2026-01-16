@@ -22,12 +22,11 @@ import {
   stopChatSession,
   listenChatEvents,
 } from '../api';
-import { getToolKindIcon, getToolStatusIcon as getToolStatusIconSvg } from '../icons';
+import { chunkRendererHelpers, type OutputChunk } from './chunk-renderer';
 
-/** A chunk of content in a message - text, thinking, or tool */
-interface MessageChunk {
-  id: string;
-  type: 'text' | 'thinking' | 'tool';
+/** A chunk of content in a message - reuse shared type */
+type MessageChunk = OutputChunk & {
+  // MessageChunk is same as OutputChunk
   content?: string;
   tool?: ChatToolCall;
 }
@@ -234,10 +233,10 @@ Be concise.`;
           this.handleThinkingDelta(event.text);
           break;
         case 'toolCallStart':
-          this.handleToolCallStart(event.toolCallId, event.title, event.kind);
+          this.handleToolCallStart(event.toolCallId, event.title, event.kind, event.input);
           break;
         case 'toolCallUpdate':
-          this.handleToolCallUpdate(event.toolCallId, event.status, event.output);
+          this.handleToolCallUpdate(event.toolCallId, event.status, event.title, event.output);
           break;
         case 'permissionRequest':
           this.handlePermissionRequest(event.request);
@@ -327,9 +326,30 @@ Be concise.`;
       this.messages = [...this.messages];
     },
 
-    handleToolCallStart(id: string, title: string, kind: string | null) {
+    handleToolCallStart(id: string, title: string, kind: string | null, input: string | null) {
       // Tool call breaks the text/thinking stream
       this._lastChunkType = null;
+
+      // Skip if this tool already exists (prevents duplicate key errors in x-for)
+      if (this._toolsById.has(id)) {
+        // Update existing tool's title/input if changed
+        const existing = this._toolsById.get(id);
+        if (existing?.tool) {
+          let updated = false;
+          if (existing.tool.title !== title) {
+            existing.tool.title = title;
+            updated = true;
+          }
+          if (input && existing.tool.input !== input) {
+            existing.tool.input = input;
+            updated = true;
+          }
+          if (updated) {
+            this.messages = [...this.messages];
+          }
+        }
+        return;
+      }
 
       if (!this._currentMessage) {
         this._currentMessage = {
@@ -348,6 +368,7 @@ Be concise.`;
         title,
         kind,
         status: 'in_progress',
+        input,
         output: null,
       };
 
@@ -363,11 +384,32 @@ Be concise.`;
       this.scrollToBottom();
     },
 
-    handleToolCallUpdate(id: string, status: string, output: string | null) {
-      const chunk = this._toolsById.get(id);
-      if (chunk && chunk.tool) {
+    handleToolCallUpdate(id: string, status: string, title: string | null, output: string | null) {
+      console.log('[DirectChat] toolCallUpdate:', { id, status, title, output: output?.substring(0, 100) });
+      // First check the active map
+      let chunk = this._toolsById.get(id);
+
+      // If not found, search through all messages
+      if (!chunk) {
+        for (const msg of this.messages) {
+          for (const c of msg.chunks) {
+            if (c.type === 'tool' && c.tool?.id === id) {
+              chunk = c;
+              break;
+            }
+          }
+          if (chunk) break;
+        }
+      }
+
+      if (chunk?.tool) {
         chunk.tool.status = status;
-        chunk.tool.output = output;
+        if (title) {
+          chunk.tool.title = title;
+        }
+        if (output) {
+          chunk.tool.output = output;
+        }
         this.messages = [...this.messages];
       }
     },
@@ -496,22 +538,31 @@ Be concise.`;
       return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
     },
 
-    getToolIcon(kind: string | null): string {
-      return getToolKindIcon(kind, 14);
+    /**
+     * Toggle tool expanded state - searches all messages
+     */
+    toggleToolExpanded(toolId: string) {
+      // First check the active map
+      const activeChunk = this._toolsById.get(toolId);
+      if (activeChunk?.tool) {
+        activeChunk.tool.expanded = !activeChunk.tool.expanded;
+        this.messages = [...this.messages];
+        return;
+      }
+
+      // Search through all messages for completed tools
+      for (const msg of this.messages) {
+        for (const chunk of msg.chunks) {
+          if (chunk.type === 'tool' && chunk.tool?.id === toolId) {
+            chunk.tool.expanded = !chunk.tool.expanded;
+            this.messages = [...this.messages];
+            return;
+          }
+        }
+      }
     },
 
-    getToolStatusIcon(status: string): string {
-      return getToolStatusIconSvg(status, 12);
-    },
-
-    getToolStatusClass(status: string): string {
-      const classes: Record<string, string> = {
-        pending: 'text-wool-500',
-        in_progress: 'text-amber-400',
-        completed: 'text-sage',
-        failed: 'text-terra',
-      };
-      return classes[status] || 'text-wool-500';
-    },
+    // Spread shared chunk renderer helpers
+    ...chunkRendererHelpers(),
   };
 }

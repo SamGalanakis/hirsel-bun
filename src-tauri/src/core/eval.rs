@@ -640,6 +640,19 @@ pub struct EvalAcpResult {
     pub eval_name: String,
 }
 
+/// Clean up a test run using the standard delete logic
+fn cleanup_test_run(run_name: &str) {
+    use tracing::{info, warn};
+
+    // Small delay to allow any pending writes to complete
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    match crate::cli::delete::execute(run_name, false) {
+        Ok(()) => info!("[cleanup] Deleted test run '{}'", run_name),
+        Err(e) => warn!("[cleanup] Failed to delete test run '{}': {}", run_name, e),
+    }
+}
+
 /// Entry point for the `__eval-run` CLI command.
 ///
 /// This function is called by the background subprocess spawned by `maybe_trigger_eval`.
@@ -665,10 +678,10 @@ pub async fn run_eval_from_args(
     // Get or create eval record in database
     let state = SQLiteState::new(files.db_path())?;
 
-    // Create eval name based on sequential number (eval_1, eval_2, etc.)
+    // Create eval name with detective/QA themed naming
     let existing_evals = state.get_evals(1000)?;
     let eval_number = existing_evals.len() + 1;
-    let eval_name = format!("eval_{}", eval_number);
+    let eval_name = crate::core::names::generate_eval_name(eval_number);
 
     // Create logs directory
     let logs_dir = run_dir.join("logs");
@@ -748,6 +761,16 @@ pub async fn run_eval_from_args(
         info!("[{}] Eval PASSED - marking run as Done", eval_name);
         state.set_status(Status::Done)?;
 
+        // Auto-cleanup test runs
+        if state.is_test_run().unwrap_or(false) {
+            info!(
+                "[{}] Test run completed successfully - cleaning up",
+                eval_name
+            );
+            cleanup_test_run(run_name);
+            return Ok(());
+        }
+
         // Trigger auto-improve if enabled
         let (global_config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
         let _ = crate::core::workers::maybe_run_improve(run_name, &global_config);
@@ -778,6 +801,13 @@ pub async fn run_eval_from_args(
                 eval_name, failed_count
             );
             state.set_status(Status::EvalFailed)?;
+
+            // Auto-cleanup test runs
+            if state.is_test_run().unwrap_or(false) {
+                info!("[{}] Test run failed - cleaning up", eval_name);
+                cleanup_test_run(run_name);
+                return Ok(());
+            }
         } else {
             info!(
                 "[{}] Eval FAILED ({} failures) - resuming workers for retry",
@@ -799,6 +829,9 @@ pub async fn run_eval_from_args(
             let _ = crate::core::workers::resume_awaiting_workers(run_name, &run_dir, &agent_cmd);
         }
     }
+
+    // Clean up any remaining child processes (e.g., grandchildren like node claude-code-acp)
+    crate::core::process::cleanup_process_group(&eval_name);
 
     Ok(())
 }

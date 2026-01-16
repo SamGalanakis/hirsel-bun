@@ -15,15 +15,17 @@ use crate::core::chats::{
     create_default_group_chat, create_default_user_chat, create_learnings_thread,
     create_worker_chat, ChatError,
 };
+use crate::core::config::Config;
 use crate::core::coordinator_api::CoordinatorServer;
 use crate::core::files::Files;
 use crate::core::git::{create_worker_clone, create_workspace, get_repo_root, GitError};
 use crate::core::names;
 use crate::core::remote::{parse_remote_spec, RemoteConfig, RemoteError, RemoteWorkerSpawner};
+use crate::core::runner::{self, Runner, RunnerConfig, RunnerError};
 use crate::core::state::{SQLiteState, StateError, Status};
 use crate::core::tunnel::{TunnelError, TunnelManager};
 use crate::core::workers::{spawn_worker, WorkerError, WorkerSpawnConfig};
-use tracing::info;
+use tracing::{info, warn};
 
 // =============================================================================
 // Error Types
@@ -38,12 +40,14 @@ pub enum GoError {
     Worker(WorkerError),
     Remote(RemoteError),
     Tunnel(TunnelError),
+    Runner(RunnerError),
     InvalidSpec(String),
     RunExists(String),
     InvalidTimeLimit(String),
     InvalidWorkerScale(String),
     InvalidPauseMode(String),
     InvalidProject(String),
+    InvalidRunner(String),
     NoGitRepo,
     UserAborted,
     CoordinatorError(String),
@@ -59,12 +63,14 @@ impl std::fmt::Display for GoError {
             GoError::Worker(e) => write!(f, "Worker error: {}", e),
             GoError::Remote(e) => write!(f, "Remote error: {}", e),
             GoError::Tunnel(e) => write!(f, "Tunnel error: {}", e),
+            GoError::Runner(e) => write!(f, "Runner error: {}", e),
             GoError::InvalidSpec(msg) => write!(f, "Invalid spec: {}", msg),
             GoError::RunExists(name) => write!(f, "Run '{}' already exists and is active", name),
             GoError::InvalidTimeLimit(msg) => write!(f, "Invalid time limit: {}", msg),
             GoError::InvalidWorkerScale(msg) => write!(f, "Invalid worker scale: {}", msg),
             GoError::InvalidPauseMode(msg) => write!(f, "Invalid pause mode: {}", msg),
             GoError::InvalidProject(msg) => write!(f, "Invalid project: {}", msg),
+            GoError::InvalidRunner(msg) => write!(f, "Invalid runner: {}", msg),
             GoError::NoGitRepo => write!(f, "Not in a git repository"),
             GoError::UserAborted => write!(f, "Aborted by user"),
             GoError::CoordinatorError(msg) => write!(f, "Coordinator error: {}", msg),
@@ -113,6 +119,12 @@ impl From<RemoteError> for GoError {
 impl From<TunnelError> for GoError {
     fn from(e: TunnelError) -> Self {
         GoError::Tunnel(e)
+    }
+}
+
+impl From<RunnerError> for GoError {
+    fn from(e: RunnerError) -> Self {
+        GoError::Runner(e)
     }
 }
 
@@ -844,51 +856,178 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
         let spec_path = run_dir.join("spec.md");
         let teammates: Vec<String> = worker_names.clone();
 
-        // Spawn LOCAL workers
-        for (i, (worker_name, work_dir)) in local_worker_dirs.iter().enumerate() {
-            let is_leader = i == 0 && is_multi_worker;
-            let config = WorkerSpawnConfig {
-                run_name: run_name.clone(),
-                worker_name: worker_name.clone(),
-                work_dir: work_dir.clone(),
-                run_dir: run_dir.clone(),
-                spec_path: spec_path.clone(),
-                agent_command: agent_command.clone(),
-                is_leader,
-                leader_name: leader.clone(),
-                teammates: if is_multi_worker {
-                    Some(
-                        teammates
-                            .iter()
-                            .filter(|t| *t != worker_name)
-                            .cloned()
-                            .collect(),
-                    )
+        // Determine runner config
+        let (hirsel_config, _config_warnings) = Config::load().unwrap_or_default();
+        let runner_config = match &args.runner {
+            Some(runner_name) => {
+                // Try to get from config, or create default based on name
+                if runner_name == "local" {
+                    RunnerConfig::Local
+                } else if runner_name == "sprite" || runner_name == "sprites" {
+                    hirsel_config
+                        .get_runner("sprites")
+                        .unwrap_or_else(|| RunnerConfig::Sprite(Default::default()))
                 } else {
-                    None
-                },
-                resume_session_id: None,
-            };
+                    hirsel_config.get_runner(runner_name).ok_or_else(|| {
+                        GoError::InvalidRunner(format!(
+                            "Runner '{}' not found in config. Available: {}",
+                            runner_name,
+                            hirsel_config.runner_names().join(", ")
+                        ))
+                    })?
+                }
+            }
+            None => RunnerConfig::Local,
+        };
 
-            match spawn_worker(config, &state) {
-                Ok(result) => {
-                    info!(
-                        "Spawned local worker {} (PID {})",
-                        result.worker_name, result.pid
+        // Spawn workers based on runner type
+        match &runner_config {
+            RunnerConfig::Local => {
+                // Spawn LOCAL workers (existing flow)
+                for (i, (worker_name, work_dir)) in local_worker_dirs.iter().enumerate() {
+                    let is_leader = i == 0 && is_multi_worker;
+                    let config = WorkerSpawnConfig {
+                        run_name: run_name.clone(),
+                        worker_name: worker_name.clone(),
+                        work_dir: work_dir.clone(),
+                        run_dir: run_dir.clone(),
+                        spec_path: spec_path.clone(),
+                        agent_command: agent_command.clone(),
+                        is_leader,
+                        leader_name: leader.clone(),
+                        teammates: if is_multi_worker {
+                            Some(
+                                teammates
+                                    .iter()
+                                    .filter(|t| *t != worker_name)
+                                    .cloned()
+                                    .collect(),
+                            )
+                        } else {
+                            None
+                        },
+                        resume_session_id: None,
+                    };
+
+                    match spawn_worker(config, &state) {
+                        Ok(result) => {
+                            info!(
+                                "Spawned local worker {} (PID {})",
+                                result.worker_name, result.pid
+                            );
+                        }
+                        Err(WorkerError::RunPaused) => {
+                            // Run was paused - don't spawn more workers
+                            break;
+                        }
+                        Err(e) => {
+                            // Log error but continue with other workers
+                            eprintln!("Warning: Failed to spawn worker {}: {}", worker_name, e);
+                        }
+                    }
+                }
+            }
+            RunnerConfig::Sprite(sprite_config) => {
+                // Spawn SPRITE workers
+                // Need to start coordinator first for API access
+                info!("Starting coordinator for sprite workers");
+                let coordinator_port = hirsel_config.coordinator_port;
+
+                let coord_state = SQLiteState::new(db_path.clone())?;
+                let mut coordinator = CoordinatorServer::new(
+                    coord_state,
+                    "0.0.0.0".to_string(),
+                    coordinator_port,
+                    Some(workspace_dir.clone()),
+                );
+
+                // Start coordinator in background
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| GoError::CoordinatorError(e.to_string()))?;
+
+                let coord_handle = std::thread::spawn(move || {
+                    rt.block_on(async {
+                        if let Err(e) = coordinator.start().await {
+                            eprintln!("Coordinator error: {}", e);
+                        }
+                    });
+                });
+
+                // Give coordinator time to start
+                std::thread::sleep(std::time::Duration::from_millis(500));
+
+                // Create sprite runner
+                let sprite_runner = runner::SpriteRunner::new(sprite_config.clone());
+
+                // Spawn workers on sprites
+                let spawn_rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| GoError::CoordinatorError(e.to_string()))?;
+
+                for (i, worker_name) in local_worker_names.iter().enumerate() {
+                    let is_leader = i == 0 && is_multi_worker;
+
+                    // Build env vars for worker
+                    let mut env_vars: HashMap<String, String> = std::env::vars()
+                        .filter(|(k, _)| {
+                            k.starts_with("ANTHROPIC_")
+                                || k.starts_with("OPENAI_")
+                                || k.starts_with("CLAUDE_")
+                        })
+                        .collect();
+                    env_vars.insert(
+                        "ACP_PERMISSION_MODE".to_string(),
+                        "bypassPermissions".to_string(),
                     );
+
+                    let spawn_config = runner::WorkerSpawnConfig {
+                        run_name: run_name.clone(),
+                        worker_name: worker_name.clone(),
+                        work_dir: workspace_dir.clone(),
+                        run_dir: run_dir.clone(),
+                        spec_path: spec_path.clone(),
+                        agent_command: agent_command.clone(),
+                        is_leader,
+                        leader_name: leader.clone(),
+                        teammates: if is_multi_worker {
+                            Some(
+                                teammates
+                                    .iter()
+                                    .filter(|t| *t != worker_name)
+                                    .cloned()
+                                    .collect(),
+                            )
+                        } else {
+                            None
+                        },
+                        resume_session_id: None,
+                        env_vars: Some(env_vars),
+                        coordinator_url: Some(format!("http://localhost:{}", coordinator_port)),
+                        project_url: Some(format!("http://localhost:{}/git", coordinator_port)),
+                    };
+
+                    match spawn_rt.block_on(sprite_runner.spawn(&spawn_config)) {
+                        Ok(result) => {
+                            info!(
+                                "Spawned sprite worker {} (sprite: {})",
+                                result.handle.worker_name, result.handle.runner_id
+                            );
+                        }
+                        Err(e) => {
+                            warn!("Failed to spawn sprite worker {}: {}", worker_name, e);
+                        }
+                    }
                 }
-                Err(WorkerError::RunPaused) => {
-                    // Run was paused - don't spawn more workers
-                    break;
-                }
-                Err(e) => {
-                    // Log error but continue with other workers
-                    eprintln!("Warning: Failed to spawn worker {}: {}", worker_name, e);
-                }
+
+                // Don't wait for coordinator thread
+                drop(coord_handle);
+            }
+            RunnerConfig::Ssh(_ssh_config) => {
+                // For SSH, use the existing remote worker flow
+                warn!("SSH runner specified via --runner flag. Use --remote for SSH workers.");
             }
         }
 
-        // Spawn REMOTE workers if any remote specs were provided
+        // Spawn REMOTE workers if any remote specs were provided (independent of --runner)
         if !remote_specs.is_empty() {
             spawn_remote_workers(
                 &run_name,

@@ -176,7 +176,8 @@ export function chatPanel() {
       if (!runName || !window.tauriInvoke) return;
 
       try {
-        this.workers = await window.tauriInvoke<WorkerDisplay[]>('get_workers', { runName });
+        const workers = await window.tauriInvoke<WorkerDisplay[]>('get_workers', { runName });
+        this.workers = (workers || []).filter((w): w is WorkerDisplay => w != null);
       } catch (e) {
         console.error('Failed to fetch workers:', e);
       }

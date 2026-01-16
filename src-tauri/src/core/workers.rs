@@ -178,14 +178,25 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
         args.push(session_id.clone());
     }
 
-    // Spawn the detached subprocess
-    let child = Command::new(&hirsel_exe)
-        .args(&args)
+    // Spawn the detached subprocess in its own process group
+    // This allows us to kill the entire process tree when stopping workers
+    let mut cmd = Command::new(&hirsel_exe);
+    cmd.args(&args)
         .current_dir(&config.work_dir)
         .envs(&env)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // Create a new process group with the child's PID as the group leader
+        // This ensures all descendant processes (claude-code-acp, claude) are in the same group
+        cmd.process_group(0);
+    }
+
+    let child = cmd
         .spawn()
         .map_err(|e| WorkerError::SpawnFailed(e.to_string()))?;
 
@@ -267,9 +278,11 @@ pub fn is_pid_alive(pid: u32) -> bool {
     }
 }
 
-/// Pause all workers in a run by killing their processes.
+/// Pause all workers in a run by killing their process groups.
 ///
 /// Workers can be resumed later from their saved session state.
+/// Since workers are spawned with process_group(0), killing the process group
+/// will also kill all child processes (claude-code-acp, claude, etc.).
 pub fn pause_all_workers(state: &SQLiteState) -> WorkerResult<Vec<String>> {
     let workers = state.get_workers()?;
     let mut paused = Vec::new();
@@ -279,24 +292,24 @@ pub fn pause_all_workers(state: &SQLiteState) -> WorkerResult<Vec<String>> {
             if is_pid_alive(pid as u32) {
                 #[cfg(unix)]
                 {
-                    // Send SIGTERM first for graceful shutdown
+                    // Kill the entire process group using negative PID
                     unsafe {
-                        libc::kill(pid as i32, libc::SIGTERM);
+                        libc::kill(-(pid as i32), libc::SIGTERM);
                     }
                 }
                 // Brief wait for graceful shutdown
                 std::thread::sleep(std::time::Duration::from_millis(100));
 
-                // Force kill if still alive
+                // Force kill process group if leader still alive
                 if is_pid_alive(pid as u32) {
                     #[cfg(unix)]
                     {
                         unsafe {
-                            libc::kill(pid as i32, libc::SIGKILL);
+                            libc::kill(-(pid as i32), libc::SIGKILL);
                         }
                     }
                 }
-                info!("Killed worker {} (PID {})", worker.name, pid);
+                info!("Killed worker {} process group (PID {})", worker.name, pid);
             }
         }
 
@@ -317,10 +330,12 @@ pub fn pause_all_workers(state: &SQLiteState) -> WorkerResult<Vec<String>> {
     Ok(paused)
 }
 
-/// Kill all workers in a run by sending SIGKILL.
+/// Kill all workers in a run by sending signals to the entire process group.
 ///
 /// This is a forceful cleanup used when a run reaches a terminal state
 /// (Done, EvalFailed, TimedOut) to ensure no orphaned worker processes remain.
+/// Since workers are spawned with process_group(0), killing the process group
+/// will also kill all child processes (claude-code-acp, claude, etc.).
 pub fn kill_all_workers(state: &SQLiteState) -> WorkerResult<Vec<String>> {
     let workers = state.get_workers()?;
     let mut killed = Vec::new();
@@ -330,24 +345,26 @@ pub fn kill_all_workers(state: &SQLiteState) -> WorkerResult<Vec<String>> {
             if is_pid_alive(pid as u32) {
                 #[cfg(unix)]
                 {
-                    // First try SIGTERM for graceful shutdown
+                    // Kill the entire process group using negative PID
+                    // This kills the worker and all its children (claude-code-acp, claude)
                     unsafe {
-                        libc::kill(pid as i32, libc::SIGTERM);
+                        // First try SIGTERM for graceful shutdown of the process group
+                        libc::kill(-(pid as i32), libc::SIGTERM);
                     }
                 }
                 // Give a brief moment for graceful shutdown
                 std::thread::sleep(std::time::Duration::from_millis(100));
 
-                // Then force kill if still alive
+                // Then force kill the process group if leader still alive
                 if is_pid_alive(pid as u32) {
                     #[cfg(unix)]
                     {
                         unsafe {
-                            libc::kill(pid as i32, libc::SIGKILL);
+                            libc::kill(-(pid as i32), libc::SIGKILL);
                         }
                     }
                 }
-                info!("Killed worker {} (PID {})", worker.name, pid);
+                info!("Killed worker {} process group (PID {})", worker.name, pid);
                 killed.push(worker.name.clone());
             }
         }

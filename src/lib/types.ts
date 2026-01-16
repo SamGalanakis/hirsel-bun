@@ -138,11 +138,11 @@ export interface Task {
   status: TaskStatus;
   claimedBy: string | null;
   claimedAt: string | null;
+  completedAt: string | null;
   parentId: string | null;
   blockedBy: string[] | null;
   tokensUsed: number | null;
   createdAt: string;
-  pendingDoneAt: string | null;
 }
 
 /** Task with computed display properties */
@@ -275,6 +275,8 @@ export interface Eval {
   logFile: string | null;
   startedAt: string;
   finishedAt: string | null;
+  /** Sheep avatar configuration (detective hat) */
+  sheepConfig: SheepConfig;
 }
 
 // =============================================================================
@@ -529,6 +531,33 @@ export interface WorkerEventsResponse {
   workerStatus: WorkerStatus | null;
 }
 
+/** Worker stream event - emitted via Tauri events */
+export type WorkerStreamEvent =
+  | {
+      type: 'history';
+      runName: string;
+      workerName: string;
+      events: WorkerEvent[];
+      workerStatus: string | null;
+    }
+  | {
+      type: 'event';
+      runName: string;
+      workerName: string;
+      event: WorkerEvent;
+    }
+  | {
+      type: 'status';
+      runName: string;
+      workerName: string;
+      workerStatus: string | null;
+    }
+  | {
+      type: 'ended';
+      runName: string;
+      workerName: string;
+    };
+
 // =============================================================================
 // Direct Chat Session Types (ACP-based AI chat)
 // =============================================================================
@@ -592,6 +621,7 @@ export interface ToolCallStartEvent extends ChatEventBase {
   toolCallId: string;
   title: string;
   kind: string | null;
+  input: string | null;
 }
 
 /** Tool call update event */
@@ -599,6 +629,7 @@ export interface ToolCallUpdateEvent extends ChatEventBase {
   type: 'toolCallUpdate';
   toolCallId: string;
   status: string;
+  title: string | null;
   output: string | null;
 }
 
@@ -644,7 +675,11 @@ export interface ChatToolCall {
   title: string;
   kind: string | null;
   status: string;
+  /** Tool input (JSON string, e.g. command for terminal tools) */
+  input: string | null;
   output: string | null;
+  /** Whether the tool details are expanded */
+  expanded?: boolean;
 }
 
 /** Chat message for display */

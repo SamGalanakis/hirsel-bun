@@ -75,7 +75,8 @@ export function taskPanel() {
 
       try {
         if (window.tauriInvoke) {
-          this.tasks = await window.tauriInvoke<Task[]>('get_tasks', { runName });
+          const tasks = await window.tauriInvoke<Task[]>('get_tasks', { runName });
+          this.tasks = (tasks || []).filter((t): t is Task => t != null);
         } else {
           this.tasks = [];
         }
@@ -88,7 +89,8 @@ export function taskPanel() {
           if (!currentRun) return;
           try {
             if (window.tauriInvoke) {
-              this.tasks = await window.tauriInvoke<Task[]>('get_tasks', { runName: currentRun });
+              const tasks = await window.tauriInvoke<Task[]>('get_tasks', { runName: currentRun });
+              this.tasks = (tasks || []).filter((t): t is Task => t != null);
               this.buildFlatList();
               this.updateTaskCounts();
             }
@@ -171,7 +173,8 @@ export function taskPanel() {
       return 'text-wool-500';
     },
 
-    getTaskNameClass(task: TaskDisplay): string {
+    getTaskNameClass(task: TaskDisplay | null): string {
+      if (!task) return 'text-sm truncate text-wool-100';
       const classes = ['text-sm', 'truncate'];
       if (task.status === 'done') {
         classes.push('text-wool-500', 'line-through');

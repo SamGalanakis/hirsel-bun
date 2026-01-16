@@ -359,6 +359,7 @@ impl ToolCallStatus {
 
 /// Worker output event for real-time streaming
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkerEvent {
     pub id: i64,
     pub worker_name: String,
@@ -443,7 +444,8 @@ CREATE TABLE IF NOT EXISTS state (
     last_compaction_at TEXT,
     iteration_count INTEGER DEFAULT 0,
     max_iterations INTEGER,
-    pause_mode TEXT DEFAULT 'sender'
+    pause_mode TEXT DEFAULT 'sender',
+    is_test INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS workers (
@@ -1122,6 +1124,25 @@ impl SQLiteState {
         self.db.execute(
             "UPDATE state SET pause_mode = ?1, updated_at = ?2 WHERE id = 1",
             params![mode, self.now()],
+        )?;
+        Ok(())
+    }
+
+    /// Check if this is a test run (auto-cleanup after eval)
+    pub fn is_test_run(&self) -> StateResult<bool> {
+        let result: i64 = self.db.query_row(
+            "SELECT COALESCE(is_test, 0) FROM state WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(result != 0)
+    }
+
+    /// Mark this run as a test run (will auto-cleanup after eval)
+    pub fn set_is_test(&self, is_test: bool) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET is_test = ?1, updated_at = ?2 WHERE id = 1",
+            params![if is_test { 1 } else { 0 }, self.now()],
         )?;
         Ok(())
     }
@@ -2529,7 +2550,7 @@ impl SQLiteState {
         Ok(self.db.last_insert_rowid())
     }
 
-    /// Insert a tool start event
+    /// Insert a tool start event, or update if tool_call_id already exists with better data
     pub fn insert_tool_start_event(
         &self,
         worker_name: &str,
@@ -2539,6 +2560,33 @@ impl SQLiteState {
         status: ToolCallStatus,
         input: Option<&str>,
     ) -> StateResult<i64> {
+        // Check if this tool_call_id already exists
+        let existing: Option<(i64, Option<String>)> = self
+            .db
+            .query_row(
+                "SELECT id, tool_input FROM worker_events WHERE tool_call_id = ?1 AND event_type = 'tool_start'",
+                params![tool_call_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
+
+        if let Some((existing_id, existing_input)) = existing {
+            // Update if new data has input and existing doesn't (second event has actual command)
+            let has_better_input = input.is_some()
+                && input != Some("{}")
+                && (existing_input.is_none() || existing_input.as_deref() == Some("{}"));
+
+            if has_better_input || title != "Terminal" {
+                self.db.execute(
+                    "UPDATE worker_events SET tool_title = ?1, tool_kind = ?2, tool_status = ?3, tool_input = ?4
+                     WHERE id = ?5",
+                    params![title, kind, status.as_str(), input, existing_id],
+                )?;
+            }
+            return Ok(existing_id);
+        }
+
+        // Insert new row
         self.db.execute(
             "INSERT INTO worker_events (worker_name, event_type, timestamp, tool_call_id, tool_title, tool_kind, tool_status, tool_input)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
