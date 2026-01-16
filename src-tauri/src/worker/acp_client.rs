@@ -24,7 +24,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 
-use crate::core::acp::{collect_agent_env, create_hirsel_mcp_config};
+use crate::core::acp::{create_hirsel_mcp_config, AcpChild, AcpSpawnConfig};
 
 /// Result type for ACP operations
 type Result<T> = std::result::Result<T, agent_client_protocol::Error>;
@@ -376,37 +376,19 @@ pub async fn run_acp_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
         &db_path,
     ));
 
-    // Spawn the agent process
-    let mut cmd = Command::new(&config.agent_command[0]);
-    if config.agent_command.len() > 1 {
-        cmd.args(&config.agent_command[1..]);
-    }
-    cmd.current_dir(&config.work_dir);
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::null());
-
-    // Pass through environment variables
-    for (key, value) in collect_agent_env() {
-        cmd.env(&key, &value);
-    }
-    cmd.env("ACP_PERMISSION_MODE", "bypassPermissions");
-
-    let mut child = cmd.spawn()?;
-    let stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("Failed to get stdin"))?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("Failed to get stdout"))?;
-
-    info!(
-        "[{}] Agent process started, pid={}",
-        config.worker_name,
-        child.id().unwrap_or(0)
+    // Spawn the agent process using AcpChild for automatic cleanup
+    let spawn_config = AcpSpawnConfig::new(
+        config.agent_command.clone(),
+        config.work_dir.clone(),
+        config.worker_name.clone(),
     );
+    let mut acp_child = AcpChild::spawn(spawn_config)?;
+    let stdin = acp_child
+        .take_stdin()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get stdin"))?;
+    let stdout = acp_child
+        .take_stdout()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get stdout"))?;
 
     // Convert tokio streams to futures-compatible streams
     let stdin_compat = stdin.compat_write();
@@ -502,13 +484,11 @@ pub async fn run_acp_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
     // Wait for the agent to finish
     drop(conn);
     let _ = io_handle.await;
-    let _ = child.wait().await;
+    let _ = acp_child.wait().await;
 
     info!("[{}] Worker finished", config.worker_name);
 
-    // Clean up any remaining child processes (e.g., grandchildren like node claude-code-acp)
-    crate::core::process::cleanup_process_group(&config.worker_name);
-
+    // AcpChild handles cleanup automatically on drop (kills process group)
     Ok(())
 }
 

@@ -22,9 +22,9 @@ import {
   settingsModal,
   aiMessageStream,
   workerOutputViewer,
-  toastContainer,
   sortToggle,
   sortButton,
+  debugPanel,
 } from './lib/components';
 
 // Initialize toast system (uses basecoat toaster)
@@ -52,6 +52,9 @@ import {
 // Import sheep avatar utilities
 import { generateSheepSvg, getWorkerSheepSvg, getHatName, generateAgentSheepSvg } from './lib/sheep-avatar';
 
+// Import keyboard shortcuts utilities
+import { getShortcuts, formatBinding } from './lib/shortcuts';
+
 // Import types to extend global Window interface
 import './lib/types';
 
@@ -74,6 +77,10 @@ window.getWorkerSheepSvg = getWorkerSheepSvg;
 window.getHatName = getHatName;
 window.generateAgentSheepSvg = generateAgentSheepSvg;
 
+// Export keyboard shortcuts utilities globally for Alpine templates
+window.getShortcuts = getShortcuts;
+window.formatBinding = formatBinding;
+
 // Export Alpine components globally for x-data bindings
 window.appState = appState;
 window.runList = runList;
@@ -91,9 +98,9 @@ window.sheepClickerGame = sheepClickerGame;
 window.settingsModal = settingsModal;
 window.aiMessageStream = aiMessageStream;
 window.workerOutputViewer = workerOutputViewer;
-window.toastContainer = toastContainer;
 window.sortToggle = sortToggle;
 window.sortButton = sortButton;
+window.debugPanel = debugPanel;
 
 // Initialize Lucide icons
 initLucideIcons();

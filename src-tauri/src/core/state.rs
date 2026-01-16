@@ -2028,10 +2028,7 @@ impl SQLiteState {
             params![branch, EvalStatus::Running.as_str(), self.now(), eval_name, log_file],
         )?;
         let id = self.db.last_insert_rowid();
-        self.log_history(
-            "eval_start",
-            Some(&format!("branch={} name={:?}", branch, eval_name)),
-        )?;
+        self.log_history("eval_start", eval_name.map(|n| n.to_string()).as_deref())?;
         Ok(id)
     }
 
@@ -2046,10 +2043,7 @@ impl SQLiteState {
             "UPDATE evals SET status = ?1, feedback = ?2, finished_at = ?3 WHERE id = ?4",
             params![status.as_str(), feedback, self.now(), eval_id],
         )?;
-        self.log_history(
-            "eval_complete",
-            Some(&format!("id={} status={}", eval_id, status)),
-        )?;
+        self.log_history("eval_complete", Some(&format!("{}", status)))?;
         Ok(())
     }
 
@@ -2122,7 +2116,7 @@ impl SQLiteState {
                 "UPDATE evals SET status = ?1, feedback = ?2, finished_at = ?3 WHERE id = ?4",
                 params![EvalStatus::Failed.as_str(), reason, self.now(), id],
             )?;
-            self.log_history("eval_cancel", Some(&format!("id={} name={:?}", id, name)))?;
+            self.log_history("eval_cancel", name.as_deref())?;
         }
 
         Ok(running.len() as i64)

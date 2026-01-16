@@ -4143,6 +4143,109 @@ pub async fn log_frontend(level: String, message: String) {
 }
 
 // =============================================================================
+// Debug Commands (dev mode only)
+// =============================================================================
+
+/// Count claude and acp related processes (for debug panel)
+#[tauri::command]
+pub async fn get_process_counts() -> Result<serde_json::Value, String> {
+    #[cfg(unix)]
+    {
+        use std::process::Command;
+
+        // Count claude processes
+        let claude_output = Command::new("sh")
+            .arg("-c")
+            .arg("ps aux | grep -E '[c]laude' | wc -l")
+            .output()
+            .map_err(|e| e.to_string())?;
+        let claude_count: i32 = String::from_utf8_lossy(&claude_output.stdout)
+            .trim()
+            .parse()
+            .unwrap_or(0);
+
+        // Count acp processes
+        let acp_output = Command::new("sh")
+            .arg("-c")
+            .arg("ps aux | grep -E '[a]cp|[c]laude-code-acp' | wc -l")
+            .output()
+            .map_err(|e| e.to_string())?;
+        let acp_count: i32 = String::from_utf8_lossy(&acp_output.stdout)
+            .trim()
+            .parse()
+            .unwrap_or(0);
+
+        // Count node processes
+        let node_output = Command::new("sh")
+            .arg("-c")
+            .arg("ps aux | grep -E '[n]ode' | wc -l")
+            .output()
+            .map_err(|e| e.to_string())?;
+        let node_count: i32 = String::from_utf8_lossy(&node_output.stdout)
+            .trim()
+            .parse()
+            .unwrap_or(0);
+
+        // Get detailed process list
+        let detail_output = Command::new("sh")
+            .arg("-c")
+            .arg("ps aux | grep -E 'claude|acp' | grep -v grep | head -20")
+            .output()
+            .map_err(|e| e.to_string())?;
+        let details = String::from_utf8_lossy(&detail_output.stdout).to_string();
+
+        Ok(serde_json::json!({
+            "claude": claude_count,
+            "acp": acp_count,
+            "node": node_count,
+            "details": details
+        }))
+    }
+
+    #[cfg(not(unix))]
+    {
+        Ok(serde_json::json!({
+            "claude": 0,
+            "acp": 0,
+            "node": 0,
+            "details": "Process counting not supported on this platform"
+        }))
+    }
+}
+
+/// Kill orphaned claude-code-acp processes (debug panel utility)
+#[tauri::command]
+pub async fn kill_orphaned_acp_processes() -> Result<serde_json::Value, String> {
+    #[cfg(unix)]
+    {
+        use std::process::Command;
+
+        // Use pkill to kill claude-code-acp processes
+        let output = Command::new("pkill")
+            .arg("-f")
+            .arg("claude-code-acp")
+            .output()
+            .map_err(|e| e.to_string())?;
+
+        // pkill returns 0 if processes were killed, 1 if none found
+        let killed = if output.status.success() {
+            // Count how many we killed by checking process count before/after
+            // For simplicity, just report that some were killed
+            1
+        } else {
+            0
+        };
+
+        Ok(serde_json::json!({ "killed": killed }))
+    }
+
+    #[cfg(not(unix))]
+    {
+        Ok(serde_json::json!({ "killed": 0 }))
+    }
+}
+
+// =============================================================================
 // Handler Registration
 // =============================================================================
 
@@ -4219,5 +4322,8 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         list_chat_sessions,
         // Frontend logging (dev mode)
         log_frontend,
+        // Debug commands
+        get_process_counts,
+        kill_orphaned_acp_processes,
     ]
 }

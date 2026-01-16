@@ -38,10 +38,17 @@ pub fn cleanup_process_group(context: &str) {
     {
         info!("[{}] Cleaning up process group", context);
         unsafe {
-            // Small delay to let child processes finish gracefully
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            // Send SIGTERM to our process group (PID 0 = current process group)
+            // Send SIGTERM first for graceful shutdown
             libc::kill(0, libc::SIGTERM);
+        }
+
+        // Wait for graceful shutdown
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        // Force kill any remaining processes in the group
+        // (Node.js processes like claude-code-acp may ignore SIGTERM)
+        unsafe {
+            libc::kill(0, libc::SIGKILL);
         }
     }
 
@@ -59,7 +66,7 @@ pub fn cleanup_process_group(context: &str) {
 /// # Arguments
 ///
 /// * `pid` - The PID of the process group leader
-/// * `force` - If true, sends SIGKILL after SIGTERM fails
+/// * `force` - If true, sends SIGKILL after SIGTERM (always, since children may survive)
 pub fn kill_process_group(pid: u32, force: bool) {
     #[cfg(unix)]
     {
@@ -72,11 +79,10 @@ pub fn kill_process_group(pid: u32, force: bool) {
             // Brief wait for graceful shutdown
             std::thread::sleep(std::time::Duration::from_millis(100));
 
-            // Check if process is still alive and force kill
-            if is_pid_alive(pid) {
-                unsafe {
-                    libc::kill(-(pid as i32), libc::SIGKILL);
-                }
+            // Always send SIGKILL - the leader may die quickly but children
+            // (like Node.js claude-code-acp) may ignore SIGTERM
+            unsafe {
+                libc::kill(-(pid as i32), libc::SIGKILL);
             }
         }
     }

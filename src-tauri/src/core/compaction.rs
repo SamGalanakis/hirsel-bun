@@ -5,11 +5,9 @@
 //! removes the old messages.
 
 use std::path::Path;
-use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::process::Command;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
 
@@ -349,7 +347,7 @@ pub async fn generate_compaction_summary(
     project_path: &Path,
     agent_command: &[String],
 ) -> Result<String, CompactionError> {
-    use crate::core::acp::collect_agent_env;
+    use crate::core::acp::{AcpChild, AcpSpawnConfig};
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
     if messages.is_empty() {
@@ -375,32 +373,20 @@ pub async fn generate_compaction_summary(
     // Create text-only client
     let client = Arc::new(TextOnlyClient::new());
 
-    // Spawn agent process
-    let mut cmd = Command::new(&agent_command[0]);
-    if agent_command.len() > 1 {
-        cmd.args(&agent_command[1..]);
-    }
-    cmd.current_dir(project_path);
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::null());
-
-    // Pass through API keys
-    for (key, value) in collect_agent_env() {
-        cmd.env(&key, &value);
-    }
-
-    let mut child = cmd.spawn()?;
-    let stdin = child
-        .stdin
-        .take()
+    // Spawn agent process using AcpChild for automatic cleanup
+    let spawn_config = AcpSpawnConfig::new(
+        agent_command.to_vec(),
+        project_path.to_path_buf(),
+        "compaction",
+    );
+    let mut acp_child = AcpChild::spawn(spawn_config)
+        .map_err(|e| CompactionError::AgentError(format!("Failed to spawn agent: {}", e)))?;
+    let stdin = acp_child
+        .take_stdin()
         .ok_or_else(|| CompactionError::AgentError("Failed to get stdin".to_string()))?;
-    let stdout = child
-        .stdout
-        .take()
+    let stdout = acp_child
+        .take_stdout()
         .ok_or_else(|| CompactionError::AgentError("Failed to get stdout".to_string()))?;
-
-    debug!("Agent process started for compaction");
 
     // Convert to futures-compatible streams
     let stdin_compat = stdin.compat_write();
@@ -445,10 +431,10 @@ pub async fn generate_compaction_summary(
     })
     .await;
 
-    // Clean up
+    // Clean up - AcpChild handles process group cleanup on drop
     drop(conn);
     let _ = io_handle.await;
-    let _ = child.kill().await;
+    let _ = acp_child.kill().await;
 
     // Check result
     match result {

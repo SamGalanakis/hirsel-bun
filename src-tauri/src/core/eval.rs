@@ -842,6 +842,7 @@ pub async fn run_eval_from_args(
 /// tools. The agent is sent the eval prompt and is expected to call one of these
 /// tools to submit its verdict.
 pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalError> {
+    use crate::core::acp::{AcpChild, AcpSpawnConfig};
     use crate::core::Files;
     use agent_client_protocol::{
         Agent, ClientSideConnection, ContentBlock, EnvVariable, Implementation, InitializeRequest,
@@ -849,7 +850,6 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
         SetSessionModeRequest, TextContent,
     };
     use std::sync::Arc;
-    use tokio::process::Command;
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
     use tracing::{error, info};
 
@@ -887,42 +887,27 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
         .env(mcp_env);
     let mcp_server = McpServer::Stdio(mcp_stdio);
 
-    // Spawn the agent process
+    // Spawn the agent process using AcpChild for automatic cleanup
     if config.agent_command.is_empty() {
         return Err(EvalError::ProcessFailed(
             "Agent command is empty".to_string(),
         ));
     }
 
-    let mut cmd = Command::new(&config.agent_command[0]);
-    if config.agent_command.len() > 1 {
-        cmd.args(&config.agent_command[1..]);
-    }
-
-    cmd.current_dir(&config.work_dir)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .env("ACP_PERMISSION_MODE", "bypassPermissions");
-
-    let mut child = cmd
-        .spawn()
+    let spawn_config = AcpSpawnConfig::new(
+        config.agent_command.clone(),
+        config.work_dir.clone(),
+        config.eval_name.clone(),
+    );
+    let mut acp_child = AcpChild::spawn(spawn_config)
         .map_err(|e| EvalError::ProcessFailed(format!("Failed to spawn agent: {}", e)))?;
 
-    let stdin = child
-        .stdin
-        .take()
+    let stdin = acp_child
+        .take_stdin()
         .ok_or_else(|| EvalError::ProcessFailed("Failed to get stdin".to_string()))?;
-    let stdout = child
-        .stdout
-        .take()
+    let stdout = acp_child
+        .take_stdout()
         .ok_or_else(|| EvalError::ProcessFailed("Failed to get stdout".to_string()))?;
-
-    info!(
-        "[{}] Eval agent process started, pid={}",
-        config.eval_name,
-        child.id().unwrap_or(0)
-    );
 
     // Convert tokio streams to futures-compatible streams
     let stdin_compat = stdin.compat_write();
@@ -992,12 +977,12 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
         match tokio::time::timeout(timeout, conn.prompt(prompt_request)).await {
             Ok(Ok(_)) => {}
             Ok(Err(e)) => {
-                let _ = child.kill().await;
+                let _ = acp_child.kill().await;
                 io_handle.abort();
                 return Err(EvalError::ProcessFailed(format!("Prompt failed: {}", e)));
             }
             Err(_) => {
-                let _ = child.kill().await;
+                let _ = acp_child.kill().await;
                 io_handle.abort();
                 let timeout_mins = config.timeout_secs / 60;
                 return Ok(EvalAcpResult {
@@ -1017,7 +1002,7 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
         // Retry logic
         attempt += 1;
         if attempt > MAX_VERDICT_RETRIES {
-            let _ = child.kill().await;
+            let _ = acp_child.kill().await;
             io_handle.abort();
             return Ok(EvalAcpResult {
                 success: false,
@@ -1043,7 +1028,7 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
         .map_err(|e| EvalError::ProcessFailed(format!("Invalid result file: {}", e)))?;
 
     // Kill agent process and cleanup
-    let _ = child.kill().await;
+    let _ = acp_child.kill().await;
     io_handle.abort();
 
     info!(

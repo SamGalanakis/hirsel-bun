@@ -48,7 +48,7 @@ export function runDetail() {
     loading: false,
     error: null as string | null,
     pollInterval: null as ReturnType<typeof setInterval> | null,
-    activeTab: 'overview' as 'overview' | 'tasks' | 'spec' | 'eval-spec' | 'evals' | 'messages',
+    activeTab: 'overview' as 'overview' | 'tasks' | 'specs' | 'evals' | 'chat',
 
     // Eval detail view
     selectedEval: null as Eval | null,
@@ -235,7 +235,7 @@ export function runDetail() {
       // Watch for tab changes to load eval spec on demand and auto-select latest eval
       // @ts-expect-error Alpine.js $watch magic property
       this.$watch('activeTab', async (newTab: string) => {
-        if (newTab === 'eval-spec' && this.runName) {
+        if (newTab === 'specs' && this.runName && !this.evalSpec) {
           await this.loadEvalSpec();
         }
         // Auto-select the latest eval when switching to evals tab
@@ -276,8 +276,8 @@ export function runDetail() {
       this.selectedEval = null;
       this.evalLogContent = null;
 
-      // If already on eval-spec tab, load it after fetching run detail
-      const wasOnEvalSpecTab = this.activeTab === 'eval-spec';
+      // If already on specs tab, load eval spec after fetching run detail
+      const wasOnSpecsTab = this.activeTab === 'specs';
 
       try {
         if (window.tauriInvoke) {
@@ -302,8 +302,8 @@ export function runDetail() {
 
           this.loading = false;
 
-          // Load eval spec if we were already on that tab
-          if (wasOnEvalSpecTab) {
+          // Load eval spec if we were already on specs tab
+          if (wasOnSpecsTab) {
             await this.loadEvalSpec();
           }
 

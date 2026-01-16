@@ -4,16 +4,10 @@
 
 import {
   THEME_LIST,
-  THEME_FAMILIES,
-  THEME_FAMILY_LIST,
-  THEMES,
   getTheme,
   setTheme,
-  getPreferredDarkTheme,
   type ThemeId,
   type ThemeInfo,
-  type ThemeFamily,
-  type ThemeFamilyInfo,
 } from '../theme';
 import {
   startChatSession,
@@ -21,6 +15,18 @@ import {
   stopChatSession,
   listenChatEvents,
 } from '../api';
+import {
+  getShortcuts,
+  saveShortcuts,
+  resetShortcuts as resetShortcutsToDefaults,
+  findConflict,
+  formatBinding,
+  bindingFromEvent,
+  getCategoryLabel,
+  type ShortcutConfig,
+  type ShortcutAction,
+  type ShortcutCategory,
+} from '../shortcuts';
 import type { ChatEvent } from '../types';
 
 type AuthMethod = 'env' | 'apiKey' | 'oauth';
@@ -40,17 +46,7 @@ interface AuthConfig {
   goose: AgentAuth | null;
 }
 
-// Legacy remote config (SSH)
-interface RemoteConfig {
-  host: string;
-  sshKey: string | null;
-  sshPort: number;
-  workBase: string;
-  pythonPath: string;
-  location: string | null;
-}
-
-// New runner configs
+// Runner configs
 interface SshRunnerConfig {
   type: 'ssh';
   host: string;
@@ -85,9 +81,6 @@ interface Settings {
   contextWarningThreshold: number;
   coordinatorPort: number;
   auth: AuthConfig;
-  remotes: Record<string, RemoteConfig>;
-  defaultRemote: string | null;
-  // New runner config
   runners: Record<string, RunnerConfig>;
   defaultRunner: string | null;
   workerRunners: Record<string, string>;
@@ -98,16 +91,6 @@ const defaultAgentAuth = (): AgentAuth => ({
   method: 'env',
   apiKey: null,
   envVar: null,
-});
-
-// Default remote config (legacy)
-const defaultRemoteConfig = (): RemoteConfig => ({
-  host: '',
-  sshKey: null,
-  sshPort: 22,
-  workBase: '/tmp/hirsel-remote',
-  pythonPath: 'python3',
-  location: null,
 });
 
 // Default SSH runner config
@@ -138,7 +121,7 @@ export function settingsModal() {
     loading: false,
     saving: false,
     error: null as string | null,
-    activeTab: 'general' as 'general' | 'auth' | 'runners',
+    activeTab: 'general' as 'general' | 'auth' | 'runners' | 'controls',
 
     // Test connection state
     testing: false,
@@ -166,17 +149,10 @@ export function settingsModal() {
         codex: null,
         goose: null,
       },
-      remotes: {} as Record<string, RemoteConfig>,
-      defaultRemote: null,
       runners: {} as Record<string, RunnerConfig>,
       defaultRunner: null,
       workerRunners: {} as Record<string, string>,
     } as Settings,
-
-    // Editing state for remotes (legacy)
-    editingRemote: null as string | null,
-    newRemoteName: '',
-    editRemoteData: defaultRemoteConfig(),
 
     // Editing state for runners
     editingRunner: null as string | null,
@@ -190,38 +166,15 @@ export function settingsModal() {
     authEnvVar: '',
     authApiKey: '',
 
-    // Theme settings - stored as reactive properties for proper Alpine binding
+    // Theme settings
     selectedTheme: getTheme() as ThemeId,
     themes: THEME_LIST as ThemeInfo[],
-    themeFamilies: THEME_FAMILY_LIST as ThemeFamilyInfo[],
 
-    // Stored reactive values for select bindings (initialized from current theme)
-    familyValue: THEMES[getTheme()].family as ThemeFamily,
-    darkVariantValue: (THEMES[getTheme()].isDark ? getTheme() : getPreferredDarkTheme(THEMES[getTheme()].family)) as ThemeId,
-    isDarkMode: THEMES[getTheme()].isDark,
-
-    // Initialize theme values from current state
-    initThemeValues() {
-      const theme = THEMES[this.selectedTheme];
-      this.familyValue = theme.family;
-      this.isDarkMode = theme.isDark;
-      this.darkVariantValue = theme.isDark ? this.selectedTheme : getPreferredDarkTheme(theme.family);
-    },
-
-    // Get current family info
-    get currentFamilyInfo(): ThemeFamilyInfo {
-      return THEME_FAMILIES[this.familyValue as ThemeFamily] || THEME_FAMILIES.hirsel;
-    },
-
-    // Check if family has multiple dark variants
-    get hasMultipleDarkVariants(): boolean {
-      return this.currentFamilyInfo.darkThemes.length > 1;
-    },
-
-    // Get remote names as sorted array
-    get remoteNames(): string[] {
-      return Object.keys(this.settings.remotes).sort();
-    },
+    // Keyboard shortcuts state
+    shortcuts: [] as ShortcutConfig[],
+    rebindingAction: null as ShortcutAction | null,
+    shortcutConflict: '' as string,
+    _rebindHandler: null as ((e: KeyboardEvent) => void) | null,
 
     // Get runner names as sorted array
     get runnerNames(): string[] {
@@ -233,7 +186,7 @@ export function settingsModal() {
       switch (type) {
         case 'ssh': return 'server';
         case 'sprite': return 'cloud';
-        default: return 'cpu';
+        default: return 'laptop';
       }
     },
 
@@ -246,47 +199,7 @@ export function settingsModal() {
       }
     },
 
-    // Switch theme family (preserves light/dark mode)
-    switchFamily(familyId: ThemeFamily) {
-      const familyInfo = THEME_FAMILIES[familyId];
-      let newTheme: ThemeId;
-
-      if (this.isDarkMode) {
-        // Keep dark mode, use preferred dark variant
-        newTheme = getPreferredDarkTheme(familyId);
-      } else {
-        // Keep light mode
-        newTheme = familyInfo.lightTheme;
-      }
-
-      this.familyValue = familyId;
-      this.applyTheme(newTheme);
-    },
-
-    // Toggle between light and dark mode
-    toggleDarkMode() {
-      const familyInfo = this.currentFamilyInfo;
-
-      if (this.isDarkMode) {
-        // Switch to light
-        this.isDarkMode = false;
-        this.applyTheme(familyInfo.lightTheme);
-      } else {
-        // Switch to dark (preferred variant)
-        this.isDarkMode = true;
-        const darkTheme = getPreferredDarkTheme(this.familyValue as ThemeFamily);
-        this.darkVariantValue = darkTheme;
-        this.applyTheme(darkTheme);
-      }
-    },
-
-    // Select a specific dark variant (for Catppuccin)
-    selectDarkVariant(themeId: ThemeId) {
-      this.darkVariantValue = themeId;
-      this.applyTheme(themeId);
-    },
-
-    // Apply theme immediately when selected (preview)
+    // Apply theme immediately when selected
     applyTheme(themeId: ThemeId) {
       this.selectedTheme = themeId;
       setTheme(themeId);
@@ -339,56 +252,6 @@ export function settingsModal() {
     // Clear agent auth config
     clearAgentAuth(agent: string) {
       (this.settings.auth as Record<string, AgentAuth | null>)[agent] = null;
-    },
-
-    // Start adding a new remote
-    startAddRemote() {
-      this.editingRemote = '__new__';
-      this.newRemoteName = '';
-      this.editRemoteData = defaultRemoteConfig();
-    },
-
-    // Start editing an existing remote
-    startEditRemote(name: string) {
-      this.editingRemote = name;
-      this.newRemoteName = name;
-      this.editRemoteData = { ...this.settings.remotes[name] };
-    },
-
-    // Save remote config
-    saveRemote() {
-      const name = this.editingRemote === '__new__' ? this.newRemoteName.trim() : this.editingRemote;
-      if (!name) {
-        window.toast?.error('Remote name is required');
-        return;
-      }
-
-      // Validate host
-      if (!this.editRemoteData.host.trim()) {
-        window.toast?.error('Host is required');
-        return;
-      }
-
-      // If renaming, delete old entry
-      if (this.editingRemote !== '__new__' && this.editingRemote !== name) {
-        delete this.settings.remotes[this.editingRemote!];
-      }
-
-      this.settings.remotes[name] = { ...this.editRemoteData };
-      this.editingRemote = null;
-    },
-
-    // Cancel editing remote
-    cancelEditRemote() {
-      this.editingRemote = null;
-    },
-
-    // Delete a remote
-    deleteRemote(name: string) {
-      delete this.settings.remotes[name];
-      if (this.settings.defaultRemote === name) {
-        this.settings.defaultRemote = null;
-      }
     },
 
     // ==================== RUNNER METHODS ====================
@@ -464,6 +327,12 @@ export function settingsModal() {
 
       this.settings.runners[name] = { ...this.editRunnerData };
       this.editingRunner = null;
+      // Re-initialize icons for the new runner card
+      setTimeout(() => {
+        if (window.lucide) {
+          window.lucide.createIcons();
+        }
+      }, 50);
     },
 
     // Cancel editing runner
@@ -485,13 +354,97 @@ export function settingsModal() {
       }
     },
 
+    // ==================== SHORTCUT METHODS ====================
+
+    // Load shortcuts from storage
+    loadShortcuts() {
+      this.shortcuts = getShortcuts();
+    },
+
+    // Get shortcuts filtered by category
+    getShortcutsByCategory(category: ShortcutCategory): ShortcutConfig[] {
+      return this.shortcuts.filter(s => s.category === category);
+    },
+
+    // Get category display label
+    getCategoryLabel,
+
+    // Format binding for display
+    formatBinding,
+
+    // Start rebinding a shortcut
+    startRebind(action: ShortcutAction) {
+      this.rebindingAction = action;
+      this.shortcutConflict = '';
+
+      // Add keydown listener for capturing the new binding
+      this._rebindHandler = (e: KeyboardEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Cancel on Escape (don't bind Escape as a rebind key unless shift is held)
+        if (e.key === 'Escape' && !e.shiftKey) {
+          this.cancelRebind();
+          return;
+        }
+
+        // Ignore modifier-only keypresses
+        if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) {
+          return;
+        }
+
+        // Create binding from event
+        const newBinding = bindingFromEvent(e);
+
+        // Check for conflicts
+        const conflict = findConflict(action, newBinding, this.shortcuts);
+        if (conflict) {
+          this.shortcutConflict = `"${formatBinding(newBinding)}" is already used for "${conflict}"`;
+          return;
+        }
+
+        // Apply the new binding
+        const shortcut = this.shortcuts.find(s => s.action === action);
+        if (shortcut) {
+          shortcut.binding = newBinding;
+          saveShortcuts(this.shortcuts);
+        }
+
+        this.cancelRebind();
+        this.shortcutConflict = '';
+      };
+
+      document.addEventListener('keydown', this._rebindHandler, { capture: true });
+    },
+
+    // Cancel rebinding
+    cancelRebind() {
+      this.rebindingAction = null;
+      if (this._rebindHandler) {
+        document.removeEventListener('keydown', this._rebindHandler, { capture: true });
+        this._rebindHandler = null;
+      }
+    },
+
+    // Reset all shortcuts to defaults
+    resetAllShortcuts() {
+      resetShortcutsToDefaults();
+      this.shortcuts = getShortcuts();
+      this.shortcutConflict = '';
+      if (window.toast) {
+        window.toast.success('Shortcuts reset to defaults');
+      }
+    },
+
     async loadSettings() {
       this.loading = true;
       this.error = null;
 
-      // Load current theme and initialize reactive values
+      // Load current theme
       this.selectedTheme = getTheme();
-      this.initThemeValues();
+
+      // Load keyboard shortcuts
+      this.loadShortcuts();
 
       try {
         if (window.tauriInvoke) {
@@ -511,8 +464,6 @@ export function settingsModal() {
             contextWarningThreshold: number;
             coordinatorPort: number;
             auth: AuthConfig;
-            remotes: Record<string, RemoteConfig>;
-            defaultRemote: string | null;
             runners: Record<string, RunnerConfig>;
             defaultRunner: string | null;
             workerRunners: Record<string, string>;
@@ -532,8 +483,6 @@ export function settingsModal() {
             contextWarningThreshold: config.contextWarningThreshold,
             coordinatorPort: config.coordinatorPort,
             auth: config.auth,
-            remotes: config.remotes,
-            defaultRemote: config.defaultRemote,
             runners: config.runners || {},
             defaultRunner: config.defaultRunner || null,
             workerRunners: config.workerRunners || {},
@@ -548,6 +497,13 @@ export function settingsModal() {
         this.error = error.message || String(error);
       } finally {
         this.loading = false;
+        // Re-initialize Lucide icons after Alpine renders the dynamic content
+        // Use setTimeout to ensure x-for loops have fully processed
+        setTimeout(() => {
+          if (window.lucide) {
+            window.lucide.createIcons();
+          }
+        }, 50);
       }
     },
 
@@ -594,8 +550,6 @@ export function settingsModal() {
               contextWarningThreshold: this.settings.contextWarningThreshold,
               coordinatorPort: this.settings.coordinatorPort,
               auth: authUpdate,
-              remotes: this.settings.remotes,
-              defaultRemote: this.settings.defaultRemote,
               runners: this.settings.runners,
               defaultRunner: this.settings.defaultRunner,
               workerRunners: this.settings.workerRunners,

@@ -3,6 +3,8 @@
  * A fun easter egg to pass time while agents work
  */
 
+import { getShortcuts, matchesBinding, type ShortcutConfig } from '../shortcuts';
+
 interface Upgrade {
   id: string;
   name: string;
@@ -65,16 +67,38 @@ export function sheepClickerGame() {
     sheepBounce: false,
     comboCount: 0,
     _comboTimer: null as ReturnType<typeof setTimeout> | null,
+    _shortcuts: [] as ShortcutConfig[],
+    _keydownHandler: null as ((e: KeyboardEvent) => void) | null,
 
     init() {
       this.load();
       this._tickInterval = setInterval(() => this.tick(), 100);
-      document.addEventListener('keydown', (e: KeyboardEvent) => {
+
+      // Load shortcuts
+      this._shortcuts = getShortcuts();
+
+      // Listen for shortcuts changes
+      window.addEventListener('shortcuts-changed', () => {
+        this._shortcuts = getShortcuts();
+      });
+
+      // Keydown handler using shortcuts system
+      this._keydownHandler = (e: KeyboardEvent) => {
         const target = e.target as HTMLElement;
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-        if (e.key === 'g') this.toggle();
-        if (e.key === 'Escape' && this.isOpen) this.close();
-      });
+
+        // Find sheep-game shortcut
+        const sheepShortcut = this._shortcuts.find(s => s.action === 'sheep-game');
+        const closeShortcut = this._shortcuts.find(s => s.action === 'close-panel');
+
+        if (sheepShortcut && matchesBinding(e, sheepShortcut.binding)) {
+          this.toggle();
+        }
+        if (closeShortcut && matchesBinding(e, closeShortcut.binding) && this.isOpen) {
+          this.close();
+        }
+      };
+      document.addEventListener('keydown', this._keydownHandler);
     },
 
     destroy() {

@@ -30,7 +30,9 @@ pub mod tunnel;
 pub mod workers;
 
 // Re-export commonly used types
-pub use acp::{ACPClientConfig, ACPError, MCPServerConfig, SessionUpdate};
+pub use acp::{
+    ACPClientConfig, ACPError, AcpChild, AcpSpawnConfig, MCPServerConfig, SessionUpdate,
+};
 pub use chat_session::{
     ChatEvent, ChatSessionConfig, ChatSessionError, ChatSessionManager, PendingPermission,
     PermissionOption, PermissionResponse, UIContext,

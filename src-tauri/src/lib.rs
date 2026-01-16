@@ -299,12 +299,37 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
                 resume_session_id: args.resume_session_id,
             };
 
-            // Run the async worker in a tokio runtime
+            // Run the async worker in a tokio runtime with signal handling
+            let worker_name = config.worker_name.clone();
             let rt = tokio::runtime::Runtime::new()
                 .map_err(|e| format!("Failed to create runtime: {}", e))?;
             rt.block_on(async {
                 tokio::task::LocalSet::new()
-                    .run_until(async { worker::run_acp_worker(config).await })
+                    .run_until(async {
+                        #[cfg(unix)]
+                        {
+                            use tokio::signal::unix::{signal, SignalKind};
+                            let mut sigterm = signal(SignalKind::terminate())
+                                .expect("Failed to register SIGTERM handler");
+
+                            tokio::select! {
+                                result = worker::run_acp_worker(config) => {
+                                    // Normal completion - cleanup already happens in run_acp_worker
+                                    result
+                                }
+                                _ = sigterm.recv() => {
+                                    // Received SIGTERM from GUI - ensure cleanup
+                                    tracing::info!("[{}] Received SIGTERM, cleaning up process group", worker_name);
+                                    core::process::cleanup_process_group(&worker_name);
+                                    Ok(())
+                                }
+                            }
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            worker::run_acp_worker(config).await
+                        }
+                    })
                     .await
             })
             .map_err(|e| format!("Worker error: {}", e))?;
@@ -439,7 +464,7 @@ pub fn run() {
     let worker_stream_manager = Arc::new(gui::WorkerEventStreamManager::new());
 
     builder
-        .manage(chat_manager)
+        .manage(chat_manager.clone())
         .manage(worker_stream_manager)
         .invoke_handler(gui::get_handlers())
         .setup(|app| {
@@ -451,6 +476,97 @@ pub fn run() {
             }
             Ok(())
         })
+        .on_window_event(move |window, event| {
+            // Clean up when the main window is about to close
+            if let tauri::WindowEvent::Destroyed = event {
+                if window.label() == "main" {
+                    tracing::info!("[GUI] Main window destroyed, cleaning up all processes");
+                    cleanup_all_processes(&chat_manager);
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Kill all worker and chat session processes on GUI exit
+fn cleanup_all_processes(chat_manager: &std::sync::Arc<core::ChatSessionManager>) {
+    tracing::info!("[GUI] Killing all worker processes");
+
+    // Get the runs directory
+    let runs_dir = match dirs::home_dir() {
+        Some(home) => home.join(".hirsel").join("runs"),
+        None => {
+            tracing::warn!("[GUI] Could not determine home directory");
+            stop_chat_sessions(chat_manager);
+            return;
+        }
+    };
+
+    // Iterate over all run directories and open their databases
+    if let Ok(entries) = std::fs::read_dir(&runs_dir) {
+        let mut all_pids: Vec<i64> = Vec::new();
+
+        for entry in entries.flatten() {
+            let db_path = entry.path().join("hirsel.db");
+            if db_path.exists() {
+                if let Ok(state) = core::state::SQLiteState::new(db_path) {
+                    if let Ok(workers) = state.get_workers() {
+                        for worker in workers {
+                            if let Some(pid) = worker.pid {
+                                tracing::info!(
+                                    "[GUI] Found worker {} (pid {}) in {}",
+                                    worker.name,
+                                    pid,
+                                    entry.path().display()
+                                );
+                                all_pids.push(pid);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Kill all found worker process groups
+        #[cfg(unix)]
+        {
+            // First SIGTERM
+            for &pid in &all_pids {
+                unsafe {
+                    libc::kill(-(pid as i32), libc::SIGTERM);
+                }
+            }
+
+            // Brief wait then force kill
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            // Then SIGKILL
+            for &pid in &all_pids {
+                unsafe {
+                    libc::kill(-(pid as i32), libc::SIGKILL);
+                }
+            }
+        }
+
+        tracing::info!("[GUI] Killed {} worker process groups", all_pids.len());
+    }
+
+    // Stop all active chat sessions
+    stop_chat_sessions(chat_manager);
+
+    tracing::info!("[GUI] Cleanup complete");
+}
+
+fn stop_chat_sessions(chat_manager: &std::sync::Arc<core::ChatSessionManager>) {
+    tracing::info!("[GUI] Stopping all chat sessions");
+    let rt = tokio::runtime::Runtime::new();
+    if let Ok(rt) = rt {
+        rt.block_on(async {
+            let sessions = chat_manager.list_sessions().await;
+            for session_id in sessions {
+                let _ = chat_manager.stop_session(&session_id).await;
+            }
+        });
+    }
 }

@@ -24,7 +24,7 @@ repos:
 
       - id: cargo-fmt
         name: Cargo fmt
-        entry: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+        entry: cargo fmt --manifest-path src-tauri/Cargo.toml
         language: system
         pass_filenames: false
         types: [rust]

@@ -289,28 +289,28 @@ pub fn pause_all_workers(state: &SQLiteState) -> WorkerResult<Vec<String>> {
 
     for worker in workers {
         if let Some(pid) = worker.pid {
-            if is_pid_alive(pid as u32) {
-                #[cfg(unix)]
-                {
-                    // Kill the entire process group using negative PID
-                    unsafe {
-                        libc::kill(-(pid as i32), libc::SIGTERM);
-                    }
+            // Always attempt to kill the process group, even if leader appears dead
+            // The leader (hirsel subprocess) dies quickly on SIGTERM, but children
+            // (claude-code-acp, claude) may survive and need SIGKILL
+            #[cfg(unix)]
+            {
+                // Kill the entire process group using negative PID
+                unsafe {
+                    libc::kill(-(pid as i32), libc::SIGTERM);
                 }
-                // Brief wait for graceful shutdown
-                std::thread::sleep(std::time::Duration::from_millis(100));
-
-                // Force kill process group if leader still alive
-                if is_pid_alive(pid as u32) {
-                    #[cfg(unix)]
-                    {
-                        unsafe {
-                            libc::kill(-(pid as i32), libc::SIGKILL);
-                        }
-                    }
-                }
-                info!("Killed worker {} process group (PID {})", worker.name, pid);
             }
+            // Brief wait for graceful shutdown
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            // ALWAYS send SIGKILL to process group - children may survive even if leader died
+            // (Node.js processes like claude-code-acp may ignore SIGTERM)
+            #[cfg(unix)]
+            {
+                unsafe {
+                    libc::kill(-(pid as i32), libc::SIGKILL);
+                }
+            }
+            info!("Killed worker {} process group (PID {})", worker.name, pid);
         }
 
         // Mark as paused regardless of whether process was running (skip already inactive workers)
@@ -342,31 +342,31 @@ pub fn kill_all_workers(state: &SQLiteState) -> WorkerResult<Vec<String>> {
 
     for worker in workers {
         if let Some(pid) = worker.pid {
-            if is_pid_alive(pid as u32) {
-                #[cfg(unix)]
-                {
-                    // Kill the entire process group using negative PID
-                    // This kills the worker and all its children (claude-code-acp, claude)
-                    unsafe {
-                        // First try SIGTERM for graceful shutdown of the process group
-                        libc::kill(-(pid as i32), libc::SIGTERM);
-                    }
+            // Always attempt to kill the process group, even if leader appears dead
+            // The leader (hirsel subprocess) dies quickly on SIGTERM, but children
+            // (claude-code-acp, claude) may survive and need SIGKILL
+            #[cfg(unix)]
+            {
+                // Kill the entire process group using negative PID
+                // This kills the worker and all its children (claude-code-acp, claude)
+                unsafe {
+                    // First try SIGTERM for graceful shutdown of the process group
+                    libc::kill(-(pid as i32), libc::SIGTERM);
                 }
-                // Give a brief moment for graceful shutdown
-                std::thread::sleep(std::time::Duration::from_millis(100));
-
-                // Then force kill the process group if leader still alive
-                if is_pid_alive(pid as u32) {
-                    #[cfg(unix)]
-                    {
-                        unsafe {
-                            libc::kill(-(pid as i32), libc::SIGKILL);
-                        }
-                    }
-                }
-                info!("Killed worker {} process group (PID {})", worker.name, pid);
-                killed.push(worker.name.clone());
             }
+            // Give a brief moment for graceful shutdown
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            // ALWAYS send SIGKILL to process group - children may survive even if leader died
+            // (Node.js processes like claude-code-acp may ignore SIGTERM)
+            #[cfg(unix)]
+            {
+                unsafe {
+                    libc::kill(-(pid as i32), libc::SIGKILL);
+                }
+            }
+            info!("Killed worker {} process group (PID {})", worker.name, pid);
+            killed.push(worker.name.clone());
         }
 
         // Clear PID from database

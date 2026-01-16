@@ -8,7 +8,7 @@
 import { createDraft, updateDraft, startDraft, deleteRun, getRunDetail, readSpecFile, writeSpecFile, readEvalFile, writeEvalFile, validateRepo, initProjectRepo, saveAsset, importAssetFromPath, openAssetsFolder, getAssetsPath } from '../api';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { RunDetail, DraftUpdateRequest, RepoValidation } from '../types';
+import type { RunDetail, DraftUpdateRequest, RepoValidation, RunnerConfig, RunnerEntry } from '../types';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { showConfirm } from '../confirm-dialog';
@@ -44,7 +44,7 @@ export interface DraftEditorData {
   saveTimeout: ReturnType<typeof setTimeout> | null;
   evalSaveTimeout: ReturnType<typeof setTimeout> | null;
   isEditing: boolean;
-  activeTab: 'spec' | 'eval';
+  activeTab: 'spec' | 'eval' | 'settings';
   previewMode: boolean;
   // Branch selection state
   selectedBranch: string;
@@ -72,6 +72,9 @@ export interface DraftEditorData {
   // Cursor position tracking for insertion
   specCursorPos: number;
   evalCursorPos: number;
+  // Runner selection
+  selectedRunner: string | null;
+  availableRunners: RunnerEntry[];
 }
 
 /**
@@ -279,11 +282,17 @@ export function draftEditor(): DraftEditorData & {
     // Cursor position (end of content by default)
     specCursorPos: 0,
     evalCursorPos: 0,
+    // Runner selection
+    selectedRunner: null,
+    availableRunners: [],
 
     /**
      * Initialize the component
      */
     init(): void {
+      // Load available runners from config
+      this.loadRunners();
+
       // Listen for draft selection events
       window.addEventListener('draft-selected', ((e: CustomEvent<string | null>) => {
         if (e.detail) {
@@ -376,6 +385,61 @@ export function draftEditor(): DraftEditorData & {
     },
 
     /**
+     * Load available runners from config
+     */
+    async loadRunners(): Promise<void> {
+      try {
+        if (!window.tauriInvoke) return;
+
+        const config = await window.tauriInvoke<{
+          runners: Record<string, RunnerConfig>;
+          defaultRunner: string | null;
+        }>('get_config');
+
+        // Build runner list with "Local" always first
+        const runners: RunnerEntry[] = [
+          { name: 'local', config: { type: 'local' } }
+        ];
+
+        // Add configured runners
+        for (const [name, runnerConfig] of Object.entries(config.runners || {})) {
+          runners.push({ name, config: runnerConfig });
+        }
+
+        this.availableRunners = runners;
+
+        // Set default runner if not already selected
+        if (!this.selectedRunner) {
+          this.selectedRunner = config.defaultRunner || 'local';
+        }
+      } catch (err) {
+        console.error('Failed to load runners:', err);
+      }
+    },
+
+    /**
+     * Get icon name for runner type
+     */
+    getRunnerIcon(runner: RunnerEntry | null): string {
+      if (!runner) return 'laptop';
+      switch (runner.config.type) {
+        case 'local': return 'laptop';
+        case 'ssh': return 'server';
+        case 'sprite': return 'cloud';
+        default: return 'laptop';
+      }
+    },
+
+    /**
+     * Get display name for runner
+     */
+    getRunnerDisplayName(runner: RunnerEntry | null): string {
+      if (!runner) return 'Local';
+      if (runner.name === 'local') return 'Local';
+      return runner.name;
+    },
+
+    /**
      * Load a draft for editing
      */
     async loadDraft(name: string): Promise<void> {
@@ -392,6 +456,7 @@ export function draftEditor(): DraftEditorData & {
         this.timeLimitInput = formatTimeLimitDisplay(detail.timeLimitMinutes);
         this.humanInTheLoop = detail.humanInTheLoop;
         this.projectPath = detail.projectPath || '';
+        this.selectedRunner = detail.runner || 'local';
 
         // Load spec, eval, and assets path (file-first editing)
         const [specContent, evalContent, assetsPath] = await Promise.all([
@@ -462,6 +527,8 @@ export function draftEditor(): DraftEditorData & {
       this.evalDragCounter = 0;
       // Reset assets path
       this.assetsPath = '';
+      // Reset runner (keep availableRunners, just reset selection to default)
+      this.selectedRunner = this.availableRunners.length > 0 ? 'local' : null;
     },
 
     /**
@@ -599,6 +666,7 @@ export function draftEditor(): DraftEditorData & {
           timeLimitMinutes: timeLimitResult.value ?? undefined,
           humanInTheLoop: this.humanInTheLoop,
           projectPath: this.projectPath || undefined,
+          runner: this.selectedRunner || undefined,
         };
 
         // Remove undefined values

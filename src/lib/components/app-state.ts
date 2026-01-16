@@ -5,6 +5,7 @@
 import { formatElapsed, formatTimeRemaining, formatTimeShort } from '../utils/formatters';
 import { getStatusBadgeClass, getStatusDotClass } from '../utils/status';
 import { getTheme, setTheme, toggleTheme as themeToggle, isDarkTheme, THEMES, type ThemeId } from '../theme';
+import { getShortcuts, findMatchingAction, type ShortcutConfig, type ShortcutAction } from '../shortcuts';
 import type { RunDetail } from '../types';
 
 /**
@@ -27,6 +28,7 @@ export function appState() {
     sidebarCollapsed: false,
     _focusedRunIndex: -1,
     _eventCleanups: [] as (() => void)[],
+    _shortcuts: [] as ShortcutConfig[],
 
     // Attach picker state
     attachPickerOpen: false,
@@ -228,6 +230,68 @@ export function appState() {
       this.closeAttachPicker();
     },
 
+    // Execute a shortcut action
+    executeAction(action: ShortcutAction) {
+      switch (action) {
+        case 'navigate-up':
+          this.navigateRuns(-1);
+          break;
+        case 'navigate-down':
+          this.navigateRuns(1);
+          break;
+        case 'select-run':
+          this.selectFocusedRun();
+          break;
+        case 'toggle-sidebar':
+          this.toggleSidebar();
+          break;
+        case 'fullscreen':
+          window.dispatchEvent(new CustomEvent('toggle-activity-fullscreen'));
+          break;
+        case 'attach':
+          if (this.selectedRun && !this.attachPickerOpen) this.handleAttach();
+          break;
+        case 'pause':
+          if (this.selectedRun) this.pauseRun();
+          break;
+        case 'resume':
+          if (this.selectedRun) this.resumeRun();
+          break;
+        case 'switch-chat':
+          if (this.selectedRun) {
+            window.dispatchEvent(new CustomEvent('switch-tab', { detail: 'chat' }));
+          }
+          break;
+        case 'focus-message':
+          if (this.selectedRun) {
+            window.dispatchEvent(new CustomEvent('switch-tab', { detail: 'chat' }));
+            setTimeout(() => {
+              const input = document.querySelector('.inline-chat-input') as HTMLElement;
+              if (input) input.focus();
+            }, 100);
+          }
+          break;
+        case 'toggle-ai':
+          this.toggleAiChat();
+          break;
+        case 'toggle-theme':
+          this.toggleTheme();
+          break;
+        case 'show-help':
+          this.showHelp = true;
+          break;
+        case 'sheep-game':
+          // Handled by sheep-clicker component
+          break;
+        case 'close-panel':
+          this.showHelp = false;
+          this.showSettings = false;
+          this.notificationsOpen = false;
+          this.aiChatOpen = false;
+          break;
+      }
+    },
+
     // Initialization
     async init() {
       this.initTheme();
@@ -257,67 +321,26 @@ export function appState() {
       window.addEventListener('run-selected', runSelectedHandler);
       this._eventCleanups.push(() => window.removeEventListener('run-selected', runSelectedHandler));
 
-      // Keyboard shortcuts
+      // Load keyboard shortcuts
+      this._shortcuts = getShortcuts();
+
+      // Listen for shortcuts changes
+      const shortcutsChangedHandler = () => {
+        this._shortcuts = getShortcuts();
+      };
+      window.addEventListener('shortcuts-changed', shortcutsChangedHandler);
+      this._eventCleanups.push(() => window.removeEventListener('shortcuts-changed', shortcutsChangedHandler));
+
+      // Keyboard shortcuts handler
       const keydownHandler = (e: KeyboardEvent) => {
         // Ignore if typing in input
         const target = e.target as HTMLElement;
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
-        switch (e.key) {
-          case 'j':
-            this.navigateRuns(1);
-            break;
-          case 'k':
-            this.navigateRuns(-1);
-            break;
-          case 'Enter':
-            this.selectFocusedRun();
-            break;
-          case 'a':
-            if (this.selectedRun && !this.attachPickerOpen) this.handleAttach();
-            break;
-          case 'c':
-            // Switch to messages tab
-            if (this.selectedRun) {
-              window.dispatchEvent(new CustomEvent('switch-tab', { detail: 'messages' }));
-            }
-            break;
-          case 'i':
-            this.toggleAiChat();
-            break;
-          case 'm':
-            // Switch to messages tab and focus input
-            if (this.selectedRun) {
-              window.dispatchEvent(new CustomEvent('switch-tab', { detail: 'messages' }));
-              setTimeout(() => {
-                const input = document.querySelector('.inline-chat-input') as HTMLElement;
-                if (input) input.focus();
-              }, 100);
-            }
-            break;
-          case '?':
-            this.showHelp = true;
-            break;
-          case 'Escape':
-            this.showHelp = false;
-            this.notificationsOpen = false;
-            this.aiChatOpen = false;
-            break;
-          case 'p':
-            if (this.selectedRun) this.pauseRun();
-            break;
-          case 'r':
-            if (this.selectedRun) this.resumeRun();
-            break;
-          case 't':
-            this.toggleTheme();
-            break;
-          case '[':
-            this.toggleSidebar();
-            break;
-          case 'f':
-            window.dispatchEvent(new CustomEvent('toggle-activity-fullscreen'));
-            break;
+        // Find matching action
+        const action = findMatchingAction(e, this._shortcuts);
+        if (action) {
+          this.executeAction(action);
         }
       };
       document.addEventListener('keydown', keydownHandler);

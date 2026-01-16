@@ -6,6 +6,39 @@
  */
 
 // =============================================================================
+// Runner Types
+// =============================================================================
+
+/** SSH runner configuration */
+export interface SshRunnerConfig {
+  type: 'ssh';
+  host: string;
+  sshKey: string | null;
+  sshPort: number;
+  workBase: string;
+  location: string | null;
+}
+
+/** Sprite (cloud VM) runner configuration */
+export interface SpriteRunnerConfig {
+  type: 'sprite';
+  apiToken: string | null;
+  baseCheckpoint: string | null;
+  autoDestroy: boolean;
+  idleTimeoutSecs: number;
+  apiUrl: string;
+}
+
+/** Runner configuration - where workers execute */
+export type RunnerConfig = { type: 'local' } | SshRunnerConfig | SpriteRunnerConfig;
+
+/** Runner entry with name for display */
+export interface RunnerEntry {
+  name: string;
+  config: RunnerConfig;
+}
+
+// =============================================================================
 // Run Types
 // =============================================================================
 
@@ -66,6 +99,8 @@ export interface RunDetail {
   // Learnings info
   learningsCount: number;
   learningsProcessedAt: string | null;
+  // Runner configuration
+  runner: string | null;
 }
 
 /** Request to update a draft run */
@@ -77,6 +112,7 @@ export interface DraftUpdateRequest {
   projectPath?: string;
   name?: string;
   branch?: string;
+  runner?: string;
 }
 
 /** Result of validating a repository path/URL */
@@ -719,6 +755,9 @@ export interface ConfirmDialogAPI {
   delete: (itemName: string, itemType?: string) => Promise<boolean>;
 }
 
+// Shortcut types for global functions
+import type { ShortcutConfig, ShortcutBinding } from './shortcuts';
+
 /** Extend the global Window interface */
 declare global {
   interface Window {
@@ -741,6 +780,10 @@ declare global {
     getHatName: (hatIndex: number) => string;
     generateAgentSheepSvg: () => string;
 
+    // Keyboard shortcuts utilities
+    getShortcuts: () => ShortcutConfig[];
+    formatBinding: (binding: ShortcutBinding) => string;
+
     // Alpine components (functions that return component data)
     appState: () => Record<string, unknown>;
     runList: () => Record<string, unknown>;
@@ -758,12 +801,17 @@ declare global {
     settingsModal: () => Record<string, unknown>;
     aiMessageStream: () => Record<string, unknown>;
     workerOutputViewer: () => Record<string, unknown>;
-    toastContainer: () => Record<string, unknown>;
     sortToggle: () => Record<string, unknown>;
     sortButton: () => Record<string, unknown>;
+    debugPanel: () => Record<string, unknown>;
 
     // UI utilities
     toast: ToastAPI;
     confirmDialog: ConfirmDialogAPI;
+
+    // Lucide icons
+    lucide?: {
+      createIcons: (options?: { nodes?: Element[] }) => void;
+    };
   }
 }

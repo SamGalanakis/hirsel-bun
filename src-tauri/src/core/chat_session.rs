@@ -31,7 +31,7 @@ use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-use super::acp::collect_agent_env;
+use super::acp::{AcpChild, AcpSpawnConfig};
 
 /// Result type for chat session operations
 type Result<T> = std::result::Result<T, ChatSessionError>;
@@ -192,7 +192,7 @@ struct ChatSessionState {
     _session_id: String,
     _agent_session_id: Option<String>,
     _working_dir: PathBuf,
-    child: Option<Child>,
+    acp_child: Option<AcpChild>,
     terminals: HashMap<TerminalId, TerminalHandle>,
     terminal_counter: AtomicU64,
 }
@@ -778,7 +778,7 @@ async fn run_chat_session_loop(
         _session_id: session_id.clone(),
         _agent_session_id: None,
         _working_dir: working_dir.clone(),
-        child: None,
+        acp_child: None,
         terminals: HashMap::new(),
         terminal_counter: AtomicU64::new(0),
     }));
@@ -790,27 +790,15 @@ async fn run_chat_session_loop(
         state.clone(),
     ));
 
-    // Spawn agent process in its own process group
-    // This allows us to kill the entire process tree when stopping the session
-    let mut cmd = Command::new(&config.agent_command[0]);
-    if config.agent_command.len() > 1 {
-        cmd.args(&config.agent_command[1..]);
-    }
-    cmd.current_dir(&working_dir);
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::null());
+    // Spawn agent process using AcpChild for automatic cleanup
+    let spawn_config = AcpSpawnConfig::new(
+        config.agent_command.clone(),
+        working_dir.clone(),
+        format!("chat:{}", session_id),
+    )
+    .bypass_permissions(false); // Chat sessions need interactive permission handling
 
-    // Pass through environment variables
-    for (key, value) in collect_agent_env() {
-        cmd.env(&key, &value);
-    }
-
-    // Create a new process group so we can kill all child processes
-    #[cfg(unix)]
-    cmd.process_group(0);
-
-    let mut child = match cmd.spawn() {
+    let mut acp_child = match AcpChild::spawn(spawn_config) {
         Ok(c) => c,
         Err(e) => {
             let _ = event_tx.send(ChatEvent::Error {
@@ -821,7 +809,7 @@ async fn run_chat_session_loop(
         }
     };
 
-    let stdin = match child.stdin.take() {
+    let stdin = match acp_child.take_stdin() {
         Some(s) => s,
         None => {
             let _ = event_tx.send(ChatEvent::Error {
@@ -831,7 +819,7 @@ async fn run_chat_session_loop(
             return;
         }
     };
-    let stdout = match child.stdout.take() {
+    let stdout = match acp_child.take_stdout() {
         Some(s) => s,
         None => {
             let _ = event_tx.send(ChatEvent::Error {
@@ -842,16 +830,10 @@ async fn run_chat_session_loop(
         }
     };
 
-    info!(
-        "[chat:{}] Agent process started, pid={}",
-        session_id,
-        child.id().unwrap_or(0)
-    );
-
-    // Store child in state
+    // Store AcpChild in state
     {
         let mut s = state.lock().await;
-        s.child = Some(child);
+        s.acp_child = Some(acp_child);
     }
 
     // Convert tokio streams to futures-compatible
@@ -1001,26 +983,13 @@ async fn run_chat_session_loop(
         }
     }
 
-    // Clean up - kill the entire process group
+    // Clean up - AcpChild handles process group cleanup (SIGTERM -> wait -> SIGKILL)
     {
         let mut s = state.lock().await;
-        if let Some(ref mut child) = s.child {
-            // Kill the process group to ensure all child processes are terminated
-            #[cfg(unix)]
-            if let Some(pid) = child.id() {
-                unsafe {
-                    // Kill the entire process group using negative PID
-                    libc::kill(-(pid as i32), libc::SIGTERM);
-                }
-                // Brief wait then force kill
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                unsafe {
-                    libc::kill(-(pid as i32), libc::SIGKILL);
-                }
-            }
-            // Also call kill on the child handle for good measure
-            let _ = child.kill().await;
+        if let Some(ref mut acp_child) = s.acp_child {
+            let _ = acp_child.kill().await;
         }
+        // AcpChild::Drop will also run cleanup when it goes out of scope
     }
 
     let _ = event_tx.send(ChatEvent::SessionEnded {

@@ -44,5 +44,5 @@ export { sheepClickerGame } from './sheep-clicker';
 // Modals
 export { settingsModal } from './settings-modal';
 
-// Toast
-export { toastContainer } from './toast-container';
+// Debug (dev mode only)
+export { debugPanel } from './debug-panel';
