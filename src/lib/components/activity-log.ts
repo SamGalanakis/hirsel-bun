@@ -71,16 +71,13 @@ const ACTION_BG_CLASSES: Record<string, string> = {
  * Activity log component
  */
 // Actions that are worker-specific (check detail for worker name)
+// These must match the action names used in backend log_history calls
 const WORKER_ACTIONS = new Set([
   'worker_status',
-  'worker_started',
-  'worker_stopped',
-  'worker_error',
-  'worker_paused',
-  'worker_resumed',
-  'task_claimed',
+  'worker_add',
+  'task_claim',
   'task_done',
-  'task_unclaimed',
+  'task_unclaim',
 ]);
 
 export function activityLog() {

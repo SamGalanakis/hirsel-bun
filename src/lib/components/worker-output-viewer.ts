@@ -41,8 +41,10 @@ export function workerOutputViewer() {
     autoScroll: true,
 
     async init() {
+      console.log('[WorkerOutput] init() called');
       // Listen for show-worker-output events
       window.addEventListener('show-worker-output', ((e: CustomEvent<{ runName: string; workerName: string }>) => {
+        console.log('[WorkerOutput] show-worker-output event received:', e.detail);
         this.show(e.detail.runName, e.detail.workerName);
       }) as EventListener);
 
@@ -76,13 +78,14 @@ export function workerOutputViewer() {
 
       try {
         // Load existing events from DB
+        console.log('[WorkerOutput] Fetching events for:', runName, workerName);
         const response = await getWorkerEvents(runName, workerName);
-        console.log('[WorkerOutput] Initial load:', {
-          eventCount: response.events.length,
-          workerStatus: response.workerStatus,
-          firstEvent: response.events[0]
-        });
-        this.processEvents(response.events);
+        console.log('[WorkerOutput] Got response:', JSON.stringify(response, null, 2).slice(0, 500));
+        console.log('[WorkerOutput] Event count:', response.events?.length, 'Status:', response.workerStatus);
+        if (response.events && response.events.length > 0) {
+          console.log('[WorkerOutput] First event:', JSON.stringify(response.events[0]));
+        }
+        this.processEvents(response.events || []);
         console.log('[WorkerOutput] After processEvents, chunks:', this.chunks.length);
         this.updateStreamingState(response.workerStatus);
 

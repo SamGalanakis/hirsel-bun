@@ -184,6 +184,7 @@ export function workerPanel() {
 
     async attachAndClose(name: string) {
       // Dispatch event to show worker output viewer
+      console.log('[WorkerPanel] Dispatching show-worker-output:', this.selectedRun, name);
       window.dispatchEvent(new CustomEvent('show-worker-output', {
         detail: {
           runName: this.selectedRun,

@@ -858,6 +858,12 @@ impl SQLiteState {
 
     /// Set human in the loop
     pub fn set_human_in_the_loop(&self, enabled: bool) -> StateResult<()> {
+        // Check if value is actually changing
+        let current = self.get_human_in_the_loop()?;
+        if current == enabled {
+            return Ok(()); // No change, skip logging and notification
+        }
+
         self.db.execute(
             "UPDATE state SET human_in_the_loop = ?1, updated_at = ?2 WHERE id = 1",
             params![if enabled { 1 } else { 0 }, self.now()],
