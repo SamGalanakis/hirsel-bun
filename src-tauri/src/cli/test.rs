@@ -184,8 +184,8 @@ pub fn run_scenario(
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("test-{}", scenario_name));
 
-    // If scenario has a project folder, copy it to a temp location first
-    // This prevents polluting the source tree with .git directories
+    // If scenario has a project folder, copy it to a temp location and init git
+    // This prevents polluting the source tree
     let temp_project_dir = if project_path.exists() {
         let temp_dir = std::env::temp_dir()
             .join("hirsel-test")
@@ -196,8 +196,12 @@ pub fn run_scenario(
             let _ = fs::remove_dir_all(&temp_dir);
         }
 
-        // Copy project to temp location
+        // Copy project to temp location (excludes .git if present)
         copy_dir_recursive(&project_path, &temp_dir)?;
+
+        // Initialize git repo and make initial commit
+        init_git_repo(&temp_dir)?;
+
         Some(temp_dir)
     } else {
         None
@@ -321,20 +325,66 @@ pub fn execute(
 // Helpers
 // =============================================================================
 
-/// Recursively copy a directory
+/// Recursively copy a directory (skips .git)
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> TestResult<()> {
     fs::create_dir_all(dst)?;
 
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
+        let file_name = entry.file_name();
+        let dst_path = dst.join(&file_name);
+
+        // Skip .git directories
+        if file_name == ".git" {
+            continue;
+        }
 
         if src_path.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
             fs::copy(&src_path, &dst_path)?;
         }
+    }
+
+    Ok(())
+}
+
+/// Initialize a git repo with an initial commit
+fn init_git_repo(path: &std::path::Path) -> TestResult<()> {
+    use std::process::Command;
+
+    // git init
+    let status = Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(path)
+        .status()?;
+    if !status.success() {
+        return Err(TestError::InvalidScenario("Failed to init git repo".into()));
+    }
+
+    // git add .
+    let status = Command::new("git")
+        .args(["add", "."])
+        .current_dir(path)
+        .status()?;
+    if !status.success() {
+        return Err(TestError::InvalidScenario("Failed to stage files".into()));
+    }
+
+    // git commit
+    let status = Command::new("git")
+        .args(["commit", "-m", "initial commit"])
+        .env("GIT_AUTHOR_NAME", "hirsel")
+        .env("GIT_AUTHOR_EMAIL", "hirsel@test")
+        .env("GIT_COMMITTER_NAME", "hirsel")
+        .env("GIT_COMMITTER_EMAIL", "hirsel@test")
+        .current_dir(path)
+        .status()?;
+    if !status.success() {
+        return Err(TestError::InvalidScenario(
+            "Failed to create initial commit".into(),
+        ));
     }
 
     Ok(())

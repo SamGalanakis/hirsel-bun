@@ -1028,13 +1028,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let src_path = entry.path();
-        let file_name = entry.file_name();
-        let dst_path = dst.join(&file_name);
-
-        // Skip .git directories to avoid issues with nested repos
-        if file_name == ".git" {
-            continue;
-        }
+        let dst_path = dst.join(entry.file_name());
 
         if src_path.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
