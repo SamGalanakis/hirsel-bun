@@ -240,7 +240,7 @@ pub async fn pause_run(run_name: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn resume_run(run_name: String) -> Result<(), String> {
     use crate::cli::config::get_agent_command;
-    use crate::core::workers::{maybe_scale_up, resume_awaiting_workers};
+    use crate::core::workers::{maybe_scale_up, maybe_trigger_eval, resume_awaiting_workers};
 
     let run_dir = config::run_dir(&run_name);
     let db_path = run_dir.join("hirsel.db");
@@ -290,6 +290,17 @@ pub async fn resume_run(run_name: String) -> Result<(), String> {
                 tracing::warn!("Failed to scale up: {}", e);
                 break;
             }
+        }
+    }
+
+    // Check if eval should be triggered (e.g., if paused during eval and all workers are inactive)
+    match maybe_trigger_eval(&run_name, &run_dir) {
+        Ok(true) => {
+            tracing::info!("Triggered eval after resume for run '{}'", run_name);
+        }
+        Ok(false) => {}
+        Err(e) => {
+            tracing::warn!("Failed to check eval trigger: {}", e);
         }
     }
 
