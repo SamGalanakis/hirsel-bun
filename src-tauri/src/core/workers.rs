@@ -791,16 +791,15 @@ pub fn maybe_scale_up(
     let claimable = state.get_claimable_tasks()?;
     let claimable_count = claimable.len();
 
-    // Target is min(max_workers, claimable_tasks)
-    let target_workers = std::cmp::min(scale.max, claimable_count);
-
     debug!(
-        "maybe_scale_up: {} claimable tasks, {} workers, max {}, target {}",
-        claimable_count, current_count, scale.max, target_workers
+        "maybe_scale_up: {} claimable tasks, {} workers, max {}",
+        claimable_count, current_count, scale.max
     );
 
-    // Only scale up if we have fewer workers than target
-    if current_count >= target_workers {
+    // Scale up if: we have claimable tasks AND we haven't hit max workers
+    // Note: busy workers can't pick up new tasks, so we scale up whenever
+    // there's work available, up to the max
+    if claimable_count == 0 || !scale.can_scale_up(current_count) {
         return Ok(None);
     }
 
