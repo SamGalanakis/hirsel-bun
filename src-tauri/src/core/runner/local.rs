@@ -24,6 +24,12 @@ impl LocalRunner {
 
     /// Check if a process is still alive
     pub fn is_pid_alive(pid: u32) -> bool {
+        // PID 0 is the kernel scheduler, never a valid user process
+        // Also, kill(0, sig) sends to the process group, not PID 0
+        if pid == 0 {
+            return false;
+        }
+
         #[cfg(unix)]
         {
             // Send signal 0 to check if process exists

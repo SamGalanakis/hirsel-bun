@@ -1,0 +1,161 @@
+  <!-- Worker Output Viewer Panel -->
+  <div
+    x-data="workerOutputViewer()"
+    x-cloak
+    x-show="visible"
+    x-transition:enter="transition ease-out duration-200"
+    x-transition:enter-start="translate-x-full"
+    x-transition:enter-end="translate-x-0"
+    x-transition:leave="transition ease-in duration-150"
+    x-transition:leave-start="translate-x-0"
+    x-transition:leave-end="translate-x-full"
+    class="fixed right-0 top-0 bottom-0 w-[600px] max-w-[90vw] bg-pasture-900 border-l border-pasture-600 shadow-2xl flex flex-col z-50"
+  >
+    <!-- Header -->
+    <div class="p-4 border-b border-pasture-600 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <!-- Sheep avatar -->
+        <template x-if="sheepConfig">
+          <div class="w-8 h-8 flex-shrink-0" x-html="generateSheepSvg(sheepConfig, 32)"></div>
+        </template>
+        <template x-if="!sheepConfig">
+          <span class="text-wool-400" x-html="getIcon('terminal', 18)"></span>
+        </template>
+        <div>
+          <h2 class="text-sm font-medium text-wool-200" x-text="workerName"></h2>
+          <span class="text-xs text-wool-500">Worker Output</span>
+        </div>
+      </div>
+      <button
+        @click="hide()"
+        class="p-1.5 rounded hover:bg-pasture-700 text-wool-400 hover:text-wool-200 transition-colors"
+      >
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+    </div>
+
+    <!-- Loading state -->
+    <div x-show="loading" class="flex-1 flex items-center justify-center">
+      <div class="text-wool-500 flex items-center gap-2">
+        <i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i>
+        <span>Loading output...</span>
+      </div>
+    </div>
+
+    <!-- Error state -->
+    <div x-show="error && !loading" class="flex-1 flex items-center justify-center p-4">
+      <div class="text-center">
+        <div class="text-terra mb-2" x-text="error"></div>
+        <button @click="show(runName, workerName)" class="text-xs text-wool-400 hover:text-wool-200 underline">
+          Retry
+        </button>
+      </div>
+    </div>
+
+    <!-- Output chunks in chronological order -->
+    <div x-show="!loading && !error" class="flex-1 overflow-y-auto output-messages p-4 space-y-2">
+      <!-- Empty state -->
+      <div x-show="chunks.length === 0" class="text-center text-wool-500 py-8">
+        No output yet
+      </div>
+
+      <!-- Chunk list - renders text, thinking, and tools in order -->
+      <template x-for="chunk in chunks" :key="chunk.id">
+        <div>
+          <!-- Text chunk -->
+          <div
+            x-show="chunk.type === 'text'"
+            class="text-sm text-wool-200 whitespace-pre-wrap"
+            :class="{ 'ai-chat-streaming': streaming && chunks[chunks.length - 1]?.id === chunk.id }"
+            x-text="chunk.content"
+          ></div>
+
+          <!-- Thinking chunk (collapsible) -->
+          <div x-show="chunk.type === 'thinking' && showThinking" class="text-xs">
+            <details class="group">
+              <summary class="cursor-pointer text-wool-500 hover:text-wool-400 flex items-center gap-1">
+                <i data-lucide="brain" class="w-3 h-3"></i>
+                <span>Thinking...</span>
+              </summary>
+              <div class="mt-1 pl-4 border-l border-wool-700 text-wool-400 whitespace-pre-wrap" x-text="chunk.content"></div>
+            </details>
+          </div>
+
+          <!-- Tool chunk -->
+          <div
+            x-show="chunk.type === 'tool' && chunk.tool"
+            class="ai-chat-tool-card rounded-md border text-xs my-2"
+            :class="{
+              'border-wool-700 bg-wool-800/30': chunk.tool?.status === 'pending',
+              'border-amber-500/40 bg-amber-900/10': chunk.tool?.status === 'in_progress',
+              'border-sage/30 bg-sage/5': chunk.tool?.status === 'completed',
+              'border-terra/40 bg-terra/10': chunk.tool?.status === 'failed'
+            }"
+          >
+            <!-- Tool header -->
+            <div
+              class="flex items-center gap-2 px-3 py-2"
+              :class="{'cursor-pointer hover:bg-white/5 rounded-t-md': hasExpandableContent(chunk.tool)}"
+              @click="hasExpandableContent(chunk.tool) && toggleToolExpanded(chunk.tool?.id)"
+            >
+              <span class="flex-shrink-0 text-wool-400" :class="{'animate-pulse': chunk.tool?.status === 'in_progress'}" x-html="getToolIcon(chunk.tool?.kind)"></span>
+              <span class="font-medium text-wool-300 truncate" x-text="chunk.tool?.title"></span>
+              <!-- Command preview (for terminal tools, hide when expanded) -->
+              <template x-if="getCommandPreview(chunk.tool) && !chunk.tool?.expanded">
+                <code class="flex-1 min-w-0 font-mono text-wool-500 truncate text-[11px]" x-text="getCommandPreview(chunk.tool)"></code>
+              </template>
+              <!-- Expand indicator for tools with expandable content -->
+              <template x-if="hasExpandableContent(chunk.tool)">
+                <span class="text-wool-500 flex-shrink-0" x-html="getExpandIcon(chunk.tool?.expanded)"></span>
+              </template>
+              <span
+                class="ml-auto flex-shrink-0 flex items-center gap-1"
+                :class="getToolStatusClass(chunk.tool?.status || '')"
+              >
+                <span x-html="getToolStatusIcon(chunk.tool?.status || '')"></span>
+              </span>
+            </div>
+            <!-- Expanded view (result/output) -->
+            <div
+              x-show="chunk.tool?.expanded && hasExpandableContent(chunk.tool)"
+              x-transition
+              class="px-3 pb-2 border-t border-wool-700/50"
+            >
+              <!-- Result/Output -->
+              <template x-if="hasToolOutput(chunk.tool)">
+                <div class="mt-2">
+                  <div class="text-[10px] text-wool-500 mb-1">Result</div>
+                  <pre class="font-mono text-[11px] text-wool-400 bg-pasture-900/50 rounded px-2 py-1.5 overflow-x-auto whitespace-pre-wrap break-all max-h-48 overflow-y-auto" x-text="getToolOutput(chunk.tool)"></pre>
+                </div>
+              </template>
+              <!-- Command (only if title doesn't already show it) -->
+              <template x-if="getCommandPreview(chunk.tool) && !hasToolOutput(chunk.tool)">
+                <div class="mt-2">
+                  <div class="text-[10px] text-wool-500 mb-1">Command</div>
+                  <pre class="font-mono text-[11px] text-wool-400 bg-pasture-900/50 rounded px-2 py-1.5 overflow-x-auto whitespace-pre-wrap break-all" x-text="getToolCommand(chunk.tool)"></pre>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Footer -->
+    <div class="p-3 border-t border-pasture-600 flex items-center justify-between text-xs text-wool-500">
+      <div class="flex items-center gap-3">
+        <label class="label gap-1.5 cursor-pointer">
+          <input type="checkbox" x-model="showThinking" class="input">
+          <span>Show thinking</span>
+        </label>
+        <label class="label gap-1.5 cursor-pointer">
+          <input type="checkbox" x-model="autoScroll" class="input">
+          <span>Auto-scroll</span>
+        </label>
+      </div>
+      <span x-show="streaming" class="flex items-center gap-1 text-amber-400">
+        <i data-lucide="loader-2" class="w-3 h-3 animate-spin"></i>
+        Streaming...
+      </span>
+    </div>
+  </div>

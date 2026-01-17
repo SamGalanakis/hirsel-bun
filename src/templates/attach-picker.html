@@ -1,0 +1,114 @@
+  <!-- Attach Picker Modal -->
+  <div
+    x-cloak
+    x-show="attachPickerOpen"
+    x-transition.opacity
+    @click.self="closeAttachPicker()"
+    @keydown.escape.window="if (attachPickerOpen) closeAttachPicker()"
+    class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+  >
+    <div class="bg-pasture-800 rounded-xl shadow-2xl w-[400px] max-h-[500px] overflow-hidden border border-pasture-600" @click.stop>
+      <!-- Header -->
+      <div class="px-5 py-4 border-b border-pasture-600 flex items-center justify-between bg-pasture-700/50">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center">
+            <i data-lucide="terminal" class="w-4 h-4 text-amber-500"></i>
+          </div>
+          <div>
+            <h2 class="text-base font-semibold text-wool-100">Attach to Output</h2>
+            <p class="text-xs text-wool-500">Select a worker or evaluation to view</p>
+          </div>
+        </div>
+        <button @click="closeAttachPicker()" class="p-1.5 rounded-md hover:bg-pasture-600 text-wool-500 hover:text-wool-300 transition-colors">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <!-- Content -->
+      <div class="p-3 max-h-[380px] overflow-y-auto">
+        <!-- Loading -->
+        <div x-show="attachPickerLoading" class="flex items-center justify-center py-8">
+          <i data-lucide="loader" class="w-6 h-6 animate-spin text-wool-500"></i>
+        </div>
+
+        <!-- Workers Section -->
+        <div x-show="!attachPickerLoading && attachPickerWorkers.length > 0" class="mb-4">
+          <div class="flex items-center gap-2 px-2 mb-2">
+            <i data-lucide="users" class="w-3.5 h-3.5 text-wool-500"></i>
+            <span class="text-xs font-medium text-wool-500 uppercase tracking-wider">Workers</span>
+          </div>
+          <div class="space-y-1">
+            <template x-for="worker in attachPickerWorkers" :key="worker.name">
+              <button
+                @click="attachToTarget('worker', worker.name)"
+                class="w-full px-3 py-2.5 text-left rounded-lg hover:bg-pasture-700 transition-colors flex items-center justify-between group"
+              >
+                <div class="flex items-center gap-3">
+                  <span
+                    class="w-2 h-2 rounded-full"
+                    :class="{
+                      'bg-sage': worker.status === 'working',
+                      'bg-amber-500': worker.status === 'waiting' || worker.status === 'awaiting',
+                      'bg-wool-500': worker.status === 'idle' || worker.status === 'paused',
+                      'bg-terra': worker.status === 'error'
+                    }"
+                  ></span>
+                  <span class="text-sm font-medium text-wool-200" x-text="worker.name"></span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-xs text-wool-500" x-text="worker.status"></span>
+                  <i data-lucide="chevron-right" class="w-4 h-4 text-wool-600 group-hover:text-wool-400 transition-colors"></i>
+                </div>
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <!-- Evals Section -->
+        <div x-show="!attachPickerLoading && attachPickerEvals.length > 0">
+          <div class="flex items-center gap-2 px-2 mb-2">
+            <i data-lucide="clipboard-check" class="w-3.5 h-3.5 text-wool-500"></i>
+            <span class="text-xs font-medium text-wool-500 uppercase tracking-wider">Evaluations</span>
+          </div>
+          <div class="space-y-1">
+            <template x-for="evalItem in attachPickerEvals" :key="evalItem.id">
+              <button
+                @click="attachToTarget('eval', evalItem.evalName)"
+                class="w-full px-3 py-2.5 text-left rounded-lg hover:bg-pasture-700 transition-colors flex items-center justify-between group"
+              >
+                <div class="flex items-center gap-3">
+                  <span
+                    class="w-2 h-2 rounded-full"
+                    :class="{
+                      'bg-sage': evalItem.status === 'passed',
+                      'bg-terra': evalItem.status === 'failed',
+                      'bg-amber-500': evalItem.status === 'running'
+                    }"
+                  ></span>
+                  <span class="text-sm font-medium text-wool-200" x-text="evalItem.evalName"></span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-xs text-wool-500" x-text="evalItem.status"></span>
+                  <i data-lucide="chevron-right" class="w-4 h-4 text-wool-600 group-hover:text-wool-400 transition-colors"></i>
+                </div>
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <!-- Empty State -->
+        <div x-show="!attachPickerLoading && attachPickerWorkers.length === 0 && attachPickerEvals.length === 0" class="text-center py-8">
+          <i data-lucide="inbox" class="w-10 h-10 mx-auto mb-3 text-wool-600"></i>
+          <p class="text-sm text-wool-500">No workers or evaluations available</p>
+          <p class="text-xs text-wool-600 mt-1">Start a run to see workers here</p>
+        </div>
+      </div>
+
+      <!-- Footer hint -->
+      <div class="px-4 py-2.5 border-t border-pasture-700 bg-pasture-800/50">
+        <p class="text-xs text-wool-600 text-center">
+          <kbd class="px-1.5 py-0.5 bg-pasture-700 rounded text-wool-400 font-mono">Esc</kbd> to close
+        </p>
+      </div>
+    </div>
+  </div>

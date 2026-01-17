@@ -393,26 +393,28 @@ pub fn resume_awaiting_workers(
     let files = Files::new(run_dir);
     let state = SQLiteState::new(files.db_path())?;
 
-    // Get claimable tasks
+    // Get claimable tasks (needed for awaiting workers)
     let claimable = state.get_claimable_tasks()?;
-    if claimable.is_empty() {
-        return Ok(Vec::new());
-    }
 
-    // Get awaiting workers
+    // Get workers that need to be resumed:
+    // - Paused: were actively working when run was paused, resume unconditionally
+    // - Awaiting: waiting for tasks, only resume if tasks available
     let workers = state.get_workers()?;
-    let awaiting: Vec<_> = workers
+    let to_resume: Vec<_> = workers
         .iter()
-        .filter(|w| w.status == WorkerStatus::Awaiting)
+        .filter(|w| {
+            w.status == WorkerStatus::Paused
+                || (w.status == WorkerStatus::Awaiting && !claimable.is_empty())
+        })
         .collect();
 
-    if awaiting.is_empty() {
+    if to_resume.is_empty() {
         return Ok(Vec::new());
     }
 
     let mut resumed = Vec::new();
 
-    for worker in awaiting {
+    for worker in to_resume {
         let work_dir = worker
             .work_dir
             .as_ref()

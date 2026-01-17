@@ -506,9 +506,28 @@ pub fn create_workspace(run_name: &str, project_path: &Path, runs_dir: &Path) ->
         commit(&repo, "hirsel: snapshot uncommitted changes")?;
     }
 
-    // Create and checkout "staging" branch from current HEAD
+    // Force create "staging" branch from current HEAD (whatever branch we're on)
+    // This ensures we capture the current state regardless of source branch name
     let head_commit = repo.head()?.peel_to_commit()?;
-    repo.branch("staging", &head_commit, false)?;
+
+    // Get current branch name before we modify anything
+    let current_branch = repo
+        .head()
+        .ok()
+        .and_then(|h| h.shorthand().map(|s| s.to_string()));
+
+    // Delete existing staging branch if present (it might have different content)
+    if let Ok(mut branch) = repo.find_branch("staging", BranchType::Local) {
+        // Can't delete current branch, so only delete if we're not on it
+        if current_branch.as_deref() != Some("staging") {
+            let _ = branch.delete();
+        }
+    }
+
+    // Create staging branch from HEAD (skip if we're already on staging)
+    if current_branch.as_deref() != Some("staging") {
+        repo.branch("staging", &head_commit, false)?;
+    }
 
     // Checkout staging branch
     let obj = repo.revparse_single("staging")?;

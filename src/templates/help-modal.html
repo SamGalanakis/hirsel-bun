@@ -1,0 +1,28 @@
+<!-- Help Modal -->
+  <div
+    x-cloak
+    x-show="showHelp"
+    x-data="{ shortcuts: [] }"
+    x-init="$watch('showHelp', v => { if(v) shortcuts = window.getShortcuts(); })"
+    x-transition.opacity
+    @click.self="showHelp = false"
+    @keydown.escape.window="showHelp = false"
+    class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+  >
+    <div class="bg-pasture-800 rounded-lg shadow-xl w-96 max-h-96 overflow-auto" @click.stop>
+      <div class="p-4 border-b border-pasture-600 flex items-center justify-between">
+        <h2 class="text-lg font-semibold text-wool-100">Keyboard Shortcuts</h2>
+        <button @click="showHelp = false" class="text-wool-500 hover:text-wool-300">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <div class="p-4 space-y-2 text-sm">
+        <template x-for="shortcut in shortcuts" :key="shortcut.action">
+          <div class="flex justify-between">
+            <kbd class="kbd text-wool-500" x-text="window.formatBinding(shortcut.binding)"></kbd>
+            <span class="text-wool-300" x-text="shortcut.label"></span>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
