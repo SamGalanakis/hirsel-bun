@@ -263,6 +263,41 @@ pub async fn resume_run(run_name: String) -> Result<(), String> {
         return Err(format!("Cannot resume run in '{}' status", status));
     }
 
+    // Check if there was an eval that was paused - if so, we should re-trigger eval
+    let was_in_eval = state
+        .has_paused_eval()
+        .map_err(|e| format!("Failed to check paused evals: {}", e))?;
+
+    if was_in_eval {
+        // Clear the paused eval markers
+        let _ = state.clear_paused_evals();
+
+        // Set status to Working so maybe_trigger_eval can trigger
+        state
+            .set_status(crate::core::state::Status::Working)
+            .map_err(|e| format!("Failed to update status: {}", e))?;
+
+        // Directly trigger eval since we were in eval mode when paused
+        match maybe_trigger_eval(&run_name, &run_dir) {
+            Ok(true) => {
+                tracing::info!(
+                    "Re-triggered eval after resume for run '{}' (was paused during eval)",
+                    run_name
+                );
+                return Ok(());
+            }
+            Ok(false) => {
+                tracing::info!(
+                    "No eval triggered after resume for run '{}' (no eval spec or workers active)",
+                    run_name
+                );
+            }
+            Err(e) => {
+                tracing::warn!("Failed to trigger eval on resume: {}", e);
+            }
+        }
+    }
+
     // Update status first
     state
         .set_status(crate::core::state::Status::Working)
@@ -293,7 +328,7 @@ pub async fn resume_run(run_name: String) -> Result<(), String> {
         }
     }
 
-    // Check if eval should be triggered (e.g., if paused during eval and all workers are inactive)
+    // Check if eval should be triggered (e.g., all workers finished while paused)
     match maybe_trigger_eval(&run_name, &run_dir) {
         Ok(true) => {
             tracing::info!("Triggered eval after resume for run '{}'", run_name);

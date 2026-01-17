@@ -120,6 +120,26 @@ impl SQLiteState {
         Ok(())
     }
 
+    /// Check if there's a cancelled eval that was paused (feedback = "Run paused")
+    /// This helps determine if we should re-trigger eval on resume
+    pub fn has_paused_eval(&self) -> StateResult<bool> {
+        let count: i64 = self.db.query_row(
+            "SELECT COUNT(*) FROM evals WHERE status = ?1 AND feedback = 'Run paused'",
+            params![EvalStatus::Failed.as_str()],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    /// Clear the "Run paused" feedback from cancelled evals (called after resuming)
+    pub fn clear_paused_evals(&self) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE evals SET feedback = 'Paused and resumed' WHERE status = ?1 AND feedback = 'Run paused'",
+            params![EvalStatus::Failed.as_str()],
+        )?;
+        Ok(())
+    }
+
     /// Cancel running evals and kill their processes
     pub fn cancel_running_evals(&self, reason: &str) -> StateResult<i64> {
         let mut stmt = self
