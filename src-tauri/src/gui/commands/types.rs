@@ -441,8 +441,11 @@ pub enum RunnerConfigResponse {
     Sprite {
         api_token: Option<String>,
         base_checkpoint: Option<String>,
+        #[serde(default = "default_auto_destroy")]
         auto_destroy: bool,
+        #[serde(default = "default_idle_timeout_secs")]
         idle_timeout_secs: u32,
+        #[serde(default = "default_api_url")]
         api_url: String,
     },
 }
@@ -503,6 +506,17 @@ impl From<RunnerConfigResponse> for crate::core::runner::RunnerConfig {
             }
         }
     }
+}
+
+// Default functions for sprite runner fields
+fn default_auto_destroy() -> bool {
+    true
+}
+fn default_idle_timeout_secs() -> u32 {
+    30
+}
+fn default_api_url() -> String {
+    "https://api.sprites.dev".to_string()
 }
 
 /// Application configuration for frontend
