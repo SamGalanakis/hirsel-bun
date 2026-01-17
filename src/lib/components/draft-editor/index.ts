@@ -67,7 +67,7 @@ export function draftEditor(): DraftEditorComponent {
     evalSaveTimeout: null,
     isEditing: false,
     activeTab: 'spec' as const,
-    previewMode: false,
+    previewMode: true,
     // Branch selection state
     selectedBranch: '',
     availableBranches: [],

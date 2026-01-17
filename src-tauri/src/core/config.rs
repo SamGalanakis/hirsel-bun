@@ -16,12 +16,8 @@ use std::path::PathBuf;
 use std::sync::LazyLock;
 use thiserror::Error;
 
-/// Regex patterns for worker scale parsing
-static WORKER_SCALE_PLUS_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(\d+)\+$").expect("invalid regex"));
-static WORKER_SCALE_RANGE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(\d+)-(\d+)$").expect("invalid regex"));
-static WORKER_SCALE_FIXED_RE: LazyLock<Regex> =
+/// Regex pattern for parsing worker scale
+static WORKER_SCALE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\d+)$").expect("invalid regex"));
 
 /// Context window sizes per model (in tokens)
@@ -63,14 +59,11 @@ pub enum ConfigError {
     #[error("Failed to read config file {path}: {message}")]
     ReadError { path: PathBuf, message: String },
 
-    #[error("Invalid workers format: '{value}'. Use: '3' (fixed), '1-5' (range), or '2+' (min with no max)")]
+    #[error("Invalid workers format: '{value}'. Use a number like '4' for max workers")]
     InvalidWorkerScale { value: String },
 
-    #[error("Minimum workers must be at least 1")]
-    MinWorkersTooLow,
-
-    #[error("Maximum workers must be >= minimum")]
-    MaxWorkersLessThanMin,
+    #[error("Worker count must be at least 1")]
+    WorkerCountTooLow,
 
     #[error("Run name cannot be empty")]
     EmptyRunName,
@@ -291,60 +284,25 @@ pub fn get_agent_env_vars(
 
 /// Worker scaling configuration.
 ///
-/// Parses --workers argument:
-/// - "3"   -> fixed 3 workers (min=3, max=3, autoscale=false)
-/// - "1-5" -> autoscale between 1 and 5 (min=1, max=5, autoscale=true)
-/// - "2+"  -> autoscale from 2 to unlimited (min=2, max=None, autoscale=true)
+/// Workers is just a max count - always starts with 1 and autoscales up.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkerScale {
-    pub min: u32,
-    pub max: Option<u32>,
-    pub autoscale: bool,
+    pub max: u32,
 }
 
 impl WorkerScale {
-    /// Parse worker scale from string
+    /// Parse worker scale from string - just the max worker count.
+    /// - "4" -> autoscale up to 4 workers
     pub fn parse(value: &str) -> Result<Self, ConfigError> {
         let value = value.trim();
 
-        if let Some(caps) = WORKER_SCALE_PLUS_RE.captures(value) {
-            let min_val: u32 = caps[1].parse().unwrap();
-            if min_val < 1 {
-                return Err(ConfigError::MinWorkersTooLow);
+        // Simple number = max workers
+        if let Some(caps) = WORKER_SCALE_RE.captures(value) {
+            let max: u32 = caps[1].parse().unwrap();
+            if max < 1 {
+                return Err(ConfigError::WorkerCountTooLow);
             }
-            return Ok(Self {
-                min: min_val,
-                max: None,
-                autoscale: true,
-            });
-        }
-
-        if let Some(caps) = WORKER_SCALE_RANGE_RE.captures(value) {
-            let min_val: u32 = caps[1].parse().unwrap();
-            let max_val: u32 = caps[2].parse().unwrap();
-            if min_val < 1 {
-                return Err(ConfigError::MinWorkersTooLow);
-            }
-            if max_val < min_val {
-                return Err(ConfigError::MaxWorkersLessThanMin);
-            }
-            return Ok(Self {
-                min: min_val,
-                max: Some(max_val),
-                autoscale: true,
-            });
-        }
-
-        if let Some(caps) = WORKER_SCALE_FIXED_RE.captures(value) {
-            let count: u32 = caps[1].parse().unwrap();
-            if count < 1 {
-                return Err(ConfigError::MinWorkersTooLow);
-            }
-            return Ok(Self {
-                min: count,
-                max: Some(count),
-                autoscale: false,
-            });
+            return Ok(Self { max });
         }
 
         Err(ConfigError::InvalidWorkerScale {
@@ -352,42 +310,26 @@ impl WorkerScale {
         })
     }
 
-    /// Number of workers to start with
+    /// Number of workers to start with - always 1, we autoscale from there
     pub fn initial_count(&self) -> u32 {
-        self.min
+        1
     }
 
     /// Check if we can add more workers
     pub fn can_scale_up(&self, current: u32) -> bool {
-        if !self.autoscale {
-            return false;
-        }
-        match self.max {
-            None => true,
-            Some(max) => current < max,
-        }
+        current < self.max
     }
 }
 
 impl Default for WorkerScale {
     fn default() -> Self {
-        Self {
-            min: 1,
-            max: Some(1),
-            autoscale: false,
-        }
+        Self { max: 1 }
     }
 }
 
 impl std::fmt::Display for WorkerScale {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if !self.autoscale {
-            write!(f, "{}", self.min)
-        } else if self.max.is_none() {
-            write!(f, "{}+", self.min)
-        } else {
-            write!(f, "{}-{}", self.min, self.max.unwrap())
-        }
+        write!(f, "{}", self.max)
     }
 }
 
@@ -1006,51 +948,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_worker_scale_fixed() {
+    fn test_worker_scale_simple() {
         let scale = WorkerScale::parse("3").unwrap();
-        assert_eq!(scale.min, 3);
-        assert_eq!(scale.max, Some(3));
-        assert!(!scale.autoscale);
+        assert_eq!(scale.max, 3);
+        assert_eq!(scale.initial_count(), 1);
         assert_eq!(scale.to_string(), "3");
-    }
-
-    #[test]
-    fn test_worker_scale_range() {
-        let scale = WorkerScale::parse("1-5").unwrap();
-        assert_eq!(scale.min, 1);
-        assert_eq!(scale.max, Some(5));
-        assert!(scale.autoscale);
-        assert_eq!(scale.to_string(), "1-5");
-    }
-
-    #[test]
-    fn test_worker_scale_unlimited() {
-        let scale = WorkerScale::parse("2+").unwrap();
-        assert_eq!(scale.min, 2);
-        assert_eq!(scale.max, None);
-        assert!(scale.autoscale);
-        assert_eq!(scale.to_string(), "2+");
     }
 
     #[test]
     fn test_worker_scale_invalid() {
         assert!(WorkerScale::parse("0").is_err());
         assert!(WorkerScale::parse("abc").is_err());
-        assert!(WorkerScale::parse("5-2").is_err());
+        assert!(WorkerScale::parse("1-5").is_err()); // Legacy format not supported
+        assert!(WorkerScale::parse("2+").is_err()); // Legacy format not supported
     }
 
     #[test]
     fn test_worker_scale_can_scale_up() {
-        let fixed = WorkerScale::parse("3").unwrap();
-        assert!(!fixed.can_scale_up(3));
-        assert!(!fixed.can_scale_up(2));
-
-        let range = WorkerScale::parse("1-5").unwrap();
-        assert!(range.can_scale_up(3));
-        assert!(!range.can_scale_up(5));
-
-        let unlimited = WorkerScale::parse("2+").unwrap();
-        assert!(unlimited.can_scale_up(100));
+        let scale = WorkerScale::parse("5").unwrap();
+        assert!(scale.can_scale_up(3));
+        assert!(scale.can_scale_up(4));
+        assert!(!scale.can_scale_up(5));
+        assert!(!scale.can_scale_up(6));
     }
 
     #[test]

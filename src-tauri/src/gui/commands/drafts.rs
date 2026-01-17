@@ -714,8 +714,8 @@ pub async fn start_draft(run_name: String) -> Result<RunDetail, String> {
     let initial_count = scale.initial_count();
     let worker_names = get_available_names(initial_count, &[]);
 
-    // Determine if multi-worker mode
-    let is_multi_worker = initial_count > 1 || scale.autoscale;
+    // Determine if multi-worker mode (current or potential via autoscale)
+    let is_multi_worker = initial_count > 1 || scale.max > 1;
     let leader = if is_multi_worker {
         Some(worker_names[0].clone())
     } else {

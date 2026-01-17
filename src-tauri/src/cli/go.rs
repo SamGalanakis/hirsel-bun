@@ -131,91 +131,41 @@ impl From<RunnerError> for GoError {
 pub type GoResult<T> = Result<T, GoError>;
 
 // =============================================================================
-// Worker Scale (minimal implementation until config.rs is available)
+// Worker Scale
 // =============================================================================
 
-/// Worker scale configuration - how many workers to run
+/// Worker scale configuration - max workers to autoscale to.
+/// Always starts with 1 worker and autoscales up to max.
 #[derive(Debug, Clone)]
 pub struct WorkerScale {
-    pub min: u32,
-    pub max: Option<u32>,
-    pub autoscale: bool,
+    pub max: u32,
 }
 
 impl WorkerScale {
-    /// Parse worker scale from string
-    /// - "3" -> fixed 3 workers
-    /// - "1-5" -> autoscale between 1 and 5
-    /// - "2+" -> autoscale from 2 with no upper limit
+    /// Parse worker scale from string - just the max worker count.
+    /// - "4" -> autoscale up to 4 workers
     pub fn parse(s: &str) -> Result<Self, String> {
         let s = s.trim();
 
-        // Check for "N+" pattern (autoscale from N)
-        if let Some(num_str) = s.strip_suffix('+') {
-            let min: u32 = num_str
-                .parse()
-                .map_err(|_| format!("Invalid worker count: {}", num_str))?;
-            if min == 0 {
-                return Err("Worker count must be at least 1".to_string());
-            }
-            return Ok(WorkerScale {
-                min,
-                max: None,
-                autoscale: true,
-            });
-        }
-
-        // Check for "N-M" pattern (range)
-        if let Some(dash_pos) = s.find('-') {
-            let min_str = &s[..dash_pos];
-            let max_str = &s[dash_pos + 1..];
-            let min: u32 = min_str
-                .parse()
-                .map_err(|_| format!("Invalid minimum worker count: {}", min_str))?;
-            let max: u32 = max_str
-                .parse()
-                .map_err(|_| format!("Invalid maximum worker count: {}", max_str))?;
-            if min == 0 {
-                return Err("Minimum worker count must be at least 1".to_string());
-            }
-            if max < min {
-                return Err(format!("Maximum ({}) must be >= minimum ({})", max, min));
-            }
-            return Ok(WorkerScale {
-                min,
-                max: Some(max),
-                autoscale: min != max,
-            });
-        }
-
-        // Simple number - fixed count
-        let count: u32 = s
+        // Simple number = max workers
+        let max: u32 = s
             .parse()
-            .map_err(|_| format!("Invalid worker count: {}", s))?;
-        if count == 0 {
+            .map_err(|_| format!("Invalid worker count: '{}'. Use a number like '4'", s))?;
+        if max == 0 {
             return Err("Worker count must be at least 1".to_string());
         }
-        Ok(WorkerScale {
-            min: count,
-            max: Some(count),
-            autoscale: false,
-        })
+        Ok(WorkerScale { max })
     }
 
-    /// Get initial worker count
+    /// Initial worker count - always 1, we autoscale from there
     pub fn initial_count(&self) -> u32 {
-        self.min
+        1
     }
 }
 
 impl std::fmt::Display for WorkerScale {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match (self.max, self.autoscale) {
-            (None, true) => write!(f, "{}+", self.min),
-            (Some(max), true) if max != self.min => write!(f, "{}-{}", self.min, max),
-            (Some(max), _) => write!(f, "{}", max),
-            (None, false) => write!(f, "{}", self.min),
-        }
+        write!(f, "{}", self.max)
     }
 }
 
@@ -701,9 +651,9 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
     let mut worker_names = local_worker_names.clone();
     worker_names.extend(remote_worker_names.clone());
 
-    // Determine if multi-worker mode
+    // Determine if multi-worker mode (current or potential via autoscale)
     let total_workers = local_count + total_remote_workers;
-    let is_multi_worker = total_workers > 1 || scale.autoscale;
+    let is_multi_worker = total_workers > 1 || scale.max > 1;
     let leader = if is_multi_worker {
         Some(worker_names[0].clone())
     } else {
@@ -1231,37 +1181,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_worker_scale_fixed() {
+    fn test_parse_worker_scale_simple() {
         let scale = WorkerScale::parse("3").unwrap();
-        assert_eq!(scale.min, 3);
-        assert_eq!(scale.max, Some(3));
-        assert!(!scale.autoscale);
-        assert_eq!(scale.initial_count(), 3);
-    }
-
-    #[test]
-    fn test_parse_worker_scale_range() {
-        let scale = WorkerScale::parse("1-5").unwrap();
-        assert_eq!(scale.min, 1);
-        assert_eq!(scale.max, Some(5));
-        assert!(scale.autoscale);
+        assert_eq!(scale.max, 3);
         assert_eq!(scale.initial_count(), 1);
-    }
-
-    #[test]
-    fn test_parse_worker_scale_unlimited() {
-        let scale = WorkerScale::parse("2+").unwrap();
-        assert_eq!(scale.min, 2);
-        assert_eq!(scale.max, None);
-        assert!(scale.autoscale);
-        assert_eq!(scale.initial_count(), 2);
     }
 
     #[test]
     fn test_parse_worker_scale_invalid() {
         assert!(WorkerScale::parse("0").is_err());
-        assert!(WorkerScale::parse("5-3").is_err());
         assert!(WorkerScale::parse("abc").is_err());
+        assert!(WorkerScale::parse("1-5").is_err()); // Legacy format not supported
+        assert!(WorkerScale::parse("2+").is_err()); // Legacy format not supported
     }
 
     #[test]

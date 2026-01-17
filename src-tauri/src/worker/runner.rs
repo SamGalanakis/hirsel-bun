@@ -393,12 +393,13 @@ impl WorkerRunner {
         .to_string())
     }
 
-    /// Try to resume awaiting workers if there are claimable tasks.
+    /// Try to resume awaiting workers and scale up if needed.
     /// This is a best-effort operation - errors are logged but not propagated.
     fn try_resume_awaiting_workers(&self) {
-        use crate::core::workers::resume_awaiting_workers;
+        use crate::core::workers::{maybe_scale_up, resume_awaiting_workers};
         use tracing::debug;
 
+        // First, try to resume any paused/awaiting workers
         match resume_awaiting_workers(
             &self.config.run_name,
             &self.config.run_dir,
@@ -411,6 +412,21 @@ impl WorkerRunner {
             }
             Err(e) => {
                 debug!("Failed to resume awaiting workers: {}", e);
+            }
+        }
+
+        // Then, try to scale up if tasks are available
+        match maybe_scale_up(
+            &self.config.run_name,
+            &self.config.run_dir,
+            &self.config.agent_command,
+        ) {
+            Ok(Some(new_worker)) => {
+                debug!("Scaled up: spawned new worker {}", new_worker);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                debug!("Failed to scale up: {}", e);
             }
         }
     }

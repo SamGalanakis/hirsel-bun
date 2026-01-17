@@ -184,6 +184,25 @@ pub fn run_scenario(
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("test-{}", scenario_name));
 
+    // If scenario has a project folder, copy it to a temp location first
+    // This prevents polluting the source tree with .git directories
+    let temp_project_dir = if project_path.exists() {
+        let temp_dir = std::env::temp_dir()
+            .join("hirsel-test")
+            .join(&actual_run_name);
+
+        // Clean up any previous temp dir for this run
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+
+        // Copy project to temp location
+        copy_dir_recursive(&project_path, &temp_dir)?;
+        Some(temp_dir)
+    } else {
+        None
+    };
+
     // Build GoArgs
     let args = GoArgs {
         run_name: actual_run_name.clone(),
@@ -199,11 +218,9 @@ pub fn run_scenario(
             None
         },
         template: None,
-        project: if project_path.exists() {
-            Some(project_path.to_str().unwrap_or("").to_string())
-        } else {
-            None
-        },
+        project: temp_project_dir
+            .as_ref()
+            .map(|p| p.to_str().unwrap_or("").to_string()),
         max_iterations: None,
         pause_mode: None,
         draft: false,
@@ -294,6 +311,29 @@ pub fn execute(
                 println!();
                 println!("Run a scenario with: hirsel test <scenario-name>");
             }
+        }
+    }
+
+    Ok(())
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+/// Recursively copy a directory
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> TestResult<()> {
+    fs::create_dir_all(dst)?;
+
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path)?;
         }
     }
 

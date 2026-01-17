@@ -476,6 +476,16 @@ pub fn run() {
                 cleanup_orphaned_dev_processes();
             }
 
+            // Reconcile stale workers on startup (both dev and release)
+            // Workers that appear "Working" but have dead PIDs are marked as Paused
+            let stale = core::workers::reconcile_stale_workers();
+            if !stale.is_empty() {
+                tracing::info!(
+                    "[GUI] Startup reconciliation: marked {} stale worker(s) as Paused",
+                    stale.len()
+                );
+            }
+
             if let Some(window) = app.get_webview_window("main") {
                 // Set window background color to match app theme (prevents white flash on resize)
                 // Dark background color #1a1a1a = rgb(26, 26, 26)

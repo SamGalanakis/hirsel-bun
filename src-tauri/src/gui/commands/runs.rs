@@ -232,7 +232,7 @@ pub async fn pause_run(run_name: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn resume_run(run_name: String) -> Result<(), String> {
     use crate::cli::config::get_agent_command;
-    use crate::core::workers::resume_awaiting_workers;
+    use crate::core::workers::{maybe_scale_up, resume_awaiting_workers};
 
     let run_dir = config::run_dir(&run_name);
     let db_path = run_dir.join("hirsel.db");
@@ -260,7 +260,7 @@ pub async fn resume_run(run_name: String) -> Result<(), String> {
         .set_status(crate::core::state::Status::Working)
         .map_err(|e| format!("Failed to update status: {}", e))?;
 
-    // Resume workers
+    // Resume existing workers
     let agent_command = get_agent_command();
     let resumed = resume_awaiting_workers(&run_name, &run_dir, &agent_command)
         .map_err(|e| format!("Failed to resume workers: {}", e))?;
@@ -270,6 +270,21 @@ pub async fn resume_run(run_name: String) -> Result<(), String> {
         run_name,
         resumed.len()
     );
+
+    // Try to scale up if more tasks are available
+    loop {
+        match maybe_scale_up(&run_name, &run_dir, &agent_command) {
+            Ok(Some(new_worker)) => {
+                tracing::info!("Scaled up: spawned new worker {}", new_worker);
+            }
+            Ok(None) => break, // No more scaling needed
+            Err(e) => {
+                tracing::warn!("Failed to scale up: {}", e);
+                break;
+            }
+        }
+    }
+
     Ok(())
 }
 

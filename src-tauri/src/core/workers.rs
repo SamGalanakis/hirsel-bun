@@ -265,6 +265,12 @@ fn build_worker_args(config: &WorkerSpawnConfig) -> Vec<String> {
 
 /// Check if a process is still alive
 pub fn is_pid_alive(pid: u32) -> bool {
+    // PID 0 is the kernel scheduler, never a valid user process
+    // Also, kill(0, sig) sends to the process group, not PID 0
+    if pid == 0 {
+        return false;
+    }
+
     #[cfg(unix)]
     {
         // Send signal 0 to check if process exists
@@ -398,12 +404,14 @@ pub fn resume_awaiting_workers(
 
     // Get workers that need to be resumed:
     // - Paused: were actively working when run was paused, resume unconditionally
+    // - Error: worker died unexpectedly (e.g., app restart), resume unconditionally
     // - Awaiting: waiting for tasks, only resume if tasks available
     let workers = state.get_workers()?;
     let to_resume: Vec<_> = workers
         .iter()
         .filter(|w| {
             w.status == WorkerStatus::Paused
+                || w.status == WorkerStatus::Error
                 || (w.status == WorkerStatus::Awaiting && !claimable.is_empty())
         })
         .collect();
@@ -724,47 +732,26 @@ pub fn check_time_expired(
 // =============================================================================
 
 /// Configuration for worker scaling
+/// Workers is just a max count - always starts with 1 and autoscales up.
 #[derive(Debug, Clone)]
 pub struct WorkerScale {
-    pub min: usize,
     pub max: usize,
-    pub autoscale: bool,
 }
 
 impl WorkerScale {
-    /// Parse a scale string like "1", "1-3", "1-3:auto"
+    /// Parse a scale string - just an integer for max workers.
     pub fn parse(s: &str) -> Option<Self> {
-        let (range_part, autoscale) = if let Some(stripped) = s.strip_suffix(":auto") {
-            (stripped, true)
-        } else {
-            (s, false)
-        };
-
-        if range_part.contains('-') {
-            let parts: Vec<&str> = range_part.split('-').collect();
-            if parts.len() == 2 {
-                let min = parts[0].parse().ok()?;
-                let max = parts[1].parse().ok()?;
-                return Some(Self {
-                    min,
-                    max,
-                    autoscale,
-                });
-            }
-        } else {
-            let count = range_part.parse().ok()?;
-            return Some(Self {
-                min: count,
-                max: count,
-                autoscale,
-            });
+        // Just a number = max workers
+        let max = s.trim().parse().ok()?;
+        if max < 1 {
+            return None;
         }
-        None
+        Some(Self { max })
     }
 
     /// Check if we can scale up from current count
     pub fn can_scale_up(&self, current: usize) -> bool {
-        self.autoscale && current < self.max
+        current < self.max
     }
 }
 
@@ -791,10 +778,6 @@ pub fn maybe_scale_up(
         None => return Ok(None),
     };
 
-    if !scale.autoscale {
-        return Ok(None);
-    }
-
     // Don't scale up if run is paused
     use crate::core::state::Status;
     if state.status()? == Status::Paused {
@@ -802,33 +785,22 @@ pub fn maybe_scale_up(
         return Ok(None);
     }
 
-    // Get current workers
+    // Get current workers and claimable tasks
     let workers = state.get_workers()?;
     let current_count = workers.len();
-
-    // Check if we can scale up
-    if !scale.can_scale_up(current_count) {
-        return Ok(None);
-    }
-
-    // Count active workers (working or waiting for user)
-    let active_workers: Vec<_> = workers
-        .iter()
-        .filter(|w| matches!(w.status, WorkerStatus::Working | WorkerStatus::Waiting))
-        .collect();
-
-    // Get claimable tasks
     let claimable = state.get_claimable_tasks()?;
+    let claimable_count = claimable.len();
+
+    // Target is min(max_workers, claimable_tasks)
+    let target_workers = std::cmp::min(scale.max, claimable_count);
 
     debug!(
-        "maybe_scale_up: {} claimable tasks, {} active workers, {} total workers",
-        claimable.len(),
-        active_workers.len(),
-        current_count
+        "maybe_scale_up: {} claimable tasks, {} workers, max {}, target {}",
+        claimable_count, current_count, scale.max, target_workers
     );
 
-    // Only scale up if there are more claimable tasks than active workers
-    if claimable.len() <= active_workers.len() {
+    // Only scale up if we have fewer workers than target
+    if current_count >= target_workers {
         return Ok(None);
     }
 
@@ -874,9 +846,9 @@ pub fn maybe_scale_up(
 
     // Announce in group chat
     let reason = format!(
-        "Autoscaling: {} tasks available, {} workers busy",
+        "Autoscaling: {} tasks available, {} workers total",
         claimable.len(),
-        active_workers.len()
+        current_count
     );
     state.add_message(
         "group",
@@ -1113,6 +1085,139 @@ pub async fn maybe_compact_learnings(
         }
     }
 }
+
+// =============================================================================
+// Worker Reconciliation (Startup)
+// =============================================================================
+
+/// Reconcile worker state on app startup.
+///
+/// When the app restarts (or crashes), workers may have been killed but their
+/// database entries still show them as "Working" or "Waiting". This function
+/// scans all runs and marks workers with dead PIDs as Paused.
+///
+/// Workers marked as Paused can be resumed with their full context using
+/// the resume functionality (session_id is preserved).
+pub fn reconcile_stale_workers() -> Vec<(String, String)> {
+    let mut marked: Vec<(String, String)> = Vec::new();
+
+    // Get the runs directory
+    let runs_dir = match dirs::home_dir() {
+        Some(home) => home.join(".hirsel").join("runs"),
+        None => {
+            warn!("[reconcile] Could not determine home directory");
+            return marked;
+        }
+    };
+
+    // Iterate over all run directories
+    let entries = match std::fs::read_dir(&runs_dir) {
+        Ok(e) => e,
+        Err(_) => return marked,
+    };
+
+    for entry in entries.flatten() {
+        let run_name = entry.file_name().to_string_lossy().to_string();
+        let db_path = entry.path().join("hirsel.db");
+
+        if !db_path.exists() {
+            continue;
+        }
+
+        let state = match SQLiteState::new(db_path) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(
+                    "[reconcile] Failed to open database for {}: {}",
+                    run_name, e
+                );
+                continue;
+            }
+        };
+
+        let workers = match state.get_workers() {
+            Ok(w) => w,
+            Err(e) => {
+                warn!("[reconcile] Failed to get workers for {}: {}", run_name, e);
+                continue;
+            }
+        };
+
+        for worker in workers {
+            // Only check workers that should be running
+            if !matches!(
+                worker.status,
+                WorkerStatus::Working | WorkerStatus::Waiting | WorkerStatus::Idle
+            ) {
+                continue;
+            }
+
+            // If worker has a PID, check if it's still alive
+            if let Some(pid) = worker.pid {
+                if !is_pid_alive(pid as u32) {
+                    // Process is dead but status shows it should be running
+                    // Mark as Paused so it can be resumed
+                    info!(
+                        "[reconcile] Marking stale worker {} in run {} as Paused (PID {} dead)",
+                        worker.name, run_name, pid
+                    );
+
+                    if let Err(e) = state.update_worker(
+                        &worker.name,
+                        WorkerUpdate {
+                            pid: None,
+                            status: Some(WorkerStatus::Paused),
+                            ..Default::default()
+                        },
+                    ) {
+                        warn!(
+                            "[reconcile] Failed to mark worker {} as paused: {}",
+                            worker.name, e
+                        );
+                    } else {
+                        marked.push((run_name.clone(), worker.name.clone()));
+                    }
+                }
+            } else if matches!(worker.status, WorkerStatus::Working | WorkerStatus::Waiting) {
+                // Worker marked as working/waiting but has no PID - stale entry
+                // Mark as Paused so it can be resumed
+                info!(
+                    "[reconcile] Marking stale worker {} in run {} as Paused (no PID)",
+                    worker.name, run_name
+                );
+
+                if let Err(e) = state.update_worker(
+                    &worker.name,
+                    WorkerUpdate {
+                        status: Some(WorkerStatus::Paused),
+                        ..Default::default()
+                    },
+                ) {
+                    warn!(
+                        "[reconcile] Failed to mark worker {} as paused: {}",
+                        worker.name, e
+                    );
+                } else {
+                    marked.push((run_name.clone(), worker.name.clone()));
+                }
+            }
+        }
+    }
+
+    if !marked.is_empty() {
+        info!(
+            "[reconcile] Marked {} stale worker(s) as Paused: {:?}",
+            marked.len(),
+            marked
+        );
+    }
+
+    marked
+}
+
+// =============================================================================
+// Auto-improve
+// =============================================================================
 
 /// Run the improve agent to update project memory from learnings.
 ///
