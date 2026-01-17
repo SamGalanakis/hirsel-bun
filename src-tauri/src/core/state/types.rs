@@ -297,6 +297,7 @@ pub struct Eval {
     pub log_file: Option<String>,
     pub started_at: String,
     pub finished_at: Option<String>,
+    pub pid: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

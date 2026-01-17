@@ -713,9 +713,13 @@ pub async fn run_eval_from_args(
         Some(log_file.to_string_lossy().as_ref()),
     )?;
 
+    // Store our PID so the eval can be killed when pausing
+    let pid = std::process::id();
+    state.set_eval_pid(eval_id, pid)?;
+
     info!(
-        "[{}] Starting eval (id={}) for run {}",
-        eval_name, eval_id, run_name
+        "[{}] Starting eval (id={}, pid={}) for run {}",
+        eval_name, eval_id, pid, run_name
     );
 
     // Build config for ACP eval

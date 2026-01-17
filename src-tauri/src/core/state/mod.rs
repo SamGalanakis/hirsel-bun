@@ -201,6 +201,22 @@ impl SQLiteState {
                 .execute("ALTER TABLE state ADD COLUMN branch TEXT", [])?;
         }
 
+        // Migration: Add pid column to evals table (for tracking eval process)
+        let has_eval_pid_column: bool = self
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('evals') WHERE name = 'pid'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0)
+            > 0;
+
+        if !has_eval_pid_column {
+            self.db
+                .execute("ALTER TABLE evals ADD COLUMN pid INTEGER", [])?;
+        }
+
         Ok(())
     }
 

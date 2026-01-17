@@ -207,8 +207,16 @@ pub async fn pause_run(run_name: String) -> Result<(), String> {
     if status == crate::core::state::Status::Paused {
         return Ok(()); // Already paused
     }
-    if status != crate::core::state::Status::Working {
+    if status != crate::core::state::Status::Working && status != crate::core::state::Status::Eval {
         return Err(format!("Cannot pause run in '{}' status", status));
+    }
+
+    // Cancel any running evals (kills eval process)
+    let evals_cancelled = state
+        .cancel_running_evals("Run paused")
+        .map_err(|e| format!("Failed to cancel evals: {}", e))?;
+    if evals_cancelled > 0 {
+        tracing::info!("Cancelled {} running eval(s)", evals_cancelled);
     }
 
     // Pause all workers (sends SIGTERM)
