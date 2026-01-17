@@ -267,6 +267,8 @@ fn get_tools() -> Vec<Tool> {
 /// MCP Server for hirsel workers.
 pub struct McpServer {
     runner: WorkerRunner,
+    /// Flag to indicate the server should exit after current request
+    exit_after_response: bool,
 }
 
 impl McpServer {
@@ -274,12 +276,18 @@ impl McpServer {
     pub fn from_env() -> Result<Self, WorkerError> {
         let config = WorkerConfig::from_env()?;
         let runner = WorkerRunner::new(config)?;
-        Ok(Self { runner })
+        Ok(Self {
+            runner,
+            exit_after_response: false,
+        })
     }
 
     /// Create a new MCP server with explicit configuration.
     pub fn new(runner: WorkerRunner) -> Self {
-        Self { runner }
+        Self {
+            runner,
+            exit_after_response: false,
+        }
     }
 
     /// Handle a JSON-RPC request and return a response.
@@ -398,7 +406,11 @@ impl McpServer {
                     .ok_or_else(|| WorkerError::Config("task_id is required".into()))?;
                 self.runner.task_delete(task_id)
             }
-            "task_await" => self.runner.task_await(),
+            "task_await" => {
+                // Signal to exit after response - worker is awaiting tasks
+                self.exit_after_response = true;
+                self.runner.task_await()
+            }
             "msg_send" => {
                 let thread = args
                     .get("thread")
@@ -417,7 +429,11 @@ impl McpServer {
             }
             "msg_list" => self.runner.msg_list(),
             "msg_inbox" => self.runner.msg_inbox(),
-            "work_done" => self.runner.work_done(),
+            "work_done" => {
+                // Signal to exit after response - worker is done
+                self.exit_after_response = true;
+                self.runner.work_done()
+            }
             "time_status" => self.time_status(),
             _ => Err(WorkerError::Config(format!("Unknown tool: {}", name))),
         }
@@ -492,6 +508,11 @@ impl McpServer {
                     let _ = writeln!(stdout, "{}", json);
                     let _ = stdout.flush();
                 }
+            }
+
+            // Exit after work_done or task_await to signal agent to stop
+            if self.exit_after_response {
+                break;
             }
         }
 
