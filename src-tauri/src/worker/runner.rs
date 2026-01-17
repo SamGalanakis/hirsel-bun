@@ -486,7 +486,16 @@ impl WorkerRunner {
         self.run_async(self.state().add_message(thread, &worker_name, message))?;
 
         if wait {
-            self.set_status(WorkerStatus::Waiting)?;
+            // Set to Awaiting with hitl_waiting flag
+            self.set_status(WorkerStatus::Awaiting)?;
+            self.run_async(self.state().update_worker(
+                &worker_name,
+                WorkerUpdate {
+                    hitl_waiting: Some(true),
+                    waiting_thread: Some(thread.to_string()),
+                    ..Default::default()
+                },
+            ))?;
         }
 
         Ok(serde_json::json!({

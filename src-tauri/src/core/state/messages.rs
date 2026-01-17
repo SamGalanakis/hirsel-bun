@@ -248,7 +248,7 @@ impl SQLiteState {
         )?;
 
         // Parse status
-        let status = Status::from_str(&status).unwrap_or(Status::Idle);
+        let status = Status::from_str(&status).unwrap_or(Status::Draft);
 
         // Calculate elapsed minutes based on status
         let elapsed_minutes = if status == Status::Draft {

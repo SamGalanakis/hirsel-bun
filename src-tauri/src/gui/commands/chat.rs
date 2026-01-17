@@ -1,54 +1,123 @@
 //! Chat session commands
 //!
 //! Commands for direct AI chat via ACP (Agent Control Protocol).
+//! Supports both local (same-process) and remote (HTTP/SSE) chat sessions
+//! through the ChatOrchestrator abstraction.
 
 use std::sync::Arc;
 
+use futures::StreamExt;
+
 use crate::core::{
-    ChatEvent, ChatSessionConfig, ChatSessionManager, PermissionResponse, UIContext,
+    create_chat_orchestrator, ChatContext, ChatEvent, ChatOrchestrator, ChatSessionManager,
+    LocalChatOrchestrator, UIContext,
 };
+
+/// Manages chat orchestrators for different profiles
+pub struct ChatOrchestratorManager {
+    /// The local orchestrator (for local mode)
+    local: Arc<LocalChatOrchestrator>,
+}
+
+impl ChatOrchestratorManager {
+    pub fn new() -> Self {
+        Self {
+            local: Arc::new(LocalChatOrchestrator::new()),
+        }
+    }
+
+    /// Create from an existing ChatSessionManager (for backwards compatibility)
+    pub fn from_manager(manager: Arc<ChatSessionManager>) -> Self {
+        Self {
+            local: Arc::new(LocalChatOrchestrator::from_manager(manager)),
+        }
+    }
+
+    /// Get the appropriate orchestrator for the given profile
+    pub async fn get_orchestrator(
+        &self,
+        profile: Option<&str>,
+    ) -> Result<Arc<dyn ChatOrchestrator>, String> {
+        // For no profile or "local", use the local orchestrator
+        if profile.is_none() || profile == Some("local") {
+            return Ok(self.local.clone());
+        }
+
+        // For other profiles, check if we have a cached remote orchestrator
+        // or create a new one
+        let orchestrator = create_chat_orchestrator(profile)
+            .map_err(|e| format!("Failed to create orchestrator: {}", e))?;
+        Ok(Arc::from(orchestrator))
+    }
+
+    /// Get the local orchestrator's underlying manager
+    pub fn local_manager(&self) -> &Arc<ChatSessionManager> {
+        self.local.manager()
+    }
+}
+
+impl Default for ChatOrchestratorManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Start a new direct chat session with an AI agent
 ///
 /// Returns the session ID. Events will be emitted via Tauri events.
+///
+/// The `profile` parameter determines whether to use local or remote mode.
+/// If not specified, uses local mode.
 #[tauri::command]
 pub async fn start_chat_session(
     app: tauri::AppHandle,
-    chat_manager: tauri::State<'_, Arc<ChatSessionManager>>,
+    orchestrator_manager: tauri::State<'_, Arc<ChatOrchestratorManager>>,
     agent_command: Vec<String>,
     working_dir: Option<String>,
     run_name: Option<String>,
     system_prompt: Option<String>,
+    profile: Option<String>,
 ) -> Result<String, String> {
     use tauri::Emitter;
 
-    let config = ChatSessionConfig {
+    let context = ChatContext {
         agent_command,
         working_dir,
         run_name,
         system_prompt,
     };
 
-    let (session_id, mut event_rx) = chat_manager
-        .start_session(config)
+    // Get the appropriate orchestrator
+    let orchestrator = orchestrator_manager
+        .get_orchestrator(profile.as_deref())
+        .await?;
+
+    // Start the session
+    let session_info = orchestrator
+        .start_session(context)
         .await
         .map_err(|e| format!("Failed to start chat session: {}", e))?;
 
-    // Spawn task to forward events to frontend
+    let session_id = session_info.session_id.clone();
+
+    // Subscribe to events and forward to frontend
+    let mut event_stream = orchestrator
+        .subscribe_events(&session_id)
+        .await
+        .map_err(|e| format!("Failed to subscribe to events: {}", e))?;
+
     let session_id_clone = session_id.clone();
     let app_clone = app.clone();
-    eprintln!(
-        "[FORWARD] Starting event forwarder for session {}",
-        session_id
-    );
+    tracing::info!("[chat] Starting event forwarder for session {}", session_id);
+
     tokio::spawn(async move {
-        eprintln!("[FORWARD] Event forwarder task started");
-        while let Some(event) = event_rx.recv().await {
-            eprintln!("[FORWARD] Received event: {:?}", event);
+        tracing::debug!("[chat] Event forwarder task started");
+        while let Some(event) = event_stream.next().await {
+            tracing::debug!("[chat] Received event: {:?}", event);
+
             // Emit event to frontend
-            match app_clone.emit("chat-event", &event) {
-                Ok(_) => eprintln!("[FORWARD] Emitted to frontend"),
-                Err(e) => eprintln!("[FORWARD] Emit error: {:?}", e),
+            if let Err(e) = app_clone.emit("chat-event", &event) {
+                tracing::error!("[chat] Emit error: {:?}", e);
             }
 
             // Check if session ended
@@ -56,7 +125,7 @@ pub async fn start_chat_session(
                 break;
             }
         }
-        eprintln!("[FORWARD] Event forwarder stopped for {}", session_id_clone);
+        tracing::info!("[chat] Event forwarder stopped for {}", session_id_clone);
     });
 
     Ok(session_id)
@@ -67,13 +136,18 @@ pub async fn start_chat_session(
 /// The message will be prefixed with UI context (invisible to user).
 #[tauri::command]
 pub async fn send_chat_message(
-    chat_manager: tauri::State<'_, Arc<ChatSessionManager>>,
+    orchestrator_manager: tauri::State<'_, Arc<ChatOrchestratorManager>>,
     session_id: String,
     content: String,
     context: Option<UIContext>,
+    profile: Option<String>,
 ) -> Result<(), String> {
-    chat_manager
-        .send_message(&session_id, content, context)
+    let orchestrator = orchestrator_manager
+        .get_orchestrator(profile.as_deref())
+        .await?;
+
+    orchestrator
+        .send_message(&session_id, &content, context)
         .await
         .map_err(|e| format!("Failed to send message: {}", e))
 }
@@ -81,18 +155,18 @@ pub async fn send_chat_message(
 /// Respond to a permission request from a chat session
 #[tauri::command]
 pub async fn respond_chat_permission(
-    chat_manager: tauri::State<'_, Arc<ChatSessionManager>>,
+    orchestrator_manager: tauri::State<'_, Arc<ChatOrchestratorManager>>,
     session_id: String,
     request_id: String,
     option_id: String,
+    profile: Option<String>,
 ) -> Result<(), String> {
-    let response = PermissionResponse {
-        request_id,
-        option_id,
-    };
+    let orchestrator = orchestrator_manager
+        .get_orchestrator(profile.as_deref())
+        .await?;
 
-    chat_manager
-        .respond_to_permission(&session_id, response)
+    orchestrator
+        .respond_permission(&session_id, &request_id, &option_id)
         .await
         .map_err(|e| format!("Failed to respond to permission: {}", e))
 }
@@ -100,10 +174,15 @@ pub async fn respond_chat_permission(
 /// Stop an active chat session
 #[tauri::command]
 pub async fn stop_chat_session(
-    chat_manager: tauri::State<'_, Arc<ChatSessionManager>>,
+    orchestrator_manager: tauri::State<'_, Arc<ChatOrchestratorManager>>,
     session_id: String,
+    profile: Option<String>,
 ) -> Result<(), String> {
-    chat_manager
+    let orchestrator = orchestrator_manager
+        .get_orchestrator(profile.as_deref())
+        .await?;
+
+    orchestrator
         .stop_session(&session_id)
         .await
         .map_err(|e| format!("Failed to stop session: {}", e))
@@ -112,7 +191,15 @@ pub async fn stop_chat_session(
 /// List active chat sessions
 #[tauri::command]
 pub async fn list_chat_sessions(
-    chat_manager: tauri::State<'_, Arc<ChatSessionManager>>,
+    orchestrator_manager: tauri::State<'_, Arc<ChatOrchestratorManager>>,
+    profile: Option<String>,
 ) -> Result<Vec<String>, String> {
-    Ok(chat_manager.list_sessions().await)
+    let orchestrator = orchestrator_manager
+        .get_orchestrator(profile.as_deref())
+        .await?;
+
+    orchestrator
+        .list_sessions()
+        .await
+        .map_err(|e| format!("Failed to list sessions: {}", e))
 }

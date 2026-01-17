@@ -7,7 +7,7 @@
 
 use crate::cli::MsgArgs;
 use crate::core::chats::{append_message_to_file, get_thread_names, ChatError, Message};
-use crate::core::state::{SQLiteState, StateError, WorkerStatus, WorkerUpdate};
+use crate::core::state::{SQLiteState, StateError, WorkerUpdate};
 use crate::core::Files;
 use std::path::PathBuf;
 use thiserror::Error;
@@ -186,14 +186,13 @@ fn resume_waiting_workers(state: &SQLiteState, thread: &str) -> MsgResult<Vec<St
     let mut resumed = Vec::new();
 
     for worker in workers {
-        if worker.status == WorkerStatus::Waiting
-            && worker.waiting_thread.as_deref() == Some(thread)
-        {
-            // Clear waiting thread
+        if worker.hitl_waiting && worker.waiting_thread.as_deref() == Some(thread) {
+            // Clear waiting thread and hitl_waiting flag
             state.update_worker(
                 &worker.name,
                 WorkerUpdate {
                     waiting_thread: Some(String::new()), // Clear waiting thread
+                    hitl_waiting: Some(false),
                     ..Default::default()
                 },
             )?;

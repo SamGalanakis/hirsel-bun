@@ -61,7 +61,6 @@ pub async fn run_remote_worker(
 
     // Create paths for the worker
     let work_path = PathBuf::from(work_dir);
-    let log_file = work_path.join(format!("{}.log", worker_name));
     let spec_file = PathBuf::from(spec_path);
 
     // For remote workers, we use work_dir as both work_dir and run_dir
@@ -75,7 +74,6 @@ pub async fn run_remote_worker(
         work_dir: work_path,
         run_dir,
         spec_path: spec_file,
-        log_file,
         agent_command: agent_command.to_vec(),
         is_leader,
         leader_name: leader_name.map(String::from),

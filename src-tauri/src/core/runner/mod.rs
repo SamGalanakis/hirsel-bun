@@ -98,8 +98,6 @@ pub struct WorkerHandle {
     pub worker_name: String,
     /// Runner-specific identifier (PID for local, sprite name for sprites, etc.)
     pub runner_id: String,
-    /// Path to worker's log file (if available locally)
-    pub log_file: Option<PathBuf>,
     /// Runner type that spawned this worker
     pub runner_type: String,
 }
@@ -151,18 +149,11 @@ pub trait Runner: Send + Sync {
     /// Get logs from a worker.
     ///
     /// Returns the last N lines of the worker's log output.
-    async fn get_logs(&self, handle: &WorkerHandle, lines: usize) -> RunnerResult<String> {
-        if let Some(ref log_file) = handle.log_file {
-            // Default implementation reads from local log file
-            let content = tokio::fs::read_to_string(log_file)
-                .await
-                .map_err(|e| RunnerError::Io(e))?;
-            let log_lines: Vec<&str> = content.lines().collect();
-            let start = log_lines.len().saturating_sub(lines);
-            Ok(log_lines[start..].join("\n"))
-        } else {
-            Ok(String::new())
-        }
+    /// Note: File-based logging has been removed; use the worker events API instead.
+    async fn get_logs(&self, _handle: &WorkerHandle, _lines: usize) -> RunnerResult<String> {
+        // Worker events are now stored in the database
+        // Use the orchestrator's get_worker_events method instead
+        Ok(String::new())
     }
 }
 

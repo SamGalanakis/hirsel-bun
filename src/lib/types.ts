@@ -45,17 +45,19 @@ export interface RunnerEntry {
 /** Run status values matching Rust Status enum */
 export type RunStatus =
   | 'draft'
-  | 'idle'
   | 'working'
   | 'paused'
-  | 'runaway'
-  | 'timed_out'
+  | 'failed'
   | 'eval'
-  | 'eval_failed'
-  | 'waiting'
   | 'done'
-  | 'delivered'
-  | 'merged';
+  | 'delivered';
+
+/** Failure reason values (only meaningful when status is 'failed') */
+export type FailureReason =
+  | 'iteration_limit'
+  | 'time_limit'
+  | 'eval_failed'
+  | 'manual';
 
 /** Summary of a run for the run list panel */
 export interface RunSummary {
@@ -101,6 +103,9 @@ export interface RunDetail {
   learningsProcessedAt: string | null;
   // Runner configuration
   runner: string | null;
+  // Agent/metrics info
+  agentType: string;
+  metricsAvailable: boolean;
 }
 
 /** Request to update a draft run */
@@ -193,13 +198,7 @@ export interface TaskDisplay extends Task {
 // =============================================================================
 
 /** Worker status values */
-export type WorkerStatus =
-  | 'idle'
-  | 'working'
-  | 'waiting'
-  | 'awaiting'
-  | 'paused'
-  | 'error';
+export type WorkerStatus = 'working' | 'awaiting' | 'paused' | 'error';
 
 /** Worker location */
 export type WorkerLocation = 'local' | 'remote';
@@ -240,6 +239,7 @@ export interface Worker {
   createdAt: string;
   needsRestart: boolean;
   sessionStartedAt: string | null;
+  hitlWaiting: boolean;
 }
 
 /** Worker with session metrics for display */
@@ -252,6 +252,8 @@ export interface WorkerDisplay extends Worker {
   currentTask: string | null;
   /** Sheep avatar configuration */
   sheepConfig: SheepConfig;
+  /** Whether worker is waiting for HITL input */
+  hitlWaiting: boolean;
 }
 
 // =============================================================================
@@ -477,17 +479,12 @@ export type Timestamp = string;
 /** Status color mapping for UI */
 export const STATUS_COLORS: Record<RunStatus, string> = {
   draft: 'sky-500',
-  idle: 'wool-500',
   working: 'amber-500',
   paused: 'golden',
-  runaway: 'terra',
-  timed_out: 'terra',
+  failed: 'terra',
   eval: 'amber-400',
-  eval_failed: 'terra',
-  waiting: 'golden',
   done: 'sage',
   delivered: 'sage',
-  merged: 'sage',
 };
 
 /** Task status icons */
@@ -499,9 +496,7 @@ export const TASK_ICONS: Record<TaskStatus, string> = {
 
 /** Worker status icons */
 export const WORKER_ICONS: Record<WorkerStatus, string> = {
-  idle: '\u25cb', // ○
   working: '\u25cf', // ●
-  waiting: '\u29d7', // ⧗
   awaiting: '\u25cc', // ◌
   paused: '\u23f8', // ⏸
   error: '\u2717', // ✗

@@ -5,7 +5,7 @@
 use chrono::{DateTime, Local};
 use rusqlite::params;
 
-use super::types::{StateError, StateResult, Status, TimeInfo};
+use super::types::{FailureReason, StateError, StateResult, Status, TimeInfo};
 use super::SQLiteState;
 
 impl SQLiteState {
@@ -20,16 +20,54 @@ impl SQLiteState {
             .query_row("SELECT status FROM state WHERE id = 1", [], |row| {
                 row.get(0)
             })
-            .unwrap_or_else(|_| "idle".to_string());
+            .unwrap_or_else(|_| "draft".to_string());
 
-        Ok(Status::from_str(&status).unwrap_or(Status::Idle))
+        Ok(Status::from_str(&status).unwrap_or(Status::Draft))
     }
 
-    /// Set the run status
-    pub fn set_status(&self, status: Status) -> StateResult<()> {
+    /// Check if a status transition is valid
+    fn can_transition_to(&self, from: Status, to: Status) -> bool {
+        use Status::*;
+        matches!(
+            (from, to),
+            // From Draft
+            (Draft, Working) |
+            // From Working
+            (Working, Paused)
+            | (Working, Failed)
+            | (Working, Eval)
+            | (Working, Done) | // No eval configured
+            // From Paused
+            (Paused, Working)
+            | (Paused, Failed) |
+            // From Failed (allow resume/retry)
+            (Failed, Working)
+            | (Failed, Paused) |
+            // From Eval
+            (Eval, Done)
+            | (Eval, Failed)
+            | (Eval, Working)
+            | (Eval, Paused) | // Pausing during eval
+            // From Done
+            (Done, Delivered) |
+            // Setting same status is always allowed
+            (_, _) if from == to
+        )
+    }
+
+    /// Set the run status with optional transition validation
+    ///
+    /// Set `validate` to true to enforce valid state transitions.
+    /// When transitioning away from Failed, the failure_reason is cleared.
+    pub fn set_status_validated(&self, status: Status, validate: bool) -> StateResult<()> {
         let old_status = self.status()?;
         if old_status == status {
             return Ok(()); // No change
+        }
+
+        // Validate transition if requested
+        if validate && !self.can_transition_to(old_status, status) {
+            return Err(StateError::InvalidTransition(old_status, status));
         }
 
         let now = self.now();
@@ -42,8 +80,18 @@ impl SQLiteState {
             params![status.as_str(), now],
         )?;
 
+        // Clear failure_reason when transitioning away from Failed
+        if old_status == Status::Failed && status != Status::Failed {
+            self.set_failure_reason(None)?;
+        }
+
         self.log_history("status_change", Some(&format!("run {}", status)))?;
         Ok(())
+    }
+
+    /// Set the run status (no validation for backward compatibility)
+    pub fn set_status(&self, status: Status) -> StateResult<()> {
+        self.set_status_validated(status, false)
     }
 
     /// Initialize the state for a new run
@@ -54,7 +102,7 @@ impl SQLiteState {
             INSERT OR REPLACE INTO state (id, status, created_at, updated_at, project_path)
             VALUES (1, ?1, ?2, ?2, ?3)
             "#,
-            params![Status::Idle.as_str(), now, project_path],
+            params![Status::Draft.as_str(), now, project_path],
         )?;
         self.log_history("init", None)?;
         Ok(())
@@ -456,6 +504,50 @@ impl SQLiteState {
             params![max_iter, self.now()],
         )?;
         Ok(())
+    }
+
+    // =========================================================================
+    // Failure Reason
+    // =========================================================================
+
+    /// Get the failure reason (only meaningful when status is Failed)
+    pub fn get_failure_reason(&self) -> StateResult<Option<FailureReason>> {
+        match self
+            .db
+            .query_row("SELECT failure_reason FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
+            Ok(Some(val)) => Ok(FailureReason::from_str(&val)),
+            Ok(None) => Ok(None),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set the failure reason
+    pub fn set_failure_reason(&self, reason: Option<FailureReason>) -> StateResult<()> {
+        let reason_str = reason.map(|r| r.as_str().to_string());
+        self.db.execute(
+            "UPDATE state SET failure_reason = ?1, updated_at = ?2 WHERE id = 1",
+            params![reason_str, self.now()],
+        )?;
+        Ok(())
+    }
+
+    /// Set status to Failed with a reason
+    pub fn set_failed(&self, reason: FailureReason) -> StateResult<()> {
+        self.set_failure_reason(Some(reason))?;
+        self.set_status(Status::Failed)?;
+        Ok(())
+    }
+
+    /// Check if iteration limit has been exceeded
+    pub fn is_iteration_limit_exceeded(&self) -> StateResult<bool> {
+        let count = self.get_iteration_count()?;
+        match self.get_max_iterations()? {
+            Some(max) => Ok(count >= max),
+            None => Ok(false),
+        }
     }
 
     /// Get learnings processed at timestamp

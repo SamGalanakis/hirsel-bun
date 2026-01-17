@@ -55,7 +55,7 @@
               <div
                 :data-notif-id="notif.id"
                 x-init="if (!notif.read) observeNotification($el)"
-                @click="markOneRead(notif.id); goToRun(notif.runName); open = false"
+                @click="markOneRead(notif.id); goToMessage(notif.runName, notif.thread); open = false"
                 class="p-3 hover:bg-pasture-700 cursor-pointer border-b border-pasture-700 last:border-0 transition-all duration-300 group relative"
                 :class="{ 'bg-amber-500/10 border-l-2 border-l-amber-500': !notif.read, 'opacity-60 bg-pasture-800': notif.read }"
               >

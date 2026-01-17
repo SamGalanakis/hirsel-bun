@@ -197,9 +197,19 @@ export function notifications() {
       }
     },
 
-    async goToRun(runName: string) {
-      // Dispatch event to select the run
+    async goToMessage(runName: string, thread: string) {
+      // 1. Select the run
       window.dispatchEvent(new CustomEvent('run-selected', { detail: runName }));
+
+      // 2. Switch to chat tab
+      window.dispatchEvent(new CustomEvent('switch-tab', { detail: 'chat' }));
+
+      // 3. Select the thread (with small delay to allow run to load)
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('select-chat-thread', {
+          detail: { runName, thread }
+        }));
+      }, 300);
     },
 
     async markAllRead() {

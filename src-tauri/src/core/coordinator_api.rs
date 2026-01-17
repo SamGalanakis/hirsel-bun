@@ -598,6 +598,7 @@ async fn update_worker(
         waiting_thread: req.waiting_thread,
         needs_restart: req.needs_restart,
         last_heartbeat: req.last_heartbeat,
+        hitl_waiting: None,
     };
 
     state
@@ -631,6 +632,7 @@ async fn worker_heartbeat(
         waiting_thread: None,
         needs_restart: None,
         last_heartbeat: Some(timestamp),
+        hitl_waiting: None,
     };
     state
         .update_worker(&name, updates)

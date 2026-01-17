@@ -390,6 +390,36 @@ impl AgentConfig {
     }
 }
 
+/// Orchestrator mode - local or remote
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum OrchestratorMode {
+    #[default]
+    Local,
+    Remote,
+}
+
+/// Orchestrator profile configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrchestratorProfile {
+    #[serde(default)]
+    pub mode: OrchestratorMode,
+    /// Server URL for remote mode
+    pub url: Option<String>,
+    /// API key for remote mode
+    pub api_key: Option<String>,
+}
+
+impl Default for OrchestratorProfile {
+    fn default() -> Self {
+        Self {
+            mode: OrchestratorMode::Local,
+            url: None,
+            api_key: None,
+        }
+    }
+}
+
 /// Main configuration struct
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -451,6 +481,24 @@ pub struct Config {
     /// Per-worker runner assignments (worker_name -> runner_name)
     #[serde(default)]
     pub worker_runners: HashMap<String, String>,
+
+    /// Default orchestrator profile name
+    #[serde(default = "default_profile")]
+    pub default_profile: String,
+
+    /// Orchestrator profiles for local/remote connections
+    #[serde(default = "default_profiles")]
+    pub profiles: HashMap<String, OrchestratorProfile>,
+}
+
+fn default_profile() -> String {
+    "local".to_string()
+}
+
+fn default_profiles() -> HashMap<String, OrchestratorProfile> {
+    let mut profiles = HashMap::new();
+    profiles.insert("local".to_string(), OrchestratorProfile::default());
+    profiles
 }
 
 fn default_root() -> PathBuf {
@@ -518,6 +566,8 @@ impl Default for Config {
             runners: HashMap::new(),
             default_runner: None,
             worker_runners: HashMap::new(),
+            default_profile: default_profile(),
+            profiles: default_profiles(),
         }
     }
 }
@@ -879,6 +929,64 @@ impl Config {
                     if let Some(runner_name) = runner_name_val.as_str() {
                         self.worker_runners
                             .insert(worker_name.clone(), runner_name.to_string());
+                    }
+                }
+            }
+        }
+
+        // Load default_profile
+        if let Some(val) = table.get("default_profile") {
+            if let Some(s) = val.as_str() {
+                self.default_profile = s.to_string();
+            }
+        }
+
+        // Load orchestrator profiles
+        if let Some(profiles_data) = table.get("profiles") {
+            if let Some(profiles_table) = profiles_data.as_table() {
+                for (name, profile_data) in profiles_table {
+                    if let Some(profile_table) = profile_data.as_table() {
+                        let mode_str = profile_table
+                            .get("mode")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("local");
+
+                        let mode = match mode_str {
+                            "remote" => OrchestratorMode::Remote,
+                            _ => OrchestratorMode::Local,
+                        };
+
+                        let profile = OrchestratorProfile {
+                            mode,
+                            url: profile_table
+                                .get("url")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            api_key: profile_table
+                                .get("api_key")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                        };
+
+                        // Validate remote profiles have required fields
+                        if mode == OrchestratorMode::Remote {
+                            if profile.url.is_none() {
+                                warnings.push(format!(
+                                    "Config warning: [profiles.{}] remote mode requires 'url' field",
+                                    name
+                                ));
+                                continue;
+                            }
+                            if profile.api_key.is_none() {
+                                warnings.push(format!(
+                                    "Config warning: [profiles.{}] remote mode requires 'api_key' field",
+                                    name
+                                ));
+                                continue;
+                            }
+                        }
+
+                        self.profiles.insert(name.clone(), profile);
                     }
                 }
             }

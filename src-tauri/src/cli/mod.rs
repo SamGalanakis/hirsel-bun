@@ -69,6 +69,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Use a specific orchestrator profile (from config)
+    #[arg(long, short = 'p', global = true)]
+    pub profile: Option<String>,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
@@ -177,6 +181,9 @@ pub enum Commands {
     /// Run e2e test scenarios
     Test(TestArgs),
 
+    /// Run as HTTP server (headless mode for remote orchestration)
+    Serve(ServeArgs),
+
     // ========== Internal ==========
     /// Run worker subprocess (internal, called by spawn_worker)
     #[command(name = "__worker-run", hide = true)]
@@ -238,10 +245,6 @@ pub struct InternalWorkerRunArgs {
     /// Spec file path
     #[arg(long)]
     pub spec: String,
-
-    /// Log file path
-    #[arg(long)]
-    pub log_file: String,
 
     /// Agent command (JSON array)
     #[arg(long)]
@@ -368,7 +371,7 @@ pub struct GoArgs {
     pub template: Option<String>,
 
     /// Project path (defaults to current directory)
-    #[arg(short, long)]
+    #[arg(short = 'P', long)]
     pub project: Option<String>,
 
     /// Maximum iterations before auto-pause
@@ -626,6 +629,14 @@ pub struct TestArgs {
     /// Runner to use for workers (e.g., "local", "sprites", or a named runner from config)
     #[arg(long)]
     pub runner: Option<String>,
+}
+
+/// Arguments for `hirsel serve`
+#[derive(Args, Debug)]
+pub struct ServeArgs {
+    /// Port to listen on
+    #[arg(long, default_value = "8080")]
+    pub port: u16,
 }
 
 // ========== Worker CLI (hirsel-worker) ==========
@@ -930,156 +941,28 @@ pub fn run_cli() -> anyhow::Result<bool> {
             }
         }
         Commands::Clone(args) => {
-            use crate::core::{config as core_config, state::SQLiteState, Files};
-            use std::fs;
+            use crate::core::ops::{clone_run, CloneRunConfig};
 
-            let new_name = args.new_name.trim().to_string();
-            if new_name.is_empty() {
-                eprintln!("Error: New run name cannot be empty");
-                std::process::exit(1);
-            }
+            let config = CloneRunConfig::new(&args.source_run, &args.new_name);
 
-            let source_dir = core_config::run_dir(&args.source_run);
-            let source_db_path = source_dir.join("hirsel.db");
-            if !source_db_path.exists() {
-                eprintln!("Error: Source run '{}' not found", args.source_run);
-                std::process::exit(1);
-            }
-
-            let new_dir = core_config::run_dir(&new_name);
-            if new_dir.exists() {
-                eprintln!("Error: Run '{}' already exists", new_name);
-                std::process::exit(1);
-            }
-
-            // Open source database
-            let source_state = match SQLiteState::new(source_db_path) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("Error opening source database: {}", e);
-                    std::process::exit(1);
-                }
-            };
-
-            // Read settings from source
-            let project_path = source_state.get_project_path().ok().flatten();
-            let worker_scale = source_state
-                .get_worker_scale()
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| "1".to_string());
-            let time_limit = source_state.get_time_limit_minutes().ok().flatten();
-            let human_in_the_loop = source_state.get_human_in_the_loop().unwrap_or(true);
-            let max_iterations = source_state.get_max_iterations().ok().flatten();
-
-            // Read spec.md
-            let source_spec_path = source_dir.join("spec.md");
-            let spec_content = if source_spec_path.exists() {
-                fs::read_to_string(&source_spec_path).unwrap_or_else(|_| "".to_string())
-            } else {
-                "".to_string()
-            };
-
-            // Read eval.md (optional)
-            let source_eval_path = source_dir.join("eval.md");
-            let eval_content = if source_eval_path.exists() {
-                fs::read_to_string(&source_eval_path).ok()
-            } else {
-                None
-            };
-
-            // Create new run directory
-            if let Err(e) = fs::create_dir_all(&new_dir) {
-                eprintln!("Error creating run directory: {}", e);
-                std::process::exit(1);
-            }
-
-            // Initialize Files and create dirs
-            let files = Files::new(&new_dir);
-            if let Err(e) = files.init_dirs() {
-                eprintln!("Error initializing directories: {}", e);
-                std::process::exit(1);
-            }
-
-            // Write spec.md
-            if let Err(e) = fs::write(new_dir.join("spec.md"), &spec_content) {
-                eprintln!("Error writing spec file: {}", e);
-                std::process::exit(1);
-            }
-
-            // Write eval.md if exists
-            if let Some(eval) = &eval_content {
-                if let Err(e) = fs::write(new_dir.join("eval.md"), eval) {
-                    eprintln!("Error writing eval file: {}", e);
-                    std::process::exit(1);
-                }
-            }
-
-            // Copy assets folder if exists
-            let source_assets = source_dir.join("assets");
-            if source_assets.exists() && source_assets.is_dir() {
-                let dest_assets = new_dir.join("assets");
-                if let Err(e) = fs::create_dir_all(&dest_assets) {
-                    eprintln!("Error creating assets directory: {}", e);
-                    std::process::exit(1);
-                }
-                // Copy all files
-                if let Ok(entries) = fs::read_dir(&source_assets) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.is_file() {
-                            if let Some(filename) = path.file_name() {
-                                let _ = fs::copy(&path, dest_assets.join(filename));
-                            }
-                        }
+            match clone_run(config) {
+                Ok(result) => {
+                    if json {
+                        println!(
+                            r#"{{"source": "{}", "new_name": "{}", "status": "draft"}}"#,
+                            result.source_run, result.new_name
+                        );
+                    } else {
+                        println!(
+                            "Cloned '{}' to '{}' (draft)",
+                            result.source_run, result.new_name
+                        );
                     }
                 }
-            }
-
-            // Write tasks.md
-            if let Err(e) = fs::write(
-                new_dir.join("tasks.md"),
-                "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n| scope | TODO | | Read spec, create exploration tasks |\n",
-            ) {
-                eprintln!("Error writing tasks file: {}", e);
-                std::process::exit(1);
-            }
-
-            // Initialize database
-            let new_state = match SQLiteState::new(new_dir.join("hirsel.db")) {
-                Ok(s) => s,
                 Err(e) => {
-                    eprintln!("Error creating database: {}", e);
+                    eprintln!("Error: {}", e);
                     std::process::exit(1);
                 }
-            };
-
-            // Set up new run
-            if let Err(e) = new_state.init_state(project_path.as_deref()) {
-                eprintln!("Error initializing state: {}", e);
-                std::process::exit(1);
-            }
-            let _ = new_state.set_status(crate::core::state::Status::Draft);
-            let _ = new_state.set_worker_scale(&worker_scale);
-            let _ = new_state.set_human_in_the_loop(human_in_the_loop);
-            if let Some(limit) = time_limit {
-                let _ = new_state.set_time_limit_minutes(Some(limit));
-            }
-            if let Some(max_iter) = max_iterations {
-                let _ = new_state.set_max_iterations(Some(max_iter));
-            }
-            if !spec_content.is_empty() {
-                let _ = new_state.set_request(Some(&spec_content));
-            }
-            let _ = new_state.add_task("scope", "Read spec, create exploration tasks", None, None);
-
-            if json {
-                println!(
-                    r#"{{"source": "{}", "new_name": "{}", "status": "draft"}}"#,
-                    args.source_run, new_name
-                );
-            } else {
-                println!("Cloned '{}' to '{}' (draft)", args.source_run, new_name);
             }
         }
         Commands::Prune => {
@@ -1427,6 +1310,14 @@ pub fn run_cli() -> anyhow::Result<bool> {
                     }
                 }
             }
+        }
+        Commands::Serve(args) => {
+            // Server mode - run HTTP server for remote orchestration
+            // This is handled in lib.rs run_command, but add here for completeness
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| anyhow::anyhow!("Failed to create runtime: {}", e))?;
+            rt.block_on(async { crate::core::server::start_server(args.port).await })
+                .map_err(|e| anyhow::anyhow!("Server error: {}", e))?;
         }
     }
 

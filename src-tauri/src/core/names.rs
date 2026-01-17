@@ -1,10 +1,52 @@
-//! Worker name generator for Hirsel
+//! Name generators for Hirsel
 //!
-//! Generates memorable worker names using sheep breed names combined with
-//! pleasant-sounding adjectives (many Gaelic/Scottish inspired).
+//! Generates memorable names for:
+//! - Runs: adjective-animal format (curious-fox, swift-eagle)
+//! - Workers: adjective-sheep-breed format (bonnie-cheviot, braw-merino)
+//! - Evals: title-adjective-number format (inspector-keen-1)
 
 use rand::prelude::IndexedRandom;
 use rand::seq::SliceRandom;
+
+// =============================================================================
+// Run Names (adjective-animal format)
+// =============================================================================
+
+/// Adjectives for random run names
+const RUN_ADJECTIVES: &[&str] = &[
+    "curious", "swift", "bright", "calm", "bold", "eager", "gentle", "happy", "clever", "brave",
+    "kind", "quick", "quiet", "wise", "warm", "keen", "noble", "merry", "fair", "steady", "agile",
+    "witty", "lively", "earnest",
+];
+
+/// Animal nouns for random run names
+const RUN_NOUNS: &[&str] = &[
+    "fox", "eagle", "wolf", "owl", "bear", "hawk", "deer", "hare", "otter", "raven", "falcon",
+    "lynx", "crane", "swan", "finch", "sparrow", "badger", "heron", "robin", "wren", "thrush",
+    "lark", "dove", "jay",
+];
+
+/// Generate a random friendly run name like "curious-fox" or "swift-eagle"
+///
+/// Uses system time for pseudo-randomness to avoid requiring the full rand RNG.
+pub fn generate_run_name() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // Simple pseudo-random based on system time
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as usize;
+
+    let adj_idx = seed % RUN_ADJECTIVES.len();
+    let noun_idx = (seed / RUN_ADJECTIVES.len()) % RUN_NOUNS.len();
+
+    format!("{}-{}", RUN_ADJECTIVES[adj_idx], RUN_NOUNS[noun_idx])
+}
+
+// =============================================================================
+// Worker Names (adjective-sheep-breed format)
+// =============================================================================
 
 /// Nice-sounding sheep breed names (curated for memorability)
 const BREEDS: &[&str] = &[
@@ -174,7 +216,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_generate_name() {
+    fn test_generate_run_name() {
+        let name = generate_run_name();
+        assert!(name.contains('-'));
+        let parts: Vec<&str> = name.split('-').collect();
+        assert_eq!(parts.len(), 2);
+        // Verify parts are from our word lists
+        assert!(RUN_ADJECTIVES.contains(&parts[0]));
+        assert!(RUN_NOUNS.contains(&parts[1]));
+    }
+
+    #[test]
+    fn test_generate_worker_name() {
         let name = generate_worker_name();
         assert!(name.contains('-'));
         let parts: Vec<&str> = name.split('-').collect();

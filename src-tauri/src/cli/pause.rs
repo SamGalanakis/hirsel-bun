@@ -27,10 +27,7 @@ pub fn run_pause(run_name: &str, json: bool) -> anyhow::Result<()> {
     let current_status = state.status()?;
 
     // Check if run is in a pauseable state
-    if !matches!(
-        current_status,
-        Status::Working | Status::Eval | Status::Waiting
-    ) {
+    if !matches!(current_status, Status::Working | Status::Eval) {
         if json {
             println!(
                 r#"{{"success": false, "error": "Run is not active (status: {})"}}"#,

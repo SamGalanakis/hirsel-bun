@@ -1,62 +1,13 @@
 //! Helper functions shared across GUI commands
 
-use chrono::{NaiveDateTime, TimeZone, Utc};
+use chrono::Utc;
 
-use super::types::RunStatus;
+// Re-export shared helper functions from core::api_types
+pub use crate::core::api_types::{
+    calculate_duration_minutes, convert_status, is_completed_status, parse_elapsed_minutes,
+    parse_timestamp,
+};
 use crate::core::{config, state::SQLiteState};
-
-/// Parse a timestamp string and return a DateTime<Utc>
-pub fn parse_timestamp(timestamp: &str) -> Option<chrono::DateTime<Utc>> {
-    // Try RFC3339 first (has timezone)
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(timestamp) {
-        return Some(dt.with_timezone(&Utc));
-    }
-
-    // Try parsing as NaiveDateTime (no timezone, assume UTC)
-    // Format: "2024-01-13T12:30:45.123456"
-    if let Ok(naive) = NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M:%S%.f") {
-        return Some(Utc.from_utc_datetime(&naive));
-    }
-
-    // Try without fractional seconds
-    if let Ok(naive) = NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M:%S") {
-        return Some(Utc.from_utc_datetime(&naive));
-    }
-
-    None
-}
-
-/// Parse a timestamp string (with or without timezone) and return elapsed minutes from now
-pub fn parse_elapsed_minutes(timestamp: &str) -> f64 {
-    if let Some(dt) = parse_timestamp(timestamp) {
-        let now = Utc::now();
-        let elapsed = now.signed_duration_since(dt);
-        return elapsed.num_seconds() as f64 / 60.0;
-    }
-    0.0
-}
-
-/// Calculate duration in minutes between two timestamps
-pub fn calculate_duration_minutes(start: &str, end: &str) -> f64 {
-    if let (Some(start_dt), Some(end_dt)) = (parse_timestamp(start), parse_timestamp(end)) {
-        let duration = end_dt.signed_duration_since(start_dt);
-        return (duration.num_seconds() as f64 / 60.0).max(0.0);
-    }
-    0.0
-}
-
-/// Check if a status represents a completed run
-pub fn is_completed_status(status: &RunStatus) -> bool {
-    matches!(
-        status,
-        RunStatus::Done
-            | RunStatus::Delivered
-            | RunStatus::Merged
-            | RunStatus::TimedOut
-            | RunStatus::EvalFailed
-            | RunStatus::Runaway
-    )
-}
 
 /// Internal cooldown for compaction checks (10 seconds)
 const COMPACTION_INTERNAL_COOLDOWN_SECONDS: i64 = 10;
@@ -132,23 +83,5 @@ pub fn trigger_compaction_if_needed(run_name: &str) -> Result<(), String> {
             Ok(())
         }
         Err(e) => Err(format!("Failed to spawn compaction: {}", e)),
-    }
-}
-
-/// Convert core Status to GUI RunStatus
-pub fn convert_status(status: crate::core::state::Status) -> RunStatus {
-    match status {
-        crate::core::state::Status::Draft => RunStatus::Draft,
-        crate::core::state::Status::Idle => RunStatus::Idle,
-        crate::core::state::Status::Working => RunStatus::Working,
-        crate::core::state::Status::Paused => RunStatus::Paused,
-        crate::core::state::Status::Runaway => RunStatus::Runaway,
-        crate::core::state::Status::TimedOut => RunStatus::TimedOut,
-        crate::core::state::Status::Eval => RunStatus::Eval,
-        crate::core::state::Status::EvalFailed => RunStatus::EvalFailed,
-        crate::core::state::Status::Waiting => RunStatus::Waiting,
-        crate::core::state::Status::Done => RunStatus::Done,
-        crate::core::state::Status::Delivered => RunStatus::Delivered,
-        crate::core::state::Status::Merged => RunStatus::Merged,
     }
 }

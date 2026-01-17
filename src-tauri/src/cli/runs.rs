@@ -83,7 +83,7 @@ fn get_run_info(name: &str, run_dir: &std::path::Path) -> Option<RunInfo> {
 
     let state = SQLiteState::new(db_path).ok()?;
 
-    let status = state.status().unwrap_or(Status::Idle);
+    let status = state.status().unwrap_or(Status::Draft);
     let tasks = state.get_tasks().unwrap_or_default();
     let workers = state.get_workers().unwrap_or_default();
 
@@ -95,7 +95,7 @@ fn get_run_info(name: &str, run_dir: &std::path::Path) -> Option<RunInfo> {
 
     let workers_active = workers
         .iter()
-        .filter(|w| matches!(w.status, WorkerStatus::Working | WorkerStatus::Waiting))
+        .filter(|w| w.status == WorkerStatus::Working)
         .count();
     let workers_total = workers.len();
 

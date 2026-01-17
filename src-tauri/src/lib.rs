@@ -6,6 +6,7 @@
 
 pub mod cli;
 pub mod core;
+#[cfg(feature = "gui")]
 pub mod gui;
 pub mod worker;
 
@@ -30,7 +31,7 @@ pub fn run_cli() -> i32 {
             println!();
             Ok(())
         }
-        Some(cmd) => run_command(cmd, cli.json),
+        Some(cmd) => run_command(cmd, cli.json, cli.profile.as_deref()),
     };
 
     match result {
@@ -43,7 +44,11 @@ pub fn run_cli() -> i32 {
 }
 
 /// Execute a CLI command
-fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn run_command(
+    cmd: Commands,
+    json: bool,
+    _profile: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     use cli::*;
 
     match cmd {
@@ -291,7 +296,6 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
                 work_dir: PathBuf::from(args.work_dir),
                 run_dir: PathBuf::from(args.run_dir),
                 spec_path: PathBuf::from(args.spec),
-                log_file: PathBuf::from(args.log_file),
                 agent_command,
                 is_leader: args.is_leader,
                 leader_name: args.leader_name,
@@ -419,6 +423,13 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
             )
             .map_err(|e| format!("Test error: {}", e))?;
         }
+        Commands::Serve(args) => {
+            // Server mode - run HTTP server for remote orchestration
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| format!("Failed to create runtime: {}", e))?;
+            rt.block_on(async { core::server::start_server(args.port).await })
+                .map_err(|e| format!("Server error: {}", e))?;
+        }
         // Completion helpers - handled by cli/mod.rs
         Commands::CompleteRuns | Commands::CompleteWorkers(_) | Commands::CompleteThreads(_) => {
             // These are handled by the cli module's run_cli function
@@ -430,6 +441,7 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
 }
 
 /// Run the GUI (Tauri application)
+#[cfg(feature = "gui")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     use std::sync::Arc;
@@ -460,11 +472,17 @@ pub fn run() {
     // Create chat session manager as shared state
     let chat_manager = Arc::new(core::ChatSessionManager::new());
 
+    // Create chat orchestrator manager from the session manager
+    let chat_orchestrator_manager = Arc::new(gui::ChatOrchestratorManager::from_manager(
+        chat_manager.clone(),
+    ));
+
     // Create worker event stream manager as shared state
     let worker_stream_manager = Arc::new(gui::WorkerEventStreamManager::new());
 
     builder
         .manage(chat_manager.clone())
+        .manage(chat_orchestrator_manager)
         .manage(worker_stream_manager)
         .invoke_handler(gui::get_handlers())
         .setup(|app| {
@@ -507,6 +525,7 @@ pub fn run() {
 }
 
 /// Kill all worker and chat session processes on GUI exit
+#[cfg(feature = "gui")]
 fn cleanup_all_processes(chat_manager: &std::sync::Arc<core::ChatSessionManager>) {
     tracing::info!("[GUI] Killing all worker processes");
 
@@ -575,6 +594,7 @@ fn cleanup_all_processes(chat_manager: &std::sync::Arc<core::ChatSessionManager>
     tracing::info!("[GUI] Cleanup complete");
 }
 
+#[cfg(feature = "gui")]
 fn stop_chat_sessions(chat_manager: &std::sync::Arc<core::ChatSessionManager>) {
     tracing::info!("[GUI] Stopping all chat sessions");
     let rt = tokio::runtime::Runtime::new();
@@ -590,7 +610,7 @@ fn stop_chat_sessions(chat_manager: &std::sync::Arc<core::ChatSessionManager>) {
 
 /// Clean up orphaned claude-code-acp processes from previous dev sessions.
 /// This is only compiled in debug builds to handle hot-reload orphans.
-#[cfg(debug_assertions)]
+#[cfg(all(feature = "gui", debug_assertions))]
 fn cleanup_orphaned_dev_processes() {
     use std::process::Command;
 

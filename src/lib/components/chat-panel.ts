@@ -71,6 +71,18 @@ export function chatPanel() {
       window.addEventListener('run-selected', runSelectedHandler);
       this._eventCleanups.push(() => window.removeEventListener('run-selected', runSelectedHandler));
 
+      // Listen for deep-link thread selection from notifications
+      const selectThreadHandler = (e: Event) => {
+        const customEvent = e as CustomEvent<{ runName: string; thread: string }>;
+        const { runName, thread } = customEvent.detail;
+        // Only select if we're viewing the right run
+        if (this._currentRunName === runName) {
+          this.selectThread(thread);
+        }
+      };
+      window.addEventListener('select-chat-thread', selectThreadHandler);
+      this._eventCleanups.push(() => window.removeEventListener('select-chat-thread', selectThreadHandler));
+
       // Initial load if a run is already selected
       const app = this.getAppState();
       if (app && app.selectedRun) {

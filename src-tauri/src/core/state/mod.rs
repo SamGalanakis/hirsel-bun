@@ -29,7 +29,7 @@ const SCHEMA: &str = r#"
 
 CREATE TABLE IF NOT EXISTS state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
-    status TEXT NOT NULL DEFAULT 'idle',
+    status TEXT NOT NULL DEFAULT 'draft',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     request TEXT,
@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS state (
     iteration_count INTEGER DEFAULT 0,
     max_iterations INTEGER,
     pause_mode TEXT DEFAULT 'sender',
-    is_test INTEGER DEFAULT 0
+    is_test INTEGER DEFAULT 0,
+    failure_reason TEXT
 );
 
 CREATE TABLE IF NOT EXISTS workers (
@@ -58,13 +59,14 @@ CREATE TABLE IF NOT EXISTS workers (
     pid INTEGER,
     session_id TEXT,
     session_started_at TEXT,
-    status TEXT NOT NULL DEFAULT 'idle',
+    status TEXT NOT NULL DEFAULT 'working',
     work_dir TEXT,
     waiting_thread TEXT,
     needs_restart INTEGER DEFAULT 0,
     location TEXT DEFAULT 'local',
     last_heartbeat TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    hitl_waiting INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS history (
@@ -183,40 +185,8 @@ impl SQLiteState {
     }
 
     /// Run database migrations for schema changes
+    /// Note: In development mode, we don't need migrations - just delete ~/.hirsel/runs
     fn run_migrations(&mut self) -> StateResult<()> {
-        // Migration: Add branch column to state table (if not exists)
-        // SQLite doesn't have ADD COLUMN IF NOT EXISTS, so we check first
-        let has_branch_column: bool = self
-            .db
-            .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info('state') WHERE name = 'branch'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap_or(0)
-            > 0;
-
-        if !has_branch_column {
-            self.db
-                .execute("ALTER TABLE state ADD COLUMN branch TEXT", [])?;
-        }
-
-        // Migration: Add pid column to evals table (for tracking eval process)
-        let has_eval_pid_column: bool = self
-            .db
-            .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info('evals') WHERE name = 'pid'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap_or(0)
-            > 0;
-
-        if !has_eval_pid_column {
-            self.db
-                .execute("ALTER TABLE evals ADD COLUMN pid INTEGER", [])?;
-        }
-
         Ok(())
     }
 

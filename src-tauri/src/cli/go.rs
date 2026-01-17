@@ -7,24 +7,23 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::cli::config::get_agent_command;
 use crate::cli::GoArgs;
-use crate::core::chats::{
-    create_default_group_chat, create_default_user_chat, create_learnings_thread,
-    create_worker_chat, ChatError,
-};
+use crate::core::chats::ChatError;
 use crate::core::config::Config;
 use crate::core::coordinator_api::CoordinatorServer;
 use crate::core::files::Files;
-use crate::core::git::{create_worker_clone, create_workspace, get_repo_root, GitError};
+use crate::core::git::{get_repo_root, GitError};
 use crate::core::names;
+use crate::core::ops::{
+    register_workers, setup_run_workspace, spawn_local_workers, RunSetupConfig, SpawnWorkersConfig,
+};
 use crate::core::remote::{parse_remote_spec, RemoteConfig, RemoteError, RemoteWorkerSpawner};
 use crate::core::runner::{self, Runner, RunnerConfig, RunnerError};
 use crate::core::state::{SQLiteState, StateError, Status};
 use crate::core::tunnel::{TunnelError, TunnelManager};
-use crate::core::workers::{spawn_worker, WorkerError, WorkerSpawnConfig};
+use crate::core::workers::WorkerError;
 use tracing::{info, warn};
 
 // =============================================================================
@@ -125,6 +124,12 @@ impl From<TunnelError> for GoError {
 impl From<RunnerError> for GoError {
     fn from(e: RunnerError) -> Self {
         GoError::Runner(e)
+    }
+}
+
+impl From<crate::core::ops::OpsError> for GoError {
+    fn from(e: crate::core::ops::OpsError) -> Self {
+        GoError::InvalidSpec(e.to_string())
     }
 }
 
@@ -390,51 +395,16 @@ fn prompt_confirm(message: &str, yolo: bool) -> bool {
 }
 
 /// Initialize a git repository in the given directory
+/// Initialize a git repository - delegated to ops module
 fn init_git_repo(path: &Path) -> GoResult<()> {
-    let output = Command::new("git")
-        .args(["init", "-b", "main"])
-        .current_dir(path)
-        .output()?;
-
-    if !output.status.success() {
-        return Err(GoError::Git(GitError::Other(format!(
-            "git init failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ))));
-    }
-
-    // Create initial commit so we have a valid HEAD
-    let output = Command::new("git")
-        .args(["add", "-A"])
-        .current_dir(path)
-        .output()?;
-
-    if !output.status.success() {
-        return Err(GoError::Git(GitError::Other(format!(
-            "git add failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ))));
-    }
-
-    let output = Command::new("git")
-        .args(["commit", "-m", "Initial commit", "--allow-empty"])
-        .current_dir(path)
-        .output()?;
-
-    if !output.status.success() {
-        return Err(GoError::Git(GitError::Other(format!(
-            "git commit failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ))));
-    }
-
-    Ok(())
+    use crate::core::ops::init_git_repo as ops_init_git_repo;
+    ops_init_git_repo(path).map_err(|e| GoError::Git(GitError::Other(e.to_string())))
 }
 
 /// Check if a path IS a git repository root (has .git directory)
 /// This is different from checking if it's inside a git repo
 fn is_git_repo_root(path: &Path) -> bool {
-    path.join(".git").exists()
+    crate::core::ops::is_git_repo_root(path)
 }
 
 /// Ensure project directory exists and is a git repo
@@ -533,7 +503,7 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
         let status = state.status()?;
 
         match status {
-            Status::Working | Status::Eval | Status::Waiting => {
+            Status::Working | Status::Eval => {
                 return Err(GoError::RunExists(run_name));
             }
             _ => {
@@ -652,24 +622,13 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
     worker_names.extend(remote_worker_names.clone());
 
     // Determine if multi-worker mode (current or potential via autoscale)
+    // Include both local and remote workers in the count
     let total_workers = local_count + total_remote_workers;
-    let is_multi_worker = total_workers > 1 || scale.max > 1;
-    let leader = if is_multi_worker {
-        Some(worker_names[0].clone())
+    let (is_multi_worker, leader) = if total_workers > 1 || scale.max > 1 {
+        (true, Some(worker_names[0].clone()))
     } else {
-        None
+        (false, None)
     };
-
-    // Create default chats
-    let chats_dir = files.chats_dir();
-    create_default_user_chat(&chats_dir)?;
-
-    if is_multi_worker {
-        create_default_group_chat(&chats_dir, &worker_names, leader.as_deref())?;
-    }
-
-    // Create learnings thread
-    create_learnings_thread(&chats_dir, &worker_names)?;
 
     // Clean up staging
     fs::remove_dir_all(&staging_dir)?;
@@ -687,42 +646,27 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
     let first_worker = &worker_names[0];
     let _ = state.claim_task("scope", first_worker);
 
-    // Create workspace with staging branch
-    let runs_dir = get_hirsel_dir().join("runs");
-    let workspace_dir = create_workspace(&run_name, &project_path, &runs_dir)?;
+    // Set up workspace, worker clones, and chats using shared ops
+    let setup_config = RunSetupConfig {
+        run_name: run_name.clone(),
+        project_path: project_path.clone(),
+        run_dir: run_dir.clone(),
+        worker_names: local_worker_names.clone(),
+        additional_chat_workers: remote_worker_names.clone(), // Remote workers need chats but not clones
+        is_multi_worker,
+        leader_name: leader.clone(),
+    };
 
-    // Create worker clones/worktrees for LOCAL workers only
-    let mut local_worker_dirs: Vec<(String, PathBuf)> = Vec::new();
+    let setup_result = setup_run_workspace(&setup_config)?;
+    let workspace_dir = setup_result.workspace_dir;
+    let local_worker_dirs = setup_result.worker_dirs;
 
-    for worker_name in &local_worker_names {
-        let worker_dir = if is_multi_worker {
-            create_worker_clone(
-                &run_name,
-                &project_path,
-                worker_name,
-                Some(&workspace_dir),
-                &runs_dir,
-            )?
-        } else {
-            workspace_dir.clone()
-        };
-
-        local_worker_dirs.push((worker_name.clone(), worker_dir.clone()));
-
-        // Register local worker in state
-        state.add_worker(worker_name, worker_dir.to_str().unwrap_or("."), "local")?;
-
-        // Create individual worker chat
-        create_worker_chat(&chats_dir, worker_name)?;
-    }
+    // Register local workers in state
+    register_workers(&state, &local_worker_dirs, "local")?;
 
     // Register remote workers in state (work_dir is set to remote base path)
     for worker_name in &remote_worker_names {
-        // Remote workers have work_dir set on the remote machine
         state.add_worker(worker_name, "/tmp/hirsel-remote", "remote")?;
-
-        // Create individual worker chat for remote workers too
-        create_worker_chat(&chats_dir, worker_name)?;
     }
 
     // Set run status - Draft if --draft flag, otherwise Working
@@ -833,48 +777,22 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
         // Spawn workers based on runner type
         match &runner_config {
             RunnerConfig::Local => {
-                // Spawn LOCAL workers (existing flow)
-                for (i, (worker_name, work_dir)) in local_worker_dirs.iter().enumerate() {
-                    let is_leader = i == 0 && is_multi_worker;
-                    let config = WorkerSpawnConfig {
-                        run_name: run_name.clone(),
-                        worker_name: worker_name.clone(),
-                        work_dir: work_dir.clone(),
-                        run_dir: run_dir.clone(),
-                        spec_path: spec_path.clone(),
-                        agent_command: agent_command.clone(),
-                        is_leader,
-                        leader_name: leader.clone(),
-                        teammates: if is_multi_worker {
-                            Some(
-                                teammates
-                                    .iter()
-                                    .filter(|t| *t != worker_name)
-                                    .cloned()
-                                    .collect(),
-                            )
-                        } else {
-                            None
-                        },
-                        resume_session_id: None,
-                    };
+                // Spawn LOCAL workers using shared ops
+                let spawn_config = SpawnWorkersConfig {
+                    run_name: run_name.clone(),
+                    run_dir: run_dir.clone(),
+                    spec_path: spec_path.clone(),
+                    agent_command: agent_command.clone(),
+                    is_multi_worker,
+                    leader_name: leader.clone(),
+                    all_worker_names: teammates.clone(),
+                };
 
-                    match spawn_worker(config, &state) {
-                        Ok(result) => {
-                            info!(
-                                "Spawned local worker {} (PID {})",
-                                result.worker_name, result.pid
-                            );
-                        }
-                        Err(WorkerError::RunPaused) => {
-                            // Run was paused - don't spawn more workers
-                            break;
-                        }
-                        Err(e) => {
-                            // Log error but continue with other workers
-                            eprintln!("Warning: Failed to spawn worker {}: {}", worker_name, e);
-                        }
-                    }
+                let spawn_result = spawn_local_workers(&spawn_config, &local_worker_dirs, &state);
+
+                // Log any failures
+                for (worker_name, error) in &spawn_result.failed {
+                    eprintln!("Warning: Failed to spawn worker {}: {}", worker_name, error);
                 }
             }
             RunnerConfig::Sprite(sprite_config) => {

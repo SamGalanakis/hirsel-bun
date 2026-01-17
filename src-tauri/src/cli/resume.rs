@@ -37,10 +37,7 @@ pub fn run_resume(run_name: &str, time_limit: Option<&str>, json: bool) -> anyho
     let current_status = state.status()?;
 
     // Check if run is in a resumable state
-    if !matches!(
-        current_status,
-        Status::Paused | Status::Runaway | Status::TimedOut
-    ) {
+    if !matches!(current_status, Status::Paused | Status::Failed) {
         if json {
             println!(
                 r#"{{"success": false, "error": "Run is not paused (status: {})"}}"#,

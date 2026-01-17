@@ -1,5 +1,19 @@
 # Hirsel Development Guidelines
 
+## Development Mode - No Backwards Compatibility
+
+This is a development project. **Backwards compatibility with old databases is not required.**
+
+When making schema changes:
+- Modify the schema directly in `src-tauri/src/core/state/mod.rs` (the SCHEMA constant)
+- Do NOT add migrations
+- Reset local data by deleting `~/.hirsel/runs/` when needed
+
+```bash
+# Reset all local run data
+rm -rf ~/.hirsel/runs
+```
+
 ## Basecoat UI
 
 Use [Basecoat UI](https://basecoatui.com/) components for all UI elements. Basecoat provides accessible, styled components.

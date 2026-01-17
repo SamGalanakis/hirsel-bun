@@ -4,44 +4,14 @@
 
 use super::types::{ConfigResponse, ConfigUpdateRequest};
 use crate::core::config;
+use crate::core::orchestrator::create_orchestrator;
 
 /// Get application configuration
+/// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn get_config() -> Result<ConfigResponse, String> {
-    let (cfg, _warnings) =
-        config::Config::load().map_err(|e| format!("Failed to load config: {}", e))?;
-
-    let runs_dir = cfg.runs_dir().to_string_lossy().to_string();
-
-    Ok(ConfigResponse {
-        runs_dir,
-        agent_command: cfg.agent.command,
-        eval_timeout: cfg.eval_timeout,
-        auto_learn: cfg.auto_learn,
-        max_iterations: cfg.max_iterations,
-        user_message_pause: cfg.user_message_pause,
-        human_in_the_loop: cfg.human_in_the_loop,
-        compaction_enabled: cfg.compaction_enabled,
-        compaction_threshold: cfg.compaction_threshold,
-        compaction_keep_messages: cfg.compaction_keep_messages,
-        auto_improve: cfg.auto_improve,
-        context_warning_threshold: cfg.context_warning_threshold,
-        coordinator_port: cfg.coordinator_port,
-        auth: cfg.auth.into(),
-        remotes: cfg
-            .remotes
-            .into_iter()
-            .map(|(k, v)| (k, v.into()))
-            .collect(),
-        default_remote: cfg.default_remote,
-        runners: cfg
-            .runners
-            .into_iter()
-            .map(|(k, v)| (k, v.into()))
-            .collect(),
-        default_runner: cfg.default_runner,
-        worker_runners: cfg.worker_runners,
-    })
+    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
+    orch.get_config().await.map_err(|e| e.to_string())
 }
 
 /// Save application configuration

@@ -126,12 +126,12 @@ pub fn run_eval(
             .filter(|e| e.status == EvalStatus::Failed)
             .count();
 
-        // After 3 failed evals, mark as EvalFailed
+        // After 3 failed evals, mark as Failed with EvalFailed reason
         if failed_count >= 3 {
-            // Kill any remaining worker processes before marking as EvalFailed
+            // Kill any remaining worker processes before marking as Failed
             let _ = crate::core::workers::kill_all_workers(&state);
 
-            state.set_status(Status::EvalFailed)?;
+            state.set_failed(crate::core::state::FailureReason::EvalFailed)?;
         } else {
             // Go back to working for retry
             state.set_status(Status::Working)?;
@@ -463,7 +463,8 @@ Your evaluation is NOT complete until you call one of these tools.
 - Don't modify any code - you are read-only
 - If a check is ambiguous, fail with clear explanation
 - Be specific about what failed and how to fix it
-- You do NOT have git access - work only with the files in your directory
+- You have git access for viewing history (git log, git diff, git status) and running hooks (pre-commit)
+- Do NOT commit or modify git state - only use it for inspection
 
 ## Feedback Format (for eval_fail)
 
@@ -550,7 +551,7 @@ fn format_messages(msgs: &[crate::core::state::Message]) -> String {
         .join("\n")
 }
 
-/// Copy directory recursively, excluding .git.
+/// Copy directory recursively.
 fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
@@ -560,11 +561,6 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
             Some(n) => n,
             None => continue,
         };
-
-        // Skip .git directory (no git access for eval)
-        if name == ".git" {
-            continue;
-        }
 
         let dst_path = dst.join(name);
         if path.is_dir() {
@@ -701,6 +697,13 @@ pub async fn run_eval_from_args(
     }
     let staging_dir = run_dir.join("work").join("staging");
     copy_dir_all(&staging_dir, &eval_work_dir)?;
+
+    // Remove git remote so eval cannot push changes (but can still view history and run hooks)
+    let _ = std::process::Command::new("git")
+        .args(["remote", "remove", "origin"])
+        .current_dir(&eval_work_dir)
+        .output();
+
     info!(
         "[{}] Created isolated eval worktree at {:?}",
         eval_name, eval_work_dir
@@ -787,7 +790,7 @@ pub async fn run_eval_from_args(
             .count();
 
         if failed_count >= 3 {
-            // Kill any remaining worker processes before marking as EvalFailed
+            // Kill any remaining worker processes before marking as Failed
             let killed = crate::core::workers::kill_all_workers(&state).unwrap_or_else(|e| {
                 tracing::warn!("[{}] Failed to kill workers: {}", eval_name, e);
                 vec![]
@@ -801,10 +804,10 @@ pub async fn run_eval_from_args(
             }
 
             info!(
-                "[{}] Eval FAILED ({} failures) - marking run as EvalFailed",
+                "[{}] Eval FAILED ({} failures) - marking run as Failed",
                 eval_name, failed_count
             );
-            state.set_status(Status::EvalFailed)?;
+            state.set_failed(crate::core::state::FailureReason::EvalFailed)?;
 
             // Auto-cleanup test runs
             if state.is_test_run().unwrap_or(false) {
@@ -921,7 +924,6 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
     let db_path = config.run_dir.join("hirsel.db");
     let client = Arc::new(crate::worker::acp_client::HirselClient::new(
         &config.eval_name,
-        &config.log_file,
         &db_path,
     ));
 

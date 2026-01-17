@@ -11,7 +11,7 @@ mod debug;
 mod drafts;
 mod events;
 mod files;
-mod helpers;
+pub mod helpers;
 mod logs;
 mod messages;
 mod runs;
@@ -24,6 +24,9 @@ pub use types::*;
 
 // Re-export the event stream manager for state management
 pub use events::WorkerEventStreamManager;
+
+// Re-export the chat orchestrator manager for state management
+pub use chat::ChatOrchestratorManager;
 
 // GypChatStore is available from crate::core::gyp_chat for modules that need it
 
@@ -67,10 +70,7 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         workers::open_worker_terminal,
         workers::detach_worker,
         workers::restart_worker,
-        // Worker log commands
-        logs::get_worker_log,
-        logs::get_worker_log_path,
-        logs::parse_worker_log,
+        // Eval log commands
         logs::get_eval_log,
         logs::get_eval_log_by_path,
         // History commands

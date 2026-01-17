@@ -72,8 +72,6 @@ pub struct SpawnResult {
     pub worker_name: String,
     /// Process ID of spawned worker
     pub pid: u32,
-    /// Path to worker's log file
-    pub log_file: PathBuf,
 }
 
 /// Spawn a new worker process
@@ -105,15 +103,6 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
             ..Default::default()
         },
     )?;
-
-    // Create log file path
-    let files = Files::new(&config.run_dir);
-    let log_file = files.worker_log(&config.worker_name);
-    if let Some(parent) = log_file.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    debug!("[{}] Worker log file: {:?}", config.worker_name, log_file);
 
     // Build environment for worker subprocess
     let mut env: HashMap<String, String> = std::env::vars().collect();
@@ -151,8 +140,6 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
         config.run_dir.to_string_lossy().to_string(),
         "--spec".to_string(),
         config.spec_path.to_string_lossy().to_string(),
-        "--log-file".to_string(),
-        log_file.to_string_lossy().to_string(),
         "--agent-command".to_string(),
         agent_command_json,
     ];
@@ -219,7 +206,6 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
     Ok(SpawnResult {
         worker_name: config.worker_name,
         pid,
-        log_file,
     })
 }
 
@@ -469,8 +455,10 @@ pub fn check_worker_heartbeats(
     let mut stale = Vec::new();
 
     for worker in workers {
-        // Only check workers that should be running
-        if worker.status != WorkerStatus::Working && worker.status != WorkerStatus::Waiting {
+        // Only check workers that should be running (Working or Awaiting with hitl_waiting)
+        if worker.status != WorkerStatus::Working
+            && !(worker.status == WorkerStatus::Awaiting && worker.hitl_waiting)
+        {
             continue;
         }
 
@@ -590,25 +578,25 @@ pub fn check_and_send_time_notifications(
     Ok(None)
 }
 
-/// Handle time limit expiration - set run to TIMED_OUT status.
+/// Handle time limit expiration - set run to Failed status with TimeLimit reason.
 /// Should only be called by the first worker to detect expiration.
 pub fn handle_time_expired(
     state: &SQLiteState,
-    files: &Files,
+    _files: &Files,
     is_multi_worker: bool,
     worker_name: &str,
     run_name: &str,
 ) -> WorkerResult<()> {
-    use crate::core::state::Status;
+    use crate::core::state::{FailureReason, Status};
 
     // Only the first worker to detect expiration should handle it
-    if state.status()? == Status::TimedOut {
+    if state.status()? == Status::Failed {
         info!("[{}] Time already expired, skipping handler", worker_name);
         return Ok(());
     }
 
     // Send final message
-    let message = "Time limit reached. Run paused with current progress.";
+    let message = "Time limit reached. Run failed.";
     let thread = if is_multi_worker {
         "group"
     } else {
@@ -642,7 +630,7 @@ pub fn handle_time_expired(
     for worker in workers {
         if matches!(
             worker.status,
-            WorkerStatus::Working | WorkerStatus::Waiting | WorkerStatus::Awaiting
+            WorkerStatus::Working | WorkerStatus::Awaiting
         ) {
             state.update_worker(
                 &worker.name,
@@ -654,20 +642,12 @@ pub fn handle_time_expired(
         }
     }
 
-    // Set run status to TIMED_OUT
-    state.set_status(Status::TimedOut)?;
-    info!("[{}] Run status set to TIMED_OUT", worker_name);
+    // Set run status to Failed with TimeLimit reason
+    state.set_failed(FailureReason::TimeLimit)?;
+    info!("[{}] Run status set to Failed (time_limit)", worker_name);
 
-    // Write to worker log
-    let log_file = files.worker_log(worker_name);
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_file)
-    {
-        use std::io::Write;
-        let _ = writeln!(file, "\n[time limit reached - run timed out]");
-    }
+    // Write timeout event to database
+    let _ = state.insert_text_event(worker_name, "\n[time limit reached - run timed out]");
 
     // Trigger summary generation in background
     spawn_background_summary(run_name, worker_name);
@@ -1143,11 +1123,10 @@ pub fn reconcile_stale_workers() -> Vec<(String, String)> {
         };
 
         for worker in workers {
-            // Only check workers that should be running
-            if !matches!(
-                worker.status,
-                WorkerStatus::Working | WorkerStatus::Waiting | WorkerStatus::Idle
-            ) {
+            // Only check workers that should be running (Working or Awaiting with hitl_waiting)
+            let is_active = worker.status == WorkerStatus::Working
+                || (worker.status == WorkerStatus::Awaiting && worker.hitl_waiting);
+            if !is_active {
                 continue;
             }
 
@@ -1166,6 +1145,7 @@ pub fn reconcile_stale_workers() -> Vec<(String, String)> {
                         WorkerUpdate {
                             pid: None,
                             status: Some(WorkerStatus::Paused),
+                            hitl_waiting: Some(false),
                             ..Default::default()
                         },
                     ) {
@@ -1177,8 +1157,8 @@ pub fn reconcile_stale_workers() -> Vec<(String, String)> {
                         marked.push((run_name.clone(), worker.name.clone()));
                     }
                 }
-            } else if matches!(worker.status, WorkerStatus::Working | WorkerStatus::Waiting) {
-                // Worker marked as working/waiting but has no PID - stale entry
+            } else if worker.status == WorkerStatus::Working {
+                // Worker marked as working but has no PID - stale entry
                 // Mark as Paused so it can be resumed
                 info!(
                     "[reconcile] Marking stale worker {} in run {} as Paused (no PID)",

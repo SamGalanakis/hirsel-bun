@@ -590,7 +590,6 @@ impl Runner for SpriteRunner {
             handle: WorkerHandle {
                 worker_name: config.worker_name.clone(),
                 runner_id: sprite_name,
-                log_file: None, // Logs are remote
                 runner_type: "sprite".to_string(),
             },
             pid: pid.parse().ok(),

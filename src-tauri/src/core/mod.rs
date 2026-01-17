@@ -8,8 +8,11 @@
 //! - File utilities
 //! - ACP client
 //! - Eval system
+//! - Orchestrator abstraction for local/remote coordination
 
 pub mod acp;
+pub mod api_types;
+pub mod chat_orchestrator;
 pub mod chat_session;
 pub mod chats;
 pub mod compaction;
@@ -22,9 +25,12 @@ pub mod git_http;
 pub mod gyp_chat;
 pub mod metrics;
 pub mod names;
+pub mod ops;
+pub mod orchestrator;
 pub mod process;
 pub mod remote;
 pub mod runner;
+pub mod server;
 pub mod state;
 pub mod state_access;
 pub mod tunnel;
@@ -33,6 +39,11 @@ pub mod workers;
 // Re-export commonly used types
 pub use acp::{
     ACPClientConfig, ACPError, AcpChild, AcpSpawnConfig, MCPServerConfig, SessionUpdate,
+};
+pub use chat_orchestrator::{
+    create_chat_orchestrator, create_local_chat_orchestrator, ChatContext, ChatOrchestrator,
+    ChatOrchestratorError, ChatOrchestratorResult, LocalChatOrchestrator, RemoteChatOrchestrator,
+    SessionInfo,
 };
 pub use chat_session::{
     ChatEvent, ChatSessionConfig, ChatSessionError, ChatSessionManager, PendingPermission,
@@ -46,7 +57,11 @@ pub use eval::{
 };
 pub use files::Files;
 pub use gyp_chat::{GypChatError, GypChatMessage, GypChatResult, GypChatStore};
-pub use names::{generate_unique_names, generate_worker_name};
+pub use names::{generate_run_name, generate_unique_names, generate_worker_name};
+pub use orchestrator::{
+    create_local_orchestrator, create_orchestrator, LocalOrchestrator, Orchestrator,
+    OrchestratorError, OrchestratorResult, RemoteOrchestrator,
+};
 pub use remote::{
     parse_remote_spec, parse_remote_specs, RemoteConfig, RemoteError, RemoteResult,
     RemoteWorkerSpawner,

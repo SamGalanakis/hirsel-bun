@@ -1,7 +1,10 @@
 // Hirsel - Main entry point
 // Launches GUI by default, or handles CLI commands
 
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(feature = "gui", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
 
 fn main() {
     // Check if running as CLI (has subcommands) or GUI (no args)
@@ -19,7 +22,17 @@ fn main() {
         let exit_code = hirsel_lib::run_cli();
         std::process::exit(exit_code);
     } else {
-        // Run GUI mode
+        // Run GUI mode (only available with gui feature)
+        #[cfg(feature = "gui")]
         hirsel_lib::run();
+
+        #[cfg(not(feature = "gui"))]
+        {
+            eprintln!(
+                "GUI not available in this build. Use CLI commands or build with --features gui"
+            );
+            eprintln!("Run 'hirsel --help' for available commands.");
+            std::process::exit(1);
+        }
     }
 }

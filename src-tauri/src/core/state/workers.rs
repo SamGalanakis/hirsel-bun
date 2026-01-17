@@ -20,7 +20,7 @@ impl SQLiteState {
             session_id: row.get("session_id")?,
             session_started_at: row.get("session_started_at")?,
             status: WorkerStatus::from_str(&row.get::<_, String>("status")?)
-                .unwrap_or(WorkerStatus::Idle),
+                .unwrap_or(WorkerStatus::Awaiting),
             work_dir: row.get("work_dir")?,
             waiting_thread: row.get("waiting_thread")?,
             needs_restart: row
@@ -32,6 +32,10 @@ impl SQLiteState {
                 .unwrap_or_else(|| "local".to_string()),
             last_heartbeat: row.get("last_heartbeat")?,
             created_at: row.get("created_at")?,
+            hitl_waiting: row
+                .get::<_, Option<i64>>("hitl_waiting")?
+                .map(|v| v != 0)
+                .unwrap_or(false),
         })
     }
 
@@ -44,7 +48,7 @@ impl SQLiteState {
     ) -> StateResult<Option<Worker>> {
         match self.db.execute(
             "INSERT INTO workers (name, status, work_dir, location, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![name, WorkerStatus::Idle.as_str(), work_dir, location, self.now()],
+            params![name, WorkerStatus::Working.as_str(), work_dir, location, self.now()],
         ) {
             Ok(_) => {
                 self.log_history("worker_add", Some(name))?;
@@ -60,7 +64,7 @@ impl SQLiteState {
     /// Get a worker by name
     pub fn get_worker(&self, name: &str) -> StateResult<Option<Worker>> {
         let result = self.db.query_row(
-            "SELECT id, name, pid, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at FROM workers WHERE name = ?1",
+            "SELECT id, name, pid, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting FROM workers WHERE name = ?1",
             params![name],
             Self::worker_from_row,
         );
@@ -74,7 +78,7 @@ impl SQLiteState {
     /// Get all workers
     pub fn get_workers(&self) -> StateResult<Vec<Worker>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, pid, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at FROM workers ORDER BY id"
+            "SELECT id, name, pid, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting FROM workers ORDER BY id"
         )?;
         let workers = stmt
             .query_map([], Self::worker_from_row)?
@@ -85,7 +89,7 @@ impl SQLiteState {
     /// Get active workers (not awaiting or error)
     pub fn get_active_workers(&self) -> StateResult<Vec<Worker>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, pid, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at FROM workers WHERE status NOT IN (?1, ?2) ORDER BY id"
+            "SELECT id, name, pid, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting FROM workers WHERE status NOT IN (?1, ?2) ORDER BY id"
         )?;
         let workers = stmt
             .query_map(
@@ -136,6 +140,10 @@ impl SQLiteState {
         if let Some(last_heartbeat) = &updates.last_heartbeat {
             set_clauses.push("last_heartbeat = ?");
             params_vec.push(Box::new(last_heartbeat.clone()));
+        }
+        if let Some(hitl_waiting) = updates.hitl_waiting {
+            set_clauses.push("hitl_waiting = ?");
+            params_vec.push(Box::new(if hitl_waiting { 1i64 } else { 0i64 }));
         }
 
         if set_clauses.is_empty() {
@@ -216,13 +224,24 @@ impl SQLiteState {
         Ok(())
     }
 
-    /// Get waiting count
+    /// Get count of workers waiting for HITL input
     pub fn get_waiting_count(&self) -> StateResult<i64> {
         let count: i64 = self.db.query_row(
-            "SELECT COUNT(*) FROM workers WHERE status = ?1",
-            params![WorkerStatus::Waiting.as_str()],
+            "SELECT COUNT(*) FROM workers WHERE hitl_waiting = 1",
+            [],
             |row| row.get(0),
         )?;
         Ok(count)
+    }
+
+    /// Get workers waiting for HITL input
+    pub fn get_hitl_waiting_workers(&self) -> StateResult<Vec<Worker>> {
+        let mut stmt = self.db.prepare(
+            "SELECT id, name, pid, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting FROM workers WHERE hitl_waiting = 1 ORDER BY id"
+        )?;
+        let workers = stmt
+            .query_map([], Self::worker_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(workers)
     }
 }

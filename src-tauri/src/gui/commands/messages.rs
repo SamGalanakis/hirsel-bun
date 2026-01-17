@@ -4,74 +4,31 @@
 
 use super::helpers::parse_timestamp;
 use super::types::{Message, ThreadSummary, UnreadNotification, UnreadNotificationsResponse};
+use crate::core::orchestrator::create_orchestrator;
 use crate::core::{config, state::SQLiteState};
 
 /// Get messages for a thread
+/// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn get_messages(
     run_name: String,
     thread_name: String,
-    limit: Option<u32>,
+    _limit: Option<u32>,
 ) -> Result<Vec<Message>, String> {
-    let db_path = config::run_dir(&run_name).join("hirsel.db");
-    if !db_path.exists() {
-        return Err(format!("Run '{}' not found", run_name));
-    }
-
-    let state = SQLiteState::new(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
-
-    let limit = limit.unwrap_or(100) as i64;
-    let core_messages = state
-        .get_messages(&thread_name, limit)
-        .map_err(|e| format!("Failed to get messages: {}", e))?;
-
-    let messages = core_messages
-        .into_iter()
-        .map(|m| Message {
-            id: m.id as u32,
-            thread: m.thread,
-            sender: m.sender,
-            content: m.content,
-            waiting: m.waiting,
-            read_by: None,
-            timestamp: m.timestamp,
-        })
-        .collect();
-
-    Ok(messages)
+    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
+    orch.get_messages(&run_name, &thread_name)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Get all threads for a run
+/// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn get_threads(run_name: String) -> Result<Vec<ThreadSummary>, String> {
-    let db_path = config::run_dir(&run_name).join("hirsel.db");
-    if !db_path.exists() {
-        return Err(format!("Run '{}' not found", run_name));
-    }
-
-    let state = SQLiteState::new(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
-
-    let thread_names = state
-        .get_threads()
-        .map_err(|e| format!("Failed to get threads: {}", e))?;
-
-    let mut threads = Vec::new();
-    for name in thread_names {
-        let message_count = state.get_thread_message_count(&name).unwrap_or(0) as u32;
-        let messages = state.get_messages(&name, 1).unwrap_or_default();
-        let last_message = messages.first().map(|m| m.content.clone());
-        let last_timestamp = messages.first().map(|m| m.timestamp.clone());
-
-        threads.push(ThreadSummary {
-            name,
-            message_count,
-            unread_count: 0,
-            last_message,
-            last_timestamp,
-        });
-    }
-
-    Ok(threads)
+    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
+    orch.list_threads(&run_name)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Get all unread notifications across all runs
@@ -142,34 +99,17 @@ pub async fn get_all_unread_notifications() -> Result<UnreadNotificationsRespons
 }
 
 /// Send a message to a thread
+/// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn send_message(
     run_name: String,
     thread_name: String,
     content: String,
 ) -> Result<Message, String> {
-    let db_path = config::run_dir(&run_name).join("hirsel.db");
-    if !db_path.exists() {
-        return Err(format!("Run '{}' not found", run_name));
-    }
-
-    let state = SQLiteState::new(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
-
-    // Add the message (user messages are not waiting)
-    let message_id = state
-        .add_message(&thread_name, "user", &content, false)
-        .map_err(|e| format!("Failed to send message: {}", e))?;
-
-    // Return the created message
-    Ok(Message {
-        id: message_id as u32,
-        thread: thread_name,
-        sender: "user".to_string(),
-        content,
-        waiting: false,
-        read_by: None,
-        timestamp: chrono::Utc::now().to_rfc3339(),
-    })
+    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
+    orch.send_message(&run_name, &thread_name, &content)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Mark messages as read

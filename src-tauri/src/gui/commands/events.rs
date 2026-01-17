@@ -8,18 +8,8 @@ use std::sync::Mutex;
 use tokio::sync::oneshot;
 use tracing::info;
 
-use super::types::WorkerEventResponse;
+use super::types::{WorkerEventResponse, WorkerEventsResponse};
 use crate::core::{config, state::SQLiteState};
-
-/// Response for worker events query
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkerEventsResponse {
-    pub events: Vec<WorkerEventResponse>,
-    pub last_id: Option<i64>,
-    /// Worker status for determining if still streaming
-    pub worker_status: Option<String>,
-}
 
 /// Manages active worker event streams
 pub struct WorkerEventStreamManager {

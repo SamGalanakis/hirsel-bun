@@ -39,31 +39,18 @@ struct TerminalHandle {
 /// Handles agent requests for permissions, file operations, and terminals.
 pub struct HirselClient {
     worker_name: String,
-    log_file: PathBuf,
     db_path: PathBuf,
     terminals: Mutex<HashMap<TerminalId, TerminalHandle>>,
     terminal_counter: AtomicU64,
 }
 
 impl HirselClient {
-    pub fn new(worker_name: &str, log_file: &Path, db_path: &Path) -> Self {
+    pub fn new(worker_name: &str, db_path: &Path) -> Self {
         Self {
             worker_name: worker_name.to_string(),
-            log_file: log_file.to_path_buf(),
             db_path: db_path.to_path_buf(),
             terminals: Mutex::new(HashMap::new()),
             terminal_counter: AtomicU64::new(0),
-        }
-    }
-
-    fn log(&self, message: &str) {
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.log_file)
-        {
-            use std::io::Write;
-            let _ = writeln!(file, "{}", message);
         }
     }
 
@@ -101,13 +88,11 @@ impl Client for HirselClient {
     async fn session_notification(&self, args: SessionNotification) -> Result<()> {
         use crate::core::state::ToolCallStatus;
 
-        // Log session updates to the worker log file AND database
+        // Write session updates to database for streaming
         match &args.update {
             SessionUpdate::AgentMessageChunk(chunk) => {
                 if let ContentBlock::Text(text) = &chunk.content {
-                    // Log to file (for backwards compatibility)
-                    self.log(&text.text);
-                    // Write to database for GUI streaming
+                    // Write to database for streaming
                     if let Some(state) = self.get_state() {
                         let _ = state.insert_text_event(&self.worker_name, &text.text);
                     }
@@ -122,9 +107,6 @@ impl Client for HirselClient {
                 }
             }
             SessionUpdate::ToolCall(tc) => {
-                // Log to file
-                self.log(&format!("\n[tool: {}]", tc.title));
-
                 // Convert ACP status to our status
                 let status = match tc.status {
                     agent_client_protocol::ToolCallStatus::Pending => ToolCallStatus::Pending,
@@ -175,13 +157,6 @@ impl Client for HirselClient {
                     agent_client_protocol::ToolCallStatus::Failed => ToolCallStatus::Failed,
                     _ => ToolCallStatus::Pending,
                 });
-
-                // Log completion to file
-                if let Some(s) = &status {
-                    if *s == ToolCallStatus::Completed || *s == ToolCallStatus::Failed {
-                        self.log("[/tool]");
-                    }
-                }
 
                 // Extract output using shared utility
                 let output = crate::core::acp::extract_tool_output(&update.fields);
@@ -333,7 +308,6 @@ pub struct WorkerRunConfig {
     pub work_dir: PathBuf,
     pub run_dir: PathBuf,
     pub spec_path: PathBuf,
-    pub log_file: PathBuf,
     pub agent_command: Vec<String>,
     pub is_leader: bool,
     pub leader_name: Option<String>,
@@ -351,30 +325,9 @@ pub async fn run_acp_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
         config.worker_name, config.run_name
     );
 
-    // Create log file
-    if let Some(parent) = config.log_file.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(
-        &config.log_file,
-        format!(
-            "[worker: {}]\n{}\n\n",
-            config.worker_name,
-            if config.is_leader {
-                "Starting as leader..."
-            } else {
-                "Starting, waiting for tasks..."
-            }
-        ),
-    )?;
-
     // Create the client
     let db_path = config.run_dir.join("hirsel.db");
-    let client = Arc::new(HirselClient::new(
-        &config.worker_name,
-        &config.log_file,
-        &db_path,
-    ));
+    let client = Arc::new(HirselClient::new(&config.worker_name, &db_path));
 
     // Spawn the agent process using AcpChild for automatic cleanup
     let spawn_config = AcpSpawnConfig::new(

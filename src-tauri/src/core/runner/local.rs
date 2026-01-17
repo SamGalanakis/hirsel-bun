@@ -6,10 +6,9 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use super::{Runner, RunnerError, RunnerResult, SpawnResult, WorkerHandle, WorkerSpawnConfig};
-use crate::core::files::Files;
 
 /// Local runner - spawns workers as local processes
 pub struct LocalRunner {
@@ -61,15 +60,6 @@ impl Default for LocalRunner {
 #[async_trait]
 impl Runner for LocalRunner {
     async fn spawn(&self, config: &WorkerSpawnConfig) -> RunnerResult<SpawnResult> {
-        // Create log file path
-        let files = Files::new(&config.run_dir);
-        let log_file = files.worker_log(&config.worker_name);
-        if let Some(parent) = log_file.parent() {
-            std::fs::create_dir_all(parent).map_err(RunnerError::Io)?;
-        }
-
-        debug!("[{}] Worker log file: {:?}", config.worker_name, log_file);
-
         // Build environment for worker subprocess
         let mut env: HashMap<String, String> = std::env::vars().collect();
         env.insert(
@@ -113,8 +103,6 @@ impl Runner for LocalRunner {
             config.run_dir.to_string_lossy().to_string(),
             "--spec".to_string(),
             config.spec_path.to_string_lossy().to_string(),
-            "--log-file".to_string(),
-            log_file.to_string_lossy().to_string(),
             "--agent-command".to_string(),
             agent_command_json,
         ];
@@ -173,7 +161,6 @@ impl Runner for LocalRunner {
             handle: WorkerHandle {
                 worker_name: config.worker_name.clone(),
                 runner_id: pid.to_string(),
-                log_file: Some(log_file),
                 runner_type: "local".to_string(),
             },
             pid: Some(pid),
@@ -225,22 +212,8 @@ impl Runner for LocalRunner {
         "local"
     }
 
-    async fn get_logs(&self, handle: &WorkerHandle, lines: usize) -> RunnerResult<String> {
-        if let Some(ref log_file) = handle.log_file {
-            if log_file.exists() {
-                let content = tokio::fs::read_to_string(log_file)
-                    .await
-                    .map_err(RunnerError::Io)?;
-                let log_lines: Vec<&str> = content.lines().collect();
-                let start = log_lines.len().saturating_sub(lines);
-                Ok(log_lines[start..].join("\n"))
-            } else {
-                Ok(String::new())
-            }
-        } else {
-            Ok(String::new())
-        }
-    }
+    // get_logs not overridden - default implementation returns empty
+    // Worker events are now stored in the database; use orchestrator's get_worker_events
 }
 
 /// Pause all workers by killing their process groups.

@@ -981,20 +981,24 @@ Example:
                   <div class="mt-2 flex items-center gap-3 text-xs">
                     <!-- Elapsed time -->
                     <span class="text-wool-500" x-text="worker.sessionStartedAt ? formatElapsedTime(worker.sessionStartedAt) : '--'"></span>
-                    <!-- Token counts -->
-                    <span x-show="worker.inputTokens || worker.outputTokens" class="text-wool-600">
-                      <span class="text-wool-500" x-text="formatTokens(worker.inputTokens)"></span>/<span class="text-sage" x-text="formatTokens(worker.outputTokens)"></span>
-                    </span>
+                    <!-- Token counts (only shown for agents with metrics) -->
+                    <template x-if="$store.app?.currentRunDetail?.metricsAvailable">
+                      <span x-show="worker.inputTokens || worker.outputTokens" class="text-wool-600">
+                        <span class="text-wool-500" x-text="formatTokens(worker.inputTokens)"></span>/<span class="text-sage" x-text="formatTokens(worker.outputTokens)"></span>
+                      </span>
+                    </template>
                     <!-- Context utilization (value is 0-1 from backend, display as percentage) -->
-                    <span
-                      x-show="worker.contextUtilization != null"
-                      class="ml-auto"
-                      :class="getContextClass((worker.contextUtilization || 0) * 100)"
-                      :data-tooltip="'Context: ' + ((worker.contextUtilization || 0) * 100).toFixed(1) + '%'"
-                      data-side="left"
-                    >
-                      <span x-text="Math.round((worker.contextUtilization || 0) * 100) + '%'"></span>
-                    </span>
+                    <template x-if="$store.app?.currentRunDetail?.metricsAvailable">
+                      <span
+                        x-show="worker.contextUtilization != null"
+                        class="ml-auto"
+                        :class="getContextClass((worker.contextUtilization || 0) * 100)"
+                        :data-tooltip="'Context: ' + ((worker.contextUtilization || 0) * 100).toFixed(1) + '%'"
+                        data-side="left"
+                      >
+                        <span x-text="Math.round((worker.contextUtilization || 0) * 100) + '%'"></span>
+                      </span>
+                    </template>
                   </div>
                   <div x-show="worker.currentTask" class="mt-1 text-xs text-wool-500 truncate">
                     <span class="text-wool-700">Task:</span>
@@ -1070,8 +1074,8 @@ Example:
                       </div>
                     </div>
 
-                    <!-- Token Usage -->
-                    <div class="bg-pasture-700/50 rounded-lg p-3">
+                    <!-- Token Usage (only shown for agents with metrics) -->
+                    <div x-show="$store.app?.currentRunDetail?.metricsAvailable" class="bg-pasture-700/50 rounded-lg p-3">
                       <div class="text-xs text-wool-500 mb-2">Token Usage</div>
                       <div class="flex items-center gap-6">
                         <div>

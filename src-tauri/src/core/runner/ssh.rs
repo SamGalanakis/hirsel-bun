@@ -272,7 +272,6 @@ impl Runner for SshRunner {
             handle: WorkerHandle {
                 worker_name: config.worker_name.clone(),
                 runner_id: pid.to_string(),
-                log_file: None, // Remote logs not available locally
                 runner_type: "ssh".to_string(),
             },
             pid: Some(pid),

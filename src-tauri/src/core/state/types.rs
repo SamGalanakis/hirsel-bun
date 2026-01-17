@@ -13,54 +13,95 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
-    Draft, // Configured but not started (no workers spawned)
-    Idle,
-    Working,
-    Paused,   // Manually paused by user
-    Runaway,  // Auto-paused due to max_iterations exceeded
-    TimedOut, // Auto-paused due to time limit exceeded
-    Eval,
-    EvalFailed, // Max eval attempts reached
-    Waiting,
-    Done,
-    Delivered,
-    Merged, // Work merged to staging/main
+    Draft,     // Configured but not started (no workers spawned)
+    Working,   // Workers actively running
+    Paused,    // Manually paused by user
+    Failed,    // Run failed (see failure_reason for why)
+    Eval,      // Evaluation in progress
+    Done,      // All work complete, eval passed (or no eval)
+    Delivered, // Changes delivered to branch
+}
+
+/// Reason for a run failure
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureReason {
+    IterationLimit, // was Runaway - max iterations exceeded
+    TimeLimit,      // was TimedOut - time limit exceeded
+    EvalFailed,     // was EvalFailed - max eval attempts reached
+    Manual,         // User manually marked as failed
 }
 
 impl Status {
     pub fn as_str(&self) -> &'static str {
         match self {
             Status::Draft => "draft",
-            Status::Idle => "idle",
             Status::Working => "working",
             Status::Paused => "paused",
-            Status::Runaway => "runaway",
-            Status::TimedOut => "timed_out",
+            Status::Failed => "failed",
             Status::Eval => "eval",
-            Status::EvalFailed => "eval_failed",
-            Status::Waiting => "waiting",
             Status::Done => "done",
             Status::Delivered => "delivered",
-            Status::Merged => "merged",
         }
     }
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "draft" => Some(Status::Draft),
-            "idle" => Some(Status::Idle),
             "working" => Some(Status::Working),
             "paused" => Some(Status::Paused),
-            "runaway" => Some(Status::Runaway),
-            "timed_out" => Some(Status::TimedOut),
+            "failed" => Some(Status::Failed),
             "eval" => Some(Status::Eval),
-            "eval_failed" => Some(Status::EvalFailed),
-            "waiting" => Some(Status::Waiting),
             "done" => Some(Status::Done),
             "delivered" => Some(Status::Delivered),
-            "merged" => Some(Status::Merged),
             _ => None,
         }
+    }
+
+    /// Check if this status represents a completed run (terminal state)
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Status::Done | Status::Delivered | Status::Failed)
+    }
+
+    /// Check if this status allows workers to run
+    pub fn is_active(&self) -> bool {
+        matches!(self, Status::Working | Status::Eval)
+    }
+}
+
+impl FailureReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FailureReason::IterationLimit => "iteration_limit",
+            FailureReason::TimeLimit => "time_limit",
+            FailureReason::EvalFailed => "eval_failed",
+            FailureReason::Manual => "manual",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "iteration_limit" => Some(FailureReason::IterationLimit),
+            "time_limit" => Some(FailureReason::TimeLimit),
+            "eval_failed" => Some(FailureReason::EvalFailed),
+            "manual" => Some(FailureReason::Manual),
+            _ => None,
+        }
+    }
+
+    pub fn display_message(&self) -> &'static str {
+        match self {
+            FailureReason::IterationLimit => "Maximum iterations exceeded",
+            FailureReason::TimeLimit => "Time limit reached",
+            FailureReason::EvalFailed => "Evaluation failed after max retries",
+            FailureReason::Manual => "Manually marked as failed",
+        }
+    }
+}
+
+impl std::fmt::Display for FailureReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
     }
 }
 
@@ -108,20 +149,16 @@ impl std::fmt::Display for EvalStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkerStatus {
-    Idle,
-    Working,
-    Waiting,  // Waiting for user reply
-    Awaiting, // No work to do (no tasks available OR all work complete)
-    Paused,   // Worker paused (run is paused/runaway)
+    Working,  // Actively processing a task
+    Awaiting, // No work to do OR waiting for user (check hitl_waiting flag)
+    Paused,   // Worker paused (run is paused/failed)
     Error,    // Worker process died unexpectedly
 }
 
 impl WorkerStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
-            WorkerStatus::Idle => "idle",
             WorkerStatus::Working => "working",
-            WorkerStatus::Waiting => "waiting",
             WorkerStatus::Awaiting => "awaiting",
             WorkerStatus::Paused => "paused",
             WorkerStatus::Error => "error",
@@ -130,9 +167,7 @@ impl WorkerStatus {
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
-            "idle" => Some(WorkerStatus::Idle),
             "working" => Some(WorkerStatus::Working),
-            "waiting" => Some(WorkerStatus::Waiting),
             "awaiting" => Some(WorkerStatus::Awaiting),
             "paused" => Some(WorkerStatus::Paused),
             "error" => Some(WorkerStatus::Error),
@@ -143,6 +178,14 @@ impl WorkerStatus {
     /// Check if worker is inactive (not actively working)
     pub fn is_inactive(&self) -> bool {
         matches!(self, WorkerStatus::Awaiting | WorkerStatus::Error)
+    }
+
+    /// Check if worker can be resumed
+    pub fn can_resume(&self) -> bool {
+        matches!(
+            self,
+            WorkerStatus::Paused | WorkerStatus::Error | WorkerStatus::Awaiting
+        )
     }
 }
 
@@ -285,6 +328,7 @@ pub struct Worker {
     pub location: String,
     pub last_heartbeat: Option<String>,
     pub created_at: String,
+    pub hitl_waiting: bool, // True if worker is awaiting user input (HITL)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -388,6 +432,7 @@ pub enum StateError {
     InvalidState(String),
     AlreadyExists(String),
     Blocked(String),
+    InvalidTransition(Status, Status),
 }
 
 impl std::fmt::Display for StateError {
@@ -398,6 +443,9 @@ impl std::fmt::Display for StateError {
             StateError::InvalidState(s) => write!(f, "Invalid state: {}", s),
             StateError::AlreadyExists(s) => write!(f, "Already exists: {}", s),
             StateError::Blocked(s) => write!(f, "Blocked: {}", s),
+            StateError::InvalidTransition(from, to) => {
+                write!(f, "Invalid transition: {} -> {}", from, to)
+            }
         }
     }
 }
@@ -425,6 +473,7 @@ pub struct WorkerUpdate {
     pub waiting_thread: Option<String>,
     pub needs_restart: Option<bool>,
     pub last_heartbeat: Option<String>,
+    pub hitl_waiting: Option<bool>,
 }
 
 // =============================================================================
