@@ -105,6 +105,21 @@ pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
         cfg.worker_runners = worker_runners;
     }
 
+    // Apply profiles updates (replace entire map if provided)
+    if let Some(profiles) = updates.profiles {
+        cfg.profiles = profiles.into_iter().map(|(k, v)| (k, v.into())).collect();
+    }
+
+    // Apply default_profile update
+    if let Some(default_profile) = updates.default_profile {
+        cfg.default_profile = default_profile;
+    }
+
+    // Apply git config update
+    if let Some(git_update) = updates.git {
+        cfg.git = git_update.into();
+    }
+
     // Serialize to TOML
     let toml_str =
         toml::to_string_pretty(&cfg).map_err(|e| format!("Failed to serialize config: {}", e))?;

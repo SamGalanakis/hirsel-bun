@@ -9,8 +9,8 @@ use std::sync::Arc;
 use futures::StreamExt;
 
 use crate::core::{
-    create_chat_orchestrator, ChatContext, ChatEvent, ChatOrchestrator, ChatSessionManager,
-    LocalChatOrchestrator, UIContext,
+    create_chat_orchestrator, get_local_oauth_credentials, ChatContext, ChatEvent,
+    ChatOrchestrator, ChatSessionManager, LocalChatOrchestrator, UIContext,
 };
 
 /// Manages chat orchestrators for different profiles
@@ -68,6 +68,9 @@ impl Default for ChatOrchestratorManager {
 ///
 /// The `profile` parameter determines whether to use local or remote mode.
 /// If not specified, uses local mode.
+///
+/// For remote profiles, local OAuth credentials are automatically read
+/// from ~/.claude/.credentials.json and forwarded to the remote server.
 #[tauri::command]
 pub async fn start_chat_session(
     app: tauri::AppHandle,
@@ -80,11 +83,19 @@ pub async fn start_chat_session(
 ) -> Result<String, String> {
     use tauri::Emitter;
 
+    // Read local credentials for remote profiles
+    let credentials = if profile.as_deref() != Some("local") && profile.is_some() {
+        get_local_oauth_credentials()
+    } else {
+        None
+    };
+
     let context = ChatContext {
         agent_command,
         working_dir,
         run_name,
         system_prompt,
+        credentials,
     };
 
     // Get the appropriate orchestrator

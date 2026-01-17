@@ -40,6 +40,22 @@ export interface SpriteRunnerConfig {
 
 export type RunnerConfig = { type: 'local' } | SshRunnerConfig | SpriteRunnerConfig;
 
+// Orchestrator profile types
+export type OrchestratorMode = 'local' | 'remote';
+
+export interface OrchestratorProfile {
+  mode: OrchestratorMode;
+  url: string | null;
+  apiKey: string | null;
+}
+
+export type GitProvider = 'github';
+
+export interface GitConfig {
+  defaultProvider: GitProvider | null;
+  configuredProviders: GitProvider[];
+}
+
 export interface Settings {
   agentCommand: string;
   evalTimeout: number;
@@ -57,4 +73,7 @@ export interface Settings {
   runners: Record<string, RunnerConfig>;
   defaultRunner: string | null;
   workerRunners: Record<string, string>;
+  profiles: Record<string, OrchestratorProfile>;
+  defaultProfile: string;
+  git: GitConfig;
 }

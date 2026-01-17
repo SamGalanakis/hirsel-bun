@@ -605,6 +605,7 @@ impl Orchestrator for LocalOrchestrator {
                 None
             },
             resume_session_id: worker_data.session_id.clone(),
+            credentials: None,
         };
 
         spawn_worker(config, &state).map_err(|e| OrchestratorError::Other(e.to_string()))?;
@@ -915,6 +916,30 @@ impl Orchestrator for LocalOrchestrator {
                 .collect(),
             default_runner: self.config.default_runner.clone(),
             worker_runners: self.config.worker_runners.clone(),
+            profiles: self
+                .config
+                .profiles
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone().into()))
+                .collect(),
+            default_profile: self.config.default_profile.clone(),
+            git: {
+                use crate::core::api_types::{GitConfigResponse, GitProviderResponse};
+                use crate::core::credentials::CredentialStore;
+
+                // Check which providers have tokens configured
+                let mut configured = Vec::new();
+                if let Ok(store) = CredentialStore::open() {
+                    if store.load("git_github_token").is_ok() {
+                        configured.push(GitProviderResponse::Github);
+                    }
+                }
+
+                GitConfigResponse {
+                    default_provider: self.config.git.default_provider.map(|p| p.into()),
+                    configured_providers: configured,
+                }
+            },
         })
     }
 

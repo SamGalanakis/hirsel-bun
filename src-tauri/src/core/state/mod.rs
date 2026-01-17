@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS evals (
     status TEXT NOT NULL DEFAULT 'running',
     feedback TEXT,
     log_file TEXT,
+    pid INTEGER,
     started_at TEXT NOT NULL,
     finished_at TEXT
 );

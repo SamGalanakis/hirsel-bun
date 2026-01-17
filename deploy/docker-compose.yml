@@ -1,0 +1,15 @@
+services:
+  hirsel:
+    build: .
+    init: true
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - HIRSEL_API_KEY=${HIRSEL_API_KEY}
+    volumes:
+      - hirsel-data:/root/.hirsel
+    stop_grace_period: 30s
+
+volumes:
+  hirsel-data:

@@ -18,6 +18,7 @@ use thiserror::Error;
 
 use crate::core::chat_session::{ChatEvent, ChatSessionConfig, PermissionResponse, UIContext};
 use crate::core::config::Config;
+use crate::core::credentials::ForwardedCredentials;
 
 // =============================================================================
 // Error Types
@@ -95,6 +96,9 @@ pub struct ChatContext {
     pub run_name: Option<String>,
     /// System prompt to prepend
     pub system_prompt: Option<String>,
+    /// Credentials to forward to the agent process
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credentials: Option<ForwardedCredentials>,
 }
 
 impl From<ChatContext> for ChatSessionConfig {
@@ -104,6 +108,7 @@ impl From<ChatContext> for ChatSessionConfig {
             working_dir: ctx.working_dir,
             run_name: ctx.run_name,
             system_prompt: ctx.system_prompt,
+            credentials: ctx.credentials,
         }
     }
 }
@@ -115,6 +120,7 @@ impl From<ChatSessionConfig> for ChatContext {
             working_dir: cfg.working_dir,
             run_name: cfg.run_name,
             system_prompt: cfg.system_prompt,
+            credentials: cfg.credentials,
         }
     }
 }

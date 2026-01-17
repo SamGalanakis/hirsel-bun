@@ -26,6 +26,7 @@ use crate::core::chat_orchestrator::{
     PermissionResponseRequest, SendMessageRequest, SessionInfo, StartSessionRequest,
 };
 use crate::core::chat_session::{ChatEvent, ChatSessionConfig, ChatSessionManager};
+use crate::core::credentials::CredentialStore;
 
 /// State for Gyp chat sessions
 pub struct GypState {
@@ -88,17 +89,45 @@ type GypResult<T> = Result<T, GypError>;
 /// Start a new chat session
 ///
 /// POST /api/gyp/sessions
+///
+/// If credentials are provided in the request, they are stored encrypted for future use.
+/// If not provided, previously stored credentials are loaded.
 pub async fn start_session(
     State(state): State<Arc<GypState>>,
     Json(body): Json<StartSessionRequest>,
 ) -> GypResult<Json<SessionInfo>> {
     info!("[gyp] Starting new chat session");
 
+    // Resolve credentials: from request or from storage
+    let credentials = match body.context.credentials {
+        Some(creds) => {
+            // Store for future use (if encryption key is available)
+            if let Ok(store) = CredentialStore::open() {
+                if let Err(e) = store.store_all(&creds) {
+                    debug!("[gyp] Failed to store credentials: {}", e);
+                }
+            }
+            Some(creds)
+        }
+        None => {
+            // Load from store
+            CredentialStore::open().ok().map(|store| store.load_all())
+        }
+    };
+
+    // Validate that we have credentials
+    if credentials.as_ref().map_or(true, |c| !c.has_any()) {
+        return Err(GypError::Other(
+            "No credentials available. Please configure OAuth token or API key.".into(),
+        ));
+    }
+
     let config = ChatSessionConfig {
         agent_command: body.context.agent_command,
         working_dir: body.context.working_dir,
         run_name: body.context.run_name,
         system_prompt: body.context.system_prompt,
+        credentials,
     };
 
     let (session_id, event_rx) = state

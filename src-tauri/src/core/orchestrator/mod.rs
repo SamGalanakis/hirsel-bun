@@ -255,6 +255,8 @@ pub trait Orchestrator: Send + Sync {
 /// If no profile is specified, uses the default profile from config.
 /// Returns a LocalOrchestrator for local mode, RemoteOrchestrator for remote.
 pub fn create_orchestrator(profile: Option<&str>) -> OrchestratorResult<Box<dyn Orchestrator>> {
+    use crate::core::credentials::CredentialStore;
+
     let (config, _) = Config::load().map_err(|e| OrchestratorError::Config(e.to_string()))?;
 
     let profile_name = profile.unwrap_or(&config.default_profile);
@@ -270,10 +272,20 @@ pub fn create_orchestrator(profile: Option<&str>) -> OrchestratorResult<Box<dyn 
             let url = profile_config.url.as_ref().ok_or_else(|| {
                 OrchestratorError::Config("Missing URL for remote profile".into())
             })?;
-            let key = profile_config.api_key.as_ref().ok_or_else(|| {
+
+            // Try to load API key from credential store first, fall back to config
+            let key = {
+                let cred_key = format!("profile_{}_api_key", profile_name);
+                CredentialStore::open()
+                    .ok()
+                    .and_then(|store| store.load(&cred_key).ok())
+                    .or_else(|| profile_config.api_key.clone())
+            }
+            .ok_or_else(|| {
                 OrchestratorError::Config("Missing API key for remote profile".into())
             })?;
-            Ok(Box::new(RemoteOrchestrator::new(url.clone(), key.clone())))
+
+            Ok(Box::new(RemoteOrchestrator::new(url.clone(), key)))
         }
     }
 }

@@ -420,6 +420,32 @@ impl Default for OrchestratorProfile {
     }
 }
 
+/// Git provider type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GitProvider {
+    Github,
+    // Future: Gitlab, Bitbucket, etc.
+}
+
+impl std::fmt::Display for GitProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Github => write!(f, "github"),
+        }
+    }
+}
+
+/// Git provider configuration
+///
+/// Tokens are stored in CredentialStore, not in config.
+/// This struct only tracks which providers are configured.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GitConfig {
+    /// Default git provider to use
+    pub default_provider: Option<GitProvider>,
+}
+
 /// Main configuration struct
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -489,6 +515,10 @@ pub struct Config {
     /// Orchestrator profiles for local/remote connections
     #[serde(default = "default_profiles")]
     pub profiles: HashMap<String, OrchestratorProfile>,
+
+    /// Git provider configuration
+    #[serde(default)]
+    pub git: GitConfig,
 }
 
 fn default_profile() -> String {
@@ -568,6 +598,7 @@ impl Default for Config {
             worker_runners: HashMap::new(),
             default_profile: default_profile(),
             profiles: default_profiles(),
+            git: GitConfig::default(),
         }
     }
 }
@@ -988,6 +1019,26 @@ impl Config {
 
                         self.profiles.insert(name.clone(), profile);
                     }
+                }
+            }
+        }
+
+        // Load git configuration
+        if let Some(git_data) = table.get("git") {
+            if let Some(git_table) = git_data.as_table() {
+                if let Some(provider_str) =
+                    git_table.get("default_provider").and_then(|v| v.as_str())
+                {
+                    self.git.default_provider = match provider_str.to_lowercase().as_str() {
+                        "github" => Some(GitProvider::Github),
+                        _ => {
+                            warnings.push(format!(
+                                "Config warning: unknown git provider '{}', ignoring",
+                                provider_str
+                            ));
+                            None
+                        }
+                    };
                 }
             }
         }

@@ -7,6 +7,7 @@
 
 mod chat;
 mod config_cmd;
+mod credentials;
 mod debug;
 mod drafts;
 mod events;
@@ -92,6 +93,11 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         // Config commands
         config_cmd::get_config,
         config_cmd::save_config,
+        // Credential commands
+        credentials::store_credential,
+        credentials::delete_credential,
+        credentials::has_credential,
+        credentials::get_credential_masked,
         // Chat session commands
         chat::start_chat_session,
         chat::send_chat_message,

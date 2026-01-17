@@ -97,6 +97,7 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
             None
         },
         resume_session_id: None,
+        credentials: None,
     };
 
     match spawn_worker(config, &state) {

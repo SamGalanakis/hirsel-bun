@@ -20,8 +20,14 @@ pub use crate::core::api_types::{
     Eval,
     // Status enums
     EvalStatus,
+    // Git provider types
+    GitConfigResponse,
+    GitProviderResponse,
     HistoryEntry,
     Message,
+    // Orchestrator profile types
+    OrchestratorModeResponse,
+    OrchestratorProfileResponse,
     // Remote/Runner types
     RemoteConfigResponse,
     RunDetail,
@@ -134,6 +140,40 @@ impl From<RemoteConfigUpdate> for config::RemoteConfig {
     }
 }
 
+/// Orchestrator profile update request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestratorProfileUpdate {
+    pub mode: crate::core::api_types::OrchestratorModeResponse,
+    pub url: Option<String>,
+    pub api_key: Option<String>,
+}
+
+impl From<OrchestratorProfileUpdate> for config::OrchestratorProfile {
+    fn from(update: OrchestratorProfileUpdate) -> Self {
+        Self {
+            mode: update.mode.into(),
+            url: update.url,
+            api_key: update.api_key,
+        }
+    }
+}
+
+/// Git configuration update request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitConfigUpdate {
+    pub default_provider: Option<GitProviderResponse>,
+}
+
+impl From<GitConfigUpdate> for config::GitConfig {
+    fn from(update: GitConfigUpdate) -> Self {
+        Self {
+            default_provider: update.default_provider.map(|p| p.into()),
+        }
+    }
+}
+
 /// Request to update configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -156,6 +196,9 @@ pub struct ConfigUpdateRequest {
     pub runners: Option<std::collections::HashMap<String, RunnerConfigResponse>>,
     pub default_runner: Option<Option<String>>,
     pub worker_runners: Option<std::collections::HashMap<String, String>>,
+    pub profiles: Option<std::collections::HashMap<String, OrchestratorProfileUpdate>>,
+    pub default_profile: Option<String>,
+    pub git: Option<GitConfigUpdate>,
 }
 
 /// Result of validating a repository path/URL

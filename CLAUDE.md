@@ -7,11 +7,27 @@ This is a development project. **Backwards compatibility with old databases is n
 When making schema changes:
 - Modify the schema directly in `src-tauri/src/core/state/mod.rs` (the SCHEMA constant)
 - Do NOT add migrations
-- Reset local data by deleting `~/.hirsel/runs/` when needed
+- Reset local data when needed (see below)
+
+### Data Locations
+
+```
+~/.hirsel/                    # Main hirsel data
+├── config.toml               # Configuration (profiles, agent settings)
+├── hirsel.db                 # Global DB (credentials, gyp chat history)
+└── runs/                     # Per-run databases
+
+~/.local/share/app.hirsel/    # Tauri app data (logs, frontend state)
+```
+
+### Reset Commands
 
 ```bash
-# Reset all local run data
+# Reset runs only (keeps config + credentials)
 rm -rf ~/.hirsel/runs
+
+# Full reset (like first install)
+rm -rf ~/.hirsel ~/.local/share/app.hirsel
 ```
 
 ## Basecoat UI

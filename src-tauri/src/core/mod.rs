@@ -18,6 +18,7 @@ pub mod chats;
 pub mod compaction;
 pub mod config;
 pub mod coordinator_api;
+pub mod credentials;
 pub mod eval;
 pub mod files;
 pub mod git;
@@ -51,6 +52,10 @@ pub use chat_session::{
 };
 pub use chats::{ChatHeader, ChatMode};
 pub use config::*;
+pub use credentials::{
+    get_local_oauth_credentials, CredentialError, CredentialResult, CredentialStore,
+    ForwardedCredentials,
+};
 pub use eval::{
     run_eval_acp, run_eval_from_args, EvalAcpConfig, EvalAcpResult, EvalConfig, EvalError,
     EvalResult,

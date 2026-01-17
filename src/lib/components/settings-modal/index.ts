@@ -39,11 +39,14 @@ import type {
   SpriteRunnerConfig,
   RunnerConfig,
   Settings,
+  OrchestratorProfile,
 } from './types';
 import {
   defaultAgentAuth,
   defaultSshRunnerConfig,
   defaultSpriteRunnerConfig,
+  defaultRemoteProfile,
+  defaultGitConfig,
   defaultSettings,
   getAuthMethodLabel,
   getDefaultEnvVar,
@@ -90,6 +93,14 @@ export function settingsModal() {
     newRunnerType: 'ssh' as RunnerType,
     editRunnerData: defaultSshRunnerConfig() as SshRunnerConfig | SpriteRunnerConfig,
 
+    // Editing state for orchestrator profiles
+    editingProfile: null as string | null,
+    newProfileName: '',
+    editProfileData: defaultRemoteProfile() as OrchestratorProfile,
+
+    // Git provider state
+    gitHubToken: '',
+
     // Cascading auth editor state
     selectedAuthProvider: '' as '' | 'claude' | 'gemini' | 'codex' | 'goose',
     selectedAuthMethod: 'env' as AuthMethod,
@@ -109,6 +120,18 @@ export function settingsModal() {
     // Get runner names as sorted array
     get runnerNames(): string[] {
       return Object.keys(this.settings.runners).sort();
+    },
+
+    // Get all profile names as sorted array
+    get profileNames(): string[] {
+      return Object.keys(this.settings.profiles).sort();
+    },
+
+    // Get only remote profile names (exclude 'local')
+    get remoteProfileNames(): string[] {
+      return Object.keys(this.settings.profiles)
+        .filter(name => name !== 'local' && this.settings.profiles[name]?.mode === 'remote')
+        .sort();
     },
 
     // Helper function wrappers
@@ -272,6 +295,79 @@ export function settingsModal() {
       }
     },
 
+    // ==================== PROFILE METHODS ====================
+
+    // Start adding a new profile
+    startAddProfile() {
+      this.editingProfile = '__new__';
+      this.newProfileName = '';
+      this.editProfileData = defaultRemoteProfile();
+    },
+
+    // Start editing an existing profile
+    startEditProfile(name: string) {
+      const profile = this.settings.profiles[name];
+      if (!profile) return;
+
+      this.editingProfile = name;
+      this.newProfileName = name;
+      this.editProfileData = { ...profile };
+    },
+
+    // Save profile config
+    saveProfile() {
+      const name = this.editingProfile === '__new__' ? this.newProfileName.trim() : this.editingProfile;
+      if (!name) {
+        window.toast?.error('Profile name is required');
+        return;
+      }
+
+      if (name === 'local') {
+        window.toast?.error('Cannot modify the local profile');
+        return;
+      }
+
+      // Validate remote profile has required fields
+      if (!this.editProfileData.url?.trim()) {
+        window.toast?.error('Server URL is required');
+        return;
+      }
+      if (!this.editProfileData.apiKey?.trim()) {
+        window.toast?.error('API key is required');
+        return;
+      }
+
+      // Ensure mode is set to remote
+      this.editProfileData.mode = 'remote';
+
+      this.settings.profiles[name] = { ...this.editProfileData };
+      this.editingProfile = null;
+
+      // Re-initialize icons
+      setTimeout(() => {
+        if (window.lucide) {
+          window.lucide.createIcons();
+        }
+      }, 50);
+    },
+
+    // Cancel editing profile
+    cancelEditProfile() {
+      this.editingProfile = null;
+    },
+
+    // Delete a profile
+    deleteProfile(name: string) {
+      if (name === 'local') {
+        window.toast?.error('Cannot delete the local profile');
+        return;
+      }
+      delete this.settings.profiles[name];
+      if (this.settings.defaultProfile === name) {
+        this.settings.defaultProfile = 'local';
+      }
+    },
+
     // ==================== SHORTCUT METHODS ====================
 
     // Load shortcuts from storage
@@ -385,6 +481,9 @@ export function settingsModal() {
             runners: Record<string, RunnerConfig>;
             defaultRunner: string | null;
             workerRunners: Record<string, string>;
+            profiles: Record<string, OrchestratorProfile>;
+            defaultProfile: string;
+            git: { defaultProvider: string | null; configuredProviders: string[] };
           }>('get_config');
 
           this.settings = {
@@ -404,7 +503,22 @@ export function settingsModal() {
             runners: config.runners || {},
             defaultRunner: config.defaultRunner || null,
             workerRunners: config.workerRunners || {},
+            profiles: config.profiles || { local: { mode: 'local', url: null, apiKey: null } },
+            defaultProfile: config.defaultProfile || 'local',
+            git: config.git || defaultGitConfig(),
           };
+
+          // Load masked API keys from credential store for profiles
+          for (const [name, profile] of Object.entries(this.settings.profiles)) {
+            if (profile.mode === 'remote') {
+              const maskedKey = await window.tauriInvoke<string | null>('get_credential_masked', {
+                keyType: `profile_${name}_api_key`,
+              });
+              if (maskedKey) {
+                profile.apiKey = maskedKey;
+              }
+            }
+          }
 
           // Auto-select configured provider if any
           this.initAuthProvider();
@@ -446,10 +560,49 @@ export function settingsModal() {
 
           // Only save the currently selected provider
           if (this.selectedAuthProvider) {
+            // Store API key in encrypted credential store if provided
+            if (this.authApiKey && this.selectedAuthMethod === 'apiKey') {
+              await window.tauriInvoke('store_credential', {
+                keyType: `agent_${this.selectedAuthProvider}_api_key`,
+                value: this.authApiKey,
+              });
+            }
+
             authUpdate[this.selectedAuthProvider] = {
               method: this.selectedAuthMethod,
-              apiKey: this.authApiKey || null,
+              // Don't store API key in config - it's in credential store
+              apiKey: null,
               envVar: this.authEnvVar || null,
+            };
+          }
+
+          // Store orchestrator profile API keys in credential store
+          for (const [name, profile] of Object.entries(this.settings.profiles)) {
+            if (profile.mode === 'remote' && profile.apiKey && !profile.apiKey.includes('...')) {
+              // Only store if it's a new/changed key (not masked)
+              await window.tauriInvoke('store_credential', {
+                keyType: `profile_${name}_api_key`,
+                value: profile.apiKey,
+              });
+            }
+          }
+
+          // Store GitHub token in credential store if provided
+          if (this.gitHubToken) {
+            await window.tauriInvoke('store_credential', {
+              keyType: 'git_github_token',
+              value: this.gitHubToken,
+            });
+          }
+
+          // Prepare profiles without API keys (they're stored in credential store)
+          const profilesForConfig: Record<string, OrchestratorProfile> = {};
+          for (const [name, profile] of Object.entries(this.settings.profiles)) {
+            profilesForConfig[name] = {
+              mode: profile.mode,
+              url: profile.url,
+              // Don't store API key in config - it's in credential store
+              apiKey: null,
             };
           }
 
@@ -471,6 +624,11 @@ export function settingsModal() {
               runners: this.settings.runners,
               defaultRunner: this.settings.defaultRunner,
               workerRunners: this.settings.workerRunners,
+              profiles: profilesForConfig,
+              defaultProfile: this.settings.defaultProfile,
+              git: {
+                defaultProvider: this.settings.git?.defaultProvider || null,
+              },
             },
           });
 

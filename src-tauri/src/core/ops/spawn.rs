@@ -101,6 +101,7 @@ pub fn spawn_local_workers(
             leader_name: config.leader_name.clone(),
             teammates,
             resume_session_id: None,
+            credentials: None,
         };
 
         match spawn_worker(spawn_config, state) {

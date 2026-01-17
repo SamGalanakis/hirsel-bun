@@ -47,6 +47,22 @@
             Runners
           </button>
           <button
+            @click="activeTab = 'orchestrator'"
+            :class="activeTab === 'orchestrator' ? 'bg-pasture-700 text-wool-100 font-medium' : 'text-wool-400 hover:text-wool-200 hover:bg-pasture-700/50'"
+            class="flex items-center gap-2.5 px-3 py-2.5 rounded-md text-sm text-left w-full transition-colors"
+          >
+            <i data-lucide="cloud" class="w-4 h-4"></i>
+            Orchestrator
+          </button>
+          <button
+            @click="activeTab = 'git'"
+            :class="activeTab === 'git' ? 'bg-pasture-700 text-wool-100 font-medium' : 'text-wool-400 hover:text-wool-200 hover:bg-pasture-700/50'"
+            class="flex items-center gap-2.5 px-3 py-2.5 rounded-md text-sm text-left w-full transition-colors"
+          >
+            <i data-lucide="git-branch" class="w-4 h-4"></i>
+            Git
+          </button>
+          <button
             @click="activeTab = 'controls'"
             :class="activeTab === 'controls' ? 'bg-pasture-700 text-wool-100 font-medium' : 'text-wool-400 hover:text-wool-200 hover:bg-pasture-700/50'"
             class="flex items-center gap-2.5 px-3 py-2.5 rounded-md text-sm text-left w-full transition-colors"
@@ -462,6 +478,165 @@
               </div>
             </div>
           </div>
+        </form>
+
+        <!-- ==================== ORCHESTRATOR TAB ==================== -->
+        <form x-show="!loading && activeTab === 'orchestrator'" class="form grid gap-6">
+          <p class="text-muted-foreground text-sm">Configure how hirsel connects: locally or to a remote hirsel server.</p>
+
+          <!-- Default Profile -->
+          <div class="grid gap-2">
+            <label for="settings-default-profile">Default Profile</label>
+            <select id="settings-default-profile" x-model="settings.defaultProfile">
+              <template x-for="name in profileNames" :key="name">
+                <option :value="name" x-text="name"></option>
+              </template>
+            </select>
+            <p class="text-muted-foreground text-sm">Which orchestrator to use by default.</p>
+          </div>
+
+          <!-- Profiles List -->
+          <div class="grid gap-3">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-medium text-wool-200">Orchestrator Profiles</h3>
+              <button type="button" @click="startAddProfile()" class="btn btn-ghost btn-sm">
+                <i data-lucide="plus" class="w-4 h-4"></i>
+                Add Profile
+              </button>
+            </div>
+
+            <!-- Local profile (always shown) -->
+            <div class="p-3 bg-pasture-700/30 rounded-lg border border-pasture-600/50">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <i data-lucide="laptop" class="w-4 h-4 text-sage"></i>
+                  <span class="font-medium text-wool-200">local</span>
+                  <span class="text-xs px-2 py-0.5 bg-pasture-600 text-wool-400 rounded">Built-in</span>
+                  <span x-show="settings.defaultProfile === 'local'" class="text-xs px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded">default</span>
+                </div>
+              </div>
+              <div class="mt-2 text-xs text-wool-500">
+                <span>Run orchestrator locally on this machine</span>
+              </div>
+            </div>
+
+            <!-- Remote profile cards -->
+            <template x-for="name in remoteProfileNames" :key="name">
+              <div class="p-3 bg-pasture-700/30 rounded-lg">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-2">
+                    <i data-lucide="cloud" class="w-4 h-4 text-sage"></i>
+                    <span class="font-medium text-wool-200" x-text="name"></span>
+                    <span class="text-xs px-2 py-0.5 bg-pasture-600 text-wool-400 rounded">Remote</span>
+                    <span x-show="settings.defaultProfile === name" class="text-xs px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded">default</span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <button type="button" @click="deleteProfile(name)" class="btn btn-ghost btn-sm text-wool-400 hover:text-terra">
+                      <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                    <button type="button" @click="startEditProfile(name)" class="btn btn-ghost btn-sm">
+                      <i data-lucide="pencil" class="w-4 h-4"></i>
+                      Edit
+                    </button>
+                  </div>
+                </div>
+                <div class="mt-2 text-xs text-wool-500 grid gap-1">
+                  <div class="flex items-center gap-2">
+                    <span class="text-wool-600">URL:</span>
+                    <span x-text="settings.profiles[name]?.url || 'Not set'"></span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-wool-600">API Key:</span>
+                    <span x-text="settings.profiles[name]?.apiKey ? '••••••••' : 'Not set'"></span>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- Profile Edit Dialog -->
+          <div x-show="editingProfile" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]" @click.self="cancelEditProfile()">
+            <div class="bg-pasture-800 rounded-lg shadow-xl w-[420px] p-4 border border-pasture-600" @click.stop>
+              <h3 class="text-lg font-semibold text-wool-100 mb-4" x-text="editingProfile === '__new__' ? 'Add Remote Profile' : 'Edit Profile'"></h3>
+              <form class="form grid gap-4">
+                <!-- Name -->
+                <div class="grid gap-2">
+                  <label for="profile-name">Name</label>
+                  <input id="profile-name" type="text" x-model="newProfileName" placeholder="my-server" :disabled="editingProfile !== '__new__'" />
+                  <p class="text-muted-foreground text-sm">Unique identifier for this profile.</p>
+                </div>
+
+                <!-- URL -->
+                <div class="grid gap-2">
+                  <label for="profile-url">Server URL <span class="text-terra">*</span></label>
+                  <input id="profile-url" type="text" x-model="editProfileData.url" placeholder="https://hirsel.example.com" />
+                  <p class="text-muted-foreground text-sm">URL of the remote hirsel server.</p>
+                </div>
+
+                <!-- API Key -->
+                <div class="grid gap-2">
+                  <label for="profile-api-key">API Key <span class="text-terra">*</span></label>
+                  <input id="profile-api-key" type="password" x-model="editProfileData.apiKey" placeholder="••••••••" />
+                  <p class="text-muted-foreground text-sm">Authentication key for the remote server.</p>
+                </div>
+              </form>
+              <div class="flex justify-end gap-2 mt-4">
+                <button type="button" @click="cancelEditProfile()" class="btn btn-ghost">Cancel</button>
+                <button type="button" @click="saveProfile()" class="btn">Save</button>
+              </div>
+            </div>
+          </div>
+        </form>
+
+        <!-- ==================== GIT TAB ==================== -->
+        <form x-show="!loading && activeTab === 'git'" class="form grid gap-6">
+          <p class="text-muted-foreground text-sm">Configure git provider tokens for repository access. Required for remote orchestrator mode.</p>
+
+          <!-- GitHub Provider -->
+          <div class="p-4 bg-pasture-700/30 rounded-lg border border-pasture-600/50">
+            <div class="flex items-center justify-between mb-4">
+              <div class="flex items-center gap-3">
+                <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                </svg>
+                <div>
+                  <h3 class="font-medium text-wool-200">GitHub</h3>
+                  <p class="text-xs text-wool-500">Personal Access Token for GitHub repositories</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <span x-show="settings.git?.configuredProviders?.includes('github')" class="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded flex items-center gap-1">
+                  <i data-lucide="check" class="w-3 h-3"></i>
+                  Configured
+                </span>
+                <span x-show="!settings.git?.configuredProviders?.includes('github')" class="text-xs px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded">
+                  Not configured
+                </span>
+              </div>
+            </div>
+
+            <div class="grid gap-4">
+              <div class="grid gap-2">
+                <label for="git-github-token">Personal Access Token</label>
+                <input id="git-github-token" type="password" x-model="gitHubToken" placeholder="ghp_xxxxxxxxxxxx" />
+                <p class="text-muted-foreground text-sm">
+                  Create a token at <a href="https://github.com/settings/tokens" target="_blank" class="text-amber-500 hover:underline">github.com/settings/tokens</a> with <code class="text-xs bg-pasture-600 px-1 py-0.5 rounded">repo</code> scope.
+                </p>
+              </div>
+
+              <!-- Set as default toggle -->
+              <div x-show="gitHubToken || settings.git?.configuredProviders?.includes('github')" class="gap-2 flex flex-row items-center justify-between rounded-lg border p-3 shadow-xs">
+                <div class="flex flex-col gap-0.5">
+                  <label for="git-default-github" class="leading-normal text-sm">Set as default provider</label>
+                </div>
+                <input id="git-default-github" type="checkbox" role="switch"
+                  :checked="settings.git?.defaultProvider === 'github'"
+                  @change="settings.git = { ...settings.git, defaultProvider: $event.target.checked ? 'github' : null }" />
+              </div>
+            </div>
+          </div>
+
+          <p class="text-xs text-wool-600">More providers (GitLab, Bitbucket) coming soon.</p>
         </form>
 
         <!-- ==================== CONTROLS TAB ==================== -->

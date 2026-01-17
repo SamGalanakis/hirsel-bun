@@ -2,7 +2,7 @@
  * Default configurations for settings modal
  */
 
-import type { AgentAuth, SshRunnerConfig, SpriteRunnerConfig, Settings, AuthMethod } from './types';
+import type { AgentAuth, SshRunnerConfig, SpriteRunnerConfig, Settings, AuthMethod, OrchestratorProfile, GitConfig } from './types';
 
 /**
  * Default agent auth configuration
@@ -38,6 +38,23 @@ export const defaultSpriteRunnerConfig = (): SpriteRunnerConfig => ({
 });
 
 /**
+ * Default remote orchestrator profile configuration
+ */
+export const defaultRemoteProfile = (): OrchestratorProfile => ({
+  mode: 'remote',
+  url: null,
+  apiKey: null,
+});
+
+/**
+ * Default git configuration
+ */
+export const defaultGitConfig = (): GitConfig => ({
+  defaultProvider: null,
+  configuredProviders: [],
+});
+
+/**
  * Default settings
  */
 export const defaultSettings = (): Settings => ({
@@ -63,6 +80,11 @@ export const defaultSettings = (): Settings => ({
   runners: {},
   defaultRunner: null,
   workerRunners: {},
+  profiles: {
+    local: { mode: 'local', url: null, apiKey: null },
+  },
+  defaultProfile: 'local',
+  git: defaultGitConfig(),
 });
 
 /**

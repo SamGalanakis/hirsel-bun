@@ -28,7 +28,7 @@ pub fn agent_presets() -> HashMap<&'static str, AgentPreset> {
         AgentPreset {
             command: vec!["claude-code-acp".into()],
             description: "Anthropic Claude Code",
-            install_hint: Some("npm install -g @anthropics/claude-code-acp"),
+            install_hint: Some("npm install -g @zed-industries/claude-code-acp"),
         },
     );
 
@@ -55,7 +55,7 @@ pub fn agent_presets() -> HashMap<&'static str, AgentPreset> {
         AgentPreset {
             command: vec!["codex".into()],
             description: "OpenAI Codex CLI",
-            install_hint: None,
+            install_hint: Some("npm install -g @zed-industries/codex-acp"),
         },
     );
 

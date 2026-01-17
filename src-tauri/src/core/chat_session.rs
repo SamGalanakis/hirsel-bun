@@ -32,6 +32,7 @@ use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use super::acp::{AcpChild, AcpSpawnConfig};
+use super::credentials::ForwardedCredentials;
 
 /// Result type for chat session operations
 type Result<T> = std::result::Result<T, ChatSessionError>;
@@ -607,6 +608,9 @@ pub struct ChatSessionConfig {
     pub run_name: Option<String>,
     /// System prompt to prepend
     pub system_prompt: Option<String>,
+    /// Credentials to forward to the agent process
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credentials: Option<ForwardedCredentials>,
 }
 
 /// Message sent to a chat session task
@@ -791,12 +795,22 @@ async fn run_chat_session_loop(
     ));
 
     // Spawn agent process using AcpChild for automatic cleanup
-    let spawn_config = AcpSpawnConfig::new(
+    let mut spawn_config = AcpSpawnConfig::new(
         config.agent_command.clone(),
         working_dir.clone(),
         format!("chat:{}", session_id),
     )
     .bypass_permissions(false); // Chat sessions need interactive permission handling
+
+    // Apply forwarded credentials as environment variables
+    if let Some(ref creds) = config.credentials {
+        if let Some(ref token) = creds.claude_access_token {
+            spawn_config = spawn_config.with_env("CLAUDE_ACCESS_TOKEN", token);
+        }
+        if let Some(ref key) = creds.anthropic_api_key {
+            spawn_config = spawn_config.with_env("ANTHROPIC_API_KEY", key);
+        }
+    }
 
     let mut acp_child = match AcpChild::spawn(spawn_config) {
         Ok(c) => c,

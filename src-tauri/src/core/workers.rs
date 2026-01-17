@@ -8,6 +8,7 @@
 
 use crate::cli::AgentPreset;
 use crate::core::config::Config;
+use crate::core::credentials::ForwardedCredentials;
 use crate::core::files::Files;
 use crate::core::state::{SQLiteState, StateError, Status, WorkerStatus, WorkerUpdate};
 use std::collections::HashMap;
@@ -63,6 +64,8 @@ pub struct WorkerSpawnConfig {
     pub teammates: Option<Vec<String>>,
     /// Session ID to resume (optional)
     pub resume_session_id: Option<String>,
+    /// Explicit credentials to forward (for remote orchestrator mode)
+    pub credentials: Option<ForwardedCredentials>,
 }
 
 /// Result of spawning a worker
@@ -113,6 +116,16 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
     env.insert("HIRSEL_WORKER_SUBPROCESS".to_string(), "1".to_string());
     env.insert("HIRSEL_RUN".to_string(), config.run_name.clone());
     env.insert("HIRSEL_WORKER".to_string(), config.worker_name.clone());
+
+    // Apply forwarded credentials (for remote orchestrator mode)
+    if let Some(ref creds) = config.credentials {
+        if let Some(ref token) = creds.claude_access_token {
+            env.insert("CLAUDE_ACCESS_TOKEN".to_string(), token.clone());
+        }
+        if let Some(ref key) = creds.anthropic_api_key {
+            env.insert("ANTHROPIC_API_KEY".to_string(), key.clone());
+        }
+    }
 
     // Set agent command for resume_awaiting_workers in worker subprocess
     if let Ok(agent_cmd_json) = serde_json::to_string(&config.agent_command) {
@@ -426,6 +439,7 @@ pub fn resume_awaiting_workers(
             leader_name: None,
             teammates: None,
             resume_session_id: worker.session_id.clone(),
+            credentials: None,
         };
 
         match spawn_worker(config, &state) {
@@ -861,6 +875,7 @@ pub fn maybe_scale_up(
         leader_name,
         teammates: Some(teammates),
         resume_session_id: None,
+        credentials: None,
     };
 
     match spawn_worker(config, &state) {
@@ -1274,6 +1289,7 @@ mod tests {
             leader_name: None,
             teammates: None,
             resume_session_id: None,
+            credentials: None,
         };
 
         let args = build_worker_args(&config);
@@ -1297,6 +1313,7 @@ mod tests {
             leader_name: Some("alpha".to_string()),
             teammates: Some(vec!["beta".to_string(), "gamma".to_string()]),
             resume_session_id: None,
+            credentials: None,
         };
 
         let args = build_worker_args(&config);
@@ -1319,6 +1336,7 @@ mod tests {
             leader_name: None,
             teammates: None,
             resume_session_id: Some("session-123".to_string()),
+            credentials: None,
         };
 
         let args = build_worker_args(&config);
@@ -1331,7 +1349,7 @@ mod tests {
         let claude = AgentPreset {
             command: vec!["claude-code-acp".to_string()],
             description: "Claude Code",
-            install_hint: Some("npm install -g @anthropics/claude-code-acp"),
+            install_hint: Some("npm install -g @zed-industries/claude-code-acp"),
         };
         assert_eq!(get_agent_command(&claude), vec!["claude-code-acp"]);
 
@@ -1356,6 +1374,7 @@ mod tests {
             leader_name: Some("worker1".to_string()),
             teammates: Some(vec!["worker2".to_string()]),
             resume_session_id: None,
+            credentials: None,
         };
 
         assert!(config.is_leader);

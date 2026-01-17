@@ -473,6 +473,99 @@ fn default_api_url() -> String {
     "https://api.sprites.dev".to_string()
 }
 
+// =============================================================================
+// Orchestrator Profile Types
+// =============================================================================
+
+/// Orchestrator mode for frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OrchestratorModeResponse {
+    Local,
+    Remote,
+}
+
+impl From<config::OrchestratorMode> for OrchestratorModeResponse {
+    fn from(mode: config::OrchestratorMode) -> Self {
+        match mode {
+            config::OrchestratorMode::Local => Self::Local,
+            config::OrchestratorMode::Remote => Self::Remote,
+        }
+    }
+}
+
+impl From<OrchestratorModeResponse> for config::OrchestratorMode {
+    fn from(mode: OrchestratorModeResponse) -> Self {
+        match mode {
+            OrchestratorModeResponse::Local => Self::Local,
+            OrchestratorModeResponse::Remote => Self::Remote,
+        }
+    }
+}
+
+/// Orchestrator profile for frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestratorProfileResponse {
+    pub mode: OrchestratorModeResponse,
+    pub url: Option<String>,
+    /// API key is masked for display (only shows first/last 4 chars)
+    pub api_key: Option<String>,
+}
+
+impl From<config::OrchestratorProfile> for OrchestratorProfileResponse {
+    fn from(profile: config::OrchestratorProfile) -> Self {
+        Self {
+            mode: profile.mode.into(),
+            url: profile.url,
+            api_key: profile.api_key.map(|k| {
+                if k.len() > 8 {
+                    format!("{}...{}", &k[..4], &k[k.len() - 4..])
+                } else {
+                    "****".to_string()
+                }
+            }),
+        }
+    }
+}
+
+// =============================================================================
+// Git Provider Types
+// =============================================================================
+
+/// Git provider type for frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GitProviderResponse {
+    Github,
+    // Future: Gitlab, Bitbucket, etc.
+}
+
+impl From<config::GitProvider> for GitProviderResponse {
+    fn from(provider: config::GitProvider) -> Self {
+        match provider {
+            config::GitProvider::Github => Self::Github,
+        }
+    }
+}
+
+impl From<GitProviderResponse> for config::GitProvider {
+    fn from(provider: GitProviderResponse) -> Self {
+        match provider {
+            GitProviderResponse::Github => Self::Github,
+        }
+    }
+}
+
+/// Git configuration for frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitConfigResponse {
+    pub default_provider: Option<GitProviderResponse>,
+    /// Map of provider -> whether a token is configured (from CredentialStore)
+    pub configured_providers: Vec<GitProviderResponse>,
+}
+
 /// Application configuration for frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -496,6 +589,9 @@ pub struct ConfigResponse {
     pub runners: std::collections::HashMap<String, RunnerConfigResponse>,
     pub default_runner: Option<String>,
     pub worker_runners: std::collections::HashMap<String, String>,
+    pub profiles: std::collections::HashMap<String, OrchestratorProfileResponse>,
+    pub default_profile: String,
+    pub git: GitConfigResponse,
 }
 
 // =============================================================================
