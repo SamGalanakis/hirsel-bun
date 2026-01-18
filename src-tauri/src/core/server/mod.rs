@@ -45,13 +45,13 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
             "/api/gyp/sessions",
             get(gyp::list_sessions).post(gyp::start_session),
         )
-        .route("/api/gyp/sessions/:id", delete(gyp::stop_session))
-        .route("/api/gyp/sessions/:id/messages", post(gyp::send_message))
+        .route("/api/gyp/sessions/{id}", delete(gyp::stop_session))
+        .route("/api/gyp/sessions/{id}/messages", post(gyp::send_message))
         .route(
-            "/api/gyp/sessions/:id/permission",
+            "/api/gyp/sessions/{id}/permission",
             post(gyp::respond_permission),
         )
-        .route("/api/gyp/sessions/:id/events", get(gyp::session_events))
+        .route("/api/gyp/sessions/{id}/events", get(gyp::session_events))
         .with_state(gyp_state);
 
     // Build the main router
@@ -59,58 +59,63 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
         // Health check (no auth required)
         .route("/health", get(routes::health))
         // Run management
-        .route("/api/runs", get(routes::list_runs))
+        .route("/api/runs", get(routes::list_runs).post(routes::create_run))
         .route(
-            "/api/runs/:name",
+            "/api/runs/{name}",
             get(routes::get_run).delete(routes::delete_run),
         )
-        .route("/api/runs/:name/pause", post(routes::pause_run))
-        .route("/api/runs/:name/resume", post(routes::resume_run))
-        .route("/api/runs/:name/deliver", post(routes::deliver_run))
-        // Workers
-        .route("/api/runs/:name/workers", get(routes::list_workers))
         .route(
-            "/api/runs/:name/workers/:worker/restart",
+            "/api/runs/{name}/files",
+            get(routes::download_files).post(routes::upload_files),
+        )
+        .route("/api/runs/{name}/spawn", post(routes::spawn_workers))
+        .route("/api/runs/{name}/pause", post(routes::pause_run))
+        .route("/api/runs/{name}/resume", post(routes::resume_run))
+        .route("/api/runs/{name}/deliver", post(routes::deliver_run))
+        // Workers
+        .route("/api/runs/{name}/workers", get(routes::list_workers))
+        .route(
+            "/api/runs/{name}/workers/{worker}/restart",
             post(routes::restart_worker),
         )
         .route(
-            "/api/runs/:name/workers/:worker/log",
+            "/api/runs/{name}/workers/{worker}/log",
             get(routes::get_worker_log),
         )
         .route(
-            "/api/runs/:name/workers/:worker/events",
+            "/api/runs/{name}/workers/{worker}/events",
             get(routes::get_worker_events),
         )
         // Tasks
         .route(
-            "/api/runs/:name/tasks",
+            "/api/runs/{name}/tasks",
             get(routes::list_tasks).post(routes::add_task),
         )
         .route(
-            "/api/runs/:name/tasks/:task_id",
+            "/api/runs/{name}/tasks/{task_id}",
             delete(routes::delete_task),
         )
         .route(
-            "/api/runs/:name/tasks/:task_id/complete",
+            "/api/runs/{name}/tasks/{task_id}/complete",
             post(routes::complete_task),
         )
         .route(
-            "/api/runs/:name/tasks/:task_id/reopen",
+            "/api/runs/{name}/tasks/{task_id}/reopen",
             post(routes::reopen_task),
         )
         // Threads and messages
-        .route("/api/runs/:name/threads", get(routes::list_threads))
+        .route("/api/runs/{name}/threads", get(routes::list_threads))
         .route(
-            "/api/runs/:name/threads/:thread/messages",
+            "/api/runs/{name}/threads/{thread}/messages",
             get(routes::get_messages).post(routes::send_message),
         )
         // Evals
-        .route("/api/runs/:name/evals", get(routes::list_evals))
+        .route("/api/runs/{name}/evals", get(routes::list_evals))
         // History
-        .route("/api/runs/:name/history", get(routes::get_history))
+        .route("/api/runs/{name}/history", get(routes::get_history))
         // Assets
-        .route("/api/runs/:name/assets", post(gyp::upload_asset))
-        .route("/api/runs/:name/assets-path", get(gyp::get_assets_path))
+        .route("/api/runs/{name}/assets", post(gyp::upload_asset))
+        .route("/api/runs/{name}/assets-path", get(gyp::get_assets_path))
         // Config
         .route("/api/config", get(routes::get_config))
         // Merge Gyp routes

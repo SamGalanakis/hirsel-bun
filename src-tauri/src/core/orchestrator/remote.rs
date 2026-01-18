@@ -8,8 +8,9 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use super::{
-    AddTaskRequest, DeliverRunRequest, HealthResponse, Orchestrator, OrchestratorError,
-    OrchestratorResult, ResumeRunRequest, SendMessageRequest, WorkerLogParams,
+    AddTaskRequest, CreateRunRequest, CreateRunResponse, DeliverRunRequest, HealthResponse,
+    Orchestrator, OrchestratorError, OrchestratorResult, ResumeRunRequest, SendMessageRequest,
+    SpawnWorkersRequest, SpawnWorkersResponse, WorkerLogParams,
 };
 use crate::core::api_types::{
     ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, Task, ThreadSummary,
@@ -135,6 +136,104 @@ impl RemoteOrchestrator {
         }
 
         Ok(())
+    }
+
+    // =========================================================================
+    // Server-Side Run Creation (not part of Orchestrator trait)
+    // =========================================================================
+
+    /// Create a new run on the remote server
+    ///
+    /// This sets up the run's state, spec, and initial worker.
+    /// After this, call upload_files() and then spawn_workers().
+    pub async fn create_run(
+        &self,
+        request: CreateRunRequest,
+    ) -> OrchestratorResult<CreateRunResponse> {
+        self.post("/api/runs", &request).await
+    }
+
+    /// Upload working directory as tarball to the server
+    ///
+    /// The tarball should be a gzipped tar archive of the project files.
+    /// Workers will download and extract these files before starting.
+    pub async fn upload_files(&self, run_name: &str, tarball: Vec<u8>) -> OrchestratorResult<()> {
+        let url = format!(
+            "{}/api/runs/{}/files",
+            self.base_url,
+            urlencoding::encode(run_name)
+        );
+
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.api_key)
+            .header("Content-Type", "application/gzip")
+            .body(tarball)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(OrchestratorError::Http(format!(
+                "HTTP {} from {}: {}",
+                status, url, body
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Download working directory tarball from the server
+    ///
+    /// Returns a gzipped tar archive of the run's work directory.
+    pub async fn download_files(&self, run_name: &str) -> OrchestratorResult<Vec<u8>> {
+        let url = format!(
+            "{}/api/runs/{}/files",
+            self.base_url,
+            urlencoding::encode(run_name)
+        );
+
+        let resp = self
+            .client
+            .get(&url)
+            .bearer_auth(&self.api_key)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(OrchestratorError::Http(format!(
+                "HTTP {} from {}: {}",
+                status, url, body
+            )));
+        }
+
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| OrchestratorError::Http(format!("Failed to read response: {}", e)))?;
+
+        Ok(bytes.to_vec())
+    }
+
+    /// Spawn workers on the remote server
+    ///
+    /// Creates and starts the specified number of workers.
+    /// The run must have files uploaded first.
+    pub async fn spawn_workers(
+        &self,
+        run_name: &str,
+        count: u32,
+    ) -> OrchestratorResult<SpawnWorkersResponse> {
+        let body = SpawnWorkersRequest { count };
+        self.post(
+            &format!("/api/runs/{}/spawn", urlencoding::encode(run_name)),
+            &body,
+        )
+        .await
     }
 }
 

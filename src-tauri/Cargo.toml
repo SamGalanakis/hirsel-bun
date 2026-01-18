@@ -62,6 +62,9 @@ urlencoding = "2"
 serde_urlencoded = "0.7"
 aes-gcm = "0.10"
 hex = "0.4"
+flate2 = "1"
+tar = "0.4"
+walkdir = "2"
 
 [dev-dependencies]
 tempfile = "3"

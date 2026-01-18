@@ -117,6 +117,53 @@ pub struct HealthResponse {
     pub version: String,
 }
 
+/// Create run request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateRunRequest {
+    /// Name of the run
+    pub name: String,
+    /// Spec content (markdown)
+    pub spec: String,
+    /// Optional runner name (default: from server config)
+    pub runner: Option<String>,
+    /// Maximum workers to autoscale to (default: 1)
+    pub worker_scale: Option<u32>,
+    /// Time limit in minutes
+    pub time_limit_minutes: Option<u32>,
+    /// Max iterations before pausing
+    pub max_iterations: Option<u32>,
+    /// Human-in-the-loop mode
+    pub human_in_the_loop: Option<bool>,
+    /// Eval file content (markdown)
+    pub eval: Option<String>,
+}
+
+/// Create run response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateRunResponse {
+    pub name: String,
+    pub run_dir: String,
+    pub files_url: String,
+}
+
+/// Spawn workers request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpawnWorkersRequest {
+    /// Number of workers to spawn
+    pub count: u32,
+}
+
+/// Spawn workers response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpawnWorkersResponse {
+    /// Names of spawned workers
+    pub workers: Vec<String>,
+}
+
 // =============================================================================
 // Orchestrator Trait
 // =============================================================================

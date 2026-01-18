@@ -27,6 +27,11 @@ impl LocalOrchestrator {
         Self { config }
     }
 
+    /// Get a reference to the config
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
     /// Get state for a run, opening the SQLite database
     fn get_state(&self, run_name: &str) -> OrchestratorResult<SQLiteState> {
         let db_path = self.config.runs_dir().join(run_name).join("hirsel.db");

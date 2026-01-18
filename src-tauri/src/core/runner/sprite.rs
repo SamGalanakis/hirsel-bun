@@ -481,20 +481,35 @@ impl Runner for SpriteRunner {
             sprite.name, sprite.status
         );
 
-        // Step 2: Sync work directory via git clone
-        let project_url = config.project_url.as_ref().ok_or_else(|| {
-            RunnerError::Config("project_url required for sprite runner".to_string())
-        })?;
-
+        // Step 2: Sync work directory
         let work_dir = "/home/sprite/work";
-        let setup_commands = vec![
-            format!("mkdir -p {}", work_dir),
-            format!(
-                "if [ -d {}/.git ]; then cd {} && git fetch origin && git reset --hard origin/HEAD; else git clone {} {}; fi",
-                work_dir, work_dir, project_url, work_dir
-            ),
-            format!("mkdir -p {}/chats", work_dir),
-        ];
+        let setup_commands = if let Some(ref project_url) = config.project_url {
+            // Git clone mode
+            vec![
+                format!("mkdir -p {}", work_dir),
+                format!(
+                    "if [ -d {}/.git ]; then cd {} && git fetch origin && git reset --hard origin/HEAD; else git clone {} {}; fi",
+                    work_dir, work_dir, project_url, work_dir
+                ),
+                format!("mkdir -p {}/chats", work_dir),
+            ]
+        } else if let Some(ref coordinator_url) = config.coordinator_url {
+            // Tarball download mode - get files from coordinator API
+            let files_url = format!("{}/api/runs/{}/files", coordinator_url, config.run_name);
+            vec![
+                format!("mkdir -p {}", work_dir),
+                format!(
+                    "cd {} && curl -sS -H 'Authorization: Bearer $HIRSEL_API_KEY' '{}' | tar -xzf -",
+                    work_dir, files_url
+                ),
+                format!("cd {} && git init && git add . && git commit -m 'Initial import from server' 2>/dev/null || true", work_dir),
+                format!("mkdir -p {}/chats", work_dir),
+            ]
+        } else {
+            return Err(RunnerError::Config(
+                "Either project_url or coordinator_url required for sprite runner".to_string(),
+            ));
+        };
 
         for cmd in setup_commands {
             info!("Running setup command: {}", cmd);

@@ -1,8 +1,33 @@
-references/
+# Dependencies
 node_modules/
+
+# Build outputs
 build/
 dist/
+references/
+
+# Runtime data
 runs/
-bun.lock
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# OS files
 .DS_Store
+Thumbs.db
+
+# Logs
 *.log
+
+# Lock files
+bun.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

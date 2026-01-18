@@ -342,6 +342,10 @@ pub struct GoArgs {
     /// Path to spec file or template name
     pub spec: String,
 
+    /// Orchestrator profile to use (for remote server mode)
+    #[arg(long)]
+    pub profile: Option<String>,
+
     /// Number or range of workers (e.g., "3", "1-5", "2+")
     #[arg(short, long, default_value = "1")]
     pub workers: String,

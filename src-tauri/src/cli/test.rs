@@ -211,6 +211,7 @@ pub fn run_scenario(
     let args = GoArgs {
         run_name: actual_run_name.clone(),
         spec: spec_path.to_str().unwrap_or("").to_string(),
+        profile: None, // Tests run locally
         workers: workers.unwrap_or("1").to_string(),
         time_limit: None,
         remote: remote.map(|s| s.to_string()),

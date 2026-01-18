@@ -40,6 +40,7 @@ pub enum GoError {
     Remote(RemoteError),
     Tunnel(TunnelError),
     Runner(RunnerError),
+    Orchestrator(String),
     InvalidSpec(String),
     RunExists(String),
     InvalidTimeLimit(String),
@@ -47,6 +48,7 @@ pub enum GoError {
     InvalidPauseMode(String),
     InvalidProject(String),
     InvalidRunner(String),
+    InvalidProfile(String),
     NoGitRepo,
     UserAborted,
     CoordinatorError(String),
@@ -63,6 +65,7 @@ impl std::fmt::Display for GoError {
             GoError::Remote(e) => write!(f, "Remote error: {}", e),
             GoError::Tunnel(e) => write!(f, "Tunnel error: {}", e),
             GoError::Runner(e) => write!(f, "Runner error: {}", e),
+            GoError::Orchestrator(msg) => write!(f, "Orchestrator error: {}", msg),
             GoError::InvalidSpec(msg) => write!(f, "Invalid spec: {}", msg),
             GoError::RunExists(name) => write!(f, "Run '{}' already exists and is active", name),
             GoError::InvalidTimeLimit(msg) => write!(f, "Invalid time limit: {}", msg),
@@ -70,6 +73,7 @@ impl std::fmt::Display for GoError {
             GoError::InvalidPauseMode(msg) => write!(f, "Invalid pause mode: {}", msg),
             GoError::InvalidProject(msg) => write!(f, "Invalid project: {}", msg),
             GoError::InvalidRunner(msg) => write!(f, "Invalid runner: {}", msg),
+            GoError::InvalidProfile(msg) => write!(f, "Invalid profile: {}", msg),
             GoError::NoGitRepo => write!(f, "Not in a git repository"),
             GoError::UserAborted => write!(f, "Aborted by user"),
             GoError::CoordinatorError(msg) => write!(f, "Coordinator error: {}", msg),
@@ -130,6 +134,12 @@ impl From<RunnerError> for GoError {
 impl From<crate::core::ops::OpsError> for GoError {
     fn from(e: crate::core::ops::OpsError) -> Self {
         GoError::InvalidSpec(e.to_string())
+    }
+}
+
+impl From<crate::core::orchestrator::OrchestratorError> for GoError {
+    fn from(e: crate::core::orchestrator::OrchestratorError) -> Self {
+        GoError::Orchestrator(e.to_string())
     }
 }
 
@@ -462,6 +472,197 @@ pub struct GoOutput {
     pub time_limit_minutes: Option<i64>,
 }
 
+/// Create a tarball of a project directory, excluding common build artifacts
+fn create_project_tarball(project_path: &Path) -> GoResult<Vec<u8>> {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use tar::Builder;
+    use walkdir::WalkDir;
+
+    let mut buffer = Vec::new();
+    let encoder = GzEncoder::new(&mut buffer, Compression::fast());
+    let mut builder = Builder::new(encoder);
+
+    // Walk the project directory, excluding common build artifacts
+    for entry in WalkDir::new(project_path)
+        .into_iter()
+        .filter_entry(|e| {
+            let name = e.file_name().to_str().unwrap_or("");
+            // Exclude common build/cache directories and files
+            !matches!(
+                name,
+                "node_modules"
+                    | "target"
+                    | ".git"
+                    | ".venv"
+                    | "__pycache__"
+                    | ".mypy_cache"
+                    | ".pytest_cache"
+                    | "dist"
+                    | "build"
+                    | ".next"
+                    | ".nuxt"
+                    | "coverage"
+                    | ".turbo"
+                    | ".vercel"
+                    | ".netlify"
+            )
+        })
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        let relative_path = path.strip_prefix(project_path).unwrap_or(path);
+
+        if path == project_path {
+            continue; // Skip root directory itself
+        }
+
+        if path.is_file() {
+            builder
+                .append_path_with_name(path, relative_path)
+                .map_err(|e| GoError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+        } else if path.is_dir() {
+            builder
+                .append_dir(relative_path, path)
+                .map_err(|e| GoError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+        }
+    }
+
+    builder
+        .into_inner()
+        .map_err(|e| GoError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?
+        .finish()
+        .map_err(|e| GoError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+
+    info!("Created tarball: {} bytes", buffer.len());
+    Ok(buffer)
+}
+
+/// Execute `hirsel go` in remote mode - delegates run creation to server
+fn run_remote(
+    args: &GoArgs,
+    run_name: &str,
+    spec_content: &str,
+    eval_path: Option<&Path>,
+    scale: WorkerScale,
+    time_limit_minutes: Option<i64>,
+    profile_name: &str,
+    profile: &crate::core::config::OrchestratorProfile,
+) -> GoResult<GoOutput> {
+    use crate::core::credentials::CredentialStore;
+    use crate::core::orchestrator::{CreateRunRequest, RemoteOrchestrator};
+
+    info!(
+        "Running in remote mode (profile: {}, url: {:?})",
+        profile_name, profile.url
+    );
+
+    let url = profile
+        .url
+        .as_ref()
+        .ok_or_else(|| GoError::InvalidProfile("Remote profile missing 'url' field".to_string()))?;
+
+    // Try credential store first, fall back to config
+    let api_key = {
+        let cred_key = format!("profile_{}_api_key", profile_name);
+        CredentialStore::open()
+            .ok()
+            .and_then(|store| store.load(&cred_key).ok())
+            .or_else(|| profile.api_key.clone())
+    }
+    .ok_or_else(|| GoError::InvalidProfile("Remote profile missing 'api_key' field".to_string()))?;
+
+    // Get project path
+    let project_path = if let Some(ref proj) = args.project {
+        let path = Path::new(proj);
+        ensure_project_ready(path, args.yolo)?
+    } else {
+        get_repo_root(Some(Path::new("."))).map_err(|_| GoError::NoGitRepo)?
+    };
+
+    // Print info
+    if !args.yolo {
+        println!("Creating remote run '{}' on {}", run_name, url);
+        println!("  Project: {}", project_path.display());
+        println!("  Workers: {} (autoscale)", scale.max);
+        if let Some(limit) = time_limit_minutes {
+            println!("  Time limit: {} minutes", limit);
+        }
+        println!();
+        if !prompt_confirm("Continue?", args.yolo) {
+            return Err(GoError::UserAborted);
+        }
+    }
+
+    // Create tarball of project
+    info!("Creating tarball of project: {}", project_path.display());
+    let tarball = create_project_tarball(&project_path)?;
+    info!("Tarball size: {} bytes", tarball.len());
+
+    // Read eval content if specified
+    let eval_content = eval_path.map(|p| fs::read_to_string(p)).transpose()?;
+
+    // Create remote orchestrator
+    let orchestrator = RemoteOrchestrator::new(url.clone(), api_key);
+
+    // Create the run
+    let create_request = CreateRunRequest {
+        name: run_name.to_string(),
+        spec: spec_content.to_string(),
+        runner: args.runner.clone(),
+        worker_scale: Some(scale.max),
+        time_limit_minutes: time_limit_minutes.map(|m| m as u32),
+        max_iterations: args.max_iterations.map(|m| m as u32),
+        human_in_the_loop: None, // Could add a flag for this
+        eval: eval_content,
+    };
+
+    let rt = tokio::runtime::Runtime::new().map_err(|e| GoError::Io(e.into()))?;
+
+    info!("Creating run on remote server...");
+    let create_response = rt
+        .block_on(orchestrator.create_run(create_request))
+        .map_err(|e| GoError::Orchestrator(format!("Failed to create run: {}", e)))?;
+
+    info!("Run created: {}", create_response.name);
+
+    // Upload project files
+    info!("Uploading project files...");
+    rt.block_on(orchestrator.upload_files(&create_response.name, tarball))
+        .map_err(|e| GoError::Orchestrator(format!("Failed to upload files: {}", e)))?;
+
+    info!("Files uploaded");
+
+    // Spawn initial worker (server will use autoscaling for more)
+    if !args.draft {
+        info!("Spawning initial worker...");
+        let spawn_response = rt
+            .block_on(orchestrator.spawn_workers(&create_response.name, 1))
+            .map_err(|e| GoError::Orchestrator(format!("Failed to spawn workers: {}", e)))?;
+
+        info!("Spawned workers: {:?}", spawn_response.workers);
+
+        Ok(GoOutput {
+            run_name: create_response.name,
+            project_path,
+            run_dir: PathBuf::from(create_response.run_dir),
+            worker_names: spawn_response.workers,
+            worker_count: 1,
+            time_limit_minutes,
+        })
+    } else {
+        info!("Draft mode: skipping worker spawn");
+        Ok(GoOutput {
+            run_name: create_response.name,
+            project_path,
+            run_dir: PathBuf::from(create_response.run_dir),
+            worker_names: vec![],
+            worker_count: 0,
+            time_limit_minutes,
+        })
+    }
+}
+
 /// Execute the `hirsel go` command
 pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
     // Slugify run name
@@ -492,31 +693,8 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
         None
     };
 
-    // Get run directories
-    let run_dir = get_run_dir(&run_name);
-    let staging_dir = get_staging_dir(&run_name);
-    let db_path = get_db_path(&run_name);
-
-    // Check for existing run
-    if run_dir.exists() {
-        let state = SQLiteState::new(db_path.clone())?;
-        let status = state.status()?;
-
-        match status {
-            Status::Working | Status::Eval => {
-                return Err(GoError::RunExists(run_name));
-            }
-            _ => {
-                // Old run exists but not active - remove it
-                fs::remove_dir_all(&run_dir)?;
-                if staging_dir.exists() {
-                    fs::remove_dir_all(&staging_dir)?;
-                }
-            }
-        }
-    }
-
-    // Resolve spec content - handle --template flag
+    // Resolve spec content early (needed for both local and remote modes)
+    // Handle --template flag
     let (spec_content, eval_path) = if let Some(ref template_name) = args.template {
         let template_dir = get_hirsel_dir().join("templates").join(template_name);
         if !template_dir.exists() {
@@ -544,6 +722,55 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
 
     if spec_content.trim().is_empty() {
         return Err(GoError::InvalidSpec("Spec is empty".to_string()));
+    }
+
+    // Check if we're using a remote profile
+    if let Some(ref profile_name) = args.profile {
+        // Load config and check if this profile is remote mode
+        let (config, _) =
+            Config::load().map_err(|e| GoError::InvalidProfile(format!("Config error: {}", e)))?;
+
+        let profile = config.profiles.get(profile_name).ok_or_else(|| {
+            GoError::InvalidProfile(format!("Profile '{}' not found", profile_name))
+        })?;
+
+        if matches!(profile.mode, crate::core::config::OrchestratorMode::Remote) {
+            // Run in remote mode - delegate to server
+            return run_remote(
+                args,
+                &run_name,
+                &spec_content,
+                eval_path.as_deref(),
+                scale,
+                time_limit_minutes,
+                profile_name,
+                profile,
+            );
+        }
+    }
+
+    // Get run directories
+    let run_dir = get_run_dir(&run_name);
+    let staging_dir = get_staging_dir(&run_name);
+    let db_path = get_db_path(&run_name);
+
+    // Check for existing run
+    if run_dir.exists() {
+        let state = SQLiteState::new(db_path.clone())?;
+        let status = state.status()?;
+
+        match status {
+            Status::Working | Status::Eval => {
+                return Err(GoError::RunExists(run_name));
+            }
+            _ => {
+                // Old run exists but not active - remove it
+                fs::remove_dir_all(&run_dir)?;
+                if staging_dir.exists() {
+                    fs::remove_dir_all(&staging_dir)?;
+                }
+            }
+        }
     }
 
     // Get project path (specified, or detect from current directory)

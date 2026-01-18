@@ -114,7 +114,7 @@ impl SshRunner {
             .map_err(|_| RunnerError::SpawnFailed("Invalid PID response".to_string()))
     }
 
-    /// Build the script to setup the remote workspace
+    /// Build the script to setup the remote workspace via git clone
     fn build_setup_script(&self, work_dir: &str, git_http_url: &str) -> String {
         format!(
             r#"
@@ -137,6 +137,36 @@ echo "Workspace ready at {work_dir}"
 "#,
             work_dir = work_dir,
             git_http_url = git_http_url
+        )
+    }
+
+    /// Build the script to setup the remote workspace via tarball download
+    fn build_tarball_setup_script(&self, work_dir: &str, files_url: &str) -> String {
+        format!(
+            r#"
+set -e
+mkdir -p {work_dir}
+cd {work_dir}
+
+# Download and extract project tarball from coordinator
+echo "Downloading project files from {files_url}..."
+curl -sS -H "Authorization: Bearer $HIRSEL_API_KEY" \
+    "{files_url}" | tar -xzf -
+
+# Initialize git repo for worker to use
+if [ ! -d .git ]; then
+    git init
+    git add .
+    git commit -m "Initial import from server"
+fi
+
+# Create chats directory for synced files
+mkdir -p chats
+
+echo "Workspace ready at {work_dir}"
+"#,
+            work_dir = work_dir,
+            files_url = files_url,
         )
     }
 
@@ -224,27 +254,55 @@ echo $!
 #[async_trait]
 impl Runner for SshRunner {
     async fn spawn(&self, config: &WorkerSpawnConfig) -> RunnerResult<SpawnResult> {
-        let tunnel_port = self
-            .tunnel_port
-            .ok_or_else(|| RunnerError::Config("Tunnel port not set for SSH runner".to_string()))?;
-
         let work_dir = format!(
             "{}/{}/{}",
             self.config.work_base, config.run_name, config.worker_name
         );
 
-        // Get git URL from config or construct default
-        let git_url = config
-            .project_url
-            .clone()
-            .unwrap_or_else(|| format!("http://127.0.0.1:{}/git", tunnel_port));
+        // Determine API URL - prefer coordinator_url from config (server mode),
+        // fall back to tunnel port (tunnel mode)
+        let api_url = if let Some(ref coordinator_url) = config.coordinator_url {
+            // Server mode - use direct URL to coordinator
+            info!(
+                "Using direct coordinator URL for {} on {}",
+                config.worker_name, self.config.host
+            );
+            coordinator_url.clone()
+        } else {
+            // Tunnel mode - require tunnel_port
+            let tunnel_port = self.tunnel_port.ok_or_else(|| {
+                RunnerError::Config("Tunnel port not set for SSH runner".to_string())
+            })?;
+            format!("http://127.0.0.1:{}", tunnel_port)
+        };
+
+        // Get git URL from config or construct from API URL
+        let git_url = config.project_url.clone().unwrap_or_else(|| {
+            if let Some(ref coordinator_url) = config.coordinator_url {
+                // Server mode - get files from coordinator API
+                format!("{}/api/runs/{}/files", coordinator_url, config.run_name)
+            } else if let Some(tunnel_port) = self.tunnel_port {
+                // Tunnel mode - local git server
+                format!("http://127.0.0.1:{}/git", tunnel_port)
+            } else {
+                // Fallback
+                format!("{}/git", api_url)
+            }
+        });
+
+        // If using server mode with tarball download, use different setup script
+        let uses_tarball = config.coordinator_url.is_some() && config.project_url.is_none();
 
         // Step 1: Setup remote workspace
         info!(
             "Setting up remote workspace for {} on {}",
             config.worker_name, self.config.host
         );
-        let setup_script = self.build_setup_script(&work_dir, &git_url);
+        let setup_script = if uses_tarball {
+            self.build_tarball_setup_script(&work_dir, &git_url)
+        } else {
+            self.build_setup_script(&work_dir, &git_url)
+        };
 
         if !self.run_ssh_command(&setup_script, Duration::from_secs(120))? {
             return Err(RunnerError::SetupFailed(format!(
@@ -258,7 +316,6 @@ impl Runner for SshRunner {
             "Starting worker {} on {}",
             config.worker_name, self.config.host
         );
-        let api_url = format!("http://127.0.0.1:{}", tunnel_port);
         let worker_script = self.build_worker_script(config, &work_dir, &api_url);
 
         let pid = self.spawn_remote_process(&worker_script)?;
