@@ -563,6 +563,8 @@ fn build_worker_prompt(
     prompt.push_str("## The \"scope\" Task - Three-Phase Workflow\n\n");
     prompt.push_str("Most runs start with a single task: `scope`. This is NOT where you create implementation tasks.\n\n");
 
+    prompt.push_str("**For simple tasks:** If the task is straightforward (e.g., a small bug fix, adding a single function, or a minor change where you already understand the codebase), skip exploration and directly create implementation tasks during scoping.\n\n");
+
     prompt.push_str("### Phase 1: Scoping (the \"scope\" task)\n\n");
     prompt.push_str("1. Claim the `scope` task\n");
     prompt.push_str("2. Read the spec above to understand what needs to be built\n");

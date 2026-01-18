@@ -40,6 +40,7 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         runs::pause_run,
         runs::resume_run,
         runs::delete_run,
+        runs::delete_all_runs,
         runs::deliver_run,
         // Draft commands
         drafts::validate_repo,
@@ -93,10 +94,13 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         // Config commands
         config_cmd::get_config,
         config_cmd::save_config,
+        config_cmd::get_tailscale_info,
+        config_cmd::check_ssh_runner,
         // Credential commands
         credentials::store_credential,
         credentials::delete_credential,
         credentials::has_credential,
+        credentials::get_credential,
         credentials::get_credential_masked,
         // Chat session commands
         chat::start_chat_session,

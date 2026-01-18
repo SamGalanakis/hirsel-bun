@@ -350,33 +350,8 @@ impl From<config::AuthConfig> for AuthConfigResponse {
 }
 
 // =============================================================================
-// Remote/Runner Config Types
+// Runner Config Types
 // =============================================================================
-
-/// Remote configuration for frontend
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoteConfigResponse {
-    pub host: String,
-    pub ssh_key: Option<String>,
-    pub ssh_port: u16,
-    pub work_base: String,
-    pub python_path: String,
-    pub location: Option<String>,
-}
-
-impl From<config::RemoteConfig> for RemoteConfigResponse {
-    fn from(remote: config::RemoteConfig) -> Self {
-        Self {
-            host: remote.host,
-            ssh_key: remote.ssh_key,
-            ssh_port: remote.ssh_port,
-            work_base: remote.work_base,
-            python_path: remote.python_path,
-            location: remote.location,
-        }
-    }
-}
 
 /// Runner configuration for frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -511,10 +486,43 @@ pub struct OrchestratorProfileResponse {
     pub url: Option<String>,
     /// API key is masked for display (only shows first/last 4 chars)
     pub api_key: Option<String>,
+    /// How workers access the orchestrator
+    pub access: config::OrchestratorAccess,
 }
 
 impl From<config::OrchestratorProfile> for OrchestratorProfileResponse {
     fn from(profile: config::OrchestratorProfile) -> Self {
+        // Mask OAuth credentials in the access field
+        let access = match profile.access {
+            config::OrchestratorAccess::Direct => config::OrchestratorAccess::Direct,
+            config::OrchestratorAccess::Tailscale {
+                oauth_client_id,
+                oauth_client_secret,
+                tag,
+            } => config::OrchestratorAccess::Tailscale {
+                // Mask credentials - show first/last 4 chars
+                oauth_client_id: if oauth_client_id.len() > 8 {
+                    format!(
+                        "{}...{}",
+                        &oauth_client_id[..4],
+                        &oauth_client_id[oauth_client_id.len() - 4..]
+                    )
+                } else {
+                    "****".to_string()
+                },
+                oauth_client_secret: if oauth_client_secret.len() > 8 {
+                    format!(
+                        "{}...{}",
+                        &oauth_client_secret[..4],
+                        &oauth_client_secret[oauth_client_secret.len() - 4..]
+                    )
+                } else {
+                    "****".to_string()
+                },
+                tag,
+            },
+        };
+
         Self {
             mode: profile.mode.into(),
             url: profile.url,
@@ -525,6 +533,7 @@ impl From<config::OrchestratorProfile> for OrchestratorProfileResponse {
                     "****".to_string()
                 }
             }),
+            access,
         }
     }
 }
@@ -584,8 +593,6 @@ pub struct ConfigResponse {
     pub context_warning_threshold: f64,
     pub coordinator_port: u16,
     pub auth: AuthConfigResponse,
-    pub remotes: std::collections::HashMap<String, RemoteConfigResponse>,
-    pub default_remote: Option<String>,
     pub runners: std::collections::HashMap<String, RunnerConfigResponse>,
     pub default_runner: Option<String>,
     pub worker_runners: std::collections::HashMap<String, String>,
@@ -679,4 +686,87 @@ pub fn parse_timestamp(timestamp: &str) -> Option<chrono::DateTime<chrono::Utc>>
     chrono::DateTime::parse_from_rfc3339(timestamp)
         .ok()
         .map(|dt| dt.with_timezone(&chrono::Utc))
+}
+
+// =============================================================================
+// Config Update Request Types
+// =============================================================================
+
+/// Request to update general configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeneralConfigRequest {
+    pub eval_timeout: Option<u32>,
+    pub auto_learn: Option<bool>,
+    pub max_iterations: Option<Option<u32>>,
+    pub human_in_the_loop: Option<bool>,
+    pub default_runner: Option<Option<String>>,
+    pub coordinator_port: Option<u16>,
+}
+
+/// Request to update agent configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentConfigRequest {
+    pub command: Option<Vec<String>>,
+}
+
+/// Request to update compaction configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompactionConfigRequest {
+    pub enabled: Option<bool>,
+    pub threshold: Option<Option<u32>>,
+    pub keep_messages: Option<u32>,
+}
+
+/// Request to update agent auth configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentAuthConfigRequest {
+    pub method: AuthMethodResponse,
+    pub api_key: Option<String>,
+    pub env_var: Option<String>,
+}
+
+impl From<AgentAuthConfigRequest> for config::AgentAuth {
+    fn from(req: AgentAuthConfigRequest) -> Self {
+        Self {
+            method: req.method.into(),
+            api_key: req.api_key,
+            env_var: req.env_var,
+        }
+    }
+}
+
+/// Request to update git configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitConfigRequest {
+    pub default_provider: Option<GitProviderResponse>,
+}
+
+/// Request to store a credential
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoreCredentialRequest {
+    pub value: String,
+}
+
+/// Response for credential status check
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialStatusResponse {
+    pub key: String,
+    pub exists: bool,
+    pub masked_value: Option<String>,
+}
+
+/// Helper to mask a credential value for display
+pub fn mask_credential(value: &str) -> String {
+    if value.len() > 8 {
+        format!("{}...{}", &value[..4], &value[value.len() - 4..])
+    } else {
+        "****".to_string()
+    }
 }

@@ -89,6 +89,8 @@ pub struct WorkerSpawnConfig {
     pub coordinator_url: Option<String>,
     /// Git URL for cloning project (for remote workers)
     pub project_url: Option<String>,
+    /// Tailscale auth key for auto-joining worker hosts to tailnet
+    pub tailscale_authkey: Option<String>,
 }
 
 /// Handle to a spawned worker

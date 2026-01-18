@@ -15,7 +15,6 @@ export type ShortcutAction =
   | 'navigate-up'
   | 'navigate-down'
   | 'select-run'
-  | 'toggle-sidebar'
   | 'fullscreen'
   | 'attach'
   | 'pause'
@@ -23,8 +22,6 @@ export type ShortcutAction =
   | 'switch-chat'
   | 'focus-message'
   | 'toggle-ai'
-  | 'toggle-theme'
-  | 'show-help'
   | 'sheep-game'
   | 'close-panel';
 
@@ -59,7 +56,6 @@ export const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
   { action: 'navigate-up', label: 'Navigate runs up', category: 'navigation', binding: { key: 'k' }, defaultBinding: { key: 'k' } },
   { action: 'navigate-down', label: 'Navigate runs down', category: 'navigation', binding: { key: 'j' }, defaultBinding: { key: 'j' } },
   { action: 'select-run', label: 'Select run', category: 'navigation', binding: { key: 'Enter' }, defaultBinding: { key: 'Enter' } },
-  { action: 'toggle-sidebar', label: 'Toggle sidebar', category: 'navigation', binding: { key: '[' }, defaultBinding: { key: '[' } },
   { action: 'fullscreen', label: 'Fullscreen activity', category: 'navigation', binding: { key: 'f' }, defaultBinding: { key: 'f' } },
 
   // Run controls
@@ -73,8 +69,6 @@ export const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
   { action: 'toggle-ai', label: 'Toggle AI sidebar', category: 'communication', binding: { key: 'i' }, defaultBinding: { key: 'i' } },
 
   // Other
-  { action: 'toggle-theme', label: 'Toggle theme', category: 'other', binding: { key: 't' }, defaultBinding: { key: 't' } },
-  { action: 'show-help', label: 'Show help', category: 'other', binding: { key: '?' }, defaultBinding: { key: '?' } },
   { action: 'sheep-game', label: 'Sheep clicker', category: 'other', binding: { key: 'g' }, defaultBinding: { key: 'g' } },
   { action: 'close-panel', label: 'Close panels', category: 'other', binding: { key: 'Escape' }, defaultBinding: { key: 'Escape' } },
 ];

@@ -1,5 +1,18 @@
 # Hirsel Development Guidelines
 
+## Architecture Documentation
+
+> **Important**: See [`docs/architecture.md`](docs/architecture.md) for the full system architecture overview.
+> This document **must be kept up to date** as the architecture evolves.
+
+The architecture doc covers:
+- High-level system design and tech stack
+- Daemon architecture (CLI/GUI thin clients → daemon → state)
+- Orchestrator pattern (Local, Daemon, Remote)
+- Worker execution model and ACP protocol
+- State management (SQLite)
+- File locations and data flow
+
 ## Development Mode - No Backwards Compatibility
 
 This is a development project. **Backwards compatibility with old databases is not required.**
@@ -152,10 +165,11 @@ Use [Lucide Icons](https://lucide.dev/icons/) for all iconography.
 
 2. **Dynamic icons need re-initialization** - After adding icons dynamically, call:
    ```javascript
-   lucide.createIcons();
+   lucide.createIcons({ inTemplates: true });
    // Or scope to specific element:
-   lucide.createIcons({ nodes: [element] });
+   lucide.createIcons({ inTemplates: true, nodes: [element] });
    ```
+   **Always use `inTemplates: true`** - This option processes icons inside `<template>` tags, which is essential for Alpine.js `x-for` loops. Without it, icons in dynamically rendered templates won't appear.
 
 3. **Common icons:**
    - Navigation: `chevron-down`, `chevron-right`, `chevrons-up-down`, `arrow-left`

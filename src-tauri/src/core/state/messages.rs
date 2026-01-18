@@ -2,7 +2,7 @@
 //!
 //! Methods for managing messages, threads, and notifications.
 
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Utc};
 use rusqlite::{params, Row};
 
 use super::types::{Message, RunStateSummary, StateError, StateResult, Status};
@@ -254,17 +254,15 @@ impl SQLiteState {
         let elapsed_minutes = if status == Status::Draft {
             0.0
         } else if let Some(ref sa) = started_at {
-            // Calculate elapsed from started_at
             if let Ok(start_time) = DateTime::parse_from_rfc3339(sa) {
-                let elapsed = Local::now().signed_duration_since(start_time);
+                let elapsed = Utc::now().signed_duration_since(start_time);
                 elapsed.num_seconds() as f64 / 60.0
             } else {
                 0.0
             }
         } else if let Some(ref ca) = created_at {
-            // Fallback to created_at
             if let Ok(start_time) = DateTime::parse_from_rfc3339(ca) {
-                let elapsed = Local::now().signed_duration_since(start_time);
+                let elapsed = Utc::now().signed_duration_since(start_time);
                 elapsed.num_seconds() as f64 / 60.0
             } else {
                 0.0

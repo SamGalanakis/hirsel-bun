@@ -481,7 +481,39 @@ impl Runner for SpriteRunner {
             sprite.name, sprite.status
         );
 
-        // Step 2: Sync work directory
+        // Step 2: Setup Tailscale if auth key provided
+        if let Some(ref authkey) = config.tailscale_authkey {
+            info!("Setting up Tailscale on sprite {}", sprite_name);
+            let tailscale_commands = vec![
+                // Install Tailscale if not present
+                "which tailscale || curl -fsSL https://tailscale.com/install.sh | sh".to_string(),
+                // Connect to tailnet (--accept-routes to use exit nodes if configured)
+                format!(
+                    "tailscale status || tailscale up --authkey={} --accept-routes --hostname={}",
+                    authkey, sprite_name
+                ),
+            ];
+
+            for cmd in tailscale_commands {
+                debug!("Running Tailscale setup: {}", cmd);
+                let result = self
+                    .client
+                    .exec(
+                        &sprite_name,
+                        &["sh".to_string(), "-c".to_string(), cmd.clone()],
+                        None,
+                        None,
+                    )
+                    .await;
+
+                if let Err(e) = result {
+                    warn!("Tailscale setup command failed: {} - {}", cmd, e);
+                    // Don't fail the whole spawn - Tailscale might already be set up
+                }
+            }
+        }
+
+        // Step 3: Sync work directory (now step 3 after Tailscale)
         let work_dir = "/home/sprite/work";
         let setup_commands = if let Some(ref project_url) = config.project_url {
             // Git clone mode

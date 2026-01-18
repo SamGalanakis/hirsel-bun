@@ -550,7 +550,7 @@ fn run_remote(
     profile: &crate::core::config::OrchestratorProfile,
 ) -> GoResult<GoOutput> {
     use crate::core::credentials::CredentialStore;
-    use crate::core::orchestrator::{CreateRunRequest, RemoteOrchestrator};
+    use crate::core::orchestrator::{CreateRunRequest, RemoteOrchestrator, TailscaleOAuth};
 
     info!(
         "Running in remote mode (profile: {}, url: {:?})",
@@ -606,6 +606,14 @@ fn run_remote(
     let orchestrator = RemoteOrchestrator::new(url.clone(), api_key);
 
     // Create the run
+    let tailscale_oauth = profile
+        .tailscale_oauth()
+        .map(|(client_id, client_secret, tag)| TailscaleOAuth {
+            client_id: client_id.to_string(),
+            client_secret: client_secret.to_string(),
+            tag: tag.map(String::from),
+        });
+
     let create_request = CreateRunRequest {
         name: run_name.to_string(),
         spec: spec_content.to_string(),
@@ -615,6 +623,7 @@ fn run_remote(
         max_iterations: args.max_iterations.map(|m| m as u32),
         human_in_the_loop: None, // Could add a flag for this
         eval: eval_content,
+        tailscale_oauth,
     };
 
     let rt = tokio::runtime::Runtime::new().map_err(|e| GoError::Io(e.into()))?;
@@ -1033,6 +1042,8 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
                     coord_state,
                     "0.0.0.0".to_string(),
                     coordinator_port,
+                    run_dir.clone(),
+                    run_name.clone(),
                     Some(workspace_dir.clone()),
                 );
 
@@ -1098,6 +1109,7 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
                         env_vars: Some(env_vars),
                         coordinator_url: Some(format!("http://localhost:{}", coordinator_port)),
                         project_url: Some(format!("http://localhost:{}/git", coordinator_port)),
+                        tailscale_authkey: None, // Not needed for local coordinator
                     };
 
                     match spawn_rt.block_on(sprite_runner.spawn(&spawn_config)) {
@@ -1139,6 +1151,19 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
         }
     }
 
+    // Ensure daemon is running for lifecycle management (eval triggering, time limits)
+    // This is non-blocking - if daemon can't start, the run still proceeds
+    if !args.draft {
+        match crate::daemon::DaemonClient::connect_or_start() {
+            Ok(_) => {
+                tracing::debug!("Daemon is running for lifecycle management");
+            }
+            Err(e) => {
+                warn!("Could not start daemon for lifecycle management: {}", e);
+            }
+        }
+    }
+
     Ok(GoOutput {
         run_name,
         project_path,
@@ -1153,7 +1178,7 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
 #[allow(clippy::too_many_arguments)]
 fn spawn_remote_workers(
     run_name: &str,
-    _run_dir: &Path,
+    run_dir: &Path,
     db_path: &Path,
     workspace_dir: &Path,
     remote_specs: &[(String, u32)],
@@ -1180,6 +1205,8 @@ fn spawn_remote_workers(
         state,
         "127.0.0.1".to_string(),
         COORDINATOR_PORT,
+        run_dir.to_path_buf(),
+        run_name.to_string(),
         Some(workspace_dir.to_path_buf()),
     );
 

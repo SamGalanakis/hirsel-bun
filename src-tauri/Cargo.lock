@@ -2408,6 +2408,8 @@ dependencies = [
  "futures",
  "git2",
  "hex",
+ "hyper",
+ "hyper-util",
  "lazy_static",
  "libc",
  "rand 0.9.2",

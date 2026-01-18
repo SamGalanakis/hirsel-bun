@@ -220,6 +220,14 @@ pub async fn create_run(
         .add_worker(&first_worker_name, "", "remote")
         .map_err(|e| OrchestratorError::Other(format!("Failed to register worker: {}", e)))?;
 
+    // Store tailscale OAuth credentials if provided (for generating auth keys on-demand)
+    if let Some(ref oauth) = body.tailscale_oauth {
+        let oauth_json = serde_json::to_string(oauth)
+            .map_err(|e| OrchestratorError::Other(format!("Failed to serialize OAuth: {}", e)))?;
+        std::fs::write(run_dir.join(".tailscale_oauth.json"), oauth_json)
+            .map_err(|e| OrchestratorError::Other(format!("Failed to write OAuth: {}", e)))?;
+    }
+
     tracing::info!(
         "Created run '{}' with initial worker '{}'",
         run_name,
@@ -470,6 +478,21 @@ pub async fn spawn_workers(
     let spec_path = files.spec();
     let chats_dir = files.chats_dir();
 
+    // Read tailscale OAuth credentials if present
+    let tailscale_oauth: Option<crate::core::orchestrator::TailscaleOAuth> =
+        std::fs::read_to_string(run_dir.join(".tailscale_oauth.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok());
+
+    // Create TailscaleClient if OAuth credentials are available
+    let tailscale_client = tailscale_oauth.as_ref().map(|oauth| {
+        crate::core::tailscale::TailscaleClient::new(
+            oauth.client_id.clone(),
+            oauth.client_secret.clone(),
+            oauth.tag.clone(),
+        )
+    });
+
     // Create runner
     let runner: Box<dyn Runner> = match &runner_config {
         RunnerConfig::Local => Box::new(crate::core::runner::LocalRunner::new()),
@@ -508,6 +531,23 @@ pub async fn spawn_workers(
             None
         };
 
+        // Generate fresh Tailscale auth key for this worker if OAuth is configured
+        let tailscale_authkey = if let Some(ref client) = tailscale_client {
+            match rt.block_on(client.generate_auth_key(worker_name)) {
+                Ok(key) => Some(key),
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to generate Tailscale auth key for '{}': {}",
+                        worker_name,
+                        e
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let spawn_config = WorkerSpawnConfig {
             run_name: name.clone(),
             worker_name: worker_name.clone(),
@@ -522,6 +562,7 @@ pub async fn spawn_workers(
             env_vars: None,
             coordinator_url: None,
             project_url: None,
+            tailscale_authkey,
         };
 
         match rt.block_on(runner.spawn(&spawn_config)) {
@@ -733,4 +774,331 @@ pub async fn get_history(
 pub async fn get_config(State(state): State<Arc<AppState>>) -> Result<Json<ConfigResponse>> {
     let config = state.orchestrator.get_config().await?;
     Ok(Json(config))
+}
+
+// =============================================================================
+// Config - Granular Updates
+// =============================================================================
+
+use crate::core::api_types::{
+    mask_credential, AgentAuthConfigRequest, AgentConfigRequest, CompactionConfigRequest,
+    CredentialStatusResponse, GeneralConfigRequest, GitConfigRequest, RunnerConfigResponse,
+    StoreCredentialRequest,
+};
+use crate::core::config::OrchestratorProfile;
+use crate::core::credentials::CredentialStore;
+use crate::core::runner::RunnerConfig;
+
+/// Patch general configuration settings
+pub async fn patch_general_config(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<GeneralConfigRequest>,
+) -> Result<StatusCode> {
+    let mut config = state.config.write().await;
+    config.update_general(
+        body.eval_timeout,
+        body.auto_learn,
+        body.max_iterations,
+        body.human_in_the_loop,
+        body.default_runner,
+        body.coordinator_port,
+    );
+    config
+        .save()
+        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Patch agent configuration settings
+pub async fn patch_agent_config(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<AgentConfigRequest>,
+) -> Result<StatusCode> {
+    let mut config = state.config.write().await;
+    config.update_agent(body.command);
+    config
+        .save()
+        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Patch compaction configuration settings
+pub async fn patch_compaction_config(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<CompactionConfigRequest>,
+) -> Result<StatusCode> {
+    let mut config = state.config.write().await;
+    config.update_compaction(body.enabled, body.threshold, body.keep_messages);
+    config
+        .save()
+        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Get full auth configuration
+pub async fn get_auth_config(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<crate::core::api_types::AuthConfigResponse>> {
+    let config = state.config.read().await;
+    Ok(Json(config.auth.clone().into()))
+}
+
+/// Patch auth configuration for a specific agent
+pub async fn patch_agent_auth(
+    State(state): State<Arc<AppState>>,
+    Path(agent): Path<String>,
+    Json(body): Json<AgentAuthConfigRequest>,
+) -> Result<StatusCode> {
+    let mut config = state.config.write().await;
+    config.update_agent_auth(&agent, body.into());
+    config
+        .save()
+        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Delete auth configuration for a specific agent
+pub async fn delete_agent_auth(
+    State(state): State<Arc<AppState>>,
+    Path(agent): Path<String>,
+) -> Result<StatusCode> {
+    let mut config = state.config.write().await;
+    config.delete_agent_auth(&agent);
+    config
+        .save()
+        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// =============================================================================
+// Runners CRUD
+// =============================================================================
+
+/// List all configured runners
+pub async fn list_runners(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<std::collections::HashMap<String, RunnerConfigResponse>>> {
+    let config = state.config.read().await;
+    let mut runners = std::collections::HashMap::new();
+
+    // Always include "local" as a built-in runner
+    runners.insert("local".to_string(), RunnerConfigResponse::Local);
+
+    // Add configured runners
+    for (name, runner_config) in &config.runners {
+        runners.insert(name.clone(), runner_config.clone().into());
+    }
+
+    Ok(Json(runners))
+}
+
+/// Get a specific runner by name
+pub async fn get_runner(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> Result<Json<RunnerConfigResponse>> {
+    let config = state.config.read().await;
+
+    if name == "local" {
+        return Ok(Json(RunnerConfigResponse::Local));
+    }
+
+    let runner = config
+        .runners
+        .get(&name)
+        .ok_or_else(|| OrchestratorError::Other(format!("Runner '{}' not found", name)))?;
+
+    Ok(Json(runner.clone().into()))
+}
+
+/// Create or update a runner
+pub async fn put_runner(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Json(body): Json<RunnerConfigResponse>,
+) -> Result<StatusCode> {
+    if name == "local" {
+        return Err(OrchestratorError::InvalidOperation(
+            "Cannot modify built-in 'local' runner".into(),
+        ));
+    }
+
+    let mut config = state.config.write().await;
+    let runner_config: RunnerConfig = body.into();
+    config.runners.insert(name, runner_config);
+    config
+        .save()
+        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Delete a runner
+pub async fn delete_runner(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> Result<StatusCode> {
+    if name == "local" {
+        return Err(OrchestratorError::InvalidOperation(
+            "Cannot delete built-in 'local' runner".into(),
+        ));
+    }
+
+    let mut config = state.config.write().await;
+    config.runners.remove(&name);
+    config
+        .save()
+        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// =============================================================================
+// Profiles CRUD
+// =============================================================================
+
+/// List all configured profiles
+pub async fn list_profiles(
+    State(state): State<Arc<AppState>>,
+) -> Result<
+    Json<std::collections::HashMap<String, crate::core::api_types::OrchestratorProfileResponse>>,
+> {
+    let config = state.config.read().await;
+    let profiles = config
+        .profiles
+        .iter()
+        .map(|(name, profile)| (name.clone(), profile.clone().into()))
+        .collect();
+    Ok(Json(profiles))
+}
+
+/// Get a specific profile by name
+pub async fn get_profile(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> Result<Json<crate::core::api_types::OrchestratorProfileResponse>> {
+    let config = state.config.read().await;
+    let profile = config
+        .profiles
+        .get(&name)
+        .ok_or_else(|| OrchestratorError::Other(format!("Profile '{}' not found", name)))?;
+    Ok(Json(profile.clone().into()))
+}
+
+/// Profile update request (with unmasked secrets)
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileUpdateRequest {
+    pub mode: crate::core::api_types::OrchestratorModeResponse,
+    pub url: Option<String>,
+    pub api_key: Option<String>,
+    pub access: Option<crate::core::config::OrchestratorAccess>,
+}
+
+/// Create or update a profile
+pub async fn put_profile(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Json(body): Json<ProfileUpdateRequest>,
+) -> Result<StatusCode> {
+    let mut config = state.config.write().await;
+
+    let profile = OrchestratorProfile {
+        mode: body.mode.into(),
+        url: body.url,
+        api_key: body.api_key,
+        access: body.access.unwrap_or_default(),
+    };
+
+    config.profiles.insert(name, profile);
+    config
+        .save()
+        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Delete a profile
+pub async fn delete_profile(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> Result<StatusCode> {
+    if name == "local" {
+        return Err(OrchestratorError::InvalidOperation(
+            "Cannot delete built-in 'local' profile".into(),
+        ));
+    }
+
+    let mut config = state.config.write().await;
+    config.profiles.remove(&name);
+    config
+        .save()
+        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// =============================================================================
+// Git Config
+// =============================================================================
+
+/// Patch git configuration
+pub async fn patch_git_config(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<GitConfigRequest>,
+) -> Result<StatusCode> {
+    let mut config = state.config.write().await;
+    if let Some(provider) = body.default_provider {
+        config.git.default_provider = Some(provider.into());
+    }
+    config
+        .save()
+        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// =============================================================================
+// Credentials
+// =============================================================================
+
+/// Store a credential
+pub async fn store_credential(
+    Path(key): Path<String>,
+    Json(body): Json<StoreCredentialRequest>,
+) -> Result<StatusCode> {
+    let store = CredentialStore::open()
+        .map_err(|e| OrchestratorError::Other(format!("Failed to open credential store: {}", e)))?;
+
+    store
+        .store(&key, &body.value)
+        .map_err(|e| OrchestratorError::Other(format!("Failed to store credential: {}", e)))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Get credential status (masked value)
+pub async fn get_credential(Path(key): Path<String>) -> Result<Json<CredentialStatusResponse>> {
+    let store = CredentialStore::open()
+        .map_err(|e| OrchestratorError::Other(format!("Failed to open credential store: {}", e)))?;
+
+    match store.load(&key) {
+        Ok(value) => Ok(Json(CredentialStatusResponse {
+            key: key.clone(),
+            exists: true,
+            masked_value: Some(mask_credential(&value)),
+        })),
+        Err(_) => Ok(Json(CredentialStatusResponse {
+            key,
+            exists: false,
+            masked_value: None,
+        })),
+    }
+}
+
+/// Delete a credential
+pub async fn delete_credential(Path(key): Path<String>) -> Result<StatusCode> {
+    let store = CredentialStore::open()
+        .map_err(|e| OrchestratorError::Other(format!("Failed to open credential store: {}", e)))?;
+
+    store
+        .delete(&key)
+        .map_err(|e| OrchestratorError::Other(format!("Failed to delete credential: {}", e)))?;
+
+    Ok(StatusCode::NO_CONTENT)
 }

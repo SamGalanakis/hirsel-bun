@@ -53,7 +53,7 @@ export function debugPanel() {
           // Refresh lucide icons for the panel
           setTimeout(() => {
             if (typeof lucide !== 'undefined') {
-              lucide.createIcons();
+              lucide.createIcons({ inTemplates: true });
             }
           }, 50);
         } else {

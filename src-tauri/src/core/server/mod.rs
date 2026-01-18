@@ -5,21 +5,27 @@
 
 mod auth;
 pub mod gyp;
-mod routes;
+pub mod routes;
 
 use axum::{
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
     Router,
 };
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpListener;
+use tokio::sync::RwLock;
+use tower_http::cors::{Any, CorsLayer};
 
 use crate::core::config::Config;
 use crate::core::orchestrator::LocalOrchestrator;
+use crate::core::tailscale::TailscaleClient;
 
 /// Application state shared across routes
 pub struct AppState {
     pub orchestrator: LocalOrchestrator,
+    /// Mutable config for API updates
+    pub config: Arc<RwLock<Config>>,
 }
 
 /// Start the HTTP server
@@ -35,8 +41,15 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
         tracing::warn!("{}", warning);
     }
 
-    let orchestrator = LocalOrchestrator::new(config);
-    let state = Arc::new(AppState { orchestrator });
+    // Start Tailscale auth monitor if OAuth credentials are configured
+    start_tailscale_monitor();
+
+    let orchestrator = LocalOrchestrator::new(config.clone());
+    let config = Arc::new(RwLock::new(config));
+    let state = Arc::new(AppState {
+        orchestrator,
+        config,
+    });
     let gyp_state = Arc::new(gyp::GypState::new());
 
     // Build Gyp chat routes with separate state
@@ -116,8 +129,42 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
         // Assets
         .route("/api/runs/{name}/assets", post(gyp::upload_asset))
         .route("/api/runs/{name}/assets-path", get(gyp::get_assets_path))
-        // Config
+        // Config - read
         .route("/api/config", get(routes::get_config))
+        // Config - granular updates
+        .route("/api/config/general", patch(routes::patch_general_config))
+        .route("/api/config/agent", patch(routes::patch_agent_config))
+        .route(
+            "/api/config/compaction",
+            patch(routes::patch_compaction_config),
+        )
+        .route("/api/config/auth", get(routes::get_auth_config))
+        .route(
+            "/api/config/auth/{agent}",
+            patch(routes::patch_agent_auth).delete(routes::delete_agent_auth),
+        )
+        .route("/api/config/runners", get(routes::list_runners))
+        .route(
+            "/api/config/runners/{name}",
+            get(routes::get_runner)
+                .put(routes::put_runner)
+                .delete(routes::delete_runner),
+        )
+        .route("/api/config/profiles", get(routes::list_profiles))
+        .route(
+            "/api/config/profiles/{name}",
+            get(routes::get_profile)
+                .put(routes::put_profile)
+                .delete(routes::delete_profile),
+        )
+        .route("/api/config/git", patch(routes::patch_git_config))
+        // Credentials
+        .route(
+            "/api/credentials/{key}",
+            post(routes::store_credential)
+                .get(routes::get_credential)
+                .delete(routes::delete_credential),
+        )
         // Merge Gyp routes
         .merge(gyp_routes)
         // Apply auth middleware and state
@@ -125,6 +172,13 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
             api_key.clone(),
             auth::api_key_auth,
         ))
+        // CORS for browser-based clients
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
         .with_state(state);
 
     // Bind and serve
@@ -134,4 +188,77 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// Start background task to monitor Tailscale auth expiry
+///
+/// Reads OAuth credentials from environment variables:
+/// - TAILSCALE_CLIENT_ID
+/// - TAILSCALE_CLIENT_SECRET
+/// - TAILSCALE_TAG (optional)
+fn start_tailscale_monitor() {
+    let client_id = match std::env::var("TAILSCALE_CLIENT_ID") {
+        Ok(id) if !id.is_empty() => id,
+        _ => {
+            tracing::debug!("TAILSCALE_CLIENT_ID not set, skipping Tailscale auth monitor");
+            return;
+        }
+    };
+
+    let client_secret = match std::env::var("TAILSCALE_CLIENT_SECRET") {
+        Ok(secret) if !secret.is_empty() => secret,
+        _ => {
+            tracing::warn!(
+                "TAILSCALE_CLIENT_ID is set but TAILSCALE_CLIENT_SECRET is missing, \
+                 skipping Tailscale auth monitor"
+            );
+            return;
+        }
+    };
+
+    let tag = std::env::var("TAILSCALE_TAG")
+        .ok()
+        .filter(|t| !t.is_empty());
+
+    tracing::info!("Starting Tailscale auth monitor (will renew 24h before expiry)");
+
+    let client = TailscaleClient::new(client_id, client_secret, tag);
+
+    // Spawn background task
+    tokio::spawn(async move {
+        // Check interval: every hour
+        let check_interval = Duration::from_secs(3600);
+        // Renew threshold: 24 hours before expiry
+        let renew_before = Duration::from_secs(24 * 3600);
+
+        // Initial check on startup
+        match client.check_and_renew_if_needed(renew_before).await {
+            Ok(renewed) => {
+                if renewed {
+                    tracing::info!("Tailscale auth renewed on startup");
+                } else {
+                    tracing::info!("Tailscale auth is valid");
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to check Tailscale auth on startup: {}", e);
+            }
+        }
+
+        // Periodic checks
+        loop {
+            tokio::time::sleep(check_interval).await;
+
+            match client.check_and_renew_if_needed(renew_before).await {
+                Ok(renewed) => {
+                    if renewed {
+                        tracing::info!("Tailscale auth renewed");
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to check/renew Tailscale auth: {}", e);
+                }
+            }
+        }
+    });
 }

@@ -6,9 +6,11 @@
 //! - `LocalOrchestrator`: Direct calls to local state (default)
 //! - `RemoteOrchestrator`: HTTP calls to a remote Hirsel server
 
+mod daemon;
 mod local;
 mod remote;
 
+pub use daemon::DaemonOrchestrator;
 pub use local::LocalOrchestrator;
 pub use remote::RemoteOrchestrator;
 
@@ -117,6 +119,16 @@ pub struct HealthResponse {
     pub version: String,
 }
 
+/// Tailscale OAuth credentials for generating ephemeral auth keys
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TailscaleOAuth {
+    pub client_id: String,
+    pub client_secret: String,
+    #[serde(default)]
+    pub tag: Option<String>,
+}
+
 /// Create run request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -137,6 +149,8 @@ pub struct CreateRunRequest {
     pub human_in_the_loop: Option<bool>,
     /// Eval file content (markdown)
     pub eval: Option<String>,
+    /// Tailscale OAuth credentials for worker hosts to join tailnet
+    pub tailscale_oauth: Option<TailscaleOAuth>,
 }
 
 /// Create run response
@@ -300,7 +314,10 @@ pub trait Orchestrator: Send + Sync {
 /// Create an orchestrator based on the profile configuration
 ///
 /// If no profile is specified, uses the default profile from config.
-/// Returns a LocalOrchestrator for local mode, RemoteOrchestrator for remote.
+/// For local mode, returns a LocalOrchestrator (direct access to local state).
+/// For remote mode, connects to the remote server.
+///
+/// Note: For local mode with daemon lifecycle management, use `create_daemon_orchestrator()`.
 pub fn create_orchestrator(profile: Option<&str>) -> OrchestratorResult<Box<dyn Orchestrator>> {
     use crate::core::credentials::CredentialStore;
 
@@ -314,7 +331,11 @@ pub fn create_orchestrator(profile: Option<&str>) -> OrchestratorResult<Box<dyn 
         .ok_or_else(|| OrchestratorError::UnknownProfile(profile_name.to_string()))?;
 
     match profile_config.mode {
-        config::OrchestratorMode::Local => Ok(Box::new(LocalOrchestrator::new(config))),
+        config::OrchestratorMode::Local => {
+            // For local mode, use LocalOrchestrator for direct access
+            // The daemon runs separately and handles lifecycle management
+            Ok(Box::new(LocalOrchestrator::new(config)))
+        }
         config::OrchestratorMode::Remote => {
             let url = profile_config.url.as_ref().ok_or_else(|| {
                 OrchestratorError::Config("Missing URL for remote profile".into())
@@ -335,6 +356,16 @@ pub fn create_orchestrator(profile: Option<&str>) -> OrchestratorResult<Box<dyn 
             Ok(Box::new(RemoteOrchestrator::new(url.clone(), key)))
         }
     }
+}
+
+/// Create a daemon orchestrator that communicates with the local daemon
+///
+/// This starts the daemon if it's not running and returns an orchestrator
+/// that communicates via Unix socket. Use this when you want the daemon
+/// to handle operations (e.g., for CLI commands that should trigger
+/// daemon lifecycle management).
+pub fn create_daemon_orchestrator() -> OrchestratorResult<DaemonOrchestrator> {
+    DaemonOrchestrator::connect_or_start()
 }
 
 /// Create a local orchestrator directly (bypasses profile resolution)

@@ -134,7 +134,7 @@ export function notifications() {
         // Re-render icons for dismiss buttons after a tick
         setTimeout(() => {
           if (typeof lucide !== 'undefined') {
-            lucide.createIcons();
+            lucide.createIcons({ inTemplates: true });
           }
         }, 0);
       }
@@ -172,7 +172,7 @@ export function notifications() {
         // Re-render icons for dismiss buttons
         setTimeout(() => {
           if (typeof lucide !== 'undefined') {
-            lucide.createIcons();
+            lucide.createIcons({ inTemplates: true });
           }
         }, 0);
       } catch (e) {

@@ -48,7 +48,7 @@ export function runDetail() {
     loading: false,
     error: null as string | null,
     pollInterval: null as ReturnType<typeof setInterval> | null,
-    activeTab: 'overview' as 'overview' | 'tasks' | 'specs' | 'evals' | 'chat',
+    activeTab: 'overview' as 'overview' | 'tasks' | 'specs' | 'evals' | 'chat' | 'config',
 
     // Eval detail view
     selectedEval: null as Eval | null,

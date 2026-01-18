@@ -21,6 +21,7 @@ use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 
 use super::state::{SQLiteState, Status, WorkerStatus, WorkerUpdate};
+use super::workers::maybe_trigger_eval;
 
 // =============================================================================
 // Shared State
@@ -29,6 +30,8 @@ use super::state::{SQLiteState, Status, WorkerStatus, WorkerUpdate};
 /// Shared state for the API handlers
 pub struct ApiState {
     pub state: Arc<Mutex<SQLiteState>>,
+    pub run_dir: PathBuf,
+    pub run_name: String,
 }
 
 // =============================================================================
@@ -186,8 +189,12 @@ type ApiResult<T> = Result<T, ApiError>;
 // =============================================================================
 
 /// Create the coordinator API router
-pub fn create_router(state: Arc<Mutex<SQLiteState>>) -> Router {
-    let api_state = Arc::new(ApiState { state });
+pub fn create_router(state: Arc<Mutex<SQLiteState>>, run_dir: PathBuf, run_name: String) -> Router {
+    let api_state = Arc::new(ApiState {
+        state,
+        run_dir,
+        run_name,
+    });
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -588,22 +595,39 @@ async fn update_worker(
     Path(name): Path<String>,
     Json(req): Json<WorkerUpdateRequest>,
 ) -> ApiResult<Json<SuccessResponse>> {
-    let state = api.state.lock().await;
+    // Check if status is being set to Awaiting
+    let is_awaiting = req
+        .status
+        .as_ref()
+        .and_then(|s| WorkerStatus::from_str(s))
+        .map(|s| s == WorkerStatus::Awaiting)
+        .unwrap_or(false);
 
-    // Build WorkerUpdate from request
-    let updates = WorkerUpdate {
-        pid: req.pid,
-        session_id: req.session_id,
-        status: req.status.as_ref().and_then(|s| WorkerStatus::from_str(s)),
-        waiting_thread: req.waiting_thread,
-        needs_restart: req.needs_restart,
-        last_heartbeat: req.last_heartbeat,
-        hitl_waiting: None,
-    };
+    {
+        let state = api.state.lock().await;
 
-    state
-        .update_worker(&name, updates)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+        // Build WorkerUpdate from request
+        let updates = WorkerUpdate {
+            pid: req.pid,
+            session_id: req.session_id,
+            status: req.status.as_ref().and_then(|s| WorkerStatus::from_str(s)),
+            waiting_thread: req.waiting_thread,
+            needs_restart: req.needs_restart,
+            last_heartbeat: req.last_heartbeat,
+            hitl_waiting: None,
+        };
+
+        state
+            .update_worker(&name, updates)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+    }
+    // Lock released here
+
+    // If worker just went to Awaiting, check if all workers are inactive
+    // and trigger eval (or mark done if no eval script)
+    if is_awaiting {
+        let _ = maybe_trigger_eval(&api.run_name, &api.run_dir);
+    }
 
     Ok(Json(SuccessResponse::ok()))
 }
@@ -1101,6 +1125,8 @@ pub struct CoordinatorServer {
     state: Arc<Mutex<SQLiteState>>,
     host: String,
     port: u16,
+    run_dir: PathBuf,
+    run_name: String,
     #[allow(dead_code)] // TODO: Used when git HTTP server is mounted
     staging_path: Option<PathBuf>,
     handle: Option<tokio::task::JoinHandle<()>>,
@@ -1112,12 +1138,16 @@ impl CoordinatorServer {
         state: SQLiteState,
         host: impl Into<String>,
         port: u16,
+        run_dir: PathBuf,
+        run_name: String,
         staging_path: Option<PathBuf>,
     ) -> Self {
         Self {
             state: Arc::new(Mutex::new(state)),
             host: host.into(),
             port,
+            run_dir,
+            run_name,
             staging_path,
             handle: None,
         }
@@ -1125,7 +1155,11 @@ impl CoordinatorServer {
 
     /// Start the API server
     pub async fn start(&mut self) -> anyhow::Result<()> {
-        let router = create_router(self.state.clone());
+        let router = create_router(
+            self.state.clone(),
+            self.run_dir.clone(),
+            self.run_name.clone(),
+        );
 
         // TODO: Mount git HTTP server if staging path provided
         // if let Some(ref staging_path) = self.staging_path {

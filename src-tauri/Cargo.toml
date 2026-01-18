@@ -32,7 +32,7 @@ serde_json = "1"
 rusqlite = { version = "0.38", features = ["bundled"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
-git2 = "0.20"
+git2 = { version = "0.20", features = ["vendored-libgit2"] }
 dirs = "6"
 tracing = "0.1"
 regex = "1"
@@ -53,6 +53,8 @@ uuid = { version = "1", features = ["v4"] }
 rand = "0.9.2"
 axum = { version = "0.8", features = ["multipart"] }
 tower-http = { version = "0.6", features = ["cors"] }
+hyper = "1"
+hyper-util = { version = "0.1", features = ["tokio", "server-auto", "http1"] }
 reqwest = { version = "0.13", features = ["json", "stream"] }
 shellexpand = "3"
 which = "8"

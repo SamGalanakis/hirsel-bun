@@ -1,29 +1,9 @@
     <!-- Title Bar -->
   <header class="title-bar flex items-center justify-between px-4 py-2 border-b border-pasture-600 select-none">
     <div class="flex items-center gap-2">
-      <div class="relative" x-data="{ baas: [], nextId: 0 }">
-        <button
-          @click="$el.classList.add('sheep-squish'); setTimeout(() => $el.classList.remove('sheep-squish'), 400); let id = nextId++; baas.push({ id, x: Math.random() * 10 - 5 }); setTimeout(() => baas = baas.filter(b => b.id !== id), 800)"
-          class="text-xl cursor-pointer hover:scale-110 transition-transform select-none sheep-btn"
-        >🐑</button>
-        <template x-for="baa in baas" :key="baa.id">
-          <span
-            x-init="setTimeout(() => $el.classList.add('baa-float'), 10)"
-            :style="`--baa-x: ${baa.x}px`"
-            class="absolute -top-2 left-1 text-[10px] text-amber-400 font-medium pointer-events-none baa-text"
-          >Baa!</span>
-        </template>
-      </div>
       <h1 class="text-lg font-semibold text-amber-500">Hirsel</h1>
     </div>
     <div class="flex items-center gap-1">
-      <!-- Theme Toggle -->
-      <button @click="toggleTheme()" class="p-2 rounded hover:bg-pasture-700 text-wool-300">
-        <!-- Sun icon (shown in dark mode) -->
-        <i x-show="isDarkTheme" data-lucide="sun" class="w-4 h-4"></i>
-        <!-- Moon icon (shown in light mode) -->
-        <i x-show="!isDarkTheme" data-lucide="moon" class="w-4 h-4"></i>
-      </button>
       <!-- Gyp Button -->
       <button @click="toggleAiChat()" class="p-1 rounded hover:bg-pasture-700 text-wool-300 relative" :class="{ 'bg-pasture-700': aiChatOpen }">
         <i data-lucide="sparkles" class="w-4 h-4"></i>

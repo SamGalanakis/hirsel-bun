@@ -293,6 +293,33 @@ impl Runner for SshRunner {
         // If using server mode with tarball download, use different setup script
         let uses_tarball = config.coordinator_url.is_some() && config.project_url.is_none();
 
+        // Step 0: Setup Tailscale if auth key provided
+        if let Some(ref authkey) = config.tailscale_authkey {
+            info!(
+                "Setting up Tailscale for {} on {}",
+                config.worker_name, self.config.host
+            );
+            let tailscale_script = format!(
+                r#"
+# Install Tailscale if not present
+if ! command -v tailscale &> /dev/null; then
+    curl -fsSL https://tailscale.com/install.sh | sh
+fi
+
+# Connect to tailnet if not already connected
+if ! tailscale status &> /dev/null; then
+    sudo tailscale up --authkey={} --accept-routes --hostname=hirsel-{}
+fi
+"#,
+                authkey, config.worker_name
+            );
+
+            if !self.run_ssh_command(&tailscale_script, Duration::from_secs(120))? {
+                // Don't fail - Tailscale might already be configured
+                info!("Tailscale setup may have failed, continuing...");
+            }
+        }
+
         // Step 1: Setup remote workspace
         info!(
             "Setting up remote workspace for {} on {}",

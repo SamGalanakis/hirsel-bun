@@ -806,7 +806,7 @@ declare global {
 
     // Lucide icons
     lucide?: {
-      createIcons: (options?: { nodes?: Element[] }) => void;
+      createIcons: (options?: { inTemplates?: boolean; nodes?: Element[] }) => void;
     };
   }
 }

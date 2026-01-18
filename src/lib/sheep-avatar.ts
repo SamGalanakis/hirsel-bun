@@ -166,26 +166,28 @@ export function generateSheepSvg(
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="${size}" height="${size}">
     ${hueFilterDef}
     ${statusGlow}
-    <g transform="rotate(${rotation}, 64, 64)">
-      <g transform="translate(0, ${(legStretch - 1) * -10}) scale(1, ${legStretch})">
-        <path fill="${legColor}" d="${LEGS_PATH}"/>
+    <g transform="translate(128, 0) scale(-1, 1)">
+      <g transform="rotate(${rotation}, 64, 64)">
+        <g transform="translate(0, ${(legStretch - 1) * -10}) scale(1, ${legStretch})">
+          <path fill="${legColor}" d="${LEGS_PATH}"/>
+        </g>
+        <g transform="translate(${earShift}, 0)">
+          <path fill="${legColor}" d="${BACK_EAR_PATH}"/>
+        </g>
+        <g transform="scale(${bodyScale})" transform-origin="64 64" ${hueFilter}>
+          <path fill="${skin}" d="${FACE_PATH}"/>
+        </g>
+        <g transform="scale(${woolScale})" transform-origin="64 50">
+          <path fill="${wool}" d="${WOOL_PATH}"/>
+        </g>
+        <path fill="${legColor}" d="${EAR_DETAIL_PATH}"/>
+        ${bowtieSvg}
+        <path fill="${dark}" d="${EYE_R_PATH}"/>
+        <path fill="${dark}" d="${EYE_L_PATH}"/>
+        ${glassesSvg}
+        <path fill="${dark}" d="${NOSE_PATH}"/>
+        ${hatSvg}
       </g>
-      <g transform="translate(${earShift}, 0)">
-        <path fill="${legColor}" d="${BACK_EAR_PATH}"/>
-      </g>
-      <g transform="scale(${bodyScale})" transform-origin="64 64" ${hueFilter}>
-        <path fill="${skin}" d="${FACE_PATH}"/>
-      </g>
-      <g transform="scale(${woolScale})" transform-origin="64 50">
-        <path fill="${wool}" d="${WOOL_PATH}"/>
-      </g>
-      <path fill="${legColor}" d="${EAR_DETAIL_PATH}"/>
-      ${bowtieSvg}
-      <path fill="${dark}" d="${EYE_R_PATH}"/>
-      <path fill="${dark}" d="${EYE_L_PATH}"/>
-      ${glassesSvg}
-      <path fill="${dark}" d="${NOSE_PATH}"/>
-      ${hatSvg}
     </g>
   </svg>`;
 }

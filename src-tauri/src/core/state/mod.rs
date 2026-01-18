@@ -192,7 +192,7 @@ impl SQLiteState {
     }
 
     pub(crate) fn now(&self) -> String {
-        Utc::now().format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
+        Utc::now().format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()
     }
 
     pub(crate) fn log_history(&self, action: &str, detail: Option<&str>) -> StateResult<()> {

@@ -28,8 +28,7 @@ pub use crate::core::api_types::{
     // Orchestrator profile types
     OrchestratorModeResponse,
     OrchestratorProfileResponse,
-    // Remote/Runner types
-    RemoteConfigResponse,
+    // Runner types
     RunDetail,
     RunStatus,
     RunSummary,
@@ -113,33 +112,6 @@ pub struct AuthConfigUpdate {
     pub goose: Option<AgentAuthUpdate>,
 }
 
-/// Remote config update request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoteConfigUpdate {
-    pub host: String,
-    pub ssh_key: Option<String>,
-    pub ssh_port: Option<u16>,
-    pub work_base: Option<String>,
-    pub python_path: Option<String>,
-    pub location: Option<String>,
-}
-
-impl From<RemoteConfigUpdate> for config::RemoteConfig {
-    fn from(update: RemoteConfigUpdate) -> Self {
-        Self {
-            host: update.host,
-            ssh_key: update.ssh_key,
-            ssh_port: update.ssh_port.unwrap_or(22),
-            work_base: update
-                .work_base
-                .unwrap_or_else(|| "/tmp/hirsel-remote".to_string()),
-            python_path: update.python_path.unwrap_or_else(|| "python3".to_string()),
-            location: update.location,
-        }
-    }
-}
-
 /// Orchestrator profile update request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -147,6 +119,7 @@ pub struct OrchestratorProfileUpdate {
     pub mode: crate::core::api_types::OrchestratorModeResponse,
     pub url: Option<String>,
     pub api_key: Option<String>,
+    pub access: config::OrchestratorAccess,
 }
 
 impl From<OrchestratorProfileUpdate> for config::OrchestratorProfile {
@@ -155,6 +128,7 @@ impl From<OrchestratorProfileUpdate> for config::OrchestratorProfile {
             mode: update.mode.into(),
             url: update.url,
             api_key: update.api_key,
+            access: update.access,
         }
     }
 }
@@ -191,8 +165,6 @@ pub struct ConfigUpdateRequest {
     pub context_warning_threshold: Option<f64>,
     pub coordinator_port: Option<u16>,
     pub auth: Option<AuthConfigUpdate>,
-    pub remotes: Option<std::collections::HashMap<String, RemoteConfigUpdate>>,
-    pub default_remote: Option<Option<String>>,
     pub runners: Option<std::collections::HashMap<String, RunnerConfigResponse>>,
     pub default_runner: Option<Option<String>>,
     pub worker_runners: Option<std::collections::HashMap<String, String>>,

@@ -906,13 +906,6 @@ impl Orchestrator for LocalOrchestrator {
             context_warning_threshold: self.config.context_warning_threshold,
             coordinator_port: self.config.coordinator_port,
             auth: self.config.auth.clone().into(),
-            remotes: self
-                .config
-                .remotes
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone().into()))
-                .collect(),
-            default_remote: self.config.default_remote.clone(),
             runners: self
                 .config
                 .runners

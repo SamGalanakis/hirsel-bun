@@ -1,70 +1,160 @@
 # Hirsel Server Deployment
 
-Deploy hirsel as a headless server using Docker Compose.
+Deploy hirsel as a headless orchestrator server.
 
-## Prerequisites
+## Network Architecture
 
-- Docker and Docker Compose
-- Hirsel CLI binary built for Linux
+Hirsel uses [Tailscale](https://tailscale.com) for secure networking between the orchestrator and workers:
 
-## Build the binary
-
-From the repo root:
-
-```bash
-cd src-tauri
-cargo build --release --no-default-features
-cp target/release/hirsel ../deploy/
+```
+Your machine ──┐
+               │ Tailscale network (WireGuard encrypted)
+Orchestrator ──┼── 100.x.x.x:8080
+               │
+Sprite workers─┘
 ```
 
-## Configure
+Workers connect to the orchestrator via its Tailscale IP. No domains, certificates, or port forwarding needed.
+
+## Setup
+
+### 1. Install Tailscale on the orchestrator VPS
 
 ```bash
+# On your VPS (Ubuntu/Debian)
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+
+# Note the Tailscale IP (100.x.x.x)
+tailscale ip -4
+```
+
+### 2. Deploy the orchestrator
+
+```bash
+git clone https://github.com/anthropics/hirsel.git
+cd hirsel/deploy
+
 cp .env.example .env
-# Edit .env and set a secure HIRSEL_API_KEY
+# Edit .env and set HIRSEL_API_KEY (generate with: openssl rand -hex 32)
+
+docker compose up -d --build
 ```
 
-## Deploy
+First build takes a few minutes (compiling Rust).
+
+### 3. Verify
 
 ```bash
-docker-compose up -d --build
+# From your machine (also on Tailscale)
+curl http://100.x.x.x:8080/health
 ```
 
-## Usage
-
-```bash
-# Check health
-curl http://localhost:8080/health
-
-# List runs (with auth)
-curl -H "Authorization: Bearer YOUR_API_KEY" http://localhost:8080/api/runs
-```
-
-## Client configuration
+## Client Configuration
 
 On your local machine, configure a remote profile in `~/.hirsel/config.toml`:
 
 ```toml
+default_profile = "remote"
+
 [profiles.remote]
 mode = "remote"
-url = "http://your-server:8080"
+url = "http://100.x.x.x:8080"  # Orchestrator's Tailscale IP
 api_key = "your-api-key"
 
-default_profile = "remote"
+# Access strategy - how workers reach the orchestrator
+[profiles.remote.access]
+type = "tailscale"
+oauth_client_id = "your-oauth-client-id"
+oauth_client_secret = "your-oauth-client-secret"
+tag = "tag:hirsel-worker"  # Optional: tag for worker devices
 ```
 
-Then use the CLI or GUI - credentials are forwarded from your local machine.
+### Tailscale OAuth Setup
 
-## Data
+Hirsel uses Tailscale OAuth to generate ephemeral auth keys for workers on-demand. This avoids the 90-day expiration limit of static auth keys.
 
-Run data is persisted in the `hirsel-data` Docker volume at `/root/.hirsel`.
+1. Go to the [Tailscale admin console](https://login.tailscale.com/admin/settings/oauth)
+2. Create a new OAuth client with these scopes:
+   - `devices:core:write` (to create auth keys)
+3. Copy the Client ID and Client Secret to your config
 
-Backup:
+Workers receive short-lived (5 minute) ephemeral auth keys at spawn time. The devices auto-remove from your tailnet when they go offline.
+
+### Access Strategies
+
+**Tailscale** (recommended) - Workers auto-join your tailnet:
+```toml
+[profiles.remote.access]
+type = "tailscale"
+oauth_client_id = "..."
+oauth_client_secret = "..."
+tag = "tag:hirsel-worker"  # Optional
+```
+
+**Direct** - Assumes network already configured (VPC, same LAN):
+```toml
+[profiles.remote.access]
+type = "direct"
+```
+
+## Worker Hosts
+
+With the Tailscale access strategy, worker hosts automatically join your tailnet when spawned. Each worker receives a fresh ephemeral auth key - no manual setup needed.
+
+For the Direct strategy, ensure worker hosts can reach the orchestrator IP before starting runs.
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `HIRSEL_API_KEY` | API key for authentication (required) |
+
+## Data Management
+
+Run data is persisted in the `hirsel-data` Docker volume.
+
+### Backup
+
 ```bash
-docker run --rm -v hirsel-data:/data -v $(pwd):/backup alpine tar czf /backup/hirsel-backup.tar.gz -C /data .
+docker run --rm \
+  -v hirsel-data:/data \
+  -v $(pwd):/backup \
+  alpine tar czf /backup/hirsel-backup.tar.gz -C /data .
 ```
 
-Restore:
+### Restore
+
 ```bash
-docker run --rm -v hirsel-data:/data -v $(pwd):/backup alpine tar xzf /backup/hirsel-backup.tar.gz -C /data
+docker run --rm \
+  -v hirsel-data:/data \
+  -v $(pwd):/backup \
+  alpine tar xzf /backup/hirsel-backup.tar.gz -C /data
 ```
+
+## Operations
+
+```bash
+# View logs
+docker compose logs -f
+
+# Restart
+docker compose restart
+
+# Update
+git pull
+docker compose up -d --build
+
+# Stop
+docker compose down
+```
+
+## Alternative: No Tailscale
+
+If you can't use Tailscale, alternatives include:
+
+- **Cloudflare Tunnel**: Free, but adds latency and has upload limits
+- **VPC/Private network**: If orchestrator and workers are in same cloud
+- **Direct IP + firewall rules**: Less secure, requires careful firewall config
+
+The orchestrator just needs to be reachable by workers at some URL.

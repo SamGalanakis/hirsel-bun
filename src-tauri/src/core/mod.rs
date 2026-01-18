@@ -34,6 +34,7 @@ pub mod runner;
 pub mod server;
 pub mod state;
 pub mod state_access;
+pub mod tailscale;
 pub mod tunnel;
 pub mod workers;
 

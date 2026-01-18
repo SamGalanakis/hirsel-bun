@@ -3,9 +3,8 @@
  */
 
 import type { HistoryEntry, WorkerDisplay } from '../types';
-import { getActionIcon as getActionIconSvg } from '../icons';
+import { getActionIcon as getActionIconSvg, getIcon } from '../icons';
 import { dataCache, DATA_EVENTS } from '../data-cache';
-import { generateSheepSvg } from '../sheep-avatar';
 
 export type SortDirection = 'asc' | 'desc';
 
@@ -285,19 +284,17 @@ export function activityLog() {
       return null;
     },
 
-    // Get avatar SVG for a worker, or cog icon for system events
+    // Get icon for entry based on action type
     getEntryAvatar(entry: HistoryEntry): string {
-      const workerName = this.getWorkerName(entry);
+      const normalized = entry.action.toLowerCase().replace(/[\s-]+/g, '_');
 
-      if (workerName) {
-        const worker = this.workers.find(w => w.name === workerName);
-        if (worker?.sheepConfig) {
-          return generateSheepSvg(worker.sheepConfig, 20, worker.status);
-        }
+      // Worker-related actions get a user icon
+      if (WORKER_ACTIONS.has(normalized)) {
+        return getIcon('user', 14);
       }
 
-      // System event - return cog icon
-      return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-wool-500"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`;
+      // System/settings icon for system events
+      return getIcon('settings', 14);
     },
 
     // Check if entry is worker-related (for styling)

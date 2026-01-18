@@ -2,7 +2,7 @@
  * Default configurations for settings modal
  */
 
-import type { AgentAuth, SshRunnerConfig, SpriteRunnerConfig, Settings, AuthMethod, OrchestratorProfile, GitConfig } from './types';
+import type { AgentAuth, SshRunnerConfig, SpriteRunnerConfig, Settings, AuthMethod, OrchestratorProfile, GitConfig, NavigationState } from './types';
 
 /**
  * Default agent auth configuration
@@ -44,6 +44,17 @@ export const defaultRemoteProfile = (): OrchestratorProfile => ({
   mode: 'remote',
   url: null,
   apiKey: null,
+  access: { type: 'direct' },
+});
+
+/**
+ * Default Tailscale access configuration
+ */
+export const defaultTailscaleAccess = (): { type: 'tailscale'; oauth_client_id: string; oauth_client_secret: string; tag: string | null } => ({
+  type: 'tailscale',
+  oauth_client_id: '',
+  oauth_client_secret: '',
+  tag: null,
 });
 
 /**
@@ -52,6 +63,16 @@ export const defaultRemoteProfile = (): OrchestratorProfile => ({
 export const defaultGitConfig = (): GitConfig => ({
   defaultProvider: null,
   configuredProviders: [],
+});
+
+/**
+ * Default navigation state - starts with default profile selected
+ */
+export const defaultNavigationState = (): NavigationState => ({
+  activeSection: 'profile',
+  appSection: 'theme',
+  selectedProfile: 'local',
+  profileTab: 'defaults',
 });
 
 /**
@@ -81,7 +102,7 @@ export const defaultSettings = (): Settings => ({
   defaultRunner: null,
   workerRunners: {},
   profiles: {
-    local: { mode: 'local', url: null, apiKey: null },
+    local: { mode: 'local', url: null, apiKey: null, access: { type: 'direct' } },
   },
   defaultProfile: 'local',
   git: defaultGitConfig(),
@@ -130,6 +151,17 @@ export function getRunnerTypeLabel(type: string): string {
   switch (type) {
     case 'ssh': return 'SSH';
     case 'sprite': return 'Sprites';
+    default: return type;
+  }
+}
+
+/**
+ * Get access type label
+ */
+export function getAccessTypeLabel(type: string): string {
+  switch (type) {
+    case 'direct': return 'Direct';
+    case 'tailscale': return 'Tailscale';
     default: return type;
   }
 }

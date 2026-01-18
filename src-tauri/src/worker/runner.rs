@@ -14,7 +14,6 @@
 use crate::cli::{MsgSubcommands, TaskSubcommands, WorkerCommands};
 use crate::core::state::{SQLiteState, StateError, WorkerStatus, WorkerUpdate};
 use crate::core::state_access::{StateAccess, StateAccessError};
-use crate::core::workers::maybe_trigger_eval;
 use crate::core::Files;
 use crate::worker::http_state::HttpState;
 use std::path::PathBuf;
@@ -394,7 +393,8 @@ impl WorkerRunner {
     }
 
     /// Try to resume awaiting workers and scale up if needed.
-    /// This is a best-effort operation - errors are logged but not propagated.
+    /// This provides immediate responsiveness when tasks become available.
+    /// The daemon's polling loop also handles this, but with a 5-second interval.
     fn try_resume_awaiting_workers(&self) {
         use crate::core::workers::{maybe_scale_up, resume_awaiting_workers};
         use tracing::debug;
@@ -461,9 +461,8 @@ impl WorkerRunner {
         // Check for available tasks
         let claimable = self.run_async(self.state().get_claimable_tasks())?;
 
-        // Check if all workers are now inactive - if so, trigger eval
-        let eval_triggered =
-            maybe_trigger_eval(&self.config.run_name, &self.config.run_dir).unwrap_or(false);
+        // Note: Lifecycle management (eval triggering, scaling) is handled by
+        // the daemon's polling loop, not by individual worker processes
 
         Ok(serde_json::json!({
             "available_tasks": claimable.len(),
@@ -471,7 +470,6 @@ impl WorkerRunner {
                 "id": t.id,
                 "name": t.name,
             })).collect::<Vec<_>>(),
-            "eval_triggered": eval_triggered,
         })
         .to_string())
     }
@@ -573,20 +571,18 @@ impl WorkerRunner {
 
     /// Signal that worker has no more work to do.
     /// This sets the worker to Awaiting status. Evaluation is triggered
-    /// when ALL workers become inactive.
+    /// by the daemon's lifecycle polling loop when ALL workers become inactive.
     pub fn work_done(&self) -> WorkerResult<String> {
         // Mark worker as awaiting (no work to do)
         self.set_status(WorkerStatus::Awaiting)?;
 
-        // Check if all workers are now inactive - if so, trigger eval
-        let eval_triggered =
-            maybe_trigger_eval(&self.config.run_name, &self.config.run_dir).unwrap_or(false);
+        // Note: Lifecycle management (eval triggering) is handled by
+        // the daemon's polling loop, not by individual worker processes
 
         Ok(serde_json::json!({
             "success": true,
             "worker": self.config.worker_name,
             "status": "awaiting",
-            "eval_triggered": eval_triggered,
         })
         .to_string())
     }

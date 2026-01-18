@@ -6,6 +6,7 @@
 
 pub mod cli;
 pub mod core;
+pub mod daemon;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod worker;
@@ -429,6 +430,93 @@ fn run_command(
                 .map_err(|e| format!("Failed to create runtime: {}", e))?;
             rt.block_on(async { core::server::start_server(args.port).await })
                 .map_err(|e| format!("Server error: {}", e))?;
+        }
+        Commands::Daemon(args) => {
+            // Internal daemon command - runs the daemon server
+            use daemon::{start_daemon, DaemonConfig};
+
+            let config = DaemonConfig {
+                idle_timeout_secs: args.idle_timeout,
+            };
+
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| format!("Failed to create runtime: {}", e))?;
+            rt.block_on(async { start_daemon(config).await })
+                .map_err(|e| format!("Daemon error: {}", e))?;
+        }
+        Commands::DaemonCtl(args) => {
+            // Daemon control commands
+            use cli::DaemonCommand;
+
+            match args.command {
+                DaemonCommand::Start => {
+                    if daemon::is_daemon_running() {
+                        if json {
+                            println!(r#"{{"status": "already_running"}}"#);
+                        } else {
+                            println!("Daemon is already running");
+                        }
+                    } else {
+                        // Start daemon by connecting (which auto-starts)
+                        let rt = tokio::runtime::Runtime::new()
+                            .map_err(|e| format!("Failed to create runtime: {}", e))?;
+                        let client = daemon::DaemonClient::connect_or_start()
+                            .map_err(|e| format!("Failed to start daemon: {}", e))?;
+                        rt.block_on(async { client.health().await })
+                            .map_err(|e| format!("Daemon health check failed: {}", e))?;
+                        if json {
+                            println!(r#"{{"status": "started"}}"#);
+                        } else {
+                            println!("Daemon started");
+                        }
+                    }
+                }
+                DaemonCommand::Stop => {
+                    if !daemon::is_daemon_running() {
+                        if json {
+                            println!(r#"{{"status": "not_running"}}"#);
+                        } else {
+                            println!("Daemon is not running");
+                        }
+                    } else {
+                        let rt = tokio::runtime::Runtime::new()
+                            .map_err(|e| format!("Failed to create runtime: {}", e))?;
+                        let client = daemon::DaemonClient::connect()
+                            .map_err(|e| format!("Failed to connect to daemon: {}", e))?;
+                        rt.block_on(async { client.stop().await })
+                            .map_err(|e| format!("Failed to stop daemon: {}", e))?;
+                        if json {
+                            println!(r#"{{"status": "stopped"}}"#);
+                        } else {
+                            println!("Daemon stopped");
+                        }
+                    }
+                }
+                DaemonCommand::Status => {
+                    if daemon::is_daemon_running() {
+                        if json {
+                            // Get full status from daemon
+                            let rt = tokio::runtime::Runtime::new()
+                                .map_err(|e| format!("Failed to create runtime: {}", e))?;
+                            let client = daemon::DaemonClient::connect()
+                                .map_err(|e| format!("Failed to connect to daemon: {}", e))?;
+                            let status: serde_json::Value = rt
+                                .block_on(async { client.get("/daemon/status").await })
+                                .map_err(|e| format!("Failed to get status: {}", e))?;
+                            println!("{}", serde_json::to_string_pretty(&status).unwrap());
+                        } else {
+                            println!("Daemon is running");
+                            println!("Socket: {}", daemon::socket_path().display());
+                        }
+                    } else {
+                        if json {
+                            println!(r#"{{"running": false}}"#);
+                        } else {
+                            println!("Daemon is not running");
+                        }
+                    }
+                }
+            }
         }
         // Completion helpers - handled by cli/mod.rs
         Commands::CompleteRuns | Commands::CompleteWorkers(_) | Commands::CompleteThreads(_) => {

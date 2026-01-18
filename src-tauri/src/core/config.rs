@@ -333,32 +333,6 @@ impl std::fmt::Display for WorkerScale {
     }
 }
 
-/// Configuration for a remote machine
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RemoteConfig {
-    pub host: String,
-    #[serde(default = "default_python_path")]
-    pub python_path: String,
-    #[serde(default = "default_work_base")]
-    pub work_base: String,
-    pub ssh_key: Option<String>,
-    #[serde(default = "default_ssh_port")]
-    pub ssh_port: u16,
-    pub location: Option<String>,
-}
-
-fn default_python_path() -> String {
-    "python3".to_string()
-}
-
-fn default_work_base() -> String {
-    "/tmp/hirsel-remote".to_string()
-}
-
-fn default_ssh_port() -> u16 {
-    22
-}
-
 /// Agent configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
@@ -399,6 +373,30 @@ pub enum OrchestratorMode {
     Remote,
 }
 
+/// How workers access the orchestrator
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum OrchestratorAccess {
+    /// Direct access - assumes network is already configured (VPC, same network, etc.)
+    Direct,
+    /// Tailscale - workers join the user's tailnet via OAuth-generated auth keys
+    Tailscale {
+        /// OAuth client ID from Tailscale admin console
+        oauth_client_id: String,
+        /// OAuth client secret from Tailscale admin console
+        oauth_client_secret: String,
+        /// Optional tag to apply to worker devices (e.g., "tag:hirsel-worker")
+        #[serde(default)]
+        tag: Option<String>,
+    },
+}
+
+impl Default for OrchestratorAccess {
+    fn default() -> Self {
+        Self::Direct
+    }
+}
+
 /// Orchestrator profile configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrchestratorProfile {
@@ -408,6 +406,9 @@ pub struct OrchestratorProfile {
     pub url: Option<String>,
     /// API key for remote mode
     pub api_key: Option<String>,
+    /// How workers access the orchestrator (network strategy)
+    #[serde(default)]
+    pub access: OrchestratorAccess,
 }
 
 impl Default for OrchestratorProfile {
@@ -416,6 +417,25 @@ impl Default for OrchestratorProfile {
             mode: OrchestratorMode::Local,
             url: None,
             api_key: None,
+            access: OrchestratorAccess::Direct,
+        }
+    }
+}
+
+impl OrchestratorProfile {
+    /// Get Tailscale OAuth credentials if access is configured for Tailscale
+    pub fn tailscale_oauth(&self) -> Option<(&str, &str, Option<&str>)> {
+        match &self.access {
+            OrchestratorAccess::Tailscale {
+                oauth_client_id,
+                oauth_client_secret,
+                tag,
+            } => Some((
+                oauth_client_id.as_str(),
+                oauth_client_secret.as_str(),
+                tag.as_deref(),
+            )),
+            _ => None,
         }
     }
 }
@@ -485,13 +505,8 @@ pub struct Config {
     #[serde(default = "default_context_warning_threshold")]
     pub context_warning_threshold: f64,
 
-    #[serde(default)]
-    pub remotes: HashMap<String, RemoteConfig>,
-
     #[serde(default = "default_coordinator_port")]
     pub coordinator_port: u16,
-
-    pub default_remote: Option<String>,
 
     #[serde(default)]
     pub auth: AuthConfig,
@@ -589,9 +604,7 @@ impl Default for Config {
             compaction_keep_messages: default_compaction_keep_messages(),
             auto_improve: default_auto_improve(),
             context_warning_threshold: default_context_warning_threshold(),
-            remotes: HashMap::new(),
             coordinator_port: default_coordinator_port(),
-            default_remote: None,
             auth: AuthConfig::default(),
             runners: HashMap::new(),
             default_runner: None,
@@ -822,60 +835,6 @@ impl Config {
             }
         }
 
-        // Load remotes
-        if let Some(remotes_data) = table.get("remotes") {
-            if let Some(remotes_table) = remotes_data.as_table() {
-                for (name, remote_data) in remotes_table {
-                    if let Some(remote_table) = remote_data.as_table() {
-                        if let Some(host) = remote_table.get("host").and_then(|v| v.as_str()) {
-                            let remote_config = RemoteConfig {
-                                host: host.to_string(),
-                                python_path: remote_table
-                                    .get("python_path")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("python3")
-                                    .to_string(),
-                                work_base: remote_table
-                                    .get("work_base")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("/tmp/hirsel-remote")
-                                    .to_string(),
-                                ssh_key: remote_table
-                                    .get("ssh_key")
-                                    .and_then(|v| v.as_str())
-                                    .map(String::from),
-                                ssh_port: remote_table
-                                    .get("ssh_port")
-                                    .and_then(|v| v.as_integer())
-                                    .unwrap_or(22) as u16,
-                                location: remote_table
-                                    .get("location")
-                                    .and_then(|v| v.as_str())
-                                    .map(String::from),
-                            };
-                            self.remotes.insert(name.clone(), remote_config);
-                        } else {
-                            warnings.push(format!(
-                                "Config warning: [remotes.{}] missing required 'host' field",
-                                name
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Load default_remote
-        if let Some(val) = table.get("default_remote") {
-            if let Some(s) = val.as_str() {
-                if s == "local" || s.is_empty() {
-                    self.default_remote = None;
-                } else {
-                    self.default_remote = Some(s.to_string());
-                }
-            }
-        }
-
         // Load auth configuration
         if let Some(auth_data) = table.get("auth") {
             if let Some(auth_table) = auth_data.as_table() {
@@ -987,6 +946,51 @@ impl Config {
                             _ => OrchestratorMode::Local,
                         };
 
+                        // Parse access strategy
+                        let access = if let Some(access_data) = profile_table.get("access") {
+                            if let Some(access_table) = access_data.as_table() {
+                                let access_type = access_table
+                                    .get("type")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("direct");
+
+                                match access_type {
+                                    "tailscale" => {
+                                        let client_id = access_table
+                                            .get("oauth_client_id")
+                                            .and_then(|v| v.as_str());
+                                        let client_secret = access_table
+                                            .get("oauth_client_secret")
+                                            .and_then(|v| v.as_str());
+                                        let tag = access_table
+                                            .get("tag")
+                                            .and_then(|v| v.as_str())
+                                            .map(String::from);
+
+                                        if let (Some(id), Some(secret)) = (client_id, client_secret)
+                                        {
+                                            OrchestratorAccess::Tailscale {
+                                                oauth_client_id: id.to_string(),
+                                                oauth_client_secret: secret.to_string(),
+                                                tag,
+                                            }
+                                        } else {
+                                            warnings.push(format!(
+                                                "Config warning: [profiles.{}.access] tailscale requires 'oauth_client_id' and 'oauth_client_secret'",
+                                                name
+                                            ));
+                                            OrchestratorAccess::Direct
+                                        }
+                                    }
+                                    _ => OrchestratorAccess::Direct,
+                                }
+                            } else {
+                                OrchestratorAccess::Direct
+                            }
+                        } else {
+                            OrchestratorAccess::Direct
+                        };
+
                         let profile = OrchestratorProfile {
                             mode,
                             url: profile_table
@@ -997,6 +1001,7 @@ impl Config {
                                 .get("api_key")
                                 .and_then(|v| v.as_str())
                                 .map(String::from),
+                            access,
                         };
 
                         // Validate remote profiles have required fields
@@ -1008,13 +1013,7 @@ impl Config {
                                 ));
                                 continue;
                             }
-                            if profile.api_key.is_none() {
-                                warnings.push(format!(
-                                    "Config warning: [profiles.{}] remote mode requires 'api_key' field",
-                                    name
-                                ));
-                                continue;
-                            }
+                            // Note: api_key is optional in config - it can be loaded from credential store
                         }
 
                         self.profiles.insert(name.clone(), profile);
@@ -1099,6 +1098,295 @@ impl Config {
         let mut names: Vec<String> = self.runners.keys().cloned().collect();
         names.insert(0, "local".to_string());
         names
+    }
+
+    /// Save the current configuration to config.toml
+    ///
+    /// This serializes the config back to TOML format and writes it to disk.
+    /// Note: Comments in the original file will be lost.
+    pub fn save(&self) -> Result<(), ConfigError> {
+        let config_path = self.config_file();
+
+        // Build TOML manually to control section ordering
+        let mut output = String::new();
+
+        // Agent section
+        output.push_str("[agent]\n");
+        let cmd_parts: Vec<String> = self
+            .agent
+            .command
+            .iter()
+            .map(|s| format!("\"{}\"", s))
+            .collect();
+        output.push_str(&format!("command = [{}]\n\n", cmd_parts.join(", ")));
+
+        // Top-level settings
+        output.push_str(&format!("eval_timeout = {}\n", self.eval_timeout));
+        output.push_str(&format!("auto_learn = {}\n", self.auto_learn));
+        if let Some(max_iter) = self.max_iterations {
+            output.push_str(&format!("max_iterations = {}\n", max_iter));
+        }
+        output.push_str(&format!(
+            "user_message_pause = \"{}\"\n",
+            self.user_message_pause
+        ));
+        output.push_str(&format!("human_in_the_loop = {}\n", self.human_in_the_loop));
+        output.push_str(&format!(
+            "compaction_enabled = {}\n",
+            self.compaction_enabled
+        ));
+        if let Some(threshold) = self.compaction_threshold {
+            output.push_str(&format!("compaction_threshold = {}\n", threshold));
+        }
+        output.push_str(&format!(
+            "compaction_keep_messages = {}\n",
+            self.compaction_keep_messages
+        ));
+        output.push_str(&format!("auto_improve = {}\n", self.auto_improve));
+        output.push_str(&format!(
+            "context_warning_threshold = {}\n",
+            self.context_warning_threshold
+        ));
+        output.push_str(&format!("coordinator_port = {}\n", self.coordinator_port));
+        if let Some(ref runner) = self.default_runner {
+            output.push_str(&format!("default_runner = \"{}\"\n", runner));
+        }
+        output.push_str(&format!("default_profile = \"{}\"\n", self.default_profile));
+        output.push('\n');
+
+        // Auth section
+        output.push_str("[auth]\n");
+        output.push_str(&format!(
+            "default_method = \"{}\"\n",
+            match self.auth.default_method {
+                AuthMethod::Env => "env",
+                AuthMethod::ApiKey => "api_key",
+                AuthMethod::OAuth => "oauth",
+            }
+        ));
+
+        // Agent-specific auth
+        for (name, auth) in [
+            ("claude", &self.auth.claude),
+            ("gemini", &self.auth.gemini),
+            ("codex", &self.auth.codex),
+            ("goose", &self.auth.goose),
+        ] {
+            if let Some(agent_auth) = auth {
+                output.push_str(&format!("\n[auth.{}]\n", name));
+                output.push_str(&format!(
+                    "method = \"{}\"\n",
+                    match agent_auth.method {
+                        AuthMethod::Env => "env",
+                        AuthMethod::ApiKey => "api_key",
+                        AuthMethod::OAuth => "oauth",
+                    }
+                ));
+                if let Some(ref key) = agent_auth.api_key {
+                    output.push_str(&format!("api_key = \"{}\"\n", key));
+                }
+                if let Some(ref var) = agent_auth.env_var {
+                    output.push_str(&format!("env_var = \"{}\"\n", var));
+                }
+            }
+        }
+        output.push('\n');
+
+        // Runners section
+        for (name, runner_config) in &self.runners {
+            output.push_str(&format!("[runners.{}]\n", name));
+            match runner_config {
+                crate::core::runner::RunnerConfig::Local => {
+                    output.push_str("type = \"local\"\n");
+                }
+                crate::core::runner::RunnerConfig::Ssh(ssh) => {
+                    output.push_str("type = \"ssh\"\n");
+                    output.push_str(&format!("host = \"{}\"\n", ssh.host));
+                    if let Some(ref key) = ssh.ssh_key {
+                        output.push_str(&format!("ssh_key = \"{}\"\n", key));
+                    }
+                    output.push_str(&format!("ssh_port = {}\n", ssh.ssh_port));
+                    output.push_str(&format!("work_base = \"{}\"\n", ssh.work_base));
+                    if let Some(ref loc) = ssh.location {
+                        output.push_str(&format!("location = \"{}\"\n", loc));
+                    }
+                }
+                crate::core::runner::RunnerConfig::Sprite(sprite) => {
+                    output.push_str("type = \"sprite\"\n");
+                    if let Some(ref token) = sprite.api_token {
+                        output.push_str(&format!("api_token = \"{}\"\n", token));
+                    }
+                    if let Some(ref cp) = sprite.base_checkpoint {
+                        output.push_str(&format!("base_checkpoint = \"{}\"\n", cp));
+                    }
+                    output.push_str(&format!("auto_destroy = {}\n", sprite.auto_destroy));
+                    output.push_str(&format!(
+                        "idle_timeout_secs = {}\n",
+                        sprite.idle_timeout_secs
+                    ));
+                    output.push_str(&format!("api_url = \"{}\"\n", sprite.api_url));
+                }
+            }
+            output.push('\n');
+        }
+
+        // Profiles section
+        for (name, profile) in &self.profiles {
+            output.push_str(&format!("[profiles.{}]\n", name));
+            output.push_str(&format!(
+                "mode = \"{}\"\n",
+                match profile.mode {
+                    OrchestratorMode::Local => "local",
+                    OrchestratorMode::Remote => "remote",
+                }
+            ));
+            if let Some(ref url) = profile.url {
+                output.push_str(&format!("url = \"{}\"\n", url));
+            }
+            if let Some(ref key) = profile.api_key {
+                output.push_str(&format!("api_key = \"{}\"\n", key));
+            }
+
+            // Access sub-section
+            match &profile.access {
+                OrchestratorAccess::Direct => {
+                    output.push_str("\n[profiles.");
+                    output.push_str(name);
+                    output.push_str(".access]\n");
+                    output.push_str("type = \"direct\"\n");
+                }
+                OrchestratorAccess::Tailscale {
+                    oauth_client_id,
+                    oauth_client_secret,
+                    tag,
+                } => {
+                    output.push_str("\n[profiles.");
+                    output.push_str(name);
+                    output.push_str(".access]\n");
+                    output.push_str("type = \"tailscale\"\n");
+                    output.push_str(&format!("oauth_client_id = \"{}\"\n", oauth_client_id));
+                    output.push_str(&format!(
+                        "oauth_client_secret = \"{}\"\n",
+                        oauth_client_secret
+                    ));
+                    if let Some(ref t) = tag {
+                        output.push_str(&format!("tag = \"{}\"\n", t));
+                    }
+                }
+            }
+            output.push('\n');
+        }
+
+        // Git section
+        if let Some(ref provider) = self.git.default_provider {
+            output.push_str("[git]\n");
+            output.push_str(&format!(
+                "default_provider = \"{}\"\n",
+                match provider {
+                    GitProvider::Github => "github",
+                }
+            ));
+            output.push('\n');
+        }
+
+        // Ensure parent directory exists
+        if let Some(parent) = config_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| ConfigError::ReadError {
+                path: parent.to_path_buf(),
+                message: e.to_string(),
+            })?;
+        }
+
+        // Write config file
+        fs::write(&config_path, output).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                ConfigError::PermissionDenied { path: config_path }
+            } else {
+                ConfigError::ReadError {
+                    path: config_path,
+                    message: e.to_string(),
+                }
+            }
+        })?;
+
+        Ok(())
+    }
+
+    /// Update general settings (max_workers, default_runner, etc.)
+    pub fn update_general(
+        &mut self,
+        eval_timeout: Option<u32>,
+        auto_learn: Option<bool>,
+        max_iterations: Option<Option<u32>>,
+        human_in_the_loop: Option<bool>,
+        default_runner: Option<Option<String>>,
+        coordinator_port: Option<u16>,
+    ) {
+        if let Some(v) = eval_timeout {
+            self.eval_timeout = v;
+        }
+        if let Some(v) = auto_learn {
+            self.auto_learn = v;
+        }
+        if let Some(v) = max_iterations {
+            self.max_iterations = v;
+        }
+        if let Some(v) = human_in_the_loop {
+            self.human_in_the_loop = v;
+        }
+        if let Some(v) = default_runner {
+            self.default_runner = v;
+        }
+        if let Some(v) = coordinator_port {
+            self.coordinator_port = v;
+        }
+    }
+
+    /// Update agent settings
+    pub fn update_agent(&mut self, command: Option<Vec<String>>) {
+        if let Some(cmd) = command {
+            self.agent.command = cmd;
+        }
+    }
+
+    /// Update compaction settings
+    pub fn update_compaction(
+        &mut self,
+        enabled: Option<bool>,
+        threshold: Option<Option<u32>>,
+        keep_messages: Option<u32>,
+    ) {
+        if let Some(v) = enabled {
+            self.compaction_enabled = v;
+        }
+        if let Some(v) = threshold {
+            self.compaction_threshold = v;
+        }
+        if let Some(v) = keep_messages {
+            self.compaction_keep_messages = v;
+        }
+    }
+
+    /// Update auth settings for a specific agent
+    pub fn update_agent_auth(&mut self, agent: &str, auth: AgentAuth) {
+        match agent {
+            "claude" => self.auth.claude = Some(auth),
+            "gemini" => self.auth.gemini = Some(auth),
+            "codex" => self.auth.codex = Some(auth),
+            "goose" => self.auth.goose = Some(auth),
+            _ => {}
+        }
+    }
+
+    /// Delete auth settings for a specific agent
+    pub fn delete_agent_auth(&mut self, agent: &str) {
+        match agent {
+            "claude" => self.auth.claude = None,
+            "gemini" => self.auth.gemini = None,
+            "codex" => self.auth.codex = None,
+            "goose" => self.auth.goose = None,
+            _ => {}
+        }
     }
 }
 

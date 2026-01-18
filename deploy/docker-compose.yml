@@ -1,6 +1,8 @@
 services:
   hirsel:
-    build: .
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
     init: true
     restart: unless-stopped
     ports:
@@ -8,7 +10,7 @@ services:
     environment:
       - HIRSEL_API_KEY=${HIRSEL_API_KEY}
     volumes:
-      - hirsel-data:/root/.hirsel
+      - hirsel-data:/home/hirsel/.hirsel
     stop_grace_period: 30s
 
 volumes:

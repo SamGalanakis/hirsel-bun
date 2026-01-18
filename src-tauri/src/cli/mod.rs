@@ -209,6 +209,14 @@ pub enum Commands {
     #[command(name = "__remote-worker", hide = true)]
     RemoteWorker(RemoteWorkerArgs),
 
+    /// Run as daemon (internal, auto-started by CLI)
+    #[command(name = "__daemon", hide = true)]
+    Daemon(DaemonArgs),
+
+    /// Stop the daemon
+    #[command(name = "daemon")]
+    DaemonCtl(DaemonCtlArgs),
+
     // ========== Completion Helpers ==========
     /// List run names (for shell completion)
     #[command(name = "_complete_runs", hide = true)]
@@ -641,6 +649,33 @@ pub struct ServeArgs {
     /// Port to listen on
     #[arg(long, default_value = "8080")]
     pub port: u16,
+}
+
+/// Arguments for `hirsel __daemon` (internal)
+#[derive(Args, Debug)]
+pub struct DaemonArgs {
+    /// Idle timeout in seconds (daemon exits if no active runs for this long)
+    #[arg(long, default_value = "300")]
+    pub idle_timeout: u64,
+}
+
+/// Arguments for `hirsel daemon`
+#[derive(Args, Debug)]
+pub struct DaemonCtlArgs {
+    /// Daemon subcommand
+    #[command(subcommand)]
+    pub command: DaemonCommand,
+}
+
+/// Daemon control subcommands
+#[derive(Subcommand, Debug)]
+pub enum DaemonCommand {
+    /// Start the daemon (if not running)
+    Start,
+    /// Stop the daemon
+    Stop,
+    /// Check daemon status
+    Status,
 }
 
 // ========== Worker CLI (hirsel-worker) ==========
@@ -1322,6 +1357,16 @@ pub fn run_cli() -> anyhow::Result<bool> {
                 .map_err(|e| anyhow::anyhow!("Failed to create runtime: {}", e))?;
             rt.block_on(async { crate::core::server::start_server(args.port).await })
                 .map_err(|e| anyhow::anyhow!("Server error: {}", e))?;
+        }
+        Commands::Daemon(_args) => {
+            // Daemon command is handled by lib.rs run_command
+            eprintln!("Daemon command should be called via hirsel binary directly");
+            std::process::exit(1);
+        }
+        Commands::DaemonCtl(_args) => {
+            // DaemonCtl command is handled by lib.rs run_command
+            eprintln!("Daemon control command should be called via hirsel binary directly");
+            std::process::exit(1);
         }
     }
 

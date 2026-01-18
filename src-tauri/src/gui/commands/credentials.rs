@@ -28,6 +28,18 @@ pub fn has_credential(key_type: String) -> Result<bool, String> {
     Ok(store.load(&key_type).is_ok())
 }
 
+/// Get the actual value of a credential
+///
+/// Used internally for auth verification. Only accessible from within the app.
+#[tauri::command]
+pub fn get_credential(key_type: String) -> Result<Option<String>, String> {
+    let store = CredentialStore::open().map_err(|e| e.to_string())?;
+    match store.load(&key_type) {
+        Ok(value) => Ok(Some(value)),
+        Err(_) => Ok(None),
+    }
+}
+
 /// Get the masked value of a credential (for display purposes)
 ///
 /// Returns the first 4 and last 4 characters of the credential,

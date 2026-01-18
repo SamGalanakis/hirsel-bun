@@ -162,12 +162,12 @@ export function setTheme(themeId: ThemeId): void {
 }
 
 /**
- * Get the current theme ID from localStorage or return default
+ * Get the current theme ID from localStorage or return default based on system preference
  */
 export function getTheme(): ThemeId {
   const stored = localStorage.getItem(STORAGE_KEY);
 
-  // Check if it's a valid theme ID
+  // Check if it's a valid theme ID (user has explicitly chosen)
   if (stored && stored in THEMES) {
     return stored as ThemeId;
   }
@@ -180,7 +180,9 @@ export function getTheme(): ThemeId {
     return 'hirsel-light';
   }
 
-  return DEFAULT_THEME;
+  // No stored preference - use system preference with Hirsel theme
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  return prefersDark ? 'hirsel-dark' : 'hirsel-light';
 }
 
 /**

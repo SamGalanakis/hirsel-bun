@@ -19,25 +19,22 @@ pub async fn api_key_auth(
         return Ok(next.run(request).await);
     }
 
-    // Extract Authorization header
-    let auth_header = request
+    // Extract API key from either Authorization header or X-API-Key header
+    let api_key = request
         .headers()
         .get("Authorization")
-        .and_then(|value| value.to_str().ok());
+        .and_then(|value| value.to_str().ok())
+        .and_then(|header| header.strip_prefix("Bearer ").map(|s| s.to_string()))
+        .or_else(|| {
+            request
+                .headers()
+                .get("X-API-Key")
+                .and_then(|value| value.to_str().ok())
+                .map(|s| s.to_string())
+        });
 
-    match auth_header {
-        Some(header) => {
-            // Check for Bearer token
-            if let Some(token) = header.strip_prefix("Bearer ") {
-                if token == expected_key {
-                    Ok(next.run(request).await)
-                } else {
-                    Err(StatusCode::UNAUTHORIZED)
-                }
-            } else {
-                Err(StatusCode::UNAUTHORIZED)
-            }
-        }
-        None => Err(StatusCode::UNAUTHORIZED),
+    match api_key {
+        Some(key) if key == expected_key => Ok(next.run(request).await),
+        _ => Err(StatusCode::UNAUTHORIZED),
     }
 }
