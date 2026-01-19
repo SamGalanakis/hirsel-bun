@@ -303,6 +303,8 @@ pub async fn create_draft(project_path: Option<String>) -> Result<RunDetail, Str
         learnings_processed_at: None,
         agent_type: format!("{:?}", agent_type).to_lowercase(),
         metrics_available,
+        runner: None,
+        worker_runners: None,
     })
 }
 
@@ -351,6 +353,8 @@ pub async fn clone_run(source_run: String, new_name: String) -> Result<RunDetail
         learnings_processed_at: None,
         agent_type: format!("{:?}", agent_type).to_lowercase(),
         metrics_available,
+        runner: None,
+        worker_runners: None,
     })
 }
 
@@ -423,6 +427,20 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
             .map_err(|e| format!("Failed to update branch: {}", e))?;
     }
 
+    // Update default runner
+    if let Some(runner) = updates.runner {
+        state
+            .set_default_runner(Some(&runner))
+            .map_err(|e| format!("Failed to update runner: {}", e))?;
+    }
+
+    // Update per-worker runner assignments
+    if let Some(worker_runners) = updates.worker_runners {
+        state
+            .set_worker_runners(Some(&worker_runners))
+            .map_err(|e| format!("Failed to update worker runners: {}", e))?;
+    }
+
     // Handle rename if requested
     if let Some(new_name) = updates.name {
         if new_name != run_name {
@@ -445,14 +463,14 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
 #[tauri::command]
 pub async fn start_draft(run_name: String) -> Result<RunDetail, String> {
     use crate::cli::config::get_agent_command;
-    use crate::cli::go::{get_available_names, WorkerScale};
+    use crate::cli::go::WorkerScale;
     use crate::core::git::{
         checkout_branch_at_path, clone_remote_with_branch, get_repo_root, is_remote_url,
     };
-    use crate::core::ops::{
-        compute_multi_worker_config, register_workers, setup_run_workspace, spawn_local_workers,
-        RunSetupConfig, SpawnWorkersConfig,
-    };
+    use crate::core::names::get_available_names;
+    use crate::core::ops::{compute_multi_worker_config, setup_run_workspace, RunSetupConfig};
+    use crate::core::runner::{create_runner, WorkerSpawnConfig as RunnerSpawnConfig};
+    use crate::core::state::WorkerUpdate;
 
     let run_dir = config::run_dir(&run_name);
     let db_path = run_dir.join("hirsel.db");
@@ -550,8 +568,15 @@ pub async fn start_draft(run_name: String) -> Result<RunDetail, String> {
 
     let setup_result = setup_run_workspace(&setup_config).map_err(|e| e.to_string())?;
 
-    // Register workers in state
-    register_workers(&state, &setup_result.worker_dirs, "local").map_err(|e| e.to_string())?;
+    // Register workers in state with per-worker runner assignments
+    for (worker_name, work_dir) in &setup_result.worker_dirs {
+        let runner = state
+            .get_runner_for_worker(worker_name)
+            .map_err(|e| format!("Failed to get runner for {}: {}", worker_name, e))?;
+        state
+            .add_worker(worker_name, work_dir.to_str().unwrap_or("."), &runner)
+            .map_err(|e| format!("Failed to register worker {}: {}", worker_name, e))?;
+    }
 
     // Pre-claim scope for first worker
     let first_worker = &worker_names[0];
@@ -577,19 +602,100 @@ pub async fn start_draft(run_name: String) -> Result<RunDetail, String> {
         }
     }
 
-    // Spawn worker processes using shared ops
-    let agent_command = get_agent_command();
-    let spawn_config = SpawnWorkersConfig {
-        run_name: run_name.clone(),
-        run_dir: run_dir.clone(),
-        spec_path,
-        agent_command,
-        is_multi_worker,
-        leader_name: leader,
-        all_worker_names: worker_names,
-    };
+    // Load global config for runner definitions
+    let (global_config, _) =
+        config::Config::load().unwrap_or_else(|_| (config::Config::default(), vec![]));
 
-    spawn_local_workers(&spawn_config, &setup_result.worker_dirs, &state);
+    // Get agent command
+    let agent_command = get_agent_command();
+
+    // Spawn workers using the appropriate runner for each
+    for (i, (worker_name, work_dir)) in setup_result.worker_dirs.iter().enumerate() {
+        // Check if run was paused while spawning
+        if state
+            .status()
+            .map(|s| s == crate::core::state::Status::Paused)
+            .unwrap_or(false)
+        {
+            tracing::info!("Run paused, stopping worker spawn");
+            break;
+        }
+
+        let is_leader = i == 0 && is_multi_worker;
+
+        // Build teammates list (all workers except self)
+        let teammates = if is_multi_worker {
+            Some(
+                worker_names
+                    .iter()
+                    .filter(|t| *t != worker_name)
+                    .cloned()
+                    .collect(),
+            )
+        } else {
+            None
+        };
+
+        // Get the runner name for this worker from run state
+        let runner_name = state
+            .get_runner_for_worker(worker_name)
+            .map_err(|e| format!("Failed to get runner for {}: {}", worker_name, e))?;
+
+        // Look up runner config from global config
+        let runner_config = global_config.get_runner(&runner_name).unwrap_or_default();
+
+        // Create the runner
+        let runner = create_runner(&runner_config);
+
+        // Build spawn config for the runner
+        let spawn_config = RunnerSpawnConfig {
+            run_name: run_name.clone(),
+            worker_name: worker_name.clone(),
+            work_dir: work_dir.clone(),
+            run_dir: run_dir.clone(),
+            spec_path: spec_path.clone(),
+            agent_command: agent_command.clone(),
+            is_leader,
+            leader_name: leader.clone(),
+            teammates,
+            resume_session_id: None,
+            env_vars: None,
+            coordinator_url: None,
+            project_url: None,
+            tailscale_authkey: None,
+        };
+
+        // Spawn the worker
+        match runner.spawn(&spawn_config).await {
+            Ok(result) => {
+                // Update worker with PID
+                if let Some(pid) = result.pid {
+                    let _ = state.update_worker(
+                        worker_name,
+                        WorkerUpdate {
+                            pid: Some(pid as i64),
+                            ..Default::default()
+                        },
+                    );
+                }
+                tracing::info!(
+                    "Spawned worker {} on runner {} (type: {})",
+                    worker_name,
+                    runner_name,
+                    result.handle.runner_type
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Failed to spawn worker {} on runner {}: {}",
+                    worker_name,
+                    runner_name,
+                    e
+                );
+                // Continue with other workers
+            }
+        }
+    }
 
     // Return updated run detail
     get_run_detail(run_name).await

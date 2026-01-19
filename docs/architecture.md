@@ -18,6 +18,8 @@
 13. [Configuration](#configuration)
 14. [Runner Management](#runner-management)
 15. [Data Flow Examples](#data-flow-examples)
+16. [Cargo Feature Flags](#cargo-feature-flags)
+17. [Separate CLI/GUI Packaging](#separate-cligui-packaging)
 
 ---
 
@@ -810,21 +812,159 @@ SSH runners are polled for connectivity when the Runners tab is active:
 
 ---
 
+## Cargo Feature Flags
+
+The Rust crate uses feature flags to support different build configurations, from full desktop app to minimal worker binary.
+
+### Feature Overview
+
+| Feature | Description | Dependencies Added |
+|---------|-------------|-------------------|
+| `gui` | Tauri desktop application | tauri, tauri-plugin-*, full-cli |
+| `full-cli` | Complete CLI (go, test, attach, serve) | server, tui |
+| `server` | HTTP server mode (`hirsel serve`) | axum, tower-http, hyper |
+| `tui` | Terminal UI (`hirsel attach`) | ratatui, crossterm |
+| `worker` | Minimal worker binary | (none - subset of core) |
+
+### Default Build
+
+```bash
+cargo build
+# Features: gui + full-cli + server + tui
+# Binary size: ~25MB
+# Use case: Development, desktop app
+```
+
+### Build Variants
+
+**Full CLI (no GUI):**
+```bash
+cargo build --no-default-features --features full-cli
+# Features: full-cli + server + tui
+# Use case: Server deployment, headless operation
+```
+
+**Worker-only (minimal):**
+```bash
+cargo build --no-default-features --features worker
+# Features: worker only
+# Binary size: ~8MB (target)
+# Use case: Remote worker deployment on sprites/VMs
+```
+
+### Feature Graph
+
+```
+default
+  └── gui
+        ├── tauri, tauri-plugin-*
+        └── full-cli
+              ├── server (axum, tower-http, hyper)
+              └── tui (ratatui, crossterm)
+
+worker (standalone, minimal deps)
+```
+
+### Module Feature Gates
+
+Key modules are feature-gated:
+
+```rust
+// Server-only modules (core/)
+#[cfg(feature = "server")]
+pub mod coordinator_api;
+#[cfg(feature = "server")]
+pub mod git_http;
+#[cfg(feature = "server")]
+pub mod server;
+#[cfg(feature = "server")]
+pub mod tunnel;
+
+// Server-only (orchestrator)
+#[cfg(feature = "server")]
+mod daemon;  // DaemonOrchestrator
+#[cfg(feature = "server")]
+pub fn create_daemon_orchestrator();
+
+// TUI-only modules (cli/)
+#[cfg(feature = "tui")]
+pub mod attach;
+#[cfg(feature = "tui")]
+pub mod tui;
+
+// Full CLI modules (cli/)
+#[cfg(feature = "full-cli")]
+pub mod go;
+#[cfg(feature = "full-cli")]
+pub mod test;
+```
+
+### Command Feature Gates
+
+CLI commands are feature-gated to support minimal builds:
+
+| Command | Feature | Description |
+|---------|---------|-------------|
+| `go` | `full-cli` | Start a new run |
+| `test` | `full-cli` | Run e2e test scenarios |
+| `attach` | `tui` | TUI worker output viewer |
+| `serve` | `server` | HTTP server mode |
+| `daemon` | `server` | Background daemon |
+| `daemon start/stop/status` | `server` | Daemon control |
+
+Commands like `runs`, `view`, `pause`, `resume`, `tasks`, etc. are always available.
+
+### Worker Binary Purpose
+
+The `worker` feature creates a minimal binary for deployment to remote machines (sprites, VMs):
+
+- Runs the `__worker-run` internal command
+- Connects to coordinator via HTTP
+- Spawns ACP agent subprocess
+- No server, TUI, or GUI dependencies
+
+This enables smaller uploads to remote runners and faster startup times.
+
+### Shared Dependencies
+
+Some dependencies are always included (not feature-gated):
+- `serde`, `serde_json` - Serialization
+- `rusqlite` - SQLite state
+- `tokio` - Async runtime
+- `reqwest` - HTTP client
+- `git2` - Git operations
+- `aes-gcm`, `hex` - Credential encryption
+
+---
+
 ## Separate CLI/GUI Packaging
 
-The architecture supports separate installables:
+The architecture supports separate installables via feature flags:
 
 **CLI Package** (`hirsel`):
-- CLI commands + daemon
+```bash
+cargo build --no-default-features --features full-cli
+```
+- CLI commands + daemon + server
 - No Tauri dependencies
-- Build: `cargo build --no-default-features`
+- Use case: Servers, headless operation
 
 **GUI Package** (`hirsel-gui`):
-- Tauri app
-- Can share daemon with CLI
-- Build: `cargo build` (default features)
+```bash
+cargo build  # default features
+```
+- Full Tauri app
+- Includes CLI commands
+- Use case: Desktop development
 
-Both connect to the same daemon socket, enabling:
+**Worker Package** (`hirsel-worker`):
+```bash
+cargo build --no-default-features --features worker
+```
+- Minimal binary for remote execution
+- Use case: Sprite/VM deployment
+
+Both CLI and GUI connect to the same daemon socket, enabling:
 - Install CLI only on servers
 - Install GUI only on desktops
 - Both on development machines

@@ -6,6 +6,7 @@
 
 pub mod cli;
 pub mod core;
+#[cfg(feature = "server")]
 pub mod daemon;
 #[cfg(feature = "gui")]
 pub mod gui;
@@ -55,6 +56,7 @@ fn run_command(
     match cmd {
         Commands::Runs => list_runs(json)?,
         Commands::View(args) => view::execute(&args.run_name, json)?,
+        #[cfg(feature = "full-cli")]
         Commands::Go(args) => {
             let result = run_go(&args)?;
             if json {
@@ -82,6 +84,7 @@ fn run_command(
                 log::LogResult::Error(e) => return Err(e.into()),
             }
         }
+        #[cfg(feature = "tui")]
         Commands::Attach(args) => {
             run_attach(&args.run_name, args.target.as_deref(), json)?;
         }
@@ -412,6 +415,7 @@ fn run_command(
             })
             .map_err(|e| format!("Remote worker error: {}", e))?;
         }
+        #[cfg(feature = "full-cli")]
         Commands::Test(args) => {
             cli::test::execute(
                 args.scenario.as_deref(),
@@ -424,6 +428,7 @@ fn run_command(
             )
             .map_err(|e| format!("Test error: {}", e))?;
         }
+        #[cfg(feature = "server")]
         Commands::Serve(args) => {
             // Server mode - run HTTP server for remote orchestration
             let rt = tokio::runtime::Runtime::new()
@@ -431,6 +436,7 @@ fn run_command(
             rt.block_on(async { core::server::start_server(args.port).await })
                 .map_err(|e| format!("Server error: {}", e))?;
         }
+        #[cfg(feature = "server")]
         Commands::Daemon(args) => {
             // Internal daemon command - runs the daemon server
             use daemon::{start_daemon, DaemonConfig};
@@ -444,6 +450,7 @@ fn run_command(
             rt.block_on(async { start_daemon(config).await })
                 .map_err(|e| format!("Daemon error: {}", e))?;
         }
+        #[cfg(feature = "server")]
         Commands::DaemonCtl(args) => {
             // Daemon control commands
             use cli::DaemonCommand;

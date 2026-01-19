@@ -8,6 +8,7 @@
 //! When invoked without arguments, `hirsel` launches the native GUI.
 
 pub mod asset;
+#[cfg(feature = "tui")]
 pub mod attach;
 pub mod compact;
 pub mod completions;
@@ -15,6 +16,7 @@ pub mod config;
 pub mod delete;
 pub mod deliver;
 pub mod diff;
+#[cfg(feature = "full-cli")]
 pub mod go;
 pub mod improve;
 pub mod log;
@@ -29,7 +31,9 @@ pub mod spec;
 pub mod summary;
 pub mod tasks;
 pub mod templates;
+#[cfg(feature = "full-cli")]
 pub mod test;
+#[cfg(feature = "tui")]
 pub mod tui;
 pub mod view;
 
@@ -38,12 +42,14 @@ use clap::{Args, Parser, Subcommand};
 // Re-export command implementations
 pub use self::diff::{print_diff, run_diff, DiffError, DiffResult};
 pub use asset::run_asset;
+#[cfg(feature = "tui")]
 pub use attach::{list_targets, run_attach};
 pub use completions::{generate_completions, print_completions, run_completions};
 pub use config::{
     agent_presets, get_agent_command, get_current_agent, run_config, set_agent, AgentPreset,
 };
 pub use delete::execute as run_delete;
+#[cfg(feature = "full-cli")]
 pub use go::{run as run_go, GoError, GoOutput, GoResult};
 pub use log::{run_log, LogResult, OutputFormat};
 pub use man::run_man;
@@ -82,6 +88,7 @@ pub struct Cli {
 pub enum Commands {
     // ========== Run Management ==========
     /// Start a new run
+    #[cfg(feature = "full-cli")]
     Go(GoArgs),
 
     /// View run status
@@ -91,6 +98,7 @@ pub enum Commands {
     Log(LogArgs),
 
     /// Watch worker live output (TUI)
+    #[cfg(feature = "tui")]
     Attach(AttachArgs),
 
     /// Send message to run
@@ -179,9 +187,11 @@ pub enum Commands {
     Reset(ResetArgs),
 
     /// Run e2e test scenarios
+    #[cfg(feature = "full-cli")]
     Test(TestArgs),
 
     /// Run as HTTP server (headless mode for remote orchestration)
+    #[cfg(feature = "server")]
     Serve(ServeArgs),
 
     // ========== Internal ==========
@@ -210,10 +220,12 @@ pub enum Commands {
     RemoteWorker(RemoteWorkerArgs),
 
     /// Run as daemon (internal, auto-started by CLI)
+    #[cfg(feature = "server")]
     #[command(name = "__daemon", hide = true)]
     Daemon(DaemonArgs),
 
     /// Stop the daemon
+    #[cfg(feature = "server")]
     #[command(name = "daemon")]
     DaemonCtl(DaemonCtlArgs),
 
@@ -832,6 +844,7 @@ pub fn run_cli() -> anyhow::Result<bool> {
 
     match command {
         // Run Management
+        #[cfg(feature = "full-cli")]
         Commands::Go(args) => {
             match go::run(&args) {
                 Ok(output) => {
@@ -879,6 +892,7 @@ pub fn run_cli() -> anyhow::Result<bool> {
                 }
             }
         }
+        #[cfg(feature = "tui")]
         Commands::Attach(args) => {
             if let Err(e) = attach::run_attach(&args.run_name, args.target.as_deref(), json) {
                 eprintln!("Error: {}", e);
@@ -1242,6 +1256,7 @@ pub fn run_cli() -> anyhow::Result<bool> {
                 }
             }
         }
+        #[cfg(feature = "full-cli")]
         Commands::Test(args) => {
             if let Err(e) = test::execute(
                 args.scenario.as_deref(),
@@ -1350,6 +1365,7 @@ pub fn run_cli() -> anyhow::Result<bool> {
                 }
             }
         }
+        #[cfg(feature = "server")]
         Commands::Serve(args) => {
             // Server mode - run HTTP server for remote orchestration
             // This is handled in lib.rs run_command, but add here for completeness
@@ -1358,11 +1374,13 @@ pub fn run_cli() -> anyhow::Result<bool> {
             rt.block_on(async { crate::core::server::start_server(args.port).await })
                 .map_err(|e| anyhow::anyhow!("Server error: {}", e))?;
         }
+        #[cfg(feature = "server")]
         Commands::Daemon(_args) => {
             // Daemon command is handled by lib.rs run_command
             eprintln!("Daemon command should be called via hirsel binary directly");
             std::process::exit(1);
         }
+        #[cfg(feature = "server")]
         Commands::DaemonCtl(_args) => {
             // DaemonCtl command is handled by lib.rs run_command
             eprintln!("Daemon control command should be called via hirsel binary directly");

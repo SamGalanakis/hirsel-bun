@@ -278,6 +278,10 @@ impl Orchestrator for LocalOrchestrator {
         let agent_type = self.config.agent.agent_type();
         let metrics_available = agent_type.supports_context_tracking();
 
+        // Get runner configuration
+        let runner = state.get_default_runner().ok().flatten();
+        let worker_runners = state.get_worker_runners().ok().flatten();
+
         Ok(RunDetail {
             name: name.to_string(),
             status: run_status,
@@ -305,6 +309,8 @@ impl Orchestrator for LocalOrchestrator {
             learnings_processed_at,
             agent_type: format!("{:?}", agent_type).to_lowercase(),
             metrics_available,
+            runner,
+            worker_runners,
         })
     }
 

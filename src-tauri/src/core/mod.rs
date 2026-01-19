@@ -17,11 +17,13 @@ pub mod chat_session;
 pub mod chats;
 pub mod compaction;
 pub mod config;
+#[cfg(feature = "server")]
 pub mod coordinator_api;
 pub mod credentials;
 pub mod eval;
 pub mod files;
 pub mod git;
+#[cfg(feature = "server")]
 pub mod git_http;
 pub mod gyp_chat;
 pub mod metrics;
@@ -31,10 +33,12 @@ pub mod orchestrator;
 pub mod process;
 pub mod remote;
 pub mod runner;
+#[cfg(feature = "server")]
 pub mod server;
 pub mod state;
 pub mod state_access;
 pub mod tailscale;
+#[cfg(feature = "server")]
 pub mod tunnel;
 pub mod workers;
 
@@ -63,7 +67,10 @@ pub use eval::{
 };
 pub use files::Files;
 pub use gyp_chat::{GypChatError, GypChatMessage, GypChatResult, GypChatStore};
-pub use names::{generate_run_name, generate_unique_names, generate_worker_name};
+pub use names::{
+    generate_run_name, generate_unique_names, generate_worker_name, get_available_name,
+    get_available_names,
+};
 pub use orchestrator::{
     create_local_orchestrator, create_orchestrator, LocalOrchestrator, Orchestrator,
     OrchestratorError, OrchestratorResult, RemoteOrchestrator,

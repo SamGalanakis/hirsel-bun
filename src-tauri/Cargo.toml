@@ -9,24 +9,53 @@ name = "hirsel_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
-default = ["gui"]
+# Default: full CLI + GUI
+default = ["gui", "full-cli"]
+
+# GUI (Tauri desktop app)
 gui = [
     "dep:tauri",
     "dep:tauri-plugin-log",
     "dep:tauri-plugin-single-instance",
     "dep:tauri-plugin-mcp",
     "tauri-build",
+    "full-cli",
 ]
+
+# Full CLI with all commands (server, TUI, etc.)
+full-cli = ["server", "tui"]
+
+# Server mode (hirsel serve) - coordinator/orchestrator
+server = ["dep:axum", "dep:tower-http", "dep:hyper", "dep:hyper-util"]
+
+# TUI mode (attach command)
+tui = ["dep:ratatui", "dep:crossterm"]
+
+# Minimal worker binary - only remote worker + MCP server
+# Build with: cargo build --release --no-default-features --features worker
+worker = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]
-# GUI dependencies (feature-gated)
+# === GUI dependencies (feature-gated) ===
 tauri = { version = "2", features = ["protocol-asset"], optional = true }
 tauri-plugin-log = { version = "2", optional = true }
 tauri-plugin-single-instance = { version = "2", optional = true }
 tauri-plugin-mcp = { path = "../tauri-plugin-mcp", optional = true }
+
+# === Server dependencies (feature-gated) ===
+axum = { version = "0.8", features = ["multipart"], optional = true }
+tower-http = { version = "0.6", features = ["cors"], optional = true }
+hyper = { version = "1", optional = true }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto", "http1"], optional = true }
+
+# === TUI dependencies (feature-gated) ===
+ratatui = { version = "0.30", optional = true }
+crossterm = { version = "0.29", optional = true }
+
+# === Core dependencies (always included) ===
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.38", features = ["bundled"] }
@@ -51,22 +80,16 @@ futures = "0.3"
 lazy_static = "1"
 uuid = { version = "1", features = ["v4"] }
 rand = "0.9.2"
-axum = { version = "0.8", features = ["multipart"] }
-tower-http = { version = "0.6", features = ["cors"] }
-hyper = "1"
-hyper-util = { version = "0.1", features = ["tokio", "server-auto", "http1"] }
 reqwest = { version = "0.13", features = ["json", "stream"] }
 shellexpand = "3"
 which = "8"
-ratatui = "0.30"
-crossterm = "0.29"
 urlencoding = "2"
 serde_urlencoded = "0.7"
-aes-gcm = "0.10"
-hex = "0.4"
 flate2 = "1"
 tar = "0.4"
 walkdir = "2"
+aes-gcm = "0.10"
+hex = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

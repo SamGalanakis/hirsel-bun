@@ -50,7 +50,9 @@ CREATE TABLE IF NOT EXISTS state (
     max_iterations INTEGER,
     pause_mode TEXT DEFAULT 'sender',
     is_test INTEGER DEFAULT 0,
-    failure_reason TEXT
+    failure_reason TEXT,
+    default_runner TEXT,
+    worker_runners TEXT
 );
 
 CREATE TABLE IF NOT EXISTS workers (

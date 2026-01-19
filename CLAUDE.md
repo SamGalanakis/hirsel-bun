@@ -339,3 +339,48 @@ This pattern is implemented in:
 - `cli/improve.rs` - Memory file updates
 
 See `src/core/process.rs` for the implementation.
+
+## Cargo Feature Flags
+
+The Rust crate supports feature flags to control binary size and functionality:
+
+```toml
+[features]
+default = ["gui", "full-cli"]  # Full desktop app
+gui = [...]                     # Tauri GUI (includes full-cli)
+full-cli = ["server", "tui"]    # Full CLI with all commands
+server = [...]                  # Server mode (hirsel serve), daemon, coordinator API
+tui = [...]                     # TUI mode (attach command)
+worker = []                     # Minimal worker binary for remote deployment
+```
+
+### Build Variants
+
+```bash
+# Full app (default) - GUI + all CLI commands
+cargo build --release
+
+# CLI only (no GUI, ~30% smaller)
+cargo build --release --no-default-features --features full-cli
+
+# Worker only (for sprite/remote deployment)
+cargo build --release --no-default-features --features worker
+```
+
+### Heavy Dependencies by Feature
+
+| Feature | Dependencies | Size Impact |
+|---------|-------------|-------------|
+| `gui` | tauri, webkit | ~20MB |
+| `server` | axum, hyper, tower | ~5MB |
+| `tui` | ratatui, crossterm | ~2MB |
+
+### Feature-Gated Commands
+
+| Command | Required Feature |
+|---------|-----------------|
+| `go` | `full-cli` |
+| `test` | `full-cli` |
+| `attach` | `tui` |
+| `serve` | `server` |
+| `daemon` | `server` |

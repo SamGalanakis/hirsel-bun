@@ -200,6 +200,8 @@ pub struct DraftUpdateRequest {
     pub project_path: Option<String>,
     pub branch: Option<String>,
     pub name: Option<String>,
+    pub runner: Option<String>,
+    pub worker_runners: Option<std::collections::HashMap<String, String>>,
 }
 
 /// Parsed log line

@@ -799,7 +799,7 @@ pub fn maybe_scale_up(
 
     // Get a new worker name
     let existing_names: Vec<String> = workers.iter().map(|w| w.name.clone()).collect();
-    let new_name = crate::cli::go::get_available_name(&existing_names);
+    let new_name = crate::core::names::get_available_name(&existing_names);
 
     // Get project path
     let project_path_str = match state.get_project_path()? {

@@ -110,6 +110,8 @@ pub struct RunDetail {
     pub learnings_processed_at: Option<String>,
     pub agent_type: String,
     pub metrics_available: bool,
+    pub runner: Option<String>,
+    pub worker_runners: Option<std::collections::HashMap<String, String>>,
 }
 
 /// Task from the database

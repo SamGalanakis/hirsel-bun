@@ -103,6 +103,7 @@ export interface RunDetail {
   learningsProcessedAt: string | null;
   // Runner configuration
   runner: string | null;
+  workerRunners: Record<string, string> | null;
   // Agent/metrics info
   agentType: string;
   metricsAvailable: boolean;
@@ -118,6 +119,7 @@ export interface DraftUpdateRequest {
   name?: string;
   branch?: string;
   runner?: string;
+  workerRunners?: Record<string, string>;
 }
 
 /** Result of validating a repository path/URL */

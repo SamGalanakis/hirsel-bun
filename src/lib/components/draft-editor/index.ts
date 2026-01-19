@@ -93,7 +93,8 @@ export function draftEditor(): DraftEditorComponent {
     specCursorPos: 0,
     evalCursorPos: 0,
     // Runner selection
-    selectedRunner: null,
+    runnerDefault: null,
+    workerRunners: {} as Record<string, string>,
     availableRunners: [],
 
     /**
@@ -219,12 +220,72 @@ export function draftEditor(): DraftEditorComponent {
         this.availableRunners = runners;
 
         // Set default runner if not already selected
-        if (!this.selectedRunner) {
-          this.selectedRunner = config.defaultRunner || 'local';
+        if (!this.runnerDefault) {
+          this.runnerDefault = config.defaultRunner || 'local';
         }
       } catch (err) {
         console.error('Failed to load runners:', err);
       }
+    },
+
+    /**
+     * Get worker names based on workerScale
+     * workerScale can be "1", "2", "3", or a range like "1-4"
+     */
+    getWorkerNames(): string[] {
+      const scale = this.workerScale || '1';
+      let maxWorkers = 1;
+
+      // Handle range format "min-max" or single number
+      if (scale.includes('-')) {
+        const parts = scale.split('-');
+        maxWorkers = parseInt(parts[1], 10) || 1;
+      } else {
+        maxWorkers = parseInt(scale, 10) || 1;
+      }
+
+      // Generate worker names
+      const names: string[] = [];
+      for (let i = 1; i <= maxWorkers; i++) {
+        names.push(`worker-${i}`);
+      }
+      return names;
+    },
+
+    /**
+     * Get runner for a specific worker (falls back to run default)
+     */
+    getWorkerRunner(workerName: string): string {
+      return this.workerRunners[workerName] || this.runnerDefault || 'local';
+    },
+
+    /**
+     * Set runner for a specific worker
+     */
+    setWorkerRunner(workerName: string, runnerName: string): void {
+      // If same as default, remove override
+      if (runnerName === this.runnerDefault) {
+        delete this.workerRunners[workerName];
+      } else {
+        this.workerRunners[workerName] = runnerName;
+      }
+      this.debouncedSave();
+    },
+
+    /**
+     * Apply current default runner to all workers
+     */
+    applyRunnerToAll(): void {
+      // Clear all overrides - all workers will use the default
+      this.workerRunners = {};
+      this.debouncedSave();
+    },
+
+    /**
+     * Check if any workers have custom runner assignments
+     */
+    hasCustomRunnerAssignments(): boolean {
+      return Object.keys(this.workerRunners).length > 0;
     },
 
     /**
@@ -266,7 +327,8 @@ export function draftEditor(): DraftEditorComponent {
         this.timeLimitInput = formatTimeLimitDisplay(detail.timeLimitMinutes);
         this.humanInTheLoop = detail.humanInTheLoop;
         this.projectPath = detail.projectPath || '';
-        this.selectedRunner = detail.runner || 'local';
+        this.runnerDefault = detail.runner || 'local';
+        this.workerRunners = detail.workerRunners || {};
 
         // Load spec, eval, and assets path (file-first editing)
         const [specContent, evalContent, assetsPath] = await Promise.all([
@@ -338,7 +400,8 @@ export function draftEditor(): DraftEditorComponent {
       // Reset assets path
       this.assetsPath = '';
       // Reset runner (keep availableRunners, just reset selection to default)
-      this.selectedRunner = this.availableRunners.length > 0 ? 'local' : null;
+      this.runnerDefault = this.availableRunners.length > 0 ? 'local' : null;
+      this.workerRunners = {};
     },
 
     /**
@@ -476,7 +539,8 @@ export function draftEditor(): DraftEditorComponent {
           timeLimitMinutes: timeLimitResult.value ?? undefined,
           humanInTheLoop: this.humanInTheLoop,
           projectPath: this.projectPath || undefined,
-          runner: this.selectedRunner || undefined,
+          runner: this.runnerDefault || undefined,
+          workerRunners: Object.keys(this.workerRunners).length > 0 ? this.workerRunners : undefined,
         };
 
         // Remove undefined values

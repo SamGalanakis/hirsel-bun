@@ -635,4 +635,79 @@ impl SQLiteState {
         )?;
         Ok(())
     }
+
+    // =========================================================================
+    // Runner Configuration
+    // =========================================================================
+
+    /// Get the default runner for this run
+    pub fn get_default_runner(&self) -> StateResult<Option<String>> {
+        match self
+            .db
+            .query_row("SELECT default_runner FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set the default runner for this run
+    pub fn set_default_runner(&self, runner: Option<&str>) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET default_runner = ?1, updated_at = ?2 WHERE id = 1",
+            params![runner, self.now()],
+        )?;
+        Ok(())
+    }
+
+    /// Get per-worker runner assignments as JSON
+    pub fn get_worker_runners(
+        &self,
+    ) -> StateResult<Option<std::collections::HashMap<String, String>>> {
+        match self
+            .db
+            .query_row("SELECT worker_runners FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
+            Ok(Some(json)) => {
+                let map: std::collections::HashMap<String, String> =
+                    serde_json::from_str(&json).unwrap_or_default();
+                Ok(Some(map))
+            }
+            Ok(None) => Ok(None),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set per-worker runner assignments as JSON
+    pub fn set_worker_runners(
+        &self,
+        runners: Option<&std::collections::HashMap<String, String>>,
+    ) -> StateResult<()> {
+        let json = runners.map(|r| serde_json::to_string(r).unwrap_or_default());
+        self.db.execute(
+            "UPDATE state SET worker_runners = ?1, updated_at = ?2 WHERE id = 1",
+            params![json, self.now()],
+        )?;
+        Ok(())
+    }
+
+    /// Get the runner for a specific worker (falls back to default_runner, then "local")
+    pub fn get_runner_for_worker(&self, worker_name: &str) -> StateResult<String> {
+        // First check per-worker assignments
+        if let Some(runners) = self.get_worker_runners()? {
+            if let Some(runner) = runners.get(worker_name) {
+                return Ok(runner.clone());
+            }
+        }
+        // Fall back to default runner
+        if let Some(default) = self.get_default_runner()? {
+            return Ok(default);
+        }
+        // Ultimate fallback
+        Ok("local".to_string())
+    }
 }

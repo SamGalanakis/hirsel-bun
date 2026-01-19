@@ -12,16 +12,20 @@ use crate::cli::config::get_agent_command;
 use crate::cli::GoArgs;
 use crate::core::chats::ChatError;
 use crate::core::config::Config;
+#[cfg(feature = "server")]
 use crate::core::coordinator_api::CoordinatorServer;
 use crate::core::files::Files;
 use crate::core::git::{get_repo_root, GitError};
-use crate::core::names;
+#[cfg(test)]
+use crate::core::names::get_available_name;
+use crate::core::names::get_available_names;
 use crate::core::ops::{
     register_workers, setup_run_workspace, spawn_local_workers, RunSetupConfig, SpawnWorkersConfig,
 };
 use crate::core::remote::{parse_remote_spec, RemoteConfig, RemoteError, RemoteWorkerSpawner};
 use crate::core::runner::{self, Runner, RunnerConfig, RunnerError};
 use crate::core::state::{SQLiteState, StateError, Status};
+#[cfg(feature = "server")]
 use crate::core::tunnel::{TunnelError, TunnelManager};
 use crate::core::workers::WorkerError;
 use tracing::{info, warn};
@@ -236,61 +240,6 @@ pub fn parse_time_limit(s: &str) -> Result<i64, String> {
         .parse()
         .map_err(|_| format!("Invalid time limit: {}", s))?;
     Ok(minutes as i64)
-}
-
-// =============================================================================
-// Worker Names
-// =============================================================================
-
-/// Maximum attempts to generate a unique name before falling back
-const MAX_NAME_ATTEMPTS: usize = 100;
-
-/// Get an available worker name that's not in use.
-/// Uses sheep breed names (adjective-breed format) for the hirsel theme.
-pub fn get_available_name(used: &[String]) -> String {
-    // Try generating random names until we find one not in use
-    for _ in 0..MAX_NAME_ATTEMPTS {
-        let name = names::generate_worker_name();
-        if !used.iter().any(|u| u == &name) {
-            return name;
-        }
-    }
-    // Fallback: generate a numbered name
-    for i in 1.. {
-        let name = format!("worker-{}", i);
-        if !used.iter().any(|u| u == &name) {
-            return name;
-        }
-    }
-    unreachable!()
-}
-
-/// Get multiple available worker names.
-/// Ensures all returned names are unique and not in the used list.
-pub fn get_available_names(count: u32, used: &[String]) -> Vec<String> {
-    let mut result = Vec::with_capacity(count as usize);
-    let mut all_used: std::collections::HashSet<String> = used.iter().cloned().collect();
-
-    // First try to get unique names from the batch generator
-    let candidates = names::generate_unique_names(count as usize * 2);
-    for name in candidates {
-        if result.len() >= count as usize {
-            break;
-        }
-        if !all_used.contains(&name) {
-            all_used.insert(name.clone());
-            result.push(name);
-        }
-    }
-
-    // If we still need more names, generate them one by one
-    while result.len() < count as usize {
-        let name = get_available_name(&all_used.iter().cloned().collect::<Vec<_>>());
-        all_used.insert(name.clone());
-        result.push(name);
-    }
-
-    result
 }
 
 // =============================================================================

@@ -211,6 +211,61 @@ pub fn generate_unique_names(count: usize) -> Vec<String> {
     names
 }
 
+// =============================================================================
+// Available Name Selection (avoids collision with existing names)
+// =============================================================================
+
+/// Maximum attempts to generate a unique name before falling back
+const MAX_NAME_ATTEMPTS: usize = 100;
+
+/// Get an available worker name that's not in use.
+/// Uses sheep breed names (adjective-breed format) for the hirsel theme.
+pub fn get_available_name(used: &[String]) -> String {
+    // Try generating random names until we find one not in use
+    for _ in 0..MAX_NAME_ATTEMPTS {
+        let name = generate_worker_name();
+        if !used.iter().any(|u| u == &name) {
+            return name;
+        }
+    }
+    // Fallback: generate a numbered name
+    for i in 1.. {
+        let name = format!("worker-{}", i);
+        if !used.iter().any(|u| u == &name) {
+            return name;
+        }
+    }
+    unreachable!()
+}
+
+/// Get multiple available worker names.
+/// Ensures all returned names are unique and not in the used list.
+pub fn get_available_names(count: u32, used: &[String]) -> Vec<String> {
+    let mut result = Vec::with_capacity(count as usize);
+    let mut all_used: std::collections::HashSet<String> = used.iter().cloned().collect();
+
+    // First try to get unique names from the batch generator
+    let candidates = generate_unique_names(count as usize * 2);
+    for name in candidates {
+        if result.len() >= count as usize {
+            break;
+        }
+        if !all_used.contains(&name) {
+            all_used.insert(name.clone());
+            result.push(name);
+        }
+    }
+
+    // If we still need more names, generate them one by one
+    while result.len() < count as usize {
+        let name = get_available_name(&all_used.iter().cloned().collect::<Vec<_>>());
+        all_used.insert(name.clone());
+        result.push(name);
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

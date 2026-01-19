@@ -56,7 +56,8 @@ export interface DraftEditorData {
   specCursorPos: number;
   evalCursorPos: number;
   // Runner selection
-  selectedRunner: string | null;
+  runnerDefault: string | null;
+  workerRunners: Record<string, string>;
   availableRunners: RunnerEntry[];
 }
 
@@ -97,6 +98,15 @@ export interface DraftEditorMethods {
   trackCursorPosition(type: 'spec' | 'eval', event: Event): void;
   openFilePicker(type: 'spec' | 'eval'): void;
   openAssets(): Promise<void>;
+  // Runner methods
+  loadRunners(): Promise<void>;
+  getWorkerNames(): string[];
+  getWorkerRunner(workerName: string): string;
+  setWorkerRunner(workerName: string, runnerName: string): void;
+  applyRunnerToAll(): void;
+  hasCustomRunnerAssignments(): boolean;
+  getRunnerIcon(runner: RunnerEntry | null): string;
+  getRunnerDisplayName(runner: RunnerEntry | null): string;
 }
 
 /**

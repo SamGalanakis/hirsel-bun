@@ -6,10 +6,12 @@
 //! - `LocalOrchestrator`: Direct calls to local state (default)
 //! - `RemoteOrchestrator`: HTTP calls to a remote Hirsel server
 
+#[cfg(feature = "server")]
 mod daemon;
 mod local;
 mod remote;
 
+#[cfg(feature = "server")]
 pub use daemon::DaemonOrchestrator;
 pub use local::LocalOrchestrator;
 pub use remote::RemoteOrchestrator;
@@ -364,6 +366,7 @@ pub fn create_orchestrator(profile: Option<&str>) -> OrchestratorResult<Box<dyn 
 /// that communicates via Unix socket. Use this when you want the daemon
 /// to handle operations (e.g., for CLI commands that should trigger
 /// daemon lifecycle management).
+#[cfg(feature = "server")]
 pub fn create_daemon_orchestrator() -> OrchestratorResult<DaemonOrchestrator> {
     DaemonOrchestrator::connect_or_start()
 }
