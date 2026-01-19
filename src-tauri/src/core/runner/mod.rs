@@ -6,6 +6,7 @@
 //! - SSH: spawns processes on remote machines via SSH
 //! - Sprite: spawns processes on Sprites.dev cloud VMs
 
+pub mod devpod;
 pub mod local;
 pub mod sprite;
 pub mod ssh;
@@ -17,6 +18,7 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 // Re-export runner implementations
+pub use devpod::DevpodRunner;
 pub use local::LocalRunner;
 pub use sprite::SpriteRunner;
 pub use ssh::SshRunner;
@@ -165,6 +167,7 @@ pub fn create_runner(config: &RunnerConfig) -> Box<dyn Runner> {
         RunnerConfig::Local => Box::new(LocalRunner::new()),
         RunnerConfig::Ssh(ssh_config) => Box::new(SshRunner::new(ssh_config.clone())),
         RunnerConfig::Sprite(sprite_config) => Box::new(SpriteRunner::new(sprite_config.clone())),
+        RunnerConfig::Devpod(devpod_config) => Box::new(DevpodRunner::new(devpod_config.clone())),
     }
 }
 
@@ -178,6 +181,8 @@ pub enum RunnerConfig {
     Ssh(SshRunnerConfig),
     /// Sprite runner - spawns processes on Sprites.dev cloud VMs
     Sprite(SpriteRunnerConfig),
+    /// DevPod runner - spawns processes in DevPod workspaces
+    Devpod(DevpodRunnerConfig),
 }
 
 impl Default for RunnerConfig {
@@ -276,6 +281,38 @@ impl Default for SpriteRunnerConfig {
     }
 }
 
+/// Configuration for DevPod runner
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DevpodRunnerConfig {
+    /// Provider: "docker", "ssh", "kubernetes", "aws", etc.
+    pub provider: String,
+    /// Provider-specific options (passed via -o flag)
+    #[serde(default)]
+    pub provider_options: HashMap<String, String>,
+    /// DevContainer image (optional, uses devcontainer.json if present)
+    #[serde(default)]
+    pub image: Option<String>,
+    /// Prebuild image with hirsel+tools (skips runtime install)
+    #[serde(default)]
+    pub prebuild_image: Option<String>,
+    /// Use SSH tunnel for coordinator access (auto-detect if None)
+    /// Set to true if orchestrator is not directly reachable from worker
+    #[serde(default)]
+    pub use_tunnel: Option<bool>,
+}
+
+impl Default for DevpodRunnerConfig {
+    fn default() -> Self {
+        Self {
+            provider: "docker".to_string(),
+            provider_options: HashMap::new(),
+            image: None,
+            prebuild_image: None,
+            use_tunnel: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,6 +336,16 @@ mod tests {
         assert!(config.api_token.is_none());
         assert!(config.auto_destroy);
         assert_eq!(config.idle_timeout_secs, 30);
+    }
+
+    #[test]
+    fn test_devpod_config_default() {
+        let config = DevpodRunnerConfig::default();
+        assert_eq!(config.provider, "docker");
+        assert!(config.provider_options.is_empty());
+        assert!(config.image.is_none());
+        assert!(config.prebuild_image.is_none());
+        assert!(config.use_tunnel.is_none());
     }
 
     #[test]

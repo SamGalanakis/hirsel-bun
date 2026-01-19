@@ -498,6 +498,7 @@ pub async fn spawn_workers(
         RunnerConfig::Local => Box::new(crate::core::runner::LocalRunner::new()),
         RunnerConfig::Sprite(cfg) => Box::new(crate::core::runner::SpriteRunner::new(cfg.clone())),
         RunnerConfig::Ssh(cfg) => Box::new(crate::core::runner::SshRunner::new(cfg.clone())),
+        RunnerConfig::Devpod(cfg) => Box::new(crate::core::runner::DevpodRunner::new(cfg.clone())),
     };
 
     // Ensure group chat exists for multi-worker

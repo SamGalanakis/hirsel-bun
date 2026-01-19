@@ -16,7 +16,7 @@
 
 use std::path::PathBuf;
 
-use crate::worker::acp_client::{run_acp_worker, WorkerRunConfig};
+use crate::worker::acp_client::{run_worker, WorkerRunConfig};
 use crate::worker::http_state::HttpState;
 
 /// Configuration for running a remote worker
@@ -170,10 +170,10 @@ pub async fn run_remote_worker_with_config(
         config.leader_name
     );
 
-    // Run the ACP worker loop - same as local workers
+    // Run the worker loop - same as local workers
     // The MCP server spawned by the agent will detect HIRSEL_API_URL
     // and use HttpState for all state operations
-    run_acp_worker(worker_config).await?;
+    run_worker(worker_config).await?;
 
     tracing::info!("Remote worker {} completed", config.worker_name);
     Ok(())

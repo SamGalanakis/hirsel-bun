@@ -382,6 +382,18 @@ pub enum RunnerConfigResponse {
         #[serde(default)]
         use_file_push: bool,
     },
+    #[serde(rename = "devpod")]
+    Devpod {
+        provider: String,
+        #[serde(default)]
+        provider_options: std::collections::HashMap<String, String>,
+        #[serde(default)]
+        image: Option<String>,
+        #[serde(default)]
+        prebuild_image: Option<String>,
+        #[serde(default)]
+        use_tunnel: Option<bool>,
+    },
 }
 
 impl From<crate::core::runner::RunnerConfig> for RunnerConfigResponse {
@@ -402,6 +414,13 @@ impl From<crate::core::runner::RunnerConfig> for RunnerConfigResponse {
                 idle_timeout_secs: sprite.idle_timeout_secs,
                 api_url: sprite.api_url,
                 use_file_push: sprite.use_file_push,
+            },
+            crate::core::runner::RunnerConfig::Devpod(devpod) => RunnerConfigResponse::Devpod {
+                provider: devpod.provider,
+                provider_options: devpod.provider_options,
+                image: devpod.image,
+                prebuild_image: devpod.prebuild_image,
+                use_tunnel: devpod.use_tunnel,
             },
         }
     }
@@ -439,6 +458,21 @@ impl From<RunnerConfigResponse> for crate::core::runner::RunnerConfig {
                     idle_timeout_secs,
                     api_url,
                     use_file_push,
+                })
+            }
+            RunnerConfigResponse::Devpod {
+                provider,
+                provider_options,
+                image,
+                prebuild_image,
+                use_tunnel,
+            } => {
+                crate::core::runner::RunnerConfig::Devpod(crate::core::runner::DevpodRunnerConfig {
+                    provider,
+                    provider_options,
+                    image,
+                    prebuild_image,
+                    use_tunnel,
                 })
             }
         }

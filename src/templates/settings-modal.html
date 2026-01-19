@@ -505,6 +505,10 @@
                             <template x-if="getRunner(name)?.type === 'ssh'">
                               <i data-lucide="server" class="w-4 h-4 text-sage"></i>
                             </template>
+                            <!-- Container icon for DevPod runners -->
+                            <template x-if="getRunner(name)?.type === 'devpod'">
+                              <i data-lucide="container" class="w-4 h-4 text-sage"></i>
+                            </template>
                             <span class="font-medium text-wool-200" x-text="name"></span>
                             <span class="text-xs px-2 py-0.5 bg-pasture-600 text-wool-400 rounded" x-text="getRunnerTypeLabel(getRunner(name)?.type)"></span>
                             <span x-show="getCurrentDefaultRunner() === name" class="text-xs px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded">default</span>
@@ -554,6 +558,19 @@
                             </div>
                           </div>
                         </template>
+                        <!-- DevPod runner details -->
+                        <template x-if="getRunner(name)?.type === 'devpod'">
+                          <div class="mt-2 text-xs text-wool-500 grid gap-1">
+                            <div class="flex items-center gap-2">
+                              <span class="text-wool-600">Provider:</span>
+                              <span x-text="getRunner(name)?.provider"></span>
+                            </div>
+                            <div class="flex items-center gap-2" x-show="getRunner(name)?.prebuildImage">
+                              <span class="text-wool-600">Prebuild:</span>
+                              <span x-text="getRunner(name)?.prebuildImage"></span>
+                            </div>
+                          </div>
+                        </template>
                       </div>
                     </template>
                   </div>
@@ -595,6 +612,7 @@
                           <select class="select" x-model="newRunnerType" @change="onRunnerTypeChange()">
                             <option value="ssh">SSH Remote</option>
                             <option value="sprite">Sprites Cloud</option>
+                            <option value="devpod">DevPod</option>
                           </select>
                         </div>
 
@@ -639,6 +657,44 @@
                                 <p class="text-muted-foreground text-sm">Destroy VM when worker completes.</p>
                               </div>
                               <input id="auto-destroy" type="checkbox" role="switch" x-model="editRunnerData.autoDestroy" />
+                            </div>
+                          </div>
+                        </template>
+
+                        <!-- DevPod Fields -->
+                        <template x-if="editRunnerData.type === 'devpod'">
+                          <div class="grid gap-4">
+                            <div class="grid gap-2">
+                              <label for="devpod-provider">Provider <span class="text-terra">*</span></label>
+                              <select id="devpod-provider" class="select" x-model="editRunnerData.provider">
+                                <option value="docker">Docker (Local)</option>
+                                <option value="podman">Podman (Local)</option>
+                                <option value="ssh">SSH</option>
+                                <option value="kubernetes">Kubernetes</option>
+                                <option value="aws">AWS</option>
+                                <option value="gcp">Google Cloud</option>
+                                <option value="azure">Azure</option>
+                              </select>
+                              <p class="text-muted-foreground text-sm">DevPod provider. <a href="https://devpod.sh/docs/managing-providers/add-provider" target="_blank" class="text-amber-500 hover:underline">Learn more</a></p>
+                            </div>
+                            <div class="grid gap-2">
+                              <label for="devpod-image">DevContainer Image (optional)</label>
+                              <input id="devpod-image" type="text" x-model="editRunnerData.image" placeholder="mcr.microsoft.com/devcontainers/base:ubuntu" />
+                              <p class="text-muted-foreground text-sm">Base image if no devcontainer.json in project.</p>
+                            </div>
+                            <div class="grid gap-2">
+                              <label for="devpod-prebuild">Prebuild Image (optional)</label>
+                              <input id="devpod-prebuild" type="text" x-model="editRunnerData.prebuildImage" placeholder="ghcr.io/myorg/hirsel-worker:latest" />
+                              <p class="text-muted-foreground text-sm">Image with hirsel+tools preinstalled for faster startup.</p>
+                            </div>
+                            <div class="grid gap-2">
+                              <label for="devpod-tunnel">SSH Tunnel</label>
+                              <select id="devpod-tunnel" class="select" x-model="editRunnerData.useTunnel">
+                                <option :value="null">Auto (tunnel for remote providers)</option>
+                                <option :value="true">Always use tunnel</option>
+                                <option :value="false">No tunnel (orchestrator reachable directly)</option>
+                              </select>
+                              <p class="text-muted-foreground text-sm">Tunnel needed if orchestrator isn't reachable from worker network.</p>
                             </div>
                           </div>
                         </template>

@@ -2,7 +2,7 @@
  * Default configurations for settings modal
  */
 
-import type { AgentAuth, SshRunnerConfig, SpriteRunnerConfig, Settings, AuthMethod, OrchestratorProfile, GitConfig, NavigationState } from './types';
+import type { AgentAuth, SshRunnerConfig, SpriteRunnerConfig, DevpodRunnerConfig, Settings, AuthMethod, OrchestratorProfile, GitConfig, NavigationState } from './types';
 
 /**
  * Default agent auth configuration
@@ -35,6 +35,18 @@ export const defaultSpriteRunnerConfig = (): SpriteRunnerConfig => ({
   autoDestroy: true,
   idleTimeoutSecs: 30,
   apiUrl: 'https://api.sprites.dev',
+});
+
+/**
+ * Default DevPod runner configuration
+ */
+export const defaultDevpodRunnerConfig = (): DevpodRunnerConfig => ({
+  type: 'devpod',
+  provider: 'docker',
+  providerOptions: {},
+  image: null,
+  prebuildImage: null,
+  useTunnel: null,  // auto-detect based on provider
 });
 
 /**
@@ -140,6 +152,7 @@ export function getRunnerIcon(type: string): string {
   switch (type) {
     case 'ssh': return 'server';
     case 'sprite': return 'cloud';
+    case 'devpod': return 'container';
     default: return 'laptop';
   }
 }
@@ -151,6 +164,7 @@ export function getRunnerTypeLabel(type: string): string {
   switch (type) {
     case 'ssh': return 'SSH';
     case 'sprite': return 'Sprites';
+    case 'devpod': return 'DevPod';
     default: return type;
   }
 }

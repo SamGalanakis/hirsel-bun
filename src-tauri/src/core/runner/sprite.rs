@@ -679,7 +679,7 @@ impl Runner for SpriteRunner {
 
         // Build worker command
         let agent_command_json = serde_json::to_string(&config.agent_command)
-            .unwrap_or_else(|_| "[\"claude-code-acp\"]".to_string());
+            .unwrap_or_else(|_| "[\"claude\"]".to_string());
 
         let mut worker_args = format!(
             "hirsel __remote-worker --api-url '{}' --run-name '{}' --worker-name '{}' --work-dir '{}' --spec '{}/spec.md' --agent-command '{}'",

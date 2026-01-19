@@ -328,8 +328,8 @@ fn run_command(
                                 .expect("Failed to register SIGTERM handler");
 
                             tokio::select! {
-                                result = worker::run_acp_worker(config) => {
-                                    // Normal completion - cleanup already happens in run_acp_worker
+                                result = worker::run_worker(config) => {
+                                    // Normal completion - cleanup already happens in run_worker
                                     result
                                 }
                                 _ = sigterm.recv() => {
@@ -342,7 +342,7 @@ fn run_command(
                         }
                         #[cfg(not(unix))]
                         {
-                            worker::run_acp_worker(config).await
+                            worker::run_worker(config).await
                         }
                     })
                     .await

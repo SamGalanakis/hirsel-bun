@@ -341,7 +341,7 @@ pub struct AgentConfig {
 }
 
 fn default_agent_command() -> Vec<String> {
-    vec!["claude-code-acp".to_string()]
+    vec!["claude".to_string()]
 }
 
 impl Default for AgentConfig {
@@ -1225,6 +1225,28 @@ impl Config {
                         sprite.idle_timeout_secs
                     ));
                     output.push_str(&format!("api_url = \"{}\"\n", sprite.api_url));
+                }
+                crate::core::runner::RunnerConfig::Devpod(devpod) => {
+                    output.push_str("type = \"devpod\"\n");
+                    output.push_str(&format!("provider = \"{}\"\n", devpod.provider));
+                    if let Some(ref image) = devpod.image {
+                        output.push_str(&format!("image = \"{}\"\n", image));
+                    }
+                    if let Some(ref prebuild) = devpod.prebuild_image {
+                        output.push_str(&format!("prebuild_image = \"{}\"\n", prebuild));
+                    }
+                    if let Some(use_tunnel) = devpod.use_tunnel {
+                        output.push_str(&format!("use_tunnel = {}\n", use_tunnel));
+                    }
+                    // Serialize provider_options if not empty
+                    if !devpod.provider_options.is_empty() {
+                        output.push_str("[runners.");
+                        output.push_str(name);
+                        output.push_str(".provider_options]\n");
+                        for (key, value) in &devpod.provider_options {
+                            output.push_str(&format!("{} = \"{}\"\n", key, value));
+                        }
+                    }
                 }
             }
             output.push('\n');

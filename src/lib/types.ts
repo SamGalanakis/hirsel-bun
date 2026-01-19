@@ -29,8 +29,18 @@ export interface SpriteRunnerConfig {
   apiUrl: string;
 }
 
+/** DevPod runner configuration */
+export interface DevpodRunnerConfig {
+  type: 'devpod';
+  provider: string;
+  providerOptions: Record<string, string>;
+  image: string | null;
+  prebuildImage: string | null;
+  useTunnel: boolean | null;
+}
+
 /** Runner configuration - where workers execute */
-export type RunnerConfig = { type: 'local' } | SshRunnerConfig | SpriteRunnerConfig;
+export type RunnerConfig = { type: 'local' } | SshRunnerConfig | SpriteRunnerConfig | DevpodRunnerConfig;
 
 /** Runner entry with name for display */
 export interface RunnerEntry {

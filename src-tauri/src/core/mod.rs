@@ -15,6 +15,8 @@ pub mod api_types;
 pub mod chat_orchestrator;
 pub mod chat_session;
 pub mod chats;
+#[cfg(feature = "claude")]
+pub mod claude_cli;
 pub mod compaction;
 pub mod config;
 #[cfg(feature = "server")]
@@ -56,6 +58,11 @@ pub use chat_session::{
     PermissionOption, PermissionResponse, UIContext,
 };
 pub use chats::{ChatHeader, ChatMode};
+#[cfg(feature = "claude")]
+pub use claude_cli::{
+    execute_claude_worker, run_claude_worker, BridgeEvent, ClaudeCliBridge, ClaudeCliConfig,
+    ClaudeCliError, ClaudeWorkerConfig, WorkerResult as ClaudeWorkerResult,
+};
 pub use config::*;
 pub use credentials::{
     get_local_oauth_credentials, CredentialError, CredentialResult, CredentialStore,

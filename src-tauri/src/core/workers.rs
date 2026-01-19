@@ -1284,7 +1284,7 @@ mod tests {
             work_dir: PathBuf::from("/work/alpha"),
             run_dir: PathBuf::from("/runs/test-run"),
             spec_path: PathBuf::from("/runs/test-run/spec.md"),
-            agent_command: vec!["claude-code-acp".to_string()],
+            agent_command: vec!["claude".to_string()],
             is_leader: false,
             leader_name: None,
             teammates: None,
@@ -1308,7 +1308,7 @@ mod tests {
             work_dir: PathBuf::from("/work/alpha"),
             run_dir: PathBuf::from("/runs/test-run"),
             spec_path: PathBuf::from("/runs/test-run/spec.md"),
-            agent_command: vec!["claude-code-acp".to_string()],
+            agent_command: vec!["claude".to_string()],
             is_leader: true,
             leader_name: Some("alpha".to_string()),
             teammates: Some(vec!["beta".to_string(), "gamma".to_string()]),
@@ -1331,7 +1331,7 @@ mod tests {
             work_dir: PathBuf::from("/work/alpha"),
             run_dir: PathBuf::from("/runs/test-run"),
             spec_path: PathBuf::from("/runs/test-run/spec.md"),
-            agent_command: vec!["claude-code-acp".to_string()],
+            agent_command: vec!["claude".to_string()],
             is_leader: false,
             leader_name: None,
             teammates: None,
@@ -1347,11 +1347,11 @@ mod tests {
     #[test]
     fn test_get_agent_command() {
         let claude = AgentPreset {
-            command: vec!["claude-code-acp".to_string()],
-            description: "Claude Code",
-            install_hint: Some("npm install -g @zed-industries/claude-code-acp"),
+            command: vec!["claude".to_string()],
+            description: "Claude Code (native)",
+            install_hint: Some("See https://docs.anthropic.com/en/docs/claude-code"),
         };
-        assert_eq!(get_agent_command(&claude), vec!["claude-code-acp"]);
+        assert_eq!(get_agent_command(&claude), vec!["claude"]);
 
         let opencode = AgentPreset {
             command: vec!["opencode".to_string(), "acp".to_string()],

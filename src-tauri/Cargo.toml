@@ -9,8 +9,8 @@ name = "hirsel_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
-# Default: full CLI + GUI
-default = ["gui", "full-cli"]
+# Default: full CLI + GUI with Claude support
+default = ["gui", "full-cli", "claude"]
 
 # GUI (Tauri desktop app)
 gui = [
@@ -34,6 +34,19 @@ tui = ["dep:ratatui", "dep:crossterm"]
 # Minimal worker binary - only remote worker + MCP server + file receiver
 # Build with: cargo build --release --no-default-features --features worker
 worker = ["dep:axum", "dep:tower-http"]
+
+# === Agent backends ===
+# Claude CLI bridge (native Rust, no Node.js dependency)
+claude = []
+
+# Codex support (future: native Rust adapter)
+codex = []
+
+# Legacy Node.js ACP adapters (claude-code-acp, codex-acp)
+acp-nodejs = []
+
+# All agent backends
+all-agents = ["claude", "codex"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [], optional = true }

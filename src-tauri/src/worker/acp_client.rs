@@ -37,11 +37,27 @@ struct TerminalHandle {
 
 /// Hirsel's implementation of the ACP Client trait.
 /// Handles agent requests for permissions, file operations, and terminals.
+///
+/// This client processes SessionUpdate events from agents (via the ACP protocol)
+/// and writes them to the database for streaming UI updates. It's used by both
+/// the Node.js ACP adapter and the native Claude CLI bridge.
 pub struct HirselClient {
     worker_name: String,
     db_path: PathBuf,
     terminals: Mutex<HashMap<TerminalId, TerminalHandle>>,
     terminal_counter: AtomicU64,
+}
+
+impl HirselClient {
+    /// Get the worker name.
+    pub fn worker_name(&self) -> &str {
+        &self.worker_name
+    }
+
+    /// Get the database path.
+    pub fn db_path(&self) -> &Path {
+        &self.db_path
+    }
 }
 
 impl HirselClient {
@@ -445,8 +461,11 @@ pub async fn run_acp_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Build the worker prompt with all context.
+///
+/// This is used by both the ACP worker and Claude CLI worker implementations.
 #[allow(clippy::too_many_arguments)]
-fn build_worker_prompt(
+pub fn build_worker_prompt(
     worker_name: &str,
     run_name: &str,
     spec_content: &str,
@@ -703,4 +722,80 @@ fn build_worker_prompt(
     prompt.push_str("**Begin by using `task_list` to see available tasks.**\n");
 
     prompt
+}
+
+// =============================================================================
+// Claude CLI Worker (native Rust, no Node.js dependency)
+// =============================================================================
+
+/// Run a worker using the native Claude CLI bridge.
+///
+/// This is an alternative to `run_acp_worker` that communicates directly with
+/// the Claude CLI using its JSON streaming protocol, eliminating the need for
+/// the Node.js `claude-code-acp` adapter.
+#[cfg(feature = "claude")]
+pub async fn run_claude_cli_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
+    use crate::core::claude_cli::{run_claude_worker, ClaudeWorkerConfig};
+
+    info!(
+        "[{}] Starting Claude CLI worker for run={}",
+        config.worker_name, config.run_name
+    );
+
+    // Read the spec
+    let spec_content =
+        std::fs::read_to_string(&config.spec_path).unwrap_or_else(|_| "No spec found.".to_string());
+
+    // Build the prompt
+    let prompt = build_worker_prompt(
+        &config.worker_name,
+        &config.run_name,
+        &spec_content,
+        config.is_leader,
+        config.leader_name.as_deref(),
+        config.teammates.as_deref(),
+        &config.work_dir,
+        &config.run_dir,
+    );
+
+    // Create Claude worker config
+    let worker_config = ClaudeWorkerConfig {
+        run_name: config.run_name,
+        worker_name: config.worker_name,
+        work_dir: config.work_dir,
+        run_dir: config.run_dir,
+        prompt,
+    };
+
+    // Run the worker
+    let result = run_claude_worker(worker_config).await?;
+
+    info!(
+        "Worker completed: stop_reason={:?}, tokens={:?}/{:?}, cost=${:?}",
+        result.stop_reason, result.input_tokens, result.output_tokens, result.cost_usd
+    );
+
+    Ok(())
+}
+
+/// Run a worker, automatically selecting the best backend.
+///
+/// If the `claude` feature is enabled and the agent command indicates Claude,
+/// uses the native Claude CLI bridge. Otherwise falls back to the ACP adapter.
+pub async fn run_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
+    #[cfg(feature = "claude")]
+    {
+        // Check if we should use the native Claude CLI bridge
+        let use_native = config.agent_command.is_empty()
+            || config.agent_command.first().map_or(false, |cmd| {
+                cmd == "claude" || cmd.ends_with("/claude") || cmd.contains("claude-code")
+            });
+
+        if use_native {
+            return run_claude_cli_worker(config).await;
+        }
+    }
+
+    // Fall back to ACP adapter
+    run_acp_worker(config).await
 }

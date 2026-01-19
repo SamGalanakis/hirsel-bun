@@ -1081,6 +1081,102 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
                 // For SSH, use the existing remote worker flow
                 warn!("SSH runner specified via --runner flag. Use --remote for SSH workers.");
             }
+            RunnerConfig::Devpod(devpod_config) => {
+                // Spawn DevPod workers
+                info!("Starting coordinator for DevPod workers");
+                let coordinator_port = hirsel_config.coordinator_port;
+
+                let coord_state = SQLiteState::new(db_path.clone())?;
+                let mut coordinator = CoordinatorServer::new(
+                    coord_state,
+                    "0.0.0.0".to_string(),
+                    coordinator_port,
+                    run_dir.clone(),
+                    run_name.clone(),
+                    Some(workspace_dir.clone()),
+                );
+
+                // Start coordinator in background
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| GoError::CoordinatorError(e.to_string()))?;
+
+                let coord_handle = std::thread::spawn(move || {
+                    rt.block_on(async {
+                        if let Err(e) = coordinator.start().await {
+                            eprintln!("Coordinator error: {}", e);
+                        }
+                    });
+                });
+
+                // Give coordinator time to start
+                std::thread::sleep(std::time::Duration::from_millis(500));
+
+                // Create DevPod runner
+                let devpod_runner = runner::DevpodRunner::new(devpod_config.clone());
+
+                // Spawn workers on DevPod
+                let spawn_rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| GoError::CoordinatorError(e.to_string()))?;
+
+                for (i, worker_name) in local_worker_names.iter().enumerate() {
+                    let is_leader = i == 0 && is_multi_worker;
+
+                    // Build env vars for worker
+                    let mut env_vars: HashMap<String, String> = std::env::vars()
+                        .filter(|(k, _)| {
+                            k.starts_with("ANTHROPIC_")
+                                || k.starts_with("OPENAI_")
+                                || k.starts_with("CLAUDE_")
+                        })
+                        .collect();
+                    env_vars.insert(
+                        "ACP_PERMISSION_MODE".to_string(),
+                        "bypassPermissions".to_string(),
+                    );
+
+                    let spawn_config = runner::WorkerSpawnConfig {
+                        run_name: run_name.clone(),
+                        worker_name: worker_name.clone(),
+                        work_dir: workspace_dir.clone(),
+                        run_dir: run_dir.clone(),
+                        spec_path: spec_path.clone(),
+                        agent_command: agent_command.clone(),
+                        is_leader,
+                        leader_name: leader.clone(),
+                        teammates: if is_multi_worker {
+                            Some(
+                                teammates
+                                    .iter()
+                                    .filter(|t| *t != worker_name)
+                                    .cloned()
+                                    .collect(),
+                            )
+                        } else {
+                            None
+                        },
+                        resume_session_id: None,
+                        env_vars: Some(env_vars),
+                        coordinator_url: Some(format!("http://localhost:{}", coordinator_port)),
+                        project_url: Some(format!("http://localhost:{}/git", coordinator_port)),
+                        tailscale_authkey: None,
+                    };
+
+                    match spawn_rt.block_on(devpod_runner.spawn(&spawn_config)) {
+                        Ok(result) => {
+                            info!(
+                                "Spawned DevPod worker {} (workspace: {})",
+                                result.handle.worker_name, result.handle.runner_id
+                            );
+                        }
+                        Err(e) => {
+                            warn!("Failed to spawn DevPod worker {}: {}", worker_name, e);
+                        }
+                    }
+                }
+
+                // Don't wait for coordinator thread
+                drop(coord_handle);
+            }
         }
 
         // Spawn REMOTE workers if any remote specs were provided (independent of --runner)

@@ -297,6 +297,7 @@ export function draftEditor(): DraftEditorComponent {
         case 'local': return 'laptop';
         case 'ssh': return 'server';
         case 'sprite': return 'cloud';
+        case 'devpod': return 'container';
         default: return 'laptop';
       }
     },

@@ -26,7 +26,11 @@ pub mod msg;
 pub mod remote_runner;
 pub mod runner;
 
-pub use acp_client::{run_acp_worker, WorkerRunConfig};
+#[cfg(feature = "claude")]
+pub use acp_client::run_claude_cli_worker;
+pub use acp_client::{
+    build_worker_prompt, run_acp_worker, run_worker, HirselClient, WorkerRunConfig,
+};
 pub use eval_mcp::{run_eval_mcp_server, EvalMcpServer};
 #[cfg(any(feature = "server", feature = "worker"))]
 pub use file_server::{start_file_server, FileServerHandle, FILE_RECEIVER_PORT};

@@ -37,6 +37,7 @@ import type {
   AuthConfig,
   SshRunnerConfig,
   SpriteRunnerConfig,
+  DevpodRunnerConfig,
   RunnerConfig,
   Settings,
   OrchestratorProfile,
@@ -54,6 +55,7 @@ import {
   defaultAgentAuth,
   defaultSshRunnerConfig,
   defaultSpriteRunnerConfig,
+  defaultDevpodRunnerConfig,
   defaultRemoteProfile,
   defaultTailscaleAccess,
   defaultGitConfig,
@@ -116,7 +118,7 @@ export function settingsModal() {
     editingRunner: null as string | null,
     newRunnerName: '',
     newRunnerType: 'ssh' as RunnerType,
-    editRunnerData: defaultSshRunnerConfig() as SshRunnerConfig | SpriteRunnerConfig,
+    editRunnerData: defaultSshRunnerConfig() as SshRunnerConfig | SpriteRunnerConfig | DevpodRunnerConfig,
 
     // Editing state for orchestrator profiles
     editingProfile: null as string | null,
@@ -561,6 +563,8 @@ export function settingsModal() {
         this.editRunnerData = defaultSshRunnerConfig();
       } else if (this.newRunnerType === 'sprite') {
         this.editRunnerData = defaultSpriteRunnerConfig();
+      } else if (this.newRunnerType === 'devpod') {
+        this.editRunnerData = defaultDevpodRunnerConfig();
       }
     },
 
@@ -577,8 +581,10 @@ export function settingsModal() {
         this.editRunnerData = { ...defaultSpriteRunnerConfig(), ...runner };
       } else if (runner.type === 'ssh') {
         this.editRunnerData = { ...defaultSshRunnerConfig(), ...runner };
+      } else if (runner.type === 'devpod') {
+        this.editRunnerData = { ...defaultDevpodRunnerConfig(), ...runner };
       } else {
-        this.editRunnerData = { ...runner } as SshRunnerConfig | SpriteRunnerConfig;
+        this.editRunnerData = { ...runner } as SshRunnerConfig | SpriteRunnerConfig | DevpodRunnerConfig;
       }
     },
 
@@ -601,6 +607,12 @@ export function settingsModal() {
         const sprite = this.editRunnerData as SpriteRunnerConfig;
         if (!sprite.apiToken?.trim()) {
           window.toast?.error('API token is required');
+          return;
+        }
+      } else if (this.editRunnerData.type === 'devpod') {
+        const devpod = this.editRunnerData as DevpodRunnerConfig;
+        if (!devpod.provider?.trim()) {
+          window.toast?.error('Provider is required');
           return;
         }
       }

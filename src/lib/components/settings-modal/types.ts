@@ -22,7 +22,7 @@ export interface ProfileSettingsCache {
 }
 
 export type AuthMethod = 'env' | 'apiKey' | 'oauth';
-export type RunnerType = 'ssh' | 'sprite';
+export type RunnerType = 'ssh' | 'sprite' | 'devpod';
 
 export interface AgentAuth {
   method: AuthMethod;
@@ -57,7 +57,16 @@ export interface SpriteRunnerConfig {
   apiUrl: string;
 }
 
-export type RunnerConfig = { type: 'local' } | SshRunnerConfig | SpriteRunnerConfig;
+export interface DevpodRunnerConfig {
+  type: 'devpod';
+  provider: string;
+  providerOptions: Record<string, string>;
+  image: string | null;
+  prebuildImage: string | null;
+  useTunnel: boolean | null;  // null = auto-detect
+}
+
+export type RunnerConfig = { type: 'local' } | SshRunnerConfig | SpriteRunnerConfig | DevpodRunnerConfig;
 
 // Orchestrator profile types
 export type OrchestratorMode = 'local' | 'remote';

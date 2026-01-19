@@ -26,9 +26,9 @@ pub fn agent_presets() -> HashMap<&'static str, AgentPreset> {
     presets.insert(
         "claude",
         AgentPreset {
-            command: vec!["claude-code-acp".into()],
-            description: "Anthropic Claude Code",
-            install_hint: Some("npm install -g @zed-industries/claude-code-acp"),
+            command: vec!["claude".into()],
+            description: "Anthropic Claude Code (native)",
+            install_hint: Some("See https://docs.anthropic.com/en/docs/claude-code"),
         },
     );
 
