@@ -20,6 +20,7 @@
 15. [Data Flow Examples](#data-flow-examples)
 16. [Cargo Feature Flags](#cargo-feature-flags)
 17. [Separate CLI/GUI Packaging](#separate-cligui-packaging)
+18. [CI/CD](#cicd)
 
 ---
 
@@ -968,3 +969,85 @@ Both CLI and GUI connect to the same daemon socket, enabling:
 - Install CLI only on servers
 - Install GUI only on desktops
 - Both on development machines
+
+---
+
+## CI/CD
+
+### Version Information
+
+Build metadata is embedded at compile time:
+
+```bash
+hirsel --version     # 0.1.0 (abc1234)
+hirsel --build-info  # Full build details
+```
+
+**Environment variables set by build.rs:**
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `HIRSEL_GIT_SHA` | Git commit SHA (with `-dirty` if uncommitted) | `abc1234-dirty` |
+| `HIRSEL_BUILD_DATE` | Build date (YYYY-MM-DD) | `2024-01-15` |
+
+### GitHub Actions Workflow
+
+The `.github/workflows/build.yml` workflow handles:
+
+1. **build-linux**: Build CLI binary for Linux amd64
+   - Full CLI with server features (`--features full-cli`)
+
+2. **docker**: Docker image for server/worker deployment
+   - Platform: `linux/amd64`
+   - Registry: `ghcr.io`
+   - Auto-tags: branch, semver, sha
+
+3. **release**: GitHub releases on version tags
+   - Artifacts: Linux binary
+   - Auto-generated release notes
+
+### Docker Deployment
+
+```bash
+# Pull image
+docker pull ghcr.io/OWNER/hirsel-bun:latest
+
+# Run as orchestrator server
+docker run -d \
+  -p 3000:3000 \
+  -e HIRSEL_API_KEY=your-api-key \
+  -v hirsel-data:/home/hirsel/.hirsel \
+  ghcr.io/OWNER/hirsel-bun serve --port 3000
+
+# Run as worker (connects to orchestrator)
+docker run \
+  -e ANTHROPIC_API_KEY=... \
+  ghcr.io/OWNER/hirsel-bun __remote-worker \
+    --api-url http://orchestrator:3000 \
+    --run-name my-run \
+    --worker-name worker-1 \
+    ...
+```
+
+### Image Tags
+
+| Tag | Description |
+|-----|-------------|
+| `latest` | Latest `main` branch |
+| `staging` | Latest `staging` branch |
+| `v1.2.3` | Version release |
+| `abc1234` | Commit SHA |
+
+### Version Compatibility
+
+Workers must match the orchestrator version to ensure protocol compatibility:
+
+```bash
+# Check versions match
+orchestrator$ hirsel --version  # 0.1.0 (abc1234)
+worker$ hirsel --version        # 0.1.0 (abc1234)  ✓ Match
+```
+
+The version info is available via:
+- CLI: `hirsel --version`, `hirsel --build-info`
+- GUI: Footer displays `v0.1.0 (abc1234)`
+- API: `GET /health` returns version info

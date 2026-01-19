@@ -243,6 +243,12 @@ pub struct SpriteRunnerConfig {
     /// Sprites API base URL
     #[serde(default = "default_api_url")]
     pub api_url: String,
+    /// Use push mode to send files directly to worker via HTTP.
+    /// When enabled, the worker starts a file receiver server (port 19800)
+    /// and files are pushed from the coordinator. Requires Tailscale
+    /// connectivity between coordinator and sprites.
+    #[serde(default)]
+    pub use_file_push: bool,
 }
 
 fn default_auto_destroy() -> bool {
@@ -265,6 +271,7 @@ impl Default for SpriteRunnerConfig {
             auto_destroy: true,
             idle_timeout_secs: 30,
             api_url: "https://api.sprites.dev".to_string(),
+            use_file_push: false,
         }
     }
 }
@@ -302,6 +309,7 @@ mod tests {
             auto_destroy: false,
             idle_timeout_secs: 60,
             api_url: "https://api.sprites.dev".to_string(),
+            use_file_push: false,
         });
 
         let json = serde_json::to_string(&config).unwrap();

@@ -12,12 +12,13 @@ fn main() {
 
     // Run CLI mode if:
     // - There are arguments that look like commands (not starting with --)
-    // - Or --help / --version flags are present
+    // - Or --help / --version / --build-info flags are present
     let has_subcommand = args.len() > 1 && !args[1].starts_with("--");
     let wants_help = args.iter().any(|a| a == "--help" || a == "-h");
     let wants_version = args.iter().any(|a| a == "--version" || a == "-V");
+    let wants_build_info = args.iter().any(|a| a == "--build-info");
 
-    if has_subcommand || wants_help || wants_version {
+    if has_subcommand || wants_help || wants_version || wants_build_info {
         // Run CLI mode - don't initialize GUI
         let exit_code = hirsel_lib::run_cli();
         std::process::exit(exit_code);

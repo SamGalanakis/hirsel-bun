@@ -379,6 +379,8 @@ pub enum RunnerConfigResponse {
         idle_timeout_secs: u32,
         #[serde(default = "default_api_url")]
         api_url: String,
+        #[serde(default)]
+        use_file_push: bool,
     },
 }
 
@@ -399,6 +401,7 @@ impl From<crate::core::runner::RunnerConfig> for RunnerConfigResponse {
                 auto_destroy: sprite.auto_destroy,
                 idle_timeout_secs: sprite.idle_timeout_secs,
                 api_url: sprite.api_url,
+                use_file_push: sprite.use_file_push,
             },
         }
     }
@@ -427,6 +430,7 @@ impl From<RunnerConfigResponse> for crate::core::runner::RunnerConfig {
                 auto_destroy,
                 idle_timeout_secs,
                 api_url,
+                use_file_push,
             } => {
                 crate::core::runner::RunnerConfig::Sprite(crate::core::runner::SpriteRunnerConfig {
                     api_token,
@@ -434,6 +438,7 @@ impl From<RunnerConfigResponse> for crate::core::runner::RunnerConfig {
                     auto_destroy,
                     idle_timeout_secs,
                     api_url,
+                    use_file_push,
                 })
             }
         }

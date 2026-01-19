@@ -69,7 +69,7 @@ pub use templates::{
 /// Hirsel - Herd your AI coding agents
 #[derive(Parser, Debug)]
 #[command(name = "hirsel")]
-#[command(version, about, long_about = None)]
+#[command(version = crate::version::FULL_VERSION, about, long_about = None)]
 pub struct Cli {
     /// Output in JSON format (for scripting)
     #[arg(long, global = true)]
@@ -78,6 +78,10 @@ pub struct Cli {
     /// Use a specific orchestrator profile (from config)
     #[arg(long, short = 'p', global = true)]
     pub profile: Option<String>,
+
+    /// Show detailed build information
+    #[arg(long)]
+    pub build_info: bool,
 
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -349,6 +353,14 @@ pub struct RemoteWorkerArgs {
     /// Teammates (comma-separated)
     #[arg(long)]
     pub teammates: Option<String>,
+
+    /// Wait for file upload via HTTP before starting worker
+    #[arg(long, default_value = "false")]
+    pub wait_for_files: bool,
+
+    /// Port for file receiver (default: 19800)
+    #[arg(long)]
+    pub file_receiver_port: Option<u16>,
 }
 
 // ========== Argument structs ==========

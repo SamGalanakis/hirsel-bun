@@ -384,3 +384,112 @@ cargo build --release --no-default-features --features worker
 | `attach` | `tui` |
 | `serve` | `server` |
 | `daemon` | `server` |
+
+### Version Information
+
+The binary includes build metadata:
+```bash
+hirsel --version    # Shows: hirsel 0.1.0 (abc1234)
+hirsel --build-info # Shows version, git SHA, build date, and features
+```
+
+Version info is embedded at compile time via `build.rs`:
+- `CARGO_PKG_VERSION` - Cargo.toml version
+- `HIRSEL_GIT_SHA` - Git commit (with `-dirty` suffix if uncommitted changes)
+- `HIRSEL_BUILD_DATE` - Build date (YYYY-MM-DD)
+
+## CI/CD
+
+### GitHub Actions
+
+The `.github/workflows/build.yml` workflow:
+1. **build-linux**: Builds CLI binary for Linux amd64
+2. **docker**: Builds and pushes Docker image to ghcr.io
+3. **release**: Creates GitHub releases with binaries on version tags
+
+Triggers:
+- Push to `main` or `staging` branches
+- Pull requests to `main`
+- Tags starting with `v` (e.g., `v0.1.0`)
+
+### Docker Image
+
+```bash
+# Pull from GitHub Container Registry
+docker pull ghcr.io/OWNER/hirsel-bun:latest
+
+# Run as server
+docker run -p 3000:3000 -e HIRSEL_API_KEY=secret ghcr.io/OWNER/hirsel-bun serve --port 3000
+
+# Run as worker
+docker run -e ANTHROPIC_API_KEY=... ghcr.io/OWNER/hirsel-bun __remote-worker ...
+```
+
+Image tags:
+- `latest` - Latest main branch build
+- `staging` - Latest staging branch build
+- `v0.1.0` - Specific version releases
+- `abc1234` - Specific commit SHA
+
+## Sprite Workers
+
+Hirsel supports running workers on [Sprites.dev](https://sprites.dev) cloud VMs - lightweight Firecracker VMs that hibernate when idle.
+
+### Setting Up a Sprite Checkpoint
+
+For faster worker startup, create a checkpoint with pre-installed dependencies:
+
+```bash
+# Build the worker binary
+cargo build --release --no-default-features --features worker
+
+# Set your Sprites API token
+export SPRITES_TOKEN=your-token
+
+# Run the setup script
+./scripts/setup-sprite-checkpoint.sh my-checkpoint
+
+# Output: Checkpoint ID to use in config
+```
+
+The checkpoint includes:
+- Node.js 22 + npm
+- Claude Code CLI (`@anthropic-ai/claude-code`)
+- Codex CLI (`@openai/codex`)
+- ACP adapters (`claude-code-acp`, `codex-acp`)
+- Hirsel worker binary
+
+### Configuration
+
+Add to `~/.hirsel/config.toml`:
+
+```toml
+[runners.sprite]
+api_token = "your-sprites-token"
+base_checkpoint = "checkpoint-id-from-setup"
+auto_destroy = true          # Clean up sprites after completion
+use_file_push = false        # Push files via HTTP (requires Tailscale)
+```
+
+### File Transfer Modes
+
+**Pull Mode** (default): Worker downloads files from coordinator.
+```
+Coordinator → (HTTP API) → Worker pulls tarball
+```
+
+**Push Mode** (`use_file_push = true`): Coordinator pushes files directly to worker.
+Requires Tailscale connectivity between coordinator and sprites.
+```
+Coordinator → (Tailscale) → Worker HTTP receiver (port 19800)
+```
+
+Push mode is faster as it doesn't require the worker to authenticate with the coordinator.
+
+### Worker File Receiver
+
+When running in push mode, the worker starts an HTTP server on port 19800:
+- `GET /health` - Readiness check
+- `POST /upload` - Receive and extract gzipped tarball
+
+The coordinator waits for the health check to pass before pushing files.

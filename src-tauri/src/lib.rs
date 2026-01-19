@@ -10,6 +10,7 @@ pub mod core;
 pub mod daemon;
 #[cfg(feature = "gui")]
 pub mod gui;
+pub mod version;
 pub mod worker;
 
 // Re-export commonly used types
@@ -24,6 +25,12 @@ pub fn run_cli() -> i32 {
     use cli::*;
 
     let cli = Cli::parse();
+
+    // Handle --build-info flag
+    if cli.build_info {
+        println!("{}", version::build_info());
+        return 0;
+    }
 
     let result = match cli.command {
         None => {
@@ -398,17 +405,19 @@ fn run_command(
             rt.block_on(async {
                 tokio::task::LocalSet::new()
                     .run_until(async {
-                        worker::run_remote_worker(
-                            &args.api_url,
-                            &args.run_name,
-                            &args.worker_name,
-                            &args.work_dir,
-                            &args.spec,
-                            &agent_command,
-                            args.is_leader,
-                            args.leader_name.as_deref(),
+                        worker::run_remote_worker_with_config(worker::RemoteWorkerConfig {
+                            api_url: &args.api_url,
+                            run_name: &args.run_name,
+                            worker_name: &args.worker_name,
+                            work_dir: &args.work_dir,
+                            spec_path: &args.spec,
+                            agent_command: &agent_command,
+                            is_leader: args.is_leader,
+                            leader_name: args.leader_name.as_deref(),
                             teammates,
-                        )
+                            wait_for_files: args.wait_for_files,
+                            file_receiver_port: args.file_receiver_port,
+                        })
                         .await
                     })
                     .await

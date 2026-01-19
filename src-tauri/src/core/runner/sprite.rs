@@ -9,6 +9,7 @@
 use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
@@ -16,6 +17,69 @@ use super::{
     Runner, RunnerError, RunnerResult, SpawnResult, SpriteRunnerConfig, WorkerHandle,
     WorkerSpawnConfig,
 };
+
+/// Create a tarball of a project directory, excluding common build artifacts
+fn create_project_tarball(project_path: &Path) -> Result<Vec<u8>, std::io::Error> {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use tar::Builder;
+    use walkdir::WalkDir;
+
+    let mut buffer = Vec::new();
+    let encoder = GzEncoder::new(&mut buffer, Compression::fast());
+    let mut builder = Builder::new(encoder);
+
+    // Walk the project directory, excluding common build artifacts
+    for entry in WalkDir::new(project_path)
+        .into_iter()
+        .filter_entry(|e| {
+            let name = e.file_name().to_string_lossy();
+            // Exclude common build artifacts and hidden dirs
+            !matches!(
+                name.as_ref(),
+                "node_modules"
+                    | "target"
+                    | ".git"
+                    | ".hirsel"
+                    | "__pycache__"
+                    | ".venv"
+                    | "venv"
+                    | ".tox"
+                    | "dist"
+                    | "build"
+                    | ".next"
+                    | ".nuxt"
+            )
+        })
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if path == project_path {
+            continue;
+        }
+
+        let relative_path = path.strip_prefix(project_path).unwrap_or(path);
+
+        if entry.file_type().is_file() {
+            builder
+                .append_path_with_name(path, relative_path)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        } else if entry.file_type().is_dir() {
+            builder
+                .append_dir(relative_path, path)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        }
+    }
+
+    builder
+        .into_inner()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
+        .finish()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+    debug!("Created tarball: {} bytes", buffer.len());
+    Ok(buffer)
+}
 
 /// Sprites API client
 pub struct SpritesClient {
@@ -515,52 +579,77 @@ impl Runner for SpriteRunner {
 
         // Step 3: Sync work directory (now step 3 after Tailscale)
         let work_dir = "/home/sprite/work";
-        let setup_commands = if let Some(ref project_url) = config.project_url {
-            // Git clone mode
-            vec![
-                format!("mkdir -p {}", work_dir),
-                format!(
-                    "if [ -d {}/.git ]; then cd {} && git fetch origin && git reset --hard origin/HEAD; else git clone {} {}; fi",
-                    work_dir, work_dir, project_url, work_dir
-                ),
-                format!("mkdir -p {}/chats", work_dir),
-            ]
-        } else if let Some(ref coordinator_url) = config.coordinator_url {
-            // Tarball download mode - get files from coordinator API
-            let files_url = format!("{}/api/runs/{}/files", coordinator_url, config.run_name);
-            vec![
-                format!("mkdir -p {}", work_dir),
-                format!(
-                    "cd {} && curl -sS -H 'Authorization: Bearer $HIRSEL_API_KEY' '{}' | tar -xzf -",
-                    work_dir, files_url
-                ),
-                format!("cd {} && git init && git add . && git commit -m 'Initial import from server' 2>/dev/null || true", work_dir),
-                format!("mkdir -p {}/chats", work_dir),
-            ]
-        } else {
-            return Err(RunnerError::Config(
-                "Either project_url or coordinator_url required for sprite runner".to_string(),
-            ));
-        };
+        let use_file_push = self.config.use_file_push && config.tailscale_authkey.is_some();
 
-        for cmd in setup_commands {
-            info!("Running setup command: {}", cmd);
+        if !use_file_push {
+            // Pull mode - worker downloads files from coordinator or git
+            let setup_commands = if let Some(ref project_url) = config.project_url {
+                // Git clone mode
+                vec![
+                    format!("mkdir -p {}", work_dir),
+                    format!(
+                        "if [ -d {}/.git ]; then cd {} && git fetch origin && git reset --hard origin/HEAD; else git clone {} {}; fi",
+                        work_dir, work_dir, project_url, work_dir
+                    ),
+                    format!("mkdir -p {}/chats", work_dir),
+                ]
+            } else if let Some(ref coordinator_url) = config.coordinator_url {
+                // Tarball download mode - get files from coordinator API
+                let files_url = format!("{}/api/runs/{}/files", coordinator_url, config.run_name);
+                vec![
+                    format!("mkdir -p {}", work_dir),
+                    format!(
+                        "cd {} && curl -sS -H 'Authorization: Bearer $HIRSEL_API_KEY' '{}' | tar -xzf -",
+                        work_dir, files_url
+                    ),
+                    format!("cd {} && git init && git add . && git commit -m 'Initial import from server' 2>/dev/null || true", work_dir),
+                    format!("mkdir -p {}/chats", work_dir),
+                ]
+            } else {
+                return Err(RunnerError::Config(
+                    "Either project_url or coordinator_url required for sprite runner".to_string(),
+                ));
+            };
+
+            for cmd in setup_commands {
+                info!("Running setup command: {}", cmd);
+                let result = self
+                    .client
+                    .exec(
+                        &sprite_name,
+                        &["sh".to_string(), "-c".to_string(), cmd.clone()],
+                        None,
+                        None,
+                    )
+                    .await;
+
+                if let Err(e) = result {
+                    error!("Setup command failed: {} - {}", cmd, e);
+                    // Clean up sprite on failure
+                    let _ = self.client.destroy(&sprite_name).await;
+                    return Err(RunnerError::SetupFailed(format!(
+                        "Setup command failed: {}",
+                        e
+                    )));
+                }
+            }
+        } else {
+            // Push mode - just create work directory, files will be pushed after worker starts
+            info!("Push mode enabled - creating work directory only");
             let result = self
                 .client
                 .exec(
                     &sprite_name,
-                    &["sh".to_string(), "-c".to_string(), cmd.clone()],
+                    &["mkdir".to_string(), "-p".to_string(), work_dir.to_string()],
                     None,
                     None,
                 )
                 .await;
 
             if let Err(e) = result {
-                error!("Setup command failed: {} - {}", cmd, e);
-                // Clean up sprite on failure
                 let _ = self.client.destroy(&sprite_name).await;
                 return Err(RunnerError::SetupFailed(format!(
-                    "Setup command failed: {}",
+                    "Failed to create work directory: {}",
                     e
                 )));
             }
@@ -616,6 +705,11 @@ impl Runner for SpriteRunner {
             }
         }
 
+        // Add file receiver flag if push mode enabled
+        if use_file_push {
+            worker_args.push_str(" --wait-for-files");
+        }
+
         info!("Starting worker process on sprite {}", sprite_name);
 
         let pid = self
@@ -627,6 +721,78 @@ impl Runner for SpriteRunner {
                 Some(work_dir.to_string()),
             )
             .await?;
+
+        // If push mode, push files to worker
+        if use_file_push {
+            info!(
+                "Push mode: sending files to worker {} via Tailscale",
+                sprite_name
+            );
+
+            // Create tarball from work directory
+            let tarball = create_project_tarball(&config.work_dir).map_err(|e| {
+                RunnerError::SetupFailed(format!("Failed to create tarball: {}", e))
+            })?;
+
+            info!("Created tarball: {} bytes", tarball.len());
+
+            // Wait for worker's file receiver to be ready
+            let worker_url = format!("http://{}:19800", sprite_name);
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(10))
+                .build()
+                .map_err(|e| RunnerError::Api(format!("Failed to create HTTP client: {}", e)))?;
+
+            let mut ready = false;
+            for attempt in 1..=30 {
+                debug!(
+                    "Checking worker file receiver (attempt {}/30): {}/health",
+                    attempt, worker_url
+                );
+                match client.get(format!("{}/health", worker_url)).send().await {
+                    Ok(resp) if resp.status().is_success() => {
+                        info!("Worker file receiver is ready");
+                        ready = true;
+                        break;
+                    }
+                    Ok(resp) => {
+                        debug!("Health check returned {}", resp.status());
+                    }
+                    Err(e) => {
+                        debug!("Health check failed: {}", e);
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+
+            if !ready {
+                let _ = self.client.destroy(&sprite_name).await;
+                return Err(RunnerError::SetupFailed(
+                    "Worker file receiver did not become ready".to_string(),
+                ));
+            }
+
+            // Push tarball to worker
+            info!("Pushing tarball to worker...");
+            let push_resp = client
+                .post(format!("{}/upload", worker_url))
+                .body(tarball)
+                .send()
+                .await
+                .map_err(|e| RunnerError::Api(format!("Failed to push files: {}", e)))?;
+
+            if !push_resp.status().is_success() {
+                let status = push_resp.status();
+                let body = push_resp.text().await.unwrap_or_default();
+                let _ = self.client.destroy(&sprite_name).await;
+                return Err(RunnerError::SetupFailed(format!(
+                    "Failed to push files ({}): {}",
+                    status, body
+                )));
+            }
+
+            info!("Files pushed successfully");
+        }
 
         info!(
             "Worker {} started on sprite {} (PID: {})",

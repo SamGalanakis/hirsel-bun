@@ -2354,6 +2354,10 @@ Example:
         <span x-text="'hirsel/' + (currentRunDetail?.name || '')"></span>
       </span>
     </div>
+    <!-- Version info -->
+    <div class="text-wool-600" x-show="versionInfo">
+      <span x-text="'v' + (versionInfo?.version || '') + ' (' + (versionInfo?.gitSha || '') + ')'"></span>
+    </div>
   </footer>
 
 <!--#include file="./templates/worker-output-viewer.html" -->

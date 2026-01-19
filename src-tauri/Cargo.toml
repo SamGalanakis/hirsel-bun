@@ -31,12 +31,13 @@ server = ["dep:axum", "dep:tower-http", "dep:hyper", "dep:hyper-util"]
 # TUI mode (attach command)
 tui = ["dep:ratatui", "dep:crossterm"]
 
-# Minimal worker binary - only remote worker + MCP server
+# Minimal worker binary - only remote worker + MCP server + file receiver
 # Build with: cargo build --release --no-default-features --features worker
-worker = []
+worker = ["dep:axum", "dep:tower-http"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [], optional = true }
+chrono = "0.4"
 
 [dependencies]
 # === GUI dependencies (feature-gated) ===

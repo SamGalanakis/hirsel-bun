@@ -6,7 +6,7 @@ import { formatElapsed, formatTimeRemaining, formatTimeShort } from '../utils/fo
 import { getStatusBadgeClass, getStatusDotClass } from '../utils/status';
 import { getTheme, setTheme, toggleTheme as themeToggle, isDarkTheme, THEMES, type ThemeId } from '../theme';
 import { getShortcuts, findMatchingAction, type ShortcutConfig, type ShortcutAction } from '../shortcuts';
-import type { RunDetail } from '../types';
+import type { RunDetail, VersionInfo } from '../types';
 
 /**
  * Main app state component
@@ -16,6 +16,7 @@ export function appState() {
     // State
     selectedRun: null as string | null,
     currentRunDetail: null as RunDetail | null,
+    versionInfo: null as VersionInfo | null,
     aiChatOpen: false,
     notificationsOpen: false,
     showHelp: false,
@@ -295,6 +296,13 @@ export function appState() {
     // Initialization
     async init() {
       this.initTheme();
+
+      // Load version info
+      try {
+        this.versionInfo = await window.tauriInvoke<VersionInfo>('get_version');
+      } catch (err) {
+        console.error('Failed to load version info:', err);
+      }
 
       // Listen for run selection
       const runSelectedHandler = async (e: Event) => {

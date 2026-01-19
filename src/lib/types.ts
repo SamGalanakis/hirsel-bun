@@ -727,6 +727,19 @@ export interface ChatMessage {
 }
 
 // =============================================================================
+// Version Info
+// =============================================================================
+
+/** Version and build information */
+export interface VersionInfo {
+  version: string;
+  gitSha: string;
+  buildDate: string;
+  features: string[];
+  fullVersion: string;
+}
+
+// =============================================================================
 // Global Window Extensions
 // =============================================================================
 

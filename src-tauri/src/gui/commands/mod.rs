@@ -111,6 +111,7 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         // Frontend logging (dev mode)
         debug::log_frontend,
         // Debug commands
+        debug::get_version,
         debug::get_process_counts,
         debug::kill_orphaned_acp_processes,
         // Gyp chat history commands

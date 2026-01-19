@@ -1,8 +1,32 @@
 //! Debug and utility commands
 //!
-//! Commands for debugging, frontend logging, and Gyp chat history management.
+//! Commands for debugging, frontend logging, version info, and Gyp chat history management.
 
 use crate::core::gyp_chat::{GypChatMessage, GypChatStore};
+use crate::version;
+
+/// Version information response
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionInfo {
+    pub version: &'static str,
+    pub git_sha: &'static str,
+    pub build_date: &'static str,
+    pub features: Vec<&'static str>,
+    pub full_version: String,
+}
+
+/// Get version and build information
+#[tauri::command]
+pub fn get_version() -> VersionInfo {
+    VersionInfo {
+        version: version::VERSION,
+        git_sha: version::GIT_SHA,
+        build_date: version::BUILD_DATE,
+        features: version::active_features(),
+        full_version: version::full_version(),
+    }
+}
 
 /// Log a message from the frontend to the backend log file
 /// This allows debugging frontend issues by checking the same log file
