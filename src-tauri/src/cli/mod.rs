@@ -7,6 +7,7 @@
 //!
 //! When invoked without arguments, `hirsel` launches the native GUI.
 
+pub mod acp_bridge;
 pub mod asset;
 #[cfg(feature = "tui")]
 pub mod attach;
@@ -222,6 +223,10 @@ pub enum Commands {
     /// Run remote worker (internal, spawned on remote machine via SSH)
     #[command(name = "__remote-worker", hide = true)]
     RemoteWorker(RemoteWorkerArgs),
+
+    /// Run ACP bridge server for Claude CLI (internal, used as agent command)
+    #[command(name = "__acp-bridge", hide = true)]
+    AcpBridge,
 
     /// Run as daemon (internal, auto-started by CLI)
     #[cfg(feature = "server")]
@@ -1317,6 +1322,12 @@ pub fn run_cli() -> anyhow::Result<bool> {
             // This is handled by lib.rs run_cli() for compatibility
             // Should not reach here in normal CLI flow
             eprintln!("Remote worker command should be called via hirsel binary directly");
+            std::process::exit(1);
+        }
+        Commands::AcpBridge => {
+            // This is handled by lib.rs run_cli() for compatibility
+            // Should not reach here in normal CLI flow
+            eprintln!("ACP bridge command should be called via hirsel binary directly");
             std::process::exit(1);
         }
 

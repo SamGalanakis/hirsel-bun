@@ -63,182 +63,11 @@ pub async fn list_runs(State(state): State<Arc<AppState>>) -> Result<Json<Vec<Ru
 }
 
 pub async fn create_run(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Json(body): Json<CreateRunRequest>,
 ) -> Result<Json<CreateRunResponse>> {
-    use crate::cli::go::slugify;
-    use crate::core::chats::{
-        create_default_group_chat, create_default_user_chat, create_learnings_thread,
-        create_worker_chat,
-    };
-    use crate::core::config;
-    use crate::core::files::Files;
-    use crate::core::names;
-    use crate::core::state::{SQLiteState, Status};
-
-    // Slugify and validate run name
-    let run_name = slugify(&body.name);
-    if run_name.len() > 50 {
-        return Err(OrchestratorError::InvalidOperation(format!(
-            "Run name too long (max 50 chars): {}...",
-            &run_name[..50]
-        )));
-    }
-
-    // Get run directory
-    let run_dir = config::run_dir(&run_name);
-    if run_dir.exists() {
-        let db_path = run_dir.join("hirsel.db");
-        if db_path.exists() {
-            if let Ok(existing_state) = SQLiteState::new(db_path) {
-                if let Ok(status) = existing_state.status() {
-                    if status == Status::Working || status == Status::Eval {
-                        return Err(OrchestratorError::InvalidOperation(format!(
-                            "Run '{}' already exists and is active",
-                            run_name
-                        )));
-                    }
-                }
-            }
-        }
-        // Clean up old run
-        let _ = std::fs::remove_dir_all(&run_dir);
-    }
-
-    // Create run directory
-    std::fs::create_dir_all(&run_dir)
-        .map_err(|e| OrchestratorError::Other(format!("Failed to create run directory: {}", e)))?;
-
-    // Initialize Files
-    let files = Files::new(run_dir.clone());
-    files
-        .init_dirs()
-        .map_err(|e| OrchestratorError::Other(format!("Failed to init dirs: {}", e)))?;
-
-    // Write spec file
-    std::fs::write(files.spec(), &body.spec)
-        .map_err(|e| OrchestratorError::Other(format!("Failed to write spec: {}", e)))?;
-
-    // Write eval file if provided
-    if let Some(ref eval_content) = body.eval {
-        std::fs::write(run_dir.join("eval.md"), eval_content)
-            .map_err(|e| OrchestratorError::Other(format!("Failed to write eval: {}", e)))?;
-    }
-
-    // Initialize bootstrap tasks.md
-    std::fs::write(
-        run_dir.join("tasks.md"),
-        "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n| scope | TODO | | Read spec, create exploration tasks |\n",
-    ).map_err(|e| OrchestratorError::Other(format!("Failed to write tasks.md: {}", e)))?;
-
-    // Create tasks detail folder
-    let tasks_dir = run_dir.join("tasks");
-    std::fs::create_dir_all(&tasks_dir)
-        .map_err(|e| OrchestratorError::Other(format!("Failed to create tasks dir: {}", e)))?;
-    std::fs::write(tasks_dir.join("scope.md"), "")
-        .map_err(|e| OrchestratorError::Other(format!("Failed to write scope.md: {}", e)))?;
-
-    // Initialize SQLite state
-    let db_path = run_dir.join("hirsel.db");
-    let sqlite_state = SQLiteState::new(db_path)
-        .map_err(|e| OrchestratorError::Other(format!("Failed to create state: {}", e)))?;
-    sqlite_state
-        .init_state(None)
-        .map_err(|e| OrchestratorError::Other(format!("Failed to init state: {}", e)))?;
-
-    // Set run properties
-    sqlite_state
-        .set_request(Some(&body.spec))
-        .map_err(|e| OrchestratorError::Other(format!("Failed to set request: {}", e)))?;
-
-    if let Some(scale) = body.worker_scale {
-        sqlite_state
-            .set_worker_scale(&scale.to_string())
-            .map_err(|e| OrchestratorError::Other(format!("Failed to set worker scale: {}", e)))?;
-    }
-
-    if let Some(limit) = body.time_limit_minutes {
-        sqlite_state
-            .set_time_limit_minutes(Some(limit as i64))
-            .map_err(|e| OrchestratorError::Other(format!("Failed to set time limit: {}", e)))?;
-    }
-
-    if let Some(max_iter) = body.max_iterations {
-        sqlite_state
-            .set_max_iterations(Some(max_iter as i64))
-            .map_err(|e| {
-                OrchestratorError::Other(format!("Failed to set max iterations: {}", e))
-            })?;
-    }
-
-    if let Some(hitl) = body.human_in_the_loop {
-        sqlite_state
-            .set_human_in_the_loop(hitl)
-            .map_err(|e| OrchestratorError::Other(format!("Failed to set HITL: {}", e)))?;
-    }
-
-    // Note: runner is used from server config, not stored per-run
-
-    // Add initial scope task
-    let _ = sqlite_state.add_task("scope", "Read spec, create exploration tasks", None, None);
-
-    // Set status to Draft (not spawning workers yet)
-    sqlite_state
-        .set_status(Status::Draft)
-        .map_err(|e| OrchestratorError::Other(format!("Failed to set status: {}", e)))?;
-
-    // Create initial worker name (for pre-claiming scope task)
-    let first_worker_name = names::generate_worker_name();
-    let _ = sqlite_state.claim_task("scope", &first_worker_name);
-
-    // Determine multi-worker mode from scale
-    let max_scale = body.worker_scale.unwrap_or(1);
-    let is_multi_worker = max_scale > 1;
-
-    // Create chat files
-    let chats_dir = files.chats_dir();
-    create_default_user_chat(&chats_dir)
-        .map_err(|e| OrchestratorError::Other(format!("Failed to create user chat: {}", e)))?;
-
-    if is_multi_worker {
-        create_default_group_chat(
-            &chats_dir,
-            &[first_worker_name.clone()],
-            Some(&first_worker_name),
-        )
-        .map_err(|e| OrchestratorError::Other(format!("Failed to create group chat: {}", e)))?;
-    }
-
-    create_learnings_thread(&chats_dir, &[first_worker_name.clone()])
-        .map_err(|e| OrchestratorError::Other(format!("Failed to create learnings: {}", e)))?;
-
-    create_worker_chat(&chats_dir, &first_worker_name)
-        .map_err(|e| OrchestratorError::Other(format!("Failed to create worker chat: {}", e)))?;
-
-    // Register initial worker (without work_dir - will be set after files upload)
-    sqlite_state
-        .add_worker(&first_worker_name, "", "remote")
-        .map_err(|e| OrchestratorError::Other(format!("Failed to register worker: {}", e)))?;
-
-    // Store tailscale OAuth credentials if provided (for generating auth keys on-demand)
-    if let Some(ref oauth) = body.tailscale_oauth {
-        let oauth_json = serde_json::to_string(oauth)
-            .map_err(|e| OrchestratorError::Other(format!("Failed to serialize OAuth: {}", e)))?;
-        std::fs::write(run_dir.join(".tailscale_oauth.json"), oauth_json)
-            .map_err(|e| OrchestratorError::Other(format!("Failed to write OAuth: {}", e)))?;
-    }
-
-    tracing::info!(
-        "Created run '{}' with initial worker '{}'",
-        run_name,
-        first_worker_name
-    );
-
-    Ok(Json(CreateRunResponse {
-        name: run_name.clone(),
-        run_dir: run_dir.to_string_lossy().to_string(),
-        files_url: format!("/api/runs/{}/files", run_name),
-    }))
+    let response = state.orchestrator.create_run(body).await?;
+    Ok(Json(response))
 }
 
 pub async fn get_run(
@@ -300,37 +129,14 @@ pub async fn deliver_run(
 /// Accepts a gzipped tar archive of the project files.
 /// Extracts to the run's work directory for workers to use.
 pub async fn upload_files(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
     body: Bytes,
 ) -> Result<StatusCode> {
-    use crate::core::config;
-    use flate2::read::GzDecoder;
-    use tar::Archive;
-
-    let run_dir = config::run_dir(&name);
-    if !run_dir.exists() {
-        return Err(OrchestratorError::RunNotFound(name));
-    }
-
-    // Create work directory
-    let work_dir = run_dir.join("work");
-    std::fs::create_dir_all(&work_dir)
-        .map_err(|e| OrchestratorError::Other(format!("Failed to create work dir: {}", e)))?;
-
-    // Extract tarball
-    let decoder = GzDecoder::new(&body[..]);
-    let mut archive = Archive::new(decoder);
-
-    archive
-        .unpack(&work_dir)
-        .map_err(|e| OrchestratorError::Other(format!("Failed to extract tarball: {}", e)))?;
-
-    tracing::info!(
-        "Uploaded files for run '{}' to {}",
-        name,
-        work_dir.display()
-    );
+    state
+        .orchestrator
+        .upload_files(&name, body.to_vec())
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -338,6 +144,9 @@ pub async fn upload_files(
 ///
 /// Returns a gzipped tar archive of the run's work directory.
 /// Workers call this to get project files.
+///
+/// For local runs (which create work/staging/), serves from staging.
+/// For remote uploads (which go to work/ directly), serves from work.
 pub async fn download_files(
     State(_state): State<Arc<AppState>>,
     Path(name): Path<String>,
@@ -359,6 +168,23 @@ pub async fn download_files(
         ));
     }
 
+    // Determine source directory:
+    // - Local runs create work/staging/ with project files
+    // - Remote uploads go directly to work/
+    // Prefer staging if it exists (local run with remote runners)
+    let staging_dir = work_dir.join("staging");
+    let source_dir = if staging_dir.exists() {
+        staging_dir
+    } else {
+        work_dir
+    };
+
+    tracing::debug!(
+        "Serving files tarball from {} for run '{}'",
+        source_dir.display(),
+        name
+    );
+
     // Create tarball
     let mut buffer = Vec::new();
     {
@@ -366,7 +192,7 @@ pub async fn download_files(
         let mut builder = Builder::new(encoder);
 
         builder
-            .append_dir_all(".", &work_dir)
+            .append_dir_all(".", &source_dir)
             .map_err(|e| OrchestratorError::Other(format!("Failed to create tarball: {}", e)))?;
 
         builder
@@ -390,220 +216,8 @@ pub async fn spawn_workers(
     Path(name): Path<String>,
     Json(body): Json<SpawnWorkersRequest>,
 ) -> Result<Json<SpawnWorkersResponse>> {
-    use crate::cli::config::get_agent_command;
-    use crate::core::chats::{create_default_group_chat, create_worker_chat};
-    use crate::core::config;
-    use crate::core::files::Files;
-    use crate::core::names;
-    use crate::core::runner::{Runner, RunnerConfig, WorkerSpawnConfig};
-    use crate::core::state::{SQLiteState, Status, WorkerUpdate};
-
-    let run_dir = config::run_dir(&name);
-    if !run_dir.exists() {
-        return Err(OrchestratorError::RunNotFound(name.clone()));
-    }
-
-    let work_dir = run_dir.join("work");
-    if !work_dir.exists() {
-        return Err(OrchestratorError::InvalidOperation(
-            "Work directory not found. Upload files first.".into(),
-        ));
-    }
-
-    // Open state
-    let db_path = run_dir.join("hirsel.db");
-    let sqlite_state = SQLiteState::new(db_path)
-        .map_err(|e| OrchestratorError::Other(format!("Failed to open state: {}", e)))?;
-
-    // Check run status
-    let status = sqlite_state
-        .status()
-        .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-    if status != Status::Draft && status != Status::Paused {
-        return Err(OrchestratorError::InvalidOperation(format!(
-            "Cannot spawn workers for run in '{}' status",
-            status
-        )));
-    }
-
-    // Get existing workers
-    let existing_workers = sqlite_state
-        .get_workers()
-        .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-    let existing_names: Vec<String> = existing_workers.iter().map(|w| w.name.clone()).collect();
-    let is_multi_worker = existing_workers.len() + body.count as usize > 1;
-
-    // Generate names for new workers
-    let mut new_worker_names: Vec<String> = names::generate_unique_names(body.count as usize)
-        .into_iter()
-        .filter(|n| !existing_names.contains(n))
-        .take(body.count as usize)
-        .collect();
-
-    // Need more names if we didn't get enough unique ones
-    if new_worker_names.len() < body.count as usize {
-        let mut all_used: std::collections::HashSet<String> =
-            existing_names.iter().cloned().collect();
-        all_used.extend(new_worker_names.iter().cloned());
-
-        while new_worker_names.len() < body.count as usize {
-            let name = names::generate_worker_name();
-            if !all_used.contains(&name) {
-                all_used.insert(name.clone());
-                new_worker_names.push(name);
-            }
-        }
-    }
-
-    // Determine leader and teammates
-    let leader_name = existing_workers.first().map(|w| w.name.clone());
-    let all_worker_names: Vec<String> = existing_names
-        .iter()
-        .chain(new_worker_names.iter())
-        .cloned()
-        .collect();
-
-    // Get runner config from server config
-    let config = state.orchestrator.config();
-    let runner_name = config.default_runner.clone().unwrap_or_default();
-    let runner_config = config
-        .get_runner(&runner_name)
-        .unwrap_or(RunnerConfig::Local);
-
-    // Get agent command
-    let agent_command = get_agent_command();
-    let files = Files::new(run_dir.clone());
-    let spec_path = files.spec();
-    let chats_dir = files.chats_dir();
-
-    // Read tailscale OAuth credentials if present
-    let tailscale_oauth: Option<crate::core::orchestrator::TailscaleOAuth> =
-        std::fs::read_to_string(run_dir.join(".tailscale_oauth.json"))
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok());
-
-    // Create TailscaleClient if OAuth credentials are available
-    let tailscale_client = tailscale_oauth.as_ref().map(|oauth| {
-        crate::core::tailscale::TailscaleClient::new(
-            oauth.client_id.clone(),
-            oauth.client_secret.clone(),
-            oauth.tag.clone(),
-        )
-    });
-
-    // Create runner
-    let runner: Box<dyn Runner> = match &runner_config {
-        RunnerConfig::Local => Box::new(crate::core::runner::LocalRunner::new()),
-        RunnerConfig::Sprite(cfg) => Box::new(crate::core::runner::SpriteRunner::new(cfg.clone())),
-        RunnerConfig::Ssh(cfg) => Box::new(crate::core::runner::SshRunner::new(cfg.clone())),
-        RunnerConfig::Devpod(cfg) => Box::new(crate::core::runner::DevpodRunner::new(cfg.clone())),
-    };
-
-    // Ensure group chat exists for multi-worker
-    if is_multi_worker && !chats_dir.join("group.md").exists() {
-        let _ = create_default_group_chat(&chats_dir, &all_worker_names, leader_name.as_deref());
-    }
-
-    // Spawn workers
-    let mut spawned_workers = Vec::new();
-    let rt = tokio::runtime::Handle::current();
-
-    for worker_name in &new_worker_names {
-        // Create worker chat
-        let _ = create_worker_chat(&chats_dir, worker_name);
-
-        // Register worker
-        sqlite_state
-            .add_worker(worker_name, work_dir.to_str().unwrap_or("."), "remote")
-            .map_err(|e| OrchestratorError::Other(format!("Failed to register worker: {}", e)))?;
-
-        // Build teammates list (exclude self)
-        let teammates: Option<Vec<String>> = if is_multi_worker {
-            Some(
-                all_worker_names
-                    .iter()
-                    .filter(|t| *t != worker_name)
-                    .cloned()
-                    .collect(),
-            )
-        } else {
-            None
-        };
-
-        // Generate fresh Tailscale auth key for this worker if OAuth is configured
-        let tailscale_authkey = if let Some(ref client) = tailscale_client {
-            match rt.block_on(client.generate_auth_key(worker_name)) {
-                Ok(key) => Some(key),
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to generate Tailscale auth key for '{}': {}",
-                        worker_name,
-                        e
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        let spawn_config = WorkerSpawnConfig {
-            run_name: name.clone(),
-            worker_name: worker_name.clone(),
-            work_dir: work_dir.clone(),
-            run_dir: run_dir.clone(),
-            spec_path: spec_path.clone(),
-            agent_command: agent_command.clone(),
-            is_leader: false, // Only first worker is leader
-            leader_name: leader_name.clone(),
-            teammates,
-            resume_session_id: None,
-            env_vars: None,
-            coordinator_url: None,
-            project_url: None,
-            tailscale_authkey,
-        };
-
-        match rt.block_on(runner.spawn(&spawn_config)) {
-            Ok(result) => {
-                // Update worker with PID
-                let pid = result.pid.map(|p| p as i64);
-                let _ = sqlite_state.update_worker(
-                    worker_name,
-                    WorkerUpdate {
-                        pid,
-                        status: Some(crate::core::state::WorkerStatus::Working),
-                        ..Default::default()
-                    },
-                );
-                spawned_workers.push(worker_name.clone());
-                tracing::info!(
-                    "Spawned worker '{}' (runner_id: {})",
-                    worker_name,
-                    result.handle.runner_id
-                );
-            }
-            Err(e) => {
-                tracing::warn!("Failed to spawn worker '{}': {}", worker_name, e);
-            }
-        }
-    }
-
-    // Update run status to Working if we spawned any workers
-    if !spawned_workers.is_empty() {
-        sqlite_state
-            .set_status(Status::Working)
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-        sqlite_state
-            .set_started_at(None)
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-    }
-
-    Ok(Json(SpawnWorkersResponse {
-        workers: spawned_workers,
-    }))
+    let response = state.orchestrator.spawn_workers(&name, body.count).await?;
+    Ok(Json(response))
 }
 
 // =============================================================================
@@ -883,7 +497,13 @@ pub async fn list_runners(
     let mut runners = std::collections::HashMap::new();
 
     // Always include "local" as a built-in runner
-    runners.insert("local".to_string(), RunnerConfigResponse::Local);
+    runners.insert(
+        "local".to_string(),
+        RunnerConfigResponse {
+            host: crate::core::api_types::HostConfigResponse::Local,
+            container: None,
+        },
+    );
 
     // Add configured runners
     for (name, runner_config) in &config.runners {
@@ -901,7 +521,10 @@ pub async fn get_runner(
     let config = state.config.read().await;
 
     if name == "local" {
-        return Ok(Json(RunnerConfigResponse::Local));
+        return Ok(Json(RunnerConfigResponse {
+            host: crate::core::api_types::HostConfigResponse::Local,
+            container: None,
+        }));
     }
 
     let runner = config

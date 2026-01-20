@@ -21,7 +21,7 @@ pub struct SpawnWorkersConfig {
     pub run_dir: PathBuf,
     /// Path to the spec file
     pub spec_path: PathBuf,
-    /// Agent command to run (e.g., ["claude-code-acp"])
+    /// Agent command to run (e.g., ["hirsel", "__acp-bridge"])
     pub agent_command: Vec<String>,
     /// Whether this is a multi-worker run
     pub is_multi_worker: bool,
@@ -101,7 +101,10 @@ pub fn spawn_local_workers(
             leader_name: config.leader_name.clone(),
             teammates,
             resume_session_id: None,
+            env_vars: None,
             credentials: None,
+            coordinator_url: None,
+            tailscale_authkey: None,
         };
 
         match spawn_worker(spawn_config, state) {
@@ -143,7 +146,7 @@ mod tests {
             run_name: "test-run".to_string(),
             run_dir: PathBuf::from("/runs/test-run"),
             spec_path: PathBuf::from("/runs/test-run/spec.md"),
-            agent_command: vec!["claude-code-acp".to_string()],
+            agent_command: vec!["hirsel".to_string(), "__acp-bridge".to_string()],
             is_multi_worker: true,
             leader_name: Some("alpha".to_string()),
             all_worker_names: vec!["alpha".to_string(), "beta".to_string()],

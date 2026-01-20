@@ -661,8 +661,8 @@ pub async fn start_draft(run_name: String) -> Result<RunDetail, String> {
             resume_session_id: None,
             env_vars: None,
             coordinator_url: None,
-            project_url: None,
             tailscale_authkey: None,
+            credentials: None,
         };
 
         // Spawn the worker

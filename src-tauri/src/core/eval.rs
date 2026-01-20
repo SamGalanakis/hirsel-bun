@@ -837,7 +837,7 @@ pub async fn run_eval_from_args(
         }
     }
 
-    // Clean up any remaining child processes (e.g., grandchildren like node claude-code-acp)
+    // Clean up any remaining child processes (e.g., grandchildren like hirsel __acp-bridge)
     crate::core::process::cleanup_process_group(&eval_name);
 
     Ok(())

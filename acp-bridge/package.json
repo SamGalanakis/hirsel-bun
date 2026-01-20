@@ -1,0 +1,13 @@
+{
+  "name": "hirsel-acp-bridge",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "hirsel-acp-bridge": "./index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.7",
+    "@agentclientprotocol/sdk": "^0.13.0"
+  }
+}

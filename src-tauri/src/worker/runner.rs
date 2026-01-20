@@ -81,7 +81,7 @@ impl WorkerConfig {
         let agent_command = std::env::var("HIRSEL_AGENT_COMMAND")
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_else(|| vec!["claude-code-acp".to_string()]);
+            .unwrap_or_else(|| vec!["hirsel".to_string(), "__acp-bridge".to_string()]);
 
         // Get runs directory from HIRSEL_ROOT or default
         let hirsel_root = std::env::var("HIRSEL_ROOT")
@@ -646,7 +646,7 @@ mod tests {
             "achilles".into(),
             "test-run".into(),
             PathBuf::from("/tmp/test-run"),
-            vec!["claude-code-acp".to_string()],
+            vec!["hirsel".to_string(), "__acp-bridge".to_string()],
         );
         assert_eq!(config.worker_name, "achilles");
         assert_eq!(config.run_name, "test-run");

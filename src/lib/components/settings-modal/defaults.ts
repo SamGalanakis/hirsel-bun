@@ -2,7 +2,7 @@
  * Default configurations for settings modal
  */
 
-import type { AgentAuth, SshRunnerConfig, SpriteRunnerConfig, DevpodRunnerConfig, Settings, AuthMethod, OrchestratorProfile, GitConfig, NavigationState } from './types';
+import type { AgentAuth, SshHostConfig, SpriteHostConfig, ContainerConfig, RunnerConfig, Settings, AuthMethod, OrchestratorProfile, GitConfig, NavigationState, HostType } from './types';
 
 /**
  * Default agent auth configuration
@@ -14,39 +14,56 @@ export const defaultAgentAuth = (): AgentAuth => ({
 });
 
 /**
- * Default SSH runner configuration
+ * Default SSH host configuration
  */
-export const defaultSshRunnerConfig = (): SshRunnerConfig => ({
+export const defaultSshHostConfig = (): SshHostConfig => ({
   type: 'ssh',
-  host: '',
+  address: '',
+  port: 22,
   sshKey: null,
-  sshPort: 22,
   workBase: '/tmp/hirsel-remote',
   location: null,
 });
 
 /**
- * Default Sprite runner configuration
+ * Default Sprite host configuration
  */
-export const defaultSpriteRunnerConfig = (): SpriteRunnerConfig => ({
+export const defaultSpriteHostConfig = (): SpriteHostConfig => ({
   type: 'sprite',
   apiToken: null,
-  baseCheckpoint: null,
+  checkpoint: null,
   autoDestroy: true,
   idleTimeoutSecs: 30,
   apiUrl: 'https://api.sprites.dev',
+  useFilePush: false,
 });
 
 /**
- * Default DevPod runner configuration
+ * Default container configuration
  */
-export const defaultDevpodRunnerConfig = (): DevpodRunnerConfig => ({
-  type: 'devpod',
-  provider: 'docker',
-  providerOptions: {},
-  image: null,
-  prebuildImage: null,
-  useTunnel: null,  // auto-detect based on provider
+export const defaultContainerConfig = (): ContainerConfig => ({
+  image: '',
+});
+
+/**
+ * Default local runner configuration
+ */
+export const defaultLocalRunnerConfig = (): RunnerConfig => ({
+  host: { type: 'local' },
+});
+
+/**
+ * Default SSH runner configuration (host + no container)
+ */
+export const defaultSshRunnerConfig = (): RunnerConfig => ({
+  host: defaultSshHostConfig(),
+});
+
+/**
+ * Default Sprite runner configuration (host, no container - Sprites don't support Docker)
+ */
+export const defaultSpriteRunnerConfig = (): RunnerConfig => ({
+  host: defaultSpriteHostConfig(),
 });
 
 /**
@@ -146,25 +163,27 @@ export function getDefaultEnvVar(agent: string): string {
 }
 
 /**
- * Get runner type icon
+ * Get host type icon
  */
-export function getRunnerIcon(type: string): string {
+export function getHostIcon(type: HostType): string {
   switch (type) {
+    case 'local': return 'laptop';
+    case 'client': return 'monitor';
     case 'ssh': return 'server';
     case 'sprite': return 'cloud';
-    case 'devpod': return 'container';
     default: return 'laptop';
   }
 }
 
 /**
- * Get runner type label
+ * Get host type label
  */
-export function getRunnerTypeLabel(type: string): string {
+export function getHostTypeLabel(type: HostType): string {
   switch (type) {
+    case 'local': return 'Local';
+    case 'client': return 'Client';
     case 'ssh': return 'SSH';
     case 'sprite': return 'Sprites';
-    case 'devpod': return 'DevPod';
     default: return type;
   }
 }

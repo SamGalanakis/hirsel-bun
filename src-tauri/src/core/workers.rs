@@ -54,7 +54,7 @@ pub struct WorkerSpawnConfig {
     pub run_dir: PathBuf,
     /// Path to spec file
     pub spec_path: PathBuf,
-    /// Agent command to run (e.g., ["claude-code-acp"])
+    /// Agent command to run (e.g., ["hirsel __acp-bridge"])
     pub agent_command: Vec<String>,
     /// Whether this worker is the leader
     pub is_leader: bool,
@@ -64,8 +64,14 @@ pub struct WorkerSpawnConfig {
     pub teammates: Option<Vec<String>>,
     /// Session ID to resume (optional)
     pub resume_session_id: Option<String>,
+    /// Environment variables to pass to the worker (legacy, prefer credentials)
+    pub env_vars: Option<std::collections::HashMap<String, String>>,
     /// Explicit credentials to forward (for remote orchestrator mode)
     pub credentials: Option<ForwardedCredentials>,
+    /// URL for coordinator API (for remote workers)
+    pub coordinator_url: Option<String>,
+    /// Tailscale auth key for auto-joining worker hosts to tailnet
+    pub tailscale_authkey: Option<String>,
 }
 
 /// Result of spawning a worker
@@ -192,7 +198,7 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
     {
         use std::os::unix::process::CommandExt;
         // Create a new process group with the child's PID as the group leader
-        // This ensures all descendant processes (claude-code-acp, claude) are in the same group
+        // This ensures all descendant processes (hirsel __acp-bridge, claude) are in the same group
         cmd.process_group(0);
     }
 
@@ -287,7 +293,7 @@ pub fn is_pid_alive(pid: u32) -> bool {
 ///
 /// Workers can be resumed later from their saved session state.
 /// Since workers are spawned with process_group(0), killing the process group
-/// will also kill all child processes (claude-code-acp, claude, etc.).
+/// will also kill all child processes (hirsel __acp-bridge, claude, etc.).
 pub fn pause_all_workers(state: &SQLiteState) -> WorkerResult<Vec<String>> {
     let workers = state.get_workers()?;
     let mut paused = Vec::new();
@@ -296,7 +302,7 @@ pub fn pause_all_workers(state: &SQLiteState) -> WorkerResult<Vec<String>> {
         if let Some(pid) = worker.pid {
             // Always attempt to kill the process group, even if leader appears dead
             // The leader (hirsel subprocess) dies quickly on SIGTERM, but children
-            // (claude-code-acp, claude) may survive and need SIGKILL
+            // (hirsel __acp-bridge, claude) may survive and need SIGKILL
             #[cfg(unix)]
             {
                 // Kill the entire process group using negative PID
@@ -308,7 +314,7 @@ pub fn pause_all_workers(state: &SQLiteState) -> WorkerResult<Vec<String>> {
             std::thread::sleep(std::time::Duration::from_millis(100));
 
             // ALWAYS send SIGKILL to process group - children may survive even if leader died
-            // (Node.js processes like claude-code-acp may ignore SIGTERM)
+            // (Node.js processes like hirsel __acp-bridge may ignore SIGTERM)
             #[cfg(unix)]
             {
                 unsafe {
@@ -340,7 +346,7 @@ pub fn pause_all_workers(state: &SQLiteState) -> WorkerResult<Vec<String>> {
 /// This is a forceful cleanup used when a run reaches a terminal state
 /// (Done, EvalFailed, TimedOut) to ensure no orphaned worker processes remain.
 /// Since workers are spawned with process_group(0), killing the process group
-/// will also kill all child processes (claude-code-acp, claude, etc.).
+/// will also kill all child processes (hirsel __acp-bridge, claude, etc.).
 pub fn kill_all_workers(state: &SQLiteState) -> WorkerResult<Vec<String>> {
     let workers = state.get_workers()?;
     let mut killed = Vec::new();
@@ -349,11 +355,11 @@ pub fn kill_all_workers(state: &SQLiteState) -> WorkerResult<Vec<String>> {
         if let Some(pid) = worker.pid {
             // Always attempt to kill the process group, even if leader appears dead
             // The leader (hirsel subprocess) dies quickly on SIGTERM, but children
-            // (claude-code-acp, claude) may survive and need SIGKILL
+            // (hirsel __acp-bridge, claude) may survive and need SIGKILL
             #[cfg(unix)]
             {
                 // Kill the entire process group using negative PID
-                // This kills the worker and all its children (claude-code-acp, claude)
+                // This kills the worker and all its children (hirsel __acp-bridge, claude)
                 unsafe {
                     // First try SIGTERM for graceful shutdown of the process group
                     libc::kill(-(pid as i32), libc::SIGTERM);
@@ -363,7 +369,7 @@ pub fn kill_all_workers(state: &SQLiteState) -> WorkerResult<Vec<String>> {
             std::thread::sleep(std::time::Duration::from_millis(100));
 
             // ALWAYS send SIGKILL to process group - children may survive even if leader died
-            // (Node.js processes like claude-code-acp may ignore SIGTERM)
+            // (Node.js processes like hirsel __acp-bridge may ignore SIGTERM)
             #[cfg(unix)]
             {
                 unsafe {
@@ -439,7 +445,10 @@ pub fn resume_awaiting_workers(
             leader_name: None,
             teammates: None,
             resume_session_id: worker.session_id.clone(),
+            env_vars: None,
             credentials: None,
+            coordinator_url: None,
+            tailscale_authkey: None,
         };
 
         match spawn_worker(config, &state) {
@@ -875,7 +884,10 @@ pub fn maybe_scale_up(
         leader_name,
         teammates: Some(teammates),
         resume_session_id: None,
+        env_vars: None,
         credentials: None,
+        coordinator_url: None,
+        tailscale_authkey: None,
     };
 
     match spawn_worker(config, &state) {
@@ -1289,7 +1301,10 @@ mod tests {
             leader_name: None,
             teammates: None,
             resume_session_id: None,
+            env_vars: None,
             credentials: None,
+            coordinator_url: None,
+            tailscale_authkey: None,
         };
 
         let args = build_worker_args(&config);
@@ -1313,7 +1328,10 @@ mod tests {
             leader_name: Some("alpha".to_string()),
             teammates: Some(vec!["beta".to_string(), "gamma".to_string()]),
             resume_session_id: None,
+            env_vars: None,
             credentials: None,
+            coordinator_url: None,
+            tailscale_authkey: None,
         };
 
         let args = build_worker_args(&config);
@@ -1336,7 +1354,10 @@ mod tests {
             leader_name: None,
             teammates: None,
             resume_session_id: Some("session-123".to_string()),
+            env_vars: None,
             credentials: None,
+            coordinator_url: None,
+            tailscale_authkey: None,
         };
 
         let args = build_worker_args(&config);
@@ -1374,7 +1395,10 @@ mod tests {
             leader_name: Some("worker1".to_string()),
             teammates: Some(vec!["worker2".to_string()]),
             resume_session_id: None,
+            env_vars: None,
             credentials: None,
+            coordinator_url: None,
+            tailscale_authkey: None,
         };
 
         assert!(config.is_leader);

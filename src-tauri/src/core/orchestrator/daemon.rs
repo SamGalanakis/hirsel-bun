@@ -333,4 +333,34 @@ impl Orchestrator for DaemonOrchestrator {
             .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))
     }
+
+    // -------------------------------------------------------------------------
+    // Run Creation
+    // -------------------------------------------------------------------------
+
+    async fn create_run(&self, request: CreateRunRequest) -> OrchestratorResult<CreateRunResponse> {
+        self.client
+            .post("/api/runs", request)
+            .await
+            .map_err(|e| OrchestratorError::Other(e.to_string()))
+    }
+
+    async fn upload_files(&self, run_name: &str, tarball: Vec<u8>) -> OrchestratorResult<()> {
+        self.client
+            .post_bytes(&format!("/api/runs/{}/files", run_name), tarball)
+            .await
+            .map_err(|e| OrchestratorError::Other(e.to_string()))
+    }
+
+    async fn spawn_workers(
+        &self,
+        run_name: &str,
+        count: u32,
+    ) -> OrchestratorResult<SpawnWorkersResponse> {
+        let request = SpawnWorkersRequest { count };
+        self.client
+            .post(&format!("/api/runs/{}/spawn", run_name), request)
+            .await
+            .map_err(|e| OrchestratorError::Other(e.to_string()))
+    }
 }

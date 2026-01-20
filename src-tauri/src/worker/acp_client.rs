@@ -731,8 +731,7 @@ pub fn build_worker_prompt(
 /// Run a worker using the native Claude CLI bridge.
 ///
 /// This is an alternative to `run_acp_worker` that communicates directly with
-/// the Claude CLI using its JSON streaming protocol, eliminating the need for
-/// the Node.js `claude-code-acp` adapter.
+/// the Claude CLI using its JSON streaming protocol.
 #[cfg(feature = "claude")]
 pub async fn run_claude_cli_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
     use crate::core::claude_cli::{run_claude_worker, ClaudeWorkerConfig};
@@ -780,22 +779,28 @@ pub async fn run_claude_cli_worker(config: WorkerRunConfig) -> anyhow::Result<()
 
 /// Run a worker, automatically selecting the best backend.
 ///
-/// If the `claude` feature is enabled and the agent command indicates Claude,
-/// uses the native Claude CLI bridge. Otherwise falls back to the ACP adapter.
+/// If the `claude` feature is enabled and the agent command indicates Claude or
+/// our built-in ACP bridge, uses the native Claude Agent SDK. Otherwise falls
+/// back to the ACP adapter for external agents.
 pub async fn run_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
     #[cfg(feature = "claude")]
     {
-        // Check if we should use the native Claude CLI bridge
-        let use_native = config.agent_command.is_empty()
+        // Check if we should use the native Claude Agent SDK
+        // This includes:
+        // - Empty command (default to Claude)
+        // - "claude" or path ending in "/claude"
+        // - "hirsel __acp-bridge" (our built-in bridge, now uses SDK)
+        let use_sdk = config.agent_command.is_empty()
             || config.agent_command.first().map_or(false, |cmd| {
                 cmd == "claude" || cmd.ends_with("/claude") || cmd.contains("claude-code")
-            });
+            })
+            || config.agent_command.iter().any(|arg| arg == "__acp-bridge");
 
-        if use_native {
+        if use_sdk {
             return run_claude_cli_worker(config).await;
         }
     }
 
-    // Fall back to ACP adapter
+    // Fall back to ACP adapter for external agents
     run_acp_worker(config).await
 }

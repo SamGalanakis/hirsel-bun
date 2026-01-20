@@ -2,6 +2,22 @@
 //!
 //! This module provides path accessors and file operations for the
 //! run directory structure, including spec files, tasks, chats, and logs.
+//!
+//! ## Storage Abstraction
+//!
+//! The `Files` struct provides both synchronous methods for backward compatibility
+//! and async methods that work with the `FileStorage` trait for storage-agnostic
+//! operations. For new code, prefer the async methods with `FileStorage`.
+//!
+//! ```rust,ignore
+//! // Local filesystem (default)
+//! let files = Files::new("/path/to/run");
+//! files.write_spec("# My Spec")?; // sync, local only
+//!
+//! // With storage abstraction
+//! let storage = create_file_storage(&config.storage).await?;
+//! files.write_spec_async(&storage, "# My Spec").await?; // async, works with S3 too
+//! ```
 
 use chrono::Local;
 use regex::Regex;
@@ -10,6 +26,8 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+
+use super::storage::{FileStorage, StorageResult};
 
 /// Regex pattern for parsing task table rows: | id | STATUS | worker | name |
 static TASK_ROW_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -320,6 +338,261 @@ impl Files {
         }
         logs.sort();
         Ok(logs)
+    }
+
+    // =========================================================================
+    // Async methods using FileStorage trait
+    // =========================================================================
+    // These methods work with any FileStorage implementation (local, S3, etc.)
+
+    /// Get the storage path prefix for this run (relative to storage root).
+    ///
+    /// For a run named "myrun", this returns "runs/myrun".
+    /// Use this when constructing paths for FileStorage operations.
+    pub fn storage_prefix(&self) -> String {
+        // Extract run name from run_dir path
+        if let Some(name) = self.run_dir.file_name() {
+            format!("runs/{}", name.to_string_lossy())
+        } else {
+            "runs".to_string()
+        }
+    }
+
+    /// Get the storage path for a file relative to this run.
+    pub fn storage_path(&self, relative: &str) -> String {
+        format!("{}/{}", self.storage_prefix(), relative)
+    }
+
+    /// Read spec.md using FileStorage.
+    pub async fn read_spec_async(
+        &self,
+        storage: &dyn FileStorage,
+    ) -> StorageResult<Option<String>> {
+        let path = self.storage_path("spec.md");
+        match storage.read_string(&path).await {
+            Ok(content) => Ok(Some(content)),
+            Err(super::storage::StorageError::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Write spec.md using FileStorage.
+    pub async fn write_spec_async(
+        &self,
+        storage: &dyn FileStorage,
+        content: &str,
+    ) -> StorageResult<()> {
+        let path = self.storage_path("spec.md");
+        storage.write_string(&path, content).await
+    }
+
+    /// Read eval.md using FileStorage.
+    pub async fn read_eval_async(
+        &self,
+        storage: &dyn FileStorage,
+    ) -> StorageResult<Option<String>> {
+        let path = self.storage_path("eval.md");
+        match storage.read_string(&path).await {
+            Ok(content) => Ok(Some(content)),
+            Err(super::storage::StorageError::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Write eval.md using FileStorage.
+    pub async fn write_eval_async(
+        &self,
+        storage: &dyn FileStorage,
+        content: &str,
+    ) -> StorageResult<()> {
+        let path = self.storage_path("eval.md");
+        storage.write_string(&path, content).await
+    }
+
+    /// Read tasks.md using FileStorage.
+    pub async fn read_tasks_md_async(
+        &self,
+        storage: &dyn FileStorage,
+    ) -> StorageResult<Option<String>> {
+        let path = self.storage_path("tasks.md");
+        match storage.read_string(&path).await {
+            Ok(content) => Ok(Some(content)),
+            Err(super::storage::StorageError::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Write tasks.md using FileStorage.
+    pub async fn write_tasks_md_async(
+        &self,
+        storage: &dyn FileStorage,
+        content: &str,
+    ) -> StorageResult<()> {
+        let path = self.storage_path("tasks.md");
+        storage.write_string(&path, content).await
+    }
+
+    /// Initialize directories using FileStorage.
+    pub async fn init_dirs_async(&self, storage: &dyn FileStorage) -> StorageResult<()> {
+        storage.create_dir(&self.storage_prefix()).await?;
+        storage.create_dir(&self.storage_path("tasks")).await?;
+        storage.create_dir(&self.storage_path("chats")).await?;
+        storage.create_dir(&self.storage_path("tmp")).await?;
+        Ok(())
+    }
+
+    /// Read a task detail file using FileStorage.
+    pub async fn read_task_detail_async(
+        &self,
+        storage: &dyn FileStorage,
+        task_id: &str,
+    ) -> StorageResult<Option<String>> {
+        let path = self.storage_path(&format!("tasks/{}.md", task_id));
+        match storage.read_string(&path).await {
+            Ok(content) => Ok(Some(content)),
+            Err(super::storage::StorageError::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Write a task detail file using FileStorage.
+    pub async fn write_task_detail_async(
+        &self,
+        storage: &dyn FileStorage,
+        task_id: &str,
+        content: &str,
+    ) -> StorageResult<()> {
+        let path = self.storage_path(&format!("tasks/{}.md", task_id));
+        storage.write_string(&path, content).await
+    }
+
+    /// Read a chat file using FileStorage.
+    pub async fn read_chat_async(
+        &self,
+        storage: &dyn FileStorage,
+        name: &str,
+    ) -> StorageResult<Option<String>> {
+        let path = self.storage_path(&format!("chats/{}.md", name));
+        match storage.read_string(&path).await {
+            Ok(content) => Ok(Some(content)),
+            Err(super::storage::StorageError::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Write a chat file using FileStorage.
+    pub async fn write_chat_async(
+        &self,
+        storage: &dyn FileStorage,
+        name: &str,
+        content: &str,
+    ) -> StorageResult<()> {
+        let path = self.storage_path(&format!("chats/{}.md", name));
+        storage.write_string(&path, content).await
+    }
+
+    /// Read log.md using FileStorage.
+    pub async fn read_log_async(&self, storage: &dyn FileStorage) -> StorageResult<Option<String>> {
+        let path = self.storage_path("log.md");
+        match storage.read_string(&path).await {
+            Ok(content) => Ok(Some(content)),
+            Err(super::storage::StorageError::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Append to log.md using FileStorage.
+    ///
+    /// Note: For S3, this reads and rewrites the entire file.
+    pub async fn append_log_async(
+        &self,
+        storage: &dyn FileStorage,
+        message: &str,
+    ) -> StorageResult<()> {
+        let path = self.storage_path("log.md");
+        let timestamp = Local::now().format("%H:%M");
+        let line = format!("{} {}\n", timestamp, message);
+
+        // Read existing content, append, write back
+        let existing = match storage.read_string(&path).await {
+            Ok(content) => content,
+            Err(super::storage::StorageError::NotFound(_)) => String::new(),
+            Err(e) => return Err(e),
+        };
+
+        let new_content = format!("{}{}", existing, line);
+        storage.write_string(&path, &new_content).await
+    }
+
+    /// Read worker log using FileStorage.
+    pub async fn read_worker_log_async(
+        &self,
+        storage: &dyn FileStorage,
+        worker_name: &str,
+    ) -> StorageResult<Option<String>> {
+        let path = self.storage_path(&format!("tmp/{}.log", worker_name));
+        match storage.read_string(&path).await {
+            Ok(content) => Ok(Some(content)),
+            Err(super::storage::StorageError::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Write raw bytes to a file using FileStorage.
+    pub async fn write_bytes_async(
+        &self,
+        storage: &dyn FileStorage,
+        relative_path: &str,
+        data: &[u8],
+    ) -> StorageResult<()> {
+        let path = self.storage_path(relative_path);
+        storage.write(&path, data).await
+    }
+
+    /// Read raw bytes from a file using FileStorage.
+    pub async fn read_bytes_async(
+        &self,
+        storage: &dyn FileStorage,
+        relative_path: &str,
+    ) -> StorageResult<Vec<u8>> {
+        let path = self.storage_path(relative_path);
+        storage.read(&path).await
+    }
+
+    /// Check if a file exists using FileStorage.
+    pub async fn exists_async(
+        &self,
+        storage: &dyn FileStorage,
+        relative_path: &str,
+    ) -> StorageResult<bool> {
+        let path = self.storage_path(relative_path);
+        storage.exists(&path).await
+    }
+
+    /// Delete a file using FileStorage.
+    pub async fn delete_async(
+        &self,
+        storage: &dyn FileStorage,
+        relative_path: &str,
+    ) -> StorageResult<()> {
+        let path = self.storage_path(relative_path);
+        storage.delete(&path).await
+    }
+
+    /// List files in a directory using FileStorage.
+    pub async fn list_async(
+        &self,
+        storage: &dyn FileStorage,
+        relative_prefix: &str,
+    ) -> StorageResult<Vec<String>> {
+        let prefix = self.storage_path(relative_prefix);
+        let files = storage.list(&prefix).await?;
+        // Strip the run prefix from results to get relative paths
+        let run_prefix = format!("{}/", self.storage_prefix());
+        Ok(files
+            .into_iter()
+            .filter_map(|f| f.strip_prefix(&run_prefix).map(String::from))
+            .collect())
     }
 }
 

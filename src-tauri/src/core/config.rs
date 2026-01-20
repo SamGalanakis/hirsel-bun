@@ -93,14 +93,15 @@ impl AgentType {
         if command.is_empty() {
             return Self::Unknown;
         }
-        let cmd = command[0].to_lowercase();
-        if cmd.contains("claude") {
+        // Check full command for identification (handles "hirsel __acp-bridge" etc.)
+        let full_cmd = command.join(" ").to_lowercase();
+        if full_cmd.contains("claude") || full_cmd.contains("__acp-bridge") {
             Self::Claude
-        } else if cmd.contains("gemini") {
+        } else if full_cmd.contains("gemini") {
             Self::Gemini
-        } else if cmd.contains("codex") {
+        } else if full_cmd.contains("codex") {
             Self::Codex
-        } else if cmd.contains("goose") {
+        } else if full_cmd.contains("goose") {
             Self::Goose
         } else {
             Self::Unknown
@@ -341,7 +342,9 @@ pub struct AgentConfig {
 }
 
 fn default_agent_command() -> Vec<String> {
-    vec!["claude".to_string()]
+    // Use the hirsel ACP bridge which wraps the claude CLI
+    // This provides ACP protocol support for Claude
+    vec!["hirsel".to_string(), "__acp-bridge".to_string()]
 }
 
 impl Default for AgentConfig {
@@ -466,6 +469,50 @@ pub struct GitConfig {
     pub default_provider: Option<GitProvider>,
 }
 
+// =============================================================================
+// Storage Configuration
+// =============================================================================
+
+/// Storage backend type for file storage
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum StorageBackend {
+    /// Local filesystem storage (default)
+    #[default]
+    Local,
+    /// S3-compatible object storage (MinIO, Tigris, AWS S3)
+    S3,
+}
+
+/// S3-compatible storage configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct S3Config {
+    /// S3 endpoint URL (e.g., "http://localhost:9000" for MinIO, or Tigris URL)
+    /// If not set, uses AWS S3 default endpoint
+    pub endpoint: Option<String>,
+    /// S3 bucket name
+    #[serde(default)]
+    pub bucket: String,
+    /// AWS region (e.g., "us-east-1", "auto" for MinIO)
+    #[serde(default)]
+    pub region: Option<String>,
+    /// AWS access key ID (can also be set via environment)
+    pub access_key_id: Option<String>,
+    /// AWS secret access key (can also be set via environment)
+    pub secret_access_key: Option<String>,
+}
+
+/// Storage configuration for files and database
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StorageConfig {
+    /// File storage backend: "local" or "s3"
+    #[serde(default)]
+    pub files: StorageBackend,
+    /// S3 configuration (when files = "s3")
+    #[serde(default)]
+    pub s3: Option<S3Config>,
+}
+
 /// Main configuration struct
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -534,6 +581,10 @@ pub struct Config {
     /// Git provider configuration
     #[serde(default)]
     pub git: GitConfig,
+
+    /// Storage configuration for files and database
+    #[serde(default)]
+    pub storage: StorageConfig,
 }
 
 fn default_profile() -> String {
@@ -612,6 +663,7 @@ impl Default for Config {
             default_profile: default_profile(),
             profiles: default_profiles(),
             git: GitConfig::default(),
+            storage: StorageConfig::default(),
         }
     }
 }
@@ -1042,6 +1094,55 @@ impl Config {
             }
         }
 
+        // Load storage configuration
+        if let Some(storage_data) = table.get("storage") {
+            if let Some(storage_table) = storage_data.as_table() {
+                // Parse files backend
+                if let Some(files_str) = storage_table.get("files").and_then(|v| v.as_str()) {
+                    self.storage.files = match files_str.to_lowercase().as_str() {
+                        "local" => StorageBackend::Local,
+                        "s3" => StorageBackend::S3,
+                        _ => {
+                            warnings.push(format!(
+                                "Config warning: unknown storage backend '{}', using local",
+                                files_str
+                            ));
+                            StorageBackend::Local
+                        }
+                    };
+                }
+
+                // Parse S3 config if present
+                if let Some(s3_data) = storage_table.get("s3") {
+                    if let Some(s3_table) = s3_data.as_table() {
+                        self.storage.s3 = Some(S3Config {
+                            endpoint: s3_table
+                                .get("endpoint")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            bucket: s3_table
+                                .get("bucket")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            region: s3_table
+                                .get("region")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            access_key_id: s3_table
+                                .get("access_key_id")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            secret_access_key: s3_table
+                                .get("secret_access_key")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                        });
+                    }
+                }
+            }
+        }
+
         Ok(warnings)
     }
 
@@ -1077,13 +1178,13 @@ impl Config {
         }
 
         // Fall back to local
-        crate::core::runner::RunnerConfig::Local
+        crate::core::runner::RunnerConfig::local()
     }
 
     /// Get a runner by name
     pub fn get_runner(&self, name: &str) -> Option<crate::core::runner::RunnerConfig> {
         if name == "local" {
-            return Some(crate::core::runner::RunnerConfig::Local);
+            return Some(crate::core::runner::RunnerConfig::local());
         }
         self.runners.get(name).cloned()
     }
@@ -1192,63 +1293,96 @@ impl Config {
         }
         output.push('\n');
 
-        // Runners section
+        // Runners section - using new Host + Container model
         for (name, runner_config) in &self.runners {
+            use crate::core::runner::{HostConfig, HostConfigOrShortcut};
+
             output.push_str(&format!("[runners.{}]\n", name));
-            match runner_config {
-                crate::core::runner::RunnerConfig::Local => {
-                    output.push_str("type = \"local\"\n");
+
+            // Serialize host configuration
+            let host = runner_config.host.resolve();
+            match &runner_config.host {
+                HostConfigOrShortcut::Shortcut(s) => {
+                    output.push_str(&format!("host = \"{}\"\n", s));
                 }
-                crate::core::runner::RunnerConfig::Ssh(ssh) => {
-                    output.push_str("type = \"ssh\"\n");
-                    output.push_str(&format!("host = \"{}\"\n", ssh.host));
-                    if let Some(ref key) = ssh.ssh_key {
-                        output.push_str(&format!("ssh_key = \"{}\"\n", key));
-                    }
-                    output.push_str(&format!("ssh_port = {}\n", ssh.ssh_port));
-                    output.push_str(&format!("work_base = \"{}\"\n", ssh.work_base));
-                    if let Some(ref loc) = ssh.location {
-                        output.push_str(&format!("location = \"{}\"\n", loc));
-                    }
-                }
-                crate::core::runner::RunnerConfig::Sprite(sprite) => {
-                    output.push_str("type = \"sprite\"\n");
-                    if let Some(ref token) = sprite.api_token {
-                        output.push_str(&format!("api_token = \"{}\"\n", token));
-                    }
-                    if let Some(ref cp) = sprite.base_checkpoint {
-                        output.push_str(&format!("base_checkpoint = \"{}\"\n", cp));
-                    }
-                    output.push_str(&format!("auto_destroy = {}\n", sprite.auto_destroy));
-                    output.push_str(&format!(
-                        "idle_timeout_secs = {}\n",
-                        sprite.idle_timeout_secs
-                    ));
-                    output.push_str(&format!("api_url = \"{}\"\n", sprite.api_url));
-                }
-                crate::core::runner::RunnerConfig::Devpod(devpod) => {
-                    output.push_str("type = \"devpod\"\n");
-                    output.push_str(&format!("provider = \"{}\"\n", devpod.provider));
-                    if let Some(ref image) = devpod.image {
-                        output.push_str(&format!("image = \"{}\"\n", image));
-                    }
-                    if let Some(ref prebuild) = devpod.prebuild_image {
-                        output.push_str(&format!("prebuild_image = \"{}\"\n", prebuild));
-                    }
-                    if let Some(use_tunnel) = devpod.use_tunnel {
-                        output.push_str(&format!("use_tunnel = {}\n", use_tunnel));
-                    }
-                    // Serialize provider_options if not empty
-                    if !devpod.provider_options.is_empty() {
-                        output.push_str("[runners.");
-                        output.push_str(name);
-                        output.push_str(".provider_options]\n");
-                        for (key, value) in &devpod.provider_options {
-                            output.push_str(&format!("{} = \"{}\"\n", key, value));
+                HostConfigOrShortcut::Full(_) => {
+                    // Full host config needs a sub-table
+                    match &host {
+                        HostConfig::Local => {
+                            output.push_str(&format!("\n[runners.{}.host]\n", name));
+                            output.push_str("type = \"local\"\n");
+                        }
+                        HostConfig::Client => {
+                            output.push_str(&format!("\n[runners.{}.host]\n", name));
+                            output.push_str("type = \"client\"\n");
+                        }
+                        HostConfig::Ssh(ssh) => {
+                            output.push_str(&format!("\n[runners.{}.host]\n", name));
+                            output.push_str("type = \"ssh\"\n");
+                            output.push_str(&format!("address = \"{}\"\n", ssh.address));
+                            if ssh.port != 22 {
+                                output.push_str(&format!("port = {}\n", ssh.port));
+                            }
+                            if let Some(ref key) = ssh.ssh_key {
+                                output.push_str(&format!("ssh_key = \"{}\"\n", key));
+                            }
+                            output.push_str(&format!("work_base = \"{}\"\n", ssh.work_base));
+                            if let Some(ref loc) = ssh.location {
+                                output.push_str(&format!("location = \"{}\"\n", loc));
+                            }
+                        }
+                        HostConfig::Sprite(sprite) => {
+                            output.push_str(&format!("\n[runners.{}.host]\n", name));
+                            output.push_str("type = \"sprite\"\n");
+                            if let Some(ref token) = sprite.api_token {
+                                output.push_str(&format!("api_token = \"{}\"\n", token));
+                            }
+                            if let Some(ref cp) = sprite.checkpoint {
+                                output.push_str(&format!("checkpoint = \"{}\"\n", cp));
+                            }
+                            output.push_str(&format!("auto_destroy = {}\n", sprite.auto_destroy));
+                            output.push_str(&format!(
+                                "idle_timeout_secs = {}\n",
+                                sprite.idle_timeout_secs
+                            ));
+                            if sprite.api_url != "https://api.sprites.dev" {
+                                output.push_str(&format!("api_url = \"{}\"\n", sprite.api_url));
+                            }
+                            if sprite.use_file_push {
+                                output.push_str("use_file_push = true\n");
+                            }
+                        }
+                        HostConfig::Fly(fly) => {
+                            output.push_str(&format!("\n[runners.{}.host]\n", name));
+                            output.push_str("type = \"fly\"\n");
+                            if let Some(ref token) = fly.api_token {
+                                output.push_str(&format!("api_token = \"{}\"\n", token));
+                            }
+                            output.push_str(&format!("app = \"{}\"\n", fly.app));
+                            if let Some(ref region) = fly.region {
+                                output.push_str(&format!("region = \"{}\"\n", region));
+                            }
+                            if fly.cpu_kind != "shared" {
+                                output.push_str(&format!("cpu_kind = \"{}\"\n", fly.cpu_kind));
+                            }
+                            if fly.cpus != 1 {
+                                output.push_str(&format!("cpus = {}\n", fly.cpus));
+                            }
+                            if fly.memory_mb != 1024 {
+                                output.push_str(&format!("memory_mb = {}\n", fly.memory_mb));
+                            }
+                            output.push_str(&format!("auto_destroy = {}\n", fly.auto_destroy));
                         }
                     }
                 }
             }
+
+            // Serialize container configuration if present
+            if let Some(ref container) = runner_config.container {
+                output.push_str(&format!("\n[runners.{}.container]\n", name));
+                output.push_str(&format!("image = \"{}\"\n", container.image));
+            }
+
             output.push('\n');
         }
 
@@ -1308,6 +1442,36 @@ impl Config {
                     GitProvider::Github => "github",
                 }
             ));
+            output.push('\n');
+        }
+
+        // Storage section (only write if non-default)
+        if self.storage.files != StorageBackend::Local || self.storage.s3.is_some() {
+            output.push_str("[storage]\n");
+            output.push_str(&format!(
+                "files = \"{}\"\n",
+                match self.storage.files {
+                    StorageBackend::Local => "local",
+                    StorageBackend::S3 => "s3",
+                }
+            ));
+
+            if let Some(ref s3) = self.storage.s3 {
+                output.push_str("\n[storage.s3]\n");
+                if let Some(ref endpoint) = s3.endpoint {
+                    output.push_str(&format!("endpoint = \"{}\"\n", endpoint));
+                }
+                output.push_str(&format!("bucket = \"{}\"\n", s3.bucket));
+                if let Some(ref region) = s3.region {
+                    output.push_str(&format!("region = \"{}\"\n", region));
+                }
+                if let Some(ref key) = s3.access_key_id {
+                    output.push_str(&format!("access_key_id = \"{}\"\n", key));
+                }
+                if let Some(ref secret) = s3.secret_access_key {
+                    output.push_str(&format!("secret_access_key = \"{}\"\n", secret));
+                }
+            }
             output.push('\n');
         }
 
@@ -1443,10 +1607,16 @@ mod tests {
 
     #[test]
     fn test_agent_type_from_command() {
+        // Claude variants
         assert_eq!(
             AgentType::from_command(&["claude-code-acp".to_string()]),
             AgentType::Claude
         );
+        assert_eq!(
+            AgentType::from_command(&["hirsel".to_string(), "__acp-bridge".to_string()]),
+            AgentType::Claude
+        );
+        // Other agents
         assert_eq!(
             AgentType::from_command(&["gemini".to_string()]),
             AgentType::Gemini

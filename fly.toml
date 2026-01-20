@@ -1,0 +1,62 @@
+# fly.toml - Hirsel coordinator deployment for Fly.io
+#
+# Deploy the coordinator to Fly.io for remote orchestration.
+# Uses LiteFS for distributed SQLite replication.
+#
+# Quick start:
+#   1. Create the app:
+#      fly apps create hirsel-coordinator --org hirsel
+#
+#   2. Set secrets:
+#      fly secrets set HIRSEL_API_KEY=<your-secret-key>
+#      fly secrets set ANTHROPIC_API_KEY=<your-api-key>
+#
+#   3. Build and deploy:
+#      cargo build --release --no-default-features --features full-cli
+#      fly deploy
+#
+# See docs/architecture.md for full deployment guide.
+
+app = "hirsel-coordinator"
+primary_region = "ams"
+
+[build]
+  dockerfile = "Dockerfile.coordinator"
+
+[env]
+  HIRSEL_DATA_DIR = "/litefs/data"
+  RUST_LOG = "info"
+
+# LiteFS for distributed SQLite
+[litefs]
+  mount = "/litefs"
+
+[consul]
+  # LiteFS uses Consul for leader election
+  enabled = true
+
+[[services]]
+  internal_port = 3000
+  protocol = "tcp"
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 100
+    soft_limit = 80
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512

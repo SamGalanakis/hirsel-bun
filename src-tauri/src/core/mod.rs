@@ -33,12 +33,12 @@ pub mod names;
 pub mod ops;
 pub mod orchestrator;
 pub mod process;
-pub mod remote;
 pub mod runner;
 #[cfg(feature = "server")]
 pub mod server;
 pub mod state;
 pub mod state_access;
+pub mod storage;
 pub mod tailscale;
 #[cfg(feature = "server")]
 pub mod tunnel;
@@ -82,17 +82,19 @@ pub use orchestrator::{
     create_local_orchestrator, create_orchestrator, LocalOrchestrator, Orchestrator,
     OrchestratorError, OrchestratorResult, RemoteOrchestrator,
 };
-pub use remote::{
-    parse_remote_spec, parse_remote_specs, RemoteConfig, RemoteError, RemoteResult,
-    RemoteWorkerSpawner,
-};
 pub use runner::{
-    create_runner, LocalRunner, Runner, RunnerConfig, RunnerError, RunnerResult,
-    SpawnResult as RunnerSpawnResult, SpriteRunner, SpriteRunnerConfig, SshRunner, SshRunnerConfig,
-    WorkerHandle, WorkerSpawnConfig as RunnerSpawnConfig,
+    create_runner, parse_remote_spec, parse_remote_specs, LocalRunner, Runner, RunnerConfig,
+    RunnerError, RunnerResult, SpawnResult as RunnerSpawnResult, SpriteRunner, SpriteRunnerConfig,
+    SshRunner, SshRunnerConfig, WorkerHandle, WorkerSpawnConfig as RunnerSpawnConfig,
 };
 pub use state::*;
 pub use state_access::{StateAccess, StateAccessError, StateAccessResult};
+#[cfg(feature = "s3-storage")]
+pub use storage::S3FileStorage;
+pub use storage::{
+    create_default_local_storage, create_file_storage, create_local_storage, FileStorage,
+    LocalFileStorage, StorageError, StorageResult,
+};
 pub use workers::{
     check_and_send_time_notifications, check_time_expired, check_worker_heartbeats,
     get_agent_command, handle_time_expired, is_pid_alive, maybe_scale_up, maybe_trigger_eval,

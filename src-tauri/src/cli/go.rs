@@ -22,8 +22,10 @@ use crate::core::names::get_available_names;
 use crate::core::ops::{
     register_workers, setup_run_workspace, spawn_local_workers, RunSetupConfig, SpawnWorkersConfig,
 };
-use crate::core::remote::{parse_remote_spec, RemoteConfig, RemoteError, RemoteWorkerSpawner};
-use crate::core::runner::{self, Runner, RunnerConfig, RunnerError};
+use crate::core::runner::{
+    self, create_runner, parse_remote_spec, HostConfig, Runner, RunnerConfig, RunnerError,
+    SpriteHostConfig, SshRunner, SshRunnerConfig, WorkerSpawnConfig,
+};
 use crate::core::state::{SQLiteState, StateError, Status};
 #[cfg(feature = "server")]
 use crate::core::tunnel::{TunnelError, TunnelManager};
@@ -41,7 +43,6 @@ pub enum GoError {
     State(StateError),
     Chat(ChatError),
     Worker(WorkerError),
-    Remote(RemoteError),
     Tunnel(TunnelError),
     Runner(RunnerError),
     Orchestrator(String),
@@ -66,7 +67,6 @@ impl std::fmt::Display for GoError {
             GoError::State(e) => write!(f, "State error: {}", e),
             GoError::Chat(e) => write!(f, "Chat error: {}", e),
             GoError::Worker(e) => write!(f, "Worker error: {}", e),
-            GoError::Remote(e) => write!(f, "Remote error: {}", e),
             GoError::Tunnel(e) => write!(f, "Tunnel error: {}", e),
             GoError::Runner(e) => write!(f, "Runner error: {}", e),
             GoError::Orchestrator(msg) => write!(f, "Orchestrator error: {}", msg),
@@ -114,12 +114,6 @@ impl From<ChatError> for GoError {
 impl From<WorkerError> for GoError {
     fn from(e: WorkerError) -> Self {
         GoError::Worker(e)
-    }
-}
-
-impl From<RemoteError> for GoError {
-    fn from(e: RemoteError) -> Self {
-        GoError::Remote(e)
     }
 }
 
@@ -941,11 +935,11 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
             Some(runner_name) => {
                 // Try to get from config, or create default based on name
                 if runner_name == "local" {
-                    RunnerConfig::Local
+                    RunnerConfig::local()
                 } else if runner_name == "sprite" || runner_name == "sprites" {
                     hirsel_config
                         .get_runner("sprites")
-                        .unwrap_or_else(|| RunnerConfig::Sprite(Default::default()))
+                        .unwrap_or_else(|| RunnerConfig::sprite(SpriteHostConfig::default()))
                 } else {
                     hirsel_config.get_runner(runner_name).ok_or_else(|| {
                         GoError::InvalidRunner(format!(
@@ -956,31 +950,90 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
                     })?
                 }
             }
-            None => RunnerConfig::Local,
+            None => RunnerConfig::local(),
         };
 
-        // Spawn workers based on runner type
-        match &runner_config {
-            RunnerConfig::Local => {
-                // Spawn LOCAL workers using shared ops
-                let spawn_config = SpawnWorkersConfig {
-                    run_name: run_name.clone(),
-                    run_dir: run_dir.clone(),
-                    spec_path: spec_path.clone(),
-                    agent_command: agent_command.clone(),
-                    is_multi_worker,
-                    leader_name: leader.clone(),
-                    all_worker_names: teammates.clone(),
-                };
+        // Spawn workers based on host type
+        match runner_config.host.resolve() {
+            HostConfig::Local | HostConfig::Client => {
+                // Spawn LOCAL workers using shared ops (or Docker if container is configured)
+                if runner_config.container.is_some() {
+                    // Use runner factory for Docker support
+                    let runner = create_runner(&runner_config);
+                    let spawn_rt = tokio::runtime::Runtime::new()
+                        .map_err(|e| GoError::CoordinatorError(e.to_string()))?;
 
-                let spawn_result = spawn_local_workers(&spawn_config, &local_worker_dirs, &state);
+                    for (i, (worker_name, work_dir)) in local_worker_dirs.iter().enumerate() {
+                        let is_leader = i == 0 && is_multi_worker;
+                        let env_vars: HashMap<String, String> = std::env::vars()
+                            .filter(|(k, _)| {
+                                k.starts_with("ANTHROPIC_")
+                                    || k.starts_with("OPENAI_")
+                                    || k.starts_with("CLAUDE_")
+                            })
+                            .collect();
 
-                // Log any failures
-                for (worker_name, error) in &spawn_result.failed {
-                    eprintln!("Warning: Failed to spawn worker {}: {}", worker_name, error);
+                        let spawn_config = runner::WorkerSpawnConfig {
+                            run_name: run_name.clone(),
+                            worker_name: worker_name.clone(),
+                            work_dir: work_dir.clone(),
+                            run_dir: run_dir.clone(),
+                            spec_path: spec_path.clone(),
+                            agent_command: agent_command.clone(),
+                            is_leader,
+                            leader_name: leader.clone(),
+                            teammates: if is_multi_worker {
+                                Some(
+                                    teammates
+                                        .iter()
+                                        .filter(|t| *t != worker_name)
+                                        .cloned()
+                                        .collect(),
+                                )
+                            } else {
+                                None
+                            },
+                            resume_session_id: None,
+                            env_vars: Some(env_vars),
+                            coordinator_url: None,
+                            tailscale_authkey: None,
+                            credentials: None,
+                        };
+
+                        match spawn_rt.block_on(runner.spawn(&spawn_config)) {
+                            Ok(result) => {
+                                info!(
+                                    "Spawned worker {} in Docker (container: {})",
+                                    result.handle.worker_name, result.handle.runner_id
+                                );
+                            }
+                            Err(e) => {
+                                warn!("Failed to spawn worker {}: {}", worker_name, e);
+                            }
+                        }
+                    }
+                } else {
+                    // Spawn LOCAL workers using shared ops (bare process)
+                    let spawn_config = SpawnWorkersConfig {
+                        run_name: run_name.clone(),
+                        run_dir: run_dir.clone(),
+                        spec_path: spec_path.clone(),
+                        agent_command: agent_command.clone(),
+                        is_multi_worker,
+                        leader_name: leader.clone(),
+                        all_worker_names: teammates.clone(),
+                    };
+
+                    let spawn_result =
+                        spawn_local_workers(&spawn_config, &local_worker_dirs, &state);
+
+                    // Log any failures
+                    for (worker_name, error) in &spawn_result.failed {
+                        eprintln!("Warning: Failed to spawn worker {}: {}", worker_name, error);
+                    }
                 }
             }
-            RunnerConfig::Sprite(sprite_config) => {
+            HostConfig::Sprite(sprite_config) => {
                 // Spawn SPRITE workers
                 // Need to start coordinator first for API access
                 info!("Starting coordinator for sprite workers");
@@ -1011,8 +1064,16 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
                 // Give coordinator time to start
                 std::thread::sleep(std::time::Duration::from_millis(500));
 
-                // Create sprite runner
-                let sprite_runner = runner::SpriteRunner::new(sprite_config.clone());
+                // Create sprite runner (convert SpriteHostConfig to SpriteRunnerConfig)
+                let sprite_runner_config = runner::SpriteRunnerConfig {
+                    api_token: sprite_config.api_token.clone(),
+                    base_checkpoint: sprite_config.checkpoint.clone(),
+                    auto_destroy: sprite_config.auto_destroy,
+                    idle_timeout_secs: sprite_config.idle_timeout_secs,
+                    api_url: sprite_config.api_url.clone(),
+                    use_file_push: sprite_config.use_file_push,
+                };
+                let sprite_runner = runner::SpriteRunner::new(sprite_runner_config);
 
                 // Spawn workers on sprites
                 let spawn_rt = tokio::runtime::Runtime::new()
@@ -1057,8 +1118,8 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
                         resume_session_id: None,
                         env_vars: Some(env_vars),
                         coordinator_url: Some(format!("http://localhost:{}", coordinator_port)),
-                        project_url: Some(format!("http://localhost:{}/git", coordinator_port)),
                         tailscale_authkey: None, // Not needed for local coordinator
+                        credentials: None,       // API key already in env_vars
                     };
 
                     match spawn_rt.block_on(sprite_runner.spawn(&spawn_config)) {
@@ -1077,105 +1138,16 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
                 // Don't wait for coordinator thread
                 drop(coord_handle);
             }
-            RunnerConfig::Ssh(_ssh_config) => {
+            HostConfig::Ssh(_ssh_config) => {
                 // For SSH, use the existing remote worker flow
                 warn!("SSH runner specified via --runner flag. Use --remote for SSH workers.");
             }
-            RunnerConfig::Devpod(devpod_config) => {
-                // Spawn DevPod workers
-                info!("Starting coordinator for DevPod workers");
-                let coordinator_port = hirsel_config.coordinator_port;
-
-                let coord_state = SQLiteState::new(db_path.clone())?;
-                let mut coordinator = CoordinatorServer::new(
-                    coord_state,
-                    "0.0.0.0".to_string(),
-                    coordinator_port,
-                    run_dir.clone(),
-                    run_name.clone(),
-                    Some(workspace_dir.clone()),
+            HostConfig::Fly(_fly_config) => {
+                // Fly workers need a publicly accessible coordinator
+                warn!(
+                    "Fly runner requires remote mode. Deploy coordinator to Fly and use: \
+                    hirsel go --profile fly"
                 );
-
-                // Start coordinator in background
-                let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| GoError::CoordinatorError(e.to_string()))?;
-
-                let coord_handle = std::thread::spawn(move || {
-                    rt.block_on(async {
-                        if let Err(e) = coordinator.start().await {
-                            eprintln!("Coordinator error: {}", e);
-                        }
-                    });
-                });
-
-                // Give coordinator time to start
-                std::thread::sleep(std::time::Duration::from_millis(500));
-
-                // Create DevPod runner
-                let devpod_runner = runner::DevpodRunner::new(devpod_config.clone());
-
-                // Spawn workers on DevPod
-                let spawn_rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| GoError::CoordinatorError(e.to_string()))?;
-
-                for (i, worker_name) in local_worker_names.iter().enumerate() {
-                    let is_leader = i == 0 && is_multi_worker;
-
-                    // Build env vars for worker
-                    let mut env_vars: HashMap<String, String> = std::env::vars()
-                        .filter(|(k, _)| {
-                            k.starts_with("ANTHROPIC_")
-                                || k.starts_with("OPENAI_")
-                                || k.starts_with("CLAUDE_")
-                        })
-                        .collect();
-                    env_vars.insert(
-                        "ACP_PERMISSION_MODE".to_string(),
-                        "bypassPermissions".to_string(),
-                    );
-
-                    let spawn_config = runner::WorkerSpawnConfig {
-                        run_name: run_name.clone(),
-                        worker_name: worker_name.clone(),
-                        work_dir: workspace_dir.clone(),
-                        run_dir: run_dir.clone(),
-                        spec_path: spec_path.clone(),
-                        agent_command: agent_command.clone(),
-                        is_leader,
-                        leader_name: leader.clone(),
-                        teammates: if is_multi_worker {
-                            Some(
-                                teammates
-                                    .iter()
-                                    .filter(|t| *t != worker_name)
-                                    .cloned()
-                                    .collect(),
-                            )
-                        } else {
-                            None
-                        },
-                        resume_session_id: None,
-                        env_vars: Some(env_vars),
-                        coordinator_url: Some(format!("http://localhost:{}", coordinator_port)),
-                        project_url: Some(format!("http://localhost:{}/git", coordinator_port)),
-                        tailscale_authkey: None,
-                    };
-
-                    match spawn_rt.block_on(devpod_runner.spawn(&spawn_config)) {
-                        Ok(result) => {
-                            info!(
-                                "Spawned DevPod worker {} (workspace: {})",
-                                result.handle.worker_name, result.handle.runner_id
-                            );
-                        }
-                        Err(e) => {
-                            warn!("Failed to spawn DevPod worker {}: {}", worker_name, e);
-                        }
-                    }
-                }
-
-                // Don't wait for coordinator thread
-                drop(coord_handle);
             }
         }
 
@@ -1256,11 +1228,11 @@ fn spawn_remote_workers(
     );
 
     // Start the coordinator in a background thread
-    let rt = tokio::runtime::Runtime::new()
+    let coord_rt = tokio::runtime::Runtime::new()
         .map_err(|e| GoError::CoordinatorError(format!("Failed to create runtime: {}", e)))?;
 
     let coordinator_handle = std::thread::spawn(move || {
-        rt.block_on(async {
+        coord_rt.block_on(async {
             if let Err(e) = coordinator.start().await {
                 eprintln!("Coordinator server error: {}", e);
             }
@@ -1283,6 +1255,10 @@ fn spawn_remote_workers(
         })
         .collect();
 
+    // Create runtime for spawning workers
+    let spawn_rt = tokio::runtime::Runtime::new()
+        .map_err(|e| GoError::CoordinatorError(format!("Failed to create spawn runtime: {}", e)))?;
+
     // Track which remote worker name we're on
     let mut remote_worker_idx = 0;
 
@@ -1299,15 +1275,20 @@ fn spawn_remote_workers(
             host, tunnel_port, COORDINATOR_PORT
         );
 
-        // Create remote config
-        let config = RemoteConfig::new(host.clone())
-            .with_work_base(format!("/tmp/hirsel-remote/{}", run_name));
+        // Create SSH runner config
+        let ssh_config = SshRunnerConfig {
+            host: host.clone(),
+            ssh_key: None,
+            ssh_port: 22,
+            work_base: "/tmp/hirsel-remote".to_string(),
+            location: None,
+        };
 
-        // Create spawner for this host
-        let spawner = RemoteWorkerSpawner::new(config, tunnel_port);
+        // Create SSH runner with tunnel port
+        let runner = SshRunner::with_tunnel_port(ssh_config, tunnel_port);
 
-        // Git HTTP URL for cloning (via tunnel)
-        let git_url = format!("http://127.0.0.1:{}/git", tunnel_port);
+        // Coordinator URL for workers to reach via tunnel
+        let coordinator_url = format!("http://127.0.0.1:{}", tunnel_port);
 
         // Spawn workers on this host
         for _ in 0..*worker_count {
@@ -1338,20 +1319,31 @@ fn spawn_remote_workers(
 
             info!("Spawning remote worker {} on {}", worker_name, host);
 
-            match spawner.spawn_worker(
-                run_name,
-                worker_name,
-                &git_url,
-                agent_command,
-                Some(&env_vars),
+            // Create WorkerSpawnConfig for the runner
+            let spawn_config = WorkerSpawnConfig {
+                run_name: run_name.to_string(),
+                worker_name: worker_name.clone(),
+                work_dir: workspace_dir.to_path_buf(),
+                run_dir: run_dir.to_path_buf(),
+                spec_path: run_dir.join("spec.md"),
+                agent_command: agent_command.to_vec(),
                 is_leader,
-                leader_name,
-                teammates.as_deref(),
-            ) {
-                Ok(pid) => {
+                leader_name: leader_name.map(String::from),
+                teammates,
+                resume_session_id: None,
+                env_vars: Some(env_vars.clone()),
+                credentials: None, // API keys already in env_vars
+                coordinator_url: Some(coordinator_url.clone()),
+                tailscale_authkey: None,
+            };
+
+            match spawn_rt.block_on(runner.spawn(&spawn_config)) {
+                Ok(result) => {
                     info!(
                         "Remote worker {} started on {} (PID {})",
-                        worker_name, host, pid
+                        worker_name,
+                        host,
+                        result.pid.unwrap_or(0)
                     );
                 }
                 Err(e) => {

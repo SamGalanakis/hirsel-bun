@@ -67,6 +67,8 @@ impl GypChatStore {
 
         let db = Connection::open(path)?;
         db.busy_timeout(std::time::Duration::from_secs(30))?;
+        // Enable WAL mode for better concurrent read/write performance
+        db.pragma_update(None, "journal_mode", "WAL")?;
 
         let store = Self { db };
         store.init_db()?;

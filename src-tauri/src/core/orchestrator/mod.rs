@@ -307,6 +307,48 @@ pub trait Orchestrator: Send + Sync {
 
     /// Check server health (for remote orchestrator)
     async fn health(&self) -> OrchestratorResult<HealthResponse>;
+
+    // -------------------------------------------------------------------------
+    // Run Creation (for CLI/GUI use)
+    // -------------------------------------------------------------------------
+
+    /// Create a new run (sets up directories and state, doesn't spawn workers)
+    ///
+    /// This method creates the run directory, initializes the database,
+    /// writes the spec file, and registers the initial worker. After this,
+    /// call `upload_files()` to provide project files, then `spawn_workers()`.
+    async fn create_run(&self, request: CreateRunRequest) -> OrchestratorResult<CreateRunResponse> {
+        let _ = request;
+        Err(OrchestratorError::Other(
+            "create_run not implemented for this orchestrator".to_string(),
+        ))
+    }
+
+    /// Upload project files for a run (tarball)
+    ///
+    /// For LocalOrchestrator: Extracts tarball to work/ directory
+    /// For RemoteOrchestrator: HTTP POST to server
+    async fn upload_files(&self, run_name: &str, tarball: Vec<u8>) -> OrchestratorResult<()> {
+        let _ = (run_name, tarball);
+        Err(OrchestratorError::Other(
+            "upload_files not implemented for this orchestrator".to_string(),
+        ))
+    }
+
+    /// Spawn workers for a run
+    ///
+    /// Creates and starts the specified number of workers.
+    /// The run must have files uploaded first (for remote workers).
+    async fn spawn_workers(
+        &self,
+        run_name: &str,
+        count: u32,
+    ) -> OrchestratorResult<SpawnWorkersResponse> {
+        let _ = (run_name, count);
+        Err(OrchestratorError::Other(
+            "spawn_workers not implemented for this orchestrator".to_string(),
+        ))
+    }
 }
 
 // =============================================================================

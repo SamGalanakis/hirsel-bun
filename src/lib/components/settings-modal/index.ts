@@ -32,12 +32,13 @@ import type { ChatEvent } from '../../types';
 // Import from local modules
 import type {
   AuthMethod,
-  RunnerType,
+  HostType,
   AgentAuth,
   AuthConfig,
-  SshRunnerConfig,
-  SpriteRunnerConfig,
-  DevpodRunnerConfig,
+  SshHostConfig,
+  SpriteHostConfig,
+  ContainerConfig,
+  HostConfig,
   RunnerConfig,
   Settings,
   OrchestratorProfile,
@@ -53,9 +54,12 @@ import type {
 } from './types';
 import {
   defaultAgentAuth,
+  defaultSshHostConfig,
+  defaultSpriteHostConfig,
+  defaultContainerConfig,
+  defaultLocalRunnerConfig,
   defaultSshRunnerConfig,
   defaultSpriteRunnerConfig,
-  defaultDevpodRunnerConfig,
   defaultRemoteProfile,
   defaultTailscaleAccess,
   defaultGitConfig,
@@ -63,8 +67,8 @@ import {
   defaultNavigationState,
   getAuthMethodLabel,
   getDefaultEnvVar,
-  getRunnerIcon,
-  getRunnerTypeLabel,
+  getHostIcon,
+  getHostTypeLabel,
   getAccessTypeLabel,
 } from './defaults';
 
@@ -114,11 +118,13 @@ export function settingsModal() {
     _testUnlisten: null as (() => void) | null,
     settings: defaultSettings(),
 
-    // Editing state for runners
+    // Editing state for runners (Host + Container model)
     editingRunner: null as string | null,
     newRunnerName: '',
-    newRunnerType: 'ssh' as RunnerType,
-    editRunnerData: defaultSshRunnerConfig() as SshRunnerConfig | SpriteRunnerConfig | DevpodRunnerConfig,
+    newHostType: 'ssh' as HostType,
+    editHostData: defaultSshHostConfig() as HostConfig,
+    editContainerEnabled: false,
+    editContainerImage: '',
 
     // Editing state for orchestrator profiles
     editingProfile: null as string | null,
@@ -485,8 +491,8 @@ export function settingsModal() {
     },
 
     // Helper function wrappers
-    getRunnerIcon,
-    getRunnerTypeLabel,
+    getHostIcon,
+    getHostTypeLabel,
     getAuthMethodLabel,
     getDefaultEnvVar,
     getAccessTypeLabel,
@@ -553,18 +559,25 @@ export function settingsModal() {
     startAddRunner() {
       this.editingRunner = '__new__';
       this.newRunnerName = '';
-      this.newRunnerType = 'ssh';
-      this.editRunnerData = defaultSshRunnerConfig();
+      this.newHostType = 'ssh';
+      this.editHostData = defaultSshHostConfig();
+      this.editContainerEnabled = false;
+      this.editContainerImage = '';
     },
 
-    // Change runner type when adding new
-    onRunnerTypeChange() {
-      if (this.newRunnerType === 'ssh') {
-        this.editRunnerData = defaultSshRunnerConfig();
-      } else if (this.newRunnerType === 'sprite') {
-        this.editRunnerData = defaultSpriteRunnerConfig();
-      } else if (this.newRunnerType === 'devpod') {
-        this.editRunnerData = defaultDevpodRunnerConfig();
+    // Change host type when adding new
+    onHostTypeChange() {
+      if (this.newHostType === 'local') {
+        this.editHostData = { type: 'local' };
+      } else if (this.newHostType === 'client') {
+        this.editHostData = { type: 'client' };
+      } else if (this.newHostType === 'ssh') {
+        this.editHostData = defaultSshHostConfig();
+      } else if (this.newHostType === 'sprite') {
+        this.editHostData = defaultSpriteHostConfig();
+        // Sprites don't support containers
+        this.editContainerEnabled = false;
+        this.editContainerImage = '';
       }
     },
 
@@ -575,17 +588,24 @@ export function settingsModal() {
 
       this.editingRunner = name;
       this.newRunnerName = name;
-      this.newRunnerType = runner.type as RunnerType;
+      this.newHostType = runner.host.type as HostType;
+
       // Merge with defaults to ensure all required fields are present
-      if (runner.type === 'sprite') {
-        this.editRunnerData = { ...defaultSpriteRunnerConfig(), ...runner };
-      } else if (runner.type === 'ssh') {
-        this.editRunnerData = { ...defaultSshRunnerConfig(), ...runner };
-      } else if (runner.type === 'devpod') {
-        this.editRunnerData = { ...defaultDevpodRunnerConfig(), ...runner };
+      if (runner.host.type === 'sprite') {
+        this.editHostData = { ...defaultSpriteHostConfig(), ...runner.host };
+      } else if (runner.host.type === 'ssh') {
+        this.editHostData = { ...defaultSshHostConfig(), ...runner.host };
+      } else if (runner.host.type === 'local') {
+        this.editHostData = { type: 'local' };
+      } else if (runner.host.type === 'client') {
+        this.editHostData = { type: 'client' };
       } else {
-        this.editRunnerData = { ...runner } as SshRunnerConfig | SpriteRunnerConfig | DevpodRunnerConfig;
+        this.editHostData = { ...runner.host };
       }
+
+      // Load container settings
+      this.editContainerEnabled = !!runner.container;
+      this.editContainerImage = runner.container?.image || '';
     },
 
     // Save runner config and persist to disk
@@ -596,25 +616,31 @@ export function settingsModal() {
         return;
       }
 
-      // Validate based on type
-      if (this.editRunnerData.type === 'ssh') {
-        const ssh = this.editRunnerData as SshRunnerConfig;
-        if (!ssh.host?.trim()) {
-          window.toast?.error('SSH host is required');
+      // Validate based on host type
+      if (this.editHostData.type === 'ssh') {
+        const ssh = this.editHostData as SshHostConfig;
+        if (!ssh.address?.trim()) {
+          window.toast?.error('SSH address is required');
           return;
         }
-      } else if (this.editRunnerData.type === 'sprite') {
-        const sprite = this.editRunnerData as SpriteRunnerConfig;
+      } else if (this.editHostData.type === 'sprite') {
+        const sprite = this.editHostData as SpriteHostConfig;
         if (!sprite.apiToken?.trim()) {
           window.toast?.error('API token is required');
           return;
         }
-      } else if (this.editRunnerData.type === 'devpod') {
-        const devpod = this.editRunnerData as DevpodRunnerConfig;
-        if (!devpod.provider?.trim()) {
-          window.toast?.error('Provider is required');
-          return;
-        }
+      }
+
+      // Validate container if enabled
+      if (this.editContainerEnabled && !this.editContainerImage?.trim()) {
+        window.toast?.error('Container image is required when container is enabled');
+        return;
+      }
+
+      // Sprites don't support containers
+      if (this.editHostData.type === 'sprite' && this.editContainerEnabled) {
+        window.toast?.error('Sprites do not support Docker containers');
+        return;
       }
 
       // If renaming, delete old entry and update worker assignments
@@ -629,8 +655,14 @@ export function settingsModal() {
         }
       }
 
+      // Build the runner config from host + optional container
+      const runnerConfig: RunnerConfig = {
+        host: { ...this.editHostData },
+        container: this.editContainerEnabled ? { image: this.editContainerImage } : undefined,
+      };
+
       // Save the runner to current profile
-      this.setCurrentProfileRunner(name, { ...this.editRunnerData });
+      this.setCurrentProfileRunner(name, runnerConfig);
       this.editingRunner = null;
 
       // Persist to disk immediately (without closing modal)

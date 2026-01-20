@@ -6,7 +6,10 @@
 use async_trait::async_trait;
 use chrono::Utc;
 
-use super::{HealthResponse, Orchestrator, OrchestratorError, OrchestratorResult};
+use super::{
+    CreateRunRequest, CreateRunResponse, HealthResponse, Orchestrator, OrchestratorError,
+    OrchestratorResult, SpawnWorkersResponse, TailscaleOAuth,
+};
 use crate::core::api_types::{
     calculate_duration_minutes, convert_status, is_completed_status, parse_elapsed_minutes,
     ConfigResponse, Eval, EvalStatus, HistoryEntry, Message, RunDetail, RunSummary, SheepConfig,
@@ -16,6 +19,29 @@ use crate::core::api_types::{
 use crate::core::config::{self, Config};
 use crate::core::state::SQLiteState;
 use crate::core::Files;
+
+/// Convert a name to a URL-safe slug
+fn slugify(name: &str) -> String {
+    let mut slug = String::new();
+    let mut last_was_separator = false;
+
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+            last_was_separator = false;
+        } else if !last_was_separator && !slug.is_empty() {
+            slug.push('-');
+            last_was_separator = true;
+        }
+    }
+
+    // Remove trailing dash
+    if slug.ends_with('-') {
+        slug.pop();
+    }
+
+    slug
+}
 
 /// Local orchestrator that operates directly on the local filesystem
 pub struct LocalOrchestrator {
@@ -616,7 +642,10 @@ impl Orchestrator for LocalOrchestrator {
                 None
             },
             resume_session_id: worker_data.session_id.clone(),
+            env_vars: None,
             credentials: None,
+            coordinator_url: None,
+            tailscale_authkey: None,
         };
 
         spawn_worker(config, &state).map_err(|e| OrchestratorError::Other(e.to_string()))?;
@@ -951,6 +980,438 @@ impl Orchestrator for LocalOrchestrator {
         Ok(HealthResponse {
             status: "ok".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
+        })
+    }
+
+    // -------------------------------------------------------------------------
+    // Run Creation
+    // -------------------------------------------------------------------------
+
+    async fn create_run(&self, request: CreateRunRequest) -> OrchestratorResult<CreateRunResponse> {
+        use crate::core::chats::{
+            create_default_group_chat, create_default_user_chat, create_learnings_thread,
+            create_worker_chat,
+        };
+        use crate::core::files::Files;
+        use crate::core::names;
+        use crate::core::state::{SQLiteState, Status};
+
+        // Slugify and validate run name
+        let run_name = slugify(&request.name);
+        if run_name.len() > 50 {
+            return Err(OrchestratorError::InvalidOperation(format!(
+                "Run name too long (max 50 chars): {}...",
+                &run_name[..50]
+            )));
+        }
+
+        // Get run directory
+        let run_dir = config::run_dir(&run_name);
+        if run_dir.exists() {
+            let db_path = run_dir.join("hirsel.db");
+            if db_path.exists() {
+                if let Ok(existing_state) = SQLiteState::new(db_path) {
+                    if let Ok(status) = existing_state.status() {
+                        if status == Status::Working || status == Status::Eval {
+                            return Err(OrchestratorError::InvalidOperation(format!(
+                                "Run '{}' already exists and is active",
+                                run_name
+                            )));
+                        }
+                    }
+                }
+            }
+            // Clean up old run
+            let _ = std::fs::remove_dir_all(&run_dir);
+        }
+
+        // Create run directory
+        std::fs::create_dir_all(&run_dir).map_err(|e| {
+            OrchestratorError::Other(format!("Failed to create run directory: {}", e))
+        })?;
+
+        // Initialize Files
+        let files = Files::new(run_dir.clone());
+        files
+            .init_dirs()
+            .map_err(|e| OrchestratorError::Other(format!("Failed to init dirs: {}", e)))?;
+
+        // Write spec file
+        std::fs::write(files.spec(), &request.spec)
+            .map_err(|e| OrchestratorError::Other(format!("Failed to write spec: {}", e)))?;
+
+        // Write eval file if provided
+        if let Some(ref eval_content) = request.eval {
+            std::fs::write(run_dir.join("eval.md"), eval_content)
+                .map_err(|e| OrchestratorError::Other(format!("Failed to write eval: {}", e)))?;
+        }
+
+        // Initialize bootstrap tasks.md
+        std::fs::write(
+            run_dir.join("tasks.md"),
+            "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n| scope | TODO | | Read spec, create exploration tasks |\n",
+        ).map_err(|e| OrchestratorError::Other(format!("Failed to write tasks.md: {}", e)))?;
+
+        // Create tasks detail folder
+        let tasks_dir = run_dir.join("tasks");
+        std::fs::create_dir_all(&tasks_dir)
+            .map_err(|e| OrchestratorError::Other(format!("Failed to create tasks dir: {}", e)))?;
+        std::fs::write(tasks_dir.join("scope.md"), "")
+            .map_err(|e| OrchestratorError::Other(format!("Failed to write scope.md: {}", e)))?;
+
+        // Initialize SQLite state
+        let db_path = run_dir.join("hirsel.db");
+        let sqlite_state = SQLiteState::new(db_path)
+            .map_err(|e| OrchestratorError::Other(format!("Failed to create state: {}", e)))?;
+        sqlite_state
+            .init_state(None)
+            .map_err(|e| OrchestratorError::Other(format!("Failed to init state: {}", e)))?;
+
+        // Set run properties
+        sqlite_state
+            .set_request(Some(&request.spec))
+            .map_err(|e| OrchestratorError::Other(format!("Failed to set request: {}", e)))?;
+
+        if let Some(scale) = request.worker_scale {
+            sqlite_state
+                .set_worker_scale(&scale.to_string())
+                .map_err(|e| {
+                    OrchestratorError::Other(format!("Failed to set worker scale: {}", e))
+                })?;
+        }
+
+        if let Some(limit) = request.time_limit_minutes {
+            sqlite_state
+                .set_time_limit_minutes(Some(limit as i64))
+                .map_err(|e| {
+                    OrchestratorError::Other(format!("Failed to set time limit: {}", e))
+                })?;
+        }
+
+        if let Some(max_iter) = request.max_iterations {
+            sqlite_state
+                .set_max_iterations(Some(max_iter as i64))
+                .map_err(|e| {
+                    OrchestratorError::Other(format!("Failed to set max iterations: {}", e))
+                })?;
+        }
+
+        if let Some(hitl) = request.human_in_the_loop {
+            sqlite_state
+                .set_human_in_the_loop(hitl)
+                .map_err(|e| OrchestratorError::Other(format!("Failed to set HITL: {}", e)))?;
+        }
+
+        // Add initial scope task
+        let _ = sqlite_state.add_task("scope", "Read spec, create exploration tasks", None, None);
+
+        // Set status to Draft (not spawning workers yet)
+        sqlite_state
+            .set_status(Status::Draft)
+            .map_err(|e| OrchestratorError::Other(format!("Failed to set status: {}", e)))?;
+
+        // Create initial worker name (for pre-claiming scope task)
+        let first_worker_name = names::generate_worker_name();
+        let _ = sqlite_state.claim_task("scope", &first_worker_name);
+
+        // Determine multi-worker mode from scale
+        let max_scale = request.worker_scale.unwrap_or(1);
+        let is_multi_worker = max_scale > 1;
+
+        // Create chat files
+        let chats_dir = files.chats_dir();
+        create_default_user_chat(&chats_dir)
+            .map_err(|e| OrchestratorError::Other(format!("Failed to create user chat: {}", e)))?;
+
+        if is_multi_worker {
+            create_default_group_chat(
+                &chats_dir,
+                &[first_worker_name.clone()],
+                Some(&first_worker_name),
+            )
+            .map_err(|e| OrchestratorError::Other(format!("Failed to create group chat: {}", e)))?;
+        }
+
+        create_learnings_thread(&chats_dir, &[first_worker_name.clone()])
+            .map_err(|e| OrchestratorError::Other(format!("Failed to create learnings: {}", e)))?;
+
+        create_worker_chat(&chats_dir, &first_worker_name).map_err(|e| {
+            OrchestratorError::Other(format!("Failed to create worker chat: {}", e))
+        })?;
+
+        // Register initial worker (without work_dir - will be set after files upload)
+        sqlite_state
+            .add_worker(&first_worker_name, "", "remote")
+            .map_err(|e| OrchestratorError::Other(format!("Failed to register worker: {}", e)))?;
+
+        // Store tailscale OAuth credentials if provided
+        if let Some(ref oauth) = request.tailscale_oauth {
+            let oauth_json = serde_json::to_string(oauth).map_err(|e| {
+                OrchestratorError::Other(format!("Failed to serialize OAuth: {}", e))
+            })?;
+            std::fs::write(run_dir.join(".tailscale_oauth.json"), oauth_json)
+                .map_err(|e| OrchestratorError::Other(format!("Failed to write OAuth: {}", e)))?;
+        }
+
+        tracing::info!(
+            "Created run '{}' with initial worker '{}'",
+            run_name,
+            first_worker_name
+        );
+
+        Ok(CreateRunResponse {
+            name: run_name.clone(),
+            run_dir: run_dir.to_string_lossy().to_string(),
+            files_url: format!("/api/runs/{}/files", run_name),
+        })
+    }
+
+    async fn upload_files(&self, run_name: &str, tarball: Vec<u8>) -> OrchestratorResult<()> {
+        use flate2::read::GzDecoder;
+        use tar::Archive;
+
+        let run_dir = config::run_dir(run_name);
+        if !run_dir.exists() {
+            return Err(OrchestratorError::RunNotFound(run_name.to_string()));
+        }
+
+        // Create work directory
+        let work_dir = run_dir.join("work");
+        std::fs::create_dir_all(&work_dir)
+            .map_err(|e| OrchestratorError::Other(format!("Failed to create work dir: {}", e)))?;
+
+        // Extract tarball
+        let decoder = GzDecoder::new(&tarball[..]);
+        let mut archive = Archive::new(decoder);
+
+        archive
+            .unpack(&work_dir)
+            .map_err(|e| OrchestratorError::Other(format!("Failed to extract tarball: {}", e)))?;
+
+        tracing::info!(
+            "Uploaded files for run '{}' to {}",
+            run_name,
+            work_dir.display()
+        );
+        Ok(())
+    }
+
+    async fn spawn_workers(
+        &self,
+        run_name: &str,
+        count: u32,
+    ) -> OrchestratorResult<SpawnWorkersResponse> {
+        use crate::cli::config::get_agent_command;
+        use crate::core::chats::{create_default_group_chat, create_worker_chat};
+        use crate::core::files::Files;
+        use crate::core::names;
+        use crate::core::runner::{
+            create_runner, Runner, RunnerConfig, WorkerSpawnConfig as RunnerSpawnConfig,
+        };
+        use crate::core::state::{SQLiteState, Status, WorkerUpdate};
+
+        let run_dir = config::run_dir(run_name);
+        if !run_dir.exists() {
+            return Err(OrchestratorError::RunNotFound(run_name.to_string()));
+        }
+
+        let work_dir = run_dir.join("work");
+        if !work_dir.exists() {
+            return Err(OrchestratorError::InvalidOperation(
+                "Work directory not found. Upload files first.".into(),
+            ));
+        }
+
+        // Open state
+        let db_path = run_dir.join("hirsel.db");
+        let sqlite_state = SQLiteState::new(db_path)
+            .map_err(|e| OrchestratorError::Other(format!("Failed to open state: {}", e)))?;
+
+        // Check run status
+        let status = sqlite_state
+            .status()
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+        if status != Status::Draft && status != Status::Paused {
+            return Err(OrchestratorError::InvalidOperation(format!(
+                "Cannot spawn workers for run in '{}' status",
+                status
+            )));
+        }
+
+        // Get existing workers
+        let existing_workers = sqlite_state
+            .get_workers()
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+        let existing_names: Vec<String> = existing_workers.iter().map(|w| w.name.clone()).collect();
+        let is_multi_worker = existing_workers.len() + count as usize > 1;
+
+        // Generate names for new workers
+        let mut new_worker_names: Vec<String> = names::generate_unique_names(count as usize)
+            .into_iter()
+            .filter(|n| !existing_names.contains(n))
+            .take(count as usize)
+            .collect();
+
+        // Need more names if we didn't get enough unique ones
+        if new_worker_names.len() < count as usize {
+            let mut all_used: std::collections::HashSet<String> =
+                existing_names.iter().cloned().collect();
+            all_used.extend(new_worker_names.iter().cloned());
+
+            while new_worker_names.len() < count as usize {
+                let name = names::generate_worker_name();
+                if !all_used.contains(&name) {
+                    all_used.insert(name.clone());
+                    new_worker_names.push(name);
+                }
+            }
+        }
+
+        // Determine leader and teammates
+        let leader_name = existing_workers.first().map(|w| w.name.clone());
+        let all_worker_names: Vec<String> = existing_names
+            .iter()
+            .chain(new_worker_names.iter())
+            .cloned()
+            .collect();
+
+        // Get runner config
+        let runner_name = self.config.default_runner.clone().unwrap_or_default();
+        let runner_config = self
+            .config
+            .get_runner(&runner_name)
+            .unwrap_or_else(RunnerConfig::local);
+
+        // Get agent command
+        let agent_command = get_agent_command();
+        let files = Files::new(run_dir.clone());
+        let spec_path = files.spec();
+        let chats_dir = files.chats_dir();
+
+        // Read tailscale OAuth credentials if present
+        let tailscale_oauth: Option<TailscaleOAuth> =
+            std::fs::read_to_string(run_dir.join(".tailscale_oauth.json"))
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok());
+
+        // Create TailscaleClient if OAuth credentials are available
+        let tailscale_client = tailscale_oauth.as_ref().map(|oauth| {
+            crate::core::tailscale::TailscaleClient::new(
+                oauth.client_id.clone(),
+                oauth.client_secret.clone(),
+                oauth.tag.clone(),
+            )
+        });
+
+        // Create runner using factory function
+        let runner: Box<dyn Runner> = create_runner(&runner_config);
+
+        // Ensure group chat exists for multi-worker
+        if is_multi_worker && !chats_dir.join("group.md").exists() {
+            let _ =
+                create_default_group_chat(&chats_dir, &all_worker_names, leader_name.as_deref());
+        }
+
+        // Spawn workers
+        let mut spawned_workers = Vec::new();
+
+        for worker_name in &new_worker_names {
+            // Create worker chat
+            let _ = create_worker_chat(&chats_dir, worker_name);
+
+            // Register worker
+            sqlite_state
+                .add_worker(worker_name, work_dir.to_str().unwrap_or("."), "remote")
+                .map_err(|e| {
+                    OrchestratorError::Other(format!("Failed to register worker: {}", e))
+                })?;
+
+            // Build teammates list (exclude self)
+            let teammates: Option<Vec<String>> = if is_multi_worker {
+                Some(
+                    all_worker_names
+                        .iter()
+                        .filter(|t| *t != worker_name)
+                        .cloned()
+                        .collect(),
+                )
+            } else {
+                None
+            };
+
+            // Generate fresh Tailscale auth key for this worker if OAuth is configured
+            let tailscale_authkey = if let Some(ref client) = tailscale_client {
+                match client.generate_auth_key(worker_name).await {
+                    Ok(key) => Some(key),
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to generate Tailscale auth key for '{}': {}",
+                            worker_name,
+                            e
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            let spawn_config = RunnerSpawnConfig {
+                run_name: run_name.to_string(),
+                worker_name: worker_name.clone(),
+                work_dir: work_dir.clone(),
+                run_dir: run_dir.clone(),
+                spec_path: spec_path.clone(),
+                agent_command: agent_command.clone(),
+                is_leader: false, // Only first worker is leader
+                leader_name: leader_name.clone(),
+                teammates,
+                resume_session_id: None,
+                env_vars: None,
+                coordinator_url: None,
+                tailscale_authkey,
+                credentials: None,
+            };
+
+            match runner.spawn(&spawn_config).await {
+                Ok(result) => {
+                    // Update worker with PID
+                    let pid = result.pid.map(|p| p as i64);
+                    let _ = sqlite_state.update_worker(
+                        worker_name,
+                        WorkerUpdate {
+                            pid,
+                            status: Some(crate::core::state::WorkerStatus::Working),
+                            ..Default::default()
+                        },
+                    );
+                    spawned_workers.push(worker_name.clone());
+                    tracing::info!(
+                        "Spawned worker '{}' (runner_id: {})",
+                        worker_name,
+                        result.handle.runner_id
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to spawn worker '{}': {}", worker_name, e);
+                }
+            }
+        }
+
+        // Update run status to Working if we spawned any workers
+        if !spawned_workers.is_empty() {
+            sqlite_state
+                .set_status(Status::Working)
+                .map_err(|e| OrchestratorError::State(e.to_string()))?;
+            sqlite_state
+                .set_started_at(None)
+                .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        }
+
+        Ok(SpawnWorkersResponse {
+            workers: spawned_workers,
         })
     }
 }

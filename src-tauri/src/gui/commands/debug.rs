@@ -107,17 +107,17 @@ pub async fn get_process_counts() -> Result<serde_json::Value, String> {
     }
 }
 
-/// Kill orphaned claude-code-acp processes (debug panel utility)
+/// Kill orphaned ACP bridge processes (debug panel utility)
 #[tauri::command]
 pub async fn kill_orphaned_acp_processes() -> Result<serde_json::Value, String> {
     #[cfg(unix)]
     {
         use std::process::Command;
 
-        // Use pkill to kill claude-code-acp processes
+        // Use pkill to kill hirsel __acp-bridge processes
         let output = Command::new("pkill")
             .arg("-f")
-            .arg("claude-code-acp")
+            .arg("__acp-bridge")
             .output()
             .map_err(|e| e.to_string())?;
 

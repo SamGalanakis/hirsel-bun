@@ -36,17 +36,20 @@ tui = ["dep:ratatui", "dep:crossterm"]
 worker = ["dep:axum", "dep:tower-http"]
 
 # === Agent backends ===
-# Claude CLI bridge (native Rust, no Node.js dependency)
-claude = []
+# Claude Agent SDK (native Rust, no Node.js dependency)
+claude = ["dep:claude-agent-sdk"]
 
 # Codex support (future: native Rust adapter)
 codex = []
 
-# Legacy Node.js ACP adapters (claude-code-acp, codex-acp)
+# Legacy feature (no longer used - ACP bridge is now built-in)
 acp-nodejs = []
 
 # All agent backends
 all-agents = ["claude", "codex"]
+
+# S3 storage backend (MinIO, Tigris, AWS S3)
+s3-storage = ["dep:aws-sdk-s3", "dep:aws-config"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [], optional = true }
@@ -104,6 +107,13 @@ tar = "0.4"
 walkdir = "2"
 aes-gcm = "0.10"
 hex = "0.4"
+
+# S3 storage (feature-gated)
+aws-sdk-s3 = { version = "1", optional = true }
+aws-config = { version = "1", features = ["behavior-version-latest"], optional = true }
+
+# Claude Agent SDK (feature-gated)
+claude-agent-sdk = { version = "0.1", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

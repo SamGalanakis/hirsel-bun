@@ -22,7 +22,7 @@ export interface ProfileSettingsCache {
 }
 
 export type AuthMethod = 'env' | 'apiKey' | 'oauth';
-export type RunnerType = 'ssh' | 'sprite' | 'devpod';
+export type HostType = 'local' | 'client' | 'ssh' | 'sprite';
 
 export interface AgentAuth {
   method: AuthMethod;
@@ -38,35 +38,42 @@ export interface AuthConfig {
   goose: AgentAuth | null;
 }
 
-// Runner configs
-export interface SshRunnerConfig {
+// Container config (Docker)
+export interface ContainerConfig {
+  image: string;
+}
+
+// Host configs (where compute runs)
+export interface SshHostConfig {
   type: 'ssh';
-  host: string;
+  address: string;
+  port: number;
   sshKey: string | null;
-  sshPort: number;
   workBase: string;
   location: string | null;
 }
 
-export interface SpriteRunnerConfig {
+export interface SpriteHostConfig {
   type: 'sprite';
   apiToken: string | null;
-  baseCheckpoint: string | null;
+  checkpoint: string | null;
   autoDestroy: boolean;
   idleTimeoutSecs: number;
   apiUrl: string;
+  useFilePush: boolean;
 }
 
-export interface DevpodRunnerConfig {
-  type: 'devpod';
-  provider: string;
-  providerOptions: Record<string, string>;
-  image: string | null;
-  prebuildImage: string | null;
-  useTunnel: boolean | null;  // null = auto-detect
-}
+export type HostConfig =
+  | { type: 'local' }
+  | { type: 'client' }
+  | SshHostConfig
+  | SpriteHostConfig;
 
-export type RunnerConfig = { type: 'local' } | SshRunnerConfig | SpriteRunnerConfig | DevpodRunnerConfig;
+// Runner config (Host + optional Container)
+export interface RunnerConfig {
+  host: HostConfig;
+  container?: ContainerConfig;
+}
 
 // Orchestrator profile types
 export type OrchestratorMode = 'local' | 'remote';

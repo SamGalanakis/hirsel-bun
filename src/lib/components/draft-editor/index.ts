@@ -289,15 +289,16 @@ export function draftEditor(): DraftEditorComponent {
     },
 
     /**
-     * Get icon name for runner type
+     * Get icon name for runner type (based on host type)
      */
     getRunnerIcon(runner: RunnerEntry | null): string {
       if (!runner) return 'laptop';
-      switch (runner.config.type) {
+      const hostType = runner.config.host.type;
+      switch (hostType) {
         case 'local': return 'laptop';
+        case 'client': return 'monitor';
         case 'ssh': return 'server';
         case 'sprite': return 'cloud';
-        case 'devpod': return 'container';
         default: return 'laptop';
       }
     },

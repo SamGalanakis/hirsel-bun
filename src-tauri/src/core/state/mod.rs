@@ -168,6 +168,8 @@ impl SQLiteState {
     pub fn new(db_path: PathBuf) -> StateResult<Self> {
         let db = Connection::open(&db_path)?;
         db.busy_timeout(std::time::Duration::from_secs(30))?;
+        // Enable WAL mode for better concurrent read/write performance
+        db.pragma_update(None, "journal_mode", "WAL")?;
 
         let mut state = Self { db, db_path };
         state.init_db()?;
@@ -178,6 +180,8 @@ impl SQLiteState {
     pub fn reconnect(&mut self) -> StateResult<()> {
         self.db = Connection::open(&self.db_path)?;
         self.db.busy_timeout(std::time::Duration::from_secs(30))?;
+        // Enable WAL mode for better concurrent read/write performance
+        self.db.pragma_update(None, "journal_mode", "WAL")?;
         Ok(())
     }
 

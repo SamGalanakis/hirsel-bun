@@ -144,8 +144,8 @@ pub fn get_agent_command() -> Vec<String> {
             }
         }
     }
-    // Default to claude
-    vec!["claude-code-acp".to_string()]
+    // Default to hirsel ACP bridge which wraps claude CLI
+    vec!["hirsel".to_string(), "__acp-bridge".to_string()]
 }
 
 /// Check if a command is available in PATH
@@ -267,8 +267,8 @@ mod tests {
         assert!(presets.contains_key("goose"));
 
         let claude = &presets["claude"];
-        assert_eq!(claude.command, vec!["claude-code-acp"]);
-        assert_eq!(claude.description, "Anthropic Claude Code");
+        assert_eq!(claude.command, vec!["claude"]);
+        assert_eq!(claude.description, "Anthropic Claude Code (native)");
     }
 
     #[test]

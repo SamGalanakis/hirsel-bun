@@ -3,7 +3,6 @@
 //! Provides a simple HTTP client that connects via Unix socket.
 
 use anyhow::{anyhow, Result};
-use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -14,23 +13,12 @@ use std::time::Duration;
 pub struct DaemonClient {
     /// Unix socket path
     socket_path: PathBuf,
-    /// HTTP client configured for Unix socket
-    client: Client,
 }
 
 impl DaemonClient {
     /// Create a new daemon client
     fn new(socket_path: PathBuf) -> Result<Self> {
-        // Build a client that can connect to Unix sockets
-        // We use hyper-util with unix socket connector
-        let client = Client::builder()
-            .timeout(Duration::from_secs(300)) // 5 minute timeout for long operations
-            .build()?;
-
-        Ok(Self {
-            socket_path,
-            client,
-        })
+        Ok(Self { socket_path })
     }
 
     /// Connect to an existing daemon
@@ -232,6 +220,55 @@ impl DaemonClient {
     pub async fn delete<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         self.request::<T>(reqwest::Method::DELETE, path, None::<()>)
             .await
+    }
+
+    /// POST request with raw bytes (for file upload)
+    pub async fn post_bytes(&self, path: &str, body: Vec<u8>) -> Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::UnixStream;
+
+        let mut stream = UnixStream::connect(&self.socket_path).await?;
+
+        // Build HTTP request with application/gzip content type
+        let request = format!(
+            "POST {} HTTP/1.1\r\n\
+             Host: localhost\r\n\
+             Accept: application/json\r\n\
+             Content-Type: application/gzip\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             \r\n",
+            path,
+            body.len()
+        );
+
+        // Send request
+        stream.write_all(request.as_bytes()).await?;
+        stream.write_all(&body).await?;
+
+        // Read response
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await?;
+
+        // Parse HTTP response
+        let response_str = String::from_utf8_lossy(&response);
+
+        // Parse status code
+        let status_line = response_str.lines().next().unwrap_or("");
+        let status_code = status_line
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap_or(500);
+
+        if status_code >= 400 {
+            let body_start = response_str.find("\r\n\r\n").map(|i| i + 4).unwrap_or(0);
+            let body = &response[body_start..];
+            let error_msg = String::from_utf8_lossy(body);
+            return Err(anyhow!("HTTP {}: {}", status_code, error_msg));
+        }
+
+        Ok(())
     }
 
     /// Check if daemon is healthy

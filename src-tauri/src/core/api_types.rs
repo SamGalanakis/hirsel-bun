@@ -352,27 +352,36 @@ impl From<config::AuthConfig> for AuthConfigResponse {
 }
 
 // =============================================================================
-// Runner Config Types
+// Runner Config Types (Host + Container Model)
 // =============================================================================
 
-/// Runner configuration for frontend
+/// Container configuration for frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContainerConfigResponse {
+    pub image: String,
+}
+
+/// Host configuration for frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
-pub enum RunnerConfigResponse {
+pub enum HostConfigResponse {
     #[serde(rename = "local")]
     Local,
+    #[serde(rename = "client")]
+    Client,
     #[serde(rename = "ssh")]
     Ssh {
-        host: String,
+        address: String,
+        port: u16,
         ssh_key: Option<String>,
-        ssh_port: u16,
         work_base: String,
         location: Option<String>,
     },
     #[serde(rename = "sprite")]
     Sprite {
         api_token: Option<String>,
-        base_checkpoint: Option<String>,
+        checkpoint: Option<String>,
         #[serde(default = "default_auto_destroy")]
         auto_destroy: bool,
         #[serde(default = "default_idle_timeout_secs")]
@@ -382,100 +391,138 @@ pub enum RunnerConfigResponse {
         #[serde(default)]
         use_file_push: bool,
     },
-    #[serde(rename = "devpod")]
-    Devpod {
-        provider: String,
-        #[serde(default)]
-        provider_options: std::collections::HashMap<String, String>,
-        #[serde(default)]
-        image: Option<String>,
-        #[serde(default)]
-        prebuild_image: Option<String>,
-        #[serde(default)]
-        use_tunnel: Option<bool>,
+    #[serde(rename = "fly")]
+    Fly {
+        api_token: Option<String>,
+        app: String,
+        region: Option<String>,
+        #[serde(default = "default_fly_cpu_kind")]
+        cpu_kind: String,
+        #[serde(default = "default_fly_cpus")]
+        cpus: u32,
+        #[serde(default = "default_fly_memory_mb")]
+        memory_mb: u32,
+        #[serde(default = "default_auto_destroy")]
+        auto_destroy: bool,
     },
+}
+
+/// Runner configuration for frontend (Host + Container model)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunnerConfigResponse {
+    pub host: HostConfigResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container: Option<ContainerConfigResponse>,
 }
 
 impl From<crate::core::runner::RunnerConfig> for RunnerConfigResponse {
     fn from(cfg: crate::core::runner::RunnerConfig) -> Self {
-        match cfg {
-            crate::core::runner::RunnerConfig::Local => RunnerConfigResponse::Local,
-            crate::core::runner::RunnerConfig::Ssh(ssh) => RunnerConfigResponse::Ssh {
-                host: ssh.host,
-                ssh_key: ssh.ssh_key,
-                ssh_port: ssh.ssh_port,
-                work_base: ssh.work_base,
-                location: ssh.location,
+        use crate::core::runner::{HostConfig, HostConfigOrShortcut};
+
+        let host = match &cfg.host {
+            HostConfigOrShortcut::Shortcut(s) => match s.to_lowercase().as_str() {
+                "client" => HostConfigResponse::Client,
+                _ => HostConfigResponse::Local,
             },
-            crate::core::runner::RunnerConfig::Sprite(sprite) => RunnerConfigResponse::Sprite {
-                api_token: sprite.api_token,
-                base_checkpoint: sprite.base_checkpoint,
-                auto_destroy: sprite.auto_destroy,
-                idle_timeout_secs: sprite.idle_timeout_secs,
-                api_url: sprite.api_url,
-                use_file_push: sprite.use_file_push,
+            HostConfigOrShortcut::Full(h) => match h {
+                HostConfig::Local => HostConfigResponse::Local,
+                HostConfig::Client => HostConfigResponse::Client,
+                HostConfig::Ssh(ssh) => HostConfigResponse::Ssh {
+                    address: ssh.address.clone(),
+                    port: ssh.port,
+                    ssh_key: ssh.ssh_key.clone(),
+                    work_base: ssh.work_base.clone(),
+                    location: ssh.location.clone(),
+                },
+                HostConfig::Sprite(sprite) => HostConfigResponse::Sprite {
+                    api_token: sprite.api_token.clone(),
+                    checkpoint: sprite.checkpoint.clone(),
+                    auto_destroy: sprite.auto_destroy,
+                    idle_timeout_secs: sprite.idle_timeout_secs,
+                    api_url: sprite.api_url.clone(),
+                    use_file_push: sprite.use_file_push,
+                },
+                HostConfig::Fly(fly) => HostConfigResponse::Fly {
+                    api_token: fly.api_token.clone(),
+                    app: fly.app.clone(),
+                    region: fly.region.clone(),
+                    cpu_kind: fly.cpu_kind.clone(),
+                    cpus: fly.cpus,
+                    memory_mb: fly.memory_mb,
+                    auto_destroy: fly.auto_destroy,
+                },
             },
-            crate::core::runner::RunnerConfig::Devpod(devpod) => RunnerConfigResponse::Devpod {
-                provider: devpod.provider,
-                provider_options: devpod.provider_options,
-                image: devpod.image,
-                prebuild_image: devpod.prebuild_image,
-                use_tunnel: devpod.use_tunnel,
-            },
-        }
+        };
+
+        let container = cfg
+            .container
+            .map(|c| ContainerConfigResponse { image: c.image });
+
+        RunnerConfigResponse { host, container }
     }
 }
 
 impl From<RunnerConfigResponse> for crate::core::runner::RunnerConfig {
     fn from(cfg: RunnerConfigResponse) -> Self {
-        match cfg {
-            RunnerConfigResponse::Local => crate::core::runner::RunnerConfig::Local,
-            RunnerConfigResponse::Ssh {
-                host,
+        use crate::core::runner::{
+            ContainerConfig, FlyHostConfig, HostConfig, HostConfigOrShortcut, RunnerConfig,
+            SpriteHostConfig, SshHostConfig,
+        };
+
+        let host = match cfg.host {
+            HostConfigResponse::Local => HostConfigOrShortcut::Shortcut("local".to_string()),
+            HostConfigResponse::Client => HostConfigOrShortcut::Shortcut("client".to_string()),
+            HostConfigResponse::Ssh {
+                address,
+                port,
                 ssh_key,
-                ssh_port,
                 work_base,
                 location,
-            } => crate::core::runner::RunnerConfig::Ssh(crate::core::runner::SshRunnerConfig {
-                host,
+            } => HostConfigOrShortcut::Full(HostConfig::Ssh(SshHostConfig {
+                address,
+                port,
                 ssh_key,
-                ssh_port,
                 work_base,
                 location,
-            }),
-            RunnerConfigResponse::Sprite {
+            })),
+            HostConfigResponse::Sprite {
                 api_token,
-                base_checkpoint,
+                checkpoint,
                 auto_destroy,
                 idle_timeout_secs,
                 api_url,
                 use_file_push,
-            } => {
-                crate::core::runner::RunnerConfig::Sprite(crate::core::runner::SpriteRunnerConfig {
-                    api_token,
-                    base_checkpoint,
-                    auto_destroy,
-                    idle_timeout_secs,
-                    api_url,
-                    use_file_push,
-                })
-            }
-            RunnerConfigResponse::Devpod {
-                provider,
-                provider_options,
-                image,
-                prebuild_image,
-                use_tunnel,
-            } => {
-                crate::core::runner::RunnerConfig::Devpod(crate::core::runner::DevpodRunnerConfig {
-                    provider,
-                    provider_options,
-                    image,
-                    prebuild_image,
-                    use_tunnel,
-                })
-            }
-        }
+            } => HostConfigOrShortcut::Full(HostConfig::Sprite(SpriteHostConfig {
+                api_token,
+                checkpoint,
+                auto_destroy,
+                idle_timeout_secs,
+                api_url,
+                use_file_push,
+            })),
+            HostConfigResponse::Fly {
+                api_token,
+                app,
+                region,
+                cpu_kind,
+                cpus,
+                memory_mb,
+                auto_destroy,
+            } => HostConfigOrShortcut::Full(HostConfig::Fly(FlyHostConfig {
+                api_token,
+                app,
+                region,
+                cpu_kind,
+                cpus,
+                memory_mb,
+                auto_destroy,
+            })),
+        };
+
+        let container = cfg.container.map(|c| ContainerConfig { image: c.image });
+
+        RunnerConfig { host, container }
     }
 }
 
@@ -487,6 +534,15 @@ fn default_idle_timeout_secs() -> u32 {
 }
 fn default_api_url() -> String {
     "https://api.sprites.dev".to_string()
+}
+fn default_fly_cpu_kind() -> String {
+    "shared".to_string()
+}
+fn default_fly_cpus() -> u32 {
+    1
+}
+fn default_fly_memory_mb() -> u32 {
+    1024
 }
 
 // =============================================================================

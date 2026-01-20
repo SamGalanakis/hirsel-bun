@@ -494,4 +494,53 @@ impl Orchestrator for RemoteOrchestrator {
     async fn health(&self) -> OrchestratorResult<HealthResponse> {
         self.get("/health").await
     }
+
+    // -------------------------------------------------------------------------
+    // Run Creation
+    // -------------------------------------------------------------------------
+
+    async fn create_run(&self, request: CreateRunRequest) -> OrchestratorResult<CreateRunResponse> {
+        self.post("/api/runs", &request).await
+    }
+
+    async fn upload_files(&self, run_name: &str, tarball: Vec<u8>) -> OrchestratorResult<()> {
+        let url = format!(
+            "{}/api/runs/{}/files",
+            self.base_url,
+            urlencoding::encode(run_name)
+        );
+
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.api_key)
+            .header("Content-Type", "application/gzip")
+            .body(tarball)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(OrchestratorError::Http(format!(
+                "HTTP {} from {}: {}",
+                status, url, body
+            )));
+        }
+
+        Ok(())
+    }
+
+    async fn spawn_workers(
+        &self,
+        run_name: &str,
+        count: u32,
+    ) -> OrchestratorResult<SpawnWorkersResponse> {
+        let body = SpawnWorkersRequest { count };
+        self.post(
+            &format!("/api/runs/{}/spawn", urlencoding::encode(run_name)),
+            &body,
+        )
+        .await
+    }
 }

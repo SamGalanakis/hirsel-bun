@@ -13,6 +13,7 @@ use std::path::Path;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
+use super::setup::{self, WorkerSetupConfig};
 use super::{
     Runner, RunnerError, RunnerResult, SpawnResult, SpriteRunnerConfig, WorkerHandle,
     WorkerSpawnConfig,
@@ -525,13 +526,19 @@ impl SpriteRunner {
 impl Runner for SpriteRunner {
     async fn spawn(&self, config: &WorkerSpawnConfig) -> RunnerResult<SpawnResult> {
         let sprite_name = Self::sprite_name(&config.run_name, &config.worker_name);
+        let work_dir = "/home/sprite/work";
 
-        // Step 1: Create sprite (or from checkpoint if configured)
+        // Require coordinator_url for remote runners
+        let coordinator_url = config.coordinator_url.as_ref().ok_or_else(|| {
+            RunnerError::Config("coordinator_url required for sprite runner".to_string())
+        })?;
+
         info!(
-            "Creating sprite {} for worker {}",
-            sprite_name, config.worker_name
+            "Spawning Sprite worker {} on sprite {}",
+            config.worker_name, sprite_name
         );
 
+        // Step 1: Create sprite (or from checkpoint if configured)
         let sprite = if let Some(ref checkpoint) = self.config.base_checkpoint {
             self.client
                 .create_from_checkpoint(&sprite_name, checkpoint)
@@ -549,9 +556,7 @@ impl Runner for SpriteRunner {
         if let Some(ref authkey) = config.tailscale_authkey {
             info!("Setting up Tailscale on sprite {}", sprite_name);
             let tailscale_commands = vec![
-                // Install Tailscale if not present
                 "which tailscale || curl -fsSL https://tailscale.com/install.sh | sh".to_string(),
-                // Connect to tailnet (--accept-routes to use exit nodes if configured)
                 format!(
                     "tailscale status || tailscale up --authkey={} --accept-routes --hostname={}",
                     authkey, sprite_name
@@ -572,66 +577,41 @@ impl Runner for SpriteRunner {
 
                 if let Err(e) = result {
                     warn!("Tailscale setup command failed: {} - {}", cmd, e);
-                    // Don't fail the whole spawn - Tailscale might already be set up
                 }
             }
         }
 
-        // Step 3: Sync work directory (now step 3 after Tailscale)
-        let work_dir = "/home/sprite/work";
+        // Step 3: Download and setup project files from coordinator
         let use_file_push = self.config.use_file_push && config.tailscale_authkey.is_some();
 
         if !use_file_push {
-            // Pull mode - worker downloads files from coordinator or git
-            let setup_commands = if let Some(ref project_url) = config.project_url {
-                // Git clone mode
-                vec![
-                    format!("mkdir -p {}", work_dir),
-                    format!(
-                        "if [ -d {}/.git ]; then cd {} && git fetch origin && git reset --hard origin/HEAD; else git clone {} {}; fi",
-                        work_dir, work_dir, project_url, work_dir
-                    ),
-                    format!("mkdir -p {}/chats", work_dir),
-                ]
-            } else if let Some(ref coordinator_url) = config.coordinator_url {
-                // Tarball download mode - get files from coordinator API
-                let files_url = format!("{}/api/runs/{}/files", coordinator_url, config.run_name);
-                vec![
-                    format!("mkdir -p {}", work_dir),
-                    format!(
-                        "cd {} && curl -sS -H 'Authorization: Bearer $HIRSEL_API_KEY' '{}' | tar -xzf -",
-                        work_dir, files_url
-                    ),
-                    format!("cd {} && git init && git add . && git commit -m 'Initial import from server' 2>/dev/null || true", work_dir),
-                    format!("mkdir -p {}/chats", work_dir),
-                ]
-            } else {
-                return Err(RunnerError::Config(
-                    "Either project_url or coordinator_url required for sprite runner".to_string(),
-                ));
+            // Pull mode - use shared setup script to download from coordinator
+            info!("Setting up project files on sprite {}", sprite_name);
+            let setup_config = WorkerSetupConfig {
+                coordinator_url: coordinator_url.clone(),
+                run_name: config.run_name.clone(),
+                worker_name: config.worker_name.clone(),
+                work_dir: work_dir.to_string(),
             };
+            let files_setup_script = setup::generate_setup_script(&setup_config);
 
-            for cmd in setup_commands {
-                info!("Running setup command: {}", cmd);
-                let result = self
-                    .client
-                    .exec(
-                        &sprite_name,
-                        &["sh".to_string(), "-c".to_string(), cmd.clone()],
-                        None,
-                        None,
-                    )
-                    .await;
+            let result = self
+                .client
+                .exec(
+                    &sprite_name,
+                    &["sh".to_string(), "-c".to_string(), files_setup_script],
+                    None,
+                    None,
+                )
+                .await;
 
-                if let Err(e) = result {
-                    error!("Setup command failed: {} - {}", cmd, e);
-                    // Clean up sprite on failure
-                    let _ = self.client.destroy(&sprite_name).await;
-                    return Err(RunnerError::SetupFailed(format!(
-                        "Setup command failed: {}",
-                        e
-                    )));
-                }
+            if let Err(e) = result {
+                error!("File setup failed: {}", e);
+                let _ = self.client.destroy(&sprite_name).await;
+                return Err(RunnerError::SetupFailed(format!(
+                    "Failed to download project files: {}",
+                    e
+                )));
             }
         } else {
             // Push mode - just create work directory, files will be pushed after worker starts
@@ -655,11 +635,7 @@ impl Runner for SpriteRunner {
             }
         }
 
-        // Step 3: Start worker process in background
-        let coordinator_url = config.coordinator_url.as_ref().ok_or_else(|| {
-            RunnerError::Config("coordinator_url required for sprite runner".to_string())
-        })?;
-
+        // Step 4: Start worker process in background
         // Build environment variables
         let mut env = std::collections::HashMap::new();
         env.insert("HIRSEL_RUN".to_string(), config.run_name.clone());
@@ -671,10 +647,9 @@ impl Runner for SpriteRunner {
             "bypassPermissions".to_string(),
         );
 
-        if let Some(ref extra_env) = config.env_vars {
-            for (k, v) in extra_env {
-                env.insert(k.clone(), v.clone());
-            }
+        // Add forwarded credentials and env vars
+        for (k, v) in config.collect_env_vars() {
+            env.insert(k, v);
         }
 
         // Build worker command
@@ -705,7 +680,6 @@ impl Runner for SpriteRunner {
             }
         }
 
-        // Add file receiver flag if push mode enabled
         if use_file_push {
             worker_args.push_str(" --wait-for-files");
         }

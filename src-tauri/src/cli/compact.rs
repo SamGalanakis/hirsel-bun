@@ -58,7 +58,7 @@ pub async fn execute(run_name: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Clean up any remaining child processes (e.g., grandchildren like node claude-code-acp)
+    // Clean up any remaining child processes (e.g., grandchildren like hirsel __acp-bridge)
     crate::core::process::cleanup_process_group("compaction");
 
     result

@@ -424,6 +424,10 @@ fn run_command(
             })
             .map_err(|e| format!("Remote worker error: {}", e))?;
         }
+        Commands::AcpBridge => {
+            // Run ACP bridge server for Claude CLI
+            cli::acp_bridge::run_acp_bridge().map_err(|e| format!("ACP bridge error: {}", e))?;
+        }
         #[cfg(feature = "full-cli")]
         Commands::Test(args) => {
             cli::test::execute(
@@ -712,25 +716,22 @@ fn stop_chat_sessions(chat_manager: &std::sync::Arc<core::ChatSessionManager>) {
     }
 }
 
-/// Clean up orphaned claude-code-acp processes from previous dev sessions.
+/// Clean up orphaned hirsel __acp-bridge processes from previous dev sessions.
 /// This is only compiled in debug builds to handle hot-reload orphans.
 #[cfg(all(feature = "gui", debug_assertions))]
 fn cleanup_orphaned_dev_processes() {
     use std::process::Command;
 
-    tracing::info!("[DEV] Cleaning up orphaned claude-code-acp processes from previous sessions");
+    tracing::info!("[DEV] Cleaning up orphaned acp-bridge processes from previous sessions");
 
-    // Kill all claude-code-acp processes - they're orphans from previous hot-reload
-    match Command::new("pkill")
-        .args(["-f", "claude-code-acp"])
-        .output()
-    {
+    // Kill all hirsel __acp-bridge processes - they're orphans from previous hot-reload
+    match Command::new("pkill").args(["-f", "__acp-bridge"]).output() {
         Ok(output) => {
             if output.status.success() {
-                tracing::info!("[DEV] Killed orphaned claude-code-acp processes");
+                tracing::info!("[DEV] Killed orphaned acp-bridge processes");
             } else {
                 // Exit code 1 means no processes matched - that's fine
-                tracing::debug!("[DEV] No orphaned claude-code-acp processes found");
+                tracing::debug!("[DEV] No orphaned acp-bridge processes found");
             }
         }
         Err(e) => {

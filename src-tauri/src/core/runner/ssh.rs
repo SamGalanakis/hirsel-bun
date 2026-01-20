@@ -9,25 +9,35 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 use tracing::{debug, error, info};
 
+use super::setup::{self, WorkerSetupConfig};
 use super::{
-    Runner, RunnerError, RunnerResult, SpawnResult, SshRunnerConfig, WorkerHandle,
+    ContainerConfig, Runner, RunnerError, RunnerResult, SpawnResult, SshRunnerConfig, WorkerHandle,
     WorkerSpawnConfig,
 };
 
-/// SSH runner - spawns workers on remote machines via SSH
+/// SSH runner - spawns workers on remote machines via SSH.
+/// Optionally supports running workers in Docker containers on the remote host.
 pub struct SshRunner {
     config: SshRunnerConfig,
     /// Port on remote that tunnels back to coordinator
     tunnel_port: Option<u16>,
+    /// Optional container configuration for running workers in Docker
+    container: Option<ContainerConfig>,
 }
 
 impl SshRunner {
     /// Create a new SSH runner
-    pub fn new(config: SshRunnerConfig) -> Self {
+    pub fn new(config: SshRunnerConfig, container: Option<ContainerConfig>) -> Self {
         Self {
             config,
             tunnel_port: None,
+            container,
         }
+    }
+
+    /// Create a new SSH runner without container support (bare host)
+    pub fn new_bare(config: SshRunnerConfig) -> Self {
+        Self::new(config, None)
     }
 
     /// Create a new SSH runner with a tunnel port
@@ -35,12 +45,18 @@ impl SshRunner {
         Self {
             config,
             tunnel_port: Some(tunnel_port),
+            container: None,
         }
     }
 
     /// Set the tunnel port
     pub fn set_tunnel_port(&mut self, port: u16) {
         self.tunnel_port = Some(port);
+    }
+
+    /// Set the container configuration
+    pub fn set_container(&mut self, container: Option<ContainerConfig>) {
+        self.container = container;
     }
 
     /// Build the base SSH command
@@ -114,140 +130,34 @@ impl SshRunner {
             .map_err(|_| RunnerError::SpawnFailed("Invalid PID response".to_string()))
     }
 
-    /// Build the script to setup the remote workspace via git clone
-    fn build_setup_script(&self, work_dir: &str, git_http_url: &str) -> String {
-        format!(
-            r#"
-set -e
-mkdir -p {work_dir}
-cd {work_dir}
+    /// Spawn a docker container on remote and return container ID
+    fn spawn_remote_docker(&self, script: &str) -> RunnerResult<String> {
+        let mut cmd = self.build_ssh_cmd();
+        cmd.arg(script);
 
-# Clone or update from coordinator's staging repo via HTTP
-if [ -d .git ]; then
-    git fetch origin
-    git reset --hard origin/HEAD
-else
-    git clone {git_http_url} .
-fi
+        let output = cmd
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(RunnerError::Io)?;
 
-# Create chats directory for synced files
-mkdir -p chats
-
-echo "Workspace ready at {work_dir}"
-"#,
-            work_dir = work_dir,
-            git_http_url = git_http_url
-        )
-    }
-
-    /// Build the script to setup the remote workspace via tarball download
-    fn build_tarball_setup_script(&self, work_dir: &str, files_url: &str) -> String {
-        format!(
-            r#"
-set -e
-mkdir -p {work_dir}
-cd {work_dir}
-
-# Download and extract project tarball from coordinator
-echo "Downloading project files from {files_url}..."
-curl -sS -H "Authorization: Bearer $HIRSEL_API_KEY" \
-    "{files_url}" | tar -xzf -
-
-# Initialize git repo for worker to use
-if [ ! -d .git ]; then
-    git init
-    git add .
-    git commit -m "Initial import from server"
-fi
-
-# Create chats directory for synced files
-mkdir -p chats
-
-echo "Workspace ready at {work_dir}"
-"#,
-            work_dir = work_dir,
-            files_url = files_url,
-        )
-    }
-
-    /// Build the script to start the worker process
-    fn build_worker_script(
-        &self,
-        config: &WorkerSpawnConfig,
-        work_dir: &str,
-        api_url: &str,
-    ) -> String {
-        // Build environment exports
-        let mut env_exports = vec![
-            format!(r#"export HIRSEL_RUN="{}""#, config.run_name),
-            format!(r#"export HIRSEL_WORKER="{}""#, config.worker_name),
-            format!(r#"export HIRSEL_API_URL="{}""#, api_url),
-            "export HIRSEL_REMOTE=1".to_string(),
-            "export ACP_PERMISSION_MODE=bypassPermissions".to_string(),
-        ];
-
-        // Add forwarded environment variables (API keys, etc.)
-        if let Some(ref vars) = config.env_vars {
-            for (key, value) in vars {
-                // Escape single quotes in values
-                let escaped_value = value.replace('\'', "'\\''");
-                env_exports.push(format!("export {}='{}'", key, escaped_value));
-            }
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(RunnerError::SpawnFailed(stderr.to_string()));
         }
 
-        let env_block = env_exports.join("\n");
+        // Script echoes container ID
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let container_id = stdout.trim().lines().last().unwrap_or("").to_string();
 
-        // Build agent command as JSON for passing to hirsel __remote-worker
-        let agent_command_json =
-            serde_json::to_string(&config.agent_command).unwrap_or_else(|_| "[]".to_string());
-        let agent_command_escaped = agent_command_json.replace('\'', "'\\''");
+        if container_id.is_empty() {
+            return Err(RunnerError::SpawnFailed(
+                "No container ID returned".to_string(),
+            ));
+        }
 
-        // Build optional args
-        let leader_arg = if config.is_leader { "--is-leader" } else { "" };
-        let leader_name_arg = config
-            .leader_name
-            .as_ref()
-            .map(|n| format!("--leader-name '{}'", n))
-            .unwrap_or_default();
-        let teammates_arg = config
-            .teammates
-            .as_ref()
-            .map(|t| format!("--teammates '{}'", t.join(",")))
-            .unwrap_or_default();
-
-        // Spec path is in the work directory
-        let spec_path = format!("{}/spec.md", work_dir);
-
-        format!(
-            r#"
-cd {work_dir}
-
-# Set environment
-{env_block}
-
-# Run worker in background using hirsel Rust binary
-nohup hirsel __remote-worker \
-    --api-url '{api_url}' \
-    --run-name '{run_name}' \
-    --worker-name '{worker_name}' \
-    --work-dir '{work_dir}' \
-    --spec '{spec_path}' \
-    --agent-command '{agent_command}' \
-    {leader_arg} {leader_name_arg} {teammates_arg} \
-    > worker.log 2>&1 &
-echo $!
-"#,
-            work_dir = work_dir,
-            env_block = env_block,
-            api_url = api_url,
-            run_name = config.run_name,
-            worker_name = config.worker_name,
-            spec_path = spec_path,
-            agent_command = agent_command_escaped,
-            leader_arg = leader_arg,
-            leader_name_arg = leader_name_arg,
-            teammates_arg = teammates_arg,
-        )
+        Ok(container_id)
     }
 }
 
@@ -259,41 +169,26 @@ impl Runner for SshRunner {
             self.config.work_base, config.run_name, config.worker_name
         );
 
-        // Determine API URL - prefer coordinator_url from config (server mode),
-        // fall back to tunnel port (tunnel mode)
-        let api_url = if let Some(ref coordinator_url) = config.coordinator_url {
-            // Server mode - use direct URL to coordinator
-            info!(
-                "Using direct coordinator URL for {} on {}",
-                config.worker_name, self.config.host
-            );
-            coordinator_url.clone()
-        } else {
-            // Tunnel mode - require tunnel_port
-            let tunnel_port = self.tunnel_port.ok_or_else(|| {
-                RunnerError::Config("Tunnel port not set for SSH runner".to_string())
-            })?;
+        // Require coordinator_url for remote runners
+        let coordinator_url = config.coordinator_url.as_ref().ok_or_else(|| {
+            RunnerError::Config("coordinator_url required for SSH runner".to_string())
+        })?;
+
+        // Determine API URL for worker to reach coordinator
+        let api_url = if let Some(tunnel_port) = self.tunnel_port {
+            // Tunnel mode - worker accesses coordinator via localhost tunnel
             format!("http://127.0.0.1:{}", tunnel_port)
+        } else {
+            // Direct access to coordinator
+            coordinator_url.clone()
         };
 
-        // Get git URL from config or construct from API URL
-        let git_url = config.project_url.clone().unwrap_or_else(|| {
-            if let Some(ref coordinator_url) = config.coordinator_url {
-                // Server mode - get files from coordinator API
-                format!("{}/api/runs/{}/files", coordinator_url, config.run_name)
-            } else if let Some(tunnel_port) = self.tunnel_port {
-                // Tunnel mode - local git server
-                format!("http://127.0.0.1:{}/git", tunnel_port)
-            } else {
-                // Fallback
-                format!("{}/git", api_url)
-            }
-        });
+        info!(
+            "Spawning SSH worker {} on {} (work_dir: {})",
+            config.worker_name, self.config.host, work_dir
+        );
 
-        // If using server mode with tarball download, use different setup script
-        let uses_tarball = config.coordinator_url.is_some() && config.project_url.is_none();
-
-        // Step 0: Setup Tailscale if auth key provided
+        // Step 1: Setup Tailscale if auth key provided
         if let Some(ref authkey) = config.tailscale_authkey {
             info!(
                 "Setting up Tailscale for {} on {}",
@@ -315,99 +210,197 @@ fi
             );
 
             if !self.run_ssh_command(&tailscale_script, Duration::from_secs(120))? {
-                // Don't fail - Tailscale might already be configured
                 info!("Tailscale setup may have failed, continuing...");
             }
         }
 
-        // Step 1: Setup remote workspace
+        // Step 2: Download and setup project files from coordinator
         info!(
-            "Setting up remote workspace for {} on {}",
+            "Setting up project files for {} on {}",
             config.worker_name, self.config.host
         );
-        let setup_script = if uses_tarball {
-            self.build_tarball_setup_script(&work_dir, &git_url)
-        } else {
-            self.build_setup_script(&work_dir, &git_url)
+        let setup_config = WorkerSetupConfig {
+            coordinator_url: coordinator_url.clone(),
+            run_name: config.run_name.clone(),
+            worker_name: config.worker_name.clone(),
+            work_dir: work_dir.clone(),
         };
+        let files_setup_script = setup::generate_setup_script(&setup_config);
 
-        if !self.run_ssh_command(&setup_script, Duration::from_secs(120))? {
+        if !self.run_ssh_command(&files_setup_script, Duration::from_secs(120))? {
             return Err(RunnerError::SetupFailed(format!(
                 "Failed to setup workspace for {} on {}",
                 config.worker_name, self.config.host
             )));
         }
 
-        // Step 2: Start worker process
+        // Step 3: Start worker process (bare or in Docker)
         info!(
             "Starting worker {} on {}",
             config.worker_name, self.config.host
         );
-        let worker_script = self.build_worker_script(config, &work_dir, &api_url);
 
-        let pid = self.spawn_remote_process(&worker_script)?;
+        let agent_command_json =
+            serde_json::to_string(&config.agent_command).unwrap_or_else(|_| "[]".to_string());
+        let env_vars: Vec<(String, String)> = config.collect_env_vars().into_iter().collect();
+        let spec_path = format!("{}/spec.md", work_dir);
 
-        info!(
-            "Worker {} started on {} (PID: {})",
-            config.worker_name, self.config.host, pid
-        );
+        // Dispatch based on container config
+        if let Some(ref container) = self.container {
+            // Spawn in Docker container on remote
+            let docker_script = setup::generate_docker_worker_script(
+                &work_dir,
+                &api_url,
+                &config.run_name,
+                &config.worker_name,
+                &spec_path,
+                &agent_command_json,
+                config.is_leader,
+                config.leader_name.as_deref(),
+                config.teammates.as_deref(),
+                &env_vars,
+                &container.image,
+            );
 
-        Ok(SpawnResult {
-            handle: WorkerHandle {
-                worker_name: config.worker_name.clone(),
-                runner_id: pid.to_string(),
-                runner_type: "ssh".to_string(),
-            },
-            pid: Some(pid),
-        })
+            let container_id = self.spawn_remote_docker(&docker_script)?;
+
+            info!(
+                "Worker {} started on {} in Docker (container: {}, image: {})",
+                config.worker_name,
+                self.config.host,
+                &container_id[..12.min(container_id.len())],
+                container.image
+            );
+
+            Ok(SpawnResult {
+                handle: WorkerHandle {
+                    worker_name: config.worker_name.clone(),
+                    runner_id: container_id,
+                    runner_type: "ssh-docker".to_string(),
+                },
+                pid: None,
+            })
+        } else {
+            // Spawn bare process
+            let worker_script = setup::generate_worker_start_script(
+                &work_dir,
+                &api_url,
+                &config.run_name,
+                &config.worker_name,
+                &spec_path,
+                &agent_command_json,
+                config.is_leader,
+                config.leader_name.as_deref(),
+                config.teammates.as_deref(),
+                &env_vars,
+            );
+
+            let pid = self.spawn_remote_process(&worker_script)?;
+
+            info!(
+                "Worker {} started on {} (PID: {})",
+                config.worker_name, self.config.host, pid
+            );
+
+            Ok(SpawnResult {
+                handle: WorkerHandle {
+                    worker_name: config.worker_name.clone(),
+                    runner_id: pid.to_string(),
+                    runner_type: "ssh".to_string(),
+                },
+                pid: Some(pid),
+            })
+        }
     }
 
     async fn stop(&self, handle: &WorkerHandle) -> RunnerResult<()> {
-        let pid: u32 = handle
-            .runner_id
-            .parse()
-            .map_err(|_| RunnerError::StopFailed("Invalid PID".to_string()))?;
+        if handle.runner_type == "ssh-docker" {
+            // Stop docker container on remote
+            let container_id = &handle.runner_id;
+            let mut cmd = self.build_ssh_cmd();
+            cmd.arg(format!("docker stop -t 10 {} 2>/dev/null", container_id));
 
-        let mut cmd = self.build_ssh_cmd();
-        cmd.arg(format!("kill {} 2>/dev/null", pid));
-
-        match cmd.output() {
-            Ok(output) => {
-                if output.status.success() {
-                    info!("Stopped remote worker {} (PID {})", handle.worker_name, pid);
-                    Ok(())
-                } else {
-                    // Process might already be dead
+            match cmd.output() {
+                Ok(output) => {
+                    if output.status.success() {
+                        info!(
+                            "Stopped remote docker worker {} (container: {})",
+                            handle.worker_name,
+                            &container_id[..12.min(container_id.len())]
+                        );
+                    }
                     Ok(())
                 }
+                Err(e) => Err(RunnerError::StopFailed(e.to_string())),
             }
-            Err(e) => Err(RunnerError::StopFailed(e.to_string())),
+        } else {
+            // Stop bare process by PID
+            let pid: u32 = handle
+                .runner_id
+                .parse()
+                .map_err(|_| RunnerError::StopFailed("Invalid PID".to_string()))?;
+
+            let mut cmd = self.build_ssh_cmd();
+            cmd.arg(format!("kill {} 2>/dev/null", pid));
+
+            match cmd.output() {
+                Ok(output) => {
+                    if output.status.success() {
+                        info!("Stopped remote worker {} (PID {})", handle.worker_name, pid);
+                    }
+                    Ok(())
+                }
+                Err(e) => Err(RunnerError::StopFailed(e.to_string())),
+            }
         }
     }
 
     async fn is_alive(&self, handle: &WorkerHandle) -> bool {
-        let pid: u32 = match handle.runner_id.parse() {
-            Ok(p) => p,
-            Err(_) => return false,
-        };
+        if handle.runner_type == "ssh-docker" {
+            // Check if docker container is running
+            let container_id = &handle.runner_id;
+            let mut cmd = self.build_ssh_cmd();
+            cmd.arg(format!(
+                "docker inspect -f '{{{{.State.Running}}}}' {} 2>/dev/null || echo false",
+                container_id
+            ));
 
-        let mut cmd = self.build_ssh_cmd();
-        cmd.arg(format!(
-            "kill -0 {} 2>/dev/null && echo alive || echo dead",
-            pid
-        ));
-
-        match cmd.output() {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                stdout.contains("alive")
+            match cmd.output() {
+                Ok(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
+                    stdout.trim() == "true"
+                }
+                Err(_) => false,
             }
-            Err(_) => false,
+        } else {
+            // Check if process is alive by PID
+            let pid: u32 = match handle.runner_id.parse() {
+                Ok(p) => p,
+                Err(_) => return false,
+            };
+
+            let mut cmd = self.build_ssh_cmd();
+            cmd.arg(format!(
+                "kill -0 {} 2>/dev/null && echo alive || echo dead",
+                pid
+            ));
+
+            match cmd.output() {
+                Ok(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    stdout.contains("alive")
+                }
+                Err(_) => false,
+            }
         }
     }
 
     fn runner_type(&self) -> &'static str {
-        "ssh"
+        if self.container.is_some() {
+            "ssh-docker"
+        } else {
+            "ssh"
+        }
     }
 
     async fn get_logs(&self, handle: &WorkerHandle, lines: usize) -> RunnerResult<String> {
@@ -441,8 +434,20 @@ mod tests {
     #[test]
     fn test_ssh_runner_type() {
         let config = SshRunnerConfig::default();
-        let runner = SshRunner::new(config);
+        let runner = SshRunner::new_bare(config);
         assert_eq!(runner.runner_type(), "ssh");
+    }
+
+    #[test]
+    fn test_ssh_docker_runner_type() {
+        let config = SshRunnerConfig::default();
+        let runner = SshRunner::new(
+            config,
+            Some(ContainerConfig {
+                image: "test:latest".to_string(),
+            }),
+        );
+        assert_eq!(runner.runner_type(), "ssh-docker");
     }
 
     #[test]

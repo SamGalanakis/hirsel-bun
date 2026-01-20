@@ -10,7 +10,7 @@ use tracing::info;
 /// When a subprocess is spawned with `process_group(0)`, it becomes the
 /// process group leader. Calling this function sends SIGTERM to all processes
 /// in the current process group, ensuring grandchild processes (like
-/// `node claude-code-acp` spawned by `claude`) are properly terminated.
+/// `node hirsel __acp-bridge` spawned by `claude`) are properly terminated.
 ///
 /// # Usage
 ///
@@ -46,7 +46,7 @@ pub fn cleanup_process_group(context: &str) {
         std::thread::sleep(std::time::Duration::from_millis(200));
 
         // Force kill any remaining processes in the group
-        // (Node.js processes like claude-code-acp may ignore SIGTERM)
+        // (Node.js processes like hirsel __acp-bridge may ignore SIGTERM)
         unsafe {
             libc::kill(0, libc::SIGKILL);
         }
@@ -80,7 +80,7 @@ pub fn kill_process_group(pid: u32, force: bool) {
             std::thread::sleep(std::time::Duration::from_millis(100));
 
             // Always send SIGKILL - the leader may die quickly but children
-            // (like Node.js claude-code-acp) may ignore SIGTERM
+            // (like Node.js hirsel __acp-bridge) may ignore SIGTERM
             unsafe {
                 libc::kill(-(pid as i32), libc::SIGKILL);
             }

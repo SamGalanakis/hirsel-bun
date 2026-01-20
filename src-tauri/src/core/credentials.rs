@@ -169,6 +169,8 @@ impl CredentialStore {
             std::fs::create_dir_all(parent).ok();
         }
         let db = Connection::open(db_path)?;
+        // Enable WAL mode for better concurrent read/write performance
+        db.pragma_update(None, "journal_mode", "WAL")?;
         db.execute_batch(SCHEMA)?;
 
         Ok(Self { db, cipher })

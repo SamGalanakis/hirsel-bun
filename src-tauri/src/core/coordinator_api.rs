@@ -1127,7 +1127,6 @@ pub struct CoordinatorServer {
     port: u16,
     run_dir: PathBuf,
     run_name: String,
-    #[allow(dead_code)] // TODO: Used when git HTTP server is mounted
     staging_path: Option<PathBuf>,
     handle: Option<tokio::task::JoinHandle<()>>,
 }
@@ -1155,17 +1154,23 @@ impl CoordinatorServer {
 
     /// Start the API server
     pub async fn start(&mut self) -> anyhow::Result<()> {
-        let router = create_router(
+        let mut router = create_router(
             self.state.clone(),
             self.run_dir.clone(),
             self.run_name.clone(),
         );
 
-        // TODO: Mount git HTTP server if staging path provided
-        // if let Some(ref staging_path) = self.staging_path {
-        //     let git_router = git_http::create_git_router(staging_path);
-        //     router = router.nest("/git", git_router);
-        // }
+        // Mount git HTTP server if staging path provided
+        // This allows workers to push/pull changes via git
+        if let Some(ref staging_path) = self.staging_path {
+            tracing::info!(
+                "Mounting git HTTP server at /git/{} (repo: {})",
+                self.run_name,
+                staging_path.display()
+            );
+            let git_router = super::git_http::create_git_router(staging_path.clone());
+            router = router.nest(&format!("/git/{}", self.run_name), git_router);
+        }
 
         let addr: SocketAddr = format!("{}:{}", self.host, self.port).parse()?;
         tracing::info!("Coordinator API starting on {}", addr);

@@ -19,7 +19,7 @@
 //! use std::path::PathBuf;
 //!
 //! let config = ACPClientConfig {
-//!     command: vec!["claude-code-acp".into()],
+//!     command: vec!["hirsel __acp-bridge".into()],
 //!     cwd: PathBuf::from("/path/to/project"),
 //!     ..Default::default()
 //! };
@@ -117,7 +117,7 @@ impl MCPServerConfig {
 /// Configuration for the ACP client.
 #[derive(Debug, Clone)]
 pub struct ACPClientConfig {
-    /// The command to run the agent (e.g., ["claude-code-acp"]).
+    /// The command to run the agent (e.g., ["hirsel __acp-bridge"]).
     pub command: Vec<String>,
     /// Working directory for the agent.
     pub cwd: PathBuf,
@@ -130,7 +130,7 @@ pub struct ACPClientConfig {
 impl Default for ACPClientConfig {
     fn default() -> Self {
         Self {
-            command: vec!["claude-code-acp".into()],
+            command: vec!["hirsel".into(), "__acp-bridge".into()],
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             mcp_servers: Vec::new(),
             env: HashMap::new(),
@@ -272,7 +272,7 @@ pub fn extract_tool_output(fields: &agent_client_protocol::ToolCallUpdateFields)
 /// Configuration for spawning an ACP child process.
 #[derive(Debug, Clone)]
 pub struct AcpSpawnConfig {
-    /// The command to run (e.g., ["claude-code-acp"]).
+    /// The command to run (e.g., ["hirsel __acp-bridge"]).
     pub command: Vec<String>,
     /// Working directory for the agent.
     pub cwd: PathBuf,
@@ -313,7 +313,7 @@ impl AcpSpawnConfig {
 ///
 /// This struct ensures that when the ACP process is dropped (either explicitly
 /// or when it goes out of scope), the entire process group is cleaned up,
-/// including any grandchild processes like `node claude-code-acp`.
+/// including any grandchild processes like `node hirsel __acp-bridge`.
 ///
 /// # Example
 ///
@@ -321,7 +321,7 @@ impl AcpSpawnConfig {
 /// use hirsel_lib::core::acp::{AcpChild, AcpSpawnConfig};
 ///
 /// let config = AcpSpawnConfig::new(
-///     vec!["claude-code-acp".into()],
+///     vec!["hirsel __acp-bridge".into()],
 ///     PathBuf::from("/project"),
 ///     "my-worker",
 /// );
@@ -365,10 +365,10 @@ impl AcpChild {
         cmd.current_dir(&config.cwd);
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::null());
+        cmd.stderr(Stdio::inherit()); // Inherit stderr so we can see errors
 
         // Create a new process group so we can kill all descendants on cleanup.
-        // This is critical because claude-code-acp spawns Node.js processes that
+        // This is critical because hirsel __acp-bridge spawns Node.js processes that
         // may ignore SIGTERM, but SIGKILL to the process group will kill them.
         #[cfg(unix)]
         cmd.process_group(0);
@@ -519,7 +519,7 @@ mod tests {
     #[test]
     fn test_acp_client_config_default() {
         let config = ACPClientConfig::default();
-        assert_eq!(config.command, vec!["claude-code-acp"]);
+        assert_eq!(config.command, vec!["hirsel", "__acp-bridge"]);
         assert!(config.mcp_servers.is_empty());
         assert!(config.env.is_empty());
     }

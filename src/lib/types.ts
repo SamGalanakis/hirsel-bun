@@ -6,41 +6,50 @@
  */
 
 // =============================================================================
-// Runner Types
+// Runner Types (Host + Container Model)
 // =============================================================================
 
-/** SSH runner configuration */
-export interface SshRunnerConfig {
+/** Host type - where compute runs */
+export type HostType = 'local' | 'client' | 'ssh' | 'sprite';
+
+/** Container configuration for Docker */
+export interface ContainerConfig {
+  image: string;
+}
+
+/** SSH host configuration */
+export interface SshHostConfig {
   type: 'ssh';
-  host: string;
+  address: string;
+  port: number;
   sshKey: string | null;
-  sshPort: number;
   workBase: string;
   location: string | null;
 }
 
-/** Sprite (cloud VM) runner configuration */
-export interface SpriteRunnerConfig {
+/** Sprite (cloud VM) host configuration */
+export interface SpriteHostConfig {
   type: 'sprite';
   apiToken: string | null;
-  baseCheckpoint: string | null;
+  checkpoint: string | null;
   autoDestroy: boolean;
   idleTimeoutSecs: number;
   apiUrl: string;
+  useFilePush: boolean;
 }
 
-/** DevPod runner configuration */
-export interface DevpodRunnerConfig {
-  type: 'devpod';
-  provider: string;
-  providerOptions: Record<string, string>;
-  image: string | null;
-  prebuildImage: string | null;
-  useTunnel: boolean | null;
-}
+/** Host configuration - where workers run */
+export type HostConfig =
+  | { type: 'local' }
+  | { type: 'client' }
+  | SshHostConfig
+  | SpriteHostConfig;
 
-/** Runner configuration - where workers execute */
-export type RunnerConfig = { type: 'local' } | SshRunnerConfig | SpriteRunnerConfig | DevpodRunnerConfig;
+/** Runner configuration - Host + optional Container */
+export interface RunnerConfig {
+  host: HostConfig;
+  container?: ContainerConfig;
+}
 
 /** Runner entry with name for display */
 export interface RunnerEntry {

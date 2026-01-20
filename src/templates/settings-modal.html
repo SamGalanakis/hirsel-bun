@@ -362,11 +362,23 @@
                   </div>
 
                   <div class="grid gap-2">
-                    <label for="profile-conn-access">Worker Access Method</label>
-                    <select id="profile-conn-access" class="select" :value="settings.profiles[selectedProfile]?.access?.type || 'direct'" @change="onAccessTypeChange($event.target.value); settings.profiles[selectedProfile].access = editProfileData.access">
-                      <option value="direct">Direct</option>
-                      <option value="tailscale">Tailscale</option>
-                    </select>
+                    <label>Worker Access Method</label>
+                    <div class="select" x-data="{ open: false }" data-select-initialized="true">
+                      <button type="button" class="btn-outline w-full" @click="open = !open" @click.away="open = false"
+                        aria-haspopup="listbox" :aria-expanded="open">
+                        <span class="truncate flex-1 text-left"
+                          x-text="{ direct: 'Direct', tailscale: 'Tailscale' }[settings.profiles[selectedProfile]?.access?.type] || 'Direct'"></span>
+                        <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
+                      </button>
+                      <div data-popover :aria-hidden="!open" x-show="open" x-transition>
+                        <div role="listbox" aria-orientation="vertical">
+                          <div role="option" data-value="direct" :aria-selected="settings.profiles[selectedProfile]?.access?.type === 'direct'"
+                            @click="onAccessTypeChange('direct'); settings.profiles[selectedProfile].access = editProfileData.access; open = false">Direct</div>
+                          <div role="option" data-value="tailscale" :aria-selected="settings.profiles[selectedProfile]?.access?.type === 'tailscale'"
+                            @click="onAccessTypeChange('tailscale'); settings.profiles[selectedProfile].access = editProfileData.access; open = false">Tailscale</div>
+                        </div>
+                      </div>
+                    </div>
                     <p class="text-muted-foreground text-sm">How workers connect to the orchestrator.</p>
                   </div>
 
@@ -394,14 +406,27 @@
                 <form x-show="!loadingProfile && profileTab === 'agents'" class="form grid gap-6">
                   <!-- Provider Select -->
                   <div class="grid gap-2">
-                    <label for="settings-auth-provider">Provider</label>
-                    <select id="settings-auth-provider" class="select" x-model="selectedAuthProvider" @change="onAuthProviderChange()">
-                      <option value="">Select a provider...</option>
-                      <option value="claude">Claude (Anthropic)</option>
-                      <option value="gemini">Gemini (Google)</option>
-                      <option value="codex">Codex (OpenAI)</option>
-                      <option value="goose">Goose</option>
-                    </select>
+                    <label>Provider</label>
+                    <div class="select" x-data="{ open: false }" data-select-initialized="true">
+                      <button type="button" class="btn-outline w-full" @click="open = !open" @click.away="open = false"
+                        aria-haspopup="listbox" :aria-expanded="open">
+                        <span class="truncate flex-1 text-left" :class="{ 'text-muted-foreground': !selectedAuthProvider }"
+                          x-text="{ claude: 'Claude (Anthropic)', gemini: 'Gemini (Google)', codex: 'Codex (OpenAI)', goose: 'Goose' }[selectedAuthProvider] || 'Select a provider...'"></span>
+                        <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
+                      </button>
+                      <div data-popover :aria-hidden="!open" x-show="open" x-transition>
+                        <div role="listbox" aria-orientation="vertical">
+                          <div role="option" data-value="claude" :aria-selected="selectedAuthProvider === 'claude'"
+                            @click="selectedAuthProvider = 'claude'; onAuthProviderChange(); open = false">Claude (Anthropic)</div>
+                          <div role="option" data-value="gemini" :aria-selected="selectedAuthProvider === 'gemini'"
+                            @click="selectedAuthProvider = 'gemini'; onAuthProviderChange(); open = false">Gemini (Google)</div>
+                          <div role="option" data-value="codex" :aria-selected="selectedAuthProvider === 'codex'"
+                            @click="selectedAuthProvider = 'codex'; onAuthProviderChange(); open = false">Codex (OpenAI)</div>
+                          <div role="option" data-value="goose" :aria-selected="selectedAuthProvider === 'goose'"
+                            @click="selectedAuthProvider = 'goose'; onAuthProviderChange(); open = false">Goose</div>
+                        </div>
+                      </div>
+                    </div>
                     <p class="text-muted-foreground text-sm">Select your AI provider to configure authentication.</p>
                   </div>
 
@@ -409,12 +434,25 @@
                   <div x-show="selectedAuthProvider" x-cloak class="grid gap-4">
                     <!-- Method Select -->
                     <div class="grid gap-2">
-                      <label for="settings-auth-method">Authentication Method</label>
-                      <select id="settings-auth-method" class="select" x-model="selectedAuthMethod">
-                        <option value="env">Environment Variable</option>
-                        <option value="apiKey">API Key</option>
-                        <option x-show="selectedAuthProvider === 'claude'" value="oauth">OAuth</option>
-                      </select>
+                      <label>Authentication Method</label>
+                      <div class="select" x-data="{ open: false }" data-select-initialized="true">
+                        <button type="button" class="btn-outline w-full" @click="open = !open" @click.away="open = false"
+                          aria-haspopup="listbox" :aria-expanded="open">
+                          <span class="truncate flex-1 text-left"
+                            x-text="{ env: 'Environment Variable', apiKey: 'API Key', oauth: 'OAuth' }[selectedAuthMethod] || 'Environment Variable'"></span>
+                          <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
+                        </button>
+                        <div data-popover :aria-hidden="!open" x-show="open" x-transition>
+                          <div role="listbox" aria-orientation="vertical">
+                            <div role="option" data-value="env" :aria-selected="selectedAuthMethod === 'env'"
+                              @click="selectedAuthMethod = 'env'; open = false">Environment Variable</div>
+                            <div role="option" data-value="apiKey" :aria-selected="selectedAuthMethod === 'apiKey'"
+                              @click="selectedAuthMethod = 'apiKey'; open = false">API Key</div>
+                            <div role="option" x-show="selectedAuthProvider === 'claude'" data-value="oauth" :aria-selected="selectedAuthMethod === 'oauth'"
+                              @click="selectedAuthMethod = 'oauth'; open = false">OAuth</div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
 
                     <!-- Method-specific fields -->
@@ -445,8 +483,7 @@
                     </div>
 
                     <!-- Test Connection Button -->
-                    <button type="button" @click="testConnection()" :disabled="testing" class="btn btn-outline w-fit">
-                      <i data-lucide="plug" class="w-4 h-4 mr-1.5"></i>
+                    <button type="button" @click="testConnection()" :disabled="testing" class="btn">
                       <span x-show="!testing">Test Connection</span>
                       <span x-show="testing">Testing...</span>
                     </button>
@@ -502,18 +539,19 @@
                               </svg>
                             </template>
                             <!-- Server icon for SSH runners -->
-                            <template x-if="getRunner(name)?.type === 'ssh'">
+                            <template x-if="getRunner(name)?.host?.type === 'ssh'">
                               <i data-lucide="server" class="w-4 h-4 text-sage"></i>
                             </template>
-                            <!-- Container icon for DevPod runners -->
-                            <template x-if="getRunner(name)?.type === 'devpod'">
-                              <i data-lucide="container" class="w-4 h-4 text-sage"></i>
+                            <!-- Client icon for client runners -->
+                            <template x-if="getRunner(name)?.host?.type === 'client'">
+                              <i data-lucide="monitor" class="w-4 h-4 text-sage"></i>
                             </template>
                             <span class="font-medium text-wool-200" x-text="name"></span>
-                            <span class="text-xs px-2 py-0.5 bg-pasture-600 text-wool-400 rounded" x-text="getRunnerTypeLabel(getRunner(name)?.type)"></span>
+                            <span class="text-xs px-2 py-0.5 bg-pasture-600 text-wool-400 rounded" x-text="getHostTypeLabel(getRunner(name)?.host?.type)"></span>
+                            <span x-show="getRunner(name)?.container" class="text-xs px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded">docker</span>
                             <span x-show="getCurrentDefaultRunner() === name" class="text-xs px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded">default</span>
                             <!-- SSH runner health status dot -->
-                            <span x-show="getRunner(name)?.type === 'ssh' && runnerHealth[name]"
+                            <span x-show="getRunner(name)?.host?.type === 'ssh' && runnerHealth[name]"
                               class="w-2 h-2 rounded-full shrink-0"
                               :class="{
                                 'bg-wool-500 animate-pulse': runnerHealth[name]?.status === 'checking',
@@ -537,37 +575,37 @@
                           </div>
                         </div>
                         <!-- SSH runner details -->
-                        <template x-if="getRunner(name)?.type === 'ssh'">
+                        <template x-if="getRunner(name)?.host?.type === 'ssh'">
                           <div class="mt-2 text-xs text-wool-500 grid gap-1">
                             <div class="flex items-center gap-2">
                               <span class="text-wool-600">Host:</span>
-                              <span x-text="getRunner(name)?.host"></span>
+                              <span x-text="getRunner(name)?.host?.address"></span>
                             </div>
-                            <div class="flex items-center gap-2" x-show="getRunner(name)?.sshKey">
+                            <div class="flex items-center gap-2" x-show="getRunner(name)?.host?.sshKey">
                               <span class="text-wool-600">Key:</span>
-                              <span x-text="getRunner(name)?.sshKey"></span>
+                              <span x-text="getRunner(name)?.host?.sshKey"></span>
+                            </div>
+                            <div class="flex items-center gap-2" x-show="getRunner(name)?.container">
+                              <span class="text-wool-600">Container:</span>
+                              <span x-text="getRunner(name)?.container?.image"></span>
                             </div>
                           </div>
                         </template>
                         <!-- Sprite runner details -->
-                        <template x-if="getRunner(name)?.type === 'sprite'">
-                          <div x-show="getRunner(name)?.baseCheckpoint" class="mt-2 text-xs text-wool-500 grid gap-1">
+                        <template x-if="getRunner(name)?.host?.type === 'sprite'">
+                          <div x-show="getRunner(name)?.host?.checkpoint" class="mt-2 text-xs text-wool-500 grid gap-1">
                             <div class="flex items-center gap-2">
                               <span class="text-wool-600">Checkpoint:</span>
-                              <span x-text="getRunner(name)?.baseCheckpoint"></span>
+                              <span x-text="getRunner(name)?.host?.checkpoint"></span>
                             </div>
                           </div>
                         </template>
-                        <!-- DevPod runner details -->
-                        <template x-if="getRunner(name)?.type === 'devpod'">
+                        <!-- Local runner with container details -->
+                        <template x-if="getRunner(name)?.host?.type === 'local' && getRunner(name)?.container">
                           <div class="mt-2 text-xs text-wool-500 grid gap-1">
                             <div class="flex items-center gap-2">
-                              <span class="text-wool-600">Provider:</span>
-                              <span x-text="getRunner(name)?.provider"></span>
-                            </div>
-                            <div class="flex items-center gap-2" x-show="getRunner(name)?.prebuildImage">
-                              <span class="text-wool-600">Prebuild:</span>
-                              <span x-text="getRunner(name)?.prebuildImage"></span>
+                              <span class="text-wool-600">Container:</span>
+                              <span x-text="getRunner(name)?.container?.image"></span>
                             </div>
                           </div>
                         </template>
@@ -606,95 +644,88 @@
                           <input id="runner-name" type="text" x-model="newRunnerName" placeholder="my-runner" :disabled="editingRunner !== '__new__'" />
                         </div>
 
-                        <!-- Type (only when adding new) -->
+                        <!-- Host Type (only when adding new) -->
                         <div class="grid gap-2" x-show="editingRunner === '__new__'">
-                          <label>Type</label>
-                          <select class="select" x-model="newRunnerType" @change="onRunnerTypeChange()">
-                            <option value="ssh">SSH Remote</option>
-                            <option value="sprite">Sprites Cloud</option>
-                            <option value="devpod">DevPod</option>
-                          </select>
+                          <label>Host Type</label>
+                          <div class="select" x-data="{ open: false }" data-select-initialized="true">
+                            <button type="button" class="btn-outline w-full" @click="open = !open" @click.away="open = false"
+                              aria-haspopup="listbox" :aria-expanded="open">
+                              <span class="truncate flex-1 text-left"
+                                x-text="{ local: 'Local', ssh: 'SSH Remote', sprite: 'Sprites Cloud' }[newHostType] || 'Local'"></span>
+                              <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
+                            </button>
+                            <div data-popover :aria-hidden="!open" x-show="open" x-transition>
+                              <div role="listbox" aria-orientation="vertical">
+                                <div role="option" data-value="local" :aria-selected="newHostType === 'local'"
+                                  @click="newHostType = 'local'; onHostTypeChange(); open = false">Local</div>
+                                <div role="option" data-value="ssh" :aria-selected="newHostType === 'ssh'"
+                                  @click="newHostType = 'ssh'; onHostTypeChange(); open = false">SSH Remote</div>
+                                <div role="option" data-value="sprite" :aria-selected="newHostType === 'sprite'"
+                                  @click="newHostType = 'sprite'; onHostTypeChange(); open = false">Sprites Cloud</div>
+                              </div>
+                            </div>
+                          </div>
                         </div>
 
                         <!-- SSH Fields -->
-                        <template x-if="editRunnerData.type === 'ssh'">
+                        <template x-if="editHostData.type === 'ssh'">
                           <div class="grid gap-4">
                             <div class="grid gap-2">
-                              <label for="ssh-host">SSH Host <span class="text-terra">*</span></label>
-                              <input id="ssh-host" type="text" x-model="editRunnerData.host" placeholder="user@hostname" />
+                              <label for="ssh-host">SSH Address <span class="text-terra">*</span></label>
+                              <input id="ssh-host" type="text" x-model="editHostData.address" placeholder="user@hostname" />
                               <p class="text-muted-foreground text-sm">e.g. sam@192.168.1.100</p>
                             </div>
                             <div class="grid gap-2">
                               <label for="ssh-key">SSH Key (optional)</label>
-                              <input id="ssh-key" type="text" x-model="editRunnerData.sshKey" placeholder="~/.ssh/id_rsa" />
+                              <input id="ssh-key" type="text" x-model="editHostData.sshKey" placeholder="~/.ssh/id_rsa" />
                             </div>
                             <div class="grid gap-2">
                               <label for="ssh-port">SSH Port</label>
-                              <input id="ssh-port" type="number" x-model.number="editRunnerData.sshPort" placeholder="22" />
+                              <input id="ssh-port" type="number" x-model.number="editHostData.port" placeholder="22" />
                             </div>
                             <div class="grid gap-2">
                               <label for="work-dir">Work Directory</label>
-                              <input id="work-dir" type="text" x-model="editRunnerData.workBase" placeholder="/tmp/hirsel-remote" />
+                              <input id="work-dir" type="text" x-model="editHostData.workBase" placeholder="/tmp/hirsel-remote" />
                             </div>
                           </div>
                         </template>
 
                         <!-- Sprite Fields -->
-                        <template x-if="editRunnerData.type === 'sprite'">
+                        <template x-if="editHostData.type === 'sprite'">
                           <div class="grid gap-4">
                             <div class="grid gap-2">
                               <label for="sprite-token">API Token <span class="text-terra">*</span></label>
-                              <input id="sprite-token" type="password" x-model="editRunnerData.apiToken" placeholder="••••••••" />
+                              <input id="sprite-token" type="password" x-model="editHostData.apiToken" placeholder="••••••••" />
                               <p class="text-muted-foreground text-sm">Get your token from <a href="https://sprites.dev" target="_blank" class="text-amber-500 hover:underline">sprites.dev</a></p>
                             </div>
                             <div class="grid gap-2">
                               <label for="sprite-checkpoint">Base Checkpoint (optional)</label>
-                              <input id="sprite-checkpoint" type="text" x-model="editRunnerData.baseCheckpoint" placeholder="hirsel-worker-v1" />
+                              <input id="sprite-checkpoint" type="text" x-model="editHostData.checkpoint" placeholder="hirsel-worker-v1" />
                             </div>
                             <div class="gap-2 flex flex-row items-start justify-between rounded-lg border p-4 shadow-xs">
                               <div class="flex flex-col gap-0.5">
                                 <label for="auto-destroy" class="leading-normal">Auto-destroy sprite</label>
                                 <p class="text-muted-foreground text-sm">Destroy VM when worker completes.</p>
                               </div>
-                              <input id="auto-destroy" type="checkbox" role="switch" x-model="editRunnerData.autoDestroy" />
+                              <input id="auto-destroy" type="checkbox" role="switch" x-model="editHostData.autoDestroy" />
                             </div>
                           </div>
                         </template>
 
-                        <!-- DevPod Fields -->
-                        <template x-if="editRunnerData.type === 'devpod'">
-                          <div class="grid gap-4">
-                            <div class="grid gap-2">
-                              <label for="devpod-provider">Provider <span class="text-terra">*</span></label>
-                              <select id="devpod-provider" class="select" x-model="editRunnerData.provider">
-                                <option value="docker">Docker (Local)</option>
-                                <option value="podman">Podman (Local)</option>
-                                <option value="ssh">SSH</option>
-                                <option value="kubernetes">Kubernetes</option>
-                                <option value="aws">AWS</option>
-                                <option value="gcp">Google Cloud</option>
-                                <option value="azure">Azure</option>
-                              </select>
-                              <p class="text-muted-foreground text-sm">DevPod provider. <a href="https://devpod.sh/docs/managing-providers/add-provider" target="_blank" class="text-amber-500 hover:underline">Learn more</a></p>
+                        <!-- Container Configuration (not available for Sprites) -->
+                        <template x-if="editHostData.type !== 'sprite'">
+                          <div class="mt-2">
+                            <div class="gap-2 flex flex-row items-start justify-between rounded-lg border p-4 shadow-xs">
+                              <div class="flex flex-col gap-0.5">
+                                <label for="container-enabled" class="leading-normal">Docker Container</label>
+                                <p class="text-muted-foreground text-sm">Run worker in a Docker container.</p>
+                              </div>
+                              <input id="container-enabled" type="checkbox" role="switch" x-model="editContainerEnabled" />
                             </div>
-                            <div class="grid gap-2">
-                              <label for="devpod-image">DevContainer Image (optional)</label>
-                              <input id="devpod-image" type="text" x-model="editRunnerData.image" placeholder="mcr.microsoft.com/devcontainers/base:ubuntu" />
-                              <p class="text-muted-foreground text-sm">Base image if no devcontainer.json in project.</p>
-                            </div>
-                            <div class="grid gap-2">
-                              <label for="devpod-prebuild">Prebuild Image (optional)</label>
-                              <input id="devpod-prebuild" type="text" x-model="editRunnerData.prebuildImage" placeholder="ghcr.io/myorg/hirsel-worker:latest" />
-                              <p class="text-muted-foreground text-sm">Image with hirsel+tools preinstalled for faster startup.</p>
-                            </div>
-                            <div class="grid gap-2">
-                              <label for="devpod-tunnel">SSH Tunnel</label>
-                              <select id="devpod-tunnel" class="select" x-model="editRunnerData.useTunnel">
-                                <option :value="null">Auto (tunnel for remote providers)</option>
-                                <option :value="true">Always use tunnel</option>
-                                <option :value="false">No tunnel (orchestrator reachable directly)</option>
-                              </select>
-                              <p class="text-muted-foreground text-sm">Tunnel needed if orchestrator isn't reachable from worker network.</p>
+                            <div x-show="editContainerEnabled" class="mt-4 grid gap-2">
+                              <label for="container-image">Container Image <span class="text-terra">*</span></label>
+                              <input id="container-image" type="text" x-model="editContainerImage" placeholder="rust:latest" />
+                              <p class="text-muted-foreground text-sm">Docker image URI (e.g. ghcr.io/org/dev-env)</p>
                             </div>
                           </div>
                         </template>
@@ -734,12 +765,24 @@
 
                   <!-- Pause on User Message -->
                   <div class="grid gap-2">
-                    <label for="settings-user-pause">Pause on User Message</label>
-                    <select id="settings-user-pause" class="select" x-model="settings.userMessagePause">
-                      <option value="sender">Sender only</option>
-                      <option value="all">All workers</option>
-                      <option value="none">None</option>
-                    </select>
+                    <label>Pause on User Message</label>
+                    <div class="select" x-data="{ open: false }" data-select-initialized="true">
+                      <button type="button" class="btn-outline w-full" @click="open = !open" @click.away="open = false"
+                        aria-haspopup="listbox" :aria-expanded="open">
+                        <span class="truncate flex-1 text-left" x-text="{ sender: 'Sender only', all: 'All workers', none: 'None' }[settings.userMessagePause] || 'Sender only'"></span>
+                        <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
+                      </button>
+                      <div data-popover :aria-hidden="!open" x-show="open" x-transition>
+                        <div role="listbox" aria-orientation="vertical">
+                          <div role="option" data-value="sender" :aria-selected="settings.userMessagePause === 'sender'"
+                            @click="settings.userMessagePause = 'sender'; open = false">Sender only</div>
+                          <div role="option" data-value="all" :aria-selected="settings.userMessagePause === 'all'"
+                            @click="settings.userMessagePause = 'all'; open = false">All workers</div>
+                          <div role="option" data-value="none" :aria-selected="settings.userMessagePause === 'none'"
+                            @click="settings.userMessagePause = 'none'; open = false">None</div>
+                        </div>
+                      </div>
+                    </div>
                     <p class="text-muted-foreground text-sm">Which workers pause when a user message is sent.</p>
                   </div>
 
@@ -948,11 +991,23 @@
                     <p class="text-muted-foreground text-sm">Authentication key for the remote server.</p>
                   </div>
                   <div class="grid gap-2">
-                    <label for="profile-access-type">Worker Access</label>
-                    <select id="profile-access-type" class="select" :value="editProfileData.access?.type || 'direct'" @change="onAccessTypeChange($event.target.value)">
-                      <option value="direct">Direct</option>
-                      <option value="tailscale">Tailscale</option>
-                    </select>
+                    <label>Worker Access</label>
+                    <div class="select" x-data="{ open: false }" data-select-initialized="true">
+                      <button type="button" class="btn-outline w-full" @click="open = !open" @click.away="open = false"
+                        aria-haspopup="listbox" :aria-expanded="open">
+                        <span class="truncate flex-1 text-left"
+                          x-text="{ direct: 'Direct', tailscale: 'Tailscale' }[editProfileData.access?.type] || 'Direct'"></span>
+                        <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
+                      </button>
+                      <div data-popover :aria-hidden="!open" x-show="open" x-transition>
+                        <div role="listbox" aria-orientation="vertical">
+                          <div role="option" data-value="direct" :aria-selected="editProfileData.access?.type === 'direct'"
+                            @click="onAccessTypeChange('direct'); open = false">Direct</div>
+                          <div role="option" data-value="tailscale" :aria-selected="editProfileData.access?.type === 'tailscale'"
+                            @click="onAccessTypeChange('tailscale'); open = false">Tailscale</div>
+                        </div>
+                      </div>
+                    </div>
                     <p class="text-muted-foreground text-sm">How workers connect to the orchestrator.</p>
                   </div>
                   <template x-if="editProfileData.access?.type === 'tailscale'">
