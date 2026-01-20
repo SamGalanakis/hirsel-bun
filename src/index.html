@@ -712,11 +712,22 @@ Example:
                   <div class="flex items-end gap-3">
                     <div class="grid gap-2 flex-1">
                       <label for="draft-runner">Runner</label>
-                      <select id="draft-runner" class="select" x-model="runnerDefault" @change="debouncedSave()">
-                        <template x-for="runner in availableRunners" :key="runner.name">
-                          <option :value="runner.name" x-text="runner.name === 'local' ? 'Local' : runner.name"></option>
-                        </template>
-                      </select>
+                      <div class="select" x-data="{ open: false }">
+                        <button type="button" class="btn-outline w-full" @click="open = !open" @click.away="open = false"
+                          aria-haspopup="listbox" :aria-expanded="open">
+                          <span class="truncate flex-1 text-left" x-text="runnerDefault === 'local' ? 'Local' : runnerDefault"></span>
+                          <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
+                        </button>
+                        <div data-popover :aria-hidden="!open" x-show="open" x-transition>
+                          <div role="listbox" aria-orientation="vertical">
+                            <template x-for="runner in availableRunners" :key="runner.name">
+                              <div role="option" :data-value="runner.name" :aria-selected="runnerDefault === runner.name"
+                                @click="runnerDefault = runner.name; debouncedSave(); open = false"
+                                x-text="runner.name === 'local' ? 'Local' : runner.name"></div>
+                            </template>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                     <button
                       x-show="getWorkerNames().length > 1"
@@ -745,15 +756,22 @@ Example:
                               class="text-xs text-wool-500"
                             >default</span>
                             <!-- Compact runner select -->
-                            <select
-                              class="select text-sm py-1 px-2 h-8 min-w-[120px]"
-                              :value="getWorkerRunner(workerName)"
-                              @change="setWorkerRunner(workerName, $event.target.value)"
-                            >
-                              <template x-for="runner in availableRunners" :key="runner.name">
-                                <option :value="runner.name" x-text="runner.name === 'local' ? 'Local' : runner.name"></option>
-                              </template>
-                            </select>
+                            <div class="select" x-data="{ open: false }">
+                              <button type="button" class="btn-outline text-sm py-1 px-2 h-8 min-w-[120px]" @click="open = !open" @click.away="open = false"
+                                aria-haspopup="listbox" :aria-expanded="open">
+                                <span class="truncate flex-1 text-left" x-text="(getWorkerRunner(workerName) === 'local' ? 'Local' : getWorkerRunner(workerName))"></span>
+                                <i data-lucide="chevrons-up-down" class="w-3 h-3 opacity-50 shrink-0"></i>
+                              </button>
+                              <div data-popover :aria-hidden="!open" x-show="open" x-transition>
+                                <div role="listbox" aria-orientation="vertical">
+                                  <template x-for="runner in availableRunners" :key="runner.name">
+                                    <div role="option" :data-value="runner.name" :aria-selected="getWorkerRunner(workerName) === runner.name"
+                                      @click="setWorkerRunner(workerName, runner.name); open = false"
+                                      x-text="runner.name === 'local' ? 'Local' : runner.name"></div>
+                                  </template>
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </template>
