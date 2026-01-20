@@ -480,10 +480,7 @@ impl McpServer {
         for line in stdin.lock().lines() {
             let line = match line {
                 Ok(l) => l,
-                Err(e) => {
-                    eprintln!("Error reading stdin: {}", e);
-                    continue;
-                }
+                Err(_) => continue,
             };
 
             if line.trim().is_empty() {
@@ -512,6 +509,8 @@ impl McpServer {
 
             // Exit after work_done or task_await to signal agent to stop
             if self.exit_after_response {
+                // Give Claude CLI time to read the response before we exit
+                std::thread::sleep(std::time::Duration::from_millis(500));
                 break;
             }
         }

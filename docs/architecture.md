@@ -183,7 +183,9 @@ The bridge:
 - Accepts ACP JSON-RPC on stdin (initialize, new_session, prompt)
 - Spawns Claude CLI with `--input-format stream-json --output-format stream-json`
 - Translates Claude's JSON streaming events to ACP notifications
-- Auto-approves tool permissions (permission handling is at hirsel level)
+- Pre-approves MCP tools with `--allowedTools mcp__<server>__*`
+
+**Important**: Claude CLI's `--permission-mode delegate` does NOT work for MCP tools. Using delegate mode, MCP tool calls return immediate "permission not granted" errors without sending control_request messages. MCP tools must be pre-approved using `--allowedTools mcp__<server>__*` patterns.
 
 ### Runner Types (Host + Container Model)
 

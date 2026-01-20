@@ -36,12 +36,17 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::BufRead;
 use std::path::PathBuf;
+use std::process::Child;
 use thiserror::Error;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout};
+use tokio::io::AsyncWriteExt;
+use tokio::process::ChildStdin;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
+
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 use super::acp::{collect_agent_env, MCPServerConfig};
 
@@ -82,9 +87,10 @@ pub enum CliInputMessage {
         session_id: String,
     },
     /// Response to a control request (permission check)
+    /// The response field should directly contain the permission response (e.g., {behavior: "allowAlways"})
     ControlResponse {
         request_id: String,
-        response: ControlResponsePayload,
+        response: serde_json::Value,
     },
 }
 
@@ -110,13 +116,8 @@ pub enum UserContentBlock {
     Text { text: String },
 }
 
-/// Payload for a control response.
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "subtype", rename_all = "snake_case")]
-pub enum ControlResponsePayload {
-    Success { response: serde_json::Value },
-    Error { error: String },
-}
+// ControlResponsePayload removed - we now use serde_json::Value directly
+// to send the permission response without extra nesting
 
 // =============================================================================
 // Output Message Types (received FROM the CLI)
@@ -495,8 +496,7 @@ impl ClaudeCliBridge {
     ///
     /// Returns the bridge and a receiver for events.
     pub fn spawn(config: ClaudeCliConfig) -> Result<(Self, mpsc::UnboundedReceiver<BridgeEvent>)> {
-        use std::process::Stdio;
-        use tokio::process::Command;
+        use std::process::{Command as StdCommand, Stdio};
 
         let claude_bin = config
             .claude_path
@@ -504,7 +504,8 @@ impl ClaudeCliBridge {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| "claude".to_string());
 
-        let mut cmd = Command::new(&claude_bin);
+        // Use std::process::Command to avoid tokio pipe issues with LocalSet
+        let mut cmd = StdCommand::new(&claude_bin);
 
         // Required flags for JSON streaming
         cmd.arg("--input-format").arg("stream-json");
@@ -532,6 +533,8 @@ impl ClaudeCliBridge {
         // Format: --mcp-config '{"mcpServers":{"name":{"command":"cmd","args":["a1"],"env":{"K":"V"}}}}'
         if !config.mcp_servers.is_empty() {
             let mut mcp_servers = serde_json::Map::new();
+            let mut allowed_tools: Vec<String> = Vec::new();
+
             for mcp in &config.mcp_servers {
                 let mut server_config = serde_json::json!({
                     "command": mcp.command,
@@ -545,9 +548,22 @@ impl ClaudeCliBridge {
                     server_config["env"] = serde_json::to_value(env_map).unwrap_or_default();
                 }
                 mcp_servers.insert(mcp.name.clone(), server_config);
+
+                // Pre-approve all tools from this MCP server using wildcard pattern
+                // This bypasses the permission prompt for MCP tools
+                allowed_tools.push(format!("mcp__{}__*", mcp.name));
             }
+
             let mcp_config = serde_json::json!({ "mcpServers": mcp_servers });
             cmd.arg("--mcp-config").arg(mcp_config.to_string());
+
+            // Add --allowedTools to pre-approve MCP tools
+            // --permission-mode delegate doesn't seem to work for MCP tools
+            if !allowed_tools.is_empty() {
+                for tool in &allowed_tools {
+                    cmd.arg("--allowedTools").arg(tool);
+                }
+            }
         }
 
         // Add extra arguments
@@ -579,7 +595,9 @@ impl ClaudeCliBridge {
         // permission requests ourselves via the bridge so we can auto-approve MCP tools.
         cmd.env_remove("ACP_PERMISSION_MODE");
 
-        // Spawn the process
+        // Debug: show command being executed
+
+        // Spawn the process using std::process (works reliably in LocalSet context)
         let mut child = cmd.spawn().map_err(|e| {
             ClaudeCliError::Io(std::io::Error::new(
                 e.kind(),
@@ -601,28 +619,34 @@ impl ClaudeCliBridge {
         info!(
             "[{}] Claude CLI spawned, pid={}, cwd={}",
             config.context,
-            pid.unwrap_or(0),
+            pid,
             config.cwd.display()
         );
 
         // Create event channel
         let (event_tx, event_rx) = mpsc::unbounded_channel();
 
-        // Spawn output reader task
+        // Spawn a dedicated std::thread to read from stdout synchronously
+        // This avoids tokio async I/O issues in LocalSet context
         let context = config.context.clone();
         let bypass = config.bypass_permissions;
-        tokio::spawn(Self::read_output_loop(
-            stdout,
-            event_tx,
-            context.clone(),
-            bypass,
-        ));
+        std::thread::spawn(move || {
+            Self::read_output_loop_sync(stdout, event_tx, context, bypass);
+        });
+
+        // Convert stdin to async for writing
+        let async_stdin = tokio::process::ChildStdin::from_std(stdin).map_err(|e| {
+            ClaudeCliError::Io(std::io::Error::new(
+                e.kind(),
+                format!("Failed to convert stdin: {}", e),
+            ))
+        })?;
 
         let bridge = Self {
             child,
-            stdin,
+            stdin: async_stdin,
             context: config.context,
-            pid,
+            pid: Some(pid),
             bypass_permissions: config.bypass_permissions,
             session_id: "default".to_string(),
         };
@@ -664,13 +688,11 @@ impl ClaudeCliBridge {
 
         let msg = CliInputMessage::ControlResponse {
             request_id: request_id.to_string(),
-            response: ControlResponsePayload::Success {
-                response: serde_json::to_value(ToolPermissionResponse {
-                    behavior,
-                    updated_input: None,
-                })
-                .unwrap(),
-            },
+            response: serde_json::to_value(ToolPermissionResponse {
+                behavior,
+                updated_input: None,
+            })
+            .unwrap(),
         };
         self.send_message(&msg).await
     }
@@ -679,13 +701,11 @@ impl ClaudeCliBridge {
     pub async fn respond_permission_always(&mut self, request_id: &str) -> Result<()> {
         let msg = CliInputMessage::ControlResponse {
             request_id: request_id.to_string(),
-            response: ControlResponsePayload::Success {
-                response: serde_json::to_value(ToolPermissionResponse {
-                    behavior: ToolPermissionBehavior::AllowAlways,
-                    updated_input: None,
-                })
-                .unwrap(),
-            },
+            response: serde_json::to_value(ToolPermissionResponse {
+                behavior: ToolPermissionBehavior::AllowAlways,
+                updated_input: None,
+            })
+            .unwrap(),
         };
         self.send_message(&msg).await
     }
@@ -698,7 +718,7 @@ impl ClaudeCliBridge {
     ) -> Result<()> {
         let msg = CliInputMessage::ControlResponse {
             request_id: request_id.to_string(),
-            response: ControlResponsePayload::Success { response },
+            response,
         };
         self.send_message(&msg).await
     }
@@ -713,24 +733,35 @@ impl ClaudeCliBridge {
         Ok(())
     }
 
-    /// Read and process output from the CLI.
-    async fn read_output_loop(
-        stdout: ChildStdout,
+    /// Read and process output from the CLI synchronously.
+    ///
+    /// This runs in a dedicated std::thread to avoid tokio async I/O issues
+    /// when running in a LocalSet context.
+    fn read_output_loop_sync(
+        stdout: std::process::ChildStdout,
         event_tx: mpsc::UnboundedSender<BridgeEvent>,
         context: String,
         bypass_permissions: bool,
     ) {
-        let reader = BufReader::new(stdout);
-        let mut lines = reader.lines();
+        let reader = std::io::BufReader::new(stdout);
 
         // Track current tool calls by index for completion
         let mut active_tools: HashMap<u32, (String, String)> = HashMap::new(); // index -> (id, name)
 
-        while let Ok(Some(line)) = lines.next_line().await {
+        for line_result in reader.lines() {
+            let line = match line_result {
+                Ok(l) => l,
+                Err(e) => {
+                    warn!("[{}] Read error: {}", context, e);
+                    break;
+                }
+            };
+
             if line.trim().is_empty() {
                 continue;
             }
 
+            // Debug output to stderr (visible even without tracing)
             debug!("[{}] Received: {}", context, line);
 
             match serde_json::from_str::<CliOutputMessage>(&line) {
@@ -865,7 +896,7 @@ impl ClaudeCliBridge {
                 }
             }
             CliOutputMessage::User(_) => {
-                // Echo of user message, can ignore
+                // User messages contain tool results - no special handling needed
             }
         }
     }
@@ -970,8 +1001,8 @@ impl ClaudeCliBridge {
     }
 
     /// Wait for the process to exit.
-    pub async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
-        self.child.wait().await
+    pub fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        self.child.wait()
     }
 }
 
@@ -982,16 +1013,28 @@ impl Drop for ClaudeCliBridge {
 }
 
 // =============================================================================
-// Worker Runner - Using ACP SessionUpdate Interface
+// Worker Runner - Using ClaudeCliBridge with Full Event Loop
 // =============================================================================
 
-// Note: create_hirsel_mcp_config no longer used - SDK handles MCP config directly
+use super::acp::create_hirsel_mcp_config;
 use agent_client_protocol::{
-    Client as AcpClient, ContentBlock as AcpContentBlock, ContentChunk, SessionNotification,
-    SessionUpdate, TextContent, ToolCall as AcpToolCall, ToolCallId,
-    ToolCallStatus as AcpToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    ContentBlock as AcpContentBlock, ContentChunk, SessionNotification, SessionUpdate, TextContent,
+    ToolCall as AcpToolCall, ToolCallId, ToolCallStatus as AcpToolCallStatus, ToolCallUpdate,
+    ToolCallUpdateFields, ToolKind,
 };
 use std::sync::Arc;
+
+/// Information about an active tool call for tracking state.
+#[derive(Debug, Clone)]
+struct ToolInfo {
+    #[allow(dead_code)]
+    id: String,
+    name: String,
+    #[allow(dead_code)]
+    kind: ToolKind,
+    #[allow(dead_code)]
+    input: Option<serde_json::Value>,
+}
 
 /// Configuration for running a Claude worker.
 #[derive(Debug, Clone)]
@@ -1102,188 +1145,279 @@ fn tool_name_to_acp_kind(tool_name: &str) -> ToolKind {
     }
 }
 
-/// Run a Claude worker using the Anthropic Claude Agent SDK.
+/// Get the path to the current hirsel binary for spawning MCP servers.
+fn get_hirsel_path() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.to_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "hirsel".to_string())
+}
+
+/// Send a SessionNotification to the HirselClient.
+async fn send_notification(
+    client: &crate::worker::acp_client::HirselClient,
+    session_id: &str,
+    update: SessionUpdate,
+) {
+    use agent_client_protocol::Client;
+    let notification = SessionNotification::new(session_id.to_string(), update);
+    let _ = client.session_notification(notification).await;
+}
+
+/// Run a Claude worker using the native ClaudeCliBridge.
 ///
-/// This uses the official SDK which handles permissions properly and provides
-/// a clean async interface for interacting with Claude.
+/// This is the Rust equivalent of the zed-industries/claude-code-acp TypeScript
+/// implementation. It uses ClaudeCliBridge to spawn the Claude CLI with the
+/// `--mcp-config` flag for MCP server configuration, and processes all events
+/// in a main event loop.
+///
+/// ## Key differences from the SDK approach:
+///
+/// 1. **Proven MCP handling**: ClaudeCliBridge passes `--mcp-config` to Claude CLI,
+///    which spawns MCP servers correctly.
+///
+/// 2. **Proper permission flow**: Uses `--permission-mode delegate` to receive
+///    `control_request` messages, which we auto-approve in the event loop.
+///
+/// 3. **Complete event coverage**: All BridgeEvent variants are handled, matching
+///    the zed-industries message processing.
 #[cfg(feature = "claude")]
 pub async fn run_claude_worker(config: ClaudeWorkerConfig) -> Result<WorkerResult> {
     use crate::worker::acp_client::HirselClient;
-    use claude_agent_sdk::{
-        query, ClaudeAgentOptions, McpServerConfig, McpStdioServerConfig, Message,
-        PermissionManager, PermissionResult, PermissionResultAllow,
-    };
-    use futures::StreamExt;
+    use tracing::error;
 
+    eprintln!(
+        "[DEBUG][{}] Starting Claude worker (ClaudeCliBridge) for run={}",
+        config.worker_name, config.run_name
+    );
     info!(
-        "[{}] Starting Claude worker (SDK) for run={}",
+        "[{}] Starting Claude worker (ClaudeCliBridge) for run={}",
         config.worker_name, config.run_name
     );
 
-    // Create the HirselClient for processing SessionUpdate events
+    // Create the HirselClient for writing SessionUpdate events to database
     let db_path = config.run_dir.join("hirsel.db");
     let client = Arc::new(HirselClient::new(&config.worker_name, &db_path));
 
-    // Get the path to the current hirsel binary for MCP server
-    let hirsel_path = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.to_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| "hirsel".to_string());
-
-    // Build MCP server configuration for hirsel
-    let mut mcp_servers = std::collections::HashMap::new();
-    let mut env = std::collections::HashMap::new();
-    env.insert("HIRSEL_RUN".to_string(), config.run_name.clone());
-    env.insert("HIRSEL_WORKER".to_string(), config.worker_name.clone());
-
-    mcp_servers.insert(
-        "hirsel".to_string(),
-        McpServerConfig::Stdio(McpStdioServerConfig {
-            server_type: Some("stdio".to_string()),
-            command: hirsel_path,
-            args: Some(vec!["__worker-mcp".to_string()]),
-            env: Some(env),
-        }),
+    // Build MCP config for hirsel tools
+    let mcp_config = create_hirsel_mcp_config(
+        &config.run_name,
+        &config.worker_name,
+        Some(&get_hirsel_path()),
     );
 
-    // Create permission callback that auto-approves all tools
-    let worker_name = config.worker_name.clone();
-    let permission_callback =
-        PermissionManager::callback(move |tool_name, _tool_input, _context| {
-            let worker = worker_name.clone();
-            async move {
-                debug!("[{}] Auto-approving tool: {}", worker, tool_name.as_str());
-                Ok(PermissionResult::Allow(PermissionResultAllow {
-                    updated_input: None,
-                    updated_permissions: None,
-                }))
-            }
-        });
+    // DEBUG: Try without MCP first to isolate the issue
+    let use_mcp = std::env::var("HIRSEL_NO_MCP").is_err();
 
-    // Build Claude options
-    let options = ClaudeAgentOptions::builder()
-        .mcp_servers(mcp_servers)
-        .can_use_tool(permission_callback)
-        .cwd(config.work_dir.clone())
-        .build();
+    // Configure and spawn ClaudeCliBridge
+    // - bypass_permissions: false (we want to receive PermissionRequest events)
+    // - We handle approval in the event loop below
+    let mut cli_config = ClaudeCliConfig::new(config.work_dir.clone(), &config.worker_name)
+        .bypass_permissions(false); // We handle permissions in the event loop
 
+    if use_mcp {
+        cli_config = cli_config.with_mcp_servers(vec![mcp_config]);
+    }
+
+    let (mut bridge, mut events) = ClaudeCliBridge::spawn(cli_config)?;
+
+    // Send the prompt
     info!(
         "[{}] Sending prompt ({} chars)",
         config.worker_name,
         config.prompt.len()
     );
+    bridge.send_prompt(&config.prompt).await?;
 
-    // Start the query
-    let stream = query(&config.prompt, Some(options)).await.map_err(|e| {
-        ClaudeCliError::Protocol(format!("Failed to start Claude SDK query: {}", e))
-    })?;
-    let mut stream = Box::pin(stream);
-
-    // Process events using the ACP interface
+    // Track state
+    let session_id = format!("hirsel-{}", config.worker_name);
+    let mut active_tools: HashMap<String, ToolInfo> = HashMap::new();
     let mut result = WorkerResult::default();
-    let mut active_tool_names: HashMap<String, String> = HashMap::new();
-    let session_id = format!("claude-sdk-{}", config.worker_name);
 
-    while let Some(message_result) = stream.next().await {
-        let message = match message_result {
-            Ok(m) => m,
-            Err(e) => {
-                warn!("[{}] Error from SDK: {}", config.worker_name, e);
-                continue;
-            }
-        };
-
-        match message {
-            Message::Assistant { message, .. } => {
-                // Process content blocks from assistant message
-                for block in message.content {
-                    match block {
-                        claude_agent_sdk::ContentBlock::Text { text } => {
-                            if !text.is_empty() {
-                                let update = SessionUpdate::AgentMessageChunk(ContentChunk::new(
-                                    AcpContentBlock::Text(TextContent::new(text)),
-                                ));
-                                let notification =
-                                    SessionNotification::new(session_id.clone(), update);
-                                let _ = client.session_notification(notification).await;
-                            }
-                        }
-                        claude_agent_sdk::ContentBlock::Thinking { thinking, .. } => {
-                            if !thinking.is_empty() {
-                                let update = SessionUpdate::AgentThoughtChunk(ContentChunk::new(
-                                    AcpContentBlock::Text(TextContent::new(thinking)),
-                                ));
-                                let notification =
-                                    SessionNotification::new(session_id.clone(), update);
-                                let _ = client.session_notification(notification).await;
-                            }
-                        }
-                        claude_agent_sdk::ContentBlock::ToolUse { id, name, input } => {
-                            active_tool_names.insert(id.clone(), name.clone());
-                            let kind = tool_name_to_acp_kind(&name);
-                            let update = SessionUpdate::ToolCall(
-                                AcpToolCall::new(ToolCallId::new(id), name)
-                                    .kind(kind)
-                                    .status(AcpToolCallStatus::InProgress)
-                                    .raw_input(Some(input)),
-                            );
-                            let notification = SessionNotification::new(session_id.clone(), update);
-                            let _ = client.session_notification(notification).await;
-                        }
-                        claude_agent_sdk::ContentBlock::ToolResult {
-                            tool_use_id,
-                            content,
-                            ..
-                        } => {
-                            active_tool_names.remove(&tool_use_id);
-                            let output = content.and_then(|c| match c {
-                                claude_agent_sdk::ContentValue::String(s) => Some(s),
-                                claude_agent_sdk::ContentValue::Blocks(_) => None,
-                            });
-                            let mut fields =
-                                ToolCallUpdateFields::new().status(AcpToolCallStatus::Completed);
-                            if let Some(out) = output {
-                                fields = fields.raw_output(serde_json::Value::String(out));
-                            }
-                            let update = SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
-                                ToolCallId::new(tool_use_id),
-                                fields,
-                            ));
-                            let notification = SessionNotification::new(session_id.clone(), update);
-                            let _ = client.session_notification(notification).await;
-                        }
-                    }
+    // Main event loop (like zed-industries prompt() method)
+    while let Some(event) = events.recv().await {
+        match &event {
+            // Permission handling (like canUseTool callback)
+            // Always approve with "allowAlways" - this tells Claude CLI to remember
+            // the approval for the rest of the session, reducing repeated prompts
+            BridgeEvent::PermissionRequest {
+                request_id,
+                tool_name,
+                server_name,
+                ..
+            } => {
+                eprintln!(
+                    "[DEBUG][{}] PERMISSION REQUEST: {}:{} (request_id={})",
+                    config.worker_name,
+                    server_name.as_deref().unwrap_or("builtin"),
+                    tool_name,
+                    request_id
+                );
+                debug!(
+                    "[{}] Auto-approving (allowAlways): {}:{}",
+                    config.worker_name,
+                    server_name.as_deref().unwrap_or("builtin"),
+                    tool_name
+                );
+                if let Err(e) = bridge.respond_permission_always(request_id).await {
+                    eprintln!(
+                        "[DEBUG][{}] PERMISSION RESPONSE ERROR: {}",
+                        config.worker_name, e
+                    );
+                    error!(
+                        "[{}] Failed to respond to permission request: {}",
+                        config.worker_name, e
+                    );
+                } else {
+                    eprintln!(
+                        "[DEBUG][{}] PERMISSION APPROVED: {}",
+                        config.worker_name, request_id
+                    );
                 }
             }
-            Message::Result {
-                total_cost_usd,
+
+            // Text streaming
+            BridgeEvent::TextDelta { text } => {
+                let update = SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                    AcpContentBlock::Text(TextContent::new(text.clone())),
+                ));
+                send_notification(&client, &session_id, update).await;
+            }
+
+            // Thinking/reasoning streaming
+            BridgeEvent::ThinkingDelta { thinking } => {
+                let update = SessionUpdate::AgentThoughtChunk(ContentChunk::new(
+                    AcpContentBlock::Text(TextContent::new(thinking.clone())),
+                ));
+                send_notification(&client, &session_id, update).await;
+            }
+
+            // Tool call started (like content_block_start with tool_use)
+            BridgeEvent::ToolCallStart {
+                tool_call_id,
+                tool_name,
+                input,
+            } => {
+                let kind = tool_name_to_acp_kind(tool_name);
+                active_tools.insert(
+                    tool_call_id.clone(),
+                    ToolInfo {
+                        id: tool_call_id.clone(),
+                        name: tool_name.clone(),
+                        kind,
+                        input: if input.is_null() {
+                            None
+                        } else {
+                            Some(input.clone())
+                        },
+                    },
+                );
+
+                let raw_input = if input.is_null() {
+                    None
+                } else {
+                    Some(input.clone())
+                };
+
+                let update = SessionUpdate::ToolCall(
+                    AcpToolCall::new(ToolCallId::new(tool_call_id.clone()), tool_name.clone())
+                        .kind(kind)
+                        .status(AcpToolCallStatus::InProgress)
+                        .raw_input(raw_input),
+                );
+                send_notification(&client, &session_id, update).await;
+            }
+
+            // Tool call completed (like tool_result in message)
+            BridgeEvent::ToolCallComplete {
+                tool_call_id,
+                output,
+            } => {
+                active_tools.remove(tool_call_id);
+
+                let mut fields = ToolCallUpdateFields::new().status(AcpToolCallStatus::Completed);
+                if let Some(out) = output {
+                    fields = fields.raw_output(serde_json::Value::String(out.clone()));
+                }
+
+                let update = SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                    ToolCallId::new(tool_call_id.clone()),
+                    fields,
+                ));
+                send_notification(&client, &session_id, update).await;
+            }
+
+            // Hook callbacks (for pre/post tool hooks if needed)
+            BridgeEvent::HookCallback {
+                request_id,
+                hook_type,
+                ..
+            } => {
+                debug!("[{}] Hook callback: {}", config.worker_name, hook_type);
+                if let Err(e) = bridge.respond_hook(request_id, serde_json::json!({})).await {
+                    error!(
+                        "[{}] Failed to respond to hook callback: {}",
+                        config.worker_name, e
+                    );
+                }
+            }
+
+            // Session complete with metrics
+            BridgeEvent::MessageComplete {
+                stop_reason,
+                input_tokens,
+                output_tokens,
+                cost_usd,
                 duration_ms,
-                is_error,
-                result: result_msg,
                 ..
             } => {
                 info!(
-                    "[{}] Session complete: is_error={}, cost=${:?}",
-                    config.worker_name, is_error, total_cost_usd
+                    "[{}] Complete: reason={:?}, cost=${:?}",
+                    config.worker_name, stop_reason, cost_usd
                 );
                 result = WorkerResult {
-                    stop_reason: if is_error {
-                        Some("error".to_string())
-                    } else {
-                        Some("end_turn".to_string())
-                    },
-                    input_tokens: None, // SDK doesn't expose this in Result
-                    output_tokens: None,
-                    cost_usd: total_cost_usd,
-                    duration_ms: Some(duration_ms),
+                    stop_reason: stop_reason.clone(),
+                    input_tokens: *input_tokens,
+                    output_tokens: *output_tokens,
+                    cost_usd: *cost_usd,
+                    duration_ms: *duration_ms,
                 };
-                if let Some(msg) = result_msg {
-                    debug!("[{}] Result message: {}", config.worker_name, msg);
+            }
+
+            // Process exited
+            BridgeEvent::ProcessExited { code } => {
+                info!("[{}] Process exited: {:?}", config.worker_name, code);
+                break;
+            }
+
+            // Error from CLI
+            BridgeEvent::Error { message } => {
+                error!("[{}] CLI error: {}", config.worker_name, message);
+            }
+
+            // Session init
+            BridgeEvent::SessionInit { session_id: sid } => {
+                debug!("[{}] Session initialized: {}", config.worker_name, sid);
+            }
+
+            // Input streaming (partial JSON)
+            BridgeEvent::ToolCallInputDelta { tool_call_id, .. } => {
+                // Update tool status to show input is being streamed
+                if let Some(tool_info) = active_tools.get(tool_call_id) {
+                    let title = format!("{} (streaming input...)", tool_info.name);
+                    let fields = ToolCallUpdateFields::new().title(title);
+                    let update = SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                        ToolCallId::new(tool_call_id.clone()),
+                        fields,
+                    ));
+                    send_notification(&client, &session_id, update).await;
                 }
             }
-            _ => {}
         }
     }
+
+    // Cleanup
+    bridge.cleanup();
 
     info!("[{}] Worker finished", config.worker_name);
 
@@ -1342,20 +1476,24 @@ mod tests {
     fn test_control_response_serialization() {
         let msg = CliInputMessage::ControlResponse {
             request_id: "req_123".to_string(),
-            response: ControlResponsePayload::Success {
-                response: serde_json::to_value(ToolPermissionResponse {
-                    behavior: ToolPermissionBehavior::Allow,
-                    updated_input: None,
-                })
-                .unwrap(),
-            },
+            response: serde_json::to_value(ToolPermissionResponse {
+                behavior: ToolPermissionBehavior::Allow,
+                updated_input: None,
+            })
+            .unwrap(),
         };
 
         let json = serde_json::to_string(&msg).unwrap();
         println!("Control response JSON: {}", json);
+        // Expected: {"type":"control_response","request_id":"req_123","response":{"behavior":"allow"}}
         assert!(json.contains("\"type\":\"control_response\""));
         assert!(json.contains("\"request_id\":\"req_123\""));
         assert!(json.contains("\"behavior\":\"allow\""));
+        // Verify no extra nesting
+        assert!(
+            !json.contains("\"subtype\""),
+            "Should not have subtype wrapper"
+        );
     }
 
     #[test]

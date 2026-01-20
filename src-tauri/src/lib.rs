@@ -424,6 +424,7 @@ fn run_command(
             })
             .map_err(|e| format!("Remote worker error: {}", e))?;
         }
+        #[cfg(feature = "claude")]
         Commands::AcpBridge => {
             // Run ACP bridge server for Claude CLI
             cli::acp_bridge::run_acp_bridge().map_err(|e| format!("ACP bridge error: {}", e))?;
