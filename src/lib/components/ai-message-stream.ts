@@ -12,8 +12,8 @@
  * - Markdown-ready content
  */
 
-import type { ChatMessage, ChatToolCall } from '../types';
 import { getToolKindIcon, getToolStatusIcon as getToolStatusIconSvg } from '../icons';
+import type { ChatMessage, ChatToolCall } from '../types';
 
 /**
  * Base configuration for message stream display
@@ -51,10 +51,8 @@ export function aiMessageStream(config: MessageStreamConfig = {}) {
      * Format time for display
      */
     formatTime(date: Date): string {
-      if (!(date instanceof Date)) {
-        date = new Date(date);
-      }
-      return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      const d = date instanceof Date ? date : new Date(date);
+      return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
     },
 
     /**
@@ -118,7 +116,7 @@ export function aiMessageStream(config: MessageStreamConfig = {}) {
       }
 
       this._currentMessage.content += text;
-      const idx = this.messages.findIndex(m => m.id === this._currentMessage!.id);
+      const idx = this.messages.findIndex((m) => m.id === this._currentMessage!.id);
       if (idx !== -1) {
         this._currentMessage = { ...this._currentMessage };
         this.messages[idx] = this._currentMessage;
@@ -145,7 +143,7 @@ export function aiMessageStream(config: MessageStreamConfig = {}) {
       }
 
       this._currentMessage.thinking = (this._currentMessage.thinking || '') + text;
-      const idx = this.messages.findIndex(m => m.id === this._currentMessage!.id);
+      const idx = this.messages.findIndex((m) => m.id === this._currentMessage!.id);
       if (idx !== -1) {
         this._currentMessage = { ...this._currentMessage };
         this.messages[idx] = this._currentMessage;
@@ -162,6 +160,7 @@ export function aiMessageStream(config: MessageStreamConfig = {}) {
         title,
         kind,
         status: 'in_progress',
+        input: null,
         output: null,
       };
 

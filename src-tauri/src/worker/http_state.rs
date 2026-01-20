@@ -233,13 +233,13 @@ impl HttpState {
 
     pub async fn unclaim_task(&self, task_id: &str, worker_name: &str) -> HttpStateResult<bool> {
         #[derive(Serialize)]
-        struct UncompleteRequest {
+        struct IncompleteRequest {
             worker_name: String,
         }
         let result: SuccessResponse = self
             .post(
                 &format!("/tasks/{}/unclaim", task_id),
-                &UncompleteRequest {
+                &IncompleteRequest {
                     worker_name: worker_name.to_string(),
                 },
             )

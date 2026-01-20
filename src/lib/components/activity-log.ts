@@ -2,9 +2,9 @@
  * Activity log Alpine component
  */
 
-import type { HistoryEntry } from '../types';
-import { getActionIcon as getActionIconSvg } from '../icons';
-import { dataCache, DATA_EVENTS } from '../data-cache';
+import { DATA_EVENTS, dataCache } from '../data-cache';
+import { getActionIcon as getActionIconSvg, getIcon } from '../icons';
+import type { HistoryEntry, WorkerDisplay } from '../types';
 
 export type SortDirection = 'asc' | 'desc';
 
@@ -69,10 +69,25 @@ const ACTION_BG_CLASSES: Record<string, string> = {
 /**
  * Activity log component
  */
+// Actions that are worker-specific (check detail for worker name)
+// These must match the action names used in backend log_history calls
+// Detail formats:
+//   worker_add: "{worker_name}"
+//   worker_status: "{worker_name} → {status}"
+//   task_claim/done/unclaim: "{task_id} by {worker_name}"
+const WORKER_ACTIONS = new Set([
+  'worker_status',
+  'worker_add',
+  'task_claim',
+  'task_done',
+  'task_unclaim',
+]);
+
 export function activityLog() {
   return {
     runName: null as string | null,
     entries: [] as HistoryEntry[],
+    workers: [] as WorkerDisplay[],
     loading: false,
     error: null as string | null,
     autoScroll: true,
@@ -125,7 +140,19 @@ export function activityLog() {
         }
       };
       window.addEventListener(DATA_EVENTS.HISTORY_UPDATED, historyUpdatedHandler);
-      this._eventCleanups.push(() => window.removeEventListener(DATA_EVENTS.HISTORY_UPDATED, historyUpdatedHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener(DATA_EVENTS.HISTORY_UPDATED, historyUpdatedHandler),
+      );
+
+      // Listen for workers updates from cache
+      const workersUpdatedHandler = (e: Event) => {
+        const customEvent = e as CustomEvent<WorkerDisplay[]>;
+        this.workers = customEvent.detail;
+      };
+      window.addEventListener(DATA_EVENTS.WORKERS_UPDATED, workersUpdatedHandler);
+      this._eventCleanups.push(() =>
+        window.removeEventListener(DATA_EVENTS.WORKERS_UPDATED, workersUpdatedHandler),
+      );
 
       // Listen for run selection changes
       const runSelectedHandler = (e: Event) => {
@@ -133,6 +160,7 @@ export function activityLog() {
         if (customEvent.detail) {
           this.runName = customEvent.detail;
           this.loading = true;
+          this.workers = dataCache.getWorkers();
           // Get initial history from cache
           const cachedHistory = dataCache.getHistory();
           if (cachedHistory.length > 0) {
@@ -148,7 +176,9 @@ export function activityLog() {
         }
       };
       window.addEventListener('run-selected', runSelectedHandler);
-      this._eventCleanups.push(() => window.removeEventListener('run-selected', runSelectedHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener('run-selected', runSelectedHandler),
+      );
 
       const keydownHandler = (e: KeyboardEvent) => {
         if (e.key === 'Escape' && this.isFullscreen) {
@@ -163,12 +193,15 @@ export function activityLog() {
         this.toggleFullscreen();
       };
       window.addEventListener('toggle-activity-fullscreen', toggleFullscreenHandler);
-      this._eventCleanups.push(() => window.removeEventListener('toggle-activity-fullscreen', toggleFullscreenHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener('toggle-activity-fullscreen', toggleFullscreenHandler),
+      );
 
       // Get initial data from cache if a run is already selected
       const selectedRun = dataCache.getSelectedRun();
       if (selectedRun) {
         this.runName = selectedRun;
+        this.workers = dataCache.getWorkers();
         const cachedHistory = dataCache.getHistory();
         if (cachedHistory.length > 0) {
           this.entries = cachedHistory;
@@ -181,7 +214,7 @@ export function activityLog() {
     },
 
     destroy() {
-      this._eventCleanups.forEach(fn => fn());
+      this._eventCleanups.forEach((fn) => fn());
       this._eventCleanups = [];
       if (this._cacheUnsubscribe) {
         this._cacheUnsubscribe();
@@ -220,7 +253,61 @@ export function activityLog() {
     },
 
     formatActionLabel(action: string): string {
-      return action.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      return action.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    },
+
+    // Extract worker name from entry if this is a worker-related action
+    getWorkerName(entry: HistoryEntry): string | null {
+      const normalized = entry.action.toLowerCase().replace(/[\s-]+/g, '_');
+      if (!WORKER_ACTIONS.has(normalized)) {
+        return null;
+      }
+
+      if (!entry.detail) {
+        return null;
+      }
+
+      // worker_add: detail is just the worker name
+      if (normalized === 'worker_add') {
+        return entry.detail.trim();
+      }
+
+      // worker_status: format is "{worker_name} → {status}"
+      if (normalized === 'worker_status') {
+        const arrowIdx = entry.detail.indexOf(' → ');
+        if (arrowIdx > 0) {
+          return entry.detail.substring(0, arrowIdx).trim();
+        }
+        // Fallback: first word
+        const parts = entry.detail.split(/\s+/);
+        return parts[0] || null;
+      }
+
+      // task_claim/done/unclaim: format is "{task_id} by {worker_name}"
+      const byMatch = entry.detail.match(/\s+by\s+(.+?)(?:\s*\(|$)/i);
+      if (byMatch) {
+        return byMatch[1].trim();
+      }
+
+      return null;
+    },
+
+    // Get icon for entry based on action type
+    getEntryAvatar(entry: HistoryEntry): string {
+      const normalized = entry.action.toLowerCase().replace(/[\s-]+/g, '_');
+
+      // Worker-related actions get a user icon
+      if (WORKER_ACTIONS.has(normalized)) {
+        return getIcon('user', 14);
+      }
+
+      // System/settings icon for system events
+      return getIcon('settings', 14);
+    },
+
+    // Check if entry is worker-related (for styling)
+    isWorkerEntry(entry: HistoryEntry): boolean {
+      return this.getWorkerName(entry) !== null;
     },
 
     scrollToBottom() {

@@ -9,28 +9,24 @@
  * - Context injection (run, worker, UI section)
  */
 
-import type {
-  ChatEvent,
-  ChatToolCall,
-  PendingPermission,
-  UIContext,
-} from '../types';
 import {
-  startChatSession,
-  sendChatMessage,
-  respondChatPermission,
-  stopChatSession,
+  getGypChatHistory,
   listenChatEvents,
+  respondChatPermission,
+  saveGypMessage,
+  sendChatMessage,
+  startChatSession,
+  stopChatSession,
 } from '../api';
-import { getToolKindIcon, getToolStatusIcon as getToolStatusIconSvg } from '../icons';
+import type { ChatEvent, ChatToolCall, PendingPermission, UIContext } from '../types';
+import { type OutputChunk, chunkRendererHelpers } from './chunk-renderer';
 
-/** A chunk of content in a message - text, thinking, or tool */
-interface MessageChunk {
-  id: string;
-  type: 'text' | 'thinking' | 'tool';
+/** A chunk of content in a message - reuse shared type */
+type MessageChunk = OutputChunk & {
+  // MessageChunk is same as OutputChunk
   content?: string;
   tool?: ChatToolCall;
-}
+};
 
 /** A chat message with chronologically ordered chunks */
 interface ChatMessageWithChunks {
@@ -60,6 +56,9 @@ export function directChat() {
     _currentMessage: null as ChatMessageWithChunks | null,
     _lastChunkType: null as 'text' | 'thinking' | null,
     _toolsById: new Map() as Map<string, MessageChunk>,
+    _currentRunName: null as string | null,
+    // Toggle for run-specific vs general chat (only matters when a run is selected)
+    useRunContext: true,
 
     async init() {
       // Listen for run selection changes
@@ -70,6 +69,83 @@ export function directChat() {
 
     destroy() {
       this.disconnect();
+    },
+
+    /** Get the currently selected run name from app state */
+    getSelectedRunName(): string | null {
+      return this.getAppState()?.selectedRun || null;
+    },
+
+    /** Get the effective run name based on toggle state */
+    getEffectiveRunName(): string | null {
+      const selectedRun = this.getSelectedRunName();
+      // If no run selected or toggle is off, use general chat
+      if (!selectedRun || !this.useRunContext) {
+        return null;
+      }
+      return selectedRun;
+    },
+
+    /** Toggle between run-specific and general chat */
+    async toggleContext() {
+      this.useRunContext = !this.useRunContext;
+      // Reload chat with new context
+      await this.reloadChat();
+    },
+
+    /** Reload chat history for current context */
+    async reloadChat() {
+      const runName = this.getEffectiveRunName();
+      this._currentRunName = runName;
+
+      // Load history for new context
+      try {
+        const history = await getGypChatHistory(runName);
+        if (history.length > 0) {
+          this.messages = history.map((msg) => ({
+            id: crypto.randomUUID(),
+            role: msg.role as 'user' | 'assistant' | 'system',
+            chunks: JSON.parse(msg.chunksJson),
+            timestamp: new Date(msg.timestamp),
+          }));
+          console.log(
+            `[DirectChat] Loaded ${history.length} messages for context: ${runName || 'general'}`,
+          );
+        } else {
+          // Show welcome message for empty history
+          this.messages = [
+            {
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              chunks: [
+                {
+                  id: crypto.randomUUID(),
+                  type: 'text',
+                  content: `Hello! I'm Gyp, your AI assistant for Hirsel. I can help you manage runs, tasks, and workers using the hirsel tools.\n\nWhat would you like to do today?`,
+                },
+              ],
+              timestamp: new Date(),
+            },
+          ];
+        }
+      } catch (e) {
+        console.warn('[DirectChat] Failed to load chat history:', e);
+        this.messages = [
+          {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            chunks: [
+              {
+                id: crypto.randomUUID(),
+                type: 'text',
+                content: `Hello! I'm Gyp, your AI assistant for Hirsel. I can help you manage runs, tasks, and workers using the hirsel tools.\n\nWhat would you like to do today?`,
+              },
+            ],
+            timestamp: new Date(),
+          },
+        ];
+      }
+      this.scrollToBottom();
     },
 
     getAppState(): {
@@ -85,14 +161,14 @@ export function directChat() {
       // Try to find appState from body element (where x-data="appState()" is defined)
       const body = document.body;
       // @ts-expect-error Alpine.js internal property
-      if (body._x_dataStack && body._x_dataStack[0]) {
+      if (body._x_dataStack?.[0]) {
         // @ts-expect-error Alpine.js internal property
         return body._x_dataStack[0];
       }
       // Fallback: walk up from current element
       // @ts-expect-error Alpine.js $el magic property
       let el = this.$el as HTMLElement;
-      while (el && el.parentElement) {
+      while (el?.parentElement) {
         el = el.parentElement;
         // @ts-expect-error Alpine.js internal property
         if (el._x_dataStack) {
@@ -138,41 +214,65 @@ export function directChat() {
       this.error = null;
 
       try {
-        // Start listening for events first
-        // Capture `this` to ensure correct binding in callback
-        const self = this;
         this._unlisten = await listenChatEvents((event) => {
           try {
-            self.handleChatEvent(event);
+            this.handleChatEvent(event);
           } catch (e) {
             console.error('[DirectChat] Error handling event:', e);
           }
         });
 
-        // Get context
-        const app = this.getAppState();
-        const runName = app?.selectedRun || undefined;
+        // Get context - use effective run name based on toggle
+        const runName = this.getEffectiveRunName();
+        this._currentRunName = runName;
 
-        // Start the session
+        // Start the session (pass selected run for MCP tools, regardless of chat context)
         const sessionId = await startChatSession(this.agentCommand, {
-          runName,
+          runName: this.getSelectedRunName() || undefined,
           systemPrompt: this.getSystemPrompt(),
         });
         this.sessionId = sessionId;
 
         this.connected = true;
 
-        // Add static welcome message (no model tokens used)
-        this.messages = [{
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          chunks: [{
-            id: crypto.randomUUID(),
-            type: 'text',
-            content: `Hello! I'm Gyp, your AI assistant for Hirsel. I can help you manage runs, tasks, and workers using the hirsel tools.\n\nWhat would you like to do today?`,
-          }],
-          timestamp: new Date(),
-        }];
+        // Load chat history for effective context
+        let loadedHistory = false;
+        try {
+          const history = await getGypChatHistory(runName);
+          if (history.length > 0) {
+            // Restore messages from history
+            this.messages = history.map((msg) => ({
+              id: crypto.randomUUID(),
+              role: msg.role as 'user' | 'assistant' | 'system',
+              chunks: JSON.parse(msg.chunksJson),
+              timestamp: new Date(msg.timestamp),
+            }));
+            loadedHistory = true;
+            console.log(
+              `[DirectChat] Loaded ${history.length} messages for context: ${runName || 'general'}`,
+            );
+          }
+        } catch (e) {
+          console.warn('[DirectChat] Failed to load chat history:', e);
+        }
+
+        // Add static welcome message only if no history loaded
+        if (!loadedHistory) {
+          this.messages = [
+            {
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              chunks: [
+                {
+                  id: crypto.randomUUID(),
+                  type: 'text',
+                  content: `Hello! I'm Gyp, your AI assistant for Hirsel. I can help you manage runs, tasks, and workers using the hirsel tools.\n\nWhat would you like to do today?`,
+                },
+              ],
+              timestamp: new Date(),
+            },
+          ];
+        }
       } catch (e) {
         const error = e as Error;
         this.error = error.message || 'Failed to connect';
@@ -202,6 +302,7 @@ export function directChat() {
       this._currentMessage = null;
       this._lastChunkType = null;
       this._toolsById.clear();
+      this._currentRunName = null;
     },
 
     getSystemPrompt(): string {
@@ -234,10 +335,10 @@ Be concise.`;
           this.handleThinkingDelta(event.text);
           break;
         case 'toolCallStart':
-          this.handleToolCallStart(event.toolCallId, event.title, event.kind);
+          this.handleToolCallStart(event.toolCallId, event.title, event.kind, event.input);
           break;
         case 'toolCallUpdate':
-          this.handleToolCallUpdate(event.toolCallId, event.status, event.output);
+          this.handleToolCallUpdate(event.toolCallId, event.status, event.title, event.output);
           break;
         case 'permissionRequest':
           this.handlePermissionRequest(event.request);
@@ -327,9 +428,30 @@ Be concise.`;
       this.messages = [...this.messages];
     },
 
-    handleToolCallStart(id: string, title: string, kind: string | null) {
+    handleToolCallStart(id: string, title: string, kind: string | null, input: string | null) {
       // Tool call breaks the text/thinking stream
       this._lastChunkType = null;
+
+      // Skip if this tool already exists (prevents duplicate key errors in x-for)
+      if (this._toolsById.has(id)) {
+        // Update existing tool's title/input if changed
+        const existing = this._toolsById.get(id);
+        if (existing?.tool) {
+          let updated = false;
+          if (existing.tool.title !== title) {
+            existing.tool.title = title;
+            updated = true;
+          }
+          if (input && existing.tool.input !== input) {
+            existing.tool.input = input;
+            updated = true;
+          }
+          if (updated) {
+            this.messages = [...this.messages];
+          }
+        }
+        return;
+      }
 
       if (!this._currentMessage) {
         this._currentMessage = {
@@ -348,6 +470,7 @@ Be concise.`;
         title,
         kind,
         status: 'in_progress',
+        input,
         output: null,
       };
 
@@ -363,11 +486,37 @@ Be concise.`;
       this.scrollToBottom();
     },
 
-    handleToolCallUpdate(id: string, status: string, output: string | null) {
-      const chunk = this._toolsById.get(id);
-      if (chunk && chunk.tool) {
+    handleToolCallUpdate(id: string, status: string, title: string | null, output: string | null) {
+      console.log('[DirectChat] toolCallUpdate:', {
+        id,
+        status,
+        title,
+        output: output?.substring(0, 100),
+      });
+      // First check the active map
+      let chunk = this._toolsById.get(id);
+
+      // If not found, search through all messages
+      if (!chunk) {
+        for (const msg of this.messages) {
+          for (const c of msg.chunks) {
+            if (c.type === 'tool' && c.tool?.id === id) {
+              chunk = c;
+              break;
+            }
+          }
+          if (chunk) break;
+        }
+      }
+
+      if (chunk?.tool) {
         chunk.tool.status = status;
-        chunk.tool.output = output;
+        if (title) {
+          chunk.tool.title = title;
+        }
+        if (output) {
+          chunk.tool.output = output;
+        }
         this.messages = [...this.messages];
       }
     },
@@ -380,11 +529,7 @@ Be concise.`;
       if (!this.pendingPermission || !this.sessionId) return;
 
       try {
-        await respondChatPermission(
-          this.sessionId,
-          this.pendingPermission.requestId,
-          optionId
-        );
+        await respondChatPermission(this.sessionId, this.pendingPermission.requestId, optionId);
       } catch (e) {
         console.error('Failed to respond to permission:', e);
       }
@@ -396,6 +541,14 @@ Be concise.`;
       if (this._currentMessage) {
         this._currentMessage.streaming = false;
         this.messages = [...this.messages];
+
+        // Save assistant message to history if we have a run
+        if (this._currentRunName) {
+          const msgToSave = this._currentMessage;
+          saveGypMessage(this._currentRunName, 'assistant', JSON.stringify(msgToSave.chunks)).catch(
+            (e) => console.warn('[DirectChat] Failed to save assistant message:', e),
+          );
+        }
       }
 
       this._currentMessage = null;
@@ -412,9 +565,11 @@ Be concise.`;
       const detail = app?.currentRunDetail;
       if (detail?.status === 'draft' && app?.selectedRun) {
         // Emit event to refresh the draft editor
-        window.dispatchEvent(new CustomEvent('draft-refresh', {
-          detail: app.selectedRun
-        }));
+        window.dispatchEvent(
+          new CustomEvent('draft-refresh', {
+            detail: app.selectedRun,
+          }),
+        );
       }
     },
 
@@ -434,34 +589,49 @@ Be concise.`;
     },
 
     addSystemMessage(content: string) {
-      this.messages = [...this.messages, {
-        id: crypto.randomUUID(),
-        role: 'system',
-        chunks: [{
+      this.messages = [
+        ...this.messages,
+        {
           id: crypto.randomUUID(),
-          type: 'text',
-          content,
-        }],
-        timestamp: new Date(),
-      }];
+          role: 'system',
+          chunks: [
+            {
+              id: crypto.randomUUID(),
+              type: 'text',
+              content,
+            },
+          ],
+          timestamp: new Date(),
+        },
+      ];
       this.scrollToBottom();
     },
 
     async sendMessage() {
       const content = this.inputText.trim();
-      if (!content || !this.sessionId || this.streaming) {
+      if (!content || this.streaming) {
         return;
+      }
+
+      // Lazy connect on first message
+      if (!this.sessionId && !this.loading) {
+        await this.connect();
+        if (!this.sessionId) {
+          return; // Connection failed
+        }
       }
 
       // Add user message to display (reassign for Alpine reactivity)
       const userMessage: ChatMessageWithChunks = {
         id: crypto.randomUUID(),
         role: 'user',
-        chunks: [{
-          id: crypto.randomUUID(),
-          type: 'text',
-          content,
-        }],
+        chunks: [
+          {
+            id: crypto.randomUUID(),
+            type: 'text',
+            content,
+          },
+        ],
         timestamp: new Date(),
       };
       this.messages = [...this.messages, userMessage];
@@ -469,9 +639,19 @@ Be concise.`;
       this.inputText = '';
       this.scrollToBottom();
 
+      // Save user message to history if we have a run
+      if (this._currentRunName) {
+        try {
+          await saveGypMessage(this._currentRunName, 'user', JSON.stringify(userMessage.chunks));
+        } catch (e) {
+          console.warn('[DirectChat] Failed to save user message:', e);
+        }
+      }
+
       try {
         // Send with UI context (invisible to user)
-        await sendChatMessage(this.sessionId, content, this.getUIContext());
+        // sessionId is guaranteed non-null here due to checks above
+        await sendChatMessage(this.sessionId!, content, this.getUIContext());
       } catch (e) {
         const error = e as Error;
         console.error('[DirectChat] Failed to send:', e);
@@ -496,22 +676,31 @@ Be concise.`;
       return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
     },
 
-    getToolIcon(kind: string | null): string {
-      return getToolKindIcon(kind, 14);
+    /**
+     * Toggle tool expanded state - searches all messages
+     */
+    toggleToolExpanded(toolId: string) {
+      // First check the active map
+      const activeChunk = this._toolsById.get(toolId);
+      if (activeChunk?.tool) {
+        activeChunk.tool.expanded = !activeChunk.tool.expanded;
+        this.messages = [...this.messages];
+        return;
+      }
+
+      // Search through all messages for completed tools
+      for (const msg of this.messages) {
+        for (const chunk of msg.chunks) {
+          if (chunk.type === 'tool' && chunk.tool?.id === toolId) {
+            chunk.tool.expanded = !chunk.tool.expanded;
+            this.messages = [...this.messages];
+            return;
+          }
+        }
+      }
     },
 
-    getToolStatusIcon(status: string): string {
-      return getToolStatusIconSvg(status, 12);
-    },
-
-    getToolStatusClass(status: string): string {
-      const classes: Record<string, string> = {
-        pending: 'text-wool-500',
-        in_progress: 'text-amber-400',
-        completed: 'text-sage',
-        failed: 'text-terra',
-      };
-      return classes[status] || 'text-wool-500';
-    },
+    // Spread shared chunk renderer helpers
+    ...chunkRendererHelpers(),
   };
 }

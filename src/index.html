@@ -6,252 +6,14 @@
   <title>Hirsel</title>
   <style>html,body{background:#1a1a1a!important}</style>
   <link rel="stylesheet" href="./styles/main.css">
-  <script defer src="https://cdn.jsdelivr.net/npm/basecoat-css@0.3/dist/js/all.min.js"></script>
+  <script defer src="/basecoat.js"></script>
 </head>
 <body class="h-screen flex flex-col overflow-hidden" x-data="appState()" style="background:#1a1a1a">
 
-<!-- SVG Definitions for reusable sheep illustrations -->
-  <svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
-    <defs>
-      <!-- Single sheep icon -->
-      <symbol id="sheep-icon" viewBox="0 0 64 64">
-        <!-- Body (fluffy wool) -->
-        <ellipse cx="32" cy="38" rx="20" ry="14" fill="currentColor" opacity="0.3"/>
-        <ellipse cx="30" cy="36" rx="18" ry="12" fill="currentColor" opacity="0.5"/>
-        <ellipse cx="32" cy="34" rx="16" ry="10" fill="currentColor" opacity="0.8"/>
-        <!-- Head -->
-        <ellipse cx="48" cy="28" rx="8" ry="6" fill="currentColor"/>
-        <!-- Ear -->
-        <ellipse cx="52" cy="22" rx="3" ry="4" fill="currentColor" opacity="0.8"/>
-        <!-- Eye -->
-        <circle cx="50" cy="27" r="2" fill="#1a1f1c"/>
-        <!-- Legs -->
-        <rect x="22" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7"/>
-        <rect x="28" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7"/>
-        <rect x="36" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7"/>
-        <rect x="42" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7"/>
-      </symbol>
+<!--#include file="./templates/svg-definitions.html" -->
 
-      <!-- Sleeping sheep (for idle/empty states) -->
-      <symbol id="sheep-sleeping" viewBox="0 0 64 64">
-        <!-- Body (fluffy wool) -->
-        <ellipse cx="32" cy="40" rx="20" ry="12" fill="currentColor" opacity="0.3"/>
-        <ellipse cx="30" cy="38" rx="18" ry="10" fill="currentColor" opacity="0.5"/>
-        <ellipse cx="32" cy="36" rx="16" ry="8" fill="currentColor" opacity="0.8"/>
-        <!-- Head (resting) -->
-        <ellipse cx="46" cy="34" rx="7" ry="5" fill="currentColor"/>
-        <!-- Ear -->
-        <ellipse cx="50" cy="30" rx="2" ry="3" fill="currentColor" opacity="0.8"/>
-        <!-- Closed eyes (zzz) -->
-        <path d="M47 33 L49 33" stroke="#1a1f1c" stroke-width="2" stroke-linecap="round"/>
-        <!-- ZZZ -->
-        <text x="52" y="20" font-size="8" fill="currentColor" opacity="0.6" font-weight="bold">z</text>
-        <text x="55" y="14" font-size="6" fill="currentColor" opacity="0.4" font-weight="bold">z</text>
-        <!-- Legs (tucked) -->
-        <rect x="20" y="44" width="3" height="6" rx="1" fill="currentColor" opacity="0.7"/>
-        <rect x="26" y="44" width="3" height="6" rx="1" fill="currentColor" opacity="0.7"/>
-        <rect x="38" y="44" width="3" height="6" rx="1" fill="currentColor" opacity="0.7"/>
-        <rect x="44" y="44" width="3" height="6" rx="1" fill="currentColor" opacity="0.7"/>
-      </symbol>
 
-      <!-- Flock of sheep (for "no runs" state) -->
-      <symbol id="sheep-flock" viewBox="0 0 128 64">
-        <!-- Back sheep (smaller, faded) -->
-        <g transform="translate(10, 8) scale(0.6)" opacity="0.4">
-          <use href="#sheep-sleeping"/>
-        </g>
-        <g transform="translate(60, 4) scale(0.5)" opacity="0.3">
-          <use href="#sheep-sleeping"/>
-        </g>
-        <!-- Front sheep -->
-        <g transform="translate(30, 10) scale(0.8)">
-          <use href="#sheep-sleeping"/>
-        </g>
-      </symbol>
-
-      <!-- Loading sheep (animated in CSS) -->
-      <symbol id="sheep-walking" viewBox="0 0 64 64">
-        <!-- Body -->
-        <ellipse cx="32" cy="36" rx="18" ry="12" fill="currentColor" opacity="0.3"/>
-        <ellipse cx="30" cy="34" rx="16" ry="10" fill="currentColor" opacity="0.5"/>
-        <ellipse cx="32" cy="32" rx="14" ry="8" fill="currentColor" opacity="0.8"/>
-        <!-- Head -->
-        <ellipse cx="46" cy="26" rx="7" ry="5" fill="currentColor"/>
-        <!-- Ear -->
-        <ellipse cx="50" cy="21" rx="2" ry="3" fill="currentColor" opacity="0.8"/>
-        <!-- Eye -->
-        <circle cx="48" cy="25" r="1.5" fill="#1a1f1c"/>
-        <!-- Legs (will be animated) -->
-        <rect class="sheep-leg-back" x="20" y="40" width="3" height="12" rx="1" fill="currentColor" opacity="0.7"/>
-        <rect class="sheep-leg-front" x="26" y="40" width="3" height="12" rx="1" fill="currentColor" opacity="0.7"/>
-        <rect class="sheep-leg-back" x="36" y="40" width="3" height="12" rx="1" fill="currentColor" opacity="0.7"/>
-        <rect class="sheep-leg-front" x="42" y="40" width="3" height="12" rx="1" fill="currentColor" opacity="0.7"/>
-      </symbol>
-
-      <!-- Alert sheep (for errors) -->
-      <symbol id="sheep-alert" viewBox="0 0 64 64">
-        <!-- Body (fluffy wool) -->
-        <ellipse cx="32" cy="38" rx="18" ry="12" fill="currentColor" opacity="0.3"/>
-        <ellipse cx="30" cy="36" rx="16" ry="10" fill="currentColor" opacity="0.5"/>
-        <ellipse cx="32" cy="34" rx="14" ry="8" fill="currentColor" opacity="0.8"/>
-        <!-- Head (alert, looking up) -->
-        <ellipse cx="46" cy="24" rx="7" ry="5" fill="currentColor"/>
-        <!-- Ears (perked up) -->
-        <ellipse cx="49" cy="17" rx="2" ry="4" fill="currentColor" opacity="0.8"/>
-        <ellipse cx="44" cy="18" rx="2" ry="3" fill="currentColor" opacity="0.8"/>
-        <!-- Wide eye -->
-        <circle cx="48" cy="23" r="2" fill="#1a1f1c"/>
-        <circle cx="48.5" cy="22.5" r="0.5" fill="#fff"/>
-        <!-- Exclamation -->
-        <text x="54" y="14" font-size="10" fill="#d9534f" font-weight="bold">!</text>
-        <!-- Legs -->
-        <rect x="22" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7"/>
-        <rect x="28" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7"/>
-        <rect x="36" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7"/>
-        <rect x="42" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7"/>
-      </symbol>
-    </defs>
-  </svg>
-
-<!-- Toast Notifications Container -->
-  <div
-    x-data="toastContainer()"
-    class="fixed bottom-4 right-4 z-[100] flex flex-col-reverse gap-2 pointer-events-none"
-  >
-    <template x-for="toast in toasts" :key="toast.id">
-      <div
-        x-show="toast.visible"
-        x-transition:enter="transition ease-out duration-150"
-        x-transition:enter-start="translate-y-2 opacity-0"
-        x-transition:enter-end="translate-y-0 opacity-100"
-        x-transition:leave="transition ease-in duration-100"
-        x-transition:leave-start="translate-y-0 opacity-100"
-        x-transition:leave-end="translate-y-2 opacity-0"
-        class="pointer-events-auto px-3 py-2 rounded-md shadow-lg bg-pasture-800/95 backdrop-blur-sm flex items-center gap-2"
-      >
-        <!-- Icon -->
-        <span :class="{
-          'text-terra': toast.type === 'error',
-          'text-sage': toast.type === 'success',
-          'text-amber-400': toast.type === 'warning',
-          'text-wool-400': toast.type === 'info'
-        }">
-          <i x-show="toast.type === 'error'" data-lucide="x-circle" class="w-4 h-4"></i>
-          <i x-show="toast.type === 'success'" data-lucide="check-circle" class="w-4 h-4"></i>
-          <i x-show="toast.type === 'warning'" data-lucide="alert-triangle" class="w-4 h-4"></i>
-          <i x-show="toast.type === 'info'" data-lucide="info" class="w-4 h-4"></i>
-        </span>
-        <!-- Content -->
-        <span class="text-sm text-wool-200" x-text="toast.title"></span>
-        <!-- Dismiss button -->
-        <button
-          @click="dismissToast(toast.id)"
-          class="ml-2 text-wool-500 hover:text-wool-300 transition-colors"
-        >
-          <i data-lucide="x" class="w-3.5 h-3.5"></i>
-        </button>
-      </div>
-    </template>
-  </div>
-
-    <!-- Title Bar -->
-  <header class="title-bar flex items-center justify-between px-4 py-2 border-b border-pasture-600 select-none">
-    <div class="flex items-center gap-2">
-      <div class="relative" x-data="{ baas: [], nextId: 0 }">
-        <button
-          @click="$el.classList.add('sheep-squish'); setTimeout(() => $el.classList.remove('sheep-squish'), 400); let id = nextId++; baas.push({ id, x: Math.random() * 10 - 5 }); setTimeout(() => baas = baas.filter(b => b.id !== id), 800)"
-          class="text-xl cursor-pointer hover:scale-110 transition-transform select-none sheep-btn"
-        >🐑</button>
-        <template x-for="baa in baas" :key="baa.id">
-          <span
-            x-init="setTimeout(() => $el.classList.add('baa-float'), 10)"
-            :style="`--baa-x: ${baa.x}px`"
-            class="absolute -top-2 left-1 text-[10px] text-amber-400 font-medium pointer-events-none baa-text"
-          >Baa!</span>
-        </template>
-      </div>
-      <h1 class="text-lg font-semibold text-amber-500">Hirsel</h1>
-    </div>
-    <div class="flex items-center gap-1">
-      <!-- Theme Toggle -->
-      <button @click="toggleTheme()" class="p-2 rounded hover:bg-pasture-700 text-wool-300">
-        <!-- Sun icon (shown in dark mode) -->
-        <i x-show="isDarkTheme" data-lucide="sun" class="w-4 h-4"></i>
-        <!-- Moon icon (shown in light mode) -->
-        <i x-show="!isDarkTheme" data-lucide="moon" class="w-4 h-4"></i>
-      </button>
-      <!-- Gyp Button -->
-      <button @click="toggleAiChat()" class="p-1 rounded hover:bg-pasture-700 text-wool-300 relative" :class="{ 'bg-pasture-700': aiChatOpen }">
-        <i data-lucide="sparkles" class="w-4 h-4"></i>
-      </button>
-      <!-- Notifications Bell -->
-      <div class="relative" x-data="notifications()">
-        <button @click="toggleNotifications()" class="p-2 rounded hover:bg-pasture-700 text-wool-300 relative" :class="{ 'bg-pasture-700': open }">
-          <i data-lucide="bell" class="w-4 h-4"></i>
-          <span x-show="totalUnread > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-terra rounded-full text-[10px] text-white font-bold flex items-center justify-center px-1" x-text="totalUnread > 99 ? '99+' : totalUnread"></span>
-        </button>
-        <!-- Notifications dropdown -->
-        <div
-          x-show="open"
-          @click.away="open = false"
-          x-transition:enter="transition ease-out duration-150"
-          x-transition:enter-start="opacity-0 scale-95"
-          x-transition:enter-end="opacity-100 scale-100"
-          x-transition:leave="transition ease-in duration-100"
-          x-transition:leave-start="opacity-100 scale-100"
-          x-transition:leave-end="opacity-0 scale-95"
-          class="absolute right-0 mt-2 w-80 bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl z-50 overflow-hidden"
-        >
-          <div class="p-3 border-b border-pasture-600 flex items-center justify-between">
-            <h3 class="text-sm font-medium text-wool-300">Notifications</h3>
-            <button x-show="notifications.length > 0" @click="markAllRead()" class="text-xs text-wool-500 hover:text-wool-300">Mark all read</button>
-          </div>
-          <div class="max-h-80 overflow-y-auto" x-ref="notifList" x-init="$watch('open', (val) => { if (val) $nextTick(() => setScrollRoot($el)); })">
-            <template x-for="notif in notifications" :key="notif.id">
-              <div
-                :data-notif-id="notif.id"
-                x-init="observeNotification($el)"
-                @click="goToRun(notif.runName); open = false"
-                class="p-3 hover:bg-pasture-700 cursor-pointer border-b border-pasture-700 last:border-0 transition-opacity duration-300 group relative"
-                :class="{ 'bg-pasture-700/50': !notif.read, 'opacity-50': notif.read }"
-              >
-                <div class="flex items-center gap-2 mb-1">
-                  <span class="text-xs font-medium text-amber-500" x-text="notif.runName"></span>
-                  <span class="text-xs text-wool-600" x-text="notif.thread"></span>
-                  <span class="text-xs text-wool-600 ml-auto" x-text="formatTime(notif.timestamp)"></span>
-                  <!-- Dismiss button (only for unread) -->
-                  <button
-                    x-show="!notif.read"
-                    @click.stop="markOneRead(notif.id)"
-                    class="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-pasture-600 text-wool-500 hover:text-wool-300 transition-opacity"
-                    title="Mark as read"
-                  >
-                    <i data-lucide="x" class="w-3 h-3"></i>
-                  </button>
-                  <!-- Read indicator -->
-                  <span x-show="notif.read" class="text-xs text-wool-600">read</span>
-                </div>
-                <p class="text-sm text-wool-300 truncate" x-text="notif.content"></p>
-                <p class="text-xs text-wool-500 mt-0.5" x-text="notif.sender"></p>
-              </div>
-            </template>
-            <div x-show="notifications.length === 0" class="p-6 text-center text-wool-500">
-              <i data-lucide="bell-off" class="w-8 h-8 mx-auto mb-2 text-wool-600"></i>
-              <p class="text-sm">No notifications</p>
-            </div>
-          </div>
-        </div>
-      </div>
-      <!-- Help Button -->
-      <button @click="showHelp = true" class="p-2 rounded hover:bg-pasture-700 text-wool-300">
-        <i data-lucide="help-circle" class="w-4 h-4"></i>
-      </button>
-      <!-- Settings Button -->
-      <button @click="showSettings = true" class="p-2 rounded hover:bg-pasture-700 text-wool-300">
-        <i data-lucide="settings" class="w-4 h-4"></i>
-      </button>
-    </div>
-  </header>
+<!--#include file="./templates/title-bar.html" -->
 
   <!-- Main Content Area -->
   <main class="flex-1 flex overflow-hidden bg-pasture-900">
@@ -583,119 +345,7 @@
 
       <!-- Draft Editor Content -->
       <div x-show="!loading" class="flex-1 flex flex-col overflow-hidden">
-        <!-- Configuration Card (compact, at top) -->
-        <div class="px-6 pt-8 pb-4 border-b border-pasture-700 bg-pasture-800/20 overflow-visible">
-          <div class="flex flex-wrap items-end gap-4">
-            <!-- Repository -->
-            <div class="flex-1 min-w-[280px] max-w-xl">
-              <label class="text-xs text-wool-400 flex items-center gap-1.5 mb-1.5">
-                Repository
-                <span class="inline-flex" data-tooltip="Local path or GitHub URL (branch can be specified in URL like /tree/branch)" data-side="top"><i data-lucide="help-circle" class="w-3 h-3 text-wool-600 hover:text-wool-400"></i></span>
-                <span
-                  x-show="projectPath && repoIsRemote"
-                  class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-400"
-                >remote</span>
-                <span
-                  x-show="projectPath && !repoIsRemote && availableBranches.length > 0"
-                  class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-pasture-600 text-wool-400"
-                >local</span>
-                <span
-                  x-show="repoValidating"
-                  class="ml-1 flex items-center gap-1 text-[10px] text-wool-500"
-                >
-                  <div class="spinner w-3 h-3 border-wool-500"></div>
-                  checking...
-                </span>
-              </label>
-              <div class="flex gap-2">
-                <input
-                  type="text"
-                  x-model="projectPath"
-                  @input="debouncedSave(); debouncedValidateProjectPath()"
-                  :class="{'!border-terra': repoError}"
-                  class="input flex-1 min-w-0"
-                  placeholder="/path/to/project or https://github.com/user/repo"
-                />
-                <select
-                  x-show="availableBranches.length > 0"
-                  x-model="selectedBranch"
-                  @change="onBranchChange()"
-                  :class="{'!border-terra': !selectedBranch && availableBranches.length > 0}"
-                  class="select w-36 shrink-0"
-                >
-                  <option value="">Select branch...</option>
-                  <template x-for="branch in availableBranches" :key="branch">
-                    <option :value="branch" x-text="branch"></option>
-                  </template>
-                </select>
-              </div>
-              <p
-                x-show="repoError"
-                x-text="repoError"
-                class="mt-1 text-xs text-terra"
-              ></p>
-              <p
-                x-show="!repoError && (needsDirCreate || needsGitInit)"
-                class="mt-1 text-xs text-amber-400 flex items-center gap-1"
-              >
-                <i data-lucide="info" class="w-3 h-3"></i>
-                <span x-text="needsDirCreate ? 'Directory will be created and git initialized' : 'Git will be initialized with a main branch'"></span>
-              </p>
-            </div>
-            <!-- Workers -->
-            <div class="shrink-0">
-              <label class="text-xs text-wool-400 flex items-center gap-1.5 mb-1.5">
-                Workers
-                <span class="inline-flex" data-tooltip="Parallel AI workers. Examples: 1, 1-3, 2+" data-side="top"><i data-lucide="help-circle" class="w-3 h-3 text-wool-600 hover:text-wool-400"></i></span>
-              </label>
-              <input
-                type="text"
-                x-model="workerScale"
-                @input="debouncedSave()"
-                @blur="validateWorkerScale()"
-                class="input w-20 text-center"
-                :class="{'!border-terra': workerScaleError}"
-                placeholder="1"
-              />
-              <p x-show="workerScaleError" x-text="workerScaleError" class="text-[10px] text-terra mt-1 max-w-[120px]"></p>
-            </div>
-            <!-- Time Limit -->
-            <div class="shrink-0">
-              <label class="text-xs text-wool-400 flex items-center gap-1.5 mb-1.5">
-                Time limit
-                <span class="inline-flex" data-tooltip="Max duration. Examples: 30m, 1h, 1h30m. Leave empty for no limit." data-side="top"><i data-lucide="help-circle" class="w-3 h-3 text-wool-600 hover:text-wool-400"></i></span>
-              </label>
-              <div class="relative">
-                <input
-                  type="text"
-                  x-model="timeLimitInput"
-                  @input="debouncedSave()"
-                  @blur="validateTimeLimit()"
-                  class="input w-20 text-center"
-                  :class="{'!border-terra': timeLimitError}"
-                  placeholder=""
-                />
-                <span x-show="!timeLimitInput && !timeLimitError" class="absolute inset-0 flex items-center justify-center text-wool-500 pointer-events-none">
-                  <i data-lucide="infinity" class="w-4 h-4"></i>
-                </span>
-              </div>
-              <p x-show="timeLimitError" x-text="timeLimitError" class="text-[10px] text-terra mt-1 max-w-[120px]"></p>
-            </div>
-            <!-- HITL Toggle -->
-            <label class="label gap-2 cursor-pointer shrink-0 py-1.5">
-              <input
-                type="checkbox"
-                x-model="humanInTheLoop"
-                @change="debouncedSave()"
-                class="input"
-              />
-              <span class="text-xs text-wool-400">HITL</span>
-              <span class="inline-flex" data-tooltip="Human in the Loop - workers pause and wait for your approval" data-side="top"><i data-lucide="help-circle" class="w-3 h-3 text-wool-600 hover:text-wool-400"></i></span>
-            </label>
-          </div>
-        </div>
-
-        <!-- Tabs for Spec/Eval with Preview Toggle -->
+        <!-- Tabs for Spec/Eval/Settings with Preview Toggle -->
         <div class="flex items-center px-6 border-b border-pasture-600 bg-pasture-800/30">
           <div class="flex items-center gap-1">
             <button
@@ -720,44 +370,15 @@
                 <span x-show="savingEval" class="text-[10px] text-wool-600">(saving...)</span>
               </span>
             </button>
-          </div>
-          <!-- Actions -->
-          <div class="ml-auto flex items-center gap-1">
-            <!-- Load File Button -->
             <button
-              @click="openFilePicker(activeTab)"
-              class="p-1.5 text-wool-500 hover:text-wool-200 hover:bg-pasture-700 rounded transition-colors"
-              data-tooltip="Load file"
-              data-side="bottom"
-              type="button"
+              @click="activeTab = 'settings'"
+              class="px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px"
+              :class="activeTab === 'settings' ? 'text-amber-500 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M9 15h6"/><path d="M12 18v-6"/></svg>
-            </button>
-            <!-- Open Assets Folder Button -->
-            <button
-              @click="openAssets()"
-              class="p-1.5 text-wool-500 hover:text-wool-200 hover:bg-pasture-700 rounded transition-colors"
-              data-tooltip="Open assets folder"
-              data-side="bottom"
-              type="button"
-            >
-              <i data-lucide="folder-open" class="w-4 h-4"></i>
-            </button>
-            <div class="w-px h-4 bg-pasture-600 mx-1"></div>
-            <!-- Preview Toggle -->
-            <button
-              @click="previewMode = !previewMode"
-              class="px-2 py-1 text-xs rounded transition-colors"
-              :class="!previewMode ? 'bg-pasture-700 text-wool-200' : 'text-wool-500 hover:text-wool-300'"
-            >
-              <i data-lucide="edit-3" class="w-3.5 h-3.5 inline-block mr-1"></i>Edit
-            </button>
-            <button
-              @click="previewMode = !previewMode"
-              class="px-2 py-1 text-xs rounded transition-colors"
-              :class="previewMode ? 'bg-pasture-700 text-wool-200' : 'text-wool-500 hover:text-wool-300'"
-            >
-              <i data-lucide="eye" class="w-3.5 h-3.5 inline-block mr-1"></i>Preview
+              <span class="flex items-center gap-2">
+                <i data-lucide="settings" class="w-4 h-4"></i>
+                Settings
+              </span>
             </button>
           </div>
         </div>
@@ -766,6 +387,48 @@
         <div class="flex-1 overflow-hidden">
           <!-- Spec Tab -->
           <div x-show="activeTab === 'spec'" class="h-full flex flex-col min-h-0">
+            <!-- Toolbar -->
+            <div class="flex items-center justify-between px-4 py-2 border-b border-pasture-700 bg-pasture-800/50">
+              <div class="flex items-center gap-1">
+                <!-- Load File Button -->
+                <button
+                  @click="openFilePicker('spec')"
+                  class="p-1.5 text-wool-500 hover:text-wool-200 hover:bg-pasture-700 rounded transition-colors"
+                  data-tooltip="Load file"
+                  data-side="bottom"
+                  type="button"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M9 15h6"/><path d="M12 18v-6"/></svg>
+                </button>
+                <!-- Open Assets Folder Button -->
+                <button
+                  @click="openAssets()"
+                  class="p-1.5 text-wool-500 hover:text-wool-200 hover:bg-pasture-700 rounded transition-colors"
+                  data-tooltip="Open assets folder"
+                  data-side="bottom"
+                  type="button"
+                >
+                  <i data-lucide="folder-open" class="w-4 h-4"></i>
+                </button>
+              </div>
+              <!-- Edit/Preview Toggle -->
+              <div class="flex items-center gap-1">
+                <button
+                  @click="previewMode = false"
+                  class="px-2 py-1 text-xs rounded transition-colors"
+                  :class="!previewMode ? 'bg-pasture-600 text-wool-200' : 'text-wool-500 hover:text-wool-300'"
+                >
+                  <i data-lucide="edit-3" class="w-3.5 h-3.5 inline-block mr-1"></i>Edit
+                </button>
+                <button
+                  @click="previewMode = true"
+                  class="px-2 py-1 text-xs rounded transition-colors"
+                  :class="previewMode ? 'bg-pasture-600 text-wool-200' : 'text-wool-500 hover:text-wool-300'"
+                >
+                  <i data-lucide="eye" class="w-3.5 h-3.5 inline-block mr-1"></i>Preview
+                </button>
+              </div>
+            </div>
             <!-- Drop Zone Wrapper -->
             <div
               class="flex-1 min-h-0 flex flex-col relative drop-zone"
@@ -778,6 +441,7 @@
               <!-- Edit Mode -->
               <div x-show="!previewMode" class="flex-1 flex flex-col">
                 <textarea
+                  id="spec-textarea"
                   x-model="spec"
                   @input="debouncedSaveSpec(); trackCursorPosition('spec', $event)"
                   @click="trackCursorPosition('spec', $event)"
@@ -821,6 +485,48 @@ Example:
 
           <!-- Eval Tab -->
           <div x-show="activeTab === 'eval'" class="h-full flex flex-col min-h-0">
+            <!-- Toolbar -->
+            <div class="flex items-center justify-between px-4 py-2 border-b border-pasture-700 bg-pasture-800/50">
+              <div class="flex items-center gap-1">
+                <!-- Load File Button -->
+                <button
+                  @click="openFilePicker('eval')"
+                  class="p-1.5 text-wool-500 hover:text-wool-200 hover:bg-pasture-700 rounded transition-colors"
+                  data-tooltip="Load file"
+                  data-side="bottom"
+                  type="button"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M9 15h6"/><path d="M12 18v-6"/></svg>
+                </button>
+                <!-- Open Assets Folder Button -->
+                <button
+                  @click="openAssets()"
+                  class="p-1.5 text-wool-500 hover:text-wool-200 hover:bg-pasture-700 rounded transition-colors"
+                  data-tooltip="Open assets folder"
+                  data-side="bottom"
+                  type="button"
+                >
+                  <i data-lucide="folder-open" class="w-4 h-4"></i>
+                </button>
+              </div>
+              <!-- Edit/Preview Toggle -->
+              <div class="flex items-center gap-1">
+                <button
+                  @click="previewMode = false"
+                  class="px-2 py-1 text-xs rounded transition-colors"
+                  :class="!previewMode ? 'bg-pasture-600 text-wool-200' : 'text-wool-500 hover:text-wool-300'"
+                >
+                  <i data-lucide="edit-3" class="w-3.5 h-3.5 inline-block mr-1"></i>Edit
+                </button>
+                <button
+                  @click="previewMode = true"
+                  class="px-2 py-1 text-xs rounded transition-colors"
+                  :class="previewMode ? 'bg-pasture-600 text-wool-200' : 'text-wool-500 hover:text-wool-300'"
+                >
+                  <i data-lucide="eye" class="w-3.5 h-3.5 inline-block mr-1"></i>Preview
+                </button>
+              </div>
+            </div>
             <!-- Drop Zone Wrapper -->
             <div
               class="flex-1 min-h-0 flex flex-col relative drop-zone"
@@ -833,6 +539,7 @@ Example:
               <!-- Edit Mode -->
               <div x-show="!previewMode" class="flex-1 flex flex-col">
                 <textarea
+                  id="eval-textarea"
                   x-model="eval"
                   @input="debouncedSaveEval(); trackCursorPosition('eval', $event)"
                   @click="trackCursorPosition('eval', $event)"
@@ -873,6 +580,191 @@ Example:
               </div>
             </div>
           </div>
+
+          <!-- Settings Tab -->
+          <div x-show="activeTab === 'settings'" class="h-full overflow-y-auto p-6">
+            <form class="form grid gap-6 max-w-xl mx-auto">
+              <!-- Repository Section -->
+              <div class="grid gap-4">
+                <h3 class="text-sm font-medium text-wool-300 flex items-center gap-2">
+                  <i data-lucide="folder-git-2" class="w-4 h-4 text-wool-500"></i>
+                  Repository
+                </h3>
+                <!-- Repository Path/URL -->
+                <div class="grid gap-2">
+                  <label for="draft-project-path" class="flex items-center gap-1.5">
+                    Path or URL
+                    <span
+                      x-show="projectPath && repoIsRemote"
+                      class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-400"
+                    >remote</span>
+                    <span
+                      x-show="projectPath && !repoIsRemote && availableBranches.length > 0"
+                      class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-pasture-600 text-wool-400"
+                    >local</span>
+                    <span
+                      x-show="repoValidating"
+                      x-cloak
+                      class="ml-1 flex items-center gap-1 text-[10px] text-wool-500"
+                    >
+                      <div class="spinner w-3 h-3 border-wool-500"></div>
+                      checking...
+                    </span>
+                  </label>
+                  <input
+                    id="draft-project-path"
+                    type="text"
+                    x-model="projectPath"
+                    @input="debouncedSave(); debouncedValidateProjectPath()"
+                    :class="{'!border-terra': repoError}"
+                    placeholder="/path/to/project or https://github.com/user/repo"
+                  />
+                  <p class="text-muted-foreground text-sm">Local path or GitHub URL (branch can be specified in URL like /tree/branch)</p>
+                  <p
+                    x-show="repoError"
+                    x-text="repoError"
+                    class="text-sm text-terra"
+                  ></p>
+                  <p
+                    x-show="!repoError && (needsDirCreate || needsGitInit)"
+                    class="text-sm text-amber-400 flex items-center gap-1"
+                  >
+                    <i data-lucide="info" class="w-3 h-3"></i>
+                    <span x-text="needsDirCreate ? 'Directory will be created and git initialized' : 'Git will be initialized with a main branch'"></span>
+                  </p>
+                </div>
+                <!-- Branch -->
+                <div class="grid gap-2" x-show="availableBranches.length > 0">
+                  <label for="draft-branch">Branch</label>
+                  <select
+                    id="draft-branch"
+                    x-model="selectedBranch"
+                    @change="onBranchChange()"
+                    :class="{'!border-terra': !selectedBranch && availableBranches.length > 0}"
+                    class="w-48"
+                  >
+                    <option value="">Select branch...</option>
+                    <template x-for="branch in availableBranches" :key="branch">
+                      <option :value="branch" x-text="branch"></option>
+                    </template>
+                  </select>
+                </div>
+              </div>
+
+              <hr class="border-pasture-600" />
+
+              <!-- Run Options Section -->
+              <div class="grid gap-4">
+                <h3 class="text-sm font-medium text-wool-300 flex items-center gap-2">
+                  <i data-lucide="sliders-horizontal" class="w-4 h-4 text-wool-500"></i>
+                  Run Options
+                </h3>
+                <!-- Workers & Time Limit row -->
+                <div class="grid grid-cols-2 gap-4">
+                  <div class="grid gap-2">
+                    <label for="draft-workers">Workers</label>
+                    <input
+                      id="draft-workers"
+                      type="text"
+                      x-model="workerScale"
+                      @input="debouncedSave()"
+                      @blur="validateWorkerScale()"
+                      :class="{'!border-terra': workerScaleError}"
+                      class="w-24"
+                      placeholder="1"
+                    />
+                    <p class="text-muted-foreground text-sm">Max parallel AI workers (autoscales from 1)</p>
+                    <p x-show="workerScaleError" x-text="workerScaleError" class="text-sm text-terra"></p>
+                  </div>
+                  <div class="grid gap-2">
+                    <label for="draft-time-limit">Time Limit</label>
+                    <input
+                      id="draft-time-limit"
+                      type="text"
+                      x-model="timeLimitInput"
+                      @input="debouncedSave()"
+                      @blur="validateTimeLimit()"
+                      :class="{'!border-terra': timeLimitError}"
+                      class="w-24"
+                      placeholder="∞"
+                    />
+                    <p class="text-muted-foreground text-sm">Max duration. Examples: 30m, 1h, 1h30m</p>
+                    <p x-show="timeLimitError" x-text="timeLimitError" class="text-sm text-terra"></p>
+                  </div>
+                </div>
+                <!-- HITL Switch -->
+                <div class="gap-2 flex flex-row items-start justify-between rounded-lg border p-4 shadow-xs">
+                  <div class="flex flex-col gap-0.5">
+                    <label for="draft-hitl" class="leading-normal">Human in the Loop</label>
+                    <p class="text-muted-foreground text-sm">Workers pause and wait for your approval before continuing.</p>
+                  </div>
+                  <input
+                    id="draft-hitl"
+                    type="checkbox"
+                    x-model="humanInTheLoop"
+                    @change="debouncedSave()"
+                    role="switch"
+                  />
+                </div>
+                <!-- Runner Configuration -->
+                <div class="grid gap-4" x-show="availableRunners.length > 1">
+                  <!-- Run-level default runner with Apply to all -->
+                  <div class="flex items-end gap-3">
+                    <div class="grid gap-2 flex-1">
+                      <label for="draft-runner">Runner</label>
+                      <select id="draft-runner" class="select" x-model="runnerDefault" @change="debouncedSave()">
+                        <template x-for="runner in availableRunners" :key="runner.name">
+                          <option :value="runner.name" x-text="runner.name === 'local' ? 'Local' : runner.name"></option>
+                        </template>
+                      </select>
+                    </div>
+                    <button
+                      x-show="getWorkerNames().length > 1"
+                      type="button"
+                      @click="applyRunnerToAll()"
+                      class="btn btn-sm h-10"
+                    >
+                      Apply to all
+                    </button>
+                  </div>
+
+                  <!-- Per-worker runner list (only show when multiple workers) -->
+                  <div x-show="getWorkerNames().length > 1" class="rounded-lg border border-pasture-600 overflow-hidden">
+                    <div class="px-3 py-2 bg-pasture-700/30 border-b border-pasture-600 flex items-center justify-between">
+                      <span class="text-xs font-medium text-wool-400 uppercase tracking-wider">Workers</span>
+                      <span class="text-xs text-wool-500" x-text="getWorkerNames().length + ' workers'"></span>
+                    </div>
+                    <div class="divide-y divide-pasture-700">
+                      <template x-for="workerName in getWorkerNames()" :key="workerName">
+                        <div class="px-3 py-2 flex items-center justify-between gap-3">
+                          <span class="text-sm text-wool-300 font-medium" x-text="workerName"></span>
+                          <div class="flex items-center gap-2">
+                            <!-- Show badge if using default -->
+                            <span
+                              x-show="!workerRunners[workerName]"
+                              class="text-xs text-wool-500"
+                            >default</span>
+                            <!-- Compact runner select -->
+                            <select
+                              class="select text-sm py-1 px-2 h-8 min-w-[120px]"
+                              :value="getWorkerRunner(workerName)"
+                              @change="setWorkerRunner(workerName, $event.target.value)"
+                            >
+                              <template x-for="runner in availableRunners" :key="runner.name">
+                                <option :value="runner.name" x-text="runner.name === 'local' ? 'Local' : runner.name"></option>
+                              </template>
+                            </select>
+                          </div>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                  <p x-show="getWorkerNames().length > 1" class="text-muted-foreground text-sm">Customize which runner each worker uses, or use the default for all.</p>
+                  <p x-show="getWorkerNames().length === 1" class="text-muted-foreground text-sm">Where workers execute: local machine or configured remote.</p>
+                </div>
+              </div>
+            </form>
+          </div>
         </div>
       </div>
     </section>
@@ -900,7 +792,7 @@ Example:
             <button
               @click="handlePause()"
               x-show="canPause()"
-              class="btn btn-sm btn-outline"
+              class="btn btn-sm btn-ghost"
             >
               Pause
             </button>
@@ -950,33 +842,6 @@ Example:
           </template>
         </div>
 
-        <!-- Project info row -->
-        <div class="mt-3 flex items-center gap-3 text-xs text-wool-500">
-          <!-- Remote repo indicator -->
-          <span x-show="detail?.remoteUrl" class="flex items-center gap-1 text-amber-400" :data-tooltip="detail?.remoteUrl" data-side="bottom">
-            <i data-lucide="cloud" class="w-3 h-3"></i>
-            <span x-text="detail?.remoteUrl?.replace(/^https?:\/\//, '').replace(/\.git$/, '').split('/').slice(-2).join('/') || 'remote'"></span>
-          </span>
-          <!-- Local project path (when not remote) -->
-          <span x-show="detail?.projectPath && !detail?.remoteUrl" class="flex items-center gap-1" data-tooltip="Project path" data-side="bottom">
-            <i data-lucide="folder" class="w-3 h-3"></i>
-            <span x-text="detail?.projectPath?.split('/').pop()"></span>
-          </span>
-          <span class="flex items-center gap-1" data-tooltip="Branch name" data-side="bottom">
-            <i data-lucide="git-branch" class="w-3 h-3"></i>
-            <span x-text="'hirsel/' + runName"></span>
-          </span>
-          <span x-show="detail?.workerScale" class="flex items-center gap-1" data-tooltip="Worker scale" data-side="bottom">
-            <i data-lucide="users" class="w-3 h-3"></i>
-            <span x-text="detail?.workerScale"></span>
-          </span>
-          <!-- Git diff stats -->
-          <span x-show="diffStats" class="flex items-center gap-1 ml-auto" data-tooltip="Git diff stats" data-side="bottom">
-            <i data-lucide="file-diff" class="w-3 h-3 text-wool-600"></i>
-            <span class="text-sage">+<span x-text="diffStats?.insertions || 0"></span></span>
-            <span class="text-terra">-<span x-text="diffStats?.deletions || 0"></span></span>
-          </span>
-        </div>
 
         <!-- Waiting reason (when status is waiting) -->
         <div x-show="detail?.waitingReason" class="mt-3 p-2 bg-golden/10 border border-golden/30 rounded text-sm text-golden">
@@ -989,47 +854,53 @@ Example:
       <div x-show="runName" class="tab-bar flex items-center gap-1 px-4 border-b border-pasture-600 bg-pasture-800/50">
         <button
           @click="activeTab = 'overview'"
-          class="tab-btn px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
-          :class="activeTab === 'overview' ? 'text-amber-500 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
+          class="tab-btn px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-2"
+          :class="activeTab === 'overview' ? 'text-wool-100 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
         >
+          <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
           Overview
         </button>
         <button
           @click="activeTab = 'tasks'"
-          class="tab-btn px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
-          :class="activeTab === 'tasks' ? 'text-amber-500 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
+          class="tab-btn px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-2"
+          :class="activeTab === 'tasks' ? 'text-wool-100 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
         >
+          <i data-lucide="list-checks" class="w-4 h-4"></i>
           Tasks
         </button>
         <button
-          @click="activeTab = 'spec'"
-          class="tab-btn px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
-          :class="activeTab === 'spec' ? 'text-amber-500 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
+          @click="activeTab = 'specs'"
+          class="tab-btn px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-2"
+          :class="activeTab === 'specs' ? 'text-wool-100 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
         >
-          Spec
-        </button>
-        <button
-          @click="activeTab = 'eval-spec'"
-          class="tab-btn px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
-          :class="activeTab === 'eval-spec' ? 'text-amber-500 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
-        >
-          Eval Spec
+          <i data-lucide="file-text" class="w-4 h-4"></i>
+          Specs
         </button>
         <button
           x-show="evals.length > 0"
           @click="activeTab = 'evals'"
-          class="tab-btn px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px relative"
-          :class="activeTab === 'evals' ? 'text-amber-500 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
+          class="tab-btn px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-2"
+          :class="activeTab === 'evals' ? 'text-wool-100 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
         >
-          Evals <span class="text-wool-500 font-normal" x-text="'(' + evals.length + ')'"></span>
+          <i data-lucide="clipboard-check" class="w-4 h-4"></i>
+          Evals <span class="text-wool-600 font-normal" x-text="'(' + evals.length + ')'"></span>
         </button>
         <button
-          @click="activeTab = 'messages'"
-          class="tab-btn px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px relative"
-          :class="activeTab === 'messages' ? 'text-amber-500 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
+          @click="activeTab = 'chat'"
+          class="tab-btn px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px relative flex items-center gap-2"
+          :class="activeTab === 'chat' ? 'text-wool-100 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
         >
-          Messages
+          <i data-lucide="message-square" class="w-4 h-4"></i>
+          Chat
           <span x-show="unreadCount > 0" class="absolute -top-1 -right-1 min-w-[16px] h-4 bg-terra rounded-full text-[10px] text-white font-bold flex items-center justify-center px-1" x-text="unreadCount"></span>
+        </button>
+        <button
+          @click="activeTab = 'config'"
+          class="tab-btn px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-2"
+          :class="activeTab === 'config' ? 'text-wool-100 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
+        >
+          <i data-lucide="settings" class="w-4 h-4"></i>
+          Config
         </button>
       </div>
 
@@ -1055,22 +926,26 @@ Example:
         </div>
       </div>
 
-      <!-- OVERVIEW TAB: Workers/Tasks + Activity -->
+      <!-- OVERVIEW TAB: Workers + Activity -->
       <div x-show="runName && activeTab === 'overview'" class="flex-1 flex flex-col overflow-hidden">
 
-        <!-- Top: Workers and Tasks side by side -->
-        <div class="workers-tasks-container flex-1 flex overflow-hidden border-b border-pasture-600">
+        <!-- Workers and Activity side by side -->
+        <div class="flex-1 flex overflow-hidden">
 
-          <!-- Workers Panel -->
-          <div class="workers-panel w-1/2 border-r border-pasture-600 flex flex-col">
-            <div class="p-3 border-b border-pasture-700">
+          <!-- Workers Panel - Left side -->
+          <div class="workers-panel w-1/2 border-r border-pasture-600 flex flex-col overflow-hidden">
+            <div class="p-3 border-b border-pasture-700 flex items-center gap-2">
+              <i data-lucide="users" class="w-4 h-4 text-wool-500"></i>
               <h3 class="text-sm font-medium text-wool-300">Workers</h3>
+              <span class="text-xs text-wool-600" x-text="workers.length ? '(' + workers.length + ')' : ''"></span>
             </div>
             <div class="flex-1 overflow-y-auto p-2 space-y-2" x-data="workerPanel()">
               <template x-for="worker in workers" :key="worker.id">
                 <div
-                  @click="openWorkerDetail(worker)"
-                  class="worker-card p-3 rounded-lg bg-pasture-800 hover:bg-pasture-700 cursor-pointer transition-colors"
+                  @click="highlightWorker(worker)"
+                  @dblclick="openWorkerDetail(worker)"
+                  class="worker-card p-3 rounded-lg cursor-pointer transition-colors"
+                  :class="highlightedWorker === worker.name ? 'bg-amber-500/20 ring-1 ring-amber-500/50' : 'bg-pasture-800 hover:bg-pasture-700'"
                 >
                   <div class="flex items-center gap-3">
                     <!-- Sheep avatar -->
@@ -1090,20 +965,24 @@ Example:
                   <div class="mt-2 flex items-center gap-3 text-xs">
                     <!-- Elapsed time -->
                     <span class="text-wool-500" x-text="worker.sessionStartedAt ? formatElapsedTime(worker.sessionStartedAt) : '--'"></span>
-                    <!-- Token counts -->
-                    <span x-show="worker.inputTokens || worker.outputTokens" class="text-wool-600">
-                      <span class="text-wool-500" x-text="formatTokens(worker.inputTokens)"></span>/<span class="text-sage" x-text="formatTokens(worker.outputTokens)"></span>
-                    </span>
+                    <!-- Token counts (only shown for agents with metrics) -->
+                    <template x-if="$store.app?.currentRunDetail?.metricsAvailable">
+                      <span x-show="worker.inputTokens || worker.outputTokens" class="text-wool-600">
+                        <span class="text-wool-500" x-text="formatTokens(worker.inputTokens)"></span>/<span class="text-sage" x-text="formatTokens(worker.outputTokens)"></span>
+                      </span>
+                    </template>
                     <!-- Context utilization (value is 0-1 from backend, display as percentage) -->
-                    <span
-                      x-show="worker.contextUtilization != null"
-                      class="ml-auto"
-                      :class="getContextClass((worker.contextUtilization || 0) * 100)"
-                      :data-tooltip="'Context: ' + ((worker.contextUtilization || 0) * 100).toFixed(1) + '%'"
-                      data-side="left"
-                    >
-                      <span x-text="Math.round((worker.contextUtilization || 0) * 100) + '%'"></span>
-                    </span>
+                    <template x-if="$store.app?.currentRunDetail?.metricsAvailable">
+                      <span
+                        x-show="worker.contextUtilization != null"
+                        class="ml-auto"
+                        :class="getContextClass((worker.contextUtilization || 0) * 100)"
+                        :data-tooltip="'Context: ' + ((worker.contextUtilization || 0) * 100).toFixed(1) + '%'"
+                        data-side="left"
+                      >
+                        <span x-text="Math.round((worker.contextUtilization || 0) * 100) + '%'"></span>
+                      </span>
+                    </template>
                   </div>
                   <div x-show="worker.currentTask" class="mt-1 text-xs text-wool-500 truncate">
                     <span class="text-wool-700">Task:</span>
@@ -1179,8 +1058,8 @@ Example:
                       </div>
                     </div>
 
-                    <!-- Token Usage -->
-                    <div class="bg-pasture-700/50 rounded-lg p-3">
+                    <!-- Token Usage (only shown for agents with metrics) -->
+                    <div x-show="$store.app?.currentRunDetail?.metricsAvailable" class="bg-pasture-700/50 rounded-lg p-3">
                       <div class="text-xs text-wool-500 mb-2">Token Usage</div>
                       <div class="flex items-center gap-6">
                         <div>
@@ -1269,255 +1148,27 @@ Example:
             </div>
           </div>
 
-          <!-- Tasks Panel -->
-          <div class="tasks-panel w-1/2 flex flex-col" x-data="taskPanel()">
+          <!-- Activity Panel - Right side -->
+          <div
+            class="activity-panel w-1/2 flex flex-col transition-all duration-200 overflow-hidden"
+            x-data="activityLog()"
+            :class="isFullscreen ? 'fixed inset-0 z-50 bg-pasture-900 w-full' : ''"
+          >
             <div class="p-3 border-b border-pasture-700 flex items-center justify-between">
-              <h3 class="text-sm font-medium text-wool-300">Tasks</h3>
-              <span class="text-xs text-wool-500" x-text="flatTasks.filter(t => t.status === 'done').length + '/' + flatTasks.length"></span>
-            </div>
-            <div class="flex-1 overflow-y-auto relative" @click.away="hideContextMenu()">
-              <!-- Task list -->
-              <template x-for="task in flatTasks" :key="task.id">
-                <div
-                  @click="selectTask(task.id)"
-                  @contextmenu="showContextMenu($event, task)"
-                  class="task-item px-3 py-2 hover:bg-pasture-700 cursor-pointer border-b border-pasture-800 transition-colors"
-                  :class="{ 'bg-pasture-700': selectedTaskId === task.id }"
-                  :style="{ paddingLeft: (task.depth * 16 + 12) + 'px' }"
-                >
-                  <div class="flex items-center gap-2">
-                    <!-- Status icon -->
-                    <span
-                      class="task-icon text-sm flex-shrink-0"
-                      :class="getStatusClass(task.status)"
-                      x-text="getStatusIcon(task.status)"
-                    ></span>
-                    <!-- Task ID/name -->
-                    <span
-                      :class="getTaskNameClass(task)"
-                      x-text="task.id"
-                      :data-tooltip="task.description || task.id"
-                      data-side="top"
-                    ></span>
-                    <!-- Blocked indicator -->
-                    <span x-show="task.isBlocked" class="text-xs text-terra" data-tooltip="Blocked by other tasks" data-side="top">⊘</span>
-                  </div>
-                  <!-- Claimed by info -->
-                  <div x-show="task.claimedBy" class="text-xs text-wool-500 mt-1 ml-5 flex items-center gap-1">
-                    <i data-lucide="user" class="w-3 h-3"></i>
-                    <span x-text="task.claimedBy"></span>
-                  </div>
-                  <!-- Description preview (if different from ID) -->
-                  <div x-show="task.description && task.description !== task.id" class="text-xs text-wool-600 mt-1 ml-5 truncate" x-text="task.description"></div>
-                </div>
-              </template>
-
-              <!-- Context menu -->
-              <div
-                x-show="contextMenuVisible"
-                x-transition
-                @keydown.escape.window="contextMenuVisible = false"
-                :style="'left: ' + contextMenuX + 'px; top: ' + contextMenuY + 'px'"
-                class="fixed z-50 bg-pasture-700 border border-pasture-600 rounded shadow-lg py-1 min-w-[140px]"
-              >
+              <div class="flex items-center gap-2">
+                <i data-lucide="activity" class="w-4 h-4 text-wool-500"></i>
+                <h3 class="text-sm font-medium text-wool-300">Activity</h3>
+              </div>
+              <div class="flex items-center gap-2">
+                <!-- Sort toggle button -->
                 <button
-                  x-show="canMarkDone(contextMenuTask)"
-                  @click="contextMarkDone()"
-                  class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600 flex items-center gap-2"
+                  @click="toggleSort()"
+                  class="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium bg-pasture-700 hover:bg-pasture-600 text-wool-300 hover:text-wool-200 transition-colors"
+                  :title="sortDirection === 'desc' ? 'Showing latest first' : 'Showing oldest first'"
                 >
-                  <i data-lucide="check" class="w-3.5 h-3.5 text-sage"></i> Mark Done
+                  <span x-text="sortIcon" class="text-amber-500"></span>
+                  <span x-text="sortLabel"></span>
                 </button>
-                <button
-                  x-show="canReopen(contextMenuTask)"
-                  @click="contextReopen()"
-                  class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600 flex items-center gap-2"
-                >
-                  <i data-lucide="rotate-ccw" class="w-3.5 h-3.5 text-amber-500"></i> Reopen
-                </button>
-                <button
-                  x-show="canUnclaim(contextMenuTask)"
-                  @click="contextUnclaim()"
-                  class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600 flex items-center gap-2"
-                >
-                  <i data-lucide="user-minus" class="w-3.5 h-3.5 text-golden"></i> Unclaim
-                </button>
-                <div class="border-t border-pasture-600 my-1"></div>
-                <button
-                  @click="contextDelete()"
-                  class="w-full px-3 py-1.5 text-left text-sm text-terra hover:bg-pasture-600 flex items-center gap-2"
-                >
-                  <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete
-                </button>
-              </div>
-
-              <!-- Empty tasks state -->
-              <div x-show="flatTasks.length === 0 && !loading && !error" class="empty-state text-center text-wool-500 py-6">
-                <svg class="w-12 h-12 mx-auto mb-2 text-wool-600">
-                  <use href="#sheep-sleeping"/>
-                </svg>
-                <p class="text-sm text-wool-400">No tasks defined</p>
-                <p class="text-xs mt-1">Tasks will be created by the leader</p>
-              </div>
-
-              <!-- Loading tasks state - skeleton -->
-              <div x-show="loading" class="space-y-2 py-2">
-                <template x-for="i in 4" :key="i">
-                  <div class="px-3 py-2 border-b border-pasture-700">
-                    <div class="flex items-center gap-3">
-                      <div class="skeleton w-4 h-4 rounded"></div>
-                      <div class="flex-1">
-                        <div class="skeleton h-4 w-32 mb-1"></div>
-                        <div class="skeleton h-3 w-20"></div>
-                      </div>
-                    </div>
-                  </div>
-                </template>
-              </div>
-
-              <!-- Error state -->
-              <div x-show="error" class="p-4 text-center text-terra">
-                <p class="text-sm" x-text="error"></p>
-                <button @click="loadTasks(getSelectedRun())" class="mt-2 text-xs text-amber-500 hover:underline">Retry</button>
-              </div>
-
-              <!-- Task Detail Modal -->
-              <div
-                x-cloak
-                x-show="showTaskDetail"
-                x-transition.opacity
-                @click.self="closeTaskDetail()"
-                @keydown.escape.window="closeTaskDetail()"
-                class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-              >
-                <div class="bg-pasture-800 rounded-lg shadow-xl w-[500px] max-h-[80vh] overflow-hidden border border-pasture-600" @click.stop>
-                  <!-- Modal Header -->
-                  <div class="p-4 border-b border-pasture-600 flex items-center justify-between">
-                    <div class="flex items-center gap-3">
-                      <span
-                        class="task-icon text-lg"
-                        :class="getStatusClass(selectedTask?.status)"
-                        x-text="getStatusIcon(selectedTask?.status)"
-                      ></span>
-                      <h2 class="text-lg font-semibold text-wool-100" x-text="selectedTask?.id"></h2>
-                    </div>
-                    <button @click="closeTaskDetail()" class="text-wool-500 hover:text-wool-300">
-                      <i data-lucide="x" class="w-5 h-5"></i>
-                    </button>
-                  </div>
-
-                  <!-- Modal Content -->
-                  <div class="p-4 space-y-4 overflow-y-auto max-h-[50vh]">
-                    <!-- Status -->
-                    <div class="flex items-center gap-4">
-                      <div class="bg-pasture-700/50 rounded-lg px-4 py-2 flex-1">
-                        <div class="text-xs text-wool-500 mb-1">Status</div>
-                        <div class="text-sm font-medium capitalize" :class="getStatusClass(selectedTask?.status)" x-text="selectedTask?.status"></div>
-                      </div>
-                      <div x-show="selectedTask?.isBlocked" class="bg-terra/10 border border-terra/30 rounded-lg px-4 py-2">
-                        <div class="text-xs text-terra">Blocked</div>
-                      </div>
-                    </div>
-
-                    <!-- Description -->
-                    <div x-show="selectedTask?.description" class="bg-pasture-700/50 rounded-lg p-3">
-                      <div class="text-xs text-wool-500 mb-2">Description</div>
-                      <div class="text-sm text-wool-200 whitespace-pre-wrap" x-text="selectedTask?.description"></div>
-                    </div>
-
-                    <!-- Claimed By -->
-                    <div x-show="selectedTask?.claimedBy" class="bg-pasture-700/50 rounded-lg p-3">
-                      <div class="text-xs text-wool-500 mb-1">Claimed By</div>
-                      <div class="flex items-center gap-2">
-                        <i data-lucide="user" class="w-4 h-4 text-wool-400"></i>
-                        <span class="text-sm font-medium text-wool-100" x-text="selectedTask?.claimedBy"></span>
-                        <span x-show="selectedTask?.claimedAt" class="text-xs text-wool-500 ml-auto" x-text="formatTaskTime(selectedTask?.claimedAt)"></span>
-                      </div>
-                    </div>
-
-                    <!-- Blocked By -->
-                    <div x-show="selectedTask?.blockedBy && selectedTask?.blockedBy.length > 0" class="bg-terra/5 border border-terra/20 rounded-lg p-3">
-                      <div class="text-xs text-terra mb-2">Blocked By</div>
-                      <div class="flex flex-wrap gap-2">
-                        <template x-for="blockerId in (selectedTask?.blockedBy || [])" :key="blockerId">
-                          <span class="px-2 py-1 bg-pasture-700 rounded text-xs text-wool-300" x-text="blockerId"></span>
-                        </template>
-                      </div>
-                    </div>
-
-                    <!-- Parent Task -->
-                    <div x-show="selectedTask?.parentId" class="bg-pasture-700/50 rounded-lg p-3">
-                      <div class="text-xs text-wool-500 mb-1">Parent Task</div>
-                      <span class="text-sm text-wool-300" x-text="selectedTask?.parentId"></span>
-                    </div>
-
-                    <!-- Token Usage -->
-                    <div x-show="selectedTask?.tokensUsed" class="bg-pasture-700/50 rounded-lg p-3">
-                      <div class="text-xs text-wool-500 mb-1">Tokens Used</div>
-                      <span class="text-sm text-wool-100" x-text="formatTaskTokens(selectedTask?.tokensUsed)"></span>
-                    </div>
-
-                    <!-- Timestamps -->
-                    <div class="grid grid-cols-2 gap-2 text-xs">
-                      <div class="bg-pasture-900/50 rounded p-2">
-                        <span class="text-wool-600">Created:</span>
-                        <span class="text-wool-400 ml-1" x-text="formatTaskTime(selectedTask?.createdAt)"></span>
-                      </div>
-                      <div x-show="selectedTask?.pendingDoneAt" class="bg-pasture-900/50 rounded p-2">
-                        <span class="text-wool-600">Pending Done:</span>
-                        <span class="text-wool-400 ml-1" x-text="formatTaskTime(selectedTask?.pendingDoneAt)"></span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- Modal Footer -->
-                  <div class="p-4 border-t border-pasture-600 flex justify-between">
-                    <div class="flex gap-2">
-                      <button
-                        x-show="canMarkDone(selectedTask)"
-                        @click="markDone(selectedTask?.id); closeTaskDetail()"
-                        class="px-3 py-2 text-sm rounded bg-sage hover:bg-sage/80 text-pasture-900 font-medium flex items-center gap-1.5"
-                      >
-                        <i data-lucide="check" class="w-4 h-4"></i> Mark Done
-                      </button>
-                      <button
-                        x-show="canReopen(selectedTask)"
-                        @click="reopenTask(selectedTask?.id); closeTaskDetail()"
-                        class="px-3 py-2 text-sm rounded bg-amber-600 hover:bg-amber-500 text-white font-medium flex items-center gap-1.5"
-                      >
-                        <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Reopen
-                      </button>
-                    </div>
-                    <button
-                      @click="closeTaskDetail()"
-                      class="px-4 py-2 text-sm rounded border border-pasture-500 text-wool-300 hover:bg-pasture-700"
-                    >
-                      Close
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Bottom: Activity Log -->
-        <div
-          class="activity-panel flex flex-col transition-all duration-200"
-          x-data="activityLog()"
-          :class="isFullscreen ? 'fixed inset-0 z-50 bg-pasture-900 h-auto' : 'h-48'"
-        >
-          <div class="p-3 border-b border-pasture-700 flex items-center justify-between">
-            <h3 class="text-sm font-medium text-wool-300">Activity</h3>
-            <div class="flex items-center gap-2">
-              <!-- Sort toggle button -->
-              <button
-                @click="toggleSort()"
-                class="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium bg-pasture-700 hover:bg-pasture-600 text-wool-300 hover:text-wool-200 transition-colors"
-                :title="sortDirection === 'desc' ? 'Showing latest first' : 'Showing oldest first'"
-              >
-                <span x-text="sortIcon" class="text-amber-500"></span>
-                <span x-text="sortLabel"></span>
-              </button>
               <!-- Scroll to bottom (only when not auto-scrolling in desc mode) -->
               <button
                 @click="scrollToBottom(); autoScroll = true"
@@ -1551,9 +1202,9 @@ Example:
               <div class="px-3 py-1.5 hover:bg-pasture-700/30 flex items-start gap-3 group transition-colors">
                 <span class="text-wool-600 flex-shrink-0 text-[11px] tabular-nums pt-0.5" x-text="formatTime(entry.timestamp)"></span>
                 <span
-                  class="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center"
-                  :class="[getActionBgClass(entry.action), getActionColor(entry.action)]"
-                  x-html="getActionIcon(entry.action)"
+                  class="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center overflow-hidden"
+                  :class="isWorkerEntry(entry) ? '' : getActionBgClass(entry.action)"
+                  x-html="getEntryAvatar(entry)"
                 ></span>
                 <div class="flex-1 min-w-0">
                   <span class="font-medium text-[11px]" :class="getActionColor(entry.action)" x-text="formatActionLabel(entry.action)"></span>
@@ -1571,10 +1222,13 @@ Example:
           </div>
         </div>
       </div>
+      </div>
       <!-- END OVERVIEW TAB -->
 
       <!-- TASKS TAB: Full task list with details -->
-      <div x-show="runName && activeTab === 'tasks'" x-effect="if (activeTab === 'tasks' && runName) loadTasks(runName)" class="flex-1 flex flex-col overflow-hidden" x-data="tasksTab()" @click.away="closeTaskPopover()">
+      <!-- Note: x-show must be on outer wrapper, x-data on inner element to access parent scope -->
+      <div x-show="runName && activeTab === 'tasks'" class="flex-1 flex flex-col overflow-hidden">
+      <div x-data="tasksTab()" class="flex-1 flex flex-col overflow-hidden">
         <!-- Header with stats -->
         <div class="p-4 border-b border-pasture-600">
           <!-- Title row -->
@@ -1633,103 +1287,112 @@ Example:
 
         <!-- Task list -->
         <div class="flex-1 overflow-y-auto p-4">
-          <div class="space-y-1">
+          <div class="space-y-1.5">
             <template x-for="task in filteredTasks" :key="task.id">
               <div
                 :data-task-id="task.id"
-                class="task-row group rounded-lg transition-all cursor-pointer"
-                :class="{
-                  'bg-pasture-800 hover:bg-pasture-700': selectedTaskId !== task.id,
-                  'bg-amber-500/10 ring-1 ring-amber-500/50': selectedTaskId === task.id
-                }"
+                class="task-row group transition-all cursor-pointer inline-flex w-auto min-w-[600px] max-w-full"
+                :style="'margin-left: ' + (task.depth * 16) + 'px'"
                 @click="selectTask(task, $event)"
               >
-                <div class="flex items-start gap-2 p-3" :style="'padding-left: ' + (12 + task.depth * 20) + 'px'">
-                  <!-- Collapse toggle for tasks with children -->
-                  <button
-                    x-show="hasChildren(task)"
-                    @click.stop="toggleCollapse(task.id)"
-                    class="flex-shrink-0 w-5 h-5 flex items-center justify-center text-wool-500 hover:text-wool-300 transition-colors -ml-5"
-                  >
-                    <i x-show="!isCollapsed(task.id)" data-lucide="chevron-down" class="w-4 h-4"></i>
-                    <i x-show="isCollapsed(task.id)" data-lucide="chevron-right" class="w-4 h-4"></i>
-                  </button>
+                <!-- Card with left accent border and status-based colors -->
+                <div
+                  class="relative rounded-md transition-all flex-1"
+                  :class="{
+                    'bg-wool-800/30 border border-wool-700/30 hover:bg-wool-700/30': task.status === 'todo' && !task.isBlocked && selectedTaskId !== task.id,
+                    'bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/15': task.status === 'doing' && selectedTaskId !== task.id,
+                    'bg-sage/10 border border-sage/20 hover:bg-sage/15': task.status === 'done' && selectedTaskId !== task.id,
+                    'bg-terra/10 border border-terra/30 hover:bg-terra/15': task.isBlocked && task.status !== 'done' && selectedTaskId !== task.id,
+                    'ring-1 ring-wool-400/50 bg-wool-700/40': selectedTaskId === task.id
+                  }"
+                >
+                  <!-- Left accent stripe -->
+                  <div
+                    class="absolute left-0 top-0 bottom-0 w-1 rounded-l-md"
+                    :class="{
+                      'bg-wool-500': task.status === 'todo' && !task.isBlocked,
+                      'bg-terra': task.isBlocked && task.status !== 'done',
+                      'bg-amber-500': task.status === 'doing',
+                      'bg-sage': task.status === 'done'
+                    }"
+                  ></div>
 
-                  <!-- Status icon -->
-                  <span class="flex-shrink-0 mt-0.5" :class="{
-                    'text-wool-600': task.status === 'todo' && !task.isBlocked,
-                    'text-terra': task.isBlocked,
-                    'text-amber-500': task.status === 'doing',
-                    'text-sage': task.status === 'done'
-                  }">
-                    <i x-show="task.status === 'todo' && !task.isBlocked" data-lucide="circle" class="w-4 h-4"></i>
-                    <i x-show="task.isBlocked && task.status !== 'done'" data-lucide="lock" class="w-4 h-4"></i>
-                    <i x-show="task.status === 'doing'" data-lucide="loader" class="w-4 h-4 animate-spin"></i>
-                    <i x-show="task.status === 'done'" data-lucide="check-circle-2" class="w-4 h-4"></i>
-                  </span>
+                  <div class="flex items-center gap-2 py-2 px-3 pl-4">
+                    <!-- Collapse toggle for tasks with children -->
+                    <button
+                      x-show="hasChildren(task)"
+                      @click.stop="toggleCollapse(task.id)"
+                      class="flex-shrink-0 w-4 h-4 flex items-center justify-center text-wool-500 hover:text-wool-300 transition-colors"
+                    >
+                      <span x-show="!isCollapsed(task.id)"><i data-lucide="chevron-down" class="w-3.5 h-3.5"></i></span>
+                      <span x-show="isCollapsed(task.id)"><i data-lucide="chevron-right" class="w-3.5 h-3.5"></i></span>
+                    </button>
+                    <span x-show="!hasChildren(task)" class="flex-shrink-0 w-4"></span>
 
-                  <!-- Task content -->
-                  <div class="flex-1 min-w-0">
-                    <p
-                      class="text-sm break-words leading-relaxed"
+                    <!-- Task description - color indicates status -->
+                    <span
+                      class="text-sm truncate max-w-[280px]"
                       :class="{
-                        'text-wool-200': task.status !== 'done' && !task.isBlocked,
-                        'text-wool-500': task.status === 'done',
-                        'text-wool-400 italic': task.isBlocked && task.status !== 'done'
+                        'text-amber-200 font-medium': task.status === 'doing',
+                        'text-wool-300': task.status === 'todo' && !task.isBlocked,
+                        'text-sage/80': task.status === 'done',
+                        'text-terra/80': task.isBlocked && task.status !== 'done'
                       }"
                       x-text="task.description"
-                    ></p>
+                      :title="task.description"
+                    ></span>
 
-                    <!-- Task metadata -->
-                    <div class="flex items-center flex-wrap gap-x-3 gap-y-1 mt-1.5">
-                      <!-- Worker assignment with avatar -->
-                      <span x-show="task.claimedBy" class="flex items-center gap-1.5 text-xs text-amber-400">
+                    <!-- Right side: worker + times + status badge -->
+                    <div class="flex items-center gap-3 text-xs ml-auto">
+                      <!-- Worker assignment -->
+                      <span x-show="task.claimedBy" class="flex items-center gap-1.5 w-24">
                         <template x-if="getWorkerAvatar(task.claimedBy)">
                           <span x-html="getWorkerAvatar(task.claimedBy, 16)" class="flex-shrink-0"></span>
                         </template>
-                        <template x-if="!getWorkerAvatar(task.claimedBy)">
-                          <i data-lucide="user" class="w-3.5 h-3.5 flex-shrink-0"></i>
-                        </template>
-                        <span x-text="task.claimedBy"></span>
+                        <span x-text="task.claimedBy" class="truncate text-wool-400"></span>
                       </span>
-                      <!-- Blocked by indicator -->
-                      <span x-show="task.isBlocked && task.blockedBy && task.status !== 'done'" class="flex items-center gap-1 text-xs text-terra">
-                        <i data-lucide="alert-triangle" class="w-3 h-3"></i>
-                        <span>waiting on <span x-text="task.blockedBy?.length || 0"></span></span>
-                      </span>
-                      <!-- Tokens used -->
-                      <span x-show="task.tokensUsed" class="flex items-center gap-1 text-xs text-wool-600">
-                        <i data-lucide="sparkles" class="w-3 h-3"></i>
-                        <span x-text="formatTokens(task.tokensUsed)"></span>
-                      </span>
-                      <!-- Time -->
-                      <span x-show="task.claimedAt" class="flex items-center gap-1 text-xs text-wool-600">
-                        <i data-lucide="clock" class="w-3 h-3"></i>
-                        <span x-text="formatTime(task.claimedAt)"></span>
-                      </span>
-                    </div>
-                  </div>
 
-                  <!-- Quick actions (visible on hover) -->
-                  <div class="flex-shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      x-show="task.status !== 'done'"
-                      @click.stop="markTaskDone(task)"
-                      class="p-1.5 rounded hover:bg-pasture-600 text-wool-500 hover:text-sage transition-colors"
-                      data-tooltip="Mark as done"
-                      data-side="top"
-                    >
-                      <i data-lucide="check" class="w-4 h-4"></i>
-                    </button>
-                    <button
-                      x-show="task.status === 'done'"
-                      @click.stop="reopenTask(task)"
-                      class="p-1.5 rounded hover:bg-pasture-600 text-wool-500 hover:text-amber-400 transition-colors"
-                      data-tooltip="Reopen task"
-                      data-side="top"
-                    >
-                      <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
-                    </button>
+                      <!-- Duration -->
+                      <span
+                        x-show="task.claimedAt && (task.status === 'doing' || task.status === 'done')"
+                        class="flex items-center gap-1 text-wool-500 tabular-nums"
+                      >
+                        <i data-lucide="timer" class="w-3 h-3"></i>
+                        <span x-text="formatDuration(task.claimedAt, task.completedAt)"></span>
+                      </span>
+
+                      <!-- Status badge (active/blocked only) -->
+                      <span
+                        x-show="task.status === 'doing'"
+                        class="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide rounded bg-amber-500/30 text-amber-300"
+                      >Active</span>
+                      <span
+                        x-show="task.isBlocked && task.status !== 'done'"
+                        class="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide rounded bg-terra/30 text-terra"
+                      >Blocked</span>
+
+                      <!-- Quick actions (visible on hover) -->
+                      <div class="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          x-show="task.status !== 'done'"
+                          @click.stop="markTaskDone(task)"
+                          class="p-1 rounded hover:bg-sage/20 text-wool-500 hover:text-sage transition-colors"
+                          data-tooltip="Mark as done"
+                          data-side="top"
+                        >
+                          <i data-lucide="check" class="w-3.5 h-3.5"></i>
+                        </button>
+                        <button
+                          x-show="task.status === 'done'"
+                          @click.stop="reopenTask(task)"
+                          class="p-1.5 rounded-full hover:bg-amber-500/20 text-wool-500 hover:text-amber-400 transition-colors"
+                          data-tooltip="Reopen task"
+                          data-side="top"
+                        >
+                          <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1949,12 +1612,33 @@ Example:
           </div>
         </div>
       </div>
+      </div>
       <!-- END TASKS TAB -->
 
-      <!-- SPEC TAB: Original specification/request -->
-      <div x-show="runName && activeTab === 'spec'" class="flex-1 flex flex-col overflow-hidden p-4">
-        <h3 class="text-lg font-semibold text-wool-200 mb-4">Specification</h3>
-        <div class="flex-1 overflow-y-auto">
+      <!-- SPECS TAB: Combined Specification + Eval Spec -->
+      <!-- Note: x-show must be on outer wrapper, x-data on inner element to access parent scope -->
+      <div x-show="runName && activeTab === 'specs'" class="flex-1 flex flex-col overflow-hidden">
+      <div x-data="{ specsSubTab: 'spec' }" class="flex-1 flex flex-col overflow-hidden">
+        <!-- Sub-tab navigation -->
+        <div class="flex items-center gap-1 px-4 py-2 border-b border-pasture-700 bg-pasture-800/30">
+          <button
+            @click="specsSubTab = 'spec'"
+            class="px-3 py-1.5 text-xs font-medium rounded-md transition-colors"
+            :class="specsSubTab === 'spec' ? 'bg-pasture-600 text-wool-100' : 'text-wool-500 hover:text-wool-300 hover:bg-pasture-700'"
+          >
+            <i data-lucide="file-text" class="w-3.5 h-3.5 inline mr-1.5"></i>Specification
+          </button>
+          <button
+            @click="specsSubTab = 'eval'"
+            class="px-3 py-1.5 text-xs font-medium rounded-md transition-colors"
+            :class="specsSubTab === 'eval' ? 'bg-pasture-600 text-wool-100' : 'text-wool-500 hover:text-wool-300 hover:bg-pasture-700'"
+          >
+            <i data-lucide="check-circle" class="w-3.5 h-3.5 inline mr-1.5"></i>Eval Criteria
+          </button>
+        </div>
+
+        <!-- Specification Content -->
+        <div x-show="specsSubTab === 'spec'" class="flex-1 overflow-y-auto p-4">
           <div x-show="detail?.request" class="markdown-preview" x-html="renderMarkdown(detail?.request)"></div>
           <div x-show="!detail?.request" class="text-center text-wool-500 py-8">
             <svg class="w-12 h-12 mx-auto mb-3 text-wool-600">
@@ -1964,27 +1648,24 @@ Example:
             <p class="text-xs mt-1 text-wool-600">This run was started without a spec file</p>
           </div>
         </div>
-      </div>
-      <!-- END SPEC TAB -->
 
-      <!-- EVAL SPEC TAB: Evaluation specification (eval.md) -->
-      <div x-show="runName && activeTab === 'eval-spec'" class="flex-1 flex flex-col overflow-hidden p-4">
-        <h3 class="text-lg font-semibold text-wool-200 mb-4">Evaluation Specification</h3>
-        <div class="flex-1 overflow-y-auto">
+        <!-- Eval Spec Content -->
+        <div x-show="specsSubTab === 'eval'" class="flex-1 overflow-y-auto p-4">
           <div x-show="evalSpec" class="markdown-preview" x-html="renderMarkdown(evalSpec)"></div>
           <div x-show="!evalSpec && !evalSpecLoading" class="text-center text-wool-500 py-8">
             <svg class="w-12 h-12 mx-auto mb-3 text-wool-600">
               <use href="#sheep-sleeping"/>
             </svg>
-            <p class="text-sm">No eval specification found</p>
+            <p class="text-sm">No eval criteria found</p>
             <p class="text-xs mt-1 text-wool-600">Create an eval.md file in the run directory</p>
           </div>
           <div x-show="evalSpecLoading" class="text-center text-wool-500 py-8">
-            <div class="animate-pulse">Loading eval spec...</div>
+            <div class="animate-pulse">Loading eval criteria...</div>
           </div>
         </div>
       </div>
-      <!-- END EVAL SPEC TAB -->
+      </div>
+      <!-- END SPECS TAB -->
 
       <!-- EVALS TAB: Split view with list and detail pane -->
       <div x-show="runName && activeTab === 'evals'" class="flex-1 flex overflow-hidden" @keydown.a.prevent="selectedEval && attachEval()">
@@ -1995,28 +1676,48 @@ Example:
               <template x-for="evalItem in evals" :key="evalItem.id">
                 <button
                   @click="selectEval(evalItem)"
-                  class="w-full p-3 text-left rounded-lg transition-all"
-                  :class="selectedEval?.id === evalItem.id
-                    ? 'bg-pasture-600 ring-1 ring-amber-500/50 shadow-lg'
-                    : 'bg-pasture-800/50 hover:bg-pasture-700/50'"
+                  class="w-full p-3 text-left rounded-lg transition-all border-l-4"
+                  :class="{
+                    'bg-pasture-600 ring-1 ring-amber-500/50 shadow-lg': selectedEval?.id === evalItem.id,
+                    'bg-pasture-800/50 hover:bg-pasture-700/50': selectedEval?.id !== evalItem.id,
+                    'border-l-sage': evalItem.status === 'passed',
+                    'border-l-terra': evalItem.status === 'failed',
+                    'border-l-amber-500': evalItem.status === 'running'
+                  }"
                 >
                   <div class="flex items-center gap-3">
-                    <div
-                      class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
-                      :class="{
-                        'bg-sage/20': evalItem.status === 'passed',
-                        'bg-terra/20': evalItem.status === 'failed',
-                        'bg-amber-500/20': evalItem.status === 'running'
-                      }"
-                    >
-                      <i
-                        :data-lucide="getEvalStatusIcon(evalItem.status)"
-                        class="w-4 h-4"
-                        :class="getEvalStatusClass(evalItem.status)"
-                      ></i>
+                    <!-- Eval sheep avatar (detective hat) with status indicator -->
+                    <div class="relative flex-shrink-0">
+                      <div class="w-10 h-10" x-html="generateSheepSvg(evalItem.sheepConfig, 40)"></div>
+                      <!-- Status indicator dot -->
+                      <div class="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border-2 border-pasture-800 flex items-center justify-center"
+                        :class="{
+                          'bg-sage': evalItem.status === 'passed',
+                          'bg-terra': evalItem.status === 'failed',
+                          'bg-amber-500': evalItem.status === 'running'
+                        }">
+                        <i x-show="evalItem.status === 'passed'" data-lucide="check" class="w-2.5 h-2.5 text-white"></i>
+                        <i x-show="evalItem.status === 'failed'" data-lucide="x" class="w-2.5 h-2.5 text-white"></i>
+                        <i x-show="evalItem.status === 'running'" data-lucide="loader" class="w-2.5 h-2.5 text-white animate-spin"></i>
+                      </div>
                     </div>
                     <div class="flex-1 min-w-0">
-                      <div class="text-sm font-medium text-wool-200 truncate" x-text="evalItem.evalName"></div>
+                      <div class="flex items-center gap-2">
+                        <span class="text-sm font-medium text-wool-200 truncate" x-text="evalItem.evalName"></span>
+                        <!-- Status badge -->
+                        <span
+                          x-show="evalItem.status === 'passed'"
+                          class="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide rounded bg-sage/20 text-sage border border-sage/30"
+                        >Passed</span>
+                        <span
+                          x-show="evalItem.status === 'failed'"
+                          class="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide rounded bg-terra/20 text-terra border border-terra/30"
+                        >Failed</span>
+                        <span
+                          x-show="evalItem.status === 'running'"
+                          class="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide rounded bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                        >Running</span>
+                      </div>
                       <div class="text-xs text-wool-500" x-text="getEvalDuration(evalItem)"></div>
                     </div>
                   </div>
@@ -2103,8 +1804,9 @@ Example:
       <!-- END EVALS TAB -->
 
       <!-- MESSAGES TAB -->
-      <div x-show="runName && activeTab === 'messages'" class="flex-1 flex overflow-hidden" x-data="chatPanel()"
-           x-effect="if (activeTab === 'messages' && runName) { onRunSelected(runName); }">
+      <!-- Note: x-show must be on outer wrapper, x-data on inner element to access parent scope -->
+      <div x-show="runName && activeTab === 'chat'" class="flex-1 flex overflow-hidden">
+      <div x-data="chatPanel()" class="flex-1 flex overflow-hidden">
         <!-- Thread sidebar -->
         <div class="w-48 border-r border-pasture-600 flex flex-col bg-pasture-800/50">
           <div class="flex-1 overflow-y-auto">
@@ -2146,7 +1848,7 @@ Example:
                     <span class="w-4 h-4 flex-shrink-0" x-html="getWorkerAvatar(dm.name)"></span>
                     <span class="truncate" x-text="dm.name"></span>
                   </span>
-                  <span x-show="dm.thread?.unreadCount > 0" class="ml-2 min-w-[18px] h-[18px] bg-terra rounded-full text-[10px] text-white font-bold flex items-center justify-center px-1" x-text="dm.thread.unreadCount"></span>
+                  <span x-show="dm.thread?.unreadCount > 0" class="ml-2 min-w-[18px] h-[18px] bg-terra rounded-full text-[10px] text-white font-bold flex items-center justify-center px-1" x-text="dm.thread?.unreadCount"></span>
                 </button>
               </template>
               <div x-show="dmThreads.length === 0" class="px-3 py-2 text-xs text-wool-600 italic">
@@ -2218,7 +1920,91 @@ Example:
           </div>
         </div>
       </div>
+      </div>
       <!-- END MESSAGES TAB -->
+
+      <!-- CONFIG TAB -->
+      <div x-show="runName && activeTab === 'config'" class="flex-1 overflow-y-auto p-6">
+        <div class="max-w-3xl mx-auto">
+          <div class="bg-pasture-800/50 rounded-lg border border-pasture-600 p-5">
+            <!-- Two column layout -->
+            <div class="flex gap-8">
+              <!-- Left column: Execution -->
+              <div class="flex-1 space-y-4">
+                <h3 class="text-xs font-semibold text-wool-500 uppercase tracking-wider flex items-center gap-2">
+                  <i data-lucide="cpu" class="w-3.5 h-3.5"></i>
+                  Execution
+                </h3>
+                <div class="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+                  <div class="flex items-center justify-between">
+                    <span class="text-wool-500">Runner</span>
+                    <span class="text-wool-200 font-medium capitalize" x-text="detail?.runner || 'local'"></span>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-wool-500">Workers</span>
+                    <span class="text-wool-200 font-medium" x-text="detail?.workerScale || '1'"></span>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-wool-500">Agent</span>
+                    <span class="text-wool-200 font-medium" x-text="detail?.agentType || 'claude-code'"></span>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-wool-500">HITL</span>
+                    <span
+                      class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium"
+                      :class="detail?.humanInTheLoop ? 'bg-sage/20 text-sage' : 'bg-amber-500/20 text-amber-400'"
+                      x-text="detail?.humanInTheLoop ? 'On' : 'Off'"
+                    ></span>
+                  </div>
+                </div>
+
+                <div class="border-t border-pasture-600 pt-4 mt-4">
+                  <h3 class="text-xs font-semibold text-wool-500 uppercase tracking-wider flex items-center gap-2 mb-3">
+                    <i data-lucide="gauge" class="w-3.5 h-3.5"></i>
+                    Limits
+                  </h3>
+                  <div class="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+                    <div class="flex items-center justify-between">
+                      <span class="text-wool-500">Time</span>
+                      <span class="text-wool-200 font-medium" x-text="detail?.timeLimitMinutes ? detail.timeLimitMinutes + 'm' : 'None'"></span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                      <span class="text-wool-500">Iterations</span>
+                      <span class="text-wool-200 font-medium" x-text="detail?.maxIterations || 'None'"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Divider -->
+              <div class="w-px bg-pasture-600"></div>
+
+              <!-- Right column: Repository -->
+              <div class="flex-1 space-y-4">
+                <h3 class="text-xs font-semibold text-wool-500 uppercase tracking-wider flex items-center gap-2">
+                  <i data-lucide="git-branch" class="w-3.5 h-3.5"></i>
+                  Repository
+                </h3>
+                <div class="space-y-3 text-sm">
+                  <div>
+                    <div class="text-wool-500 text-xs mb-1">Project</div>
+                    <div class="text-wool-200 font-mono text-xs break-all leading-relaxed" x-text="detail?.projectPath || '-'"></div>
+                  </div>
+                  <div x-show="detail?.remoteUrl">
+                    <div class="text-wool-500 text-xs mb-1">Remote</div>
+                    <div class="text-wool-200 font-mono text-xs break-all leading-relaxed" x-text="detail?.remoteUrl"></div>
+                  </div>
+                  <div x-show="detail?.branch" class="flex items-center justify-between">
+                    <span class="text-wool-500">Branch</span>
+                    <code class="text-wool-200 text-xs bg-pasture-700 px-1.5 py-0.5 rounded" x-text="detail?.branch"></code>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- END CONFIG TAB -->
 
       <!-- Deliver Modal -->
       <div
@@ -2291,33 +2077,57 @@ Example:
       x-transition:leave-end="translate-x-full"
       class="ai-chat-panel w-96 flex-shrink-0 border-l border-pasture-600 flex flex-col bg-pasture-800"
       x-data="directChat()"
-      x-init="if (!connected && !loading) connect()"
+      x-effect="if (aiChatOpen && !connected && !loading) connect()"
       @keydown.escape.window="if (aiChatOpen && !pendingPermission) aiChatOpen = false"
     >
       <!-- Header -->
       <div class="p-3 border-b border-pasture-600 flex items-center justify-between">
         <div class="flex items-center gap-2">
           <img src="/gyp.svg" class="size-12 shrink-0 p-1" alt="Gyp" />
-          <h2 class="text-sm font-medium text-wool-300">Gyp</h2>
-          <!-- Connection status -->
-          <span
-            x-show="connected"
-            class="w-2 h-2 rounded-full bg-sage"
-            data-tooltip="Connected"
-            data-side="bottom"
-          ></span>
-          <span
-            x-show="!connected && !loading"
-            class="w-2 h-2 rounded-full bg-wool-600"
-            data-tooltip="Disconnected"
-            data-side="bottom"
-          ></span>
-          <span
-            x-show="loading"
-            class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"
-            data-tooltip="Connecting..."
-            data-side="bottom"
-          ></span>
+          <div class="flex flex-col">
+            <div class="flex items-center gap-2">
+              <h2 class="text-sm font-medium text-wool-300">Gyp</h2>
+              <!-- Connection status -->
+              <span
+                x-show="connected"
+                class="w-2 h-2 rounded-full bg-sage"
+                data-tooltip="Connected"
+                data-side="bottom"
+              ></span>
+              <span
+                x-show="!connected && !loading"
+                class="w-2 h-2 rounded-full bg-wool-600"
+                data-tooltip="Disconnected"
+                data-side="bottom"
+              ></span>
+              <span
+                x-show="loading"
+                class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"
+                data-tooltip="Connecting..."
+                data-side="bottom"
+              ></span>
+            </div>
+            <!-- Context indicator with toggle -->
+            <label
+              x-show="getSelectedRunName()"
+              class="label flex items-center gap-2 mt-0.5 cursor-pointer"
+              :data-tooltip="useRunContext ? 'Using run-specific chat' : 'Using general chat'"
+              data-side="bottom"
+            >
+              <input
+                type="checkbox"
+                role="switch"
+                class="input"
+                x-model="useRunContext"
+                @change="reloadChat()"
+              />
+              <span
+                class="text-xs truncate max-w-28"
+                :class="useRunContext ? 'text-wool-400' : 'text-wool-600'"
+                x-text="useRunContext ? getSelectedRunName() : 'General'"
+              ></span>
+            </label>
+          </div>
         </div>
         <div class="flex items-center gap-1">
           <span
@@ -2409,15 +2219,49 @@ Example:
                           'border-terra/40 bg-terra/10': chunk.tool?.status === 'failed'
                         }"
                       >
-                        <div class="flex items-center gap-2 px-3 py-2">
+                        <!-- Tool header -->
+                        <div
+                          class="flex items-center gap-2 px-3 py-2"
+                          :class="{'cursor-pointer hover:bg-white/5 rounded-t-md': hasExpandableContent(chunk.tool)}"
+                          @click="hasExpandableContent(chunk.tool) && toggleToolExpanded(chunk.tool?.id)"
+                        >
                           <span class="flex-shrink-0 text-wool-400" :class="{'animate-pulse': chunk.tool?.status === 'in_progress'}" x-html="getToolIcon(chunk.tool?.kind)"></span>
                           <span class="font-medium text-wool-300 truncate" x-text="chunk.tool?.title"></span>
+                          <!-- Command preview (for terminal tools, hide when expanded) -->
+                          <template x-if="getCommandPreview(chunk.tool) && !chunk.tool?.expanded">
+                            <code class="flex-1 min-w-0 font-mono text-wool-500 truncate text-[11px]" x-text="getCommandPreview(chunk.tool)"></code>
+                          </template>
+                          <!-- Expand indicator for tools with expandable content -->
+                          <template x-if="hasExpandableContent(chunk.tool)">
+                            <span class="text-wool-500 flex-shrink-0" x-html="getExpandIcon(chunk.tool?.expanded)"></span>
+                          </template>
                           <span
                             class="ml-auto flex-shrink-0 flex items-center gap-1"
                             :class="getToolStatusClass(chunk.tool?.status || '')"
                           >
                             <span x-html="getToolStatusIcon(chunk.tool?.status || '')"></span>
                           </span>
+                        </div>
+                        <!-- Expanded view (result/output) -->
+                        <div
+                          x-show="chunk.tool?.expanded && hasExpandableContent(chunk.tool)"
+                          x-transition
+                          class="px-3 pb-2 border-t border-wool-700/50"
+                        >
+                          <!-- Result/Output -->
+                          <template x-if="hasToolOutput(chunk.tool)">
+                            <div class="mt-2">
+                              <div class="text-[10px] text-wool-500 mb-1">Result</div>
+                              <pre class="font-mono text-[11px] text-wool-400 bg-pasture-900/50 rounded px-2 py-1.5 overflow-x-auto whitespace-pre-wrap break-all max-h-48 overflow-y-auto" x-text="getToolOutput(chunk.tool)"></pre>
+                            </div>
+                          </template>
+                          <!-- Command (only if title doesn't already show it) -->
+                          <template x-if="getCommandPreview(chunk.tool) && !hasToolOutput(chunk.tool)">
+                            <div class="mt-2">
+                              <div class="text-[10px] text-wool-500 mb-1">Command</div>
+                              <pre class="font-mono text-[11px] text-wool-400 bg-pasture-900/50 rounded px-2 py-1.5 overflow-x-auto whitespace-pre-wrap break-all" x-text="getToolCommand(chunk.tool)"></pre>
+                            </div>
+                          </template>
                         </div>
                       </div>
                     </div>
@@ -2510,822 +2354,23 @@ Example:
         <span x-text="'hirsel/' + (currentRunDetail?.name || '')"></span>
       </span>
     </div>
-    <div class="flex items-center gap-4 text-wool-600">
-      <!-- Keyboard hints -->
-      <span class="hidden sm:flex items-center gap-2">
-        <kbd class="px-1 py-0.5 bg-pasture-700 rounded text-[10px]">?</kbd>
-        <span>help</span>
-      </span>
-      <span class="hidden md:flex items-center gap-2">
-        <kbd class="px-1 py-0.5 bg-pasture-700 rounded text-[10px]">j/k</kbd>
-        <span>navigate</span>
-      </span>
-      <span class="hidden lg:flex items-center gap-2">
-        <kbd class="px-1 py-0.5 bg-pasture-700 rounded text-[10px]">c</kbd>
-        <span>chat</span>
-      </span>
+    <!-- Version info -->
+    <div class="text-wool-600" x-show="versionInfo">
+      <span x-text="'v' + (versionInfo?.version || '') + ' (' + (versionInfo?.gitSha || '') + ')'"></span>
     </div>
   </footer>
 
-  <!-- Worker Output Viewer Panel -->
-  <div
-    x-data="workerOutputViewer()"
-    x-cloak
-    x-show="visible"
-    x-transition:enter="transition ease-out duration-200"
-    x-transition:enter-start="translate-x-full"
-    x-transition:enter-end="translate-x-0"
-    x-transition:leave="transition ease-in duration-150"
-    x-transition:leave-start="translate-x-0"
-    x-transition:leave-end="translate-x-full"
-    class="fixed right-0 top-0 bottom-0 w-[600px] max-w-[90vw] bg-pasture-900 border-l border-pasture-600 shadow-2xl flex flex-col z-50"
-  >
-    <!-- Header -->
-    <div class="p-4 border-b border-pasture-600 flex items-center justify-between">
-      <div class="flex items-center gap-2">
-        <span class="text-wool-400" x-html="getIcon('terminal', 18)"></span>
-        <h2 class="text-sm font-medium text-wool-200">
-          Worker Output
-        </h2>
-        <span class="text-xs text-wool-500" x-text="workerName"></span>
-      </div>
-      <button
-        @click="hide()"
-        class="p-1.5 rounded hover:bg-pasture-700 text-wool-400 hover:text-wool-200 transition-colors"
-      >
-        <i data-lucide="x" class="w-4 h-4"></i>
-      </button>
-    </div>
+<!--#include file="./templates/worker-output-viewer.html" -->
 
-    <!-- Loading state -->
-    <div x-show="loading" class="flex-1 flex items-center justify-center">
-      <div class="text-wool-500 flex items-center gap-2">
-        <i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i>
-        <span>Loading output...</span>
-      </div>
-    </div>
 
-    <!-- Error state -->
-    <div x-show="error && !loading" class="flex-1 flex items-center justify-center p-4">
-      <div class="text-center">
-        <div class="text-terra mb-2" x-text="error"></div>
-        <button @click="show(runName, workerName)" class="text-xs text-wool-400 hover:text-wool-200 underline">
-          Retry
-        </button>
-      </div>
-    </div>
+<!--#include file="./templates/attach-picker.html" -->
 
-    <!-- Output chunks in chronological order -->
-    <div x-show="!loading && !error" class="flex-1 overflow-y-auto output-messages p-4 space-y-2">
-      <!-- Empty state -->
-      <div x-show="chunks.length === 0" class="text-center text-wool-500 py-8">
-        No output yet
-      </div>
+<!--#include file="./templates/help-modal.html" -->
 
-      <!-- Chunk list - renders text, thinking, and tools in order -->
-      <template x-for="chunk in chunks" :key="chunk.id">
-        <div>
-          <!-- Text chunk -->
-          <div
-            x-show="chunk.type === 'text'"
-            class="text-sm text-wool-200 whitespace-pre-wrap"
-            :class="{ 'ai-chat-streaming': streaming && chunks[chunks.length - 1]?.id === chunk.id }"
-            x-text="chunk.content"
-          ></div>
+<!--#include file="./templates/settings-modal.html" -->
 
-          <!-- Thinking chunk (collapsible) -->
-          <div x-show="chunk.type === 'thinking' && showThinking" class="text-xs">
-            <details class="group">
-              <summary class="cursor-pointer text-wool-500 hover:text-wool-400 flex items-center gap-1">
-                <i data-lucide="brain" class="w-3 h-3"></i>
-                <span>Thinking...</span>
-              </summary>
-              <div class="mt-1 pl-4 border-l border-wool-700 text-wool-400 whitespace-pre-wrap" x-text="chunk.content"></div>
-            </details>
-          </div>
+<!--#include file="./templates/sheep-clicker.html" -->
 
-          <!-- Tool chunk -->
-          <div
-            x-show="chunk.type === 'tool' && chunk.tool"
-            class="rounded-md border text-xs"
-            :class="{
-              'border-wool-700 bg-wool-800/30': chunk.tool?.status === 'pending',
-              'border-amber-500/40 bg-amber-900/10': chunk.tool?.status === 'in_progress',
-              'border-sage/30 bg-sage/5': chunk.tool?.status === 'completed',
-              'border-terra/40 bg-terra/10': chunk.tool?.status === 'failed'
-            }"
-          >
-            <div class="flex items-center gap-2 px-3 py-2">
-              <span class="flex-shrink-0 text-wool-400" :class="{'animate-pulse': chunk.tool?.status === 'in_progress'}" x-html="getToolIcon(chunk.tool?.kind)"></span>
-              <span class="font-medium text-wool-300 truncate" x-text="chunk.tool?.title"></span>
-              <span class="ml-auto flex-shrink-0" :class="getToolStatusClass(chunk.tool?.status)">
-                <span x-html="getToolStatusIcon(chunk.tool?.status)"></span>
-              </span>
-            </div>
-          </div>
-        </div>
-      </template>
-    </div>
-
-    <!-- Footer -->
-    <div class="p-3 border-t border-pasture-600 flex items-center justify-between text-xs text-wool-500">
-      <div class="flex items-center gap-3">
-        <label class="label gap-1.5 cursor-pointer">
-          <input type="checkbox" x-model="showThinking" class="input">
-          <span>Show thinking</span>
-        </label>
-        <label class="label gap-1.5 cursor-pointer">
-          <input type="checkbox" x-model="autoScroll" class="input">
-          <span>Auto-scroll</span>
-        </label>
-      </div>
-      <span x-show="streaming" class="flex items-center gap-1 text-amber-400">
-        <i data-lucide="loader-2" class="w-3 h-3 animate-spin"></i>
-        Streaming...
-      </span>
-    </div>
-  </div>
-
-  <!-- Attach Picker Modal -->
-  <div
-    x-cloak
-    x-show="attachPickerOpen"
-    x-transition.opacity
-    @click.self="closeAttachPicker()"
-    @keydown.escape.window="if (attachPickerOpen) closeAttachPicker()"
-    class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-  >
-    <div class="bg-pasture-800 rounded-xl shadow-2xl w-[400px] max-h-[500px] overflow-hidden border border-pasture-600" @click.stop>
-      <!-- Header -->
-      <div class="px-5 py-4 border-b border-pasture-600 flex items-center justify-between bg-pasture-700/50">
-        <div class="flex items-center gap-3">
-          <div class="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center">
-            <i data-lucide="terminal" class="w-4 h-4 text-amber-500"></i>
-          </div>
-          <div>
-            <h2 class="text-base font-semibold text-wool-100">Attach to Output</h2>
-            <p class="text-xs text-wool-500">Select a worker or evaluation to view</p>
-          </div>
-        </div>
-        <button @click="closeAttachPicker()" class="p-1.5 rounded-md hover:bg-pasture-600 text-wool-500 hover:text-wool-300 transition-colors">
-          <i data-lucide="x" class="w-4 h-4"></i>
-        </button>
-      </div>
-
-      <!-- Content -->
-      <div class="p-3 max-h-[380px] overflow-y-auto">
-        <!-- Loading -->
-        <div x-show="attachPickerLoading" class="flex items-center justify-center py-8">
-          <i data-lucide="loader" class="w-6 h-6 animate-spin text-wool-500"></i>
-        </div>
-
-        <!-- Workers Section -->
-        <div x-show="!attachPickerLoading && attachPickerWorkers.length > 0" class="mb-4">
-          <div class="flex items-center gap-2 px-2 mb-2">
-            <i data-lucide="users" class="w-3.5 h-3.5 text-wool-500"></i>
-            <span class="text-xs font-medium text-wool-500 uppercase tracking-wider">Workers</span>
-          </div>
-          <div class="space-y-1">
-            <template x-for="worker in attachPickerWorkers" :key="worker.name">
-              <button
-                @click="attachToTarget('worker', worker.name)"
-                class="w-full px-3 py-2.5 text-left rounded-lg hover:bg-pasture-700 transition-colors flex items-center justify-between group"
-              >
-                <div class="flex items-center gap-3">
-                  <span
-                    class="w-2 h-2 rounded-full"
-                    :class="{
-                      'bg-sage': worker.status === 'working',
-                      'bg-amber-500': worker.status === 'waiting' || worker.status === 'awaiting',
-                      'bg-wool-500': worker.status === 'idle' || worker.status === 'paused',
-                      'bg-terra': worker.status === 'error'
-                    }"
-                  ></span>
-                  <span class="text-sm font-medium text-wool-200" x-text="worker.name"></span>
-                </div>
-                <div class="flex items-center gap-2">
-                  <span class="text-xs text-wool-500" x-text="worker.status"></span>
-                  <i data-lucide="chevron-right" class="w-4 h-4 text-wool-600 group-hover:text-wool-400 transition-colors"></i>
-                </div>
-              </button>
-            </template>
-          </div>
-        </div>
-
-        <!-- Evals Section -->
-        <div x-show="!attachPickerLoading && attachPickerEvals.length > 0">
-          <div class="flex items-center gap-2 px-2 mb-2">
-            <i data-lucide="clipboard-check" class="w-3.5 h-3.5 text-wool-500"></i>
-            <span class="text-xs font-medium text-wool-500 uppercase tracking-wider">Evaluations</span>
-          </div>
-          <div class="space-y-1">
-            <template x-for="evalItem in attachPickerEvals" :key="evalItem.id">
-              <button
-                @click="attachToTarget('eval', evalItem.evalName)"
-                class="w-full px-3 py-2.5 text-left rounded-lg hover:bg-pasture-700 transition-colors flex items-center justify-between group"
-              >
-                <div class="flex items-center gap-3">
-                  <i
-                    class="w-4 h-4"
-                    :data-lucide="evalItem.status === 'passed' ? 'check-circle' : evalItem.status === 'failed' ? 'x-circle' : 'loader'"
-                    :class="{
-                      'text-sage': evalItem.status === 'passed',
-                      'text-terra': evalItem.status === 'failed',
-                      'text-amber-500 animate-spin': evalItem.status === 'running'
-                    }"
-                  ></i>
-                  <span class="text-sm font-medium text-wool-200" x-text="evalItem.evalName"></span>
-                </div>
-                <div class="flex items-center gap-2">
-                  <span
-                    class="text-xs px-1.5 py-0.5 rounded"
-                    :class="{
-                      'bg-sage/20 text-sage': evalItem.status === 'passed',
-                      'bg-terra/20 text-terra': evalItem.status === 'failed',
-                      'bg-amber-500/20 text-amber-500': evalItem.status === 'running'
-                    }"
-                    x-text="evalItem.status"
-                  ></span>
-                  <i data-lucide="chevron-right" class="w-4 h-4 text-wool-600 group-hover:text-wool-400 transition-colors"></i>
-                </div>
-              </button>
-            </template>
-          </div>
-        </div>
-
-        <!-- Empty State -->
-        <div x-show="!attachPickerLoading && attachPickerWorkers.length === 0 && attachPickerEvals.length === 0" class="text-center py-8">
-          <i data-lucide="inbox" class="w-10 h-10 mx-auto mb-3 text-wool-600"></i>
-          <p class="text-sm text-wool-500">No workers or evaluations available</p>
-          <p class="text-xs text-wool-600 mt-1">Start a run to see workers here</p>
-        </div>
-      </div>
-
-      <!-- Footer hint -->
-      <div class="px-4 py-2.5 border-t border-pasture-700 bg-pasture-800/50">
-        <p class="text-xs text-wool-600 text-center">
-          <kbd class="px-1.5 py-0.5 bg-pasture-700 rounded text-wool-400 font-mono">Esc</kbd> to close
-        </p>
-      </div>
-    </div>
-  </div>
-
-  <!-- Help Modal -->
-  <div
-    x-cloak
-    x-show="showHelp"
-    x-transition.opacity
-    @click.self="showHelp = false"
-    @keydown.escape.window="showHelp = false"
-    class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-  >
-    <div class="bg-pasture-800 rounded-lg shadow-xl w-96 max-h-96 overflow-auto" @click.stop>
-      <div class="p-4 border-b border-pasture-600 flex items-center justify-between">
-        <h2 class="text-lg font-semibold text-wool-100">Keyboard Shortcuts</h2>
-        <button @click="showHelp = false" class="text-wool-500 hover:text-wool-300">
-          <i data-lucide="x" class="w-5 h-5"></i>
-        </button>
-      </div>
-      <div class="p-4 space-y-2 text-sm">
-        <div class="flex justify-between"><span class="text-wool-500">j / k</span><span class="text-wool-300">Navigate runs</span></div>
-        <div class="flex justify-between"><span class="text-wool-500">Enter</span><span class="text-wool-300">Select run</span></div>
-        <div class="flex justify-between"><span class="text-wool-500">a</span><span class="text-wool-300">Attach to worker</span></div>
-        <div class="flex justify-between"><span class="text-wool-500">p</span><span class="text-wool-300">Pause run</span></div>
-        <div class="flex justify-between"><span class="text-wool-500">r</span><span class="text-wool-300">Resume run</span></div>
-        <div class="flex justify-between"><span class="text-wool-500">c</span><span class="text-wool-300">Toggle chat</span></div>
-        <div class="flex justify-between"><span class="text-wool-500">m</span><span class="text-wool-300">Send message</span></div>
-        <div class="flex justify-between"><span class="text-wool-500">t</span><span class="text-wool-300">Toggle theme</span></div>
-        <div class="flex justify-between"><span class="text-wool-500">[</span><span class="text-wool-300">Toggle sidebar</span></div>
-        <div class="flex justify-between"><span class="text-wool-500">f</span><span class="text-wool-300">Fullscreen activity</span></div>
-        <div class="flex justify-between"><span class="text-wool-500">?</span><span class="text-wool-300">Show help</span></div>
-        <div class="flex justify-between"><span class="text-wool-500">g</span><span class="text-wool-300">Sheep clicker game</span></div>
-        <div class="flex justify-between"><span class="text-wool-500">Esc</span><span class="text-wool-300">Close panel</span></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Settings Modal -->
-  <div
-    x-cloak
-    x-show="showSettings"
-    x-data="settingsModal()"
-    x-init="$watch('showSettings', (val) => { if (val) loadSettings(); })"
-    x-transition.opacity
-    @click.self="showSettings = false"
-    @keydown.escape.window="if (showSettings) showSettings = false"
-    class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-  >
-    <div class="bg-pasture-800 rounded-lg shadow-xl w-[600px] max-h-[85vh] flex flex-col overflow-hidden" @click.stop>
-      <div class="p-4 border-b border-pasture-600 flex items-center justify-between flex-shrink-0">
-        <h2 class="text-lg font-semibold text-wool-100">Settings</h2>
-        <button @click="showSettings = false" class="text-wool-500 hover:text-wool-300">
-          <i data-lucide="x" class="w-5 h-5"></i>
-        </button>
-      </div>
-
-      <!-- Tab Navigation -->
-      <div class="flex border-b border-pasture-600 flex-shrink-0">
-        <button
-          @click="activeTab = 'general'"
-          :class="activeTab === 'general' ? 'border-b-2 border-amber-500 text-wool-100' : 'text-wool-400 hover:text-wool-200'"
-          class="px-4 py-2 text-sm font-medium transition-colors"
-        >
-          <i data-lucide="settings" class="w-4 h-4 inline-block mr-1.5"></i>
-          General
-        </button>
-        <button
-          @click="activeTab = 'auth'"
-          :class="activeTab === 'auth' ? 'border-b-2 border-amber-500 text-wool-100' : 'text-wool-400 hover:text-wool-200'"
-          class="px-4 py-2 text-sm font-medium transition-colors"
-        >
-          <i data-lucide="key" class="w-4 h-4 inline-block mr-1.5"></i>
-          Authentication
-        </button>
-        <button
-          @click="activeTab = 'remotes'"
-          :class="activeTab === 'remotes' ? 'border-b-2 border-amber-500 text-wool-100' : 'text-wool-400 hover:text-wool-200'"
-          class="px-4 py-2 text-sm font-medium transition-colors"
-        >
-          <i data-lucide="server" class="w-4 h-4 inline-block mr-1.5"></i>
-          Remotes
-        </button>
-      </div>
-
-      <div class="p-6 overflow-y-auto flex-1">
-        <!-- Loading state -->
-        <div x-show="loading" class="text-center py-8 text-wool-500">
-          Loading settings...
-        </div>
-
-        <!-- ==================== GENERAL TAB ==================== -->
-        <div x-show="!loading && activeTab === 'general'" class="form grid gap-6">
-          <!-- Theme Selection -->
-          <div class="grid gap-4">
-            <div class="flex items-end gap-4">
-              <div class="grid gap-2 flex-1">
-                <label class="label">Theme</label>
-                <select class="select" x-model="familyValue" @change="switchFamily($event.target.value)">
-                  <option value="hirsel">Hirsel</option>
-                  <option value="catppuccin">Catppuccin</option>
-                </select>
-              </div>
-              <div class="grid gap-2">
-                <label class="label">Mode</label>
-                <button @click="toggleDarkMode()" class="btn h-10 px-4 flex items-center gap-2">
-                  <i x-show="isDarkMode" data-lucide="moon" class="w-4 h-4"></i>
-                  <i x-show="!isDarkMode" data-lucide="sun" class="w-4 h-4"></i>
-                  <span x-text="isDarkMode ? 'Dark' : 'Light'"></span>
-                </button>
-              </div>
-            </div>
-            <div x-show="familyValue === 'catppuccin' && isDarkMode" class="grid gap-2">
-              <label class="label">Dark Variant</label>
-              <select class="select" x-model="darkVariantValue" @change="selectDarkVariant($event.target.value)">
-                <option value="catppuccin-mocha">Mocha (darkest)</option>
-                <option value="catppuccin-macchiato">Macchiato (medium)</option>
-                <option value="catppuccin-frappe">Frappé (lighter)</option>
-              </select>
-            </div>
-            <p class="text-muted-foreground text-sm" x-text="themes.find(t => t.id === selectedTheme)?.description"></p>
-          </div>
-
-          <!-- Agent Command -->
-          <div class="grid gap-2">
-            <label class="label">Agent Command</label>
-            <input type="text" class="input" x-model="settings.agentCommand" placeholder="claude-code-acp" />
-            <p class="text-muted-foreground text-sm">Command used to spawn workers</p>
-          </div>
-
-          <!-- Eval Timeout -->
-          <div class="grid gap-2">
-            <label class="label">Eval Timeout (seconds)</label>
-            <input type="number" class="input" x-model.number="settings.evalTimeout" min="60" step="60" />
-          </div>
-
-          <!-- Toggles Row -->
-          <div class="grid gap-4">
-            <div class="flex items-center justify-between">
-              <div class="grid gap-1">
-                <label class="mb-0">Human in the Loop</label>
-                <p class="text-muted-foreground text-sm">Pause for human review at checkpoints</p>
-              </div>
-              <input type="checkbox" role="switch" class="input" :checked="settings.humanInTheLoop" @change="settings.humanInTheLoop = $event.target.checked" />
-            </div>
-            <div class="flex items-center justify-between">
-              <div class="grid gap-1">
-                <label class="mb-0">Auto Learn</label>
-                <p class="text-muted-foreground text-sm">Automatically learn from successful runs</p>
-              </div>
-              <input type="checkbox" role="switch" class="input" :checked="settings.autoLearn" @change="settings.autoLearn = $event.target.checked" />
-            </div>
-          </div>
-
-          <!-- Max Iterations -->
-          <div class="grid gap-2">
-            <label class="label">Max Iterations</label>
-            <input type="number" class="input" x-model.number="settings.maxIterations" placeholder="No limit" min="1" />
-            <p class="text-muted-foreground text-sm">Maximum eval/fix iterations (leave empty for no limit)</p>
-          </div>
-
-          <!-- User Message Pause -->
-          <div class="grid gap-2">
-            <label class="label">Pause on User Message</label>
-            <select class="select" x-model="settings.userMessagePause">
-              <option value="sender">Sender only</option>
-              <option value="all">All workers</option>
-              <option value="none">None</option>
-            </select>
-          </div>
-
-          <!-- Memory & Learnings Section -->
-          <div class="grid gap-4 p-4 bg-pasture-700/30 rounded-lg">
-            <h3 class="text-sm font-medium text-wool-200 border-b border-pasture-600 pb-2">Memory & Learnings</h3>
-            <div class="flex items-center justify-between">
-              <div class="grid gap-1">
-                <label class="mb-0">Auto-compact learnings</label>
-                <p class="text-muted-foreground text-sm">Automatically summarize old learnings</p>
-              </div>
-              <input type="checkbox" role="switch" class="input" :checked="settings.compactionEnabled" @change="settings.compactionEnabled = $event.target.checked" />
-            </div>
-            <div x-show="settings.compactionEnabled" x-cloak class="grid gap-4 pl-4 border-l-2 border-pasture-600">
-              <div class="grid gap-2">
-                <label class="label">Compaction threshold (characters)</label>
-                <input type="number" class="input w-40" x-model.number="settings.compactionThreshold" placeholder="10000" min="1000" max="100000" step="1000" />
-              </div>
-              <div class="grid gap-2">
-                <label class="label">Messages to keep</label>
-                <input type="number" class="input w-40" x-model.number="settings.compactionKeepMessages" min="5" max="200" step="5" />
-              </div>
-            </div>
-            <div class="flex items-center justify-between mt-2">
-              <div class="grid gap-1">
-                <label class="mb-0">Auto-improve on completion</label>
-                <p class="text-muted-foreground text-sm">Update project memory when runs complete</p>
-              </div>
-              <input type="checkbox" role="switch" class="input" :checked="settings.autoImprove" @change="settings.autoImprove = $event.target.checked" />
-            </div>
-          </div>
-
-          <!-- Context Warning Threshold -->
-          <div class="grid gap-2">
-            <div class="flex items-center justify-between">
-              <label class="label mb-0">Context Warning Threshold</label>
-              <span class="text-sm text-wool-300" x-text="Math.round((settings.contextWarningThreshold || 0.5) * 100) + '%'"></span>
-            </div>
-            <input type="range" class="input w-full" x-model.number="settings.contextWarningThreshold" min="0.1" max="0.9" step="0.1" x-effect="$el.style.setProperty('--slider-value', ((settings.contextWarningThreshold - 0.1) / 0.8) * 100 + '%')" />
-          </div>
-
-          <!-- Coordinator Port -->
-          <div class="grid gap-2">
-            <label class="label">Coordinator Port</label>
-            <input type="number" class="input" x-model.number="settings.coordinatorPort" min="1024" max="65535" />
-          </div>
-        </div>
-
-        <!-- ==================== AUTH TAB ==================== -->
-        <div x-show="!loading && activeTab === 'auth'" class="form grid gap-6">
-          <p class="text-muted-foreground text-sm">Select your AI provider and configure authentication.</p>
-
-          <!-- Provider Select -->
-          <div class="grid gap-2">
-            <label class="label">Provider</label>
-            <select class="select" x-model="selectedAuthProvider" @change="onAuthProviderChange()">
-              <option value="">Select a provider...</option>
-              <option value="claude">Claude (Anthropic)</option>
-              <option value="gemini">Gemini (Google)</option>
-              <option value="codex">Codex (OpenAI)</option>
-              <option value="goose">Goose</option>
-            </select>
-          </div>
-
-          <!-- Auth config (appears after provider selected) -->
-          <div x-show="selectedAuthProvider" x-cloak class="grid gap-4">
-            <!-- Method Select -->
-            <div class="grid gap-2">
-              <label class="label">Authentication Method</label>
-              <select class="select" x-model="selectedAuthMethod">
-                <option value="env">Environment Variable</option>
-                <option value="apiKey">API Key</option>
-                <option x-show="selectedAuthProvider === 'claude'" value="oauth">OAuth</option>
-              </select>
-            </div>
-
-            <!-- Method-specific fields -->
-            <div class="grid gap-4 p-4 bg-pasture-700/30 rounded-lg">
-              <!-- Env method -->
-              <div x-show="selectedAuthMethod === 'env'" class="grid gap-2">
-                <label class="label">Environment Variable Name</label>
-                <input type="text" class="input" x-model="authEnvVar" :placeholder="getDefaultEnvVar(selectedAuthProvider)" />
-                <p class="text-xs text-wool-500">Leave empty to use default: <span x-text="getDefaultEnvVar(selectedAuthProvider)"></span></p>
-              </div>
-
-              <!-- API Key method -->
-              <div x-show="selectedAuthMethod === 'apiKey'" class="grid gap-2">
-                <label class="label">API Key</label>
-                <input type="password" class="input" x-model="authApiKey" placeholder="sk-..." />
-                <p class="text-xs text-wool-500" x-show="getExistingAuthKey(selectedAuthProvider)">
-                  Current: <span x-text="getExistingAuthKey(selectedAuthProvider)"></span>
-                </p>
-              </div>
-
-              <!-- OAuth method (Claude only) -->
-              <div x-show="selectedAuthMethod === 'oauth'" class="text-sm text-wool-400">
-                <p>Uses OAuth credentials from <code class="text-xs bg-pasture-600 px-1 py-0.5 rounded">~/.claude/.credentials.json</code></p>
-                <p class="text-xs text-wool-500 mt-1">Run <code class="bg-pasture-600 px-1 py-0.5 rounded">claude login</code> to authenticate.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- ==================== REMOTES TAB ==================== -->
-        <div x-show="!loading && activeTab === 'remotes'" class="form grid gap-6">
-          <p class="text-muted-foreground text-sm">Configure remote machines for distributed worker execution over SSH.</p>
-
-          <!-- Default Remote -->
-          <div class="grid gap-2">
-            <label class="label">Default Remote</label>
-            <select class="select" x-model="settings.defaultRemote">
-              <option :value="null">Local (no remote)</option>
-              <template x-for="name in remoteNames" :key="name">
-                <option :value="name" x-text="name"></option>
-              </template>
-            </select>
-            <p class="text-muted-foreground text-sm">Default machine for spawning workers</p>
-          </div>
-
-          <!-- Remotes List -->
-          <div class="grid gap-3">
-            <div class="flex items-center justify-between">
-              <h3 class="text-sm font-medium text-wool-200">Remote Machines</h3>
-              <button @click="startAddRemote()" class="btn btn-ghost btn-sm">
-                <i data-lucide="plus" class="w-4 h-4"></i>
-                Add Remote
-              </button>
-            </div>
-
-            <!-- Empty state -->
-            <div x-show="remoteNames.length === 0" class="p-6 text-center bg-pasture-700/30 rounded-lg">
-              <i data-lucide="server-off" class="w-8 h-8 mx-auto text-wool-500 mb-2"></i>
-              <p class="text-wool-400">No remotes configured</p>
-              <p class="text-xs text-wool-500 mt-1">Add a remote to run workers on other machines</p>
-            </div>
-
-            <!-- Remote cards -->
-            <template x-for="name in remoteNames" :key="name">
-              <div class="p-3 bg-pasture-700/30 rounded-lg">
-                <div class="flex items-center justify-between">
-                  <div class="flex items-center gap-2">
-                    <i data-lucide="server" class="w-4 h-4 text-sage"></i>
-                    <span class="font-medium text-wool-200" x-text="name"></span>
-                    <span x-show="settings.defaultRemote === name" class="text-xs px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded">default</span>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <button @click="deleteRemote(name)" class="btn btn-ghost btn-sm text-wool-400 hover:text-terra">
-                      <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-                    </button>
-                    <button @click="startEditRemote(name)" class="btn btn-ghost btn-sm">
-                      <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
-                      Edit
-                    </button>
-                  </div>
-                </div>
-                <div class="mt-2 text-xs text-wool-500 grid gap-1">
-                  <div class="flex items-center gap-2">
-                    <span class="text-wool-600">Host:</span>
-                    <span x-text="settings.remotes[name]?.host"></span>
-                  </div>
-                  <div class="flex items-center gap-2" x-show="settings.remotes[name]?.sshKey">
-                    <span class="text-wool-600">Key:</span>
-                    <span x-text="settings.remotes[name]?.sshKey"></span>
-                  </div>
-                  <div class="flex items-center gap-2" x-show="settings.remotes[name]?.sshPort !== 22">
-                    <span class="text-wool-600">Port:</span>
-                    <span x-text="settings.remotes[name]?.sshPort"></span>
-                  </div>
-                </div>
-              </div>
-            </template>
-          </div>
-
-          <!-- Remote Edit Dialog -->
-          <div x-show="editingRemote" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]" @click.self="cancelEditRemote()">
-            <div class="bg-pasture-800 rounded-lg shadow-xl w-[380px] p-4" @click.stop>
-              <h3 class="text-lg font-semibold text-wool-100 mb-4" x-text="editingRemote === '__new__' ? 'Add Remote' : 'Edit Remote'"></h3>
-              <div class="grid gap-4">
-                <div class="grid gap-2">
-                  <label class="label">Name</label>
-                  <input type="text" class="input" x-model="newRemoteName" placeholder="build-server" :disabled="editingRemote !== '__new__'" />
-                </div>
-                <div class="grid gap-2">
-                  <label class="label">SSH Host <span class="text-terra">*</span></label>
-                  <input type="text" class="input" x-model="editRemoteData.host" placeholder="user@hostname" />
-                  <p class="text-xs text-wool-500">e.g. sam@192.168.1.100 or deploy@server.com</p>
-                </div>
-              </div>
-              <div class="flex justify-end gap-2 mt-4">
-                <button @click="cancelEditRemote()" class="btn btn-ghost">Cancel</button>
-                <button @click="saveRemote()" class="btn">Save</button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Error message -->
-        <div x-show="error" class="mt-4 text-destructive text-sm" x-text="error"></div>
-      </div>
-
-      <!-- Footer -->
-      <div class="p-4 border-t border-border flex justify-between flex-shrink-0">
-        <button @click="testConnection()" :disabled="testing" class="btn btn-ghost">
-          <i data-lucide="plug" class="w-4 h-4 mr-1.5"></i>
-          <span x-show="!testing">Test Connection</span>
-          <span x-show="testing">Testing...</span>
-        </button>
-        <div class="flex gap-3">
-          <button @click="showSettings = false" class="btn btn-ghost">Cancel</button>
-          <button @click="saveSettings()" :disabled="saving" class="btn">
-            <span x-show="!saving">Save</span>
-            <span x-show="saving">Saving...</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Test Connection Dialog -->
-      <div
-        x-show="showTestDialog"
-        x-cloak
-        x-transition.opacity
-        @click.self="closeTestDialog()"
-        class="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]"
-      >
-        <div class="bg-pasture-800 rounded-lg shadow-xl w-[400px] max-h-[60vh] flex flex-col overflow-hidden border border-pasture-600" @click.stop>
-          <div class="p-4 border-b border-pasture-600 flex items-center justify-between">
-            <h3 class="text-base font-medium text-wool-100">Connection Test</h3>
-            <button @click="closeTestDialog()" class="text-wool-500 hover:text-wool-300">
-              <i data-lucide="x" class="w-4 h-4"></i>
-            </button>
-          </div>
-          <div class="p-4 flex-1 overflow-y-auto">
-            <!-- Loading state -->
-            <div x-show="testing && !testResult" class="flex items-center gap-2 text-wool-400">
-              <div class="spinner w-4 h-4"></div>
-              <span class="text-sm">Connecting to agent...</span>
-            </div>
-            <!-- Response (rendered like Gyp chat) -->
-            <div x-show="testResult" class="ai-chat-message-assistant px-4 py-2.5 rounded-lg">
-              <p class="text-sm text-wool-200 whitespace-pre-wrap" :class="{ 'ai-chat-streaming': testing }" x-text="testResult"></p>
-            </div>
-          </div>
-          <div class="p-3 border-t border-pasture-600 flex justify-end">
-            <button @click="closeTestDialog()" class="btn btn-ghost btn-sm">Close</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Sheep Clicker Mini-Game -->
-  <div
-    x-cloak
-    x-data="sheepClickerGame()"
-    x-show="isOpen"
-    x-transition.opacity
-    @click.self="close()"
-    class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 sheep-clicker-overlay"
-  >
-    <div class="bg-pasture-800 rounded-xl shadow-2xl w-[700px] max-h-[85vh] overflow-hidden border border-pasture-600" @click.stop>
-      <!-- Header -->
-      <div class="p-4 border-b border-pasture-600 flex items-center justify-between bg-gradient-to-r from-pasture-700 to-pasture-800">
-        <div class="flex items-center gap-3">
-          <span class="text-3xl">🐑</span>
-          <div>
-            <h2 class="text-xl font-bold text-amber-500">Sheep Clicker</h2>
-            <p class="text-xs text-wool-500">Pass time while your agents work</p>
-          </div>
-        </div>
-        <div class="flex items-center gap-2">
-          <button @click="reset()" class="text-xs px-2 py-1 rounded bg-terra/20 text-terra hover:bg-terra/30 transition-colors" data-tooltip="Reset game" data-side="bottom">
-            Reset
-          </button>
-          <button @click="close()" class="text-wool-500 hover:text-wool-300 transition-colors">
-            <i data-lucide="x" class="w-6 h-6"></i>
-          </button>
-        </div>
-      </div>
-
-      <div class="flex h-[500px]">
-        <!-- Main Game Area -->
-        <div class="flex-1 flex flex-col items-center justify-center p-6 relative overflow-hidden">
-          <!-- Wool Counter -->
-          <div class="text-center mb-6">
-            <div class="text-5xl font-bold text-amber-500 sheep-clicker-wool-count" x-text="formatNumber(wool)"></div>
-            <div class="text-wool-400 text-lg">wool</div>
-            <div class="text-wool-600 text-sm mt-1">
-              <span x-text="formatNumber(woolPerClick * clickMultiplier)"></span>/click
-              <span class="mx-2">•</span>
-              <span x-text="formatNumber(woolPerSecond)"></span>/sec
-            </div>
-          </div>
-
-          <!-- Clickable Sheep -->
-          <button
-            @click="clickSheep($event)"
-            class="sheep-clicker-sheep relative w-48 h-48 rounded-full bg-gradient-to-br from-wool-200 to-wool-400 shadow-lg hover:shadow-xl transition-all duration-100 flex items-center justify-center group"
-            :class="{ 'sheep-bounce': sheepBounce }"
-          >
-            <!-- Sheep SVG -->
-            <svg class="w-36 h-36 text-pasture-800 group-hover:scale-105 transition-transform" viewBox="0 0 64 64">
-              <!-- Body (fluffy wool) -->
-              <ellipse cx="32" cy="38" rx="20" ry="14" fill="currentColor" opacity="0.3"/>
-              <ellipse cx="30" cy="36" rx="18" ry="12" fill="currentColor" opacity="0.5"/>
-              <ellipse cx="32" cy="34" rx="16" ry="10" fill="currentColor" opacity="0.8"/>
-              <!-- Head -->
-              <ellipse cx="48" cy="28" rx="8" ry="6" fill="currentColor"/>
-              <!-- Ear -->
-              <ellipse cx="52" cy="22" rx="3" ry="4" fill="currentColor" opacity="0.8"/>
-              <!-- Eye -->
-              <circle cx="50" cy="27" r="2" fill="#fff"/>
-              <circle cx="50.5" cy="26.5" r="1" fill="#1a1f1c"/>
-              <!-- Legs -->
-              <rect x="22" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7"/>
-              <rect x="28" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7"/>
-              <rect x="36" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7"/>
-              <rect x="42" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7"/>
-            </svg>
-
-            <!-- Floating Numbers -->
-            <template x-for="num in floatingNumbers" :key="num.id">
-              <div
-                class="sheep-clicker-floating absolute text-amber-400 font-bold text-xl pointer-events-none"
-                :style="`left: ${num.x}px; top: ${num.y}px;`"
-                x-text="'+' + num.value"
-              ></div>
-            </template>
-          </button>
-
-          <!-- Combo indicator -->
-          <div x-show="comboCount > 1" x-transition class="mt-4 text-amber-400 font-bold">
-            <span x-text="comboCount"></span>x Combo!
-          </div>
-
-          <!-- Achievement notification area -->
-          <div class="absolute bottom-4 left-4 right-4 text-center">
-            <template x-for="achievement in achievements.filter(a => a.unlocked).slice(-3)" :key="achievement.id">
-              <div class="inline-block mx-1 px-2 py-1 bg-golden/20 text-golden rounded text-xs">
-                <span x-text="achievement.icon"></span>
-                <span x-text="achievement.name"></span>
-              </div>
-            </template>
-          </div>
-        </div>
-
-        <!-- Upgrades Panel -->
-        <div class="w-64 border-l border-pasture-600 bg-pasture-900/50 flex flex-col">
-          <div class="p-3 border-b border-pasture-600">
-            <h3 class="font-semibold text-wool-200">Upgrades</h3>
-          </div>
-          <div class="flex-1 overflow-y-auto p-2 space-y-2">
-            <template x-for="upgrade in upgrades" :key="upgrade.id">
-              <button
-                @click="buyUpgrade(upgrade.id)"
-                :disabled="!canAfford(getUpgradeCost(upgrade))"
-                class="w-full p-3 rounded-lg text-left transition-all duration-150"
-                :class="canAfford(getUpgradeCost(upgrade))
-                  ? 'bg-pasture-700 hover:bg-pasture-600 cursor-pointer'
-                  : 'bg-pasture-800 opacity-50 cursor-not-allowed'"
-              >
-                <div class="flex items-center gap-2">
-                  <span class="text-2xl" x-text="upgrade.icon"></span>
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-center justify-between">
-                      <span class="font-medium text-wool-200 text-sm" x-text="upgrade.name"></span>
-                      <span class="text-xs text-wool-500" x-text="'x' + upgrade.owned" x-show="upgrade.owned > 0"></span>
-                    </div>
-                    <div class="text-xs text-wool-500 truncate" x-text="upgrade.description"></div>
-                    <div class="text-xs font-medium mt-1" :class="canAfford(getUpgradeCost(upgrade)) ? 'text-sage' : 'text-terra'">
-                      <span x-text="formatNumber(getUpgradeCost(upgrade))"></span> wool
-                    </div>
-                  </div>
-                </div>
-              </button>
-            </template>
-          </div>
-
-          <!-- Stats -->
-          <div class="p-3 border-t border-pasture-600 text-xs text-wool-500 space-y-1">
-            <div class="flex justify-between">
-              <span>Total wool:</span>
-              <span class="text-wool-300" x-text="formatNumber(totalWool)"></span>
-            </div>
-            <div class="flex justify-between">
-              <span>Achievements:</span>
-              <span class="text-wool-300" x-text="achievements.filter(a => a.unlocked).length + '/' + achievements.length"></span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
 
   <!-- Confirm Dialog -->
   <dialog id="confirm-dialog" class="dialog w-full max-w-md">
@@ -3343,6 +2388,9 @@ Example:
 
   <!-- Basecoat Toaster -->
   <div id="toaster" class="toaster"></div>
+
+<!--#include file="./templates/debug-panel.html" -->
+
 
   <!-- Load Tauri APIs -->
   <script type="module" src="./main.ts"></script>

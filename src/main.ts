@@ -1,34 +1,38 @@
+import { invoke } from '@tauri-apps/api/core';
+import { emit, listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 // Main entry point - sets up Tauri API access and Alpine components
 import Alpine from 'alpinejs';
-import { invoke } from '@tauri-apps/api/core';
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import { listen, emit } from '@tauri-apps/api/event';
 
 // Import Alpine components
 import {
-  appState,
-  runList,
-  runDetail,
-  draftEditor,
-  workerPanel,
-  taskPanel,
   activityLog,
-  chatPanel,
-  directChat,
-  permissionModal,
-  notifications,
-  tasksTab,
-  sheepClickerGame,
-  settingsModal,
   aiMessageStream,
-  workerOutputViewer,
-  toastContainer,
-  sortToggle,
+  appState,
+  chatPanel,
+  debugPanel,
+  directChat,
+  draftEditor,
+  notifications,
+  permissionModal,
+  runDetail,
+  runList,
+  settingsModal,
+  sheepClickerGame,
   sortButton,
+  sortToggle,
+  taskPanel,
+  tasksTab,
+  workerOutputViewer,
+  workerPanel,
 } from './lib/components';
 
 // Initialize toast system (uses basecoat toaster)
 import './lib/toast';
+
+// Initialize dev logger (must be early to capture all console logs)
+import { initDevLogger } from './lib/dev-logger';
+initDevLogger();
 
 // Initialize confirm dialog
 import { initConfirmDialog } from './lib/confirm-dialog';
@@ -38,15 +42,23 @@ import { dataCache } from './lib/data-cache';
 
 // Import Lucide icons
 import {
-  initLucideIcons,
-  getIcon,
   getActionIcon,
+  getIcon,
   getTaskStatusIcon,
   getWorkerStatusIcon,
+  initLucideIcons,
 } from './lib/icons';
 
 // Import sheep avatar utilities
-import { generateSheepSvg, getWorkerSheepSvg, getHatName, generateAgentSheepSvg } from './lib/sheep-avatar';
+import {
+  generateAgentSheepSvg,
+  generateSheepSvg,
+  getHatName,
+  getWorkerSheepSvg,
+} from './lib/sheep-avatar';
+
+// Import keyboard shortcuts utilities
+import { formatBinding, getShortcuts } from './lib/shortcuts';
 
 // Import types to extend global Window interface
 import './lib/types';
@@ -70,6 +82,10 @@ window.getWorkerSheepSvg = getWorkerSheepSvg;
 window.getHatName = getHatName;
 window.generateAgentSheepSvg = generateAgentSheepSvg;
 
+// Export keyboard shortcuts utilities globally for Alpine templates
+window.getShortcuts = getShortcuts;
+window.formatBinding = formatBinding;
+
 // Export Alpine components globally for x-data bindings
 window.appState = appState;
 window.runList = runList;
@@ -87,9 +103,9 @@ window.sheepClickerGame = sheepClickerGame;
 window.settingsModal = settingsModal;
 window.aiMessageStream = aiMessageStream;
 window.workerOutputViewer = workerOutputViewer;
-window.toastContainer = toastContainer;
 window.sortToggle = sortToggle;
 window.sortButton = sortButton;
+window.debugPanel = debugPanel;
 
 // Initialize Lucide icons
 initLucideIcons();
@@ -212,28 +228,29 @@ listen<ElementPositionRequest>('get-element-position', async (event) => {
       case 'tag':
         element = document.querySelector(selectorValue);
         break;
-      case 'text':
+      case 'text': {
         // Find element by text content
-        const walker = document.createTreeWalker(
-          document.body,
-          NodeFilter.SHOW_TEXT,
-          null
-        );
-        let node;
-        while ((node = walker.nextNode())) {
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+        let node: Node | null = walker.nextNode();
+        while (node) {
           if (node.textContent?.includes(selectorValue)) {
             element = node.parentElement;
             break;
           }
+          node = walker.nextNode();
         }
         break;
+      }
     }
 
     if (!element) {
-      await emit('get-element-position-response', JSON.stringify({
-        success: false,
-        error: `Element not found: ${selectorType}="${selectorValue}"`,
-      }));
+      await emit(
+        'get-element-position-response',
+        JSON.stringify({
+          success: false,
+          error: `Element not found: ${selectorType}="${selectorValue}"`,
+        }),
+      );
       return;
     }
 
@@ -246,25 +263,31 @@ listen<ElementPositionRequest>('get-element-position', async (event) => {
       element.click();
     }
 
-    await emit('get-element-position-response', JSON.stringify({
-      success: true,
-      data: {
-        x: centerX,
-        y: centerY,
-        width: rect.width,
-        height: rect.height,
-        top: rect.top,
-        left: rect.left,
-        clicked: shouldClick || false,
-      },
-    }));
+    await emit(
+      'get-element-position-response',
+      JSON.stringify({
+        success: true,
+        data: {
+          x: centerX,
+          y: centerY,
+          width: rect.width,
+          height: rect.height,
+          top: rect.top,
+          left: rect.left,
+          clicked: shouldClick || false,
+        },
+      }),
+    );
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[MCP] Element position error:', errorMessage);
-    await emit('get-element-position-response', JSON.stringify({
-      success: false,
-      error: errorMessage,
-    }));
+    await emit(
+      'get-element-position-response',
+      JSON.stringify({
+        success: false,
+        error: errorMessage,
+      }),
+    );
   }
 });
 
@@ -292,24 +315,30 @@ listen<SendTextRequest>('send-text-to-element', async (event) => {
       case 'tag':
         element = document.querySelector(selectorValue);
         break;
-      case 'text':
+      case 'text': {
         // Find by text content
         const allElements = document.querySelectorAll('input, textarea, [contenteditable]');
         for (const el of allElements) {
-          if (el.textContent?.includes(selectorValue) ||
-              (el as HTMLInputElement).value?.includes(selectorValue)) {
+          if (
+            el.textContent?.includes(selectorValue) ||
+            (el as HTMLInputElement).value?.includes(selectorValue)
+          ) {
             element = el;
             break;
           }
         }
         break;
+      }
     }
 
     if (!element) {
-      await emit('send-text-to-element-response', JSON.stringify({
-        success: false,
-        error: `Element not found: ${selectorType}="${selectorValue}"`,
-      }));
+      await emit(
+        'send-text-to-element-response',
+        JSON.stringify({
+          success: false,
+          error: `Element not found: ${selectorType}="${selectorValue}"`,
+        }),
+      );
       return;
     }
 
@@ -331,20 +360,26 @@ listen<SendTextRequest>('send-text-to-element', async (event) => {
       }
 
       if (delayMs > 0) {
-        await new Promise(resolve => setTimeout(resolve, delayMs));
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
     }
 
-    await emit('send-text-to-element-response', JSON.stringify({
-      success: true,
-      data: { textLength: text.length },
-    }));
+    await emit(
+      'send-text-to-element-response',
+      JSON.stringify({
+        success: true,
+        data: { textLength: text.length },
+      }),
+    );
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[MCP] Send text error:', errorMessage);
-    await emit('send-text-to-element-response', JSON.stringify({
-      success: false,
-      error: errorMessage,
-    }));
+    await emit(
+      'send-text-to-element-response',
+      JSON.stringify({
+        success: false,
+        error: errorMessage,
+      }),
+    );
   }
 });

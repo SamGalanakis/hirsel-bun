@@ -19,7 +19,7 @@
 //! use std::path::PathBuf;
 //!
 //! let config = ACPClientConfig {
-//!     command: vec!["claude-code-acp".into()],
+//!     command: vec!["hirsel __acp-bridge".into()],
 //!     cwd: PathBuf::from("/path/to/project"),
 //!     ..Default::default()
 //! };
@@ -32,6 +32,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use thiserror::Error;
+use tokio::process::{Child, ChildStdin, ChildStdout};
+use tracing::info;
 
 /// Error type for ACP operations.
 #[derive(Debug, Error)]
@@ -115,7 +117,7 @@ impl MCPServerConfig {
 /// Configuration for the ACP client.
 #[derive(Debug, Clone)]
 pub struct ACPClientConfig {
-    /// The command to run the agent (e.g., ["claude-code-acp"]).
+    /// The command to run the agent (e.g., ["hirsel __acp-bridge"]).
     pub command: Vec<String>,
     /// Working directory for the agent.
     pub cwd: PathBuf,
@@ -128,7 +130,7 @@ pub struct ACPClientConfig {
 impl Default for ACPClientConfig {
     fn default() -> Self {
         Self {
-            command: vec!["claude-code-acp".into()],
+            command: vec!["hirsel".into(), "__acp-bridge".into()],
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             mcp_servers: Vec::new(),
             env: HashMap::new(),
@@ -230,15 +232,249 @@ pub fn collect_agent_env() -> HashMap<String, String> {
     env
 }
 
-// Note: The actual ACP client implementation requires async runtime support
-// and the agent-client-protocol crate. The types above provide the interface
-// that will be used by the worker system.
-//
-// The full implementation will:
-// 1. Spawn the agent process with stdin/stdout piped
-// 2. Use agent_client_protocol::ClientSideConnection for communication
-// 3. Implement the Client trait to handle agent requests
-// 4. Manage sessions and route prompts
+/// Extract tool output from ACP ToolCallUpdateFields.
+///
+/// Tries raw_output first (JSON serialized), then falls back to extracting
+/// text content from the content field.
+pub fn extract_tool_output(fields: &agent_client_protocol::ToolCallUpdateFields) -> Option<String> {
+    // Try raw_output first
+    if let Some(ref raw) = fields.raw_output {
+        if let Ok(s) = serde_json::to_string(raw) {
+            return Some(s);
+        }
+    }
+
+    // Fall back to extracting text from content
+    fields.content.as_ref().and_then(|contents| {
+        use agent_client_protocol::{ContentBlock, ToolCallContent};
+        let texts: Vec<String> = contents
+            .iter()
+            .filter_map(|c| match c {
+                ToolCallContent::Content(content) => match &content.content {
+                    ContentBlock::Text(t) => Some(t.text.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        if texts.is_empty() {
+            None
+        } else {
+            Some(texts.join("\n"))
+        }
+    })
+}
+
+// =============================================================================
+// AcpChild - Reusable wrapper for ACP process spawning and cleanup
+// =============================================================================
+
+/// Configuration for spawning an ACP child process.
+#[derive(Debug, Clone)]
+pub struct AcpSpawnConfig {
+    /// The command to run (e.g., ["hirsel __acp-bridge"]).
+    pub command: Vec<String>,
+    /// Working directory for the agent.
+    pub cwd: PathBuf,
+    /// Context name for logging (e.g., "worker-alpha", "eval").
+    pub context: String,
+    /// Whether to bypass permission prompts.
+    pub bypass_permissions: bool,
+    /// Additional environment variables beyond the standard agent env vars.
+    pub extra_env: HashMap<String, String>,
+}
+
+impl AcpSpawnConfig {
+    /// Create a new spawn config with default settings.
+    pub fn new(command: Vec<String>, cwd: PathBuf, context: impl Into<String>) -> Self {
+        Self {
+            command,
+            cwd,
+            context: context.into(),
+            bypass_permissions: true,
+            extra_env: HashMap::new(),
+        }
+    }
+
+    /// Set whether to bypass permission prompts (default: true).
+    pub fn bypass_permissions(mut self, bypass: bool) -> Self {
+        self.bypass_permissions = bypass;
+        self
+    }
+
+    /// Add extra environment variables.
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.extra_env.insert(key.into(), value.into());
+        self
+    }
+}
+
+/// A wrapper around a spawned ACP child process that handles cleanup on drop.
+///
+/// This struct ensures that when the ACP process is dropped (either explicitly
+/// or when it goes out of scope), the entire process group is cleaned up,
+/// including any grandchild processes like `node hirsel __acp-bridge`.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use hirsel_lib::core::acp::{AcpChild, AcpSpawnConfig};
+///
+/// let config = AcpSpawnConfig::new(
+///     vec!["hirsel __acp-bridge".into()],
+///     PathBuf::from("/project"),
+///     "my-worker",
+/// );
+///
+/// let mut child = AcpChild::spawn(config).await?;
+/// let stdin = child.take_stdin().unwrap();
+/// let stdout = child.take_stdout().unwrap();
+///
+/// // ... use stdin/stdout for ACP communication ...
+///
+/// // When `child` is dropped, the process group is automatically cleaned up
+/// ```
+pub struct AcpChild {
+    child: Child,
+    context: String,
+    pid: Option<u32>,
+}
+
+impl AcpChild {
+    /// Spawn a new ACP child process with the given configuration.
+    ///
+    /// The process is spawned with:
+    /// - Its own process group (for proper cleanup of child processes)
+    /// - stdin/stdout piped for ACP communication
+    /// - stderr set to null
+    /// - Standard agent environment variables (API keys, etc.)
+    /// - Optional permission bypass
+    /// - Any extra environment variables from the config
+    pub fn spawn(config: AcpSpawnConfig) -> Result<Self> {
+        use std::process::Stdio;
+        use tokio::process::Command;
+
+        if config.command.is_empty() {
+            return Err(ACPError::Protocol("Empty command".into()));
+        }
+
+        let mut cmd = Command::new(&config.command[0]);
+        if config.command.len() > 1 {
+            cmd.args(&config.command[1..]);
+        }
+        cmd.current_dir(&config.cwd);
+        cmd.stdin(Stdio::piped());
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::inherit()); // Inherit stderr so we can see errors
+
+        // Create a new process group so we can kill all descendants on cleanup.
+        // This is critical because hirsel __acp-bridge spawns Node.js processes that
+        // may ignore SIGTERM, but SIGKILL to the process group will kill them.
+        #[cfg(unix)]
+        cmd.process_group(0);
+
+        // Add standard agent environment variables (API keys, etc.)
+        for (key, value) in collect_agent_env() {
+            cmd.env(&key, &value);
+        }
+
+        // Add permission bypass if requested
+        if config.bypass_permissions {
+            cmd.env("ACP_PERMISSION_MODE", "bypassPermissions");
+        }
+
+        // Add any extra environment variables
+        for (key, value) in &config.extra_env {
+            cmd.env(key, value);
+        }
+
+        let child = cmd.spawn()?;
+        let pid = child.id();
+
+        info!(
+            "[{}] ACP process spawned as process group leader, pid={}",
+            config.context,
+            pid.unwrap_or(0)
+        );
+
+        Ok(Self {
+            child,
+            context: config.context,
+            pid,
+        })
+    }
+
+    /// Take ownership of the child's stdin handle.
+    ///
+    /// This can only be called once - subsequent calls return None.
+    pub fn take_stdin(&mut self) -> Option<ChildStdin> {
+        self.child.stdin.take()
+    }
+
+    /// Take ownership of the child's stdout handle.
+    ///
+    /// This can only be called once - subsequent calls return None.
+    pub fn take_stdout(&mut self) -> Option<ChildStdout> {
+        self.child.stdout.take()
+    }
+
+    /// Get the process ID of the child process.
+    pub fn id(&self) -> Option<u32> {
+        self.pid
+    }
+
+    /// Get the context name for this process.
+    pub fn context(&self) -> &str {
+        &self.context
+    }
+
+    /// Wait for the child process to exit.
+    pub async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        self.child.wait().await
+    }
+
+    /// Attempt to kill the child process.
+    pub async fn kill(&mut self) -> std::io::Result<()> {
+        self.child.kill().await
+    }
+
+    /// Start the child process if it hasn't been started yet.
+    ///
+    /// Returns a mutable reference to the underlying Child for advanced use cases.
+    pub fn inner(&mut self) -> &mut Child {
+        &mut self.child
+    }
+
+    /// Clean up the process group for this ACP child.
+    ///
+    /// This is called automatically on drop, but can also be called manually
+    /// if you need to ensure cleanup happens at a specific point.
+    pub fn cleanup(&self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.pid {
+            info!(
+                "[{}] Cleaning up ACP process group (PID {})",
+                self.context, pid
+            );
+            unsafe {
+                // Send SIGTERM first for graceful shutdown
+                libc::kill(-(pid as i32), libc::SIGTERM);
+            }
+            // Brief wait for graceful shutdown
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            // Force kill - Node.js processes may ignore SIGTERM
+            unsafe {
+                libc::kill(-(pid as i32), libc::SIGKILL);
+            }
+        }
+    }
+}
+
+impl Drop for AcpChild {
+    fn drop(&mut self) {
+        self.cleanup();
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -283,7 +519,7 @@ mod tests {
     #[test]
     fn test_acp_client_config_default() {
         let config = ACPClientConfig::default();
-        assert_eq!(config.command, vec!["claude-code-acp"]);
+        assert_eq!(config.command, vec!["hirsel", "__acp-bridge"]);
         assert!(config.mcp_servers.is_empty());
         assert!(config.env.is_empty());
     }

@@ -6,7 +6,7 @@
  */
 
 import type { GuiError } from './types';
-import { isUserError, getErrorLabel } from './types';
+import { getErrorLabel, isUserError } from './types';
 
 /** Toast category (basecoat terminology) */
 export type ToastCategory = 'success' | 'error' | 'warning' | 'info';
@@ -48,7 +48,7 @@ function showToast(config: ToastConfig): void {
           ...(config.action && { action: config.action }),
         },
       },
-    })
+    }),
   );
 }
 

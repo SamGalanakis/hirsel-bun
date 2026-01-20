@@ -2,27 +2,23 @@
  * Run detail panel Alpine component
  */
 
-import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import { marked } from 'marked';
+import type { Eval, RunDetail, Task, WorkerDisplay } from '../types';
+import { calculateTimeProgress, formatElapsed, formatTimeRemaining } from '../utils/formatters';
 import {
-  formatElapsed,
-  formatTimeRemaining,
-  calculateTimeProgress,
-} from '../utils/formatters';
-import {
-  getStatusBadgeClass,
-  getStatusLabel,
+  canDeliver,
   canPause,
   canResume,
-  canDeliver,
+  getStatusBadgeClass,
+  getStatusLabel,
 } from '../utils/status';
-import type { RunDetail, Task, WorkerDisplay, Eval } from '../types';
 
 // Helper to sort evals by startedAt descending (most recent first)
 function sortEvals(evals: Eval[]): Eval[] {
-  return evals.sort((a, b) =>
-    new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
-  );
+  return (evals || [])
+    .filter((e): e is Eval => e != null && e.startedAt != null)
+    .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
 }
 
 interface DiffStats {
@@ -46,7 +42,7 @@ export function runDetail() {
     loading: false,
     error: null as string | null,
     pollInterval: null as ReturnType<typeof setInterval> | null,
-    activeTab: 'overview' as 'overview' | 'tasks' | 'spec' | 'eval-spec' | 'evals' | 'messages',
+    activeTab: 'overview' as 'overview' | 'tasks' | 'specs' | 'evals' | 'chat' | 'config',
 
     // Eval detail view
     selectedEval: null as Eval | null,
@@ -118,12 +114,14 @@ export function runDetail() {
       if (!this.selectedEval || !this.runName) return;
       // Open the worker output viewer with the eval name as worker name
       // (eval events are stored in worker_events table with eval_name as worker_name)
-      window.dispatchEvent(new CustomEvent('show-worker-output', {
-        detail: {
-          runName: this.runName,
-          workerName: this.selectedEval.evalName || `eval_${this.selectedEval.id}`,
-        },
-      }));
+      window.dispatchEvent(
+        new CustomEvent('show-worker-output', {
+          detail: {
+            runName: this.runName,
+            workerName: this.selectedEval.evalName || `eval_${this.selectedEval.id}`,
+          },
+        }),
+      );
     },
 
     clearSelectedEval() {
@@ -136,10 +134,13 @@ export function runDetail() {
       this.evalLogLoading = true;
       try {
         if (window.tauriInvoke) {
-          const response = await window.tauriInvoke<{ content: string; exists: boolean }>('get_eval_log_by_path', {
-            runName: this.runName,
-            logFile: evalItem.logFile,
-          });
+          const response = await window.tauriInvoke<{ content: string; exists: boolean }>(
+            'get_eval_log_by_path',
+            {
+              runName: this.runName,
+              logFile: evalItem.logFile,
+            },
+          );
           this.evalLogContent = response.exists ? response.content : null;
         }
       } catch (err) {
@@ -152,19 +153,27 @@ export function runDetail() {
 
     getEvalStatusClass(status: string) {
       switch (status) {
-        case 'passed': return 'text-sage';
-        case 'failed': return 'text-terra';
-        case 'running': return 'text-amber-500';
-        default: return 'text-wool-500';
+        case 'passed':
+          return 'text-sage';
+        case 'failed':
+          return 'text-terra';
+        case 'running':
+          return 'text-amber-500';
+        default:
+          return 'text-wool-500';
       }
     },
 
     getEvalStatusIcon(status: string) {
       switch (status) {
-        case 'passed': return 'check-circle';
-        case 'failed': return 'x-circle';
-        case 'running': return 'loader';
-        default: return 'circle';
+        case 'passed':
+          return 'check-circle';
+        case 'failed':
+          return 'x-circle';
+        case 'running':
+          return 'loader';
+        default:
+          return 'circle';
       }
     },
 
@@ -179,8 +188,8 @@ export function runDetail() {
       });
     },
 
-    getEvalDuration(evalItem: Eval): string {
-      if (!evalItem.startedAt) return '';
+    getEvalDuration(evalItem: Eval | null): string {
+      if (!evalItem || !evalItem.startedAt) return '';
       const start = new Date(evalItem.startedAt);
       const end = evalItem.finishedAt ? new Date(evalItem.finishedAt) : new Date();
       const durationMs = end.getTime() - start.getTime();
@@ -192,16 +201,16 @@ export function runDetail() {
     },
 
     getTaskProgress() {
-      const done = this.tasks.filter(t => t.status === 'done').length;
-      const total = this.tasks.length;
+      const done = this.tasks.filter((t) => t && t.status === 'done').length;
+      const total = this.tasks.filter((t) => t != null).length;
       const percentage = total > 0 ? Math.round((done / total) * 100) : 0;
       return { done, total, percentage };
     },
 
     getWorkerCount() {
       const activeStatuses = ['working', 'waiting', 'eval'];
-      const active = this.workers.filter(w => activeStatuses.includes(w.status)).length;
-      return { active, total: this.workers.length };
+      const active = this.workers.filter((w) => w && activeStatuses.includes(w.status)).length;
+      return { active, total: this.workers.filter((w) => w != null).length };
     },
 
     async init() {
@@ -213,14 +222,12 @@ export function runDetail() {
           this.clearRunDetail();
         }
       });
-
-      const self = this;
       // @ts-expect-error Alpine.js $watch magic property
       this.$watch('$root.selectedRun', async (newValue: string | null, oldValue: string | null) => {
         if (newValue && newValue !== oldValue) {
-          await self.loadRunDetail(newValue);
+          await this.loadRunDetail(newValue);
         } else if (!newValue) {
-          self.clearRunDetail();
+          this.clearRunDetail();
         }
       });
 
@@ -233,7 +240,7 @@ export function runDetail() {
       // Watch for tab changes to load eval spec on demand and auto-select latest eval
       // @ts-expect-error Alpine.js $watch magic property
       this.$watch('activeTab', async (newTab: string) => {
-        if (newTab === 'eval-spec' && this.runName) {
+        if (newTab === 'specs' && this.runName && !this.evalSpec) {
           await this.loadEvalSpec();
         }
         // Auto-select the latest eval when switching to evals tab
@@ -274,8 +281,8 @@ export function runDetail() {
       this.selectedEval = null;
       this.evalLogContent = null;
 
-      // If already on eval-spec tab, load it after fetching run detail
-      const wasOnEvalSpecTab = this.activeTab === 'eval-spec';
+      // If already on specs tab, load eval spec after fetching run detail
+      const wasOnSpecsTab = this.activeTab === 'specs';
 
       try {
         if (window.tauriInvoke) {
@@ -286,8 +293,8 @@ export function runDetail() {
             window.tauriInvoke<Eval[]>('get_evals', { runName: name }),
           ]);
           this.detail = detail;
-          this.tasks = tasks;
-          this.workers = workers;
+          this.tasks = (tasks || []).filter((t): t is Task => t != null);
+          this.workers = (workers || []).filter((w): w is WorkerDisplay => w != null);
           this.evals = sortEvals(evals);
 
           try {
@@ -300,8 +307,8 @@ export function runDetail() {
 
           this.loading = false;
 
-          // Load eval spec if we were already on that tab
-          if (wasOnEvalSpecTab) {
+          // Load eval spec if we were already on specs tab
+          if (wasOnSpecsTab) {
             await this.loadEvalSpec();
           }
 
@@ -316,8 +323,8 @@ export function runDetail() {
                 window.tauriInvoke<Eval[]>('get_evals', { runName: this.runName }),
               ]);
               this.detail = detail;
-              this.tasks = tasks;
-              this.workers = workers;
+              this.tasks = (tasks || []).filter((t): t is Task => t != null);
+              this.workers = (workers || []).filter((w): w is WorkerDisplay => w != null);
               this.evals = sortEvals(evals);
             } catch (err) {
               console.error('Failed to poll:', err);

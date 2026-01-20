@@ -20,6 +20,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 
+use super::lifecycle::{LifecycleEvent, LifecycleManager, LocalLifecycleManager};
 use super::state::{SQLiteState, Status, WorkerStatus, WorkerUpdate};
 
 // =============================================================================
@@ -29,6 +30,8 @@ use super::state::{SQLiteState, Status, WorkerStatus, WorkerUpdate};
 /// Shared state for the API handlers
 pub struct ApiState {
     pub state: Arc<Mutex<SQLiteState>>,
+    pub run_dir: PathBuf,
+    pub run_name: String,
 }
 
 // =============================================================================
@@ -186,8 +189,12 @@ type ApiResult<T> = Result<T, ApiError>;
 // =============================================================================
 
 /// Create the coordinator API router
-pub fn create_router(state: Arc<Mutex<SQLiteState>>) -> Router {
-    let api_state = Arc::new(ApiState { state });
+pub fn create_router(state: Arc<Mutex<SQLiteState>>, run_dir: PathBuf, run_name: String) -> Router {
+    let api_state = Arc::new(ApiState {
+        state,
+        run_dir,
+        run_name,
+    });
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -588,21 +595,53 @@ async fn update_worker(
     Path(name): Path<String>,
     Json(req): Json<WorkerUpdateRequest>,
 ) -> ApiResult<Json<SuccessResponse>> {
-    let state = api.state.lock().await;
-
-    // Build WorkerUpdate from request
-    let updates = WorkerUpdate {
-        pid: req.pid,
-        session_id: req.session_id,
-        status: req.status.as_ref().and_then(|s| WorkerStatus::from_str(s)),
-        waiting_thread: req.waiting_thread,
-        needs_restart: req.needs_restart,
-        last_heartbeat: req.last_heartbeat,
+    // Check if status is being set to Awaiting
+    let old_status = {
+        let state = api.state.lock().await;
+        state.get_worker(&name).ok().flatten().map(|w| w.status)
     };
 
-    state
-        .update_worker(&name, updates)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let new_status = req.status.as_ref().and_then(|s| WorkerStatus::from_str(s));
+
+    {
+        let state = api.state.lock().await;
+
+        // Build WorkerUpdate from request
+        let updates = WorkerUpdate {
+            pid: req.pid,
+            runner_id: None,
+            runner_type: None,
+            session_id: req.session_id,
+            status: new_status,
+            waiting_thread: req.waiting_thread,
+            needs_restart: req.needs_restart,
+            last_heartbeat: req.last_heartbeat,
+            hitl_waiting: None,
+        };
+
+        state
+            .update_worker(&name, updates)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+    }
+    // Lock released here
+
+    // If worker status changed to Awaiting, use LifecycleManager to handle it
+    if let (Some(old), Some(new)) = (old_status, new_status) {
+        if old != new && new == WorkerStatus::Awaiting {
+            // Get agent command from config
+            let agent_command = crate::cli::config::get_agent_command();
+
+            if let Ok(lifecycle) =
+                LocalLifecycleManager::new(&api.run_name, api.run_dir.clone(), agent_command)
+            {
+                let _ = lifecycle.process_event(LifecycleEvent::WorkerStatusChanged {
+                    worker_name: name.clone(),
+                    old,
+                    new,
+                });
+            }
+        }
+    }
 
     Ok(Json(SuccessResponse::ok()))
 }
@@ -626,11 +665,14 @@ async fn worker_heartbeat(
     let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%S%.6f").to_string();
     let updates = WorkerUpdate {
         pid: None,
+        runner_id: None,
+        runner_type: None,
         session_id: None,
         status: None,
         waiting_thread: None,
         needs_restart: None,
         last_heartbeat: Some(timestamp),
+        hitl_waiting: None,
     };
     state
         .update_worker(&name, updates)
@@ -1099,7 +1141,8 @@ pub struct CoordinatorServer {
     state: Arc<Mutex<SQLiteState>>,
     host: String,
     port: u16,
-    #[allow(dead_code)] // TODO: Used when git HTTP server is mounted
+    run_dir: PathBuf,
+    run_name: String,
     staging_path: Option<PathBuf>,
     handle: Option<tokio::task::JoinHandle<()>>,
 }
@@ -1110,12 +1153,16 @@ impl CoordinatorServer {
         state: SQLiteState,
         host: impl Into<String>,
         port: u16,
+        run_dir: PathBuf,
+        run_name: String,
         staging_path: Option<PathBuf>,
     ) -> Self {
         Self {
             state: Arc::new(Mutex::new(state)),
             host: host.into(),
             port,
+            run_dir,
+            run_name,
             staging_path,
             handle: None,
         }
@@ -1123,13 +1170,23 @@ impl CoordinatorServer {
 
     /// Start the API server
     pub async fn start(&mut self) -> anyhow::Result<()> {
-        let router = create_router(self.state.clone());
+        let mut router = create_router(
+            self.state.clone(),
+            self.run_dir.clone(),
+            self.run_name.clone(),
+        );
 
-        // TODO: Mount git HTTP server if staging path provided
-        // if let Some(ref staging_path) = self.staging_path {
-        //     let git_router = git_http::create_git_router(staging_path);
-        //     router = router.nest("/git", git_router);
-        // }
+        // Mount git HTTP server if staging path provided
+        // This allows workers to push/pull changes via git
+        if let Some(ref staging_path) = self.staging_path {
+            tracing::info!(
+                "Mounting git HTTP server at /git/{} (repo: {})",
+                self.run_name,
+                staging_path.display()
+            );
+            let git_router = super::git_http::create_git_router(staging_path.clone());
+            router = router.nest(&format!("/git/{}", self.run_name), git_router);
+        }
 
         let addr: SocketAddr = format!("{}:{}", self.host, self.port).parse()?;
         tracing::info!("Coordinator API starting on {}", addr);

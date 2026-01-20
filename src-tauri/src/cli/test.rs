@@ -158,6 +158,8 @@ pub fn run_scenario(
     run_name: Option<&str>,
     workers: Option<&str>,
     yolo: bool,
+    remote: Option<&str>,
+    runner: Option<&str>,
 ) -> TestResult<String> {
     let scenarios_dir = get_scenarios_dir();
     let scenario_path = scenarios_dir.join(scenario_name);
@@ -182,13 +184,37 @@ pub fn run_scenario(
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("test-{}", scenario_name));
 
+    // If scenario has a project folder, copy it to a temp location and init git
+    // This prevents polluting the source tree
+    let temp_project_dir = if project_path.exists() {
+        let temp_dir = std::env::temp_dir()
+            .join("hirsel-test")
+            .join(&actual_run_name);
+
+        // Clean up any previous temp dir for this run
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+
+        // Copy project to temp location (excludes .git if present)
+        copy_dir_recursive(&project_path, &temp_dir)?;
+
+        // Initialize git repo and make initial commit
+        init_git_repo(&temp_dir)?;
+
+        Some(temp_dir)
+    } else {
+        None
+    };
+
     // Build GoArgs
     let args = GoArgs {
         run_name: actual_run_name.clone(),
         spec: spec_path.to_str().unwrap_or("").to_string(),
+        profile: None, // Tests run locally
         workers: workers.unwrap_or("1").to_string(),
         time_limit: None,
-        remote: None,
+        remote: remote.map(|s| s.to_string()),
         sandbox: false,
         yolo,
         eval: if eval_path.exists() {
@@ -197,19 +223,26 @@ pub fn run_scenario(
             None
         },
         template: None,
-        project: if project_path.exists() {
-            Some(project_path.to_str().unwrap_or("").to_string())
-        } else {
-            None
-        },
+        project: temp_project_dir
+            .as_ref()
+            .map(|p| p.to_str().unwrap_or("").to_string()),
         max_iterations: None,
         pause_mode: None,
         draft: false,
         assets: None,
+        runner: runner.map(|s| s.to_string()),
     };
 
     // Run the scenario
     let output = run_go(&args)?;
+
+    // Mark this run as a test run (auto-cleanup after eval completes)
+    let (config, _) = crate::core::Config::load().unwrap_or_default();
+    let run_dir = config.runs_dir().join(&output.run_name);
+    let db_path = run_dir.join("hirsel.db");
+    if let Ok(state) = crate::core::SQLiteState::new(db_path) {
+        let _ = state.set_is_test(true);
+    }
 
     Ok(output.run_name)
 }
@@ -225,11 +258,13 @@ pub fn execute(
     workers: Option<&str>,
     yolo: bool,
     json: bool,
+    remote: Option<&str>,
+    runner: Option<&str>,
 ) -> TestResult<()> {
     match scenario {
         Some(name) => {
             // Run specific scenario
-            let run_name = run_scenario(name, run_name, workers, yolo)?;
+            let run_name = run_scenario(name, run_name, workers, yolo, remote, runner)?;
             if json {
                 println!(
                     "{}",
@@ -282,6 +317,75 @@ pub fn execute(
                 println!("Run a scenario with: hirsel test <scenario-name>");
             }
         }
+    }
+
+    Ok(())
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+/// Recursively copy a directory (skips .git)
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> TestResult<()> {
+    fs::create_dir_all(dst)?;
+
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let file_name = entry.file_name();
+        let dst_path = dst.join(&file_name);
+
+        // Skip .git directories
+        if file_name == ".git" {
+            continue;
+        }
+
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Initialize a git repo with an initial commit
+fn init_git_repo(path: &std::path::Path) -> TestResult<()> {
+    use std::process::Command;
+
+    // git init
+    let status = Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(path)
+        .status()?;
+    if !status.success() {
+        return Err(TestError::InvalidScenario("Failed to init git repo".into()));
+    }
+
+    // git add .
+    let status = Command::new("git")
+        .args(["add", "."])
+        .current_dir(path)
+        .status()?;
+    if !status.success() {
+        return Err(TestError::InvalidScenario("Failed to stage files".into()));
+    }
+
+    // git commit
+    let status = Command::new("git")
+        .args(["commit", "-m", "initial commit"])
+        .env("GIT_AUTHOR_NAME", "hirsel")
+        .env("GIT_AUTHOR_EMAIL", "hirsel@test")
+        .env("GIT_COMMITTER_NAME", "hirsel")
+        .env("GIT_COMMITTER_EMAIL", "hirsel@test")
+        .current_dir(path)
+        .status()?;
+    if !status.success() {
+        return Err(TestError::InvalidScenario(
+            "Failed to create initial commit".into(),
+        ));
     }
 
     Ok(())

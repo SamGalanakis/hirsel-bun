@@ -31,7 +31,8 @@ use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-use super::acp::collect_agent_env;
+use super::acp::{AcpChild, AcpSpawnConfig};
+use super::credentials::ForwardedCredentials;
 
 /// Result type for chat session operations
 type Result<T> = std::result::Result<T, ChatSessionError>;
@@ -153,6 +154,7 @@ pub enum ChatEvent {
         tool_call_id: String,
         title: String,
         kind: Option<String>,
+        input: Option<String>,
     },
     /// Tool call updated (status, output)
     #[serde(rename_all = "camelCase")]
@@ -160,6 +162,7 @@ pub enum ChatEvent {
         session_id: String,
         tool_call_id: String,
         status: String,
+        title: Option<String>,
         output: Option<String>,
     },
     /// Permission request (needs user response)
@@ -190,7 +193,7 @@ struct ChatSessionState {
     _session_id: String,
     _agent_session_id: Option<String>,
     _working_dir: PathBuf,
-    child: Option<Child>,
+    acp_child: Option<AcpChild>,
     terminals: HashMap<TerminalId, TerminalHandle>,
     terminal_counter: AtomicU64,
 }
@@ -414,11 +417,18 @@ impl Client for ChatClient {
                     _ => None,
                 };
 
+                // Serialize input if present
+                let input = tc
+                    .raw_input
+                    .as_ref()
+                    .and_then(|v| serde_json::to_string(v).ok());
+
                 let _ = self.event_tx.send(ChatEvent::ToolCallStart {
                     session_id: self.session_id.clone(),
                     tool_call_id: tc.tool_call_id.to_string(),
                     title: tc.title.clone(),
                     kind: kind.map(|s| s.to_string()),
+                    input,
                 });
             }
             SessionUpdate::ToolCallUpdate(update) => {
@@ -434,16 +444,14 @@ impl Client for ChatClient {
                     })
                     .unwrap_or("unknown");
 
-                let output = update
-                    .fields
-                    .raw_output
-                    .as_ref()
-                    .and_then(|v| serde_json::to_string(v).ok());
+                // Extract output using shared utility
+                let output = crate::core::acp::extract_tool_output(&update.fields);
 
                 let _ = self.event_tx.send(ChatEvent::ToolCallUpdate {
                     session_id: self.session_id.clone(),
                     tool_call_id: update.tool_call_id.to_string(),
                     status: status.to_string(),
+                    title: update.fields.title.clone(),
                     output,
                 });
             }
@@ -600,6 +608,9 @@ pub struct ChatSessionConfig {
     pub run_name: Option<String>,
     /// System prompt to prepend
     pub system_prompt: Option<String>,
+    /// Credentials to forward to the agent process
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credentials: Option<ForwardedCredentials>,
 }
 
 /// Message sent to a chat session task
@@ -771,7 +782,7 @@ async fn run_chat_session_loop(
         _session_id: session_id.clone(),
         _agent_session_id: None,
         _working_dir: working_dir.clone(),
-        child: None,
+        acp_child: None,
         terminals: HashMap::new(),
         terminal_counter: AtomicU64::new(0),
     }));
@@ -783,22 +794,25 @@ async fn run_chat_session_loop(
         state.clone(),
     ));
 
-    // Spawn agent process
-    let mut cmd = Command::new(&config.agent_command[0]);
-    if config.agent_command.len() > 1 {
-        cmd.args(&config.agent_command[1..]);
-    }
-    cmd.current_dir(&working_dir);
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::null());
+    // Spawn agent process using AcpChild for automatic cleanup
+    let mut spawn_config = AcpSpawnConfig::new(
+        config.agent_command.clone(),
+        working_dir.clone(),
+        format!("chat:{}", session_id),
+    )
+    .bypass_permissions(false); // Chat sessions need interactive permission handling
 
-    // Pass through environment variables
-    for (key, value) in collect_agent_env() {
-        cmd.env(&key, &value);
+    // Apply forwarded credentials as environment variables
+    if let Some(ref creds) = config.credentials {
+        if let Some(ref token) = creds.claude_access_token {
+            spawn_config = spawn_config.with_env("CLAUDE_ACCESS_TOKEN", token);
+        }
+        if let Some(ref key) = creds.anthropic_api_key {
+            spawn_config = spawn_config.with_env("ANTHROPIC_API_KEY", key);
+        }
     }
 
-    let mut child = match cmd.spawn() {
+    let mut acp_child = match AcpChild::spawn(spawn_config) {
         Ok(c) => c,
         Err(e) => {
             let _ = event_tx.send(ChatEvent::Error {
@@ -809,7 +823,7 @@ async fn run_chat_session_loop(
         }
     };
 
-    let stdin = match child.stdin.take() {
+    let stdin = match acp_child.take_stdin() {
         Some(s) => s,
         None => {
             let _ = event_tx.send(ChatEvent::Error {
@@ -819,7 +833,7 @@ async fn run_chat_session_loop(
             return;
         }
     };
-    let stdout = match child.stdout.take() {
+    let stdout = match acp_child.take_stdout() {
         Some(s) => s,
         None => {
             let _ = event_tx.send(ChatEvent::Error {
@@ -830,16 +844,10 @@ async fn run_chat_session_loop(
         }
     };
 
-    info!(
-        "[chat:{}] Agent process started, pid={}",
-        session_id,
-        child.id().unwrap_or(0)
-    );
-
-    // Store child in state
+    // Store AcpChild in state
     {
         let mut s = state.lock().await;
-        s.child = Some(child);
+        s.acp_child = Some(acp_child);
     }
 
     // Convert tokio streams to futures-compatible
@@ -989,12 +997,13 @@ async fn run_chat_session_loop(
         }
     }
 
-    // Clean up
+    // Clean up - AcpChild handles process group cleanup (SIGTERM -> wait -> SIGKILL)
     {
         let mut s = state.lock().await;
-        if let Some(ref mut child) = s.child {
-            let _ = child.kill().await;
+        if let Some(ref mut acp_child) = s.acp_child {
+            let _ = acp_child.kill().await;
         }
+        // AcpChild::Drop will also run cleanup when it goes out of scope
     }
 
     let _ = event_tx.send(ChatEvent::SessionEnded {

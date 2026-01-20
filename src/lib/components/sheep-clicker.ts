@@ -3,6 +3,8 @@
  * A fun easter egg to pass time while agents work
  */
 
+import { type ShortcutConfig, getShortcuts, matchesBinding } from '../shortcuts';
+
 interface Upgrade {
   id: string;
   name: string;
@@ -42,22 +44,128 @@ export function sheepClickerGame() {
     woolPerSecond: 0,
     clickMultiplier: 1,
     upgrades: [
-      { id: 'lamb', name: 'Lamb', description: 'A cute lamb helps gather wool', baseCost: 15, woolPerSecond: 0.1, icon: '🐑', owned: 0 },
-      { id: 'sheepdog', name: 'Sheepdog', description: 'Herds sheep more efficiently', baseCost: 100, woolPerSecond: 1, icon: '🐕', owned: 0 },
-      { id: 'shepherd', name: 'Shepherd', description: 'A wise shepherd tends the flock', baseCost: 500, woolPerSecond: 5, icon: '🧑‍🌾', owned: 0 },
-      { id: 'pasture', name: 'Green Pasture', description: 'Lush grass makes happy sheep', baseCost: 2000, woolPerSecond: 20, icon: '🌿', owned: 0 },
-      { id: 'barn', name: 'Cozy Barn', description: 'Shelter increases wool production', baseCost: 10000, woolPerSecond: 100, icon: '🏠', owned: 0 },
-      { id: 'shears', name: 'Golden Shears', description: '+1 wool per click', baseCost: 500, woolPerSecond: 0, icon: '✂️', owned: 0 },
-      { id: 'spinning', name: 'Spinning Wheel', description: 'Doubles click power', baseCost: 5000, woolPerSecond: 0, icon: '🎡', owned: 0 },
-      { id: 'agent', name: 'AI Agent', description: 'An automated wool gatherer', baseCost: 50000, woolPerSecond: 500, icon: '🤖', owned: 0 },
+      {
+        id: 'lamb',
+        name: 'Lamb',
+        description: 'A cute lamb helps gather wool',
+        baseCost: 15,
+        woolPerSecond: 0.1,
+        icon: '🐑',
+        owned: 0,
+      },
+      {
+        id: 'sheepdog',
+        name: 'Sheepdog',
+        description: 'Herds sheep more efficiently',
+        baseCost: 100,
+        woolPerSecond: 1,
+        icon: '🐕',
+        owned: 0,
+      },
+      {
+        id: 'shepherd',
+        name: 'Shepherd',
+        description: 'A wise shepherd tends the flock',
+        baseCost: 500,
+        woolPerSecond: 5,
+        icon: '🧑‍🌾',
+        owned: 0,
+      },
+      {
+        id: 'pasture',
+        name: 'Green Pasture',
+        description: 'Lush grass makes happy sheep',
+        baseCost: 2000,
+        woolPerSecond: 20,
+        icon: '🌿',
+        owned: 0,
+      },
+      {
+        id: 'barn',
+        name: 'Cozy Barn',
+        description: 'Shelter increases wool production',
+        baseCost: 10000,
+        woolPerSecond: 100,
+        icon: '🏠',
+        owned: 0,
+      },
+      {
+        id: 'shears',
+        name: 'Golden Shears',
+        description: '+1 wool per click',
+        baseCost: 500,
+        woolPerSecond: 0,
+        icon: '✂️',
+        owned: 0,
+      },
+      {
+        id: 'spinning',
+        name: 'Spinning Wheel',
+        description: 'Doubles click power',
+        baseCost: 5000,
+        woolPerSecond: 0,
+        icon: '🎡',
+        owned: 0,
+      },
+      {
+        id: 'agent',
+        name: 'AI Agent',
+        description: 'An automated wool gatherer',
+        baseCost: 50000,
+        woolPerSecond: 500,
+        icon: '🤖',
+        owned: 0,
+      },
     ] as Upgrade[],
     achievements: [
-      { id: 'first_wool', name: 'First Fleece', description: 'Collect your first wool', requirement: 1, icon: '🎉', unlocked: false },
-      { id: 'wool_100', name: 'Woolly Start', description: 'Collect 100 wool', requirement: 100, icon: '⭐', unlocked: false },
-      { id: 'wool_1000', name: 'Wool Gatherer', description: 'Collect 1,000 wool', requirement: 1000, icon: '🌟', unlocked: false },
-      { id: 'wool_10000', name: 'Wool Baron', description: 'Collect 10,000 wool', requirement: 10000, icon: '💫', unlocked: false },
-      { id: 'wool_100000', name: 'Wool Tycoon', description: 'Collect 100,000 wool', requirement: 100000, icon: '👑', unlocked: false },
-      { id: 'wool_million', name: 'Wool Millionaire', description: 'Collect 1,000,000 wool', requirement: 1000000, icon: '🏆', unlocked: false },
+      {
+        id: 'first_wool',
+        name: 'First Fleece',
+        description: 'Collect your first wool',
+        requirement: 1,
+        icon: '🎉',
+        unlocked: false,
+      },
+      {
+        id: 'wool_100',
+        name: 'Woolly Start',
+        description: 'Collect 100 wool',
+        requirement: 100,
+        icon: '⭐',
+        unlocked: false,
+      },
+      {
+        id: 'wool_1000',
+        name: 'Wool Gatherer',
+        description: 'Collect 1,000 wool',
+        requirement: 1000,
+        icon: '🌟',
+        unlocked: false,
+      },
+      {
+        id: 'wool_10000',
+        name: 'Wool Baron',
+        description: 'Collect 10,000 wool',
+        requirement: 10000,
+        icon: '💫',
+        unlocked: false,
+      },
+      {
+        id: 'wool_100000',
+        name: 'Wool Tycoon',
+        description: 'Collect 100,000 wool',
+        requirement: 100000,
+        icon: '👑',
+        unlocked: false,
+      },
+      {
+        id: 'wool_million',
+        name: 'Wool Millionaire',
+        description: 'Collect 1,000,000 wool',
+        requirement: 1000000,
+        icon: '🏆',
+        unlocked: false,
+      },
     ] as Achievement[],
     floatingNumbers: [] as FloatingNumber[],
     lastTick: Date.now(),
@@ -65,16 +173,38 @@ export function sheepClickerGame() {
     sheepBounce: false,
     comboCount: 0,
     _comboTimer: null as ReturnType<typeof setTimeout> | null,
+    _shortcuts: [] as ShortcutConfig[],
+    _keydownHandler: null as ((e: KeyboardEvent) => void) | null,
 
     init() {
       this.load();
       this._tickInterval = setInterval(() => this.tick(), 100);
-      document.addEventListener('keydown', (e: KeyboardEvent) => {
+
+      // Load shortcuts
+      this._shortcuts = getShortcuts();
+
+      // Listen for shortcuts changes
+      window.addEventListener('shortcuts-changed', () => {
+        this._shortcuts = getShortcuts();
+      });
+
+      // Keydown handler using shortcuts system
+      this._keydownHandler = (e: KeyboardEvent) => {
         const target = e.target as HTMLElement;
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-        if (e.key === 'g') this.toggle();
-        if (e.key === 'Escape' && this.isOpen) this.close();
-      });
+
+        // Find sheep-game shortcut
+        const sheepShortcut = this._shortcuts.find((s) => s.action === 'sheep-game');
+        const closeShortcut = this._shortcuts.find((s) => s.action === 'close-panel');
+
+        if (sheepShortcut && matchesBinding(e, sheepShortcut.binding)) {
+          this.toggle();
+        }
+        if (closeShortcut && matchesBinding(e, closeShortcut.binding) && this.isOpen) {
+          this.close();
+        }
+      };
+      document.addEventListener('keydown', this._keydownHandler);
     },
 
     destroy() {
@@ -120,14 +250,14 @@ export function sheepClickerGame() {
       const floatingId = Date.now() + Math.random();
       this.floatingNumbers.push({ id: floatingId, value: totalWool, x, y, opacity: 1 });
       setTimeout(() => {
-        this.floatingNumbers = this.floatingNumbers.filter(f => f.id !== floatingId);
+        this.floatingNumbers = this.floatingNumbers.filter((f) => f.id !== floatingId);
       }, 1000);
       this.checkAchievements();
       if (Math.random() < 0.1) this.save();
     },
 
     buyUpgrade(upgradeId: string) {
-      const upgrade = this.upgrades.find(u => u.id === upgradeId);
+      const upgrade = this.upgrades.find((u) => u.id === upgradeId);
       if (!upgrade) return;
       const cost = this.getUpgradeCost(upgrade);
       if (this.wool < cost) return;
@@ -144,14 +274,14 @@ export function sheepClickerGame() {
     },
 
     getUpgradeCost(upgrade: Upgrade): number {
-      return Math.floor(upgrade.baseCost * Math.pow(1.15, upgrade.owned));
+      return Math.floor(upgrade.baseCost * 1.15 ** upgrade.owned);
     },
 
     formatNumber(n: number): string {
       if (n < 1000) return Math.floor(n).toString();
-      if (n < 1000000) return (n / 1000).toFixed(1) + 'K';
-      if (n < 1000000000) return (n / 1000000).toFixed(1) + 'M';
-      return (n / 1000000000).toFixed(1) + 'B';
+      if (n < 1000000) return `${(n / 1000).toFixed(1)}K`;
+      if (n < 1000000000) return `${(n / 1000000).toFixed(1)}M`;
+      return `${(n / 1000000000).toFixed(1)}B`;
     },
 
     checkAchievements() {
@@ -182,8 +312,8 @@ export function sheepClickerGame() {
         woolPerClick: this.woolPerClick,
         woolPerSecond: this.woolPerSecond,
         clickMultiplier: this.clickMultiplier,
-        upgrades: this.upgrades.map(u => ({ id: u.id, owned: u.owned })),
-        achievements: this.achievements.map(a => ({ id: a.id, unlocked: a.unlocked })),
+        upgrades: this.upgrades.map((u) => ({ id: u.id, owned: u.owned })),
+        achievements: this.achievements.map((a) => ({ id: a.id, unlocked: a.unlocked })),
       };
       localStorage.setItem('hirsel-sheep-clicker', JSON.stringify(data));
     },
@@ -200,13 +330,13 @@ export function sheepClickerGame() {
         this.clickMultiplier = data.clickMultiplier || 1;
         if (data.upgrades) {
           for (const s of data.upgrades) {
-            const u = this.upgrades.find(x => x.id === s.id);
+            const u = this.upgrades.find((x) => x.id === s.id);
             if (u) u.owned = s.owned;
           }
         }
         if (data.achievements) {
           for (const s of data.achievements) {
-            const a = this.achievements.find(x => x.id === s.id);
+            const a = this.achievements.find((x) => x.id === s.id);
             if (a) a.unlocked = s.unlocked;
           }
         }
@@ -217,12 +347,13 @@ export function sheepClickerGame() {
     },
 
     async reset() {
-      const confirmed = await window.confirmDialog?.show({
-        title: 'Reset progress?',
-        message: 'This will reset all your sheep clicker progress. This cannot be undone!',
-        confirmText: 'Reset',
-        danger: true,
-      }) ?? confirm('Reset all progress? This cannot be undone!');
+      const confirmed =
+        (await window.confirmDialog?.show({
+          title: 'Reset progress?',
+          message: 'This will reset all your sheep clicker progress. This cannot be undone!',
+          confirmText: 'Reset',
+          danger: true,
+        })) ?? confirm('Reset all progress? This cannot be undone!');
       if (!confirmed) return;
       this.wool = 0;
       this.totalWool = 0;

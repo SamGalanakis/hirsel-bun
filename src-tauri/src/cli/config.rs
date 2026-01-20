@@ -26,9 +26,9 @@ pub fn agent_presets() -> HashMap<&'static str, AgentPreset> {
     presets.insert(
         "claude",
         AgentPreset {
-            command: vec!["claude-code-acp".into()],
-            description: "Anthropic Claude Code",
-            install_hint: Some("npm install -g @anthropics/claude-code-acp"),
+            command: vec!["claude".into()],
+            description: "Anthropic Claude Code (native)",
+            install_hint: Some("See https://docs.anthropic.com/en/docs/claude-code"),
         },
     );
 
@@ -55,7 +55,7 @@ pub fn agent_presets() -> HashMap<&'static str, AgentPreset> {
         AgentPreset {
             command: vec!["codex".into()],
             description: "OpenAI Codex CLI",
-            install_hint: None,
+            install_hint: Some("npm install -g @zed-industries/codex-acp"),
         },
     );
 
@@ -144,8 +144,8 @@ pub fn get_agent_command() -> Vec<String> {
             }
         }
     }
-    // Default to claude
-    vec!["claude-code-acp".to_string()]
+    // Default to hirsel ACP bridge which wraps claude CLI
+    vec!["hirsel".to_string(), "__acp-bridge".to_string()]
 }
 
 /// Check if a command is available in PATH
@@ -267,8 +267,8 @@ mod tests {
         assert!(presets.contains_key("goose"));
 
         let claude = &presets["claude"];
-        assert_eq!(claude.command, vec!["claude-code-acp"]);
-        assert_eq!(claude.description, "Anthropic Claude Code");
+        assert_eq!(claude.command, vec!["claude"]);
+        assert_eq!(claude.description, "Anthropic Claude Code (native)");
     }
 
     #[test]

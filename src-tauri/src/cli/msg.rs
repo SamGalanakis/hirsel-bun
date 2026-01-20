@@ -7,7 +7,8 @@
 
 use crate::cli::MsgArgs;
 use crate::core::chats::{append_message_to_file, get_thread_names, ChatError, Message};
-use crate::core::state::{SQLiteState, StateError, WorkerStatus, WorkerUpdate};
+use crate::core::names::slugify;
+use crate::core::state::{SQLiteState, StateError, WorkerUpdate};
 use crate::core::Files;
 use std::path::PathBuf;
 use thiserror::Error;
@@ -71,19 +72,6 @@ pub enum MsgOutput {
 pub struct ThreadInfo {
     pub name: String,
     pub message_count: i64,
-}
-
-/// Slugify a run name (lowercase, replace spaces/special chars with dashes)
-fn slugify(name: &str) -> String {
-    name.trim()
-        .to_lowercase()
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '-' })
-        .collect::<String>()
-        .split('-')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("-")
 }
 
 /// Get runs directory - defaults to ~/.hirsel/runs
@@ -186,14 +174,13 @@ fn resume_waiting_workers(state: &SQLiteState, thread: &str) -> MsgResult<Vec<St
     let mut resumed = Vec::new();
 
     for worker in workers {
-        if worker.status == WorkerStatus::Waiting
-            && worker.waiting_thread.as_deref() == Some(thread)
-        {
-            // Clear waiting thread
+        if worker.hitl_waiting && worker.waiting_thread.as_deref() == Some(thread) {
+            // Clear waiting thread and hitl_waiting flag
             state.update_worker(
                 &worker.name,
                 WorkerUpdate {
                     waiting_thread: Some(String::new()), // Clear waiting thread
+                    hitl_waiting: Some(false),
                     ..Default::default()
                 },
             )?;
@@ -230,14 +217,6 @@ pub fn get_available_threads(run_name: &str) -> MsgResult<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_slugify() {
-        assert_eq!(slugify("My Run"), "my-run");
-        assert_eq!(slugify("test_run_123"), "test-run-123");
-        assert_eq!(slugify("  spaces  "), "spaces");
-        assert_eq!(slugify("UPPER"), "upper");
-    }
 
     #[test]
     fn test_get_runs_dir() {

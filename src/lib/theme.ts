@@ -28,6 +28,8 @@ export interface ThemeInfo {
   family: ThemeFamily;
   /** The light counterpart for dark themes, or dark counterpart for light themes */
   pairedTheme: ThemeId;
+  /** Color swatches to preview the theme [background, accent, text] */
+  swatches: [string, string, string];
 }
 
 export const THEMES: Record<ThemeId, ThemeInfo> = {
@@ -38,6 +40,7 @@ export const THEMES: Record<ThemeId, ThemeInfo> = {
     isDark: true,
     family: 'hirsel',
     pairedTheme: 'hirsel-light',
+    swatches: ['#1a1a1a', '#d4a574', '#e8e4df'], // pasture-900, amber-500, wool-100
   },
   'hirsel-light': {
     id: 'hirsel-light',
@@ -46,6 +49,7 @@ export const THEMES: Record<ThemeId, ThemeInfo> = {
     isDark: false,
     family: 'hirsel',
     pairedTheme: 'hirsel-dark',
+    swatches: ['#f5f3f0', '#b8895c', '#292724'], // wool-50, amber-600, wool-900
   },
   'catppuccin-mocha': {
     id: 'catppuccin-mocha',
@@ -54,6 +58,7 @@ export const THEMES: Record<ThemeId, ThemeInfo> = {
     isDark: true,
     family: 'catppuccin',
     pairedTheme: 'catppuccin-latte',
+    swatches: ['#1e1e2e', '#cba6f7', '#cdd6f4'], // base, mauve, text
   },
   'catppuccin-macchiato': {
     id: 'catppuccin-macchiato',
@@ -62,6 +67,7 @@ export const THEMES: Record<ThemeId, ThemeInfo> = {
     isDark: true,
     family: 'catppuccin',
     pairedTheme: 'catppuccin-latte',
+    swatches: ['#24273a', '#c6a0f6', '#cad3f5'], // base, mauve, text
   },
   'catppuccin-frappe': {
     id: 'catppuccin-frappe',
@@ -70,6 +76,7 @@ export const THEMES: Record<ThemeId, ThemeInfo> = {
     isDark: true,
     family: 'catppuccin',
     pairedTheme: 'catppuccin-latte',
+    swatches: ['#303446', '#ca9ee6', '#c6d0f5'], // base, mauve, text
   },
   'catppuccin-latte': {
     id: 'catppuccin-latte',
@@ -77,7 +84,8 @@ export const THEMES: Record<ThemeId, ThemeInfo> = {
     description: 'Light pastel theme - bright and harmonious',
     isDark: false,
     family: 'catppuccin',
-    pairedTheme: 'catppuccin-mocha', // Default dark pair
+    pairedTheme: 'catppuccin-mocha',
+    swatches: ['#eff1f5', '#8839ef', '#4c4f69'], // base, mauve, text
   },
 };
 
@@ -154,12 +162,12 @@ export function setTheme(themeId: ThemeId): void {
 }
 
 /**
- * Get the current theme ID from localStorage or return default
+ * Get the current theme ID from localStorage or return default based on system preference
  */
 export function getTheme(): ThemeId {
   const stored = localStorage.getItem(STORAGE_KEY);
 
-  // Check if it's a valid theme ID
+  // Check if it's a valid theme ID (user has explicitly chosen)
   if (stored && stored in THEMES) {
     return stored as ThemeId;
   }
@@ -172,7 +180,9 @@ export function getTheme(): ThemeId {
     return 'hirsel-light';
   }
 
-  return DEFAULT_THEME;
+  // No stored preference - use system preference with Hirsel theme
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  return prefersDark ? 'hirsel-dark' : 'hirsel-light';
 }
 
 /**
@@ -365,7 +375,14 @@ export const transitions = {
 
 export type RunStatus = 'idle' | 'working' | 'paused' | 'waiting' | 'done' | 'timed_out' | 'error';
 export type TaskStatus = 'todo' | 'doing' | 'done' | 'blocked';
-export type WorkerStatus = 'idle' | 'working' | 'waiting' | 'awaiting' | 'paused' | 'done' | 'error';
+export type WorkerStatus =
+  | 'idle'
+  | 'working'
+  | 'waiting'
+  | 'awaiting'
+  | 'paused'
+  | 'done'
+  | 'error';
 
 export const statusClasses: Record<RunStatus | TaskStatus | WorkerStatus, string> = {
   idle: 'status-idle',

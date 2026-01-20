@@ -1,0 +1,1088 @@
+  <!-- Settings Modal -->
+  <div
+    x-cloak
+    x-show="showSettings"
+    x-data="settingsModal()"
+    x-init="
+      $watch('showSettings', (val) => {
+        if (val) loadSettings();
+        else stopHealthPolling();
+      });
+    "
+    x-transition.opacity
+    @click.self="showSettings = false"
+    @keydown.escape.window="if (showSettings) showSettings = false"
+    class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6"
+  >
+    <div class="bg-pasture-800 rounded-lg shadow-xl flex flex-col overflow-hidden w-full h-full max-w-5xl max-h-[900px]" @click.stop>
+      <!-- Header -->
+      <div class="px-6 py-4 border-b border-pasture-600 flex items-center justify-between flex-shrink-0">
+        <h2 class="text-lg font-semibold text-wool-100">Settings</h2>
+        <button @click="showSettings = false" class="text-wool-500 hover:text-wool-300 transition-colors">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- Body: Sidebar + Content -->
+      <div class="flex flex-1 overflow-hidden">
+        <!-- Sidebar Navigation - Profile Centric -->
+        <nav class="w-52 border-r border-pasture-600 flex flex-col shrink-0 bg-pasture-800/50">
+          <!-- APP Section -->
+          <div class="p-3 flex flex-col gap-1">
+            <div class="text-xs font-semibold text-wool-500 uppercase tracking-wider px-3 py-1.5">App</div>
+            <button
+              @click="navigateToApp('theme')"
+              :class="activeSection === 'app' && appSection === 'theme' ? 'bg-pasture-700 text-wool-100 font-medium' : 'text-wool-400 hover:text-wool-200 hover:bg-pasture-700/50'"
+              class="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-left w-full transition-colors"
+            >
+              <i data-lucide="palette" class="w-4 h-4"></i>
+              Theme
+            </button>
+            <button
+              @click="navigateToApp('controls')"
+              :class="activeSection === 'app' && appSection === 'controls' ? 'bg-pasture-700 text-wool-100 font-medium' : 'text-wool-400 hover:text-wool-200 hover:bg-pasture-700/50'"
+              class="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-left w-full transition-colors"
+            >
+              <i data-lucide="keyboard" class="w-4 h-4"></i>
+              Controls
+            </button>
+          </div>
+
+          <!-- Divider -->
+          <div class="border-t border-pasture-600 mx-3"></div>
+
+          <!-- PROFILES Section -->
+          <div class="p-3 flex flex-col gap-1 flex-1 overflow-y-auto">
+            <div class="text-xs font-semibold text-wool-500 uppercase tracking-wider px-3 py-1.5">Profiles</div>
+
+            <!-- Local Profile (always shown) -->
+            <button
+              @click="navigateToProfile('local')"
+              :class="activeSection === 'profile' && selectedProfile === 'local' ? 'bg-pasture-700 text-wool-100 font-medium' : 'text-wool-400 hover:text-wool-200 hover:bg-pasture-700/50'"
+              class="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-left w-full transition-colors group"
+            >
+              <i data-lucide="laptop" class="w-4 h-4 text-sage"></i>
+              <span class="flex-1">local</span>
+              <span x-show="settings.defaultProfile === 'local'" class="text-amber-400 text-xs">●</span>
+            </button>
+
+            <!-- Remote Profiles -->
+            <template x-for="name in remoteProfileNames" :key="name">
+              <button
+                @click="navigateToProfile(name)"
+                :class="activeSection === 'profile' && selectedProfile === name ? 'bg-pasture-700 text-wool-100 font-medium' : 'text-wool-400 hover:text-wool-200 hover:bg-pasture-700/50'"
+                class="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-left w-full transition-colors group"
+              >
+                <i data-lucide="server" class="w-4 h-4 text-sage"></i>
+                <span class="flex-1 truncate" x-text="name"></span>
+                <!-- Default indicator -->
+                <span x-show="settings.defaultProfile === name" class="text-amber-400 text-xs">●</span>
+                <!-- Health status dot -->
+                <span x-show="profileHealth[name]"
+                  class="w-2 h-2 rounded-full shrink-0"
+                  :class="{
+                    'bg-wool-500 animate-pulse': profileHealth[name]?.status === 'checking',
+                    'bg-green-400': profileHealth[name]?.status === 'online' && !profileHealth[name]?.error,
+                    'bg-amber-400': profileHealth[name]?.status === 'online' && profileHealth[name]?.error,
+                    'bg-terra': profileHealth[name]?.status === 'offline'
+                  }"
+                  :data-tooltip="getHealthTooltip(name)">
+                </span>
+              </button>
+            </template>
+
+            <!-- Add Profile Button -->
+            <button
+              @click="startAddProfile()"
+              class="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-left w-full transition-colors text-wool-500 hover:text-wool-300 hover:bg-pasture-700/50"
+            >
+              <i data-lucide="plus" class="w-4 h-4"></i>
+              <span>Add Profile</span>
+            </button>
+          </div>
+        </nav>
+
+        <!-- Content Area -->
+        <div class="flex-1 overflow-hidden flex flex-col">
+          <!-- Loading state -->
+          <div x-show="loading" class="flex-1 flex items-center justify-center text-wool-500">
+            Loading settings...
+          </div>
+
+          <!-- ==================== APP SECTION ==================== -->
+          <div x-show="!loading && activeSection === 'app'" class="flex-1 overflow-y-auto p-8">
+            <div class="max-w-2xl mx-auto">
+
+              <!-- THEME SECTION -->
+              <div x-show="appSection === 'theme'" class="grid gap-6">
+                <div>
+                  <h3 class="text-lg font-medium text-wool-100 mb-1">Theme</h3>
+                  <p class="text-muted-foreground text-sm">Customize the appearance of the application.</p>
+                </div>
+
+                <div class="grid gap-2">
+                  <label for="settings-theme">Color Theme</label>
+                  <div class="select" x-data="{ open: false }" data-select-initialized="true">
+                    <button type="button" class="btn-outline w-full" @click="open = !open" @click.away="open = false"
+                      aria-haspopup="listbox" :aria-expanded="open">
+                      <span class="truncate flex items-center gap-2 flex-1">
+                        <span x-text="themes.find(t => t.id === selectedTheme)?.name"></span>
+                      </span>
+                      <div class="flex items-center gap-1 mr-2">
+                        <template x-for="color in (themes.find(t => t.id === selectedTheme)?.swatches || [])" :key="color">
+                          <span class="w-3 h-3 rounded-full border border-white/20" :style="`background-color: ${color}`"></span>
+                        </template>
+                      </div>
+                      <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
+                    </button>
+                    <div data-popover :aria-hidden="!open" x-show="open" x-transition>
+                      <div role="listbox" aria-orientation="vertical">
+                        <template x-for="theme in themes" :key="theme.id">
+                          <div role="option" :data-value="theme.id" :aria-selected="selectedTheme === theme.id"
+                            @click="applyTheme(theme.id); open = false" class="flex items-center justify-between gap-2">
+                            <span class="flex-1" x-text="theme.name"></span>
+                            <div class="flex items-center gap-1">
+                              <template x-for="color in theme.swatches" :key="color">
+                                <span class="w-3 h-3 rounded-full border border-white/20" :style="`background-color: ${color}`"></span>
+                              </template>
+                            </div>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
+                  <p class="text-muted-foreground text-sm" x-text="themes.find(t => t.id === selectedTheme)?.description"></p>
+                </div>
+              </div>
+
+              <!-- CONTROLS SECTION -->
+              <div x-show="appSection === 'controls'" class="grid gap-6">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <h3 class="text-lg font-medium text-wool-100 mb-1">Keyboard Shortcuts</h3>
+                    <p class="text-muted-foreground text-sm">Click any shortcut to rebind. Press Escape to cancel.</p>
+                  </div>
+                  <button @click="resetAllShortcuts()" class="btn btn-ghost btn-sm">
+                    <i data-lucide="rotate-ccw" class="w-4 h-4 mr-1"></i>
+                    Reset to Defaults
+                  </button>
+                </div>
+
+                <!-- Conflict warning -->
+                <div x-show="shortcutConflict" x-cloak class="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-sm text-amber-400 flex items-center gap-2">
+                  <i data-lucide="alert-triangle" class="w-4 h-4 shrink-0"></i>
+                  <span x-text="shortcutConflict"></span>
+                </div>
+
+                <!-- Navigation -->
+                <div class="grid gap-2">
+                  <h4 class="text-sm font-medium text-wool-200">Navigation</h4>
+                  <div class="grid gap-1.5 text-sm">
+                    <template x-for="shortcut in getShortcutsByCategory('navigation')" :key="shortcut.action">
+                      <div class="flex justify-between items-center py-1.5 border-b border-pasture-700">
+                        <span class="text-wool-300" x-text="shortcut.label"></span>
+                        <button @click="startRebind(shortcut.action)"
+                          :class="rebindingAction === shortcut.action ? 'ring-2 ring-amber-500 ring-offset-1 ring-offset-pasture-800' : 'hover:bg-pasture-600'"
+                          class="cursor-pointer transition-all rounded px-1">
+                          <kbd x-show="rebindingAction !== shortcut.action" class="kbd text-wool-500" x-text="formatBinding(shortcut.binding)"></kbd>
+                          <span x-show="rebindingAction === shortcut.action" class="kbd text-amber-400 animate-pulse">Press key...</span>
+                        </button>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+
+                <!-- Run Controls -->
+                <div class="grid gap-2">
+                  <h4 class="text-sm font-medium text-wool-200">Run Controls</h4>
+                  <div class="grid gap-1.5 text-sm">
+                    <template x-for="shortcut in getShortcutsByCategory('run-controls')" :key="shortcut.action">
+                      <div class="flex justify-between items-center py-1.5 border-b border-pasture-700">
+                        <span class="text-wool-300" x-text="shortcut.label"></span>
+                        <button @click="startRebind(shortcut.action)"
+                          :class="rebindingAction === shortcut.action ? 'ring-2 ring-amber-500 ring-offset-1 ring-offset-pasture-800' : 'hover:bg-pasture-600'"
+                          class="cursor-pointer transition-all rounded px-1">
+                          <kbd x-show="rebindingAction !== shortcut.action" class="kbd text-wool-500" x-text="formatBinding(shortcut.binding)"></kbd>
+                          <span x-show="rebindingAction === shortcut.action" class="kbd text-amber-400 animate-pulse">Press key...</span>
+                        </button>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+
+                <!-- Communication -->
+                <div class="grid gap-2">
+                  <h4 class="text-sm font-medium text-wool-200">Communication</h4>
+                  <div class="grid gap-1.5 text-sm">
+                    <template x-for="shortcut in getShortcutsByCategory('communication')" :key="shortcut.action">
+                      <div class="flex justify-between items-center py-1.5 border-b border-pasture-700">
+                        <span class="text-wool-300" x-text="shortcut.label"></span>
+                        <button @click="startRebind(shortcut.action)"
+                          :class="rebindingAction === shortcut.action ? 'ring-2 ring-amber-500 ring-offset-1 ring-offset-pasture-800' : 'hover:bg-pasture-600'"
+                          class="cursor-pointer transition-all rounded px-1">
+                          <kbd x-show="rebindingAction !== shortcut.action" class="kbd text-wool-500" x-text="formatBinding(shortcut.binding)"></kbd>
+                          <span x-show="rebindingAction === shortcut.action" class="kbd text-amber-400 animate-pulse">Press key...</span>
+                        </button>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+
+                <!-- Other -->
+                <div class="grid gap-2">
+                  <h4 class="text-sm font-medium text-wool-200">Other</h4>
+                  <div class="grid gap-1.5 text-sm">
+                    <template x-for="shortcut in getShortcutsByCategory('other')" :key="shortcut.action">
+                      <div class="flex justify-between items-center py-1.5 border-b border-pasture-700 last:border-b-0">
+                        <span class="text-wool-300" x-text="shortcut.label"></span>
+                        <button @click="startRebind(shortcut.action)"
+                          :class="rebindingAction === shortcut.action ? 'ring-2 ring-amber-500 ring-offset-1 ring-offset-pasture-800' : 'hover:bg-pasture-600'"
+                          class="cursor-pointer transition-all rounded px-1">
+                          <kbd x-show="rebindingAction !== shortcut.action" class="kbd text-wool-500" x-text="formatBinding(shortcut.binding)"></kbd>
+                          <span x-show="rebindingAction === shortcut.action" class="kbd text-amber-400 animate-pulse">Press key...</span>
+                        </button>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </div>
+
+            </div><!-- /max-w-2xl -->
+          </div><!-- /app section -->
+
+          <!-- ==================== PROFILE SECTION ==================== -->
+          <div x-show="!loading && activeSection === 'profile' && selectedProfile" class="flex-1 overflow-hidden flex flex-col">
+            <!-- Profile Header -->
+            <div class="px-8 pt-6 pb-4 border-b border-pasture-600 flex items-center justify-between shrink-0">
+              <div class="flex items-center gap-3">
+                <span x-show="selectedProfile === 'local'"><i data-lucide="laptop" class="w-5 h-5 text-sage"></i></span>
+                <span x-show="selectedProfile !== 'local'"><i data-lucide="server" class="w-5 h-5 text-sage"></i></span>
+                <h3 class="text-lg font-medium text-wool-100" x-text="selectedProfile"></h3>
+                <span x-show="selectedProfile === 'local'" class="text-xs px-2 py-0.5 bg-pasture-600 text-wool-400 rounded">Built-in</span>
+                <span x-show="selectedProfile !== 'local'" class="text-xs px-2 py-0.5 bg-pasture-600 text-wool-400 rounded">Remote</span>
+                <!-- Health status for remote -->
+                <span x-show="selectedProfile !== 'local' && profileHealth[selectedProfile]"
+                  class="flex items-center gap-1.5 text-xs"
+                  :class="{
+                    'text-wool-500': profileHealth[selectedProfile]?.status === 'checking',
+                    'text-green-400': profileHealth[selectedProfile]?.status === 'online' && !profileHealth[selectedProfile]?.error,
+                    'text-amber-400': profileHealth[selectedProfile]?.status === 'online' && profileHealth[selectedProfile]?.error,
+                    'text-terra': profileHealth[selectedProfile]?.status === 'offline'
+                  }">
+                  <span class="w-2 h-2 rounded-full"
+                    :class="{
+                      'bg-wool-500 animate-pulse': profileHealth[selectedProfile]?.status === 'checking',
+                      'bg-green-400': profileHealth[selectedProfile]?.status === 'online' && !profileHealth[selectedProfile]?.error,
+                      'bg-amber-400': profileHealth[selectedProfile]?.status === 'online' && profileHealth[selectedProfile]?.error,
+                      'bg-terra': profileHealth[selectedProfile]?.status === 'offline'
+                    }"></span>
+                  <span x-text="profileHealth[selectedProfile]?.status === 'online' && profileHealth[selectedProfile]?.error ? 'auth error' : profileHealth[selectedProfile]?.status"></span>
+                </span>
+              </div>
+              <button
+                x-show="settings.defaultProfile !== selectedProfile"
+                @click="settings.defaultProfile = selectedProfile"
+                class="btn btn-ghost btn-sm"
+              >
+                Set as Default
+              </button>
+              <span x-show="settings.defaultProfile === selectedProfile" class="text-xs px-2 py-1 bg-amber-500/20 text-amber-400 rounded">Default Profile</span>
+            </div>
+
+            <!-- Profile Tabs -->
+            <div class="px-8 py-2 border-b border-pasture-600 flex gap-1 shrink-0 bg-pasture-800/30">
+              <!-- Connection tab (remote only) -->
+              <button
+                x-show="!isLocalProfile()"
+                @click="setProfileTab('connection')"
+                :class="profileTab === 'connection' ? 'bg-pasture-700 text-wool-100' : 'text-wool-400 hover:text-wool-200 hover:bg-pasture-700/50'"
+                class="px-3 py-1.5 rounded text-sm transition-colors"
+              >
+                Connection
+              </button>
+              <button
+                @click="setProfileTab('agents')"
+                :class="profileTab === 'agents' ? 'bg-pasture-700 text-wool-100' : 'text-wool-400 hover:text-wool-200 hover:bg-pasture-700/50'"
+                class="px-3 py-1.5 rounded text-sm transition-colors"
+              >
+                Agents
+              </button>
+              <button
+                @click="setProfileTab('runners')"
+                :class="profileTab === 'runners' ? 'bg-pasture-700 text-wool-100' : 'text-wool-400 hover:text-wool-200 hover:bg-pasture-700/50'"
+                class="px-3 py-1.5 rounded text-sm transition-colors"
+              >
+                Runners
+              </button>
+              <button
+                @click="setProfileTab('defaults')"
+                :class="profileTab === 'defaults' ? 'bg-pasture-700 text-wool-100' : 'text-wool-400 hover:text-wool-200 hover:bg-pasture-700/50'"
+                class="px-3 py-1.5 rounded text-sm transition-colors"
+              >
+                Defaults
+              </button>
+              <button
+                @click="setProfileTab('git')"
+                :class="profileTab === 'git' ? 'bg-pasture-700 text-wool-100' : 'text-wool-400 hover:text-wool-200 hover:bg-pasture-700/50'"
+                class="px-3 py-1.5 rounded text-sm transition-colors"
+              >
+                Git
+              </button>
+              <button
+                @click="setProfileTab('data')"
+                :class="profileTab === 'data' ? 'bg-pasture-700 text-wool-100' : 'text-wool-400 hover:text-wool-200 hover:bg-pasture-700/50'"
+                class="px-3 py-1.5 rounded text-sm transition-colors"
+              >
+                Data
+              </button>
+            </div>
+
+            <!-- Profile Tab Content -->
+            <div class="flex-1 overflow-y-auto p-8">
+              <div class="max-w-2xl mx-auto">
+                <!-- Loading remote settings -->
+                <div x-show="loadingProfile" class="text-center py-8 text-wool-500">
+                  Loading profile settings...
+                </div>
+
+                <!-- CONNECTION TAB (remote only) -->
+                <form x-show="!loadingProfile && profileTab === 'connection' && !isLocalProfile()" class="form grid gap-6">
+                  <p class="text-muted-foreground text-sm">Configure the connection to this remote orchestrator.</p>
+
+                  <div class="grid gap-2">
+                    <label for="profile-conn-url">Server URL</label>
+                    <input id="profile-conn-url" type="text" :value="settings.profiles[selectedProfile]?.url || ''" @input="settings.profiles[selectedProfile].url = $event.target.value" placeholder="http://100.x.x.x:8080" />
+                    <p class="text-muted-foreground text-sm">Tailscale IP recommended for secure access.</p>
+                  </div>
+
+                  <div class="grid gap-2">
+                    <label for="profile-conn-apikey">API Key</label>
+                    <input id="profile-conn-apikey" type="password" :value="settings.profiles[selectedProfile]?.apiKey || ''" @input="settings.profiles[selectedProfile].apiKey = $event.target.value" placeholder="••••••••" />
+                    <p class="text-muted-foreground text-sm">Authentication key for the remote server.</p>
+                  </div>
+
+                  <div class="grid gap-2">
+                    <label>Worker Access Method</label>
+                    <div class="select" x-data="{ open: false }" data-select-initialized="true">
+                      <button type="button" class="btn-outline w-full" @click="open = !open" @click.away="open = false"
+                        aria-haspopup="listbox" :aria-expanded="open">
+                        <span class="truncate flex-1 text-left"
+                          x-text="{ direct: 'Direct', tailscale: 'Tailscale' }[settings.profiles[selectedProfile]?.access?.type] || 'Direct'"></span>
+                        <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
+                      </button>
+                      <div data-popover :aria-hidden="!open" x-show="open" x-transition>
+                        <div role="listbox" aria-orientation="vertical">
+                          <div role="option" data-value="direct" :aria-selected="settings.profiles[selectedProfile]?.access?.type === 'direct'"
+                            @click="onAccessTypeChange('direct'); settings.profiles[selectedProfile].access = editProfileData.access; open = false">Direct</div>
+                          <div role="option" data-value="tailscale" :aria-selected="settings.profiles[selectedProfile]?.access?.type === 'tailscale'"
+                            @click="onAccessTypeChange('tailscale'); settings.profiles[selectedProfile].access = editProfileData.access; open = false">Tailscale</div>
+                        </div>
+                      </div>
+                    </div>
+                    <p class="text-muted-foreground text-sm">How workers connect to the orchestrator.</p>
+                  </div>
+
+                  <!-- Tailscale OAuth Fields -->
+                  <div x-show="settings.profiles[selectedProfile]?.access?.type === 'tailscale'" x-cloak class="flex flex-col gap-4 pl-4 border-l-2 border-sage/30">
+                    <p class="text-sm text-wool-400">
+                      <a href="https://login.tailscale.com/admin/settings/oauth" target="_blank" class="text-amber-500 hover:underline">Create OAuth client</a> for ephemeral auth keys.
+                    </p>
+                    <div class="grid gap-2">
+                      <label for="profile-ts-client-id">OAuth Client ID</label>
+                      <input id="profile-ts-client-id" type="text" :value="settings.profiles[selectedProfile]?.access?.oauth_client_id || ''" @input="settings.profiles[selectedProfile].access.oauth_client_id = $event.target.value" placeholder="k..." />
+                    </div>
+                    <div class="grid gap-2">
+                      <label for="profile-ts-client-secret">OAuth Client Secret</label>
+                      <input id="profile-ts-client-secret" type="password" :value="settings.profiles[selectedProfile]?.access?.oauth_client_secret || ''" @input="settings.profiles[selectedProfile].access.oauth_client_secret = $event.target.value" placeholder="tskey-client-..." />
+                    </div>
+                    <div class="grid gap-2">
+                      <label for="profile-ts-tag">Device Tag (optional)</label>
+                      <input id="profile-ts-tag" type="text" :value="settings.profiles[selectedProfile]?.access?.tag || ''" @input="settings.profiles[selectedProfile].access.tag = $event.target.value" placeholder="tag:hirsel-worker" />
+                    </div>
+                  </div>
+                </form>
+
+                <!-- AGENTS TAB -->
+                <form x-show="!loadingProfile && profileTab === 'agents'" class="form grid gap-6">
+                  <!-- Provider Select -->
+                  <div class="grid gap-2">
+                    <label>Provider</label>
+                    <div class="select" x-data="{ open: false }" data-select-initialized="true">
+                      <button type="button" class="btn-outline w-full" @click="open = !open" @click.away="open = false"
+                        aria-haspopup="listbox" :aria-expanded="open">
+                        <span class="truncate flex-1 text-left" :class="{ 'text-muted-foreground': !selectedAuthProvider }"
+                          x-text="{ claude: 'Claude (Anthropic)', gemini: 'Gemini (Google)', codex: 'Codex (OpenAI)', goose: 'Goose' }[selectedAuthProvider] || 'Select a provider...'"></span>
+                        <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
+                      </button>
+                      <div data-popover :aria-hidden="!open" x-show="open" x-transition>
+                        <div role="listbox" aria-orientation="vertical">
+                          <div role="option" data-value="claude" :aria-selected="selectedAuthProvider === 'claude'"
+                            @click="selectedAuthProvider = 'claude'; onAuthProviderChange(); open = false">Claude (Anthropic)</div>
+                          <div role="option" data-value="gemini" :aria-selected="selectedAuthProvider === 'gemini'"
+                            @click="selectedAuthProvider = 'gemini'; onAuthProviderChange(); open = false">Gemini (Google)</div>
+                          <div role="option" data-value="codex" :aria-selected="selectedAuthProvider === 'codex'"
+                            @click="selectedAuthProvider = 'codex'; onAuthProviderChange(); open = false">Codex (OpenAI)</div>
+                          <div role="option" data-value="goose" :aria-selected="selectedAuthProvider === 'goose'"
+                            @click="selectedAuthProvider = 'goose'; onAuthProviderChange(); open = false">Goose</div>
+                        </div>
+                      </div>
+                    </div>
+                    <p class="text-muted-foreground text-sm">Select your AI provider to configure authentication.</p>
+                  </div>
+
+                  <!-- Auth config (appears after provider selected) -->
+                  <div x-show="selectedAuthProvider" x-cloak class="grid gap-4">
+                    <!-- Method Select -->
+                    <div class="grid gap-2">
+                      <label>Authentication Method</label>
+                      <div class="select" x-data="{ open: false }" data-select-initialized="true">
+                        <button type="button" class="btn-outline w-full" @click="open = !open" @click.away="open = false"
+                          aria-haspopup="listbox" :aria-expanded="open">
+                          <span class="truncate flex-1 text-left"
+                            x-text="{ env: 'Environment Variable', apiKey: 'API Key', oauth: 'OAuth' }[selectedAuthMethod] || 'Environment Variable'"></span>
+                          <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
+                        </button>
+                        <div data-popover :aria-hidden="!open" x-show="open" x-transition>
+                          <div role="listbox" aria-orientation="vertical">
+                            <div role="option" data-value="env" :aria-selected="selectedAuthMethod === 'env'"
+                              @click="selectedAuthMethod = 'env'; open = false">Environment Variable</div>
+                            <div role="option" data-value="apiKey" :aria-selected="selectedAuthMethod === 'apiKey'"
+                              @click="selectedAuthMethod = 'apiKey'; open = false">API Key</div>
+                            <div role="option" x-show="selectedAuthProvider === 'claude'" data-value="oauth" :aria-selected="selectedAuthMethod === 'oauth'"
+                              @click="selectedAuthMethod = 'oauth'; open = false">OAuth</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Method-specific fields -->
+                    <div class="p-4 bg-pasture-700/30 rounded-lg grid gap-4">
+                      <!-- Env method -->
+                      <div x-show="selectedAuthMethod === 'env'" class="grid gap-2">
+                        <label for="settings-auth-env">Environment Variable</label>
+                        <input id="settings-auth-env" type="text" x-model="authEnvVar" :placeholder="getDefaultEnvVar(selectedAuthProvider)" />
+                        <p class="text-muted-foreground text-sm">Leave empty to use default.</p>
+                      </div>
+
+                      <!-- API Key method -->
+                      <div x-show="selectedAuthMethod === 'apiKey'" class="grid gap-2">
+                        <label for="settings-auth-key">
+                          API Key
+                          <span x-show="getExistingAuthKey(selectedAuthProvider)" x-cloak class="text-muted-foreground">
+                            (current: <span x-text="getExistingAuthKey(selectedAuthProvider)"></span>)
+                          </span>
+                        </label>
+                        <input id="settings-auth-key" type="password" x-model="authApiKey" placeholder="••••••••" />
+                      </div>
+
+                      <!-- OAuth method (Claude only) -->
+                      <div x-show="selectedAuthMethod === 'oauth'" class="text-sm text-muted-foreground">
+                        <p>Uses OAuth credentials from <code class="text-xs bg-pasture-600 px-1 py-0.5 rounded">~/.claude/.credentials.json</code></p>
+                        <p class="text-sm mt-2">Run <code class="bg-pasture-600 px-1 py-0.5 rounded">claude login</code> to authenticate.</p>
+                      </div>
+                    </div>
+
+                    <!-- Test Connection Button -->
+                    <button type="button" @click="testConnection()" :disabled="testing" class="btn">
+                      <span x-show="!testing">Test Connection</span>
+                      <span x-show="testing">Testing...</span>
+                    </button>
+                  </div>
+                </form>
+
+                <!-- RUNNERS TAB -->
+                <form x-show="!loadingProfile && profileTab === 'runners'" class="form grid gap-6">
+                  <p class="text-muted-foreground text-sm">Configure where workers run: local machine, SSH servers, or Sprites cloud VMs.</p>
+
+                  <!-- Runners List -->
+                  <div class="grid gap-3">
+                    <div class="flex items-center justify-between">
+                      <h4 class="text-sm font-medium text-wool-200">Configured Runners</h4>
+                      <button type="button" @click="startAddRunner()" class="btn btn-ghost btn-sm">
+                        <i data-lucide="plus" class="w-4 h-4"></i>
+                        Add Runner
+                      </button>
+                    </div>
+
+                    <!-- Local/Orchestrator runner (always shown, contextual naming) -->
+                    <div class="p-3 bg-pasture-700/30 rounded-lg border border-pasture-600/50">
+                      <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                          <span x-show="isLocalProfile()"><i data-lucide="laptop" class="w-4 h-4 text-sage"></i></span>
+                          <span x-show="!isLocalProfile()"><i data-lucide="server" class="w-4 h-4 text-sage"></i></span>
+                          <span class="font-medium text-wool-200" x-text="getLocalRunnerName()"></span>
+                          <span class="text-xs px-2 py-0.5 bg-pasture-600 text-wool-400 rounded" x-text="getLocalRunnerBadge()"></span>
+                          <span x-show="!getCurrentDefaultRunner()" class="text-xs px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded">default</span>
+                        </div>
+                        <button x-show="getCurrentDefaultRunner()" type="button" @click="setCurrentDefaultRunner(null)" class="btn btn-ghost btn-sm text-wool-400">
+                          Set Default
+                        </button>
+                      </div>
+                      <div class="mt-2 text-xs text-wool-500">
+                        <span x-text="getLocalRunnerDescription()"></span>
+                      </div>
+                    </div>
+
+                    <!-- Remote runner cards -->
+                    <template x-for="name in runnerNames" :key="name">
+                      <div class="p-3 bg-pasture-700/30 rounded-lg border border-pasture-600/50">
+                        <div class="flex items-center justify-between">
+                          <div class="flex items-center gap-2">
+                            <!-- Sprites custom logo -->
+                            <template x-if="getRunner(name)?.type === 'sprite'">
+                              <svg class="w-4 h-4" viewBox="0 0 724 582" fill-rule="evenodd">
+                                <g>
+                                  <path d="M205.594 197.898h322.661v108.263H205.594z"></path>
+                                  <path d="M578.582 508.799h-72.323v72.686h72.323v-72.686zm-361.614 0h-72.323v72.686h72.323v-72.686zm361.614-290.742h72.323v145.371h-72.323v72.686h-74.229 1.906v72.685H216.968v-72.685h-72.323v-72.686H72.323V218.057h72.322v-73.163h72.323V72.686h72.323v72.685h144.645V72.686h72.323v72.685h72.323v72.686zM72.323 508.799V363.428H0v145.371h72.323zm650.904 0V363.428h-72.322v145.371h72.322zM289.423 290.742h-.132.132zm-72.455-72.685h72.323v72.685h-72.323v-72.685zm216.968 0h72.323v72.685h-72.323v-72.685zM578.582 0h-72.323v72.686h72.323V0zM216.968 0h-72.323v72.686h72.323V0z" class="fill-green-600"></path>
+                                  <path d="M144.645 363.428V218.057h72.323v-72.686h289.291v72.686h72.323v72.685l-.001.001v72.685h-72.322v72.686h-72.323V508.8H289.291v-72.686h-72.323v-72.686h-72.323zm144.646-72.686h-72.323v-72.685h72.323v72.685zm216.968 0h-72.323v-72.685h72.323v72.685z" class="fill-green-500"></path>
+                                </g>
+                              </svg>
+                            </template>
+                            <!-- Server icon for SSH runners -->
+                            <template x-if="getRunner(name)?.host?.type === 'ssh'">
+                              <i data-lucide="server" class="w-4 h-4 text-sage"></i>
+                            </template>
+                            <!-- Client icon for client runners -->
+                            <template x-if="getRunner(name)?.host?.type === 'client'">
+                              <i data-lucide="monitor" class="w-4 h-4 text-sage"></i>
+                            </template>
+                            <span class="font-medium text-wool-200" x-text="name"></span>
+                            <span class="text-xs px-2 py-0.5 bg-pasture-600 text-wool-400 rounded" x-text="getHostTypeLabel(getRunner(name)?.host?.type)"></span>
+                            <span x-show="getRunner(name)?.container" class="text-xs px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded">docker</span>
+                            <span x-show="getCurrentDefaultRunner() === name" class="text-xs px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded">default</span>
+                            <!-- SSH runner health status dot -->
+                            <span x-show="getRunner(name)?.host?.type === 'ssh' && runnerHealth[name]"
+                              class="w-2 h-2 rounded-full shrink-0"
+                              :class="{
+                                'bg-wool-500 animate-pulse': runnerHealth[name]?.status === 'checking',
+                                'bg-green-400': runnerHealth[name]?.status === 'online',
+                                'bg-terra': runnerHealth[name]?.status === 'offline'
+                              }"
+                              :data-tooltip="getRunnerHealthTooltip(name)">
+                            </span>
+                          </div>
+                          <div class="flex items-center gap-2">
+                            <button x-show="getCurrentDefaultRunner() !== name" type="button" @click="setCurrentDefaultRunner(name)" class="btn btn-ghost btn-sm text-wool-400">
+                              Set Default
+                            </button>
+                            <button type="button" @click="deleteRunner(name)" class="btn btn-ghost btn-sm text-wool-400 hover:text-terra">
+                              <i data-lucide="trash-2" class="w-4 h-4"></i>
+                            </button>
+                            <button type="button" @click="startEditRunner(name)" class="btn btn-ghost btn-sm">
+                              <i data-lucide="pencil" class="w-4 h-4"></i>
+                              Edit
+                            </button>
+                          </div>
+                        </div>
+                        <!-- SSH runner details -->
+                        <template x-if="getRunner(name)?.host?.type === 'ssh'">
+                          <div class="mt-2 text-xs text-wool-500 grid gap-1">
+                            <div class="flex items-center gap-2">
+                              <span class="text-wool-600">Host:</span>
+                              <span x-text="getRunner(name)?.host?.address"></span>
+                            </div>
+                            <div class="flex items-center gap-2" x-show="getRunner(name)?.host?.sshKey">
+                              <span class="text-wool-600">Key:</span>
+                              <span x-text="getRunner(name)?.host?.sshKey"></span>
+                            </div>
+                            <div class="flex items-center gap-2" x-show="getRunner(name)?.container">
+                              <span class="text-wool-600">Container:</span>
+                              <span x-text="getRunner(name)?.container?.image"></span>
+                            </div>
+                          </div>
+                        </template>
+                        <!-- Sprite runner details -->
+                        <template x-if="getRunner(name)?.host?.type === 'sprite'">
+                          <div x-show="getRunner(name)?.host?.checkpoint" class="mt-2 text-xs text-wool-500 grid gap-1">
+                            <div class="flex items-center gap-2">
+                              <span class="text-wool-600">Checkpoint:</span>
+                              <span x-text="getRunner(name)?.host?.checkpoint"></span>
+                            </div>
+                          </div>
+                        </template>
+                        <!-- Local runner with container details -->
+                        <template x-if="getRunner(name)?.host?.type === 'local' && getRunner(name)?.container">
+                          <div class="mt-2 text-xs text-wool-500 grid gap-1">
+                            <div class="flex items-center gap-2">
+                              <span class="text-wool-600">Container:</span>
+                              <span x-text="getRunner(name)?.container?.image"></span>
+                            </div>
+                          </div>
+                        </template>
+                      </div>
+                    </template>
+                  </div>
+
+                  <!-- Runner Edit Dialog -->
+                  <div x-show="editingRunner" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]" @click.self="cancelEditRunner()">
+                    <div class="bg-pasture-800 rounded-lg shadow-xl w-[420px] p-4 border border-pasture-600" @click.stop>
+                      <h3 class="text-lg font-semibold text-wool-100 mb-4" x-text="editingRunner === '__new__' ? 'Add Runner' : 'Edit Runner'"></h3>
+
+                      <!-- This Machine quick-add (only when Tailscale connected and adding new) -->
+                      <div x-show="editingRunner === '__new__' && canShowThisMachineOption()"
+                        class="mb-4 p-3 bg-sage/10 rounded-lg border border-sage/30">
+                        <div class="flex items-center justify-between">
+                          <div>
+                            <p class="text-sm font-medium text-wool-200">This Machine</p>
+                            <p class="text-xs text-wool-500" x-text="tailscaleInfo?.dns_name?.replace(/\\.$/, '')"></p>
+                          </div>
+                          <button type="button" @click="useThisMachineAsRunner()" class="btn btn-sm">Use</button>
+                        </div>
+                      </div>
+
+                      <!-- Hint when Tailscale not connected (only when adding new) -->
+                      <div x-show="editingRunner === '__new__' && tailscaleInfo && !tailscaleInfo.connected"
+                        class="mb-4 p-3 bg-wool-800/50 rounded-lg text-xs text-wool-500">
+                        <i data-lucide="info" class="w-3 h-3 inline mr-1"></i>
+                        Connect to Tailscale to quickly add this machine as a runner.
+                      </div>
+
+                      <form class="form grid gap-4">
+                        <!-- Name -->
+                        <div class="grid gap-2">
+                          <label for="runner-name">Name</label>
+                          <input id="runner-name" type="text" x-model="newRunnerName" placeholder="my-runner" :disabled="editingRunner !== '__new__'" />
+                        </div>
+
+                        <!-- Host Type (only when adding new) -->
+                        <div class="grid gap-2" x-show="editingRunner === '__new__'">
+                          <label>Host Type</label>
+                          <div class="select" x-data="{ open: false }" data-select-initialized="true">
+                            <button type="button" class="btn-outline w-full" @click="open = !open" @click.away="open = false"
+                              aria-haspopup="listbox" :aria-expanded="open">
+                              <span class="truncate flex-1 text-left"
+                                x-text="{ local: 'Local', ssh: 'SSH Remote', sprite: 'Sprites Cloud' }[newHostType] || 'Local'"></span>
+                              <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
+                            </button>
+                            <div data-popover :aria-hidden="!open" x-show="open" x-transition>
+                              <div role="listbox" aria-orientation="vertical">
+                                <div role="option" data-value="local" :aria-selected="newHostType === 'local'"
+                                  @click="newHostType = 'local'; onHostTypeChange(); open = false">Local</div>
+                                <div role="option" data-value="ssh" :aria-selected="newHostType === 'ssh'"
+                                  @click="newHostType = 'ssh'; onHostTypeChange(); open = false">SSH Remote</div>
+                                <div role="option" data-value="sprite" :aria-selected="newHostType === 'sprite'"
+                                  @click="newHostType = 'sprite'; onHostTypeChange(); open = false">Sprites Cloud</div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <!-- SSH Fields -->
+                        <template x-if="editHostData.type === 'ssh'">
+                          <div class="grid gap-4">
+                            <div class="grid gap-2">
+                              <label for="ssh-host">SSH Address <span class="text-terra">*</span></label>
+                              <input id="ssh-host" type="text" x-model="editHostData.address" placeholder="user@hostname" />
+                              <p class="text-muted-foreground text-sm">e.g. sam@192.168.1.100</p>
+                            </div>
+                            <div class="grid gap-2">
+                              <label for="ssh-key">SSH Key (optional)</label>
+                              <input id="ssh-key" type="text" x-model="editHostData.sshKey" placeholder="~/.ssh/id_rsa" />
+                            </div>
+                            <div class="grid gap-2">
+                              <label for="ssh-port">SSH Port</label>
+                              <input id="ssh-port" type="number" x-model.number="editHostData.port" placeholder="22" />
+                            </div>
+                            <div class="grid gap-2">
+                              <label for="work-dir">Work Directory</label>
+                              <input id="work-dir" type="text" x-model="editHostData.workBase" placeholder="/tmp/hirsel-remote" />
+                            </div>
+                          </div>
+                        </template>
+
+                        <!-- Sprite Fields -->
+                        <template x-if="editHostData.type === 'sprite'">
+                          <div class="grid gap-4">
+                            <div class="grid gap-2">
+                              <label for="sprite-token">API Token <span class="text-terra">*</span></label>
+                              <input id="sprite-token" type="password" x-model="editHostData.apiToken" placeholder="••••••••" />
+                              <p class="text-muted-foreground text-sm">Get your token from <a href="https://sprites.dev" target="_blank" class="text-amber-500 hover:underline">sprites.dev</a></p>
+                            </div>
+                            <div class="grid gap-2">
+                              <label for="sprite-checkpoint">Base Checkpoint (optional)</label>
+                              <input id="sprite-checkpoint" type="text" x-model="editHostData.checkpoint" placeholder="hirsel-worker-v1" />
+                            </div>
+                            <div class="gap-2 flex flex-row items-start justify-between rounded-lg border p-4 shadow-xs">
+                              <div class="flex flex-col gap-0.5">
+                                <label for="auto-destroy" class="leading-normal">Auto-destroy sprite</label>
+                                <p class="text-muted-foreground text-sm">Destroy VM when worker completes.</p>
+                              </div>
+                              <input id="auto-destroy" type="checkbox" role="switch" x-model="editHostData.autoDestroy" />
+                            </div>
+                          </div>
+                        </template>
+
+                        <!-- Container Configuration (not available for Sprites) -->
+                        <template x-if="editHostData.type !== 'sprite'">
+                          <div class="mt-2">
+                            <div class="gap-2 flex flex-row items-start justify-between rounded-lg border p-4 shadow-xs">
+                              <div class="flex flex-col gap-0.5">
+                                <label for="container-enabled" class="leading-normal">Docker Container</label>
+                                <p class="text-muted-foreground text-sm">Run worker in a Docker container.</p>
+                              </div>
+                              <input id="container-enabled" type="checkbox" role="switch" x-model="editContainerEnabled" />
+                            </div>
+                            <div x-show="editContainerEnabled" class="mt-4 grid gap-2">
+                              <label for="container-image">Container Image <span class="text-terra">*</span></label>
+                              <input id="container-image" type="text" x-model="editContainerImage" placeholder="rust:latest" />
+                              <p class="text-muted-foreground text-sm">Docker image URI (e.g. ghcr.io/org/dev-env)</p>
+                            </div>
+                          </div>
+                        </template>
+                      </form>
+                      <div class="flex justify-end gap-2 mt-4">
+                        <button type="button" @click="cancelEditRunner()" class="btn btn-ghost">Cancel</button>
+                        <button type="button" @click="saveRunner()" class="btn">Save</button>
+                      </div>
+                    </div>
+                  </div>
+                </form>
+
+                <!-- DEFAULTS TAB -->
+                <form x-show="!loadingProfile && profileTab === 'defaults'" class="form grid gap-6">
+                  <!-- Eval & Limits -->
+                  <div class="grid grid-cols-2 gap-4">
+                    <div class="grid gap-2">
+                      <label for="settings-eval-timeout">Eval Timeout (seconds)</label>
+                      <input id="settings-eval-timeout" type="number" x-model.number="settings.evalTimeout" min="60" step="60" />
+                      <p class="text-muted-foreground text-sm">Time limit for eval agent.</p>
+                    </div>
+                    <div class="grid gap-2">
+                      <label for="settings-max-iterations">Max Iterations</label>
+                      <input id="settings-max-iterations" type="number" x-model.number="settings.maxIterations" placeholder="No limit" min="1" />
+                      <p class="text-muted-foreground text-sm">Max eval/fix cycles.</p>
+                    </div>
+                  </div>
+
+                  <!-- Human in the Loop Switch -->
+                  <div class="gap-2 flex flex-row items-start justify-between rounded-lg border p-4 shadow-xs">
+                    <div class="flex flex-col gap-0.5">
+                      <label for="settings-hitl" class="leading-normal">Human in the Loop</label>
+                      <p class="text-muted-foreground text-sm">Allow agents to send messages to the user and wait for response.</p>
+                    </div>
+                    <input id="settings-hitl" type="checkbox" role="switch" :checked="settings.humanInTheLoop" @change="settings.humanInTheLoop = $event.target.checked" />
+                  </div>
+
+                  <!-- Pause on User Message -->
+                  <div class="grid gap-2">
+                    <label>Pause on User Message</label>
+                    <div class="select" x-data="{ open: false }" data-select-initialized="true">
+                      <button type="button" class="btn-outline w-full" @click="open = !open" @click.away="open = false"
+                        aria-haspopup="listbox" :aria-expanded="open">
+                        <span class="truncate flex-1 text-left" x-text="{ sender: 'Sender only', all: 'All workers', none: 'None' }[settings.userMessagePause] || 'Sender only'"></span>
+                        <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
+                      </button>
+                      <div data-popover :aria-hidden="!open" x-show="open" x-transition>
+                        <div role="listbox" aria-orientation="vertical">
+                          <div role="option" data-value="sender" :aria-selected="settings.userMessagePause === 'sender'"
+                            @click="settings.userMessagePause = 'sender'; open = false">Sender only</div>
+                          <div role="option" data-value="all" :aria-selected="settings.userMessagePause === 'all'"
+                            @click="settings.userMessagePause = 'all'; open = false">All workers</div>
+                          <div role="option" data-value="none" :aria-selected="settings.userMessagePause === 'none'"
+                            @click="settings.userMessagePause = 'none'; open = false">None</div>
+                        </div>
+                      </div>
+                    </div>
+                    <p class="text-muted-foreground text-sm">Which workers pause when a user message is sent.</p>
+                  </div>
+
+                  <hr class="border-pasture-600" />
+
+                  <!-- Learning & Memory Switches -->
+                  <div class="gap-2 flex flex-row items-start justify-between rounded-lg border p-4 shadow-xs">
+                    <div class="flex flex-col gap-0.5">
+                      <label for="settings-auto-learn" class="leading-normal">Auto Learn</label>
+                      <p class="text-muted-foreground text-sm">Extract learnings from successful task completions.</p>
+                    </div>
+                    <input id="settings-auto-learn" type="checkbox" role="switch" :checked="settings.autoLearn" @change="settings.autoLearn = $event.target.checked" />
+                  </div>
+
+                  <div class="gap-2 flex flex-row items-start justify-between rounded-lg border p-4 shadow-xs">
+                    <div class="flex flex-col gap-0.5">
+                      <label for="settings-auto-improve" class="leading-normal">Auto Improve</label>
+                      <p class="text-muted-foreground text-sm">Update project memory when runs complete successfully.</p>
+                    </div>
+                    <input id="settings-auto-improve" type="checkbox" role="switch" :checked="settings.autoImprove" @change="settings.autoImprove = $event.target.checked" />
+                  </div>
+
+                  <div class="gap-2 flex flex-row items-start justify-between rounded-lg border p-4 shadow-xs">
+                    <div class="flex flex-col gap-0.5">
+                      <label for="settings-compaction" class="leading-normal">Auto-compact Learnings</label>
+                      <p class="text-muted-foreground text-sm">Periodically summarize old learnings to save context space.</p>
+                    </div>
+                    <input id="settings-compaction" type="checkbox" role="switch" :checked="settings.compactionEnabled" @change="settings.compactionEnabled = $event.target.checked" />
+                  </div>
+
+                  <!-- Compaction settings (shown when enabled) -->
+                  <div x-show="settings.compactionEnabled" x-cloak class="grid grid-cols-2 gap-4 pl-4 border-l-2 border-pasture-600">
+                    <div class="grid gap-2">
+                      <label for="settings-compaction-threshold">Threshold (chars)</label>
+                      <input id="settings-compaction-threshold" type="number" x-model.number="settings.compactionThreshold" placeholder="10000" min="1000" max="100000" step="1000" />
+                    </div>
+                    <div class="grid gap-2">
+                      <label for="settings-compaction-keep">Keep messages</label>
+                      <input id="settings-compaction-keep" type="number" x-model.number="settings.compactionKeepMessages" min="5" max="200" step="5" />
+                    </div>
+                  </div>
+
+                  <hr class="border-pasture-600" />
+
+                  <!-- Advanced -->
+                  <div class="grid grid-cols-2 gap-4">
+                    <div class="grid gap-2">
+                      <div class="flex items-center justify-between">
+                        <label for="settings-context-warning">Context Warning</label>
+                        <span class="text-sm text-wool-300" x-text="Math.round((settings.contextWarningThreshold || 0.5) * 100) + '%'"></span>
+                      </div>
+                      <input id="settings-context-warning" type="range" x-model.number="settings.contextWarningThreshold" min="0.1" max="0.9" step="0.1" class="range" x-effect="$el.style.setProperty('--slider-value', ((settings.contextWarningThreshold - 0.1) / 0.8) * 100 + '%')" />
+                      <p class="text-muted-foreground text-sm">Warn when context usage exceeds this percentage.</p>
+                    </div>
+                    <div class="grid gap-2">
+                      <label for="settings-coordinator-port">Coordinator Port</label>
+                      <input id="settings-coordinator-port" type="number" x-model.number="settings.coordinatorPort" min="1024" max="65535" />
+                      <p class="text-muted-foreground text-sm">Port for worker coordination API (requires restart).</p>
+                    </div>
+                  </div>
+                </form>
+
+                <!-- GIT TAB -->
+                <form x-show="!loadingProfile && profileTab === 'git'" class="form grid gap-6">
+                  <p class="text-muted-foreground text-sm">Configure git provider tokens for repository access.</p>
+
+                  <!-- GitHub Provider -->
+                  <div class="p-4 bg-pasture-700/30 rounded-lg border border-pasture-600/50">
+                    <div class="flex items-center justify-between mb-4">
+                      <div class="flex items-center gap-3">
+                        <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                        </svg>
+                        <div>
+                          <h4 class="font-medium text-wool-200">GitHub</h4>
+                          <p class="text-xs text-wool-500">Personal Access Token for GitHub repositories</p>
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <span x-show="settings.git?.configuredProviders?.includes('github')" class="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded flex items-center gap-1">
+                          <i data-lucide="check" class="w-3 h-3"></i>
+                          Configured
+                        </span>
+                        <span x-show="!settings.git?.configuredProviders?.includes('github')" class="text-xs px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded">
+                          Not configured
+                        </span>
+                      </div>
+                    </div>
+
+                    <div class="grid gap-4">
+                      <div class="grid gap-2">
+                        <label for="git-github-token">Personal Access Token</label>
+                        <input id="git-github-token" type="password" x-model="gitHubToken" placeholder="ghp_xxxxxxxxxxxx" />
+                        <p class="text-muted-foreground text-sm">
+                          Create a token at <a href="https://github.com/settings/tokens" target="_blank" class="text-amber-500 hover:underline">github.com/settings/tokens</a> with <code class="text-xs bg-pasture-600 px-1 py-0.5 rounded">repo</code> scope.
+                        </p>
+                      </div>
+
+                      <!-- Set as default toggle -->
+                      <div x-show="gitHubToken || settings.git?.configuredProviders?.includes('github')" class="gap-2 flex flex-row items-center justify-between rounded-lg border p-3 shadow-xs">
+                        <div class="flex flex-col gap-0.5">
+                          <label for="git-default-github" class="leading-normal text-sm">Set as default provider</label>
+                        </div>
+                        <input id="git-default-github" type="checkbox" role="switch"
+                          :checked="settings.git?.defaultProvider === 'github'"
+                          @change="settings.git = { ...settings.git, defaultProvider: $event.target.checked ? 'github' : null }" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <p class="text-xs text-wool-600">More providers (GitLab, Bitbucket) coming soon.</p>
+                </form>
+
+                <!-- DATA TAB -->
+                <div x-show="!loadingProfile && profileTab === 'data'" class="grid gap-6">
+                  <p class="text-muted-foreground text-sm">
+                    Manage data for the <strong x-text="selectedProfile"></strong> profile.
+                  </p>
+
+                  <!-- Data Locations (local only) -->
+                  <div x-show="isLocalProfile()" class="grid gap-2">
+                    <label>Data Locations</label>
+                    <div class="grid gap-2 text-sm">
+                      <div class="flex justify-between items-center">
+                        <span class="text-wool-500">Config</span>
+                        <code class="text-wool-400 text-xs bg-pasture-700 px-1.5 py-0.5 rounded">~/.hirsel/config.toml</code>
+                      </div>
+                      <div class="flex justify-between items-center">
+                        <span class="text-wool-500">Runs</span>
+                        <code class="text-wool-400 text-xs bg-pasture-700 px-1.5 py-0.5 rounded">~/.hirsel/runs/</code>
+                      </div>
+                      <div class="flex justify-between items-center">
+                        <span class="text-wool-500">Credentials</span>
+                        <code class="text-wool-400 text-xs bg-pasture-700 px-1.5 py-0.5 rounded">~/.hirsel/hirsel.db</code>
+                      </div>
+                      <div class="flex justify-between items-center">
+                        <span class="text-wool-500">Logs</span>
+                        <code class="text-wool-400 text-xs bg-pasture-700 px-1.5 py-0.5 rounded">~/.local/share/app.hirsel/logs/</code>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Remote server info -->
+                  <div x-show="!isLocalProfile()" class="grid gap-2">
+                    <label>Remote Server</label>
+                    <div class="grid gap-2 text-sm">
+                      <div class="flex justify-between items-center">
+                        <span class="text-wool-500">Server URL</span>
+                        <code class="text-wool-400 text-xs bg-pasture-700 px-1.5 py-0.5 rounded" x-text="settings.profiles[selectedProfile]?.url || 'Not configured'"></code>
+                      </div>
+                    </div>
+                  </div>
+
+                  <hr class="border-pasture-600" />
+
+                  <!-- Danger Zone -->
+                  <div class="grid gap-4">
+                    <label class="text-terra">Danger Zone</label>
+
+                    <!-- Delete All Runs -->
+                    <div class="gap-2 flex flex-row items-start justify-between rounded-lg border border-terra/30 p-4 shadow-xs">
+                      <div class="flex flex-col gap-0.5">
+                        <label class="leading-normal">Delete All Runs</label>
+                        <p class="text-muted-foreground text-sm">
+                          Permanently delete all runs <span x-show="!isLocalProfile()">on the remote server</span><span x-show="isLocalProfile()">on this machine</span>. This cannot be undone.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        @click="deleteAllRuns()"
+                        class="btn btn-destructive shrink-0"
+                      >
+                        Delete All
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Error message -->
+                <div x-show="error" class="mt-4 text-destructive text-sm" x-text="error"></div>
+              </div><!-- /max-w-2xl -->
+            </div><!-- /profile tab content -->
+          </div><!-- /profile section -->
+
+          <!-- Profile Edit Dialog (for adding new profiles from sidebar) -->
+          <div x-show="editingProfile" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]" @click.self="cancelEditProfile()">
+            <div class="bg-pasture-800 rounded-lg shadow-xl w-[500px] max-h-[80vh] flex flex-col overflow-hidden border border-pasture-600" @click.stop>
+              <div class="px-6 py-4 border-b border-pasture-600 flex-shrink-0">
+                <h3 class="text-lg font-semibold text-wool-100" x-text="editingProfile === '__new__' ? 'Add Remote Profile' : 'Edit Profile'"></h3>
+              </div>
+              <div class="flex-1 overflow-y-auto p-6">
+                <div class="flex flex-col gap-6">
+                  <div class="grid gap-2">
+                    <label for="profile-name">Name</label>
+                    <input id="profile-name" type="text" x-model="newProfileName" placeholder="my-server" :disabled="editingProfile !== '__new__'" />
+                    <p class="text-muted-foreground text-sm">Unique identifier for this profile.</p>
+                  </div>
+                  <div class="grid gap-2">
+                    <label for="profile-url">Server URL <span class="text-terra">*</span></label>
+                    <input id="profile-url" type="text" x-model="editProfileData.url" placeholder="http://100.x.x.x:8080" />
+                    <p class="text-muted-foreground text-sm">Tailscale IP recommended for secure access.</p>
+                  </div>
+                  <div class="grid gap-2">
+                    <label for="profile-api-key">API Key <span class="text-terra">*</span></label>
+                    <input id="profile-api-key" type="password" x-model="editProfileData.apiKey" placeholder="••••••••" />
+                    <p class="text-muted-foreground text-sm">Authentication key for the remote server.</p>
+                  </div>
+                  <div class="grid gap-2">
+                    <label>Worker Access</label>
+                    <div class="select" x-data="{ open: false }" data-select-initialized="true">
+                      <button type="button" class="btn-outline w-full" @click="open = !open" @click.away="open = false"
+                        aria-haspopup="listbox" :aria-expanded="open">
+                        <span class="truncate flex-1 text-left"
+                          x-text="{ direct: 'Direct', tailscale: 'Tailscale' }[editProfileData.access?.type] || 'Direct'"></span>
+                        <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
+                      </button>
+                      <div data-popover :aria-hidden="!open" x-show="open" x-transition>
+                        <div role="listbox" aria-orientation="vertical">
+                          <div role="option" data-value="direct" :aria-selected="editProfileData.access?.type === 'direct'"
+                            @click="onAccessTypeChange('direct'); open = false">Direct</div>
+                          <div role="option" data-value="tailscale" :aria-selected="editProfileData.access?.type === 'tailscale'"
+                            @click="onAccessTypeChange('tailscale'); open = false">Tailscale</div>
+                        </div>
+                      </div>
+                    </div>
+                    <p class="text-muted-foreground text-sm">How workers connect to the orchestrator.</p>
+                  </div>
+                  <template x-if="editProfileData.access?.type === 'tailscale'">
+                    <div class="flex flex-col gap-4 pl-4 border-l-2 border-sage/30">
+                      <p class="text-sm text-wool-400">
+                        <a href="https://login.tailscale.com/admin/settings/oauth" target="_blank" class="text-amber-500 hover:underline">Create OAuth client</a> for ephemeral auth keys.
+                      </p>
+                      <div class="grid gap-2">
+                        <label for="profile-ts-client-id">OAuth Client ID <span class="text-terra">*</span></label>
+                        <input id="profile-ts-client-id" type="text" x-model="editProfileData.access.oauth_client_id" placeholder="k..." />
+                      </div>
+                      <div class="grid gap-2">
+                        <label for="profile-ts-client-secret">OAuth Client Secret <span class="text-terra">*</span></label>
+                        <input id="profile-ts-client-secret" type="password" x-model="editProfileData.access.oauth_client_secret" placeholder="tskey-client-..." />
+                      </div>
+                      <div class="grid gap-2">
+                        <label for="profile-ts-tag">Device Tag (optional)</label>
+                        <input id="profile-ts-tag" type="text" x-model="editProfileData.access.tag" placeholder="tag:hirsel-worker" />
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+              <div class="px-6 py-4 border-t border-pasture-600 flex justify-end gap-3 flex-shrink-0">
+                <button type="button" @click="cancelEditProfile()" class="btn btn-ghost">Cancel</button>
+                <button type="button" @click="saveProfile()" class="btn">Save</button>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /flex-1 content -->
+
+      </div><!-- /sidebar + content wrapper -->
+
+      <!-- Footer -->
+      <div class="px-6 py-4 border-t border-pasture-600 flex justify-end flex-shrink-0">
+        <div class="flex gap-3">
+          <button @click="showSettings = false" class="btn btn-ghost">Cancel</button>
+          <button @click="saveSettings()" :disabled="saving" class="btn">
+            <span x-show="!saving">Save</span>
+            <span x-show="saving">Saving...</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Test Connection Dialog -->
+      <div
+        x-show="showTestDialog"
+        x-cloak
+        x-transition.opacity
+        @click.self="closeTestDialog()"
+        class="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]"
+      >
+        <div class="bg-pasture-800 rounded-lg shadow-xl w-[400px] max-h-[60vh] flex flex-col overflow-hidden border border-pasture-600" @click.stop>
+          <div class="p-4 border-b border-pasture-600 flex items-center justify-between">
+            <h3 class="text-base font-medium text-wool-100">Connection Test</h3>
+            <button @click="closeTestDialog()" class="text-wool-500 hover:text-wool-300">
+              <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+          </div>
+          <div class="p-4 flex-1 overflow-y-auto">
+            <!-- Loading state -->
+            <div x-show="testing && !testResult" class="flex items-center gap-2 text-wool-400">
+              <div class="spinner w-4 h-4"></div>
+              <span class="text-sm">Connecting to agent...</span>
+            </div>
+            <!-- Response (rendered like Gyp chat) -->
+            <div x-show="testResult" class="ai-chat-message-assistant px-4 py-2.5 rounded-lg">
+              <p class="text-sm text-wool-200 whitespace-pre-wrap" :class="{ 'ai-chat-streaming': testing }" x-text="testResult"></p>
+            </div>
+          </div>
+          <div class="p-3 border-t border-pasture-600 flex justify-end">
+            <button @click="closeTestDialog()" class="btn btn-ghost btn-sm">Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>

@@ -1,0 +1,5 @@
+# Binary (built locally, copied here for Docker build)
+hirsel
+
+# Environment file with secrets
+.env

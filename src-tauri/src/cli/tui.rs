@@ -232,8 +232,6 @@ impl AttachTui {
     fn render_header(&self, frame: &mut Frame, area: Rect) {
         let status_str = match self.worker_status {
             Some(WorkerStatus::Working) => "● Working",
-            Some(WorkerStatus::Idle) => "○ Idle",
-            Some(WorkerStatus::Waiting) => "◐ Waiting",
             Some(WorkerStatus::Awaiting) => "◑ Awaiting",
             Some(WorkerStatus::Paused) => "⏸ Paused",
             Some(WorkerStatus::Error) => "✗ Error",
@@ -242,8 +240,7 @@ impl AttachTui {
 
         let status_color = match self.worker_status {
             Some(WorkerStatus::Working) => Color::Yellow,
-            Some(WorkerStatus::Idle) => Color::Green,
-            Some(WorkerStatus::Waiting) | Some(WorkerStatus::Awaiting) => Color::Cyan,
+            Some(WorkerStatus::Awaiting) => Color::Cyan,
             Some(WorkerStatus::Paused) => Color::Gray,
             Some(WorkerStatus::Error) => Color::Red,
             None => Color::DarkGray,

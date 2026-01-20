@@ -1,0 +1,18 @@
+# LiteFS configuration for Hirsel coordinator
+# https://fly.io/docs/litefs/config/
+
+fuse:
+  dir: "/litefs"
+
+data:
+  dir: "/var/lib/litefs"
+
+lease:
+  type: "consul"
+  advertise-url: "http://${HOSTNAME}.vm.${FLY_APP_NAME}.internal:20202"
+  consul:
+    url: "${FLY_CONSUL_URL}"
+    key: "litefs/${FLY_APP_NAME}"
+
+exec:
+  - cmd: "hirsel serve --port 3000 --host 0.0.0.0"

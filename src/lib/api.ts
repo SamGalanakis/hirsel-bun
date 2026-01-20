@@ -7,26 +7,29 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import { toast } from './toast';
 import type {
-  RunSummary,
-  RunDetail,
-  DraftUpdateRequest,
-  RepoValidation,
-  Task,
-  Worker,
-  Message,
-  ThreadSummary,
-  Eval,
-  HistoryEntry,
-  Config,
   ApiResult,
+  ChatEvent,
+  Config,
+  DraftUpdateRequest,
+  Eval,
   GuiError,
-  WorkerLogResponse,
-  ParsedLogLine,
+  HistoryEntry,
+  Message,
+  RepoValidation,
+  RunDetail,
+  RunSummary,
+  Task,
+  ThreadSummary,
+  UIContext,
+  Worker,
   WorkerEvent,
   WorkerEventsResponse,
+  WorkerLogResponse,
+  WorkerStreamEvent,
 } from './types';
-import { toast } from './toast';
 
 // =============================================================================
 // Run Management API
@@ -56,7 +59,7 @@ export async function startRun(
     workers?: string;
     timeLimit?: string;
     humanInTheLoop?: boolean;
-  }
+  },
 ): Promise<void> {
   return invoke('start_run', {
     name,
@@ -77,10 +80,7 @@ export async function pauseRun(name: string): Promise<void> {
 /**
  * Resume a paused or timed-out run
  */
-export async function resumeRun(
-  name: string,
-  timeLimit?: string
-): Promise<void> {
+export async function resumeRun(name: string, timeLimit?: string): Promise<void> {
   return invoke('resume_run', { runName: name, timeLimit: timeLimit });
 }
 
@@ -121,10 +121,7 @@ export async function createDraft(projectPath?: string): Promise<RunDetail> {
  * Allows updating the spec, worker scale, time limit, HITL mode, and project path
  * before the draft is started.
  */
-export async function updateDraft(
-  runName: string,
-  updates: DraftUpdateRequest
-): Promise<void> {
+export async function updateDraft(runName: string, updates: DraftUpdateRequest): Promise<void> {
   return invoke('update_draft', { runName, updates });
 }
 
@@ -196,7 +193,11 @@ export async function writeEvalFile(runName: string, content: string): Promise<v
  * Save an asset file (image, etc.) to a run's assets directory
  * @returns The filename that was saved (may differ from original if name conflict)
  */
-export async function saveAsset(runName: string, filename: string, data: number[]): Promise<string> {
+export async function saveAsset(
+  runName: string,
+  filename: string,
+  data: number[],
+): Promise<string> {
   return invoke<string>('save_asset', { runName, filename, data });
 }
 
@@ -233,10 +234,7 @@ export async function getAssetsPath(runName: string): Promise<string> {
  * @param branchName - Optional branch name (defaults to saved branch or hirsel/{runName})
  * @returns The branch name that was created
  */
-export async function deliverRun(
-  runName: string,
-  branchName?: string
-): Promise<string> {
+export async function deliverRun(runName: string, branchName?: string): Promise<string> {
   return invoke<string>('deliver_run', { runName, branchName });
 }
 
@@ -275,7 +273,7 @@ export async function addTask(
   options?: {
     parentId?: string;
     blockedBy?: string[];
-  }
+  },
 ): Promise<void> {
   return invoke('add_task', {
     runName: runName,
@@ -352,7 +350,7 @@ export async function addWorker(runName: string): Promise<string> {
  */
 export async function getWorkerMetrics(
   runName: string,
-  workerName: string
+  workerName: string,
 ): Promise<{
   inputTokens: number;
   outputTokens: number;
@@ -363,52 +361,8 @@ export async function getWorkerMetrics(
 }
 
 // =============================================================================
-// Worker Log API
+// Eval Log API
 // =============================================================================
-
-/**
- * Get worker log content
- *
- * @param runName - The run name
- * @param workerName - The worker name
- * @param lines - Optional: limit to last N lines (only if fromOffset is not set)
- * @param fromOffset - Optional: read from byte offset (for efficient polling)
- */
-export async function getWorkerLog(
-  runName: string,
-  workerName: string,
-  options?: {
-    lines?: number;
-    fromOffset?: number;
-  }
-): Promise<WorkerLogResponse> {
-  return invoke<WorkerLogResponse>('get_worker_log', {
-    runName: runName,
-    workerName: workerName,
-    lines: options?.lines,
-    fromOffset: options?.fromOffset,
-  });
-}
-
-/**
- * Get the path to a worker's log file
- */
-export async function getWorkerLogPath(
-  runName: string,
-  workerName: string
-): Promise<string> {
-  return invoke<string>('get_worker_log_path', {
-    runName: runName,
-    workerName: workerName,
-  });
-}
-
-/**
- * Parse worker log content and extract tool activity markers
- */
-export async function parseWorkerLog(content: string): Promise<ParsedLogLine[]> {
-  return invoke<ParsedLogLine[]>('parse_worker_log', { content });
-}
 
 /**
  * Get eval log content
@@ -418,68 +372,13 @@ export async function getEvalLog(
   options?: {
     lines?: number;
     fromOffset?: number;
-  }
+  },
 ): Promise<WorkerLogResponse> {
   return invoke<WorkerLogResponse>('get_eval_log', {
     runName: runName,
     lines: options?.lines,
     fromOffset: options?.fromOffset,
   });
-}
-
-/**
- * Create a poller for worker log updates
- *
- * This creates a poller that efficiently fetches only new content
- * since the last poll by tracking byte offsets.
- */
-export function createWorkerLogPoller(
-  runName: string,
-  workerName: string,
-  onUpdate: (content: string, isNew: boolean) => void,
-  intervalMs: number = 500
-): { start: () => void; stop: () => void } {
-  let intervalId: ReturnType<typeof setInterval> | null = null;
-  let lastOffset = 0;
-  let isFirstPoll = true;
-
-  const poll = async () => {
-    try {
-      const response = await getWorkerLog(runName, workerName, {
-        fromOffset: isFirstPoll ? undefined : lastOffset,
-      });
-
-      if (!response.exists) {
-        return;
-      }
-
-      if (response.content) {
-        onUpdate(response.content, !isFirstPoll);
-      }
-
-      lastOffset = response.byteOffset;
-      isFirstPoll = false;
-    } catch (error) {
-      console.error('Error polling worker log:', error);
-    }
-  };
-
-  return {
-    start() {
-      if (intervalId) return;
-      poll(); // Fetch immediately
-      intervalId = setInterval(poll, intervalMs);
-    },
-    stop() {
-      if (intervalId) {
-        clearInterval(intervalId);
-        intervalId = null;
-      }
-      // Reset state
-      lastOffset = 0;
-      isFirstPoll = true;
-    },
-  };
 }
 
 // =============================================================================
@@ -500,7 +399,7 @@ export async function getWorkerEvents(
   options?: {
     afterId?: number;
     limit?: number;
-  }
+  },
 ): Promise<WorkerEventsResponse> {
   return invoke<WorkerEventsResponse>('get_worker_events', {
     runName: runName,
@@ -513,10 +412,7 @@ export async function getWorkerEvents(
 /**
  * Clear worker events (for cleanup when attaching/detaching)
  */
-export async function clearWorkerEvents(
-  runName: string,
-  workerName: string
-): Promise<void> {
+export async function clearWorkerEvents(runName: string, workerName: string): Promise<void> {
   return invoke('clear_worker_events', {
     runName: runName,
     workerName: workerName,
@@ -533,7 +429,7 @@ export function createWorkerEventsPoller(
   runName: string,
   workerName: string,
   onEvents: (events: WorkerEvent[], isNew: boolean, workerStatus: string | null) => void,
-  intervalMs: number = 200
+  intervalMs = 200,
 ): { start: () => void; stop: () => void } {
   let intervalId: ReturnType<typeof setInterval> | null = null;
   let lastId: number | null = null;
@@ -577,6 +473,42 @@ export function createWorkerEventsPoller(
 }
 
 // =============================================================================
+// Worker Event Streaming API (Tauri events)
+// =============================================================================
+
+/**
+ * Start streaming worker events via Tauri events
+ *
+ * This starts a background task that polls the database and emits
+ * `worker-event` events. Use listenWorkerEvents to receive them.
+ */
+export async function startWorkerEventStream(runName: string, workerName: string): Promise<void> {
+  return invoke('start_worker_event_stream', { runName, workerName });
+}
+
+/**
+ * Stop streaming worker events
+ */
+export async function stopWorkerEventStream(runName: string, workerName: string): Promise<void> {
+  return invoke('stop_worker_event_stream', { runName, workerName });
+}
+
+/**
+ * Listen for worker events from a stream
+ *
+ * @param handler - Function to handle worker stream events
+ * @returns Cleanup function to stop listening
+ */
+export async function listenWorkerEvents(
+  handler: (event: WorkerStreamEvent) => void,
+): Promise<() => void> {
+  const unlisten = await listen<WorkerStreamEvent>('worker-event', (event) => {
+    handler(event.payload);
+  });
+  return unlisten;
+}
+
+// =============================================================================
 // Message/Chat API
 // =============================================================================
 
@@ -590,10 +522,7 @@ export async function getThreads(runName: string): Promise<ThreadSummary[]> {
 /**
  * Get messages for a specific thread
  */
-export async function getMessages(
-  runName: string,
-  threadName: string
-): Promise<Message[]> {
+export async function getMessages(runName: string, threadName: string): Promise<Message[]> {
   return invoke<Message[]>('get_messages', { runName: runName, threadName: threadName });
 }
 
@@ -603,7 +532,7 @@ export async function getMessages(
 export async function sendMessage(
   runName: string,
   threadName: string,
-  content: string
+  content: string,
 ): Promise<void> {
   return invoke('send_message', {
     runName: runName,
@@ -615,10 +544,7 @@ export async function sendMessage(
 /**
  * Mark messages as read
  */
-export async function markMessagesRead(
-  runName: string,
-  threadName: string
-): Promise<void> {
+export async function markMessagesRead(runName: string, threadName: string): Promise<void> {
   return invoke('mark_messages_read', { runName: runName, threadName: threadName, reader: 'user' });
 }
 
@@ -647,10 +573,7 @@ export async function attachEval(runName: string, evalName: string): Promise<voi
 /**
  * Get activity history for a run
  */
-export async function getHistory(
-  runName: string,
-  limit?: number
-): Promise<HistoryEntry[]> {
+export async function getHistory(runName: string, limit?: number): Promise<HistoryEntry[]> {
   return invoke<HistoryEntry[]>('get_history', { runName: runName, limit });
 }
 
@@ -754,7 +677,7 @@ function parseError(error: unknown): { message: string; guiError?: GuiError } {
  */
 export async function safeInvoke<T>(
   command: string,
-  args?: Record<string, unknown>
+  args?: Record<string, unknown>,
 ): Promise<ApiResult<T>> {
   try {
     const data = await invoke<T>(command, args);
@@ -778,7 +701,7 @@ export async function safeInvokeWithToast<T>(
   options?: {
     successMessage?: string;
     errorPrefix?: string;
-  }
+  },
 ): Promise<ApiResult<T>> {
   const result = await safeInvoke<T>(command, args);
 
@@ -804,7 +727,7 @@ export async function safeInvokeWithToast<T>(
 export function createPoller<T>(
   fetcher: () => Promise<T>,
   onUpdate: (data: T) => void,
-  intervalMs: number = 2000
+  intervalMs = 2000,
 ): { start: () => void; stop: () => void } {
   let intervalId: ReturnType<typeof setInterval> | null = null;
 
@@ -844,10 +767,7 @@ export function dispatchEvent<T>(eventName: string, detail: T): void {
 /**
  * Listen for a custom event
  */
-export function onEvent<T>(
-  eventName: string,
-  handler: (detail: T) => void
-): () => void {
+export function onEvent<T>(eventName: string, handler: (detail: T) => void): () => void {
   const listener = (event: Event) => {
     handler((event as CustomEvent<T>).detail);
   };
@@ -862,9 +782,6 @@ export function onEvent<T>(
 // Direct Chat Session API (ACP-based AI chat)
 // =============================================================================
 
-import { listen } from '@tauri-apps/api/event';
-import type { ChatEvent, UIContext } from './types';
-
 /**
  * Start a new direct chat session with an AI agent
  *
@@ -878,7 +795,7 @@ export async function startChatSession(
     workingDir?: string;
     runName?: string;
     systemPrompt?: string;
-  }
+  },
 ): Promise<string> {
   return invoke<string>('start_chat_session', {
     agentCommand,
@@ -898,7 +815,7 @@ export async function startChatSession(
 export async function sendChatMessage(
   sessionId: string,
   content: string,
-  context?: UIContext
+  context?: UIContext,
 ): Promise<void> {
   return invoke('send_chat_message', {
     sessionId,
@@ -917,7 +834,7 @@ export async function sendChatMessage(
 export async function respondChatPermission(
   sessionId: string,
   requestId: string,
-  optionId: string
+  optionId: string,
 ): Promise<void> {
   return invoke('respond_chat_permission', {
     sessionId,
@@ -948,12 +865,58 @@ export async function listChatSessions(): Promise<string[]> {
  * @param handler - Function to handle chat events
  * @returns Cleanup function to stop listening
  */
-export async function listenChatEvents(
-  handler: (event: ChatEvent) => void
-): Promise<() => void> {
+export async function listenChatEvents(handler: (event: ChatEvent) => void): Promise<() => void> {
   const unlisten = await listen<ChatEvent>('chat-event', (event) => {
     handler(event.payload);
   });
 
   return unlisten;
+}
+
+// =============================================================================
+// Gyp Chat History API
+// =============================================================================
+
+/** Gyp chat message stored in database */
+export interface GypChatMessage {
+  id: number;
+  runName: string | null;
+  role: string;
+  timestamp: string;
+  chunksJson: string;
+}
+
+/**
+ * Get Gyp chat history for a run (or no-run if null)
+ *
+ * @param runName - The run name, or null for no-run conversations
+ * @returns Array of saved chat messages
+ */
+export async function getGypChatHistory(runName: string | null): Promise<GypChatMessage[]> {
+  return invoke<GypChatMessage[]>('get_gyp_chat_history', { runName });
+}
+
+/**
+ * Save a Gyp chat message for a run (or no-run if null)
+ *
+ * @param runName - The run name, or null for no-run conversations
+ * @param role - Message role ('user', 'assistant', 'system')
+ * @param chunksJson - JSON-encoded chunks array
+ * @returns The saved message ID
+ */
+export async function saveGypMessage(
+  runName: string | null,
+  role: string,
+  chunksJson: string,
+): Promise<number> {
+  return invoke<number>('save_gyp_message', { runName, role, chunksJson });
+}
+
+/**
+ * Clear Gyp chat history for a run (or no-run if null)
+ *
+ * @param runName - The run name, or null for no-run conversations
+ */
+export async function clearGypChatHistory(runName: string | null): Promise<void> {
+  return invoke('clear_gyp_chat_history', { runName });
 }

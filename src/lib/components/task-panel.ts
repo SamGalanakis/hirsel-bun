@@ -33,7 +33,7 @@ export function taskPanel() {
       });
 
       const app = this.getAppState();
-      if (app && app.selectedRun) {
+      if (app?.selectedRun) {
         await this.loadTasks(app.selectedRun);
       }
     },
@@ -48,7 +48,7 @@ export function taskPanel() {
     getAppState(): { selectedRun?: string | null; tasksTotal?: number; tasksDone?: number } | null {
       // @ts-expect-error Alpine.js $el magic property
       let el = this.$el as HTMLElement;
-      while (el && el.parentElement) {
+      while (el?.parentElement) {
         el = el.parentElement;
         // @ts-expect-error Alpine.js internal property
         if (el._x_dataStack) {
@@ -75,7 +75,8 @@ export function taskPanel() {
 
       try {
         if (window.tauriInvoke) {
-          this.tasks = await window.tauriInvoke<Task[]>('get_tasks', { runName });
+          const tasks = await window.tauriInvoke<Task[]>('get_tasks', { runName });
+          this.tasks = (tasks || []).filter((t): t is Task => t != null);
         } else {
           this.tasks = [];
         }
@@ -88,7 +89,8 @@ export function taskPanel() {
           if (!currentRun) return;
           try {
             if (window.tauriInvoke) {
-              this.tasks = await window.tauriInvoke<Task[]>('get_tasks', { runName: currentRun });
+              const tasks = await window.tauriInvoke<Task[]>('get_tasks', { runName: currentRun });
+              this.tasks = (tasks || []).filter((t): t is Task => t != null);
               this.buildFlatList();
               this.updateTaskCounts();
             }
@@ -119,11 +121,11 @@ export function taskPanel() {
       const taskMap = new Map<string, TaskDisplay>();
       const rootTasks: TaskDisplay[] = [];
 
-      this.tasks.forEach(t => {
+      this.tasks.forEach((t) => {
         taskMap.set(t.id, { ...t, children: [], depth: 0, isBlocked: false });
       });
 
-      this.tasks.forEach(t => {
+      this.tasks.forEach((t) => {
         const task = taskMap.get(t.id)!;
         if (t.parentId && taskMap.has(t.parentId)) {
           taskMap.get(t.parentId)!.children.push(task);
@@ -134,12 +136,12 @@ export function taskPanel() {
 
       const flat: TaskDisplay[] = [];
       const flatten = (tasks: TaskDisplay[], depth: number) => {
-        tasks.forEach(t => {
+        tasks.forEach((t) => {
           t.depth = depth;
           t.isBlocked =
             !!t.blockedBy &&
             t.blockedBy.length > 0 &&
-            t.blockedBy.some(bid => {
+            t.blockedBy.some((bid) => {
               const blocker = taskMap.get(bid);
               return blocker && blocker.status !== 'done';
             });
@@ -157,7 +159,7 @@ export function taskPanel() {
       const app = this.getAppState();
       if (app) {
         app.tasksTotal = this.tasks.length;
-        app.tasksDone = this.tasks.filter(t => t.status === 'done').length;
+        app.tasksDone = this.tasks.filter((t) => t.status === 'done').length;
       }
     },
 
@@ -171,7 +173,8 @@ export function taskPanel() {
       return 'text-wool-500';
     },
 
-    getTaskNameClass(task: TaskDisplay): string {
+    getTaskNameClass(task: TaskDisplay | null): string {
+      if (!task) return 'text-sm truncate text-wool-100';
       const classes = ['text-sm', 'truncate'];
       if (task.status === 'done') {
         classes.push('text-wool-500', 'line-through');
@@ -186,7 +189,7 @@ export function taskPanel() {
     selectTask(taskId: string) {
       this.selectedTaskId = taskId;
       window.dispatchEvent(new CustomEvent('task-selected', { detail: taskId }));
-      const task = this.flatTasks.find(t => t.id === taskId);
+      const task = this.flatTasks.find((t) => t.id === taskId);
       if (task) {
         this.openTaskDetail(task);
       }
@@ -243,8 +246,8 @@ export function taskPanel() {
     formatTaskTokens(n: number | null | undefined): string {
       if (n == null || n === 0) return '0';
       if (n < 1000) return String(n);
-      if (n < 1000000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
-      return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+      if (n < 1000000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+      return `${(n / 1000000).toFixed(1).replace(/\.0$/, '')}M`;
     },
 
     async markDone(taskId: string | undefined) {
@@ -331,8 +334,9 @@ export function taskPanel() {
       const taskToDelete = this.contextMenuTask.id;
       this.hideContextMenu();
 
-      const confirmed = await window.confirmDialog?.delete(taskToDelete, 'task')
-        ?? confirm(`Delete task "${taskToDelete}"?`);
+      const confirmed =
+        (await window.confirmDialog?.delete(taskToDelete, 'task')) ??
+        confirm(`Delete task "${taskToDelete}"?`);
       if (!confirmed) return;
 
       try {

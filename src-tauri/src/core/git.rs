@@ -208,6 +208,33 @@ pub fn checkout_branch_at_path(repo_path: &Path, branch_name: &str) -> Result<()
     checkout_branch(&repo, branch_name)
 }
 
+/// Get the authenticated URL for a git remote
+///
+/// If a GitHub token is configured in CredentialStore, embeds it in HTTPS URLs.
+/// SSH URLs are returned unchanged.
+fn get_authenticated_url(url: &str) -> String {
+    use crate::core::credentials::CredentialStore;
+
+    // Only modify HTTPS GitHub URLs
+    if !url.starts_with("https://github.com/") {
+        return url.to_string();
+    }
+
+    // Try to load GitHub token from credential store
+    if let Ok(store) = CredentialStore::open() {
+        if let Ok(token) = store.load("git_github_token") {
+            // Embed token in URL: https://TOKEN@github.com/user/repo.git
+            return url.replacen(
+                "https://github.com/",
+                &format!("https://{}@github.com/", token),
+                1,
+            );
+        }
+    }
+
+    url.to_string()
+}
+
 /// Clone a remote repository to a local directory
 ///
 /// Optionally checks out a specific branch after cloning.
@@ -220,6 +247,7 @@ pub fn clone_remote(url: &str, target_dir: &Path) -> Result<PathBuf> {
 ///
 /// If branch is specified, checks out that branch after cloning.
 /// Returns the path to the cloned repository.
+/// Uses GitHub token from CredentialStore for authentication if available.
 pub fn clone_remote_with_branch(
     url: &str,
     target_dir: &Path,
@@ -234,7 +262,9 @@ pub fn clone_remote_with_branch(
 
     info!("Cloning {} to {:?}", url, target_dir);
 
-    let repo = Repository::clone(url, target_dir)?;
+    // Use authenticated URL if token is available
+    let auth_url = get_authenticated_url(url);
+    let repo = Repository::clone(&auth_url, target_dir)?;
 
     // Checkout specific branch if requested
     if let Some(branch_name) = branch {
@@ -255,6 +285,7 @@ pub fn clone_remote_with_branch(
 /// Push staging branch to a remote repository
 ///
 /// Creates or updates a branch on the remote.
+/// Uses GitHub token from CredentialStore for authentication if available.
 pub fn push_to_remote(
     work_dir: &Path,
     remote_url: &str,
@@ -265,13 +296,14 @@ pub fn push_to_remote(
     // Make sure we're on staging
     checkout_branch(&repo, "staging")?;
 
-    // Add or update the remote
+    // Add or update the remote with authenticated URL
     let remote_name = "hirsel_delivery";
+    let auth_url = get_authenticated_url(remote_url);
 
     // Remove existing remote if present
     let _ = repo.remote_delete(remote_name);
 
-    repo.remote(remote_name, remote_url)?;
+    repo.remote(remote_name, &auth_url)?;
 
     // Push staging as the target branch
     let mut remote = repo.find_remote(remote_name)?;
@@ -506,9 +538,28 @@ pub fn create_workspace(run_name: &str, project_path: &Path, runs_dir: &Path) ->
         commit(&repo, "hirsel: snapshot uncommitted changes")?;
     }
 
-    // Create and checkout "staging" branch from current HEAD
+    // Force create "staging" branch from current HEAD (whatever branch we're on)
+    // This ensures we capture the current state regardless of source branch name
     let head_commit = repo.head()?.peel_to_commit()?;
-    repo.branch("staging", &head_commit, false)?;
+
+    // Get current branch name before we modify anything
+    let current_branch = repo
+        .head()
+        .ok()
+        .and_then(|h| h.shorthand().map(|s| s.to_string()));
+
+    // Delete existing staging branch if present (it might have different content)
+    if let Ok(mut branch) = repo.find_branch("staging", BranchType::Local) {
+        // Can't delete current branch, so only delete if we're not on it
+        if current_branch.as_deref() != Some("staging") {
+            let _ = branch.delete();
+        }
+    }
+
+    // Create staging branch from HEAD (skip if we're already on staging)
+    if current_branch.as_deref() != Some("staging") {
+        repo.branch("staging", &head_commit, false)?;
+    }
 
     // Checkout staging branch
     let obj = repo.revparse_single("staging")?;

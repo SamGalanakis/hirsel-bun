@@ -198,8 +198,8 @@ fn print_text(
                 })
                 .unwrap_or_default();
 
-            let waiting_str = if worker.status == crate::core::state::WorkerStatus::Waiting {
-                " (waiting)"
+            let waiting_str = if worker.hitl_waiting {
+                " (waiting for input)"
             } else {
                 ""
             };
@@ -298,17 +298,12 @@ fn format_status_badge(status: &crate::core::state::Status) -> String {
     use crate::core::state::Status;
     match status {
         Status::Draft => "[DRAFT]".to_string(),
-        Status::Idle => "[idle]".to_string(),
         Status::Working => "[WORKING]".to_string(),
         Status::Paused => "[PAUSED]".to_string(),
-        Status::Runaway => "[RUNAWAY!]".to_string(),
-        Status::TimedOut => "[TIMED OUT]".to_string(),
+        Status::Failed => "[FAILED]".to_string(),
         Status::Eval => "[eval]".to_string(),
-        Status::EvalFailed => "[eval FAILED]".to_string(),
-        Status::Waiting => "[waiting]".to_string(),
         Status::Done => "[DONE]".to_string(),
         Status::Delivered => "[delivered]".to_string(),
-        Status::Merged => "[merged]".to_string(),
     }
 }
 
@@ -316,9 +311,7 @@ fn format_status_badge(status: &crate::core::state::Status) -> String {
 fn format_worker_status_icon(status: &crate::core::state::WorkerStatus) -> &'static str {
     use crate::core::state::WorkerStatus;
     match status {
-        WorkerStatus::Idle => "○",
         WorkerStatus::Working => "●",
-        WorkerStatus::Waiting => "◐",
         WorkerStatus::Awaiting => "◌",
         WorkerStatus::Paused => "◫",
         WorkerStatus::Error => "✗",

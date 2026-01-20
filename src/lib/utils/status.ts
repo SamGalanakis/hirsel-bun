@@ -2,7 +2,7 @@
  * Status-related utilities for the Hirsel GUI
  */
 
-import type { RunStatus, WorkerStatus, TaskStatus } from '../types';
+import type { RunStatus, TaskStatus, WorkerStatus } from '../types';
 
 /**
  * Get CSS class for status badge
@@ -66,7 +66,7 @@ export function getStatusDotClass(status: RunStatus | null | undefined): Record<
 export function getProgressBarClass(
   status: RunStatus | null | undefined,
   _done?: number,
-  _total?: number
+  _total?: number,
 ): string {
   // Error states: red
   if (['runaway', 'timed_out', 'eval_failed'].includes(status || '')) {

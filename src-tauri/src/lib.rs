@@ -6,7 +6,11 @@
 
 pub mod cli;
 pub mod core;
+#[cfg(feature = "server")]
+pub mod daemon;
+#[cfg(feature = "gui")]
 pub mod gui;
+pub mod version;
 pub mod worker;
 
 // Re-export commonly used types
@@ -22,6 +26,12 @@ pub fn run_cli() -> i32 {
 
     let cli = Cli::parse();
 
+    // Handle --build-info flag
+    if cli.build_info {
+        println!("{}", version::build_info());
+        return 0;
+    }
+
     let result = match cli.command {
         None => {
             // No command - show help
@@ -30,7 +40,7 @@ pub fn run_cli() -> i32 {
             println!();
             Ok(())
         }
-        Some(cmd) => run_command(cmd, cli.json),
+        Some(cmd) => run_command(cmd, cli.json, cli.profile.as_deref()),
     };
 
     match result {
@@ -43,12 +53,17 @@ pub fn run_cli() -> i32 {
 }
 
 /// Execute a CLI command
-fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn run_command(
+    cmd: Commands,
+    json: bool,
+    _profile: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     use cli::*;
 
     match cmd {
         Commands::Runs => list_runs(json)?,
         Commands::View(args) => view::execute(&args.run_name, json)?,
+        #[cfg(feature = "full-cli")]
         Commands::Go(args) => {
             let result = run_go(&args)?;
             if json {
@@ -76,6 +91,7 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
                 log::LogResult::Error(e) => return Err(e.into()),
             }
         }
+        #[cfg(feature = "tui")]
         Commands::Attach(args) => {
             run_attach(&args.run_name, args.target.as_deref(), json)?;
         }
@@ -291,7 +307,6 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
                 work_dir: PathBuf::from(args.work_dir),
                 run_dir: PathBuf::from(args.run_dir),
                 spec_path: PathBuf::from(args.spec),
-                log_file: PathBuf::from(args.log_file),
                 agent_command,
                 is_leader: args.is_leader,
                 leader_name: args.leader_name,
@@ -299,12 +314,37 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
                 resume_session_id: args.resume_session_id,
             };
 
-            // Run the async worker in a tokio runtime
+            // Run the async worker in a tokio runtime with signal handling
+            let worker_name = config.worker_name.clone();
             let rt = tokio::runtime::Runtime::new()
                 .map_err(|e| format!("Failed to create runtime: {}", e))?;
             rt.block_on(async {
                 tokio::task::LocalSet::new()
-                    .run_until(async { worker::run_acp_worker(config).await })
+                    .run_until(async {
+                        #[cfg(unix)]
+                        {
+                            use tokio::signal::unix::{signal, SignalKind};
+                            let mut sigterm = signal(SignalKind::terminate())
+                                .expect("Failed to register SIGTERM handler");
+
+                            tokio::select! {
+                                result = worker::run_worker(config) => {
+                                    // Normal completion - cleanup already happens in run_worker
+                                    result
+                                }
+                                _ = sigterm.recv() => {
+                                    // Received SIGTERM from GUI - ensure cleanup
+                                    tracing::info!("[{}] Received SIGTERM, cleaning up process group", worker_name);
+                                    core::process::cleanup_process_group(&worker_name);
+                                    Ok(())
+                                }
+                            }
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            worker::run_worker(config).await
+                        }
+                    })
                     .await
             })
             .map_err(|e| format!("Worker error: {}", e))?;
@@ -327,8 +367,6 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
                         core::eval::run_eval_from_args(
                             &args.run,
                             &args.run_dir,
-                            &args.spec,
-                            &args.eval_spec,
                             &args.agent_command,
                         )
                         .await
@@ -365,23 +403,31 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
             rt.block_on(async {
                 tokio::task::LocalSet::new()
                     .run_until(async {
-                        worker::run_remote_worker(
-                            &args.api_url,
-                            &args.run_name,
-                            &args.worker_name,
-                            &args.work_dir,
-                            &args.spec,
-                            &agent_command,
-                            args.is_leader,
-                            args.leader_name.as_deref(),
+                        worker::run_remote_worker_with_config(worker::RemoteWorkerConfig {
+                            api_url: &args.api_url,
+                            run_name: &args.run_name,
+                            worker_name: &args.worker_name,
+                            work_dir: &args.work_dir,
+                            spec_path: &args.spec,
+                            agent_command: &agent_command,
+                            is_leader: args.is_leader,
+                            leader_name: args.leader_name.as_deref(),
                             teammates,
-                        )
+                            wait_for_files: args.wait_for_files,
+                            file_receiver_port: args.file_receiver_port,
+                        })
                         .await
                     })
                     .await
             })
             .map_err(|e| format!("Remote worker error: {}", e))?;
         }
+        #[cfg(feature = "claude")]
+        Commands::AcpBridge => {
+            // Run ACP bridge server for Claude CLI
+            cli::acp_bridge::run_acp_bridge().map_err(|e| format!("ACP bridge error: {}", e))?;
+        }
+        #[cfg(feature = "full-cli")]
         Commands::Test(args) => {
             cli::test::execute(
                 args.scenario.as_deref(),
@@ -389,8 +435,108 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
                 Some(&args.workers),
                 args.yolo,
                 json,
+                args.remote.as_deref(),
+                args.runner.as_deref(),
             )
             .map_err(|e| format!("Test error: {}", e))?;
+        }
+        #[cfg(feature = "server")]
+        Commands::Serve(args) => {
+            // Server mode - run HTTP server for remote orchestration
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| format!("Failed to create runtime: {}", e))?;
+            rt.block_on(async { core::server::start_server(args.port).await })
+                .map_err(|e| format!("Server error: {}", e))?;
+        }
+        #[cfg(feature = "server")]
+        Commands::Daemon(args) => {
+            // Internal daemon command - runs the daemon server
+            use daemon::{start_daemon, DaemonConfig};
+
+            let config = DaemonConfig {
+                idle_timeout_secs: args.idle_timeout,
+                tcp_port: args.tcp_port,
+            };
+
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| format!("Failed to create runtime: {}", e))?;
+            rt.block_on(async { start_daemon(config).await })
+                .map_err(|e| format!("Daemon error: {}", e))?;
+        }
+        #[cfg(feature = "server")]
+        Commands::DaemonCtl(args) => {
+            // Daemon control commands
+            use cli::DaemonCommand;
+
+            match args.command {
+                DaemonCommand::Start => {
+                    if daemon::is_daemon_running() {
+                        if json {
+                            println!(r#"{{"status": "already_running"}}"#);
+                        } else {
+                            println!("Daemon is already running");
+                        }
+                    } else {
+                        // Start daemon by connecting (which auto-starts)
+                        let rt = tokio::runtime::Runtime::new()
+                            .map_err(|e| format!("Failed to create runtime: {}", e))?;
+                        let client = daemon::DaemonClient::connect_or_start()
+                            .map_err(|e| format!("Failed to start daemon: {}", e))?;
+                        rt.block_on(async { client.health().await })
+                            .map_err(|e| format!("Daemon health check failed: {}", e))?;
+                        if json {
+                            println!(r#"{{"status": "started"}}"#);
+                        } else {
+                            println!("Daemon started");
+                        }
+                    }
+                }
+                DaemonCommand::Stop => {
+                    if !daemon::is_daemon_running() {
+                        if json {
+                            println!(r#"{{"status": "not_running"}}"#);
+                        } else {
+                            println!("Daemon is not running");
+                        }
+                    } else {
+                        let rt = tokio::runtime::Runtime::new()
+                            .map_err(|e| format!("Failed to create runtime: {}", e))?;
+                        let client = daemon::DaemonClient::connect()
+                            .map_err(|e| format!("Failed to connect to daemon: {}", e))?;
+                        rt.block_on(async { client.stop().await })
+                            .map_err(|e| format!("Failed to stop daemon: {}", e))?;
+                        if json {
+                            println!(r#"{{"status": "stopped"}}"#);
+                        } else {
+                            println!("Daemon stopped");
+                        }
+                    }
+                }
+                DaemonCommand::Status => {
+                    if daemon::is_daemon_running() {
+                        if json {
+                            // Get full status from daemon
+                            let rt = tokio::runtime::Runtime::new()
+                                .map_err(|e| format!("Failed to create runtime: {}", e))?;
+                            let client = daemon::DaemonClient::connect()
+                                .map_err(|e| format!("Failed to connect to daemon: {}", e))?;
+                            let status: serde_json::Value = rt
+                                .block_on(async { client.get("/daemon/status").await })
+                                .map_err(|e| format!("Failed to get status: {}", e))?;
+                            println!("{}", serde_json::to_string_pretty(&status).unwrap());
+                        } else {
+                            println!("Daemon is running");
+                            println!("Socket: {}", daemon::socket_path().display());
+                        }
+                    } else {
+                        if json {
+                            println!(r#"{{"running": false}}"#);
+                        } else {
+                            println!("Daemon is not running");
+                        }
+                    }
+                }
+            }
         }
         // Completion helpers - handled by cli/mod.rs
         Commands::CompleteRuns | Commands::CompleteWorkers(_) | Commands::CompleteThreads(_) => {
@@ -403,11 +549,23 @@ fn run_command(cmd: Commands, json: bool) -> Result<(), Box<dyn std::error::Erro
 }
 
 /// Run the GUI (Tauri application)
+#[cfg(feature = "gui")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     use std::sync::Arc;
 
-    let mut builder = tauri::Builder::default().plugin(tauri_plugin_log::Builder::new().build());
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_log::Builder::new().build())
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // When a second instance tries to launch, focus the existing window
+            use tauri::Manager;
+            tracing::info!("Second instance attempted with args: {:?}", args);
+            if let Some(window) = app.get_webview_window("main") {
+                // Unminimize if minimized, then focus
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }));
 
     // Enable MCP plugin in debug builds for AI agent debugging
     #[cfg(debug_assertions)]
@@ -422,11 +580,38 @@ pub fn run() {
     // Create chat session manager as shared state
     let chat_manager = Arc::new(core::ChatSessionManager::new());
 
+    // Create chat orchestrator manager from the session manager
+    let chat_orchestrator_manager = Arc::new(gui::ChatOrchestratorManager::from_manager(
+        chat_manager.clone(),
+    ));
+
+    // Create worker event stream manager as shared state
+    let worker_stream_manager = Arc::new(gui::WorkerEventStreamManager::new());
+
     builder
-        .manage(chat_manager)
+        .manage(chat_manager.clone())
+        .manage(chat_orchestrator_manager)
+        .manage(worker_stream_manager)
         .invoke_handler(gui::get_handlers())
         .setup(|app| {
             use tauri::Manager;
+
+            // In dev mode, clean up orphaned processes from previous hot-reload sessions
+            #[cfg(debug_assertions)]
+            {
+                cleanup_orphaned_dev_processes();
+            }
+
+            // Reconcile stale workers on startup (both dev and release)
+            // Workers that appear "Working" but have dead PIDs are marked as Paused
+            let stale = core::workers::reconcile_stale_workers();
+            if !stale.is_empty() {
+                tracing::info!(
+                    "[GUI] Startup reconciliation: marked {} stale worker(s) as Paused",
+                    stale.len()
+                );
+            }
+
             if let Some(window) = app.get_webview_window("main") {
                 // Set window background color to match app theme (prevents white flash on resize)
                 // Dark background color #1a1a1a = rgb(26, 26, 26)
@@ -434,6 +619,123 @@ pub fn run() {
             }
             Ok(())
         })
+        .on_window_event(move |window, event| {
+            // Clean up when the main window is about to close
+            if let tauri::WindowEvent::Destroyed = event {
+                if window.label() == "main" {
+                    tracing::info!("[GUI] Main window destroyed, cleaning up all processes");
+                    cleanup_all_processes(&chat_manager);
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Kill all worker and chat session processes on GUI exit
+#[cfg(feature = "gui")]
+fn cleanup_all_processes(chat_manager: &std::sync::Arc<core::ChatSessionManager>) {
+    tracing::info!("[GUI] Killing all worker processes");
+
+    // Get the runs directory
+    let runs_dir = match dirs::home_dir() {
+        Some(home) => home.join(".hirsel").join("runs"),
+        None => {
+            tracing::warn!("[GUI] Could not determine home directory");
+            stop_chat_sessions(chat_manager);
+            return;
+        }
+    };
+
+    // Iterate over all run directories and open their databases
+    if let Ok(entries) = std::fs::read_dir(&runs_dir) {
+        let mut all_pids: Vec<i64> = Vec::new();
+
+        for entry in entries.flatten() {
+            let db_path = entry.path().join("hirsel.db");
+            if db_path.exists() {
+                if let Ok(state) = core::state::SQLiteState::new(db_path) {
+                    if let Ok(workers) = state.get_workers() {
+                        for worker in workers {
+                            if let Some(pid) = worker.pid {
+                                tracing::info!(
+                                    "[GUI] Found worker {} (pid {}) in {}",
+                                    worker.name,
+                                    pid,
+                                    entry.path().display()
+                                );
+                                all_pids.push(pid);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Kill all found worker process groups
+        #[cfg(unix)]
+        {
+            // First SIGTERM
+            for &pid in &all_pids {
+                unsafe {
+                    libc::kill(-(pid as i32), libc::SIGTERM);
+                }
+            }
+
+            // Brief wait then force kill
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            // Then SIGKILL
+            for &pid in &all_pids {
+                unsafe {
+                    libc::kill(-(pid as i32), libc::SIGKILL);
+                }
+            }
+        }
+
+        tracing::info!("[GUI] Killed {} worker process groups", all_pids.len());
+    }
+
+    // Stop all active chat sessions
+    stop_chat_sessions(chat_manager);
+
+    tracing::info!("[GUI] Cleanup complete");
+}
+
+#[cfg(feature = "gui")]
+fn stop_chat_sessions(chat_manager: &std::sync::Arc<core::ChatSessionManager>) {
+    tracing::info!("[GUI] Stopping all chat sessions");
+    let rt = tokio::runtime::Runtime::new();
+    if let Ok(rt) = rt {
+        rt.block_on(async {
+            let sessions = chat_manager.list_sessions().await;
+            for session_id in sessions {
+                let _ = chat_manager.stop_session(&session_id).await;
+            }
+        });
+    }
+}
+
+/// Clean up orphaned hirsel __acp-bridge processes from previous dev sessions.
+/// This is only compiled in debug builds to handle hot-reload orphans.
+#[cfg(all(feature = "gui", debug_assertions))]
+fn cleanup_orphaned_dev_processes() {
+    use std::process::Command;
+
+    tracing::info!("[DEV] Cleaning up orphaned acp-bridge processes from previous sessions");
+
+    // Kill all hirsel __acp-bridge processes - they're orphans from previous hot-reload
+    match Command::new("pkill").args(["-f", "__acp-bridge"]).output() {
+        Ok(output) => {
+            if output.status.success() {
+                tracing::info!("[DEV] Killed orphaned acp-bridge processes");
+            } else {
+                // Exit code 1 means no processes matched - that's fine
+                tracing::debug!("[DEV] No orphaned acp-bridge processes found");
+            }
+        }
+        Err(e) => {
+            tracing::warn!("[DEV] Failed to run pkill: {}", e);
+        }
+    }
 }

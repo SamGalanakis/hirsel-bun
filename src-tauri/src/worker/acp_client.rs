@@ -24,7 +24,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 
-use crate::core::acp::{collect_agent_env, create_hirsel_mcp_config};
+use crate::core::acp::{create_hirsel_mcp_config, AcpChild, AcpSpawnConfig};
 
 /// Result type for ACP operations
 type Result<T> = std::result::Result<T, agent_client_protocol::Error>;
@@ -37,33 +37,36 @@ struct TerminalHandle {
 
 /// Hirsel's implementation of the ACP Client trait.
 /// Handles agent requests for permissions, file operations, and terminals.
+///
+/// This client processes SessionUpdate events from agents (via the ACP protocol)
+/// and writes them to the database for streaming UI updates. It's used by both
+/// the Node.js ACP adapter and the native Claude CLI bridge.
 pub struct HirselClient {
     worker_name: String,
-    log_file: PathBuf,
     db_path: PathBuf,
     terminals: Mutex<HashMap<TerminalId, TerminalHandle>>,
     terminal_counter: AtomicU64,
 }
 
 impl HirselClient {
-    pub fn new(worker_name: &str, log_file: &Path, db_path: &Path) -> Self {
+    /// Get the worker name.
+    pub fn worker_name(&self) -> &str {
+        &self.worker_name
+    }
+
+    /// Get the database path.
+    pub fn db_path(&self) -> &Path {
+        &self.db_path
+    }
+}
+
+impl HirselClient {
+    pub fn new(worker_name: &str, db_path: &Path) -> Self {
         Self {
             worker_name: worker_name.to_string(),
-            log_file: log_file.to_path_buf(),
             db_path: db_path.to_path_buf(),
             terminals: Mutex::new(HashMap::new()),
             terminal_counter: AtomicU64::new(0),
-        }
-    }
-
-    fn log(&self, message: &str) {
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.log_file)
-        {
-            use std::io::Write;
-            let _ = writeln!(file, "{}", message);
         }
     }
 
@@ -101,13 +104,11 @@ impl Client for HirselClient {
     async fn session_notification(&self, args: SessionNotification) -> Result<()> {
         use crate::core::state::ToolCallStatus;
 
-        // Log session updates to the worker log file AND database
+        // Write session updates to database for streaming
         match &args.update {
             SessionUpdate::AgentMessageChunk(chunk) => {
                 if let ContentBlock::Text(text) = &chunk.content {
-                    // Log to file (for backwards compatibility)
-                    self.log(&text.text);
-                    // Write to database for GUI streaming
+                    // Write to database for streaming
                     if let Some(state) = self.get_state() {
                         let _ = state.insert_text_event(&self.worker_name, &text.text);
                     }
@@ -122,9 +123,6 @@ impl Client for HirselClient {
                 }
             }
             SessionUpdate::ToolCall(tc) => {
-                // Log to file
-                self.log(&format!("\n[tool: {}]", tc.title));
-
                 // Convert ACP status to our status
                 let status = match tc.status {
                     agent_client_protocol::ToolCallStatus::Pending => ToolCallStatus::Pending,
@@ -176,19 +174,8 @@ impl Client for HirselClient {
                     _ => ToolCallStatus::Pending,
                 });
 
-                // Log completion to file
-                if let Some(s) = &status {
-                    if *s == ToolCallStatus::Completed || *s == ToolCallStatus::Failed {
-                        self.log("[/tool]");
-                    }
-                }
-
-                // Serialize output if present
-                let output = update
-                    .fields
-                    .raw_output
-                    .as_ref()
-                    .and_then(|v| serde_json::to_string(v).ok());
+                // Extract output using shared utility
+                let output = crate::core::acp::extract_tool_output(&update.fields);
 
                 // Write to database
                 if let Some(state) = self.get_state() {
@@ -337,7 +324,6 @@ pub struct WorkerRunConfig {
     pub work_dir: PathBuf,
     pub run_dir: PathBuf,
     pub spec_path: PathBuf,
-    pub log_file: PathBuf,
     pub agent_command: Vec<String>,
     pub is_leader: bool,
     pub leader_name: Option<String>,
@@ -355,62 +341,23 @@ pub async fn run_acp_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
         config.worker_name, config.run_name
     );
 
-    // Create log file
-    if let Some(parent) = config.log_file.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(
-        &config.log_file,
-        format!(
-            "[worker: {}]\n{}\n\n",
-            config.worker_name,
-            if config.is_leader {
-                "Starting as leader..."
-            } else {
-                "Starting, waiting for tasks..."
-            }
-        ),
-    )?;
-
     // Create the client
     let db_path = config.run_dir.join("hirsel.db");
-    let client = Arc::new(HirselClient::new(
-        &config.worker_name,
-        &config.log_file,
-        &db_path,
-    ));
+    let client = Arc::new(HirselClient::new(&config.worker_name, &db_path));
 
-    // Spawn the agent process
-    let mut cmd = Command::new(&config.agent_command[0]);
-    if config.agent_command.len() > 1 {
-        cmd.args(&config.agent_command[1..]);
-    }
-    cmd.current_dir(&config.work_dir);
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::null());
-
-    // Pass through environment variables
-    for (key, value) in collect_agent_env() {
-        cmd.env(&key, &value);
-    }
-    cmd.env("ACP_PERMISSION_MODE", "bypassPermissions");
-
-    let mut child = cmd.spawn()?;
-    let stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("Failed to get stdin"))?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("Failed to get stdout"))?;
-
-    info!(
-        "[{}] Agent process started, pid={}",
-        config.worker_name,
-        child.id().unwrap_or(0)
+    // Spawn the agent process using AcpChild for automatic cleanup
+    let spawn_config = AcpSpawnConfig::new(
+        config.agent_command.clone(),
+        config.work_dir.clone(),
+        config.worker_name.clone(),
     );
+    let mut acp_child = AcpChild::spawn(spawn_config)?;
+    let stdin = acp_child
+        .take_stdin()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get stdin"))?;
+    let stdout = acp_child
+        .take_stdout()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get stdout"))?;
 
     // Convert tokio streams to futures-compatible streams
     let stdin_compat = stdin.compat_write();
@@ -506,14 +453,19 @@ pub async fn run_acp_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
     // Wait for the agent to finish
     drop(conn);
     let _ = io_handle.await;
-    let _ = child.wait().await;
+    let _ = acp_child.wait().await;
 
     info!("[{}] Worker finished", config.worker_name);
+
+    // AcpChild handles cleanup automatically on drop (kills process group)
     Ok(())
 }
 
+/// Build the worker prompt with all context.
+///
+/// This is used by both the ACP worker and Claude CLI worker implementations.
 #[allow(clippy::too_many_arguments)]
-fn build_worker_prompt(
+pub fn build_worker_prompt(
     worker_name: &str,
     run_name: &str,
     spec_content: &str,
@@ -629,6 +581,8 @@ fn build_worker_prompt(
     // The scope task and three-phase workflow
     prompt.push_str("## The \"scope\" Task - Three-Phase Workflow\n\n");
     prompt.push_str("Most runs start with a single task: `scope`. This is NOT where you create implementation tasks.\n\n");
+
+    prompt.push_str("**For simple tasks:** If the task is straightforward (e.g., a small bug fix, adding a single function, or a minor change where you already understand the codebase), skip exploration and directly create implementation tasks during scoping.\n\n");
 
     prompt.push_str("### Phase 1: Scoping (the \"scope\" task)\n\n");
     prompt.push_str("1. Claim the `scope` task\n");
@@ -768,4 +722,85 @@ fn build_worker_prompt(
     prompt.push_str("**Begin by using `task_list` to see available tasks.**\n");
 
     prompt
+}
+
+// =============================================================================
+// Claude CLI Worker (native Rust, no Node.js dependency)
+// =============================================================================
+
+/// Run a worker using the native Claude CLI bridge.
+///
+/// This is an alternative to `run_acp_worker` that communicates directly with
+/// the Claude CLI using its JSON streaming protocol.
+#[cfg(feature = "claude")]
+pub async fn run_claude_cli_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
+    use crate::core::claude_cli::{run_claude_worker, ClaudeWorkerConfig};
+
+    info!(
+        "[{}] Starting Claude CLI worker for run={}",
+        config.worker_name, config.run_name
+    );
+
+    // Read the spec
+    let spec_content =
+        std::fs::read_to_string(&config.spec_path).unwrap_or_else(|_| "No spec found.".to_string());
+
+    // Build the prompt
+    let prompt = build_worker_prompt(
+        &config.worker_name,
+        &config.run_name,
+        &spec_content,
+        config.is_leader,
+        config.leader_name.as_deref(),
+        config.teammates.as_deref(),
+        &config.work_dir,
+        &config.run_dir,
+    );
+
+    // Create Claude worker config
+    let worker_config = ClaudeWorkerConfig {
+        run_name: config.run_name,
+        worker_name: config.worker_name,
+        work_dir: config.work_dir,
+        run_dir: config.run_dir,
+        prompt,
+    };
+
+    // Run the worker
+    let result = run_claude_worker(worker_config).await?;
+
+    info!(
+        "Worker completed: stop_reason={:?}, tokens={:?}/{:?}, cost=${:?}",
+        result.stop_reason, result.input_tokens, result.output_tokens, result.cost_usd
+    );
+
+    Ok(())
+}
+
+/// Run a worker, automatically selecting the best backend.
+///
+/// If the `claude` feature is enabled and the agent command indicates Claude or
+/// our built-in ACP bridge, uses the native Claude Agent SDK. Otherwise falls
+/// back to the ACP adapter for external agents.
+pub async fn run_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
+    #[cfg(feature = "claude")]
+    {
+        // Check if we should use the native Claude Agent SDK
+        // This includes:
+        // - Empty command (default to Claude)
+        // - "claude" or path ending in "/claude"
+        // - "hirsel __acp-bridge" (our built-in bridge, now uses SDK)
+        let use_sdk = config.agent_command.is_empty()
+            || config.agent_command.first().map_or(false, |cmd| {
+                cmd == "claude" || cmd.ends_with("/claude") || cmd.contains("claude-code")
+            })
+            || config.agent_command.iter().any(|arg| arg == "__acp-bridge");
+
+        if use_sdk {
+            return run_claude_cli_worker(config).await;
+        }
+    }
+
+    // Fall back to ACP adapter for external agents
+    run_acp_worker(config).await
 }

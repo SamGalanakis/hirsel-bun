@@ -16,8 +16,8 @@ export { createIcons, icons };
  * Also sets up a MutationObserver to handle dynamically added elements
  */
 export function initLucideIcons(): void {
-  // Initial icon replacement
-  createIcons({ icons });
+  // Initial icon replacement - inTemplates: true handles Alpine x-for templates
+  createIcons({ icons, inTemplates: true });
 
   // Debounced re-initialization for Alpine-rendered icons
   let pendingRefresh = false;
@@ -25,7 +25,7 @@ export function initLucideIcons(): void {
     if (pendingRefresh) return;
     pendingRefresh = true;
     requestAnimationFrame(() => {
-      createIcons({ icons });
+      createIcons({ icons, inTemplates: true });
       pendingRefresh = false;
     });
   };
@@ -45,7 +45,7 @@ export function initLucideIcons(): void {
 function toPascalCase(str: string): string {
   return str
     .split('-')
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join('');
 }
 

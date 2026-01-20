@@ -1,0 +1,78 @@
+    <!-- Title Bar -->
+  <header class="title-bar flex items-center justify-between px-4 py-2 border-b border-pasture-600 select-none">
+    <div class="flex items-center gap-2">
+      <h1 class="text-lg font-semibold text-amber-500">Hirsel</h1>
+    </div>
+    <div class="flex items-center gap-1">
+      <!-- Gyp Button -->
+      <button @click="toggleAiChat()" class="p-1 rounded hover:bg-pasture-700 text-wool-300 relative" :class="{ 'bg-pasture-700': aiChatOpen }">
+        <i data-lucide="sparkles" class="w-4 h-4"></i>
+      </button>
+      <!-- Notifications Bell -->
+      <div class="relative" x-data="notifications()">
+        <button @click="toggleNotifications()" class="p-2 rounded hover:bg-pasture-700 text-wool-300 relative" :class="{ 'bg-pasture-700': open }">
+          <i data-lucide="bell" class="w-4 h-4"></i>
+          <span x-show="totalUnread > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-terra rounded-full text-[10px] text-white font-bold flex items-center justify-center px-1" x-text="totalUnread > 99 ? '99+' : totalUnread"></span>
+        </button>
+        <!-- Notifications dropdown -->
+        <div
+          x-show="open"
+          @click.away="open = false"
+          x-transition:enter="transition ease-out duration-150"
+          x-transition:enter-start="opacity-0 scale-95"
+          x-transition:enter-end="opacity-100 scale-100"
+          x-transition:leave="transition ease-in duration-100"
+          x-transition:leave-start="opacity-100 scale-100"
+          x-transition:leave-end="opacity-0 scale-95"
+          class="absolute right-0 mt-2 w-80 bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl z-50 overflow-hidden"
+        >
+          <div class="p-3 border-b border-pasture-600 flex items-center justify-between">
+            <h3 class="text-sm font-medium text-wool-300">Notifications</h3>
+            <button x-show="notifications.length > 0" @click="markAllRead()" class="text-xs text-wool-500 hover:text-wool-300">Mark all read</button>
+          </div>
+          <div class="max-h-80 overflow-y-auto" x-ref="notifList" x-init="$watch('open', (val) => { if (val) $nextTick(() => setScrollRoot($el)); })">
+            <template x-for="notif in notifications" :key="notif.id">
+              <div
+                :data-notif-id="notif.id"
+                x-init="if (!notif.read) observeNotification($el)"
+                @click="markOneRead(notif.id); goToMessage(notif.runName, notif.thread); open = false"
+                class="p-3 hover:bg-pasture-700 cursor-pointer border-b border-pasture-700 last:border-0 transition-all duration-300 group relative"
+                :class="{ 'bg-amber-500/10 border-l-2 border-l-amber-500': !notif.read, 'opacity-60 bg-pasture-800': notif.read }"
+              >
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="text-xs font-medium" :class="notif.read ? 'text-wool-500' : 'text-amber-500'" x-text="notif.runName"></span>
+                  <span class="text-xs text-wool-600" x-text="notif.thread"></span>
+                  <span class="text-xs text-wool-600 ml-auto" x-text="formatTime(notif.timestamp)"></span>
+                  <!-- Dismiss button (only for unread) -->
+                  <button
+                    x-show="!notif.read"
+                    @click.stop="markOneRead(notif.id)"
+                    class="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-pasture-600 text-wool-500 hover:text-wool-300 transition-opacity"
+                    title="Mark as read"
+                  >
+                    <i data-lucide="x" class="w-3 h-3"></i>
+                  </button>
+                  <!-- Read indicator -->
+                  <span x-show="notif.read" class="text-[10px] text-wool-600 uppercase tracking-wide">read</span>
+                </div>
+                <p class="text-sm truncate" :class="notif.read ? 'text-wool-500' : 'text-wool-300'" x-text="notif.content"></p>
+                <p class="text-xs text-wool-500 mt-0.5" x-text="notif.sender"></p>
+              </div>
+            </template>
+            <div x-show="notifications.length === 0" class="p-6 text-center text-wool-500">
+              <i data-lucide="bell-off" class="w-8 h-8 mx-auto mb-2 text-wool-600"></i>
+              <p class="text-sm">No notifications</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Help Button -->
+      <button @click="showHelp = true" class="p-2 rounded hover:bg-pasture-700 text-wool-300">
+        <i data-lucide="help-circle" class="w-4 h-4"></i>
+      </button>
+      <!-- Settings Button -->
+      <button @click="showSettings = true" class="p-2 rounded hover:bg-pasture-700 text-wool-300">
+        <i data-lucide="settings" class="w-4 h-4"></i>
+      </button>
+    </div>
+  </header>

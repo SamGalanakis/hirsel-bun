@@ -3,11 +3,11 @@
  * Aggregates unread messages across all runs
  */
 
+import { DATA_EVENTS, dataCache } from '../data-cache';
 import type { UnreadNotification, UnreadNotificationsResponse } from '../types';
 import { formatRelativeTime } from '../utils/formatters';
-import { dataCache, DATA_EVENTS } from '../data-cache';
 
-declare const lucide: { createIcons(): void } | undefined;
+declare const lucide: { createIcons(options?: { inTemplates?: boolean }): void } | undefined;
 
 interface Notification extends UnreadNotification {
   read: boolean;
@@ -26,6 +26,7 @@ export function notifications() {
     _cacheUnsubscribe: null as (() => void) | null,
     _observer: null as IntersectionObserver | null,
     _visibleTimers: new Map<string, ReturnType<typeof setTimeout>>(),
+    _pendingObserve: [] as HTMLElement[], // Queue for elements waiting to be observed
 
     async init() {
       // Subscribe to cache (for subscriber count)
@@ -50,7 +51,7 @@ export function notifications() {
         clearInterval(this._pollInterval);
         this._pollInterval = null;
       }
-      this._eventCleanups.forEach(fn => fn());
+      this._eventCleanups.forEach((fn) => fn());
       this._eventCleanups = [];
       if (this._cacheUnsubscribe) {
         this._cacheUnsubscribe();
@@ -60,9 +61,10 @@ export function notifications() {
         this._observer.disconnect();
         this._observer = null;
       }
-      // Clear any pending timers
-      this._visibleTimers.forEach(timer => clearTimeout(timer));
+      // Clear any pending timers and queued elements
+      this._visibleTimers.forEach((timer) => clearTimeout(timer));
       this._visibleTimers.clear();
+      this._pendingObserve = [];
     },
 
     _setupObserver(root: HTMLElement | null = null) {
@@ -70,6 +72,10 @@ export function notifications() {
       if (this._observer) {
         this._observer.disconnect();
       }
+
+      // Clear any pending timers
+      this._visibleTimers.forEach((timer) => clearTimeout(timer));
+      this._visibleTimers.clear();
 
       // Create intersection observer that marks notifications as read when visible
       this._observer = new IntersectionObserver(
@@ -100,13 +106,24 @@ export function notifications() {
         {
           root: root, // Use the scrollable container as root
           threshold: 0.5, // 50% visible
-        }
+        },
       );
+
+      // Process any elements that were queued before observer was ready
+      for (const el of this._pendingObserve) {
+        this._observer.observe(el);
+      }
+      this._pendingObserve = [];
     },
 
     observeNotification(el: HTMLElement) {
-      if (this._observer && el) {
+      if (!el) return;
+
+      if (this._observer) {
         this._observer.observe(el);
+      } else {
+        // Queue for later when observer is set up
+        this._pendingObserve.push(el);
       }
     },
 
@@ -117,7 +134,7 @@ export function notifications() {
         // Re-render icons for dismiss buttons after a tick
         setTimeout(() => {
           if (typeof lucide !== 'undefined') {
-            lucide.createIcons();
+            lucide.createIcons({ inTemplates: true });
           }
         }, 0);
       }
@@ -129,15 +146,25 @@ export function notifications() {
       try {
         // Single API call to get all unread notifications
         const response = await window.tauriInvoke<UnreadNotificationsResponse>(
-          'get_all_unread_notifications'
+          'get_all_unread_notifications',
         );
 
-        // Convert to internal notification format
-        this.notifications = response.notifications.map(n => ({
+        // Keep existing read notifications
+        const existingRead = this.notifications.filter((n) => n.read);
+
+        // Convert new unread to internal format
+        const newUnread: Notification[] = response.notifications.map((n) => ({
           ...n,
           read: false,
         }));
-        this.totalUnread = response.totalRunsWithUnread;
+
+        // Merge: new unread first, then existing read (avoid duplicates)
+        const unreadIds = new Set(newUnread.map((n) => n.id));
+        const filteredRead = existingRead.filter((n) => !unreadIds.has(n.id));
+
+        // Combine and cap at 100
+        this.notifications = [...newUnread, ...filteredRead].slice(0, 100);
+        this.totalUnread = newUnread.length;
 
         // Update app state
         this.updateAppState(response.totalRunsWithUnread);
@@ -145,7 +172,7 @@ export function notifications() {
         // Re-render icons for dismiss buttons
         setTimeout(() => {
           if (typeof lucide !== 'undefined') {
-            lucide.createIcons();
+            lucide.createIcons({ inTemplates: true });
           }
         }, 0);
       } catch (e) {
@@ -156,7 +183,7 @@ export function notifications() {
     updateAppState(count: number) {
       // @ts-expect-error Alpine.js $el magic property
       let el = this.$el as HTMLElement;
-      while (el && el.parentElement) {
+      while (el?.parentElement) {
         el = el.parentElement;
         // @ts-expect-error Alpine.js internal property
         if (el._x_dataStack) {
@@ -170,19 +197,42 @@ export function notifications() {
       }
     },
 
-    async goToRun(runName: string) {
-      // Dispatch event to select the run
+    async goToMessage(runName: string, thread: string) {
+      // 1. Select the run
       window.dispatchEvent(new CustomEvent('run-selected', { detail: runName }));
+
+      // 2. Switch to chat tab
+      window.dispatchEvent(new CustomEvent('switch-tab', { detail: 'chat' }));
+
+      // 3. Select the thread (with small delay to allow run to load)
+      setTimeout(() => {
+        window.dispatchEvent(
+          new CustomEvent('select-chat-thread', {
+            detail: { runName, thread },
+          }),
+        );
+      }, 300);
     },
 
     async markAllRead() {
       if (!window.tauriInvoke) return;
 
+      // Mark all as read locally first for immediate feedback
+      const unreadNotifs = this.notifications.filter((n) => !n.read);
+      if (unreadNotifs.length === 0) return;
+
+      // Optimistic update - mark all as read
+      for (const notif of unreadNotifs) {
+        notif.read = true;
+      }
+      this.totalUnread = 0;
+      this.updateAppState(0);
+
       try {
-        // Mark messages as read for each notification
+        // Collect unique run/thread pairs to mark as read in backend
         const runThreads = new Map<string, Set<string>>();
 
-        for (const notif of this.notifications) {
+        for (const notif of unreadNotifs) {
           if (!runThreads.has(notif.runName)) {
             runThreads.set(notif.runName, new Set());
           }
@@ -198,25 +248,26 @@ export function notifications() {
             });
           }
         }
-
-        // Clear notifications
-        this.notifications = [];
-        this.totalUnread = 0;
-        this.updateAppState(0);
       } catch (e) {
         console.error('Failed to mark all read:', e);
+        // Revert on error
+        for (const notif of unreadNotifs) {
+          notif.read = false;
+        }
+        this.totalUnread = unreadNotifs.length;
+        this.updateAppState(unreadNotifs.length);
       }
     },
 
     async markOneRead(notifId: string) {
-      const notif = this.notifications.find(n => n.id === notifId);
+      const notif = this.notifications.find((n) => n.id === notifId);
       if (!notif || notif.read) return;
 
       // Mark as read locally first for immediate feedback
       notif.read = true;
 
       // Update count immediately
-      const unreadCount = this.notifications.filter(n => !n.read).length;
+      const unreadCount = this.notifications.filter((n) => !n.read).length;
       this.totalUnread = unreadCount;
       this.updateAppState(unreadCount);
 
@@ -232,7 +283,7 @@ export function notifications() {
         // Revert on error
         notif.read = false;
         // Restore count
-        const revertCount = this.notifications.filter(n => !n.read).length;
+        const revertCount = this.notifications.filter((n) => !n.read).length;
         this.totalUnread = revertCount;
         this.updateAppState(revertCount);
       }

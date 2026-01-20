@@ -1,0 +1,1060 @@
+//! Local implementation of LifecycleManager using SQLite state.
+//!
+//! This implementation directly accesses the SQLite database and manages
+//! local worker processes. It consolidates logic previously scattered across
+//! workers.rs, daemon/lifecycle.rs, and other modules.
+
+use super::{
+    LifecycleAction, LifecycleContext, LifecycleError, LifecycleEvent, LifecycleManager,
+    LifecycleResult, RunStateMachine,
+};
+use crate::core::config::Config;
+use crate::core::files::Files;
+use crate::core::runner::{create_lifecycle_runner_for_handle, WorkerHandle};
+use crate::core::state::{FailureReason, SQLiteState, Status, WorkerStatus, WorkerUpdate};
+use crate::core::workers::{spawn_worker, WorkerSpawnConfig};
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+use tracing::{debug, info, warn};
+
+/// Local lifecycle manager using SQLite state.
+pub struct LocalLifecycleManager {
+    context: LifecycleContext,
+    state: SQLiteState,
+    files: Files,
+}
+
+impl LocalLifecycleManager {
+    /// Create a new LocalLifecycleManager.
+    pub fn new(
+        run_name: impl Into<String>,
+        run_dir: PathBuf,
+        agent_command: Vec<String>,
+    ) -> LifecycleResult<Self> {
+        let files = Files::new(&run_dir);
+        let state =
+            SQLiteState::new(files.db_path()).map_err(|e| LifecycleError::State(e.to_string()))?;
+
+        Ok(Self {
+            context: LifecycleContext::new(run_name, run_dir, agent_command),
+            state,
+            files,
+        })
+    }
+
+    /// Create from existing state (for use in contexts where state is already open).
+    pub fn from_state(
+        run_name: impl Into<String>,
+        run_dir: PathBuf,
+        agent_command: Vec<String>,
+        state: SQLiteState,
+    ) -> Self {
+        let files = Files::new(&run_dir);
+        Self {
+            context: LifecycleContext::new(run_name, run_dir, agent_command),
+            state,
+            files,
+        }
+    }
+
+    /// Get a reference to the SQLite state.
+    pub fn state(&self) -> &SQLiteState {
+        &self.state
+    }
+
+    /// Get a reference to the Files helper.
+    pub fn files(&self) -> &Files {
+        &self.files
+    }
+
+    /// Kill all workers in the run.
+    ///
+    /// This is the public interface for killing workers, used when deleting runs
+    /// or other cleanup operations. Uses the Runner trait to properly stop
+    /// both local processes and Docker containers.
+    pub fn kill_all_workers(&self) -> LifecycleResult<Vec<String>> {
+        self.kill_all_workers_internal()
+    }
+
+    /// Resume workers that are paused, in error state, or awaiting tasks.
+    ///
+    /// This is the public interface for resuming workers after an eval fails
+    /// or when workers need to be restarted.
+    pub fn resume_awaiting_workers(&self) -> LifecycleResult<Vec<String>> {
+        self.resume_awaiting_workers_internal()
+    }
+
+    /// Trigger the auto-improve agent if enabled in config.
+    ///
+    /// This spawns a subprocess to run the `improve` command which analyzes
+    /// learnings and updates the project memory file.
+    pub fn run_improve(&self) {
+        self.maybe_run_improve()
+    }
+
+    // =========================================================================
+    // Internal Helpers
+    // =========================================================================
+
+    /// Kill all workers in the run using the Runner trait.
+    ///
+    /// This handles both local processes and Docker containers based on
+    /// the stored runner_type.
+    fn kill_all_workers_internal(&self) -> LifecycleResult<Vec<String>> {
+        let workers = self
+            .state
+            .get_workers()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let mut killed = Vec::new();
+
+        // Helper to run async code - handles being called from within a tokio runtime
+        fn run_async<F, T>(f: F) -> Result<T, String>
+        where
+            F: FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send>>
+                + Send
+                + 'static,
+            T: Send + 'static,
+        {
+            if tokio::runtime::Handle::try_current().is_ok() {
+                // Already in a tokio runtime - spawn a thread with its own runtime
+                std::thread::scope(|s| {
+                    s.spawn(|| {
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .map_err(|e| format!("Failed to create runtime: {}", e))?;
+                        Ok(rt.block_on(f()))
+                    })
+                    .join()
+                    .unwrap()
+                })
+            } else {
+                // Not in a runtime - create one
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| format!("Failed to create runtime: {}", e))?;
+                Ok(rt.block_on(f()))
+            }
+        }
+
+        for worker in workers {
+            // Stop using runner_id and runner_type
+            if let (Some(runner_id), Some(runner_type)) =
+                (worker.runner_id.as_ref(), worker.runner_type.as_ref())
+            {
+                let handle = WorkerHandle {
+                    worker_name: worker.name.clone(),
+                    runner_id: runner_id.clone(),
+                    runner_type: runner_type.clone(),
+                };
+
+                let runner = create_lifecycle_runner_for_handle(&handle);
+                let worker_name = worker.name.clone();
+                let runner_type_clone = runner_type.clone();
+                let runner_id_clone = runner_id.clone();
+
+                let stop_result =
+                    run_async(move || Box::pin(async move { runner.stop(&handle).await }));
+
+                match stop_result {
+                    Ok(Ok(())) => {
+                        info!(
+                            "Stopped worker {} (runner_type: {}, runner_id: {})",
+                            worker_name, runner_type_clone, runner_id_clone
+                        );
+                        killed.push(worker_name);
+                    }
+                    Ok(Err(e)) => {
+                        warn!(
+                            "Runner stop failed for {} (runner_type: {}): {}",
+                            worker_name, runner_type_clone, e
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to run stop for {} (runner_type: {}): {}",
+                            worker_name, runner_type_clone, e
+                        );
+                    }
+                }
+            } else {
+                warn!("Worker {} has no runner info, cannot stop", worker.name);
+            }
+
+            // Clear PID and runner info from database
+            if worker.pid.is_some() || worker.runner_id.is_some() {
+                let _ = self.state.update_worker(
+                    &worker.name,
+                    WorkerUpdate {
+                        pid: None,
+                        runner_id: None,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+
+        Ok(killed)
+    }
+
+    /// Pause all workers (kill processes and mark as Paused).
+    fn pause_all_workers_internal(&self) -> LifecycleResult<Vec<String>> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| LifecycleError::Worker(format!("Failed to create runtime: {}", e)))?;
+
+        let workers = self
+            .state
+            .get_workers()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let mut paused = Vec::new();
+
+        for worker in workers {
+            // Skip already inactive workers
+            if worker.status.is_inactive() {
+                continue;
+            }
+
+            // Stop using runner_id and runner_type
+            if let (Some(runner_id), Some(runner_type)) =
+                (worker.runner_id.as_ref(), worker.runner_type.as_ref())
+            {
+                let handle = WorkerHandle {
+                    worker_name: worker.name.clone(),
+                    runner_id: runner_id.clone(),
+                    runner_type: runner_type.clone(),
+                };
+
+                let runner = create_lifecycle_runner_for_handle(&handle);
+
+                if let Err(e) = rt.block_on(runner.stop(&handle)) {
+                    warn!(
+                        "Runner stop failed for {} (runner_type: {}): {}",
+                        worker.name, runner_type, e
+                    );
+                } else {
+                    info!(
+                        "Stopped worker {} (runner_type: {}, runner_id: {})",
+                        worker.name, runner_type, runner_id
+                    );
+                }
+            } else {
+                warn!("Worker {} has no runner info, cannot stop", worker.name);
+            }
+
+            // Mark as paused
+            self.state
+                .update_worker(
+                    &worker.name,
+                    WorkerUpdate {
+                        pid: None,
+                        runner_id: None,
+                        status: Some(WorkerStatus::Paused),
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| LifecycleError::State(e.to_string()))?;
+            paused.push(worker.name.clone());
+        }
+
+        Ok(paused)
+    }
+
+    /// Resume workers that are in paused/awaiting/error state.
+    fn resume_awaiting_workers_internal(&self) -> LifecycleResult<Vec<String>> {
+        // Get claimable tasks (needed for awaiting workers)
+        let claimable = self
+            .state
+            .get_claimable_tasks()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+        // Get workers that need to be resumed
+        let workers = self
+            .state
+            .get_workers()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+        let to_resume: Vec<_> = workers
+            .iter()
+            .filter(|w| {
+                w.status == WorkerStatus::Paused
+                    || w.status == WorkerStatus::Error
+                    || (w.status == WorkerStatus::Awaiting && !claimable.is_empty())
+            })
+            .collect();
+
+        if to_resume.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut resumed = Vec::new();
+
+        for worker in to_resume {
+            let work_dir = worker
+                .work_dir
+                .as_ref()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| self.context.run_dir.join("workers").join(&worker.name));
+
+            let config = WorkerSpawnConfig {
+                run_name: self.context.run_name.clone(),
+                worker_name: worker.name.clone(),
+                work_dir,
+                run_dir: self.context.run_dir.clone(),
+                spec_path: self.files.spec(),
+                agent_command: self.context.agent_command.clone(),
+                is_leader: false,
+                leader_name: None,
+                teammates: None,
+                resume_session_id: worker.session_id.clone(),
+                env_vars: None,
+                credentials: None,
+                coordinator_url: None,
+                tailscale_authkey: None,
+            };
+
+            match spawn_worker(config, &self.state) {
+                Ok(_) => {
+                    resumed.push(worker.name.clone());
+                }
+                Err(crate::core::workers::WorkerError::RunPaused) => {
+                    // Run was paused while we were processing
+                    break;
+                }
+                Err(e) => {
+                    warn!("Failed to resume worker {}: {}", worker.name, e);
+                }
+            }
+        }
+
+        Ok(resumed)
+    }
+
+    /// Try to scale up workers if autoscale is enabled and tasks are available.
+    fn maybe_scale_up_internal(&self) -> LifecycleResult<Option<String>> {
+        use crate::core::git::create_worker_clone;
+        use crate::core::workers::WorkerScale;
+
+        // Check if autoscaling is enabled
+        let scale_str = match self
+            .state
+            .get_worker_scale()
+            .map_err(|e| LifecycleError::State(e.to_string()))?
+        {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+
+        let scale = match WorkerScale::parse(&scale_str) {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+
+        // Don't scale up if run is paused
+        let status = self
+            .state
+            .status()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        if status == Status::Paused {
+            debug!("maybe_scale_up: run is paused, not scaling");
+            return Ok(None);
+        }
+
+        // Get current workers and claimable tasks
+        let workers = self
+            .state
+            .get_workers()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let current_count = workers.len();
+        let claimable = self
+            .state
+            .get_claimable_tasks()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let claimable_count = claimable.len();
+
+        debug!(
+            "maybe_scale_up: {} claimable tasks, {} workers, max {}",
+            claimable_count, current_count, scale.max
+        );
+
+        // Scale up if: we have claimable tasks AND we haven't hit max workers
+        if claimable_count == 0 || !scale.can_scale_up(current_count) {
+            return Ok(None);
+        }
+
+        // Get a new worker name
+        let existing_names: Vec<String> = workers.iter().map(|w| w.name.clone()).collect();
+        let new_name = crate::core::names::get_available_name(&existing_names);
+
+        // Get project path
+        let project_path_str = match self
+            .state
+            .get_project_path()
+            .map_err(|e| LifecycleError::State(e.to_string()))?
+        {
+            Some(p) => p,
+            None => {
+                warn!("maybe_scale_up: no project path, cannot scale");
+                return Ok(None);
+            }
+        };
+
+        let project_path = PathBuf::from(&project_path_str);
+        let staging_dir = self.context.run_dir.join("work").join("staging");
+
+        // Create worker clone
+        let worker_dir = match create_worker_clone(
+            &self.context.run_name,
+            &project_path,
+            &new_name,
+            Some(&staging_dir),
+            &self.context.run_dir,
+        ) {
+            Ok(dir) => dir,
+            Err(e) => {
+                warn!("maybe_scale_up: failed to create worker clone: {}", e);
+                return Ok(None);
+            }
+        };
+
+        // Add worker to state
+        self.state
+            .add_worker(&new_name, worker_dir.to_str().unwrap_or("."), "local")
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+        // Create worker chat file
+        let chat_file = self.files.chats_dir().join(format!("{}.md", new_name));
+        if let Err(e) = std::fs::write(&chat_file, format!("# {} Chat\n\n", new_name)) {
+            warn!("maybe_scale_up: failed to create worker chat: {}", e);
+        }
+
+        // Announce in group chat
+        let reason = format!(
+            "Autoscaling: {} tasks available, {} workers total",
+            claimable.len(),
+            current_count
+        );
+        self.state
+            .add_message(
+                "group",
+                "System",
+                &format!(
+                    "New worker **{}** has joined the team. {}",
+                    new_name, reason
+                ),
+                false,
+            )
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+        // Get leader info
+        let leader = workers.first();
+        let leader_name = leader.map(|l| l.name.clone());
+
+        // Get teammates
+        let teammates: Vec<String> = workers.iter().map(|w| w.name.clone()).collect();
+
+        // Spawn the worker
+        let config = WorkerSpawnConfig {
+            run_name: self.context.run_name.clone(),
+            worker_name: new_name.clone(),
+            work_dir: worker_dir,
+            run_dir: self.context.run_dir.clone(),
+            spec_path: self.files.spec(),
+            agent_command: self.context.agent_command.clone(),
+            is_leader: false,
+            leader_name,
+            teammates: Some(teammates),
+            resume_session_id: None,
+            env_vars: None,
+            credentials: None,
+            coordinator_url: None,
+            tailscale_authkey: None,
+        };
+
+        match spawn_worker(config, &self.state) {
+            Ok(result) => {
+                info!(
+                    "Scaled up: spawned new worker {} (PID {})",
+                    new_name, result.pid
+                );
+                Ok(Some(new_name))
+            }
+            Err(e) => {
+                warn!("maybe_scale_up: failed to spawn worker: {}", e);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Spawn the eval agent as a background process.
+    fn spawn_eval_agent(&self) -> LifecycleResult<()> {
+        // Get the hirsel executable
+        let hirsel_exe =
+            std::env::current_exe().map_err(|e| LifecycleError::Io(std::io::Error::other(e)))?;
+
+        // Get agent command from config
+        let (config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
+        let agent_command = config.agent.command.clone();
+
+        // Spawn the eval subprocess
+        let mut cmd = Command::new(&hirsel_exe);
+        cmd.arg("__eval-run")
+            .arg("--run")
+            .arg(&self.context.run_name)
+            .arg("--run-dir")
+            .arg(&self.context.run_dir)
+            .arg("--agent-command")
+            .arg(serde_json::to_string(&agent_command).unwrap_or_else(|_| "[]".to_string()))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+
+        // Spawn detached
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+
+        let child = cmd
+            .spawn()
+            .map_err(|e| LifecycleError::Worker(format!("Failed to spawn eval agent: {}", e)))?;
+
+        info!(
+            "Spawned eval agent for run {}, pid={}",
+            self.context.run_name,
+            child.id()
+        );
+
+        Ok(())
+    }
+
+    /// Spawn summary generation in a background process.
+    fn spawn_background_summary(&self) {
+        let hirsel_exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(e) => {
+                warn!("Failed to get current exe for summary: {}", e);
+                return;
+            }
+        };
+
+        match Command::new(&hirsel_exe)
+            .args(["summary", &self.context.run_name])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(_) => {
+                info!("Spawned summary generation for timed out run");
+            }
+            Err(e) => {
+                warn!("Failed to spawn summary generation: {}", e);
+            }
+        }
+    }
+
+    /// Trigger auto-improve if enabled.
+    fn maybe_run_improve(&self) {
+        let (config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
+
+        if !config.auto_improve {
+            debug!("maybe_run_improve: auto_improve disabled");
+            return;
+        }
+
+        info!("Running auto-improve for {}", self.context.run_name);
+
+        let hirsel_exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(e) => {
+                warn!("Failed to get current exe: {}", e);
+                return;
+            }
+        };
+
+        let mut cmd = Command::new(&hirsel_exe);
+        cmd.arg("improve")
+            .arg("--run")
+            .arg(&self.context.run_name)
+            .arg("--json")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+
+        match cmd.spawn() {
+            Ok(child) => {
+                info!(
+                    "Spawned improve agent for {}, pid={}",
+                    self.context.run_name,
+                    child.id()
+                );
+            }
+            Err(e) => {
+                warn!("Failed to spawn improve agent: {}", e);
+            }
+        }
+    }
+
+    /// Check if eval should be triggered and trigger it.
+    ///
+    /// Returns true if eval was triggered, false otherwise.
+    fn maybe_trigger_eval(&self) -> LifecycleResult<bool> {
+        // Check if all workers are inactive
+        if !self
+            .state
+            .all_workers_inactive()
+            .map_err(|e| LifecycleError::State(e.to_string()))?
+        {
+            debug!("maybe_trigger_eval: not all workers inactive, skipping");
+            return Ok(false);
+        }
+
+        // Check if run is still in working status
+        let status = self
+            .state
+            .status()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        if status != Status::Working {
+            debug!(
+                "maybe_trigger_eval: run status is {:?}, not Working, skipping",
+                status
+            );
+            return Ok(false);
+        }
+
+        // Check if there's an eval script configured
+        let eval_path = self.files.eval_spec();
+        if !eval_path.exists() {
+            // No eval script - kill any remaining workers and set run to Done status
+            let killed = self.kill_all_workers_internal()?;
+            if !killed.is_empty() {
+                info!(
+                    "maybe_trigger_eval: killed {} remaining worker(s): {:?}",
+                    killed.len(),
+                    killed
+                );
+            }
+
+            info!("maybe_trigger_eval: all workers inactive, no eval script, marking run as Done");
+            self.state
+                .set_status(Status::Done)
+                .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+            // Trigger auto-improve if enabled
+            self.maybe_run_improve();
+
+            return Ok(false);
+        }
+
+        // Trigger eval
+        info!("maybe_trigger_eval: all workers inactive, triggering eval");
+        self.state
+            .set_status(Status::Eval)
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+        // Spawn the eval agent in a background process
+        self.spawn_eval_agent()?;
+
+        Ok(true)
+    }
+}
+
+impl LifecycleManager for LocalLifecycleManager {
+    fn process_event(&self, event: LifecycleEvent) -> LifecycleResult<Vec<LifecycleAction>> {
+        let mut actions = Vec::new();
+
+        match event {
+            LifecycleEvent::WorkerDone { worker_name } => {
+                debug!("Processing WorkerDone event for {}", worker_name);
+                actions.extend(self.worker_done(&worker_name)?);
+            }
+
+            LifecycleEvent::WorkerStatusChanged {
+                worker_name,
+                old,
+                new,
+            } => {
+                debug!(
+                    "Processing WorkerStatusChanged: {} {:?} -> {:?}",
+                    worker_name, old, new
+                );
+                if new == WorkerStatus::Awaiting {
+                    // Worker became inactive - check if we should trigger eval
+                    if self.maybe_trigger_eval()? {
+                        actions.push(LifecycleAction::EvalTriggered);
+                    }
+                }
+            }
+
+            LifecycleEvent::TaskCompleted {
+                task_id: _,
+                worker_name: _,
+            } => {
+                // Task completion might unblock other tasks
+                // Try to resume awaiting workers and scale up
+                let resumed = self.resume_awaiting_workers_internal()?;
+                if !resumed.is_empty() {
+                    actions.push(LifecycleAction::WorkersResumed(resumed));
+                }
+
+                if let Some(new_worker) = self.maybe_scale_up_internal()? {
+                    actions.push(LifecycleAction::WorkerScaledUp(new_worker));
+                }
+            }
+
+            LifecycleEvent::TaskAdded { task_id: _ }
+            | LifecycleEvent::TaskUnclaimed { task_id: _ } => {
+                // New or unclaimed task - try to resume awaiting workers
+                let resumed = self.resume_awaiting_workers_internal()?;
+                if !resumed.is_empty() {
+                    actions.push(LifecycleAction::WorkersResumed(resumed));
+                }
+
+                if let Some(new_worker) = self.maybe_scale_up_internal()? {
+                    actions.push(LifecycleAction::WorkerScaledUp(new_worker));
+                }
+            }
+
+            LifecycleEvent::TimeCheck => {
+                // Check if time has expired
+                let expired = self
+                    .state
+                    .is_time_expired()
+                    .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+                if expired {
+                    self.handle_time_expired()?;
+                    actions.push(LifecycleAction::RunFailed {
+                        reason: FailureReason::TimeLimit,
+                    });
+                }
+
+                // Check if we should trigger eval (for daemon polling case)
+                if self.maybe_trigger_eval()? {
+                    actions.push(LifecycleAction::EvalTriggered);
+                }
+
+                // Check if we should scale up
+                if let Some(new_worker) = self.maybe_scale_up_internal()? {
+                    actions.push(LifecycleAction::WorkerScaledUp(new_worker));
+                }
+            }
+
+            LifecycleEvent::PauseRequested { reason } => {
+                let paused = self.pause_run(&reason)?;
+                if !paused.is_empty() {
+                    actions.push(LifecycleAction::WorkersPaused(paused));
+                }
+                actions.push(LifecycleAction::RunStatusChanged(Status::Paused));
+            }
+
+            LifecycleEvent::ResumeRequested => {
+                let resumed = self.resume_run()?;
+                if !resumed.is_empty() {
+                    actions.push(LifecycleAction::WorkersResumed(resumed));
+                }
+                actions.push(LifecycleAction::RunStatusChanged(Status::Working));
+            }
+
+            LifecycleEvent::EvalCompleted { success, feedback } => {
+                if success {
+                    self.state
+                        .set_status(Status::Done)
+                        .map_err(|e| LifecycleError::State(e.to_string()))?;
+                    self.maybe_run_improve();
+                    actions.push(LifecycleAction::RunCompleted);
+                } else {
+                    // Eval failed - check if we should retry or fail the run
+                    debug!("Eval failed with feedback: {}", feedback);
+                    // Resume workers to continue working
+                    self.state
+                        .set_status(Status::Working)
+                        .map_err(|e| LifecycleError::State(e.to_string()))?;
+                    let resumed = self.resume_awaiting_workers_internal()?;
+                    if !resumed.is_empty() {
+                        actions.push(LifecycleAction::WorkersResumed(resumed));
+                    }
+                    actions.push(LifecycleAction::RunStatusChanged(Status::Working));
+                }
+            }
+        }
+
+        if actions.is_empty() {
+            actions.push(LifecycleAction::None);
+        }
+
+        Ok(actions)
+    }
+
+    fn pause_run(&self, _reason: &str) -> LifecycleResult<Vec<String>> {
+        // Check current status
+        let status = self
+            .state
+            .status()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+        if !RunStateMachine::can_transition(status, Status::Paused) {
+            return Err(LifecycleError::InvalidTransition {
+                from: status.to_string(),
+                to: Status::Paused.to_string(),
+            });
+        }
+
+        // Cancel any running evals
+        let _ = self.state.cancel_running_evals("Run paused");
+
+        // Pause all workers
+        let paused = self.pause_all_workers_internal()?;
+
+        // Update status
+        self.state
+            .set_status(Status::Paused)
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+        Ok(paused)
+    }
+
+    fn resume_run(&self) -> LifecycleResult<Vec<String>> {
+        // Check current status
+        let status = self
+            .state
+            .status()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+        if !RunStateMachine::can_transition(status, Status::Working) {
+            return Err(LifecycleError::InvalidTransition {
+                from: status.to_string(),
+                to: Status::Working.to_string(),
+            });
+        }
+
+        // Check if there was an eval that was paused
+        let was_in_eval = self
+            .state
+            .has_paused_eval()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+        if was_in_eval {
+            let _ = self.state.clear_paused_evals();
+            self.state
+                .set_status(Status::Working)
+                .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+            if self.maybe_trigger_eval()? {
+                return Ok(Vec::new());
+            }
+        }
+
+        // Update status first
+        self.state
+            .set_status(Status::Working)
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+        // Resume existing workers
+        let mut resumed = self.resume_awaiting_workers_internal()?;
+
+        // Try to scale up if more tasks are available
+        loop {
+            match self.maybe_scale_up_internal() {
+                Ok(Some(name)) => {
+                    resumed.push(name);
+                }
+                _ => break,
+            }
+        }
+
+        // Check if eval should be triggered
+        let _ = self.maybe_trigger_eval();
+
+        Ok(resumed)
+    }
+
+    fn worker_done(&self, worker_name: &str) -> LifecycleResult<Vec<LifecycleAction>> {
+        let mut actions = Vec::new();
+
+        // Update worker status to awaiting
+        self.state
+            .update_worker(
+                worker_name,
+                WorkerUpdate {
+                    status: Some(WorkerStatus::Awaiting),
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+        // Check if eval should be triggered
+        if self.maybe_trigger_eval()? {
+            actions.push(LifecycleAction::EvalTriggered);
+        }
+
+        Ok(actions)
+    }
+
+    fn handle_time_expired(&self) -> LifecycleResult<()> {
+        // Only handle if not already failed
+        let status = self
+            .state
+            .status()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        if status == Status::Failed {
+            info!("Time already expired, skipping handler");
+            return Ok(());
+        }
+
+        // Send final message
+        let workers = self
+            .state
+            .get_workers()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let is_multi_worker = workers.len() > 1;
+
+        let message = "Time limit reached. Run failed.";
+        let thread = if is_multi_worker { "group" } else { "user" };
+
+        self.state
+            .add_message(thread, "System", message, false)
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+        // Cancel any running evals
+        let cancelled = self
+            .state
+            .cancel_running_evals("Time limit reached")
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        if cancelled > 0 {
+            info!("Cancelled {} running eval(s) due to timeout", cancelled);
+        }
+
+        // Kill all worker processes
+        let killed = self.kill_all_workers_internal()?;
+        if !killed.is_empty() {
+            info!("Killed {} worker(s) on timeout: {:?}", killed.len(), killed);
+        }
+
+        // Set all active workers to PAUSED status
+        for worker in &workers {
+            if matches!(
+                worker.status,
+                WorkerStatus::Working | WorkerStatus::Awaiting
+            ) {
+                self.state
+                    .update_worker(
+                        &worker.name,
+                        WorkerUpdate {
+                            status: Some(WorkerStatus::Paused),
+                            ..Default::default()
+                        },
+                    )
+                    .map_err(|e| LifecycleError::State(e.to_string()))?;
+            }
+        }
+
+        // Set run status to Failed with TimeLimit reason
+        self.state
+            .set_failed(FailureReason::TimeLimit)
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        info!("Run status set to Failed (time_limit)");
+
+        // Write timeout event to database
+        let _ = self
+            .state
+            .insert_text_event("system", "\n[time limit reached - run timed out]");
+
+        // Trigger summary generation in background
+        self.spawn_background_summary();
+
+        Ok(())
+    }
+
+    fn all_workers_inactive(&self) -> LifecycleResult<bool> {
+        self.state
+            .all_workers_inactive()
+            .map_err(|e| LifecycleError::State(e.to_string()))
+    }
+
+    fn should_trigger_eval(&self) -> LifecycleResult<bool> {
+        // Check if all workers are inactive
+        if !self.all_workers_inactive()? {
+            return Ok(false);
+        }
+
+        // Check if run is in Working status
+        let status = self.run_status()?;
+        if status != Status::Working {
+            return Ok(false);
+        }
+
+        // Check if eval script exists
+        Ok(self.files.eval_spec().exists())
+    }
+
+    fn can_scale_up(&self) -> LifecycleResult<bool> {
+        use crate::core::workers::WorkerScale;
+
+        // Check if autoscaling is enabled
+        let scale_str = match self
+            .state
+            .get_worker_scale()
+            .map_err(|e| LifecycleError::State(e.to_string()))?
+        {
+            Some(s) => s,
+            None => return Ok(false),
+        };
+
+        let scale = match WorkerScale::parse(&scale_str) {
+            Some(s) => s,
+            None => return Ok(false),
+        };
+
+        // Get current count
+        let workers = self
+            .state
+            .get_workers()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+        // Check if we have claimable tasks
+        let claimable = self
+            .state
+            .get_claimable_tasks()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+        Ok(!claimable.is_empty() && scale.can_scale_up(workers.len()))
+    }
+
+    fn run_status(&self) -> LifecycleResult<Status> {
+        self.state
+            .status()
+            .map_err(|e| LifecycleError::State(e.to_string()))
+    }
+
+    fn context(&self) -> &LifecycleContext {
+        &self.context
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lifecycle_context_new() {
+        let ctx = LifecycleContext::new(
+            "test-run",
+            PathBuf::from("/tmp/test"),
+            vec!["hirsel".to_string(), "__acp-bridge".to_string()],
+        );
+        assert_eq!(ctx.run_name, "test-run");
+        assert_eq!(ctx.run_dir, PathBuf::from("/tmp/test"));
+        assert_eq!(ctx.agent_command.len(), 2);
+    }
+}

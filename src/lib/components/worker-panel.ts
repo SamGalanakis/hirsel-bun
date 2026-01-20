@@ -2,9 +2,9 @@
  * Worker panel Alpine component
  */
 
-import type { WorkerDisplay, Task } from '../types';
-import { formatTokens, formatElapsedTime } from '../utils/formatters';
-import { dataCache, DATA_EVENTS } from '../data-cache';
+import { DATA_EVENTS, dataCache } from '../data-cache';
+import type { Task, WorkerDisplay } from '../types';
+import { formatElapsedTime, formatTokens } from '../utils/formatters';
 
 interface EnrichedWorker extends WorkerDisplay {
   isLeader: boolean;
@@ -24,6 +24,7 @@ export function workerPanel() {
     _cacheUnsubscribe: null as (() => void) | null,
     selectedWorker: null as EnrichedWorker | null,
     showWorkerDetail: false,
+    highlightedWorker: null as string | null, // Worker name for highlight (separate from modal selection)
 
     async init() {
       // Subscribe to shared cache
@@ -35,7 +36,9 @@ export function workerPanel() {
         this.enrichAndSetWorkers(customEvent.detail);
       };
       window.addEventListener(DATA_EVENTS.WORKERS_UPDATED, workersUpdatedHandler);
-      this._eventCleanups.push(() => window.removeEventListener(DATA_EVENTS.WORKERS_UPDATED, workersUpdatedHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener(DATA_EVENTS.WORKERS_UPDATED, workersUpdatedHandler),
+      );
 
       // Listen for tasks updates (to show current task per worker)
       const tasksUpdatedHandler = (e: Event) => {
@@ -43,12 +46,15 @@ export function workerPanel() {
         this.updateCurrentTasks(customEvent.detail);
       };
       window.addEventListener(DATA_EVENTS.TASKS_UPDATED, tasksUpdatedHandler);
-      this._eventCleanups.push(() => window.removeEventListener(DATA_EVENTS.TASKS_UPDATED, tasksUpdatedHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener(DATA_EVENTS.TASKS_UPDATED, tasksUpdatedHandler),
+      );
 
       // Listen for run selection
       const runSelectedHandler = (e: Event) => {
         const customEvent = e as CustomEvent<string | null>;
         this.selectedRun = customEvent.detail;
+        this.highlightedWorker = null; // Clear highlight when run changes
         if (!customEvent.detail) {
           this.workers = [];
           this.loading = false;
@@ -56,7 +62,9 @@ export function workerPanel() {
         }
       };
       window.addEventListener('run-selected', runSelectedHandler);
-      this._eventCleanups.push(() => window.removeEventListener('run-selected', runSelectedHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener('run-selected', runSelectedHandler),
+      );
 
       // Get initial data from cache
       const cachedWorkers = dataCache.getWorkers();
@@ -65,13 +73,13 @@ export function workerPanel() {
       }
 
       const app = this.getAppState();
-      if (app && app.selectedRun) {
+      if (app?.selectedRun) {
         this.selectedRun = app.selectedRun;
       }
     },
 
     destroy() {
-      this._eventCleanups.forEach(fn => fn());
+      this._eventCleanups.forEach((fn) => fn());
       this._eventCleanups = [];
       if (this._cacheUnsubscribe) {
         this._cacheUnsubscribe();
@@ -82,7 +90,7 @@ export function workerPanel() {
     getAppState(): { selectedRun?: string | null } | null {
       // @ts-expect-error Alpine.js $el magic property
       let el = this.$el as HTMLElement;
-      while (el && el.parentElement) {
+      while (el?.parentElement) {
         el = el.parentElement;
         // @ts-expect-error Alpine.js internal property
         if (el._x_dataStack) {
@@ -100,7 +108,7 @@ export function workerPanel() {
       const tasks = dataCache.getTasks();
       const taskByWorker = new Map<string, string>();
       for (const task of tasks) {
-        if (task.claimedBy && task.status === 'doing') {
+        if (task?.claimedBy && task.status === 'doing') {
           taskByWorker.set(task.claimedBy, task.id);
         }
       }
@@ -135,7 +143,7 @@ export function workerPanel() {
     updateCurrentTasks(tasks: Task[]) {
       const taskByWorker = new Map<string, string>();
       for (const task of tasks) {
-        if (task.claimedBy && task.status === 'doing') {
+        if (task?.claimedBy && task.status === 'doing') {
           taskByWorker.set(task.claimedBy, task.id);
         }
       }
@@ -172,6 +180,21 @@ export function workerPanel() {
       }
     },
 
+    /**
+     * Highlight a worker (single click) - for quick attach with 'a' key
+     */
+    highlightWorker(worker: EnrichedWorker) {
+      // Toggle highlight if clicking same worker
+      if (this.highlightedWorker === worker.name) {
+        this.highlightedWorker = null;
+      } else {
+        this.highlightedWorker = worker.name;
+      }
+    },
+
+    /**
+     * Open worker detail modal (double click)
+     */
     openWorkerDetail(worker: EnrichedWorker) {
       this.selectedWorker = worker;
       this.showWorkerDetail = true;
@@ -182,14 +205,24 @@ export function workerPanel() {
       this.selectedWorker = null;
     },
 
+    /**
+     * Clear highlight (e.g., when clicking elsewhere)
+     */
+    clearHighlight() {
+      this.highlightedWorker = null;
+    },
+
     async attachAndClose(name: string) {
       // Dispatch event to show worker output viewer
-      window.dispatchEvent(new CustomEvent('show-worker-output', {
-        detail: {
-          runName: this.selectedRun,
-          workerName: name,
-        },
-      }));
+      console.log('[WorkerPanel] Dispatching show-worker-output:', this.selectedRun, name);
+      window.dispatchEvent(
+        new CustomEvent('show-worker-output', {
+          detail: {
+            runName: this.selectedRun,
+            workerName: name,
+          },
+        }),
+      );
       this.closeWorkerDetail();
     },
   };

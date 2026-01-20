@@ -2,10 +2,15 @@
  * Tasks tab Alpine component - Enhanced task list view with nesting and details
  */
 
-import type { Task, TaskDisplay, WorkerDisplay } from '../../types';
-import { formatTokens, formatRelativeTime, formatFullDateTime } from '../../utils/formatters';
-import { dataCache, DATA_EVENTS } from '../../data-cache';
+import { DATA_EVENTS, dataCache } from '../../data-cache';
 import { generateSheepSvg } from '../../sheep-avatar';
+import type { Task, TaskDisplay, WorkerDisplay } from '../../types';
+import {
+  formatDuration,
+  formatFullDateTime,
+  formatRelativeTime,
+  formatTokens,
+} from '../../utils/formatters';
 
 declare const Alpine: {
   store: (name: string) => { selectedRun?: string | null } | undefined;
@@ -19,7 +24,13 @@ declare const window: Window & {
     info: (message: string, title?: string) => void;
   };
   confirmDialog?: {
-    show: (options: { title: string; message: string; confirmText?: string; cancelText?: string; danger?: boolean }) => Promise<boolean>;
+    show: (options: {
+      title: string;
+      message: string;
+      confirmText?: string;
+      cancelText?: string;
+      danger?: boolean;
+    }) => Promise<boolean>;
     delete: (itemName: string, itemType?: string) => Promise<boolean>;
   };
 };
@@ -41,10 +52,55 @@ export interface TasksTabData {
   _parentIds: Set<string>; // Set of task IDs that have children (for O(1) hasChildren lookup)
 }
 
+// Alpine.js runtime methods injected into components
+interface AlpineComponent {
+  $watch: <T>(property: string, callback: (value: T) => void) => void;
+  $nextTick: (callback: () => void) => void;
+}
+
+/**
+ * Tasks tab component methods
+ */
+interface TasksTabMethods {
+  readonly filteredTasks: TaskDisplay[];
+  readonly stats: {
+    total: number;
+    done: number;
+    inProgress: number;
+    blocked: number;
+    todo: number;
+    percentDone: number;
+  };
+  init(): Promise<void>;
+  destroy(): void;
+  getSelectedRun(): string | null;
+  clearTasks(): void;
+  buildTaskTree(): void;
+  toggleCollapse(taskId: string): void;
+  isCollapsed(taskId: string): boolean;
+  hasChildren(task: TaskDisplay | null): boolean;
+  selectTask(task: TaskDisplay, event: MouseEvent): void;
+  closeTaskModal(): void;
+  getWorkerAvatar(workerName: string, size?: number): string;
+  getBlockers(task: TaskDisplay | null): TaskDisplay[];
+  getParentTask(task: TaskDisplay | null): TaskDisplay | null;
+  navigateToTask(taskId: string): void;
+  getStatusLabel(status: string): string;
+  loadTasks(runName: string): Promise<void>;
+  markTaskDone(task: TaskDisplay): Promise<void>;
+  reopenTask(task: TaskDisplay): Promise<void>;
+  unclaimTask(task: TaskDisplay): Promise<void>;
+  deleteTask(task: TaskDisplay): Promise<void>;
+  formatTokens: typeof formatTokens;
+  formatDuration: typeof formatDuration;
+  formatTime: typeof formatRelativeTime;
+  formatFullTime: typeof formatFullDateTime;
+}
+
 /**
  * Tasks tab component
  */
-export function tasksTab(): TasksTabData & Record<string, unknown> {
+export function tasksTab(): TasksTabData & TasksTabMethods & Partial<AlpineComponent> {
   return {
     tasks: [],
     taskTree: [],
@@ -63,21 +119,22 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
 
     // Computed: filtered tasks based on filter and search
     get filteredTasks(): TaskDisplay[] {
-      let result = this.flatTasks;
+      let result = this.flatTasks.filter((t) => t != null);
 
       // Apply status filter
       if (this.filter === 'blocked') {
-        result = result.filter(t => t.isBlocked);
+        result = result.filter((t) => t.isBlocked);
       } else if (this.filter !== 'all') {
-        result = result.filter(t => t.status === this.filter);
+        result = result.filter((t) => t.status === this.filter);
       }
 
       // Apply search filter
       if (this.searchQuery.trim()) {
         const query = this.searchQuery.toLowerCase();
-        result = result.filter(t =>
-          t.description.toLowerCase().includes(query) ||
-          (t.claimedBy && t.claimedBy.toLowerCase().includes(query))
+        result = result.filter(
+          (t) =>
+            t.description?.toLowerCase().includes(query) ||
+            t.claimedBy?.toLowerCase().includes(query),
         );
       }
 
@@ -86,12 +143,20 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
 
     // Computed: stats
     get stats() {
-      const total = this.tasks.length;
-      const done = this.tasks.filter(t => t.status === 'done').length;
-      const inProgress = this.tasks.filter(t => t.status === 'doing').length;
-      const blocked = this.flatTasks.filter(t => t.isBlocked).length;
-      const todo = this.tasks.filter(t => t.status === 'todo').length;
-      return { total, done, inProgress, blocked, todo, percentDone: total > 0 ? Math.round((done / total) * 100) : 0 };
+      const validTasks = this.tasks.filter((t) => t != null);
+      const total = validTasks.length;
+      const done = validTasks.filter((t) => t.status === 'done').length;
+      const inProgress = validTasks.filter((t) => t.status === 'doing').length;
+      const blocked = this.flatTasks.filter((t) => t?.isBlocked).length;
+      const todo = validTasks.filter((t) => t.status === 'todo').length;
+      return {
+        total,
+        done,
+        inProgress,
+        blocked,
+        todo,
+        percentDone: total > 0 ? Math.round((done / total) * 100) : 0,
+      };
     },
 
     async init() {
@@ -102,26 +167,31 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
       const tasksUpdatedHandler = (e: Event) => {
         const customEvent = e as CustomEvent<Task[]>;
         const prevSelected = this.selectedTaskId;
-        this.tasks = customEvent.detail;
+        // Filter out any null/undefined tasks
+        this.tasks = (customEvent.detail || []).filter((t): t is Task => t != null);
         this.buildTaskTree();
         // Update selected task if still exists
         if (prevSelected && this.selectedTask) {
-          const updated = this.flatTasks.find(t => t.id === prevSelected);
+          const updated = this.flatTasks.find((t) => t.id === prevSelected);
           if (updated) {
             this.selectedTask = updated;
           }
         }
       };
       window.addEventListener(DATA_EVENTS.TASKS_UPDATED, tasksUpdatedHandler);
-      this._eventCleanups.push(() => window.removeEventListener(DATA_EVENTS.TASKS_UPDATED, tasksUpdatedHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener(DATA_EVENTS.TASKS_UPDATED, tasksUpdatedHandler),
+      );
 
       // Listen for workers updates from cache
       const workersUpdatedHandler = (e: Event) => {
         const customEvent = e as CustomEvent<WorkerDisplay[]>;
-        this.workers = customEvent.detail;
+        this.workers = (customEvent.detail || []).filter((w): w is WorkerDisplay => w != null);
       };
       window.addEventListener(DATA_EVENTS.WORKERS_UPDATED, workersUpdatedHandler);
-      this._eventCleanups.push(() => window.removeEventListener(DATA_EVENTS.WORKERS_UPDATED, workersUpdatedHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener(DATA_EVENTS.WORKERS_UPDATED, workersUpdatedHandler),
+      );
 
       // Listen for run selection changes
       const runSelectedHandler = (e: Event) => {
@@ -129,34 +199,36 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
         if (customEvent.detail) {
           this.currentRunName = customEvent.detail;
           // Get initial data from cache
-          const cachedTasks = dataCache.getTasks();
+          const cachedTasks = dataCache.getTasks().filter((t): t is Task => t != null);
           if (cachedTasks.length > 0) {
             this.tasks = cachedTasks;
             this.buildTaskTree();
           }
-          this.workers = dataCache.getWorkers();
+          this.workers = dataCache.getWorkers().filter((w): w is WorkerDisplay => w != null);
         } else {
           this.clearTasks();
         }
       };
       window.addEventListener('run-selected', runSelectedHandler);
-      this._eventCleanups.push(() => window.removeEventListener('run-selected', runSelectedHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener('run-selected', runSelectedHandler),
+      );
 
       // Get initial data from cache if a run is already selected
       const selectedRun = dataCache.getSelectedRun();
       if (selectedRun) {
         this.currentRunName = selectedRun;
-        const cachedTasks = dataCache.getTasks();
+        const cachedTasks = dataCache.getTasks().filter((t): t is Task => t != null);
         if (cachedTasks.length > 0) {
           this.tasks = cachedTasks;
           this.buildTaskTree();
         }
-        this.workers = dataCache.getWorkers();
+        this.workers = dataCache.getWorkers().filter((w): w is WorkerDisplay => w != null);
       }
     },
 
     destroy() {
-      this._eventCleanups.forEach(fn => fn());
+      this._eventCleanups.forEach((fn) => fn());
       this._eventCleanups = [];
       if (this._cacheUnsubscribe) {
         this._cacheUnsubscribe();
@@ -188,14 +260,15 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
 
       // Build parent IDs set for O(1) hasChildren lookup
       this._parentIds = new Set<string>();
-      this.tasks.forEach(t => {
+      this.tasks.forEach((t) => {
         if (t.parentId) {
           this._parentIds.add(t.parentId);
         }
       });
 
       // First pass: create TaskDisplay objects
-      this.tasks.forEach(t => {
+      this.tasks.forEach((t) => {
+        if (!t) return; // Skip null entries
         taskMap.set(t.id, {
           ...t,
           children: [],
@@ -207,15 +280,19 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
       // Second pass: determine blocked status and build parent-child relationships
       const rootTasks: TaskDisplay[] = [];
 
-      this.tasks.forEach(t => {
+      this.tasks.forEach((t) => {
+        if (!t) return; // Skip null entries
         const task = taskMap.get(t.id);
         if (!task) return; // Shouldn't happen, but be defensive
 
         // Check if blocked
-        task.isBlocked = !!t.blockedBy && t.blockedBy.length > 0 && t.blockedBy.some(bid => {
-          const blocker = taskMap.get(bid);
-          return blocker && blocker.status !== 'done';
-        });
+        task.isBlocked =
+          !!t.blockedBy &&
+          t.blockedBy.length > 0 &&
+          t.blockedBy.some((bid) => {
+            const blocker = taskMap.get(bid);
+            return blocker && blocker.status !== 'done';
+          });
 
         // Build hierarchy
         if (t.parentId) {
@@ -243,7 +320,7 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
       // Flatten for easy filtering/display
       const flat: TaskDisplay[] = [];
       const flatten = (tasks: TaskDisplay[], depth: number) => {
-        tasks.forEach(task => {
+        tasks.forEach((task) => {
           task.depth = depth;
           flat.push(task);
           if (task.children.length > 0 && !this.collapsedTasks.has(task.id)) {
@@ -274,8 +351,9 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
       return this.collapsedTasks.has(taskId);
     },
 
-    hasChildren(task: TaskDisplay): boolean {
+    hasChildren(task: TaskDisplay | null): boolean {
       // O(1) lookup using pre-built parent IDs Set
+      if (!task) return false;
       return this._parentIds.has(task.id);
     },
 
@@ -299,7 +377,7 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
 
     // Get worker avatar SVG by worker name
     getWorkerAvatar(workerName: string, size = 32): string {
-      const worker = this.workers.find(w => w.name === workerName);
+      const worker = this.workers.find((w) => w.name === workerName);
       if (worker?.sheepConfig) {
         return generateSheepSvg(worker.sheepConfig, size, worker.status);
       }
@@ -308,22 +386,22 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
     },
 
     // Get the blocker tasks for a task
-    getBlockers(task: TaskDisplay): TaskDisplay[] {
-      if (!task.blockedBy || task.blockedBy.length === 0) return [];
+    getBlockers(task: TaskDisplay | null): TaskDisplay[] {
+      if (!task || !task.blockedBy || task.blockedBy.length === 0) return [];
       return task.blockedBy
-        .map(id => this.flatTasks.find(t => t.id === id))
+        .map((id) => this.flatTasks.find((t) => t.id === id))
         .filter((t): t is TaskDisplay => t !== undefined && t.status !== 'done');
     },
 
     // Get the parent task
-    getParentTask(task: TaskDisplay): TaskDisplay | null {
-      if (!task.parentId) return null;
-      return this.flatTasks.find(t => t.id === task.parentId) || null;
+    getParentTask(task: TaskDisplay | null): TaskDisplay | null {
+      if (!task || !task.parentId) return null;
+      return this.flatTasks.find((t) => t.id === task.parentId) || null;
     },
 
     // Navigate to a task
     navigateToTask(taskId: string) {
-      const task = this.flatTasks.find(t => t.id === taskId);
+      const task = this.flatTasks.find((t) => t.id === taskId);
       if (task) {
         this.selectedTaskId = taskId;
         this.selectedTask = task;
@@ -339,13 +417,18 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
     formatTokens,
     formatTime: formatRelativeTime,
     formatFullTime: formatFullDateTime,
+    formatDuration,
 
     getStatusLabel(status: string): string {
       switch (status) {
-        case 'todo': return 'To Do';
-        case 'doing': return 'In Progress';
-        case 'done': return 'Done';
-        default: return status;
+        case 'todo':
+          return 'To Do';
+        case 'doing':
+          return 'In Progress';
+        case 'done':
+          return 'Done';
+        default:
+          return status;
       }
     },
 
@@ -354,7 +437,7 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
       try {
         if (window.tauriInvoke) {
           const tasks = await window.tauriInvoke<Task[]>('get_tasks', { runName });
-          this.tasks = tasks;
+          this.tasks = (tasks || []).filter((t): t is Task => t != null);
           this.buildTaskTree();
         }
       } catch (err) {
@@ -412,8 +495,9 @@ export function tasksTab(): TasksTabData & Record<string, unknown> {
       const runName = this.getSelectedRun();
       if (!runName) return;
 
-      const confirmed = await window.confirmDialog?.delete(task.description.slice(0, 50), 'task')
-        ?? confirm(`Delete task "${task.description.slice(0, 50)}..."?`);
+      const confirmed =
+        (await window.confirmDialog?.delete(task.description.slice(0, 50), 'task')) ??
+        confirm(`Delete task "${task.description.slice(0, 50)}..."?`);
       if (!confirmed) return;
 
       try {

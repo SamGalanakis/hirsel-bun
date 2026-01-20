@@ -6,23 +6,75 @@
  */
 
 // =============================================================================
+// Runner Types (Host + Container Model)
+// =============================================================================
+
+/** Host type - where compute runs */
+export type HostType = 'local' | 'client' | 'ssh' | 'sprite';
+
+/** Container configuration for Docker */
+export interface ContainerConfig {
+  image: string;
+}
+
+/** SSH host configuration */
+export interface SshHostConfig {
+  type: 'ssh';
+  address: string;
+  port: number;
+  sshKey: string | null;
+  workBase: string;
+  location: string | null;
+}
+
+/** Sprite (cloud VM) host configuration */
+export interface SpriteHostConfig {
+  type: 'sprite';
+  apiToken: string | null;
+  checkpoint: string | null;
+  autoDestroy: boolean;
+  idleTimeoutSecs: number;
+  apiUrl: string;
+  useFilePush: boolean;
+}
+
+/** Host configuration - where workers run */
+export type HostConfig = { type: 'local' } | { type: 'client' } | SshHostConfig | SpriteHostConfig;
+
+/** Runner configuration - Host + optional Container */
+export interface RunnerConfig {
+  host: HostConfig;
+  container?: ContainerConfig;
+}
+
+/** Runner entry with name for display */
+export interface RunnerEntry {
+  name: string;
+  config: RunnerConfig;
+}
+
+// =============================================================================
 // Run Types
 // =============================================================================
 
 /** Run status values matching Rust Status enum */
 export type RunStatus =
   | 'draft'
-  | 'idle'
   | 'working'
   | 'paused'
-  | 'runaway'
-  | 'timed_out'
+  | 'failed'
   | 'eval'
-  | 'eval_failed'
-  | 'waiting'
   | 'done'
   | 'delivered'
-  | 'merged';
+  | 'waiting'
+  | 'merged'
+  | 'idle'
+  | 'runaway'
+  | 'timed_out'
+  | 'eval_failed';
+
+/** Failure reason values (only meaningful when status is 'failed') */
+export type FailureReason = 'iteration_limit' | 'time_limit' | 'eval_failed' | 'manual';
 
 /** Summary of a run for the run list panel */
 export interface RunSummary {
@@ -66,6 +118,12 @@ export interface RunDetail {
   // Learnings info
   learningsCount: number;
   learningsProcessedAt: string | null;
+  // Runner configuration
+  runner: string | null;
+  workerRunners: Record<string, string> | null;
+  // Agent/metrics info
+  agentType: string;
+  metricsAvailable: boolean;
 }
 
 /** Request to update a draft run */
@@ -77,6 +135,8 @@ export interface DraftUpdateRequest {
   projectPath?: string;
   name?: string;
   branch?: string;
+  runner?: string;
+  workerRunners?: Record<string, string>;
 }
 
 /** Result of validating a repository path/URL */
@@ -138,11 +198,11 @@ export interface Task {
   status: TaskStatus;
   claimedBy: string | null;
   claimedAt: string | null;
+  completedAt: string | null;
   parentId: string | null;
   blockedBy: string[] | null;
   tokensUsed: number | null;
   createdAt: string;
-  pendingDoneAt: string | null;
 }
 
 /** Task with computed display properties */
@@ -157,13 +217,7 @@ export interface TaskDisplay extends Task {
 // =============================================================================
 
 /** Worker status values */
-export type WorkerStatus =
-  | 'idle'
-  | 'working'
-  | 'waiting'
-  | 'awaiting'
-  | 'paused'
-  | 'error';
+export type WorkerStatus = 'idle' | 'working' | 'waiting' | 'awaiting' | 'paused' | 'error';
 
 /** Worker location */
 export type WorkerLocation = 'local' | 'remote';
@@ -204,6 +258,7 @@ export interface Worker {
   createdAt: string;
   needsRestart: boolean;
   sessionStartedAt: string | null;
+  hitlWaiting: boolean;
 }
 
 /** Worker with session metrics for display */
@@ -216,6 +271,8 @@ export interface WorkerDisplay extends Worker {
   currentTask: string | null;
   /** Sheep avatar configuration */
   sheepConfig: SheepConfig;
+  /** Whether worker is waiting for HITL input */
+  hitlWaiting: boolean;
 }
 
 // =============================================================================
@@ -275,6 +332,8 @@ export interface Eval {
   logFile: string | null;
   startedAt: string;
   finishedAt: string | null;
+  /** Sheep avatar configuration (detective hat) */
+  sheepConfig: SheepConfig;
 }
 
 // =============================================================================
@@ -439,17 +498,18 @@ export type Timestamp = string;
 /** Status color mapping for UI */
 export const STATUS_COLORS: Record<RunStatus, string> = {
   draft: 'sky-500',
-  idle: 'wool-500',
   working: 'amber-500',
   paused: 'golden',
-  runaway: 'terra',
-  timed_out: 'terra',
+  failed: 'terra',
   eval: 'amber-400',
-  eval_failed: 'terra',
-  waiting: 'golden',
   done: 'sage',
   delivered: 'sage',
+  waiting: 'golden',
   merged: 'sage',
+  idle: 'wool-500',
+  runaway: 'terra',
+  timed_out: 'terra',
+  eval_failed: 'terra',
 };
 
 /** Task status icons */
@@ -463,7 +523,7 @@ export const TASK_ICONS: Record<TaskStatus, string> = {
 export const WORKER_ICONS: Record<WorkerStatus, string> = {
   idle: '\u25cb', // ○
   working: '\u25cf', // ●
-  waiting: '\u29d7', // ⧗
+  waiting: '\u25d4', // ◔
   awaiting: '\u25cc', // ◌
   paused: '\u23f8', // ⏸
   error: '\u2717', // ✗
@@ -473,20 +533,12 @@ export const WORKER_ICONS: Record<WorkerStatus, string> = {
 // Worker Log Types
 // =============================================================================
 
-/** Response for worker log content */
+/** Response for log content (used by eval logs) */
 export interface WorkerLogResponse {
   content: string;
   byteOffset: number;
   fileSize: number;
   exists: boolean;
-}
-
-/** Parsed log line with tool activity info */
-export interface ParsedLogLine {
-  text: string;
-  isToolStart: boolean;
-  isToolEnd: boolean;
-  toolName: string | null;
 }
 
 // =============================================================================
@@ -528,6 +580,33 @@ export interface WorkerEventsResponse {
   /** Worker status for determining if still streaming */
   workerStatus: WorkerStatus | null;
 }
+
+/** Worker stream event - emitted via Tauri events */
+export type WorkerStreamEvent =
+  | {
+      type: 'history';
+      runName: string;
+      workerName: string;
+      events: WorkerEvent[];
+      workerStatus: string | null;
+    }
+  | {
+      type: 'event';
+      runName: string;
+      workerName: string;
+      event: WorkerEvent;
+    }
+  | {
+      type: 'status';
+      runName: string;
+      workerName: string;
+      workerStatus: string | null;
+    }
+  | {
+      type: 'ended';
+      runName: string;
+      workerName: string;
+    };
 
 // =============================================================================
 // Direct Chat Session Types (ACP-based AI chat)
@@ -592,6 +671,7 @@ export interface ToolCallStartEvent extends ChatEventBase {
   toolCallId: string;
   title: string;
   kind: string | null;
+  input: string | null;
 }
 
 /** Tool call update event */
@@ -599,6 +679,7 @@ export interface ToolCallUpdateEvent extends ChatEventBase {
   type: 'toolCallUpdate';
   toolCallId: string;
   status: string;
+  title: string | null;
   output: string | null;
 }
 
@@ -644,7 +725,11 @@ export interface ChatToolCall {
   title: string;
   kind: string | null;
   status: string;
+  /** Tool input (JSON string, e.g. command for terminal tools) */
+  input: string | null;
   output: string | null;
+  /** Whether the tool details are expanded */
+  expanded?: boolean;
 }
 
 /** Chat message for display */
@@ -656,6 +741,19 @@ export interface ChatMessage {
   toolCalls?: ChatToolCall[];
   timestamp: Date;
   streaming?: boolean;
+}
+
+// =============================================================================
+// Version Info
+// =============================================================================
+
+/** Version and build information */
+export interface VersionInfo {
+  version: string;
+  gitSha: string;
+  buildDate: string;
+  features: string[];
+  fullVersion: string;
 }
 
 // =============================================================================
@@ -684,6 +782,9 @@ export interface ConfirmDialogAPI {
   delete: (itemName: string, itemType?: string) => Promise<boolean>;
 }
 
+// Shortcut types for global functions
+import type { ShortcutBinding, ShortcutConfig } from './shortcuts';
+
 /** Extend the global Window interface */
 declare global {
   interface Window {
@@ -692,7 +793,9 @@ declare global {
 
     // Tauri APIs
     tauriInvoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-    tauriGetCurrentWindow: () => ReturnType<typeof import('@tauri-apps/api/window').getCurrentWindow>;
+    tauriGetCurrentWindow: () => ReturnType<
+      typeof import('@tauri-apps/api/window').getCurrentWindow
+    >;
 
     // Icon utilities
     getIcon: (name: string) => string;
@@ -701,34 +804,51 @@ declare global {
     getWorkerStatusIcon: (status: string) => string;
 
     // Sheep avatar utilities
-    generateSheepSvg: (config: SheepConfig) => string;
-    getWorkerSheepSvg: (workerName: string) => string;
+    generateSheepSvg: (
+      config: SheepConfig,
+      size?: number,
+      statusOrOptions?: WorkerStatus | { woolColor?: string; status?: WorkerStatus },
+    ) => string;
+    getWorkerSheepSvg: (
+      worker: { sheepConfig: SheepConfig; status?: WorkerStatus },
+      size?: number,
+    ) => string;
     getHatName: (hatIndex: number) => string;
-    generateAgentSheepSvg: () => string;
+    generateAgentSheepSvg: (size?: number) => string;
+
+    // Keyboard shortcuts utilities
+    getShortcuts: () => ShortcutConfig[];
+    formatBinding: (binding: ShortcutBinding) => string;
 
     // Alpine components (functions that return component data)
-    appState: () => Record<string, unknown>;
-    runList: () => Record<string, unknown>;
-    runDetail: () => Record<string, unknown>;
-    draftEditor: () => Record<string, unknown>;
-    workerPanel: () => Record<string, unknown>;
-    taskPanel: () => Record<string, unknown>;
-    activityLog: () => Record<string, unknown>;
-    chatPanel: () => Record<string, unknown>;
-    directChat: () => Record<string, unknown>;
-    permissionModal: () => Record<string, unknown>;
-    notifications: () => Record<string, unknown>;
-    tasksTab: () => Record<string, unknown>;
-    sheepClickerGame: () => Record<string, unknown>;
-    settingsModal: () => Record<string, unknown>;
-    aiMessageStream: () => Record<string, unknown>;
-    workerOutputViewer: () => Record<string, unknown>;
-    toastContainer: () => Record<string, unknown>;
-    sortToggle: () => Record<string, unknown>;
-    sortButton: () => Record<string, unknown>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    appState: () => any;
+    runList: () => any;
+    runDetail: () => any;
+    draftEditor: () => any;
+    workerPanel: () => any;
+    taskPanel: () => any;
+    activityLog: () => any;
+    chatPanel: () => any;
+    directChat: () => any;
+    permissionModal: () => any;
+    notifications: () => any;
+    tasksTab: () => any;
+    sheepClickerGame: () => any;
+    settingsModal: () => any;
+    aiMessageStream: () => any;
+    workerOutputViewer: () => any;
+    sortToggle: () => any;
+    sortButton: () => any;
+    debugPanel: () => any;
 
     // UI utilities
     toast: ToastAPI;
     confirmDialog: ConfirmDialogAPI;
+
+    // Lucide icons
+    lucide?: {
+      createIcons: (options?: { inTemplates?: boolean; nodes?: Element[] }) => void;
+    };
   }
 }

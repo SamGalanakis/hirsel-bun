@@ -2,10 +2,23 @@
  * Main application state Alpine component
  */
 
+import {
+  type ShortcutAction,
+  type ShortcutConfig,
+  findMatchingAction,
+  getShortcuts,
+} from '../shortcuts';
+import {
+  THEMES,
+  type ThemeId,
+  getTheme,
+  isDarkTheme,
+  setTheme,
+  toggleTheme as themeToggle,
+} from '../theme';
+import type { RunDetail, VersionInfo } from '../types';
 import { formatElapsed, formatTimeRemaining, formatTimeShort } from '../utils/formatters';
 import { getStatusBadgeClass, getStatusDotClass } from '../utils/status';
-import { getTheme, setTheme, toggleTheme as themeToggle, isDarkTheme, THEMES, type ThemeId } from '../theme';
-import type { RunDetail } from '../types';
 
 /**
  * Main app state component
@@ -15,6 +28,7 @@ export function appState() {
     // State
     selectedRun: null as string | null,
     currentRunDetail: null as RunDetail | null,
+    versionInfo: null as VersionInfo | null,
     aiChatOpen: false,
     notificationsOpen: false,
     showHelp: false,
@@ -27,6 +41,7 @@ export function appState() {
     sidebarCollapsed: false,
     _focusedRunIndex: -1,
     _eventCleanups: [] as (() => void)[],
+    _shortcuts: [] as ShortcutConfig[],
 
     // Attach picker state
     attachPickerOpen: false,
@@ -74,14 +89,18 @@ export function appState() {
         this.isDarkTheme = e.detail.theme.isDark;
       }) as EventListener;
       window.addEventListener('theme-changed', themeChangedHandler);
-      this._eventCleanups.push(() => window.removeEventListener('theme-changed', themeChangedHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener('theme-changed', themeChangedHandler),
+      );
 
       // Listen for close-settings event
       const closeSettingsHandler = () => {
         this.showSettings = false;
       };
       window.addEventListener('close-settings', closeSettingsHandler);
-      this._eventCleanups.push(() => window.removeEventListener('close-settings', closeSettingsHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener('close-settings', closeSettingsHandler),
+      );
     },
 
     // Formatting helpers (bound to this for templates)
@@ -142,30 +161,46 @@ export function appState() {
       if (!this.selectedRun || !window.tauriInvoke) return;
 
       // Check if we're on evals tab with a selected eval
-      const runDetailEl = document.querySelector('[x-data*="runDetail"]') as HTMLElement & { _x_dataStack?: Array<{ selectedEval: { evalName: string } | null; activeTab: string }> };
+      const runDetailEl = document.querySelector('[x-data*="runDetail"]') as HTMLElement & {
+        _x_dataStack?: Array<{ selectedEval: { evalName: string } | null; activeTab: string }>;
+      };
       if (runDetailEl?._x_dataStack?.[0]) {
         const runDetailData = runDetailEl._x_dataStack[0];
         if (runDetailData.activeTab === 'evals' && runDetailData.selectedEval) {
-          window.dispatchEvent(new CustomEvent('show-worker-output', {
-            detail: {
-              runName: this.selectedRun,
-              workerName: runDetailData.selectedEval.evalName,
-            },
-          }));
+          window.dispatchEvent(
+            new CustomEvent('show-worker-output', {
+              detail: {
+                runName: this.selectedRun,
+                workerName: runDetailData.selectedEval.evalName,
+              },
+            }),
+          );
           return;
         }
       }
 
-      // Check if we're on overview with a selected worker in the panel
-      const workerPanelEl = document.querySelector('[x-data*="workerPanel"]') as HTMLElement & { _x_dataStack?: Array<{ selectedWorker: { name: string } | null }> };
-      if (workerPanelEl?._x_dataStack?.[0]?.selectedWorker) {
-        window.dispatchEvent(new CustomEvent('show-worker-output', {
-          detail: {
-            runName: this.selectedRun,
-            workerName: workerPanelEl._x_dataStack[0].selectedWorker.name,
-          },
-        }));
-        return;
+      // Check if we're on overview with a highlighted or selected worker in the panel
+      const workerPanelEl = document.querySelector('[x-data*="workerPanel"]') as HTMLElement & {
+        _x_dataStack?: Array<{
+          highlightedWorker: string | null;
+          selectedWorker: { name: string } | null;
+        }>;
+      };
+      if (workerPanelEl?._x_dataStack?.[0]) {
+        const panelData = workerPanelEl._x_dataStack[0];
+        // Prefer highlighted worker (single-click selection), then fall back to modal selection
+        const workerName = panelData.highlightedWorker || panelData.selectedWorker?.name;
+        if (workerName) {
+          window.dispatchEvent(
+            new CustomEvent('show-worker-output', {
+              detail: {
+                runName: this.selectedRun,
+                workerName,
+              },
+            }),
+          );
+          return;
+        }
       }
 
       // Neither selected - show the attach picker
@@ -174,22 +209,39 @@ export function appState() {
 
     async openAttachPicker() {
       if (!this.selectedRun || !window.tauriInvoke) return;
-      this.attachPickerLoading = true;
-      this.attachPickerOpen = true;
 
       try {
         const [workers, evals] = await Promise.all([
-          window.tauriInvoke<Array<{ name: string; status: string }>>('get_workers', { runName: this.selectedRun }),
-          window.tauriInvoke<Array<{ id: number; evalName: string; status: string }>>('get_evals', { runName: this.selectedRun }),
+          window.tauriInvoke<Array<{ name: string; status: string }>>('get_workers', {
+            runName: this.selectedRun,
+          }),
+          window.tauriInvoke<Array<{ id: number; evalName: string; status: string }>>('get_evals', {
+            runName: this.selectedRun,
+          }),
         ]);
-        this.attachPickerWorkers = workers || [];
-        this.attachPickerEvals = evals || [];
+
+        const workerList = workers || [];
+        const evalList = evals || [];
+        const totalChoices = workerList.length + evalList.length;
+
+        // If only one choice, attach directly without showing picker
+        if (totalChoices === 1) {
+          if (workerList.length === 1) {
+            this.attachToTarget('worker', workerList[0].name);
+          } else if (evalList.length === 1) {
+            this.attachToTarget('eval', evalList[0].evalName);
+          }
+          return;
+        }
+
+        // Multiple choices - show picker
+        this.attachPickerWorkers = workerList;
+        this.attachPickerEvals = evalList;
+        this.attachPickerOpen = true;
       } catch (e) {
         console.error('Failed to load attach picker data:', e);
         this.attachPickerWorkers = [];
         this.attachPickerEvals = [];
-      } finally {
-        this.attachPickerLoading = false;
       }
     },
 
@@ -201,18 +253,89 @@ export function appState() {
 
     attachToTarget(type: 'worker' | 'eval', name: string) {
       if (!this.selectedRun) return;
-      window.dispatchEvent(new CustomEvent('show-worker-output', {
-        detail: {
-          runName: this.selectedRun,
-          workerName: name,
-        },
-      }));
+      window.dispatchEvent(
+        new CustomEvent('show-worker-output', {
+          detail: {
+            runName: this.selectedRun,
+            workerName: name,
+          },
+        }),
+      );
       this.closeAttachPicker();
+    },
+
+    // Execute a shortcut action
+    executeAction(action: ShortcutAction) {
+      switch (action) {
+        case 'navigate-up':
+          this.navigateRuns(-1);
+          break;
+        case 'navigate-down':
+          this.navigateRuns(1);
+          break;
+        case 'select-run':
+          this.selectFocusedRun();
+          break;
+        case 'toggle-sidebar':
+          this.toggleSidebar();
+          break;
+        case 'fullscreen':
+          window.dispatchEvent(new CustomEvent('toggle-activity-fullscreen'));
+          break;
+        case 'attach':
+          if (this.selectedRun && !this.attachPickerOpen) this.handleAttach();
+          break;
+        case 'pause':
+          if (this.selectedRun) this.pauseRun();
+          break;
+        case 'resume':
+          if (this.selectedRun) this.resumeRun();
+          break;
+        case 'switch-chat':
+          if (this.selectedRun) {
+            window.dispatchEvent(new CustomEvent('switch-tab', { detail: 'chat' }));
+          }
+          break;
+        case 'focus-message':
+          if (this.selectedRun) {
+            window.dispatchEvent(new CustomEvent('switch-tab', { detail: 'chat' }));
+            setTimeout(() => {
+              const input = document.querySelector('.inline-chat-input') as HTMLElement;
+              if (input) input.focus();
+            }, 100);
+          }
+          break;
+        case 'toggle-ai':
+          this.toggleAiChat();
+          break;
+        case 'toggle-theme':
+          this.toggleTheme();
+          break;
+        case 'show-help':
+          this.showHelp = true;
+          break;
+        case 'sheep-game':
+          // Handled by sheep-clicker component
+          break;
+        case 'close-panel':
+          this.showHelp = false;
+          this.showSettings = false;
+          this.notificationsOpen = false;
+          this.aiChatOpen = false;
+          break;
+      }
     },
 
     // Initialization
     async init() {
       this.initTheme();
+
+      // Load version info
+      try {
+        this.versionInfo = await window.tauriInvoke<VersionInfo>('get_version');
+      } catch (err) {
+        console.error('Failed to load version info:', err);
+      }
 
       // Listen for run selection
       const runSelectedHandler = async (e: Event) => {
@@ -237,69 +360,32 @@ export function appState() {
         }
       };
       window.addEventListener('run-selected', runSelectedHandler);
-      this._eventCleanups.push(() => window.removeEventListener('run-selected', runSelectedHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener('run-selected', runSelectedHandler),
+      );
 
-      // Keyboard shortcuts
+      // Load keyboard shortcuts
+      this._shortcuts = getShortcuts();
+
+      // Listen for shortcuts changes
+      const shortcutsChangedHandler = () => {
+        this._shortcuts = getShortcuts();
+      };
+      window.addEventListener('shortcuts-changed', shortcutsChangedHandler);
+      this._eventCleanups.push(() =>
+        window.removeEventListener('shortcuts-changed', shortcutsChangedHandler),
+      );
+
+      // Keyboard shortcuts handler
       const keydownHandler = (e: KeyboardEvent) => {
         // Ignore if typing in input
         const target = e.target as HTMLElement;
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
-        switch (e.key) {
-          case 'j':
-            this.navigateRuns(1);
-            break;
-          case 'k':
-            this.navigateRuns(-1);
-            break;
-          case 'Enter':
-            this.selectFocusedRun();
-            break;
-          case 'a':
-            if (this.selectedRun && !this.attachPickerOpen) this.handleAttach();
-            break;
-          case 'c':
-            // Switch to messages tab
-            if (this.selectedRun) {
-              window.dispatchEvent(new CustomEvent('switch-tab', { detail: 'messages' }));
-            }
-            break;
-          case 'i':
-            this.toggleAiChat();
-            break;
-          case 'm':
-            // Switch to messages tab and focus input
-            if (this.selectedRun) {
-              window.dispatchEvent(new CustomEvent('switch-tab', { detail: 'messages' }));
-              setTimeout(() => {
-                const input = document.querySelector('.inline-chat-input') as HTMLElement;
-                if (input) input.focus();
-              }, 100);
-            }
-            break;
-          case '?':
-            this.showHelp = true;
-            break;
-          case 'Escape':
-            this.showHelp = false;
-            this.notificationsOpen = false;
-            this.aiChatOpen = false;
-            break;
-          case 'p':
-            if (this.selectedRun) this.pauseRun();
-            break;
-          case 'r':
-            if (this.selectedRun) this.resumeRun();
-            break;
-          case 't':
-            this.toggleTheme();
-            break;
-          case '[':
-            this.toggleSidebar();
-            break;
-          case 'f':
-            window.dispatchEvent(new CustomEvent('toggle-activity-fullscreen'));
-            break;
+        // Find matching action
+        const action = findMatchingAction(e, this._shortcuts);
+        if (action) {
+          this.executeAction(action);
         }
       };
       document.addEventListener('keydown', keydownHandler);
@@ -307,7 +393,7 @@ export function appState() {
     },
 
     destroy() {
-      this._eventCleanups.forEach(fn => fn());
+      this._eventCleanups.forEach((fn) => fn());
       this._eventCleanups = [];
     },
   };

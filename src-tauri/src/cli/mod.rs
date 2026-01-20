@@ -7,7 +7,10 @@
 //!
 //! When invoked without arguments, `hirsel` launches the native GUI.
 
+#[cfg(feature = "claude")]
+pub mod acp_bridge;
 pub mod asset;
+#[cfg(feature = "tui")]
 pub mod attach;
 pub mod compact;
 pub mod completions;
@@ -15,6 +18,7 @@ pub mod config;
 pub mod delete;
 pub mod deliver;
 pub mod diff;
+#[cfg(feature = "full-cli")]
 pub mod go;
 pub mod improve;
 pub mod log;
@@ -29,7 +33,9 @@ pub mod spec;
 pub mod summary;
 pub mod tasks;
 pub mod templates;
+#[cfg(feature = "full-cli")]
 pub mod test;
+#[cfg(feature = "tui")]
 pub mod tui;
 pub mod view;
 
@@ -38,12 +44,14 @@ use clap::{Args, Parser, Subcommand};
 // Re-export command implementations
 pub use self::diff::{print_diff, run_diff, DiffError, DiffResult};
 pub use asset::run_asset;
+#[cfg(feature = "tui")]
 pub use attach::{list_targets, run_attach};
 pub use completions::{generate_completions, print_completions, run_completions};
 pub use config::{
     agent_presets, get_agent_command, get_current_agent, run_config, set_agent, AgentPreset,
 };
 pub use delete::execute as run_delete;
+#[cfg(feature = "full-cli")]
 pub use go::{run as run_go, GoError, GoOutput, GoResult};
 pub use log::{run_log, LogResult, OutputFormat};
 pub use man::run_man;
@@ -63,11 +71,19 @@ pub use templates::{
 /// Hirsel - Herd your AI coding agents
 #[derive(Parser, Debug)]
 #[command(name = "hirsel")]
-#[command(version, about, long_about = None)]
+#[command(version = crate::version::FULL_VERSION, about, long_about = None)]
 pub struct Cli {
     /// Output in JSON format (for scripting)
     #[arg(long, global = true)]
     pub json: bool,
+
+    /// Use a specific orchestrator profile (from config)
+    #[arg(long, short = 'p', global = true)]
+    pub profile: Option<String>,
+
+    /// Show detailed build information
+    #[arg(long)]
+    pub build_info: bool,
 
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -78,6 +94,7 @@ pub struct Cli {
 pub enum Commands {
     // ========== Run Management ==========
     /// Start a new run
+    #[cfg(feature = "full-cli")]
     Go(GoArgs),
 
     /// View run status
@@ -87,6 +104,7 @@ pub enum Commands {
     Log(LogArgs),
 
     /// Watch worker live output (TUI)
+    #[cfg(feature = "tui")]
     Attach(AttachArgs),
 
     /// Send message to run
@@ -175,7 +193,12 @@ pub enum Commands {
     Reset(ResetArgs),
 
     /// Run e2e test scenarios
+    #[cfg(feature = "full-cli")]
     Test(TestArgs),
+
+    /// Run as HTTP server (headless mode for remote orchestration)
+    #[cfg(feature = "server")]
+    Serve(ServeArgs),
 
     // ========== Internal ==========
     /// Run worker subprocess (internal, called by spawn_worker)
@@ -190,7 +213,7 @@ pub enum Commands {
     #[command(name = "__worker-mcp", hide = true)]
     WorkerMcp,
 
-    /// Run eval agent (internal, spawned by maybe_trigger_eval)
+    /// Run eval agent (internal, spawned by lifecycle manager)
     #[command(name = "__eval-run", hide = true)]
     EvalRun(InternalEvalRunArgs),
 
@@ -201,6 +224,21 @@ pub enum Commands {
     /// Run remote worker (internal, spawned on remote machine via SSH)
     #[command(name = "__remote-worker", hide = true)]
     RemoteWorker(RemoteWorkerArgs),
+
+    /// Run ACP bridge server for Claude CLI (internal, used as agent command)
+    #[cfg(feature = "claude")]
+    #[command(name = "__acp-bridge", hide = true)]
+    AcpBridge,
+
+    /// Run as daemon (internal, auto-started by CLI)
+    #[cfg(feature = "server")]
+    #[command(name = "__daemon", hide = true)]
+    Daemon(DaemonArgs),
+
+    /// Stop the daemon
+    #[cfg(feature = "server")]
+    #[command(name = "daemon")]
+    DaemonCtl(DaemonCtlArgs),
 
     // ========== Completion Helpers ==========
     /// List run names (for shell completion)
@@ -239,10 +277,6 @@ pub struct InternalWorkerRunArgs {
     #[arg(long)]
     pub spec: String,
 
-    /// Log file path
-    #[arg(long)]
-    pub log_file: String,
-
     /// Agent command (JSON array)
     #[arg(long)]
     pub agent_command: String,
@@ -274,14 +308,6 @@ pub struct InternalEvalRunArgs {
     /// Run directory
     #[arg(long)]
     pub run_dir: String,
-
-    /// Spec file path
-    #[arg(long)]
-    pub spec: String,
-
-    /// Eval spec file path
-    #[arg(long)]
-    pub eval_spec: String,
 
     /// Agent command (JSON array)
     #[arg(long)]
@@ -326,6 +352,14 @@ pub struct RemoteWorkerArgs {
     /// Teammates (comma-separated)
     #[arg(long)]
     pub teammates: Option<String>,
+
+    /// Wait for file upload via HTTP before starting worker
+    #[arg(long, default_value = "false")]
+    pub wait_for_files: bool,
+
+    /// Port for file receiver (default: 19800)
+    #[arg(long)]
+    pub file_receiver_port: Option<u16>,
 }
 
 // ========== Argument structs ==========
@@ -338,6 +372,10 @@ pub struct GoArgs {
 
     /// Path to spec file or template name
     pub spec: String,
+
+    /// Orchestrator profile to use (for remote server mode)
+    #[arg(long)]
+    pub profile: Option<String>,
 
     /// Number or range of workers (e.g., "3", "1-5", "2+")
     #[arg(short, long, default_value = "1")]
@@ -368,7 +406,7 @@ pub struct GoArgs {
     pub template: Option<String>,
 
     /// Project path (defaults to current directory)
-    #[arg(short, long)]
+    #[arg(short = 'P', long)]
     pub project: Option<String>,
 
     /// Maximum iterations before auto-pause
@@ -386,6 +424,10 @@ pub struct GoArgs {
     /// Path to assets folder (copies contents to run's assets/)
     #[arg(long)]
     pub assets: Option<String>,
+
+    /// Runner to use for workers (e.g., "local", "sprites", or a named runner from config)
+    #[arg(long)]
+    pub runner: Option<String>,
 }
 
 /// Simple run name argument
@@ -614,6 +656,52 @@ pub struct TestArgs {
     /// YOLO mode (skip confirmation prompts)
     #[arg(long)]
     pub yolo: bool,
+
+    /// Remote worker spec (e.g., "user@host:2")
+    #[arg(long)]
+    pub remote: Option<String>,
+
+    /// Runner to use for workers (e.g., "local", "sprites", or a named runner from config)
+    #[arg(long)]
+    pub runner: Option<String>,
+}
+
+/// Arguments for `hirsel serve`
+#[derive(Args, Debug)]
+pub struct ServeArgs {
+    /// Port to listen on
+    #[arg(long, default_value = "8080")]
+    pub port: u16,
+}
+
+/// Arguments for `hirsel __daemon` (internal)
+#[derive(Args, Debug)]
+pub struct DaemonArgs {
+    /// Idle timeout in seconds (daemon exits if no active runs for this long)
+    #[arg(long, default_value = "300")]
+    pub idle_timeout: u64,
+    /// TCP port for HTTP server (0 to disable, used for SSH reverse tunnels)
+    #[arg(long, default_value = "19700")]
+    pub tcp_port: u16,
+}
+
+/// Arguments for `hirsel daemon`
+#[derive(Args, Debug)]
+pub struct DaemonCtlArgs {
+    /// Daemon subcommand
+    #[command(subcommand)]
+    pub command: DaemonCommand,
+}
+
+/// Daemon control subcommands
+#[derive(Subcommand, Debug)]
+pub enum DaemonCommand {
+    /// Start the daemon (if not running)
+    Start,
+    /// Stop the daemon
+    Stop,
+    /// Check daemon status
+    Status,
 }
 
 // ========== Worker CLI (hirsel-worker) ==========
@@ -770,6 +858,7 @@ pub fn run_cli() -> anyhow::Result<bool> {
 
     match command {
         // Run Management
+        #[cfg(feature = "full-cli")]
         Commands::Go(args) => {
             match go::run(&args) {
                 Ok(output) => {
@@ -817,6 +906,7 @@ pub fn run_cli() -> anyhow::Result<bool> {
                 }
             }
         }
+        #[cfg(feature = "tui")]
         Commands::Attach(args) => {
             if let Err(e) = attach::run_attach(&args.run_name, args.target.as_deref(), json) {
                 eprintln!("Error: {}", e);
@@ -918,156 +1008,28 @@ pub fn run_cli() -> anyhow::Result<bool> {
             }
         }
         Commands::Clone(args) => {
-            use crate::core::{config as core_config, state::SQLiteState, Files};
-            use std::fs;
+            use crate::core::ops::{clone_run, CloneRunConfig};
 
-            let new_name = args.new_name.trim().to_string();
-            if new_name.is_empty() {
-                eprintln!("Error: New run name cannot be empty");
-                std::process::exit(1);
-            }
+            let config = CloneRunConfig::new(&args.source_run, &args.new_name);
 
-            let source_dir = core_config::run_dir(&args.source_run);
-            let source_db_path = source_dir.join("hirsel.db");
-            if !source_db_path.exists() {
-                eprintln!("Error: Source run '{}' not found", args.source_run);
-                std::process::exit(1);
-            }
-
-            let new_dir = core_config::run_dir(&new_name);
-            if new_dir.exists() {
-                eprintln!("Error: Run '{}' already exists", new_name);
-                std::process::exit(1);
-            }
-
-            // Open source database
-            let source_state = match SQLiteState::new(source_db_path) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("Error opening source database: {}", e);
-                    std::process::exit(1);
-                }
-            };
-
-            // Read settings from source
-            let project_path = source_state.get_project_path().ok().flatten();
-            let worker_scale = source_state
-                .get_worker_scale()
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| "1".to_string());
-            let time_limit = source_state.get_time_limit_minutes().ok().flatten();
-            let human_in_the_loop = source_state.get_human_in_the_loop().unwrap_or(true);
-            let max_iterations = source_state.get_max_iterations().ok().flatten();
-
-            // Read spec.md
-            let source_spec_path = source_dir.join("spec.md");
-            let spec_content = if source_spec_path.exists() {
-                fs::read_to_string(&source_spec_path).unwrap_or_else(|_| "".to_string())
-            } else {
-                "".to_string()
-            };
-
-            // Read eval.md (optional)
-            let source_eval_path = source_dir.join("eval.md");
-            let eval_content = if source_eval_path.exists() {
-                fs::read_to_string(&source_eval_path).ok()
-            } else {
-                None
-            };
-
-            // Create new run directory
-            if let Err(e) = fs::create_dir_all(&new_dir) {
-                eprintln!("Error creating run directory: {}", e);
-                std::process::exit(1);
-            }
-
-            // Initialize Files and create dirs
-            let files = Files::new(&new_dir);
-            if let Err(e) = files.init_dirs() {
-                eprintln!("Error initializing directories: {}", e);
-                std::process::exit(1);
-            }
-
-            // Write spec.md
-            if let Err(e) = fs::write(new_dir.join("spec.md"), &spec_content) {
-                eprintln!("Error writing spec file: {}", e);
-                std::process::exit(1);
-            }
-
-            // Write eval.md if exists
-            if let Some(eval) = &eval_content {
-                if let Err(e) = fs::write(new_dir.join("eval.md"), eval) {
-                    eprintln!("Error writing eval file: {}", e);
-                    std::process::exit(1);
-                }
-            }
-
-            // Copy assets folder if exists
-            let source_assets = source_dir.join("assets");
-            if source_assets.exists() && source_assets.is_dir() {
-                let dest_assets = new_dir.join("assets");
-                if let Err(e) = fs::create_dir_all(&dest_assets) {
-                    eprintln!("Error creating assets directory: {}", e);
-                    std::process::exit(1);
-                }
-                // Copy all files
-                if let Ok(entries) = fs::read_dir(&source_assets) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.is_file() {
-                            if let Some(filename) = path.file_name() {
-                                let _ = fs::copy(&path, dest_assets.join(filename));
-                            }
-                        }
+            match clone_run(config) {
+                Ok(result) => {
+                    if json {
+                        println!(
+                            r#"{{"source": "{}", "new_name": "{}", "status": "draft"}}"#,
+                            result.source_run, result.new_name
+                        );
+                    } else {
+                        println!(
+                            "Cloned '{}' to '{}' (draft)",
+                            result.source_run, result.new_name
+                        );
                     }
                 }
-            }
-
-            // Write tasks.md
-            if let Err(e) = fs::write(
-                new_dir.join("tasks.md"),
-                "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n| scope | TODO | | Read spec, create exploration tasks |\n",
-            ) {
-                eprintln!("Error writing tasks file: {}", e);
-                std::process::exit(1);
-            }
-
-            // Initialize database
-            let new_state = match SQLiteState::new(new_dir.join("hirsel.db")) {
-                Ok(s) => s,
                 Err(e) => {
-                    eprintln!("Error creating database: {}", e);
+                    eprintln!("Error: {}", e);
                     std::process::exit(1);
                 }
-            };
-
-            // Set up new run
-            if let Err(e) = new_state.init_state(project_path.as_deref()) {
-                eprintln!("Error initializing state: {}", e);
-                std::process::exit(1);
-            }
-            let _ = new_state.set_status(crate::core::state::Status::Draft);
-            let _ = new_state.set_worker_scale(&worker_scale);
-            let _ = new_state.set_human_in_the_loop(human_in_the_loop);
-            if let Some(limit) = time_limit {
-                let _ = new_state.set_time_limit_minutes(Some(limit));
-            }
-            if let Some(max_iter) = max_iterations {
-                let _ = new_state.set_max_iterations(Some(max_iter));
-            }
-            if !spec_content.is_empty() {
-                let _ = new_state.set_request(Some(&spec_content));
-            }
-            let _ = new_state.add_task("scope", "Read spec, create exploration tasks", None, None);
-
-            if json {
-                println!(
-                    r#"{{"source": "{}", "new_name": "{}", "status": "draft"}}"#,
-                    args.source_run, new_name
-                );
-            } else {
-                println!("Cloned '{}' to '{}' (draft)", args.source_run, new_name);
             }
         }
         Commands::Prune => {
@@ -1308,6 +1270,7 @@ pub fn run_cli() -> anyhow::Result<bool> {
                 }
             }
         }
+        #[cfg(feature = "full-cli")]
         Commands::Test(args) => {
             if let Err(e) = test::execute(
                 args.scenario.as_deref(),
@@ -1315,6 +1278,8 @@ pub fn run_cli() -> anyhow::Result<bool> {
                 Some(&args.workers),
                 args.yolo,
                 json,
+                args.remote.as_deref(),
+                args.runner.as_deref(),
             ) {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
@@ -1354,6 +1319,13 @@ pub fn run_cli() -> anyhow::Result<bool> {
             // This is handled by lib.rs run_cli() for compatibility
             // Should not reach here in normal CLI flow
             eprintln!("Remote worker command should be called via hirsel binary directly");
+            std::process::exit(1);
+        }
+        #[cfg(feature = "claude")]
+        Commands::AcpBridge => {
+            // This is handled by lib.rs run_cli() for compatibility
+            // Should not reach here in normal CLI flow
+            eprintln!("ACP bridge command should be called via hirsel binary directly");
             std::process::exit(1);
         }
 
@@ -1413,6 +1385,27 @@ pub fn run_cli() -> anyhow::Result<bool> {
                     }
                 }
             }
+        }
+        #[cfg(feature = "server")]
+        Commands::Serve(args) => {
+            // Server mode - run HTTP server for remote orchestration
+            // This is handled in lib.rs run_command, but add here for completeness
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| anyhow::anyhow!("Failed to create runtime: {}", e))?;
+            rt.block_on(async { crate::core::server::start_server(args.port).await })
+                .map_err(|e| anyhow::anyhow!("Server error: {}", e))?;
+        }
+        #[cfg(feature = "server")]
+        Commands::Daemon(_args) => {
+            // Daemon command is handled by lib.rs run_command
+            eprintln!("Daemon command should be called via hirsel binary directly");
+            std::process::exit(1);
+        }
+        #[cfg(feature = "server")]
+        Commands::DaemonCtl(_args) => {
+            // DaemonCtl command is handled by lib.rs run_command
+            eprintln!("Daemon control command should be called via hirsel binary directly");
+            std::process::exit(1);
         }
     }
 

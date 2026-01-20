@@ -14,7 +14,6 @@
 use crate::cli::{MsgSubcommands, TaskSubcommands, WorkerCommands};
 use crate::core::state::{SQLiteState, StateError, WorkerStatus, WorkerUpdate};
 use crate::core::state_access::{StateAccess, StateAccessError};
-use crate::core::workers::maybe_trigger_eval;
 use crate::core::Files;
 use crate::worker::http_state::HttpState;
 use std::path::PathBuf;
@@ -82,7 +81,7 @@ impl WorkerConfig {
         let agent_command = std::env::var("HIRSEL_AGENT_COMMAND")
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_else(|| vec!["claude-code-acp".to_string()]);
+            .unwrap_or_else(|| vec!["hirsel".to_string(), "__acp-bridge".to_string()]);
 
         // Get runs directory from HIRSEL_ROOT or default
         let hirsel_root = std::env::var("HIRSEL_ROOT")
@@ -393,24 +392,37 @@ impl WorkerRunner {
         .to_string())
     }
 
-    /// Try to resume awaiting workers if there are claimable tasks.
-    /// This is a best-effort operation - errors are logged but not propagated.
+    /// Try to resume awaiting workers and scale up if needed.
+    /// This provides immediate responsiveness when tasks become available.
+    /// The daemon's polling loop also handles this, but with a 5-second interval.
     fn try_resume_awaiting_workers(&self) {
-        use crate::core::workers::resume_awaiting_workers;
+        use crate::core::lifecycle::{LifecycleEvent, LifecycleManager, LocalLifecycleManager};
         use tracing::debug;
 
-        match resume_awaiting_workers(
+        // In remote mode, coordinator handles this
+        if std::env::var("HIRSEL_API_URL").is_ok() {
+            return;
+        }
+
+        // Local mode - use lifecycle manager
+        if let Ok(lifecycle) = LocalLifecycleManager::new(
             &self.config.run_name,
-            &self.config.run_dir,
-            &self.config.agent_command,
+            self.config.run_dir.clone(),
+            self.config.agent_command.clone(),
         ) {
-            Ok(resumed) => {
-                if !resumed.is_empty() {
-                    debug!("Resumed awaiting workers: {:?}", resumed);
+            // Process TaskCompleted event which handles resume and scale up
+            match lifecycle.process_event(LifecycleEvent::TaskCompleted {
+                task_id: String::new(),
+                worker_name: self.config.worker_name.clone(),
+            }) {
+                Ok(actions) => {
+                    for action in actions {
+                        debug!("Lifecycle action: {:?}", action);
+                    }
                 }
-            }
-            Err(e) => {
-                debug!("Failed to resume awaiting workers: {}", e);
+                Err(e) => {
+                    debug!("Failed to process lifecycle event: {}", e);
+                }
             }
         }
     }
@@ -445,9 +457,8 @@ impl WorkerRunner {
         // Check for available tasks
         let claimable = self.run_async(self.state().get_claimable_tasks())?;
 
-        // Check if all workers are now inactive - if so, trigger eval
-        let eval_triggered =
-            maybe_trigger_eval(&self.config.run_name, &self.config.run_dir).unwrap_or(false);
+        // Note: Lifecycle management (eval triggering, scaling) is handled by
+        // the daemon's polling loop, not by individual worker processes
 
         Ok(serde_json::json!({
             "available_tasks": claimable.len(),
@@ -455,7 +466,6 @@ impl WorkerRunner {
                 "id": t.id,
                 "name": t.name,
             })).collect::<Vec<_>>(),
-            "eval_triggered": eval_triggered,
         })
         .to_string())
     }
@@ -470,7 +480,16 @@ impl WorkerRunner {
         self.run_async(self.state().add_message(thread, &worker_name, message))?;
 
         if wait {
-            self.set_status(WorkerStatus::Waiting)?;
+            // Set to Awaiting with hitl_waiting flag
+            self.set_status(WorkerStatus::Awaiting)?;
+            self.run_async(self.state().update_worker(
+                &worker_name,
+                WorkerUpdate {
+                    hitl_waiting: Some(true),
+                    waiting_thread: Some(thread.to_string()),
+                    ..Default::default()
+                },
+            ))?;
         }
 
         Ok(serde_json::json!({
@@ -547,21 +566,33 @@ impl WorkerRunner {
     // =========================================================================
 
     /// Signal that worker has no more work to do.
-    /// This sets the worker to Awaiting status. Evaluation is triggered
-    /// when ALL workers become inactive.
+    /// This sets the worker to Awaiting status and may trigger evaluation
+    /// if all workers are inactive.
     pub fn work_done(&self) -> WorkerResult<String> {
-        // Mark worker as awaiting (no work to do)
-        self.set_status(WorkerStatus::Awaiting)?;
+        // In remote mode, just set status - coordinator handles lifecycle
+        if std::env::var("HIRSEL_API_URL").is_ok() {
+            self.set_status(WorkerStatus::Awaiting)?;
+        } else {
+            // In local mode, use LifecycleManager for immediate response
+            use crate::core::lifecycle::{LifecycleManager, LocalLifecycleManager};
 
-        // Check if all workers are now inactive - if so, trigger eval
-        let eval_triggered =
-            maybe_trigger_eval(&self.config.run_name, &self.config.run_dir).unwrap_or(false);
+            // Set status first
+            self.set_status(WorkerStatus::Awaiting)?;
+
+            // Use lifecycle manager to check/trigger eval
+            if let Ok(lifecycle) = LocalLifecycleManager::new(
+                &self.config.run_name,
+                self.config.run_dir.clone(),
+                self.config.agent_command.clone(),
+            ) {
+                let _ = lifecycle.worker_done(&self.config.worker_name);
+            }
+        }
 
         Ok(serde_json::json!({
             "success": true,
             "worker": self.config.worker_name,
             "status": "awaiting",
-            "eval_triggered": eval_triggered,
         })
         .to_string())
     }
@@ -625,7 +656,7 @@ mod tests {
             "achilles".into(),
             "test-run".into(),
             PathBuf::from("/tmp/test-run"),
-            vec!["claude-code-acp".to_string()],
+            vec!["hirsel".to_string(), "__acp-bridge".to_string()],
         );
         assert_eq!(config.worker_name, "achilles");
         assert_eq!(config.run_name, "test-run");

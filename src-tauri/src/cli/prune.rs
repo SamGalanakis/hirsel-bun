@@ -51,7 +51,7 @@ pub fn execute(json: bool) -> Result<(), Box<dyn std::error::Error>> {
         // Try to read state and check if delivered
         let should_prune = match SQLiteState::new(db_path) {
             Ok(state) => {
-                let status = state.status().unwrap_or(Status::Idle);
+                let status = state.status().unwrap_or(Status::Draft);
                 if status == Status::Delivered {
                     // Kill any lingering worker processes
                     if let Ok(workers) = state.get_workers() {

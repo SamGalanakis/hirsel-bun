@@ -8,7 +8,6 @@ use crate::core::{config, state::SQLiteState, Files};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
@@ -33,11 +32,16 @@ const IMPROVE_TIMEOUT_SECS: u64 = 120;
 pub fn execute(run_name: Option<&str>, json: bool) -> Result<(), Box<dyn std::error::Error>> {
     // Create runtime for async execution
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async {
+    let result = rt.block_on(async {
         tokio::task::LocalSet::new()
             .run_until(execute_async(run_name, json))
             .await
-    })
+    });
+
+    // Clean up any remaining child processes (e.g., grandchildren like hirsel __acp-bridge)
+    crate::core::process::cleanup_process_group("improve");
+
+    result
 }
 
 /// Async implementation of the improve command
@@ -633,8 +637,7 @@ async fn run_improve_agent_acp(
     memory_file: &Path,
     agent_command: &[String],
 ) -> Result<String, Box<dyn std::error::Error>> {
-    use crate::core::acp::collect_agent_env;
-    use std::process::Stdio;
+    use crate::core::acp::{AcpChild, AcpSpawnConfig};
 
     if agent_command.is_empty() {
         return Err("Empty agent command".into());
@@ -656,32 +659,19 @@ async fn run_improve_agent_acp(
     // Create improve client
     let client = Arc::new(ImproveClient::new(project_path));
 
-    // Spawn agent process
-    let mut cmd = Command::new(&agent_command[0]);
-    if agent_command.len() > 1 {
-        cmd.args(&agent_command[1..]);
-    }
-    cmd.current_dir(project_path);
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::null());
-
-    // Pass through API keys
-    for (key, value) in collect_agent_env() {
-        cmd.env(&key, &value);
-    }
-
-    let mut child = cmd.spawn()?;
-    let stdin = child
-        .stdin
-        .take()
+    // Spawn agent process using AcpChild for automatic cleanup
+    let spawn_config = AcpSpawnConfig::new(
+        agent_command.to_vec(),
+        project_path.to_path_buf(),
+        "improve",
+    );
+    let mut acp_child = AcpChild::spawn(spawn_config)?;
+    let stdin = acp_child
+        .take_stdin()
         .ok_or_else(|| "Failed to get stdin".to_string())?;
-    let stdout = child
-        .stdout
-        .take()
+    let stdout = acp_child
+        .take_stdout()
         .ok_or_else(|| "Failed to get stdout".to_string())?;
-
-    debug!("Agent process started for improve");
 
     // Convert to futures-compatible streams
     let stdin_compat = stdin.compat_write();
@@ -727,10 +717,10 @@ async fn run_improve_agent_acp(
     })
     .await;
 
-    // Clean up
+    // Clean up - AcpChild handles process group cleanup on drop
     drop(conn);
     let _ = io_handle.await;
-    let _ = child.kill().await;
+    let _ = acp_child.kill().await;
 
     // Check result
     match result {

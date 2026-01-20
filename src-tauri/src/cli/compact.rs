@@ -33,7 +33,7 @@ pub async fn execute(run_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Run compaction
-    match compact_learnings_with_agent(&state, &files, &global_config).await {
+    let result = match compact_learnings_with_agent(&state, &files, &global_config).await {
         Ok(result) => {
             info!(
                 "Compacted {} learnings messages for run '{}'",
@@ -56,5 +56,10 @@ pub async fn execute(run_name: &str) -> Result<(), Box<dyn std::error::Error>> {
             warn!("Compaction failed for run '{}': {}", run_name, e);
             Err(e.into())
         }
-    }
+    };
+
+    // Clean up any remaining child processes (e.g., grandchildren like hirsel __acp-bridge)
+    crate::core::process::cleanup_process_group("compaction");
+
+    result
 }

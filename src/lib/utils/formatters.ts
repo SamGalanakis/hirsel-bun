@@ -10,13 +10,13 @@ export function formatElapsed(minutes: number | null | undefined): string {
   if (minutes === null || minutes === undefined) return '0s';
   if (minutes < 1) {
     const seconds = Math.round(minutes * 60);
-    return seconds + 's';
+    return `${seconds}s`;
   }
   const m = Math.round(minutes);
-  if (m < 60) return m + 'm';
+  if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
   const rem = m % 60;
-  return h + 'h' + (rem > 0 ? ' ' + rem + 'm' : '');
+  return `${h}h${rem > 0 ? ` ${rem}m` : ''}`;
 }
 
 /**
@@ -24,15 +24,15 @@ export function formatElapsed(minutes: number | null | undefined): string {
  */
 export function formatTimeRemaining(
   limit: number | null | undefined,
-  elapsed: number | null | undefined
+  elapsed: number | null | undefined,
 ): string {
   if (!limit) return '';
   const remaining = limit - (elapsed || 0);
   if (remaining <= 0) return 'Time up!';
-  if (remaining < 60) return remaining + 'm remaining';
+  if (remaining < 60) return `${remaining}m remaining`;
   const h = Math.floor(remaining / 60);
   const m = remaining % 60;
-  return m > 0 ? h + 'h ' + m + 'm remaining' : h + 'h remaining';
+  return m > 0 ? `${h}h ${m}m remaining` : `${h}h remaining`;
 }
 
 /**
@@ -40,7 +40,7 @@ export function formatTimeRemaining(
  */
 function parseUtcTimestamp(timestamp: string): Date {
   // Timestamps from backend are UTC but without 'Z' suffix - add it for proper parsing
-  const utcTimestamp = timestamp.endsWith('Z') ? timestamp : timestamp + 'Z';
+  const utcTimestamp = timestamp.endsWith('Z') ? timestamp : `${timestamp}Z`;
   return new Date(utcTimestamp);
 }
 
@@ -105,15 +105,15 @@ export function formatElapsedTime(sessionStartedAt: string | null | undefined): 
   const start = parseUtcTimestamp(sessionStartedAt);
   const now = new Date();
   const seconds = Math.floor((now.getTime() - start.getTime()) / 1000);
-  if (seconds < 60) return seconds + 's';
+  if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return minutes + 'm';
+  if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   const mins = minutes % 60;
-  if (hours < 24) return mins > 0 ? hours + 'h ' + mins + 'm' : hours + 'h';
+  if (hours < 24) return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
   const days = Math.floor(hours / 24);
   const hrs = hours % 24;
-  return hrs > 0 ? days + 'd ' + hrs + 'h' : days + 'd';
+  return hrs > 0 ? `${days}d ${hrs}h` : `${days}d`;
 }
 
 /**
@@ -122,8 +122,8 @@ export function formatElapsedTime(sessionStartedAt: string | null | undefined): 
 export function formatTokens(tokens: number | null | undefined): string {
   if (tokens == null || tokens === 0) return '0';
   if (tokens < 1000) return String(tokens);
-  if (tokens < 1000000) return (tokens / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
-  return (tokens / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (tokens < 1000000) return `${(tokens / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+  return `${(tokens / 1000000).toFixed(1).replace(/\.0$/, '')}M`;
 }
 
 /**
@@ -139,10 +139,41 @@ export function formatProgress(done: number, total: number): number {
  */
 export function calculateTimeProgress(
   elapsed: number | null | undefined,
-  limit: number | null | undefined
+  limit: number | null | undefined,
 ): number {
   if (!limit || !elapsed) return 0;
   return Math.min(100, Math.round((elapsed / limit) * 100));
+}
+
+/**
+ * Format duration between two timestamps (or from start to now if end is null)
+ * Returns formats like "2m", "1h 15m", "3h", "2d 4h"
+ */
+export function formatDuration(
+  startTimestamp: string | null | undefined,
+  endTimestamp: string | null | undefined = null,
+): string {
+  if (!startTimestamp) return '';
+  const start = parseUtcTimestamp(startTimestamp);
+  const end = endTimestamp ? parseUtcTimestamp(endTimestamp) : new Date();
+  const diffMs = end.getTime() - start.getTime();
+  if (diffMs < 0) return '';
+
+  const diffSecs = Math.floor(diffMs / 1000);
+  if (diffSecs < 60) return `${diffSecs}s`;
+
+  const diffMins = Math.floor(diffSecs / 60);
+  if (diffMins < 60) return `${diffMins}m`;
+
+  const diffHours = Math.floor(diffMins / 60);
+  const remMins = diffMins % 60;
+  if (diffHours < 24) {
+    return remMins > 0 ? `${diffHours}h ${remMins}m` : `${diffHours}h`;
+  }
+
+  const diffDays = Math.floor(diffHours / 24);
+  const remHours = diffHours % 24;
+  return remHours > 0 ? `${diffDays}d ${remHours}h` : `${diffDays}d`;
 }
 
 /**
@@ -156,16 +187,16 @@ export function formatRelativeTime(timestamp: string | null | undefined): string
   const diffMins = Math.floor(diffMs / 60000);
 
   if (diffMins < 1) return 'just now';
-  if (diffMins < 60) return diffMins + 'm ago';
+  if (diffMins < 60) return `${diffMins}m ago`;
 
   const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return diffHours + 'h ago';
+  if (diffHours < 24) return `${diffHours}h ago`;
 
   const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 7) return diffDays + 'd ago';
+  if (diffDays < 7) return `${diffDays}d ago`;
 
   const diffWeeks = Math.floor(diffDays / 7);
-  if (diffWeeks < 4) return diffWeeks + 'w ago';
+  if (diffWeeks < 4) return `${diffWeeks}w ago`;
 
   // For older dates, show the actual date
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });

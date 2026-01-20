@@ -7,12 +7,12 @@
  */
 
 import type {
-  RunSummary,
+  HistoryEntry,
   RunDetail,
-  WorkerDisplay,
+  RunSummary,
   Task,
   ThreadSummary,
-  HistoryEntry,
+  WorkerDisplay,
 } from './types';
 
 // Event names for data updates
@@ -164,9 +164,11 @@ class DataCache {
 
     try {
       const runs = await window.tauriInvoke<RunSummary[]>('get_runs');
-      this.state.runs = runs;
+      // Filter out null/undefined entries
+      const filtered = (runs || []).filter((r): r is RunSummary => r != null);
+      this.state.runs = filtered;
       this.state.lastFetch.runs = Date.now();
-      this.emit(DATA_EVENTS.RUNS_UPDATED, runs);
+      this.emit(DATA_EVENTS.RUNS_UPDATED, filtered);
     } catch (e) {
       console.error('[DataCache] Failed to fetch runs:', e);
     }
@@ -220,9 +222,11 @@ class DataCache {
     try {
       const workers = await window.tauriInvoke<WorkerDisplay[]>('get_workers', { runName });
       if (this.state.selectedRun === runName) {
-        this.state.workers = workers;
+        // Filter out null/undefined entries
+        const filtered = (workers || []).filter((w): w is WorkerDisplay => w != null);
+        this.state.workers = filtered;
         this.state.lastFetch.workers = Date.now();
-        this.emit(DATA_EVENTS.WORKERS_UPDATED, workers);
+        this.emit(DATA_EVENTS.WORKERS_UPDATED, filtered);
       }
     } catch (e) {
       console.error('[DataCache] Failed to fetch workers:', e);
@@ -233,9 +237,11 @@ class DataCache {
     try {
       const tasks = await window.tauriInvoke<Task[]>('get_tasks', { runName });
       if (this.state.selectedRun === runName) {
-        this.state.tasks = tasks;
+        // Filter out null/undefined entries
+        const filtered = (tasks || []).filter((t): t is Task => t != null);
+        this.state.tasks = filtered;
         this.state.lastFetch.tasks = Date.now();
-        this.emit(DATA_EVENTS.TASKS_UPDATED, tasks);
+        this.emit(DATA_EVENTS.TASKS_UPDATED, filtered);
       }
     } catch (e) {
       console.error('[DataCache] Failed to fetch tasks:', e);
@@ -246,9 +252,11 @@ class DataCache {
     try {
       const threads = await window.tauriInvoke<ThreadSummary[]>('get_threads', { runName });
       if (this.state.selectedRun === runName) {
-        this.state.threads = threads;
+        // Filter out null/undefined entries
+        const filtered = (threads || []).filter((t): t is ThreadSummary => t != null);
+        this.state.threads = filtered;
         this.state.lastFetch.threads = Date.now();
-        this.emit(DATA_EVENTS.THREADS_UPDATED, threads);
+        this.emit(DATA_EVENTS.THREADS_UPDATED, filtered);
       }
     } catch (e) {
       console.error('[DataCache] Failed to fetch threads:', e);
@@ -262,9 +270,11 @@ class DataCache {
         limit: 100,
       });
       if (this.state.selectedRun === runName) {
-        this.state.history = history;
+        // Filter out null/undefined entries
+        const filtered = (history || []).filter((h): h is HistoryEntry => h != null);
+        this.state.history = filtered;
         this.state.lastFetch.history = Date.now();
-        this.emit(DATA_EVENTS.HISTORY_UPDATED, history);
+        this.emit(DATA_EVENTS.HISTORY_UPDATED, filtered);
       }
     } catch (e) {
       console.error('[DataCache] Failed to fetch history:', e);
