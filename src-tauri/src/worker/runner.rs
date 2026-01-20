@@ -396,37 +396,33 @@ impl WorkerRunner {
     /// This provides immediate responsiveness when tasks become available.
     /// The daemon's polling loop also handles this, but with a 5-second interval.
     fn try_resume_awaiting_workers(&self) {
-        use crate::core::workers::{maybe_scale_up, resume_awaiting_workers};
+        use crate::core::lifecycle::{LifecycleEvent, LifecycleManager, LocalLifecycleManager};
         use tracing::debug;
 
-        // First, try to resume any paused/awaiting workers
-        match resume_awaiting_workers(
-            &self.config.run_name,
-            &self.config.run_dir,
-            &self.config.agent_command,
-        ) {
-            Ok(resumed) => {
-                if !resumed.is_empty() {
-                    debug!("Resumed awaiting workers: {:?}", resumed);
-                }
-            }
-            Err(e) => {
-                debug!("Failed to resume awaiting workers: {}", e);
-            }
+        // In remote mode, coordinator handles this
+        if std::env::var("HIRSEL_API_URL").is_ok() {
+            return;
         }
 
-        // Then, try to scale up if tasks are available
-        match maybe_scale_up(
+        // Local mode - use lifecycle manager
+        if let Ok(lifecycle) = LocalLifecycleManager::new(
             &self.config.run_name,
-            &self.config.run_dir,
-            &self.config.agent_command,
+            self.config.run_dir.clone(),
+            self.config.agent_command.clone(),
         ) {
-            Ok(Some(new_worker)) => {
-                debug!("Scaled up: spawned new worker {}", new_worker);
-            }
-            Ok(None) => {}
-            Err(e) => {
-                debug!("Failed to scale up: {}", e);
+            // Process TaskCompleted event which handles resume and scale up
+            match lifecycle.process_event(LifecycleEvent::TaskCompleted {
+                task_id: String::new(),
+                worker_name: self.config.worker_name.clone(),
+            }) {
+                Ok(actions) => {
+                    for action in actions {
+                        debug!("Lifecycle action: {:?}", action);
+                    }
+                }
+                Err(e) => {
+                    debug!("Failed to process lifecycle event: {}", e);
+                }
             }
         }
     }
@@ -570,14 +566,28 @@ impl WorkerRunner {
     // =========================================================================
 
     /// Signal that worker has no more work to do.
-    /// This sets the worker to Awaiting status. Evaluation is triggered
-    /// by the daemon's lifecycle polling loop when ALL workers become inactive.
+    /// This sets the worker to Awaiting status and may trigger evaluation
+    /// if all workers are inactive.
     pub fn work_done(&self) -> WorkerResult<String> {
-        // Mark worker as awaiting (no work to do)
-        self.set_status(WorkerStatus::Awaiting)?;
+        // In remote mode, just set status - coordinator handles lifecycle
+        if std::env::var("HIRSEL_API_URL").is_ok() {
+            self.set_status(WorkerStatus::Awaiting)?;
+        } else {
+            // In local mode, use LifecycleManager for immediate response
+            use crate::core::lifecycle::{LifecycleManager, LocalLifecycleManager};
 
-        // Note: Lifecycle management (eval triggering) is handled by
-        // the daemon's polling loop, not by individual worker processes
+            // Set status first
+            self.set_status(WorkerStatus::Awaiting)?;
+
+            // Use lifecycle manager to check/trigger eval
+            if let Ok(lifecycle) = LocalLifecycleManager::new(
+                &self.config.run_name,
+                self.config.run_dir.clone(),
+                self.config.agent_command.clone(),
+            ) {
+                let _ = lifecycle.worker_done(&self.config.worker_name);
+            }
+        }
 
         Ok(serde_json::json!({
             "success": true,

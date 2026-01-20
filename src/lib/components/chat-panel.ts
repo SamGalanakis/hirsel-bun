@@ -2,10 +2,10 @@
  * Chat panel Alpine component
  */
 
-import type { ThreadSummary, Message, WorkerDisplay, SheepConfig } from '../types';
-import { formatTimeHHMM, formatDate } from '../utils/formatters';
-import { generateSheepSvg } from '../sheep-avatar';
 import { getIcon } from '../icons';
+import { generateSheepSvg } from '../sheep-avatar';
+import type { Message, SheepConfig, ThreadSummary, WorkerDisplay } from '../types';
+import { formatDate, formatTimeHHMM } from '../utils/formatters';
 
 // Known group chat thread names (user is the channel for workers to message the human)
 const GROUP_CHAT_NAMES = ['user', 'group', 'learnings'];
@@ -21,7 +21,13 @@ const SENDER_COLORS: Record<string, string> = {
 };
 
 // Colors for workers (assigned by hash)
-const WORKER_COLORS = ['text-sage', 'text-sky-400', 'text-pink-400', 'text-purple-400', 'text-golden'];
+const WORKER_COLORS = [
+  'text-sage',
+  'text-sky-400',
+  'text-pink-400',
+  'text-purple-400',
+  'text-golden',
+];
 
 // Get color for a sender (memoized)
 function getSenderColorCached(sender: string): string {
@@ -69,7 +75,9 @@ export function chatPanel() {
         this.onRunSelected(customEvent.detail);
       };
       window.addEventListener('run-selected', runSelectedHandler);
-      this._eventCleanups.push(() => window.removeEventListener('run-selected', runSelectedHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener('run-selected', runSelectedHandler),
+      );
 
       // Listen for deep-link thread selection from notifications
       const selectThreadHandler = (e: Event) => {
@@ -81,18 +89,20 @@ export function chatPanel() {
         }
       };
       window.addEventListener('select-chat-thread', selectThreadHandler);
-      this._eventCleanups.push(() => window.removeEventListener('select-chat-thread', selectThreadHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener('select-chat-thread', selectThreadHandler),
+      );
 
       // Initial load if a run is already selected
       const app = this.getAppState();
-      if (app && app.selectedRun) {
+      if (app?.selectedRun) {
         await this.onRunSelected(app.selectedRun);
       }
     },
 
     destroy() {
       this.stopPolling();
-      this._eventCleanups.forEach(fn => fn());
+      this._eventCleanups.forEach((fn) => fn());
       this._eventCleanups = [];
     },
 
@@ -124,7 +134,7 @@ export function chatPanel() {
     getAppState(): { selectedRun?: string | null; unreadCount?: number } | null {
       // @ts-expect-error Alpine.js $el magic property
       let el = this.$el as HTMLElement;
-      while (el && el.parentElement) {
+      while (el?.parentElement) {
         el = el.parentElement;
         // @ts-expect-error Alpine.js internal property
         if (el._x_dataStack) {
@@ -176,7 +186,7 @@ export function chatPanel() {
         await Promise.all([this.fetchThreads(), this.fetchWorkers()]);
         this._threadPollInterval = setInterval(
           () => Promise.all([this.fetchThreads(), this.fetchWorkers()]),
-          4000
+          4000,
         );
       } finally {
         this._isLoadingRun = false;
@@ -251,7 +261,7 @@ export function chatPanel() {
           });
         }
 
-        const thread = this.threads.find(t => t.name === name);
+        const thread = this.threads.find((t) => t.name === name);
         if (thread) {
           thread.unreadCount = 0;
         }
@@ -354,7 +364,7 @@ export function chatPanel() {
 
     // Get sheep avatar SVG for a worker
     getWorkerAvatar(workerName: string): string {
-      const worker = this.workers.find(w => w.name === workerName);
+      const worker = this.workers.find((w) => w.name === workerName);
       if (worker?.sheepConfig) {
         return generateSheepSvg(worker.sheepConfig, 16);
       }

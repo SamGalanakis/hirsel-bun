@@ -10,7 +10,7 @@ use serde::Serialize;
 use super::{
     AddTaskRequest, CreateRunRequest, CreateRunResponse, DeliverRunRequest, HealthResponse,
     Orchestrator, OrchestratorError, OrchestratorResult, ResumeRunRequest, SendMessageRequest,
-    SpawnWorkersRequest, SpawnWorkersResponse, WorkerLogParams,
+    SpawnWorkersRequest, SpawnWorkersResponse,
 };
 use crate::core::api_types::{
     ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, Task, ThreadSummary,
@@ -314,30 +314,6 @@ impl Orchestrator for RemoteOrchestrator {
             &(),
         )
         .await
-    }
-
-    async fn get_worker_log(
-        &self,
-        run: &str,
-        worker: &str,
-        lines: Option<usize>,
-    ) -> OrchestratorResult<String> {
-        #[derive(serde::Deserialize)]
-        struct LogResponse {
-            content: String,
-        }
-
-        let params = WorkerLogParams { lines };
-        let query = serde_urlencoded::to_string(&params).unwrap_or_default();
-        let path = format!(
-            "/api/runs/{}/workers/{}/log?{}",
-            urlencoding::encode(run),
-            urlencoding::encode(worker),
-            query
-        );
-
-        let resp: LogResponse = self.get(&path).await?;
-        Ok(resp.content)
     }
 
     async fn get_worker_events(

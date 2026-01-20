@@ -2,11 +2,11 @@
  * Run list sidebar Alpine component
  */
 
-import { formatElapsed, formatProgress, formatRelativeTime } from '../utils/formatters';
-import { getStatusBadgeClass, getStatusLabel, getProgressBarClass } from '../utils/status';
-import { createDraft, cloneRun } from '../api';
+import { cloneRun, createDraft } from '../api';
+import { DATA_EVENTS, dataCache } from '../data-cache';
 import type { RunSummary } from '../types';
-import { dataCache, DATA_EVENTS } from '../data-cache';
+import { formatElapsed, formatProgress, formatRelativeTime } from '../utils/formatters';
+import { getProgressBarClass, getStatusBadgeClass, getStatusLabel } from '../utils/status';
 
 declare const Alpine: {
   store: (name: string) => { selectedRun?: string | null } | undefined;
@@ -50,7 +50,14 @@ export function runList() {
      * - Active: shows elapsed time (e.g., "45m")
      */
     getTimeDisplay(run: RunSummary): string {
-      const completedStatuses = ['done', 'delivered', 'merged', 'timed_out', 'eval_failed', 'runaway'];
+      const completedStatuses = [
+        'done',
+        'delivered',
+        'merged',
+        'timed_out',
+        'eval_failed',
+        'runaway',
+      ];
 
       if (run.status === 'draft') {
         return formatRelativeTime(run.createdAt);
@@ -91,10 +98,10 @@ export function runList() {
       if (!limit) return '';
       const remaining = limit - (elapsed || 0);
       if (remaining <= 0) return '⚠ Time up!';
-      if (remaining < 60) return remaining + 'm left';
+      if (remaining < 60) return `${remaining}m left`;
       const h = Math.floor(remaining / 60);
       const m = remaining % 60;
-      return h + 'h' + (m > 0 ? ' ' + m + 'm' : '') + ' left';
+      return `${h}h${m > 0 ? ` ${m}m` : ''} left`;
     },
 
     async init() {
@@ -119,7 +126,9 @@ export function runList() {
         }
       };
       window.addEventListener(DATA_EVENTS.RUNS_UPDATED, runsUpdatedHandler);
-      this._eventCleanups.push(() => window.removeEventListener(DATA_EVENTS.RUNS_UPDATED, runsUpdatedHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener(DATA_EVENTS.RUNS_UPDATED, runsUpdatedHandler),
+      );
 
       // Get initial data from cache
       const cachedRuns = dataCache.getRuns();
@@ -132,11 +141,13 @@ export function runList() {
       const runSelectedHandler = (e: Event) => {
         const customEvent = e as CustomEvent<string | null>;
         this.selectedRun = customEvent.detail;
-        const index = this.runs.findIndex(r => r.name === customEvent.detail);
+        const index = this.runs.findIndex((r) => r.name === customEvent.detail);
         if (index >= 0) this.selectedIndex = index;
       };
       window.addEventListener('run-selected', runSelectedHandler);
-      this._eventCleanups.push(() => window.removeEventListener('run-selected', runSelectedHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener('run-selected', runSelectedHandler),
+      );
 
       // Close context menu on click
       const clickHandler = () => {
@@ -147,7 +158,7 @@ export function runList() {
     },
 
     destroy() {
-      this._eventCleanups.forEach(fn => fn());
+      this._eventCleanups.forEach((fn) => fn());
       this._eventCleanups = [];
       if (this._cacheUnsubscribe) {
         this._cacheUnsubscribe();
@@ -157,7 +168,7 @@ export function runList() {
 
     selectRun(name: string) {
       this.selectedRun = name;
-      this.selectedIndex = this.runs.findIndex(r => r.name === name);
+      this.selectedIndex = this.runs.findIndex((r) => r.name === name);
       if (typeof Alpine !== 'undefined' && Alpine.store && Alpine.store('app')) {
         const store = Alpine.store('app');
         if (store) store.selectedRun = name;
@@ -242,8 +253,9 @@ export function runList() {
       const runToDelete = this.contextMenuRun;
       this.hideContextMenu();
 
-      const confirmed = await window.confirmDialog?.delete(runToDelete, 'run')
-        ?? confirm(`Delete run "${runToDelete}"?`);
+      const confirmed =
+        (await window.confirmDialog?.delete(runToDelete, 'run')) ??
+        confirm(`Delete run "${runToDelete}"?`);
       if (!confirmed) return;
 
       try {
@@ -283,7 +295,7 @@ export function runList() {
     showCloneDialog() {
       if (!this.contextMenuRun) return;
       this.cloneSourceRun = this.contextMenuRun;
-      this.cloneNewName = this.contextMenuRun + '-copy';
+      this.cloneNewName = `${this.contextMenuRun}-copy`;
       this.cloneDialogVisible = true;
       this.hideContextMenu();
 
@@ -330,7 +342,8 @@ export function runList() {
         this.hideCloneDialog();
       } catch (err) {
         // Tauri returns error strings directly, not Error objects
-        const message = typeof err === 'string' ? err : (err as Error).message || 'Failed to clone run';
+        const message =
+          typeof err === 'string' ? err : (err as Error).message || 'Failed to clone run';
         window.toast.error(message, 'Failed to clone run');
         this.cloneLoading = false;
       }
@@ -362,7 +375,7 @@ export function runList() {
      */
     selectRunWithDraft(name: string, status: string) {
       this.selectedRun = name;
-      this.selectedIndex = this.runs.findIndex(r => r.name === name);
+      this.selectedIndex = this.runs.findIndex((r) => r.name === name);
       if (typeof Alpine !== 'undefined' && Alpine.store && Alpine.store('app')) {
         const store = Alpine.store('app');
         if (store) store.selectedRun = name;

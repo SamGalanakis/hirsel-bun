@@ -92,33 +92,3 @@ pub fn kill_process_group(pid: u32, force: bool) {
         let _ = (pid, force); // Suppress unused warnings
     }
 }
-
-/// Check if a process is still running.
-#[cfg(unix)]
-pub fn is_pid_alive(pid: u32) -> bool {
-    unsafe { libc::kill(pid as i32, 0) == 0 }
-}
-
-#[cfg(not(unix))]
-pub fn is_pid_alive(_pid: u32) -> bool {
-    false
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_is_pid_alive_self() {
-        // Our own PID should be alive
-        let pid = std::process::id();
-        assert!(is_pid_alive(pid));
-    }
-
-    #[test]
-    fn test_is_pid_alive_invalid() {
-        // PID 0 is special (kernel), but checking shouldn't panic
-        // A very large PID is unlikely to exist
-        assert!(!is_pid_alive(999999999));
-    }
-}

@@ -1,7 +1,7 @@
-//! Unix socket server for the hirsel daemon
+//! Unix socket and TCP server for the hirsel daemon
 //!
-//! Reuses the existing axum router from core/server/ but binds to a Unix socket
-//! instead of a TCP socket.
+//! Reuses the existing axum router from core/server/ but binds to both a Unix socket
+//! (for local CLI access) and a TCP socket on localhost:19700 (for SSH reverse tunnels).
 
 use anyhow::Result;
 use axum::{
@@ -10,7 +10,7 @@ use axum::{
 };
 use std::path::Path;
 use std::sync::Arc;
-use tokio::net::UnixListener;
+use tokio::net::{TcpListener, UnixListener};
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -20,23 +20,30 @@ use crate::core::server::{gyp, AppState};
 
 use super::lifecycle;
 
+/// Default TCP port for the daemon HTTP server
+pub const DEFAULT_TCP_PORT: u16 = 19700;
+
 /// Daemon configuration
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
     /// Idle timeout in seconds (daemon exits if no active runs for this long)
     /// Set to 0 to disable auto-exit
     pub idle_timeout_secs: u64,
+    /// TCP port for HTTP access (for SSH reverse tunnels)
+    /// Set to 0 to disable TCP listener
+    pub tcp_port: u16,
 }
 
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
             idle_timeout_secs: 300, // 5 minutes
+            tcp_port: DEFAULT_TCP_PORT,
         }
     }
 }
 
-/// Start the daemon server on a Unix socket
+/// Start the daemon server on both Unix socket and TCP
 pub async fn start_daemon(config: DaemonConfig) -> Result<()> {
     let socket_path = super::socket_path();
     let pid_path = super::pid_path();
@@ -86,41 +93,82 @@ pub async fn start_daemon(config: DaemonConfig) -> Result<()> {
         lifecycle::run_polling_loop(lifecycle_state, daemon_config).await;
     });
 
-    // Build router (same routes as core/server but no auth for local socket)
+    // Build router (same routes as core/server but no auth for local daemon)
     let gyp_state = Arc::new(gyp::GypState::new());
     let router = build_router(state, gyp_state);
 
     // Bind to Unix socket
-    let listener = UnixListener::bind(&socket_path)?;
+    let unix_listener = UnixListener::bind(&socket_path)?;
     tracing::info!(
         "[Daemon] Listening on Unix socket: {}",
         socket_path.display()
     );
     tracing::info!("[Daemon] PID: {}", pid);
 
-    // Serve requests
-    loop {
-        match listener.accept().await {
-            Ok((stream, _addr)) => {
-                let router = router.clone();
-                tokio::spawn(async move {
-                    let io = hyper_util::rt::TokioIo::new(stream);
-                    let service =
-                        hyper_util::service::TowerToHyperService::new(router.into_service());
-                    if let Err(e) = hyper_util::server::conn::auto::Builder::new(
-                        hyper_util::rt::TokioExecutor::new(),
-                    )
-                    .serve_connection(io, service)
-                    .await
-                    {
-                        tracing::warn!("[Daemon] Connection error: {}", e);
-                    }
-                });
-            }
-            Err(e) => {
-                tracing::warn!("[Daemon] Accept error: {}", e);
+    // Spawn Unix socket accept loop
+    let unix_router = router.clone();
+    tokio::spawn(async move {
+        loop {
+            match unix_listener.accept().await {
+                Ok((stream, _addr)) => {
+                    let router = unix_router.clone();
+                    tokio::spawn(async move {
+                        let io = hyper_util::rt::TokioIo::new(stream);
+                        let service =
+                            hyper_util::service::TowerToHyperService::new(router.into_service());
+                        if let Err(e) = hyper_util::server::conn::auto::Builder::new(
+                            hyper_util::rt::TokioExecutor::new(),
+                        )
+                        .serve_connection(io, service)
+                        .await
+                        {
+                            tracing::warn!("[Daemon] Unix socket connection error: {}", e);
+                        }
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!("[Daemon] Unix socket accept error: {}", e);
+                }
             }
         }
+    });
+
+    // Bind to TCP port if enabled
+    if config.tcp_port > 0 {
+        let tcp_addr = format!("127.0.0.1:{}", config.tcp_port);
+        let tcp_listener = TcpListener::bind(&tcp_addr).await?;
+        tracing::info!("[Daemon] Listening on TCP: {}", tcp_addr);
+
+        // TCP accept loop (main loop)
+        loop {
+            match tcp_listener.accept().await {
+                Ok((stream, addr)) => {
+                    let router = router.clone();
+                    tokio::spawn(async move {
+                        tracing::debug!("[Daemon] TCP connection from {}", addr);
+                        let io = hyper_util::rt::TokioIo::new(stream);
+                        let service =
+                            hyper_util::service::TowerToHyperService::new(router.into_service());
+                        if let Err(e) = hyper_util::server::conn::auto::Builder::new(
+                            hyper_util::rt::TokioExecutor::new(),
+                        )
+                        .serve_connection(io, service)
+                        .await
+                        {
+                            tracing::warn!("[Daemon] TCP connection error: {}", e);
+                        }
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!("[Daemon] TCP accept error: {}", e);
+                }
+            }
+        }
+    } else {
+        // No TCP, just wait forever (Unix socket loop is in background task)
+        tracing::info!("[Daemon] TCP listener disabled");
+        std::future::pending::<()>().await;
+        Ok(())
     }
 }
 
@@ -169,10 +217,6 @@ fn build_router(state: Arc<AppState>, gyp_state: Arc<gyp::GypState>) -> Router {
         .route(
             "/api/runs/{name}/workers/{worker}/restart",
             post(routes::restart_worker),
-        )
-        .route(
-            "/api/runs/{name}/workers/{worker}/log",
-            get(routes::get_worker_log),
         )
         .route(
             "/api/runs/{name}/workers/{worker}/events",
@@ -243,6 +287,7 @@ use serde::Serialize;
 struct DaemonStatus {
     running: bool,
     pid: u32,
+    tcp_port: u16,
     uptime_secs: u64,
     active_runs: usize,
 }
@@ -277,6 +322,7 @@ async fn daemon_status(State(state): State<Arc<AppState>>) -> Json<DaemonStatus>
     Json(DaemonStatus {
         running: true,
         pid: std::process::id(),
+        tcp_port: DEFAULT_TCP_PORT,
         uptime_secs,
         active_runs,
     })

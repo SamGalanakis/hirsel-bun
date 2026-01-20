@@ -39,11 +39,7 @@ export interface SpriteHostConfig {
 }
 
 /** Host configuration - where workers run */
-export type HostConfig =
-  | { type: 'local' }
-  | { type: 'client' }
-  | SshHostConfig
-  | SpriteHostConfig;
+export type HostConfig = { type: 'local' } | { type: 'client' } | SshHostConfig | SpriteHostConfig;
 
 /** Runner configuration - Host + optional Container */
 export interface RunnerConfig {
@@ -69,14 +65,16 @@ export type RunStatus =
   | 'failed'
   | 'eval'
   | 'done'
-  | 'delivered';
+  | 'delivered'
+  | 'waiting'
+  | 'merged'
+  | 'idle'
+  | 'runaway'
+  | 'timed_out'
+  | 'eval_failed';
 
 /** Failure reason values (only meaningful when status is 'failed') */
-export type FailureReason =
-  | 'iteration_limit'
-  | 'time_limit'
-  | 'eval_failed'
-  | 'manual';
+export type FailureReason = 'iteration_limit' | 'time_limit' | 'eval_failed' | 'manual';
 
 /** Summary of a run for the run list panel */
 export interface RunSummary {
@@ -219,7 +217,7 @@ export interface TaskDisplay extends Task {
 // =============================================================================
 
 /** Worker status values */
-export type WorkerStatus = 'working' | 'awaiting' | 'paused' | 'error';
+export type WorkerStatus = 'idle' | 'working' | 'waiting' | 'awaiting' | 'paused' | 'error';
 
 /** Worker location */
 export type WorkerLocation = 'local' | 'remote';
@@ -506,6 +504,12 @@ export const STATUS_COLORS: Record<RunStatus, string> = {
   eval: 'amber-400',
   done: 'sage',
   delivered: 'sage',
+  waiting: 'golden',
+  merged: 'sage',
+  idle: 'wool-500',
+  runaway: 'terra',
+  timed_out: 'terra',
+  eval_failed: 'terra',
 };
 
 /** Task status icons */
@@ -517,7 +521,9 @@ export const TASK_ICONS: Record<TaskStatus, string> = {
 
 /** Worker status icons */
 export const WORKER_ICONS: Record<WorkerStatus, string> = {
+  idle: '\u25cb', // ○
   working: '\u25cf', // ●
+  waiting: '\u25d4', // ◔
   awaiting: '\u25cc', // ◌
   paused: '\u23f8', // ⏸
   error: '\u2717', // ✗
@@ -527,20 +533,12 @@ export const WORKER_ICONS: Record<WorkerStatus, string> = {
 // Worker Log Types
 // =============================================================================
 
-/** Response for worker log content */
+/** Response for log content (used by eval logs) */
 export interface WorkerLogResponse {
   content: string;
   byteOffset: number;
   fileSize: number;
   exists: boolean;
-}
-
-/** Parsed log line with tool activity info */
-export interface ParsedLogLine {
-  text: string;
-  isToolStart: boolean;
-  isToolEnd: boolean;
-  toolName: string | null;
 }
 
 // =============================================================================
@@ -785,7 +783,7 @@ export interface ConfirmDialogAPI {
 }
 
 // Shortcut types for global functions
-import type { ShortcutConfig, ShortcutBinding } from './shortcuts';
+import type { ShortcutBinding, ShortcutConfig } from './shortcuts';
 
 /** Extend the global Window interface */
 declare global {
@@ -795,7 +793,9 @@ declare global {
 
     // Tauri APIs
     tauriInvoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-    tauriGetCurrentWindow: () => ReturnType<typeof import('@tauri-apps/api/window').getCurrentWindow>;
+    tauriGetCurrentWindow: () => ReturnType<
+      typeof import('@tauri-apps/api/window').getCurrentWindow
+    >;
 
     // Icon utilities
     getIcon: (name: string) => string;
@@ -804,35 +804,43 @@ declare global {
     getWorkerStatusIcon: (status: string) => string;
 
     // Sheep avatar utilities
-    generateSheepSvg: (config: SheepConfig) => string;
-    getWorkerSheepSvg: (workerName: string) => string;
+    generateSheepSvg: (
+      config: SheepConfig,
+      size?: number,
+      statusOrOptions?: WorkerStatus | { woolColor?: string; status?: WorkerStatus },
+    ) => string;
+    getWorkerSheepSvg: (
+      worker: { sheepConfig: SheepConfig; status?: WorkerStatus },
+      size?: number,
+    ) => string;
     getHatName: (hatIndex: number) => string;
-    generateAgentSheepSvg: () => string;
+    generateAgentSheepSvg: (size?: number) => string;
 
     // Keyboard shortcuts utilities
     getShortcuts: () => ShortcutConfig[];
     formatBinding: (binding: ShortcutBinding) => string;
 
     // Alpine components (functions that return component data)
-    appState: () => Record<string, unknown>;
-    runList: () => Record<string, unknown>;
-    runDetail: () => Record<string, unknown>;
-    draftEditor: () => Record<string, unknown>;
-    workerPanel: () => Record<string, unknown>;
-    taskPanel: () => Record<string, unknown>;
-    activityLog: () => Record<string, unknown>;
-    chatPanel: () => Record<string, unknown>;
-    directChat: () => Record<string, unknown>;
-    permissionModal: () => Record<string, unknown>;
-    notifications: () => Record<string, unknown>;
-    tasksTab: () => Record<string, unknown>;
-    sheepClickerGame: () => Record<string, unknown>;
-    settingsModal: () => Record<string, unknown>;
-    aiMessageStream: () => Record<string, unknown>;
-    workerOutputViewer: () => Record<string, unknown>;
-    sortToggle: () => Record<string, unknown>;
-    sortButton: () => Record<string, unknown>;
-    debugPanel: () => Record<string, unknown>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    appState: () => any;
+    runList: () => any;
+    runDetail: () => any;
+    draftEditor: () => any;
+    workerPanel: () => any;
+    taskPanel: () => any;
+    activityLog: () => any;
+    chatPanel: () => any;
+    directChat: () => any;
+    permissionModal: () => any;
+    notifications: () => any;
+    tasksTab: () => any;
+    sheepClickerGame: () => any;
+    settingsModal: () => any;
+    aiMessageStream: () => any;
+    workerOutputViewer: () => any;
+    sortToggle: () => any;
+    sortButton: () => any;
+    debugPanel: () => any;
 
     // UI utilities
     toast: ToastAPI;

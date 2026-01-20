@@ -63,11 +63,7 @@ export interface SpriteHostConfig {
   useFilePush: boolean;
 }
 
-export type HostConfig =
-  | { type: 'local' }
-  | { type: 'client' }
-  | SshHostConfig
-  | SpriteHostConfig;
+export type HostConfig = { type: 'local' } | { type: 'client' } | SshHostConfig | SpriteHostConfig;
 
 // Runner config (Host + optional Container)
 export interface RunnerConfig {

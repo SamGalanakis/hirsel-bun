@@ -18,7 +18,7 @@ use crate::core::api_types::{
 use crate::core::orchestrator::{
     AddTaskRequest, CreateRunRequest, CreateRunResponse, DeliverRunRequest, HealthResponse,
     Orchestrator, OrchestratorError, ResumeRunRequest, SendMessageRequest, SpawnWorkersRequest,
-    SpawnWorkersResponse, WorkerLogParams,
+    SpawnWorkersResponse,
 };
 
 /// Convert OrchestratorError to HTTP response
@@ -238,23 +238,6 @@ pub async fn restart_worker(
 ) -> Result<StatusCode> {
     state.orchestrator.restart_worker(&name, &worker).await?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-#[derive(Serialize)]
-pub struct LogResponse {
-    content: String,
-}
-
-pub async fn get_worker_log(
-    State(state): State<Arc<AppState>>,
-    Path((name, worker)): Path<(String, String)>,
-    Query(params): Query<WorkerLogParams>,
-) -> Result<Json<LogResponse>> {
-    let content = state
-        .orchestrator
-        .get_worker_log(&name, &worker, params.lines)
-        .await?;
-    Ok(Json(LogResponse { content }))
 }
 
 #[derive(Deserialize)]

@@ -17,6 +17,8 @@ impl SQLiteState {
             id: row.get("id")?,
             name: row.get("name")?,
             pid: row.get("pid")?,
+            runner_id: row.get("runner_id")?,
+            runner_type: row.get("runner_type")?,
             session_id: row.get("session_id")?,
             session_started_at: row.get("session_started_at")?,
             status: WorkerStatus::from_str(&row.get::<_, String>("status")?)
@@ -64,7 +66,7 @@ impl SQLiteState {
     /// Get a worker by name
     pub fn get_worker(&self, name: &str) -> StateResult<Option<Worker>> {
         let result = self.db.query_row(
-            "SELECT id, name, pid, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting FROM workers WHERE name = ?1",
+            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting FROM workers WHERE name = ?1",
             params![name],
             Self::worker_from_row,
         );
@@ -78,7 +80,7 @@ impl SQLiteState {
     /// Get all workers
     pub fn get_workers(&self) -> StateResult<Vec<Worker>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, pid, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting FROM workers ORDER BY id"
+            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting FROM workers ORDER BY id"
         )?;
         let workers = stmt
             .query_map([], Self::worker_from_row)?
@@ -89,7 +91,7 @@ impl SQLiteState {
     /// Get active workers (not awaiting or error)
     pub fn get_active_workers(&self) -> StateResult<Vec<Worker>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, pid, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting FROM workers WHERE status NOT IN (?1, ?2) ORDER BY id"
+            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting FROM workers WHERE status NOT IN (?1, ?2) ORDER BY id"
         )?;
         let workers = stmt
             .query_map(
@@ -111,6 +113,14 @@ impl SQLiteState {
         if let Some(pid) = updates.pid {
             set_clauses.push("pid = ?");
             params_vec.push(Box::new(pid));
+        }
+        if let Some(runner_id) = &updates.runner_id {
+            set_clauses.push("runner_id = ?");
+            params_vec.push(Box::new(runner_id.clone()));
+        }
+        if let Some(runner_type) = &updates.runner_type {
+            set_clauses.push("runner_type = ?");
+            params_vec.push(Box::new(runner_type.clone()));
         }
         if let Some(session_id) = &updates.session_id {
             set_clauses.push("session_id = ?");
@@ -237,7 +247,7 @@ impl SQLiteState {
     /// Get workers waiting for HITL input
     pub fn get_hitl_waiting_workers(&self) -> StateResult<Vec<Worker>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, pid, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting FROM workers WHERE hitl_waiting = 1 ORDER BY id"
+            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting FROM workers WHERE hitl_waiting = 1 ORDER BY id"
         )?;
         let workers = stmt
             .query_map([], Self::worker_from_row)?

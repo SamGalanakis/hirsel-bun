@@ -266,6 +266,38 @@ pub fn get_available_names(count: u32, used: &[String]) -> Vec<String> {
     result
 }
 
+// =============================================================================
+// Slugify
+// =============================================================================
+
+/// Convert a string to a URL-safe slug (lowercase, alphanumeric, dashes)
+///
+/// - Converts to lowercase
+/// - Replaces non-alphanumeric characters with dashes
+/// - Collapses consecutive dashes
+/// - Removes leading/trailing dashes
+pub fn slugify(name: &str) -> String {
+    let mut slug = String::new();
+    let mut last_was_separator = false;
+
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+            last_was_separator = false;
+        } else if !last_was_separator && !slug.is_empty() {
+            slug.push('-');
+            last_was_separator = true;
+        }
+    }
+
+    // Remove trailing dash
+    if slug.ends_with('-') {
+        slug.pop();
+    }
+
+    slug
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,5 +337,15 @@ mod tests {
         let name1 = generate_worker_name_seeded(12345);
         let name2 = generate_worker_name_seeded(12345);
         assert_eq!(name1, name2);
+    }
+
+    #[test]
+    fn test_slugify() {
+        assert_eq!(slugify("My Cool Run"), "my-cool-run");
+        assert_eq!(slugify("test_run_123"), "test-run-123");
+        assert_eq!(slugify("  spaces  "), "spaces");
+        assert_eq!(slugify("CamelCase"), "camelcase");
+        assert_eq!(slugify("multiple---dashes"), "multiple-dashes");
+        assert_eq!(slugify("UPPER"), "upper");
     }
 }

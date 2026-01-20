@@ -167,17 +167,6 @@ fn extract_tarball(data: &[u8], work_dir: &PathBuf) -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-/// Extract a plain tarball (no compression)
-#[allow(dead_code)]
-fn extract_tar(data: &[u8], work_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    std::fs::create_dir_all(work_dir)?;
-
-    let mut archive = Archive::new(data);
-    archive.unpack(work_dir)?;
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

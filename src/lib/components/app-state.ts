@@ -2,11 +2,23 @@
  * Main application state Alpine component
  */
 
+import {
+  type ShortcutAction,
+  type ShortcutConfig,
+  findMatchingAction,
+  getShortcuts,
+} from '../shortcuts';
+import {
+  THEMES,
+  type ThemeId,
+  getTheme,
+  isDarkTheme,
+  setTheme,
+  toggleTheme as themeToggle,
+} from '../theme';
+import type { RunDetail, VersionInfo } from '../types';
 import { formatElapsed, formatTimeRemaining, formatTimeShort } from '../utils/formatters';
 import { getStatusBadgeClass, getStatusDotClass } from '../utils/status';
-import { getTheme, setTheme, toggleTheme as themeToggle, isDarkTheme, THEMES, type ThemeId } from '../theme';
-import { getShortcuts, findMatchingAction, type ShortcutConfig, type ShortcutAction } from '../shortcuts';
-import type { RunDetail, VersionInfo } from '../types';
 
 /**
  * Main app state component
@@ -77,14 +89,18 @@ export function appState() {
         this.isDarkTheme = e.detail.theme.isDark;
       }) as EventListener;
       window.addEventListener('theme-changed', themeChangedHandler);
-      this._eventCleanups.push(() => window.removeEventListener('theme-changed', themeChangedHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener('theme-changed', themeChangedHandler),
+      );
 
       // Listen for close-settings event
       const closeSettingsHandler = () => {
         this.showSettings = false;
       };
       window.addEventListener('close-settings', closeSettingsHandler);
-      this._eventCleanups.push(() => window.removeEventListener('close-settings', closeSettingsHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener('close-settings', closeSettingsHandler),
+      );
     },
 
     // Formatting helpers (bound to this for templates)
@@ -145,33 +161,44 @@ export function appState() {
       if (!this.selectedRun || !window.tauriInvoke) return;
 
       // Check if we're on evals tab with a selected eval
-      const runDetailEl = document.querySelector('[x-data*="runDetail"]') as HTMLElement & { _x_dataStack?: Array<{ selectedEval: { evalName: string } | null; activeTab: string }> };
+      const runDetailEl = document.querySelector('[x-data*="runDetail"]') as HTMLElement & {
+        _x_dataStack?: Array<{ selectedEval: { evalName: string } | null; activeTab: string }>;
+      };
       if (runDetailEl?._x_dataStack?.[0]) {
         const runDetailData = runDetailEl._x_dataStack[0];
         if (runDetailData.activeTab === 'evals' && runDetailData.selectedEval) {
-          window.dispatchEvent(new CustomEvent('show-worker-output', {
-            detail: {
-              runName: this.selectedRun,
-              workerName: runDetailData.selectedEval.evalName,
-            },
-          }));
+          window.dispatchEvent(
+            new CustomEvent('show-worker-output', {
+              detail: {
+                runName: this.selectedRun,
+                workerName: runDetailData.selectedEval.evalName,
+              },
+            }),
+          );
           return;
         }
       }
 
       // Check if we're on overview with a highlighted or selected worker in the panel
-      const workerPanelEl = document.querySelector('[x-data*="workerPanel"]') as HTMLElement & { _x_dataStack?: Array<{ highlightedWorker: string | null; selectedWorker: { name: string } | null }> };
+      const workerPanelEl = document.querySelector('[x-data*="workerPanel"]') as HTMLElement & {
+        _x_dataStack?: Array<{
+          highlightedWorker: string | null;
+          selectedWorker: { name: string } | null;
+        }>;
+      };
       if (workerPanelEl?._x_dataStack?.[0]) {
         const panelData = workerPanelEl._x_dataStack[0];
         // Prefer highlighted worker (single-click selection), then fall back to modal selection
         const workerName = panelData.highlightedWorker || panelData.selectedWorker?.name;
         if (workerName) {
-          window.dispatchEvent(new CustomEvent('show-worker-output', {
-            detail: {
-              runName: this.selectedRun,
-              workerName,
-            },
-          }));
+          window.dispatchEvent(
+            new CustomEvent('show-worker-output', {
+              detail: {
+                runName: this.selectedRun,
+                workerName,
+              },
+            }),
+          );
           return;
         }
       }
@@ -185,8 +212,12 @@ export function appState() {
 
       try {
         const [workers, evals] = await Promise.all([
-          window.tauriInvoke<Array<{ name: string; status: string }>>('get_workers', { runName: this.selectedRun }),
-          window.tauriInvoke<Array<{ id: number; evalName: string; status: string }>>('get_evals', { runName: this.selectedRun }),
+          window.tauriInvoke<Array<{ name: string; status: string }>>('get_workers', {
+            runName: this.selectedRun,
+          }),
+          window.tauriInvoke<Array<{ id: number; evalName: string; status: string }>>('get_evals', {
+            runName: this.selectedRun,
+          }),
         ]);
 
         const workerList = workers || [];
@@ -222,12 +253,14 @@ export function appState() {
 
     attachToTarget(type: 'worker' | 'eval', name: string) {
       if (!this.selectedRun) return;
-      window.dispatchEvent(new CustomEvent('show-worker-output', {
-        detail: {
-          runName: this.selectedRun,
-          workerName: name,
-        },
-      }));
+      window.dispatchEvent(
+        new CustomEvent('show-worker-output', {
+          detail: {
+            runName: this.selectedRun,
+            workerName: name,
+          },
+        }),
+      );
       this.closeAttachPicker();
     },
 
@@ -327,7 +360,9 @@ export function appState() {
         }
       };
       window.addEventListener('run-selected', runSelectedHandler);
-      this._eventCleanups.push(() => window.removeEventListener('run-selected', runSelectedHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener('run-selected', runSelectedHandler),
+      );
 
       // Load keyboard shortcuts
       this._shortcuts = getShortcuts();
@@ -337,7 +372,9 @@ export function appState() {
         this._shortcuts = getShortcuts();
       };
       window.addEventListener('shortcuts-changed', shortcutsChangedHandler);
-      this._eventCleanups.push(() => window.removeEventListener('shortcuts-changed', shortcutsChangedHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener('shortcuts-changed', shortcutsChangedHandler),
+      );
 
       // Keyboard shortcuts handler
       const keydownHandler = (e: KeyboardEvent) => {
@@ -356,7 +393,7 @@ export function appState() {
     },
 
     destroy() {
-      this._eventCleanups.forEach(fn => fn());
+      this._eventCleanups.forEach((fn) => fn());
       this._eventCleanups = [];
     },
   };

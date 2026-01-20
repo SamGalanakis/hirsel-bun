@@ -92,10 +92,6 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
             post(routes::restart_worker),
         )
         .route(
-            "/api/runs/{name}/workers/{worker}/log",
-            get(routes::get_worker_log),
-        )
-        .route(
             "/api/runs/{name}/workers/{worker}/events",
             get(routes::get_worker_events),
         )

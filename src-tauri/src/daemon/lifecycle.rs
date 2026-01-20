@@ -13,10 +13,10 @@ use tokio::time::interval;
 
 use crate::core::api_types::RunStatus;
 use crate::core::config;
+use crate::core::lifecycle::{LifecycleEvent, LifecycleManager, LocalLifecycleManager};
 use crate::core::orchestrator::Orchestrator;
 use crate::core::server::AppState;
-use crate::core::state::{SQLiteState, Status};
-use crate::core::workers;
+use crate::core::state::Status;
 use crate::core::Files;
 
 use super::server::DaemonConfig;
@@ -50,7 +50,7 @@ pub async fn run_polling_loop(state: Arc<AppState>, config: DaemonConfig) {
                 has_active_runs = true;
                 last_active = Instant::now();
 
-                // Process active run (sync operations only)
+                // Process active run using LifecycleManager
                 if let Err(e) = process_active_run(&run.name) {
                     tracing::warn!("[Daemon] Error processing run '{}': {}", run.name, e);
                 }
@@ -73,7 +73,7 @@ pub async fn run_polling_loop(state: Arc<AppState>, config: DaemonConfig) {
     }
 }
 
-/// Process an active run (sync operations only)
+/// Process an active run using LifecycleManager
 fn process_active_run(run_name: &str) -> anyhow::Result<()> {
     let run_dir = config::run_dir(run_name);
     let files = Files::new(&run_dir);
@@ -83,123 +83,56 @@ fn process_active_run(run_name: &str) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let sqlite_state = SQLiteState::new(db_path)?;
-
-    // Check run status
-    let status = sqlite_state.status()?;
-
-    match status {
-        Status::Working => {
-            // Check time limit
-            check_time_limit(run_name, &sqlite_state)?;
-
-            // Check if eval should be triggered
-            check_eval_trigger(run_name, &run_dir, &sqlite_state)?;
-
-            // Check if we should scale up
-            check_scale_up(run_name, &run_dir)?;
-
-            // Note: compaction is handled via subprocess spawning in workers.rs
-            // and doesn't need to be triggered here
-        }
-        Status::Eval => {
-            // Check time limit even during eval
-            check_time_limit(run_name, &sqlite_state)?;
-        }
-        _ => {}
-    }
-
-    Ok(())
-}
-
-/// Check and enforce time limit
-fn check_time_limit(run_name: &str, state: &SQLiteState) -> anyhow::Result<()> {
-    let time_limit_minutes = state.get_time_limit_minutes()?;
-
-    if let Some(limit) = time_limit_minutes {
-        if let Some(started_at_str) = state.get_started_at()? {
-            // Parse the ISO timestamp
-            if let Ok(started_at) = chrono::DateTime::parse_from_rfc3339(&started_at_str) {
-                let elapsed_minutes =
-                    (chrono::Utc::now() - started_at.with_timezone(&chrono::Utc)).num_minutes();
-
-                if elapsed_minutes >= limit {
-                    tracing::info!(
-                        "[Daemon] Run '{}' exceeded time limit ({} >= {} minutes), pausing",
-                        run_name,
-                        elapsed_minutes,
-                        limit
-                    );
-
-                    // Pause the run
-                    workers::pause_all_workers(state)?;
-                    state.set_status(Status::Paused)?;
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Check if eval should be triggered
-fn check_eval_trigger(
-    run_name: &str,
-    run_dir: &std::path::Path,
-    state: &SQLiteState,
-) -> anyhow::Result<()> {
-    // Check if all workers are inactive
-    let workers = state.get_workers()?;
-    let all_inactive = workers
-        .iter()
-        .all(|w| !matches!(w.status.as_str(), "Working" | "working"));
-
-    if all_inactive && !workers.is_empty() {
-        tracing::debug!(
-            "[Daemon] All workers inactive for run '{}', checking eval",
-            run_name
-        );
-
-        // Use existing maybe_trigger_eval logic
-        match workers::maybe_trigger_eval(run_name, run_dir) {
-            Ok(triggered) => {
-                if triggered {
-                    tracing::info!("[Daemon] Triggered eval for run '{}'", run_name);
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "[Daemon] Failed to check/trigger eval for '{}': {}",
-                    run_name,
-                    e
-                );
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Check if workers should scale up
-fn check_scale_up(run_name: &str, run_dir: &std::path::Path) -> anyhow::Result<()> {
     // Get agent command from config
     let agent_command = crate::cli::config::get_agent_command();
 
-    // Try to scale up
-    match workers::maybe_scale_up(run_name, run_dir, &agent_command) {
-        Ok(Some(new_worker)) => {
-            tracing::info!(
-                "[Daemon] Scaled up run '{}' with new worker '{}'",
-                run_name,
-                new_worker
-            );
-        }
-        Ok(None) => {
-            // No scaling needed
-        }
+    // Create lifecycle manager
+    let lifecycle = match LocalLifecycleManager::new(run_name, run_dir, agent_command) {
+        Ok(lm) => lm,
         Err(e) => {
-            tracing::debug!("[Daemon] Scale up check for '{}': {}", run_name, e);
+            tracing::warn!(
+                "[Daemon] Failed to create lifecycle manager for '{}': {}",
+                run_name,
+                e
+            );
+            return Ok(());
         }
+    };
+
+    // Check run status
+    let status = lifecycle.run_status().unwrap_or(Status::Draft);
+
+    match status {
+        Status::Working => {
+            // Process TimeCheck event - handles time limit, eval triggering, and scaling
+            match lifecycle.process_event(LifecycleEvent::TimeCheck) {
+                Ok(actions) => {
+                    for action in actions {
+                        tracing::debug!("[Daemon] Run '{}' action: {:?}", run_name, action);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "[Daemon] Failed to process TimeCheck for '{}': {}",
+                        run_name,
+                        e
+                    );
+                }
+            }
+        }
+        Status::Eval => {
+            // Check time limit even during eval
+            if lifecycle.state().is_time_expired()? {
+                if let Err(e) = lifecycle.handle_time_expired() {
+                    tracing::warn!(
+                        "[Daemon] Failed to handle time expired for '{}': {}",
+                        run_name,
+                        e
+                    );
+                }
+            }
+        }
+        _ => {}
     }
 
     Ok(())

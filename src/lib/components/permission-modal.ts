@@ -61,7 +61,7 @@ export function permissionModal() {
       if (this.permission && this._resolveCallback) {
         // Find a deny/skip option
         const denyOption = this.permission.options.find(
-          (o) => o.kind !== 'AllowAlways' && o.kind !== 'AllowOnce'
+          (o) => o.kind !== 'AllowAlways' && o.kind !== 'AllowOnce',
         );
         const optionId = denyOption?.optionId || this.permission.options[0]?.optionId || 'deny';
         this._resolveCallback(optionId);
@@ -77,10 +77,10 @@ export function permissionModal() {
      */
     getOptionIcon(kind: string): string {
       const icons: Record<string, string> = {
-        AllowOnce: '\u2713',      // ✓
+        AllowOnce: '\u2713', // ✓
         AllowAlways: '\u2713\u2713', // ✓✓
-        Deny: '\u2717',           // ✗
-        Skip: '\u27A1',           // ➡
+        Deny: '\u2717', // ✗
+        Skip: '\u27A1', // ➡
       };
       return icons[kind] || '';
     },

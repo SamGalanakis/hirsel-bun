@@ -5,27 +5,47 @@
  * Provides controls for spec, worker scale, time limit, HITL mode, and project path.
  */
 
-import { createDraft, updateDraft, startDraft, deleteRun, getRunDetail, readSpecFile, writeSpecFile, readEvalFile, writeEvalFile, validateRepo, initProjectRepo, openAssetsFolder, getAssetsPath } from '../../api';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { RunDetail, DraftUpdateRequest, RepoValidation, RunnerConfig, RunnerEntry } from '../../types';
-import { marked } from 'marked';
+import { type UnlistenFn, listen } from '@tauri-apps/api/event';
 import DOMPurify from 'dompurify';
+import { marked } from 'marked';
+import {
+  createDraft,
+  deleteRun,
+  getAssetsPath,
+  getRunDetail,
+  initProjectRepo,
+  openAssetsFolder,
+  readEvalFile,
+  readSpecFile,
+  startDraft,
+  updateDraft,
+  validateRepo,
+  writeEvalFile,
+  writeSpecFile,
+} from '../../api';
 import { showConfirm } from '../../confirm-dialog';
+import type {
+  DraftUpdateRequest,
+  RepoValidation,
+  RunDetail,
+  RunnerConfig,
+  RunnerEntry,
+} from '../../types';
 
-// Import extracted utilities
 import {
-  parseTimeLimit,
-  validateWorkerScale as validateWorkerScaleUtil,
-  formatTimeLimitDisplay,
-} from './validation';
-import {
-  processDroppedFile,
-  processNativeFilePath,
   calculateInsertPosition,
   insertAtPosition,
+  processDroppedFile,
+  processNativeFilePath,
 } from './file-handling';
-import type { DraftEditorData, DraftEditorComponent } from './types';
+import type { DraftEditorComponent, DraftEditorData } from './types';
+// Import extracted utilities
+import {
+  formatTimeLimitDisplay,
+  parseTimeLimit,
+  validateWorkerScale as validateWorkerScaleUtil,
+} from './validation';
 
 // Re-export types and utilities for external use
 export * from './types';
@@ -127,9 +147,12 @@ export function draftEditor(): DraftEditorComponent {
       }) as EventListener);
 
       // Listen for Tauri native file drop events
-      listen<{ paths: string[]; position: { x: number; y: number } }>('tauri://drag-drop', (event) => {
-        this.handleNativeFileDrop(event.payload.paths, event.payload.position);
-      }).then((unlisten) => {
+      listen<{ paths: string[]; position: { x: number; y: number } }>(
+        'tauri://drag-drop',
+        (event) => {
+          this.handleNativeFileDrop(event.payload.paths, event.payload.position);
+        },
+      ).then((unlisten) => {
         this._unlistenDragDrop = unlisten;
       });
 
@@ -208,9 +231,7 @@ export function draftEditor(): DraftEditorComponent {
         }>('get_config');
 
         // Build runner list with "Local" always first
-        const runners: RunnerEntry[] = [
-          { name: 'local', config: { type: 'local' } }
-        ];
+        const runners: RunnerEntry[] = [{ name: 'local', config: { host: { type: 'local' } } }];
 
         // Add configured runners
         for (const [name, runnerConfig] of Object.entries(config.runners || {})) {
@@ -239,9 +260,9 @@ export function draftEditor(): DraftEditorComponent {
       // Handle range format "min-max" or single number
       if (scale.includes('-')) {
         const parts = scale.split('-');
-        maxWorkers = parseInt(parts[1], 10) || 1;
+        maxWorkers = Number.parseInt(parts[1], 10) || 1;
       } else {
-        maxWorkers = parseInt(scale, 10) || 1;
+        maxWorkers = Number.parseInt(scale, 10) || 1;
       }
 
       // Generate worker names
@@ -295,11 +316,16 @@ export function draftEditor(): DraftEditorComponent {
       if (!runner) return 'laptop';
       const hostType = runner.config.host.type;
       switch (hostType) {
-        case 'local': return 'laptop';
-        case 'client': return 'monitor';
-        case 'ssh': return 'server';
-        case 'sprite': return 'cloud';
-        default: return 'laptop';
+        case 'local':
+          return 'laptop';
+        case 'client':
+          return 'monitor';
+        case 'ssh':
+          return 'server';
+        case 'sprite':
+          return 'cloud';
+        default:
+          return 'laptop';
       }
     },
 
@@ -542,7 +568,8 @@ export function draftEditor(): DraftEditorComponent {
           humanInTheLoop: this.humanInTheLoop,
           projectPath: this.projectPath || undefined,
           runner: this.runnerDefault || undefined,
-          workerRunners: Object.keys(this.workerRunners).length > 0 ? this.workerRunners : undefined,
+          workerRunners:
+            Object.keys(this.workerRunners).length > 0 ? this.workerRunners : undefined,
         };
 
         // Remove undefined values
@@ -683,8 +710,9 @@ export function draftEditor(): DraftEditorComponent {
     async deleteDraft(): Promise<void> {
       if (!this.runName) return;
 
-      const confirmed = await window.confirmDialog?.delete(this.name, 'draft')
-        ?? confirm(`Delete draft "${this.name}"? This cannot be undone.`);
+      const confirmed =
+        (await window.confirmDialog?.delete(this.name, 'draft')) ??
+        confirm(`Delete draft "${this.name}"? This cannot be undone.`);
       if (!confirmed) return;
 
       try {
@@ -719,7 +747,7 @@ export function draftEditor(): DraftEditorComponent {
         window.dispatchEvent(
           new CustomEvent('run-renamed', {
             detail: { oldName, newName: newName.trim() },
-          })
+          }),
         );
         window.dispatchEvent(new CustomEvent('run-selected', { detail: newName.trim() }));
       } catch (err) {
@@ -763,14 +791,11 @@ export function draftEditor(): DraftEditorComponent {
       // Rewrite assets/ URLs to Tauri asset URLs for webview
       if (this.assetsPath) {
         // Match src="assets/..." or src='assets/...'
-        html = html.replace(
-          /src=(["'])assets\/([^"']+)\1/g,
-          (_match, quote, filename) => {
-            const filePath = `${this.assetsPath}/${filename}`;
-            const fileUrl = convertFileSrc(filePath);
-            return `src=${quote}${fileUrl}${quote}`;
-          }
-        );
+        html = html.replace(/src=(["'])assets\/([^"']+)\1/g, (_match, quote, filename) => {
+          const filePath = `${this.assetsPath}/${filename}`;
+          const fileUrl = convertFileSrc(filePath);
+          return `src=${quote}${fileUrl}${quote}`;
+        });
       }
 
       // Sanitize but allow Tauri's asset protocol URLs
@@ -810,8 +835,8 @@ export function draftEditor(): DraftEditorComponent {
         const result = await Promise.race([
           validateRepo(path),
           new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Validation timed out')), timeoutMs)
-          )
+            setTimeout(() => reject(new Error('Validation timed out')), timeoutMs),
+          ),
         ]);
 
         this.repoIsRemote = result.isRemote;
@@ -893,11 +918,11 @@ export function draftEditor(): DraftEditorComponent {
 
       return Boolean(
         this.projectPath.trim() &&
-        (hasValidRepo || needsSetup) &&
-        !this.repoValidating &&
-        !this.starting &&
-        !this.workerScaleError &&
-        !this.timeLimitError
+          (hasValidRepo || needsSetup) &&
+          !this.repoValidating &&
+          !this.starting &&
+          !this.workerScaleError &&
+          !this.timeLimitError,
       );
     },
 
@@ -993,9 +1018,9 @@ export function draftEditor(): DraftEditorComponent {
 
           // Force textarea to update by dispatching input event
           // This ensures x-model binding syncs properly from external changes
-          this.$nextTick(() => {
+          this.$nextTick?.(() => {
             const textarea = document.getElementById(
-              type === 'spec' ? 'spec-textarea' : 'eval-textarea'
+              type === 'spec' ? 'spec-textarea' : 'eval-textarea',
             ) as HTMLTextAreaElement | null;
             if (textarea) {
               textarea.value = content;
@@ -1105,9 +1130,8 @@ export function draftEditor(): DraftEditorComponent {
       const insertion = markdownRefs.join('\n');
 
       // Try to find the textarea and calculate drop line from position
-      const textareaSelector = type === 'spec'
-        ? 'textarea[x-model="spec"]'
-        : 'textarea[x-model="eval"]';
+      const textareaSelector =
+        type === 'spec' ? 'textarea[x-model="spec"]' : 'textarea[x-model="eval"]';
       const textarea = document.querySelector(textareaSelector) as HTMLTextAreaElement | null;
 
       const insertPos = calculateInsertPosition(content, textarea, position.y);

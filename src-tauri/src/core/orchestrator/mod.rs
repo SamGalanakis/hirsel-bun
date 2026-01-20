@@ -106,13 +106,6 @@ pub struct SendMessageRequest {
     pub content: String,
 }
 
-/// Worker log request parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkerLogParams {
-    pub lines: Option<usize>,
-}
-
 /// Server health response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -225,14 +218,6 @@ pub trait Orchestrator: Send + Sync {
 
     /// Restart a specific worker
     async fn restart_worker(&self, run: &str, worker: &str) -> OrchestratorResult<()>;
-
-    /// Get worker log content (deprecated: use get_worker_events instead)
-    async fn get_worker_log(
-        &self,
-        run: &str,
-        worker: &str,
-        lines: Option<usize>,
-    ) -> OrchestratorResult<String>;
 
     /// Get worker events for streaming from database
     async fn get_worker_events(

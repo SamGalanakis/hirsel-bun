@@ -16,8 +16,8 @@ export function parseTimeLimit(input: string): { value: number | null; error: st
     if (!hMatch) {
       return { value: null, error: 'Invalid format. Use: 30m, 1h, or 1h30m' };
     }
-    const hours = parseFloat(hMatch[1]);
-    const mins = parseInt(hMatch[2], 10);
+    const hours = Number.parseFloat(hMatch[1]);
+    const mins = Number.parseInt(hMatch[2], 10);
     if (mins >= 60) {
       return { value: null, error: 'Minutes should be less than 60' };
     }
@@ -30,8 +30,8 @@ export function parseTimeLimit(input: string): { value: number | null; error: st
 
   // Hours format
   if (s.endsWith('h')) {
-    const num = parseFloat(s.slice(0, -1));
-    if (isNaN(num)) {
+    const num = Number.parseFloat(s.slice(0, -1));
+    if (Number.isNaN(num)) {
       return { value: null, error: 'Invalid hours value' };
     }
     if (num <= 0) {
@@ -42,8 +42,8 @@ export function parseTimeLimit(input: string): { value: number | null; error: st
 
   // Minutes format
   if (s.endsWith('m')) {
-    const num = parseFloat(s.slice(0, -1));
-    if (isNaN(num)) {
+    const num = Number.parseFloat(s.slice(0, -1));
+    if (Number.isNaN(num)) {
       return { value: null, error: 'Invalid minutes value' };
     }
     if (num <= 0) {
@@ -53,8 +53,8 @@ export function parseTimeLimit(input: string): { value: number | null; error: st
   }
 
   // Plain number - assume minutes
-  const num = parseFloat(s);
-  if (isNaN(num)) {
+  const num = Number.parseFloat(s);
+  if (Number.isNaN(num)) {
     return { value: null, error: 'Invalid format. Use: 30m, 1h, or 1h30m' };
   }
   if (num <= 0) {
@@ -75,8 +75,8 @@ export function validateWorkerScale(input: string): { value: string | null; erro
 
   // Check for "N+" pattern (autoscale from N)
   if (s.endsWith('+')) {
-    const num = parseInt(s.slice(0, -1), 10);
-    if (isNaN(num) || num < 1) {
+    const num = Number.parseInt(s.slice(0, -1), 10);
+    if (Number.isNaN(num) || num < 1) {
       return { value: null, error: 'Minimum workers must be at least 1' };
     }
     return { value: s, error: null };
@@ -88,9 +88,9 @@ export function validateWorkerScale(input: string): { value: string | null; erro
     if (parts.length !== 2) {
       return { value: null, error: 'Invalid range. Use: 1-5' };
     }
-    const min = parseInt(parts[0], 10);
-    const max = parseInt(parts[1], 10);
-    if (isNaN(min) || isNaN(max)) {
+    const min = Number.parseInt(parts[0], 10);
+    const max = Number.parseInt(parts[1], 10);
+    if (Number.isNaN(min) || Number.isNaN(max)) {
       return { value: null, error: 'Invalid range. Use numbers like: 1-5' };
     }
     if (min < 1) {
@@ -103,8 +103,8 @@ export function validateWorkerScale(input: string): { value: string | null; erro
   }
 
   // Simple number - fixed count
-  const num = parseInt(s, 10);
-  if (isNaN(num)) {
+  const num = Number.parseInt(s, 10);
+  if (Number.isNaN(num)) {
     return { value: null, error: 'Enter a number (e.g., 1, 1-3, or 2+)' };
   }
   if (num < 1) {

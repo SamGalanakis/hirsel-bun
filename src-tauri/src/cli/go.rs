@@ -18,7 +18,7 @@ use crate::core::files::Files;
 use crate::core::git::{get_repo_root, GitError};
 #[cfg(test)]
 use crate::core::names::get_available_name;
-use crate::core::names::get_available_names;
+use crate::core::names::{get_available_names, slugify};
 use crate::core::ops::{
     register_workers, setup_run_workspace, spawn_local_workers, RunSetupConfig, SpawnWorkersConfig,
 };
@@ -297,33 +297,6 @@ pub fn resolve_content(spec: &str) -> GoResult<String> {
         "Spec file not found: {}",
         spec
     )))
-}
-
-// =============================================================================
-// Slugify
-// =============================================================================
-
-/// Convert a string to a valid run name slug
-pub fn slugify(name: &str) -> String {
-    let mut slug = String::new();
-    let mut last_was_separator = false;
-
-    for c in name.chars() {
-        if c.is_ascii_alphanumeric() {
-            slug.push(c.to_ascii_lowercase());
-            last_was_separator = false;
-        } else if !last_was_separator && !slug.is_empty() {
-            slug.push('-');
-            last_was_separator = true;
-        }
-    }
-
-    // Remove trailing separator
-    if slug.ends_with('-') {
-        slug.pop();
-    }
-
-    slug
 }
 
 // =============================================================================
@@ -1422,14 +1395,6 @@ mod tests {
     fn test_parse_time_limit_combined() {
         assert_eq!(parse_time_limit("1h30m").unwrap(), 90);
         assert_eq!(parse_time_limit("2h15m").unwrap(), 135);
-    }
-
-    #[test]
-    fn test_slugify() {
-        assert_eq!(slugify("My Cool Run"), "my-cool-run");
-        assert_eq!(slugify("test_run_123"), "test-run-123");
-        assert_eq!(slugify("  spaces  "), "spaces");
-        assert_eq!(slugify("CamelCase"), "camelcase");
     }
 
     #[test]

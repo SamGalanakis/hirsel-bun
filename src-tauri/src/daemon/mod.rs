@@ -6,14 +6,16 @@
 //! - Time limit enforcement
 //! - Compaction of learnings
 //!
-//! Both CLI and GUI communicate with the daemon via Unix socket.
+//! The daemon listens on:
+//! - Unix socket (`~/.hirsel/hirsel.sock`) - for local CLI/GUI
+//! - TCP (`localhost:19700`) - for SSH reverse tunnels
 
 mod client;
 mod lifecycle;
 mod server;
 
 pub use client::DaemonClient;
-pub use server::{start_daemon, DaemonConfig};
+pub use server::{start_daemon, DaemonConfig, DEFAULT_TCP_PORT};
 
 use std::path::PathBuf;
 

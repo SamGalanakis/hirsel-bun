@@ -2,75 +2,65 @@
  * Settings modal Alpine component
  */
 
+import { listenChatEvents, sendChatMessage, startChatSession, stopChatSession } from '../../api';
 import {
-  THEME_LIST,
-  getTheme,
-  setTheme,
-  type ThemeId,
-  type ThemeInfo,
-} from '../../theme';
-import {
-  startChatSession,
-  sendChatMessage,
-  stopChatSession,
-  listenChatEvents,
-} from '../../api';
-import {
-  getShortcuts,
-  saveShortcuts,
-  resetShortcuts as resetShortcutsToDefaults,
-  findConflict,
-  formatBinding,
-  bindingFromEvent,
-  getCategoryLabel,
-  type ShortcutConfig,
   type ShortcutAction,
   type ShortcutCategory,
+  type ShortcutConfig,
+  bindingFromEvent,
+  findConflict,
+  formatBinding,
+  getCategoryLabel,
+  getShortcuts,
+  resetShortcuts as resetShortcutsToDefaults,
+  saveShortcuts,
 } from '../../shortcuts';
+import { THEME_LIST, type ThemeId, type ThemeInfo, getTheme, setTheme } from '../../theme';
 import type { ChatEvent } from '../../types';
 
-// Import from local modules
-import type {
-  AuthMethod,
-  HostType,
-  AgentAuth,
-  AuthConfig,
-  SshHostConfig,
-  SpriteHostConfig,
-  ContainerConfig,
-  HostConfig,
-  RunnerConfig,
-  Settings,
-  OrchestratorProfile,
-  OrchestratorAccessType,
-  TailscaleAccess,
-  AppSection,
-  ProfileTab,
-  ActiveSection,
-  ProfileSettingsCache,
-  RemoteConfig,
-  TailscaleInfo,
-  RunnerHealthStatus,
-} from './types';
 import {
   defaultAgentAuth,
-  defaultSshHostConfig,
-  defaultSpriteHostConfig,
   defaultContainerConfig,
-  defaultLocalRunnerConfig,
-  defaultSshRunnerConfig,
-  defaultSpriteRunnerConfig,
-  defaultRemoteProfile,
-  defaultTailscaleAccess,
   defaultGitConfig,
-  defaultSettings,
+  defaultLocalRunnerConfig,
   defaultNavigationState,
+  defaultRemoteProfile,
+  defaultSettings,
+  defaultSpriteHostConfig,
+  defaultSpriteRunnerConfig,
+  defaultSshHostConfig,
+  defaultSshRunnerConfig,
+  defaultTailscaleAccess,
+  getAccessTypeLabel,
   getAuthMethodLabel,
   getDefaultEnvVar,
   getHostIcon,
   getHostTypeLabel,
-  getAccessTypeLabel,
 } from './defaults';
+// Import from local modules
+import type {
+  ActiveSection,
+  AgentAuth,
+  AppSection,
+  AuthConfig,
+  AuthMethod,
+  ContainerConfig,
+  GitConfig,
+  HostConfig,
+  HostType,
+  OrchestratorAccessType,
+  OrchestratorProfile,
+  ProfileSettingsCache,
+  ProfileTab,
+  RemoteConfig,
+  RunnerConfig,
+  RunnerHealthStatus,
+  Settings,
+  SpriteHostConfig,
+  SshHostConfig,
+  TailscaleAccess,
+  TailscaleInfo,
+} from './types';
 
 // Re-export types and utilities
 export * from './types';
@@ -86,7 +76,13 @@ declare const window: Window & {
     createIcons: (options?: { inTemplates?: boolean; nodes?: Element[] }) => void;
   };
   confirmDialog?: {
-    show: (options: { title: string; message: string; confirmText?: string; cancelText?: string; danger?: boolean }) => Promise<boolean>;
+    show: (options: {
+      title: string;
+      message: string;
+      confirmText?: string;
+      cancelText?: string;
+      danger?: boolean;
+    }) => Promise<boolean>;
     delete: (itemName: string, itemType?: string) => Promise<boolean>;
   };
 };
@@ -130,7 +126,15 @@ export function settingsModal() {
     editingProfile: null as string | null,
     newProfileName: '',
     editProfileData: defaultRemoteProfile() as OrchestratorProfile,
-    profileHealth: {} as Record<string, { status: 'checking' | 'online' | 'offline'; version?: string; lastChecked?: number; error?: string }>,
+    profileHealth: {} as Record<
+      string,
+      {
+        status: 'checking' | 'online' | 'offline';
+        version?: string;
+        lastChecked?: number;
+        error?: string;
+      }
+    >,
     _healthPollInterval: null as ReturnType<typeof setInterval> | null,
 
     // Tailscale info for "This Machine" feature
@@ -271,7 +275,7 @@ export function settingsModal() {
     // Get only remote profile names (exclude 'local')
     get remoteProfileNames(): string[] {
       return Object.keys(this.settings.profiles)
-        .filter(name => name !== 'local' && this.settings.profiles[name]?.mode === 'remote')
+        .filter((name) => name !== 'local' && this.settings.profiles[name]?.mode === 'remote')
         .sort();
     },
 
@@ -289,9 +293,11 @@ export function settingsModal() {
 
     // Check if current profile is remote
     isRemoteProfile(): boolean {
-      return this.selectedProfile !== null &&
+      return (
+        this.selectedProfile !== null &&
         this.selectedProfile !== 'local' &&
-        this.settings.profiles[this.selectedProfile]?.mode === 'remote';
+        this.settings.profiles[this.selectedProfile]?.mode === 'remote'
+      );
     },
 
     // Check if connection tab should be shown (only for remote profiles)
@@ -338,11 +344,11 @@ export function settingsModal() {
     useThisMachineAsRunner() {
       if (!this.tailscaleInfo?.dns_name) return;
 
-      this.newRunnerType = 'ssh';
-      this.editRunnerData = {
-        ...defaultSshRunnerConfig(),
-        host: this.tailscaleInfo.dns_name.replace(/\.$/, ''),
-        sshPort: 22,
+      this.newHostType = 'ssh';
+      this.editHostData = {
+        ...defaultSshHostConfig(),
+        address: this.tailscaleInfo.dns_name.replace(/\.$/, ''),
+        port: 22,
         workBase: '/tmp/hirsel-remote',
       };
       this.newRunnerName = this.tailscaleInfo.hostname || 'this-machine';
@@ -353,19 +359,19 @@ export function settingsModal() {
     // Check health of a single SSH runner
     async checkRunnerHealth(name: string) {
       const runner = this.getRunner(name);
-      if (!runner || runner.type !== 'ssh') return;
+      if (!runner || runner.host.type !== 'ssh') return;
 
-      const ssh = runner as SshRunnerConfig;
+      const sshHost = runner.host as SshHostConfig;
 
       // Set to checking state
       this.runnerHealth[name] = { status: 'checking' };
 
       try {
-        const result = await window.tauriInvoke?.('check_ssh_runner', {
-          host: ssh.host,
-          port: ssh.sshPort || 22,
-          sshKey: ssh.sshKey || null,
-        }) as { reachable: boolean; error: string | null; latency_ms: number | null } | undefined;
+        const result = (await window.tauriInvoke?.('check_ssh_runner', {
+          host: sshHost.address,
+          port: sshHost.port || 22,
+          sshKey: sshHost.sshKey || null,
+        })) as { reachable: boolean; error: string | null; latency_ms: number | null } | undefined;
 
         if (result) {
           this.runnerHealth[name] = {
@@ -386,9 +392,9 @@ export function settingsModal() {
     async pollRunnerHealth() {
       const runners = this.getCurrentProfileRunners();
       const sshRunnerNames = Object.keys(runners).filter(
-        name => runners[name]?.type === 'ssh'
+        (name) => runners[name]?.host.type === 'ssh',
       );
-      await Promise.all(sshRunnerNames.map(name => this.checkRunnerHealth(name)));
+      await Promise.all(sshRunnerNames.map((name) => this.checkRunnerHealth(name)));
     },
 
     // Start runner health polling (called when entering Runners tab)
@@ -503,7 +509,6 @@ export function settingsModal() {
       setTheme(themeId);
     },
 
-
     // When provider changes, load existing config if any
     onAuthProviderChange() {
       if (!this.selectedAuthProvider) {
@@ -541,7 +546,7 @@ export function settingsModal() {
 
     // Get existing masked API key for display
     getExistingAuthKey(provider: string): string | null {
-      const auth = this.settings.auth[provider as keyof AuthConfig['claude']];
+      const auth = this.settings.auth[provider as keyof Omit<AuthConfig, 'defaultMethod'>];
       if (auth && typeof auth === 'object' && 'apiKey' in auth && auth.apiKey) {
         return auth.apiKey; // Already masked from server
       }
@@ -550,7 +555,8 @@ export function settingsModal() {
 
     // Clear agent auth config
     clearAgentAuth(agent: string) {
-      (this.settings.auth as Record<string, AgentAuth | null>)[agent] = null;
+      const key = agent as keyof Omit<AuthConfig, 'defaultMethod'>;
+      this.settings.auth[key] = null;
     },
 
     // ==================== RUNNER METHODS ====================
@@ -600,7 +606,8 @@ export function settingsModal() {
       } else if (runner.host.type === 'client') {
         this.editHostData = { type: 'client' };
       } else {
-        this.editHostData = { ...runner.host };
+        // Fallback for any new host types
+        this.editHostData = { ...(runner.host as HostConfig) };
       }
 
       // Load container settings
@@ -610,7 +617,8 @@ export function settingsModal() {
 
     // Save runner config and persist to disk
     async saveRunner() {
-      const name = this.editingRunner === '__new__' ? this.newRunnerName.trim() : this.editingRunner;
+      const name =
+        this.editingRunner === '__new__' ? this.newRunnerName.trim() : this.editingRunner;
       if (!name) {
         window.toast?.error('Runner name is required');
         return;
@@ -727,7 +735,8 @@ export function settingsModal() {
 
     // Save profile config and persist to disk
     async saveProfile() {
-      const name = this.editingProfile === '__new__' ? this.newProfileName.trim() : this.editingProfile;
+      const name =
+        this.editingProfile === '__new__' ? this.newProfileName.trim() : this.editingProfile;
       if (!name) {
         window.toast?.error('Profile name is required');
         return;
@@ -849,8 +858,8 @@ export function settingsModal() {
         const response = await fetch(`${baseUrl}/api/config`, {
           method: 'GET',
           headers: {
-            'Accept': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
+            Accept: 'application/json',
+            Authorization: `Bearer ${apiKey}`,
           },
         });
 
@@ -861,7 +870,7 @@ export function settingsModal() {
           throw new Error(`HTTP ${response.status}`);
         }
 
-        const remoteConfig = await response.json() as RemoteConfig;
+        const remoteConfig = (await response.json()) as RemoteConfig;
 
         // Cache the settings
         this.profileSettingsCache[profileName] = {
@@ -881,7 +890,7 @@ export function settingsModal() {
             runners: remoteConfig.runners || {},
             defaultRunner: remoteConfig.defaultRunner,
             workerRunners: remoteConfig.workerRunners || {},
-            git: remoteConfig.git || defaultGitConfig(),
+            git: (remoteConfig.git as GitConfig) || defaultGitConfig(),
           },
           loadedAt: Date.now(),
           dirty: false,
@@ -948,9 +957,9 @@ export function settingsModal() {
       const response = await fetch(`${baseUrl}/api/config`, {
         method: 'PATCH',
         headers: {
-          'Accept': 'application/json',
+          Accept: 'application/json',
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
           agentCommand,
@@ -1014,7 +1023,7 @@ export function settingsModal() {
       const response = await fetch(`${baseUrl}/api/runs`, {
         method: 'DELETE',
         headers: {
-          'Authorization': `Bearer ${apiKey}`,
+          Authorization: `Bearer ${apiKey}`,
         },
       });
 
@@ -1044,13 +1053,17 @@ export function settingsModal() {
 
         const healthResponse = await fetch(`${baseUrl}/health`, {
           method: 'GET',
-          headers: { 'Accept': 'application/json' },
+          headers: { Accept: 'application/json' },
           signal: controller.signal,
         });
         clearTimeout(timeout);
 
         if (!healthResponse.ok) {
-          this.profileHealth[name] = { status: 'offline', lastChecked: Date.now(), error: `HTTP ${healthResponse.status}` };
+          this.profileHealth[name] = {
+            status: 'offline',
+            lastChecked: Date.now(),
+            error: `HTTP ${healthResponse.status}`,
+          };
           return;
         }
 
@@ -1066,7 +1079,12 @@ export function settingsModal() {
           }
 
           if (!apiKey) {
-            this.profileHealth[name] = { status: 'online', version: healthData.version, lastChecked: Date.now(), error: 'No API key' };
+            this.profileHealth[name] = {
+              status: 'online',
+              version: healthData.version,
+              lastChecked: Date.now(),
+              error: 'No API key',
+            };
             return;
           }
 
@@ -1077,27 +1095,50 @@ export function settingsModal() {
           const authResponse = await fetch(`${baseUrl}/api/runs`, {
             method: 'GET',
             headers: {
-              'Accept': 'application/json',
-              'Authorization': `Bearer ${apiKey}`,
+              Accept: 'application/json',
+              Authorization: `Bearer ${apiKey}`,
             },
             signal: authController.signal,
           });
           clearTimeout(authTimeout);
 
           if (authResponse.status === 401) {
-            this.profileHealth[name] = { status: 'online', version: healthData.version, lastChecked: Date.now(), error: 'Invalid API key' };
+            this.profileHealth[name] = {
+              status: 'online',
+              version: healthData.version,
+              lastChecked: Date.now(),
+              error: 'Invalid API key',
+            };
           } else if (authResponse.ok) {
-            this.profileHealth[name] = { status: 'online', version: healthData.version, lastChecked: Date.now() };
+            this.profileHealth[name] = {
+              status: 'online',
+              version: healthData.version,
+              lastChecked: Date.now(),
+            };
           } else {
-            this.profileHealth[name] = { status: 'online', version: healthData.version, lastChecked: Date.now(), error: `HTTP ${authResponse.status}` };
+            this.profileHealth[name] = {
+              status: 'online',
+              version: healthData.version,
+              lastChecked: Date.now(),
+              error: `HTTP ${authResponse.status}`,
+            };
           }
         } catch (authErr) {
           // Auth check failed but server is reachable - show online without auth verification
-          this.profileHealth[name] = { status: 'online', version: healthData.version, lastChecked: Date.now(), error: 'Auth check failed' };
+          this.profileHealth[name] = {
+            status: 'online',
+            version: healthData.version,
+            lastChecked: Date.now(),
+            error: 'Auth check failed',
+          };
         }
       } catch (err) {
         const error = err as Error;
-        this.profileHealth[name] = { status: 'offline', lastChecked: Date.now(), error: error.message || 'Connection failed' };
+        this.profileHealth[name] = {
+          status: 'offline',
+          lastChecked: Date.now(),
+          error: error.message || 'Connection failed',
+        };
       }
     },
 
@@ -1118,10 +1159,11 @@ export function settingsModal() {
 
     // Poll health for all remote profiles
     async pollProfileHealth() {
-      const remoteNames = Object.keys(this.settings.profiles)
-        .filter(name => name !== 'local' && this.settings.profiles[name]?.mode === 'remote');
+      const remoteNames = Object.keys(this.settings.profiles).filter(
+        (name) => name !== 'local' && this.settings.profiles[name]?.mode === 'remote',
+      );
 
-      await Promise.all(remoteNames.map(name => this.checkProfileHealth(name)));
+      await Promise.all(remoteNames.map((name) => this.checkProfileHealth(name)));
     },
 
     // Start health polling
@@ -1148,7 +1190,7 @@ export function settingsModal() {
 
     // Get shortcuts filtered by category
     getShortcutsByCategory(category: ShortcutCategory): ShortcutConfig[] {
-      return this.shortcuts.filter(s => s.category === category);
+      return this.shortcuts.filter((s) => s.category === category);
     },
 
     // Get category display label
@@ -1189,7 +1231,7 @@ export function settingsModal() {
         }
 
         // Apply the new binding
-        const shortcut = this.shortcuts.find(s => s.action === action);
+        const shortcut = this.shortcuts.find((s) => s.action === action);
         if (shortcut) {
           shortcut.binding = newBinding;
           saveShortcuts(this.shortcuts);
@@ -1253,7 +1295,7 @@ export function settingsModal() {
             workerRunners: Record<string, string>;
             profiles: Record<string, OrchestratorProfile>;
             defaultProfile: string;
-            git: { defaultProvider: string | null; configuredProviders: string[] };
+            git: GitConfig;
           }>('get_config');
 
           this.settings = {
@@ -1273,7 +1315,9 @@ export function settingsModal() {
             runners: config.runners || {},
             defaultRunner: config.defaultRunner || null,
             workerRunners: config.workerRunners || {},
-            profiles: config.profiles || { local: { mode: 'local', url: null, apiKey: null, access: { type: 'direct' } } },
+            profiles: config.profiles || {
+              local: { mode: 'local', url: null, apiKey: null, access: { type: 'direct' } },
+            },
             defaultProfile: config.defaultProfile || 'local',
             git: config.git || defaultGitConfig(),
           };
@@ -1426,7 +1470,7 @@ export function settingsModal() {
       // If viewing a remote profile with cached changes, save to remote server too
       if (this.selectedProfile && this.isRemoteProfile()) {
         const cached = this.profileSettingsCache[this.selectedProfile];
-        if (cached && cached.dirty) {
+        if (cached?.dirty) {
           try {
             await this.saveToRemoteServer(this.selectedProfile);
           } catch (err) {
@@ -1480,21 +1524,18 @@ export function settingsModal() {
         if (agentCommand.length === 0) {
           throw new Error('No agent command configured');
         }
-
-        // Set up event listener
-        const self = this;
         this._testUnlisten = await listenChatEvents((event: ChatEvent) => {
-          if (event.sessionId !== self._testSessionId) return;
+          if (event.sessionId !== this._testSessionId) return;
 
           if (event.type === 'textDelta') {
-            self.testResult += event.text;
+            this.testResult += event.text;
           } else if (event.type === 'messageComplete') {
-            self.testing = false;
-            self.stopTestSession();
+            this.testing = false;
+            this.stopTestSession();
           } else if (event.type === 'error') {
-            self.testResult = `Error: ${event.message}`;
-            self.testing = false;
-            self.stopTestSession();
+            this.testResult = `Error: ${event.message}`;
+            this.testing = false;
+            this.stopTestSession();
           }
         });
 
@@ -1514,7 +1555,6 @@ export function settingsModal() {
             this.stopTestSession();
           }
         }, 30000);
-
       } catch (err) {
         const error = err as Error;
         this.testResult = `Failed: ${error.message || String(error)}`;
@@ -1545,12 +1585,13 @@ export function settingsModal() {
         ? `on the remote server (${this.settings.profiles[profileName]?.url})`
         : 'on this machine';
 
-      const confirmed = await window.confirmDialog?.show({
-        title: 'Delete All Runs',
-        message: `Are you sure you want to delete all runs ${locationText}? This cannot be undone.`,
-        confirmText: 'Delete All',
-        danger: true,
-      }) ?? confirm(`Delete all runs ${locationText}? This cannot be undone.`);
+      const confirmed =
+        (await window.confirmDialog?.show({
+          title: 'Delete All Runs',
+          message: `Are you sure you want to delete all runs ${locationText}? This cannot be undone.`,
+          confirmText: 'Delete All',
+          danger: true,
+        })) ?? confirm(`Delete all runs ${locationText}? This cannot be undone.`);
 
       if (!confirmed) return;
 

@@ -213,7 +213,7 @@ pub enum Commands {
     #[command(name = "__worker-mcp", hide = true)]
     WorkerMcp,
 
-    /// Run eval agent (internal, spawned by maybe_trigger_eval)
+    /// Run eval agent (internal, spawned by lifecycle manager)
     #[command(name = "__eval-run", hide = true)]
     EvalRun(InternalEvalRunArgs),
 
@@ -308,14 +308,6 @@ pub struct InternalEvalRunArgs {
     /// Run directory
     #[arg(long)]
     pub run_dir: String,
-
-    /// Spec file path
-    #[arg(long)]
-    pub spec: String,
-
-    /// Eval spec file path
-    #[arg(long)]
-    pub eval_spec: String,
 
     /// Agent command (JSON array)
     #[arg(long)]
@@ -688,6 +680,9 @@ pub struct DaemonArgs {
     /// Idle timeout in seconds (daemon exits if no active runs for this long)
     #[arg(long, default_value = "300")]
     pub idle_timeout: u64,
+    /// TCP port for HTTP server (0 to disable, used for SSH reverse tunnels)
+    #[arg(long, default_value = "19700")]
+    pub tcp_port: u16,
 }
 
 /// Arguments for `hirsel daemon`

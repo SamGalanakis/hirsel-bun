@@ -2,7 +2,7 @@
 //!
 //! Pauses all workers in a run by sending SIGTERM and updating status.
 
-use crate::core::{Config, SQLiteState, Status, WorkerStatus, WorkerUpdate};
+use crate::core::{is_pid_alive, Config, SQLiteState, Status, WorkerStatus, WorkerUpdate};
 
 /// Run the pause command
 pub fn run_pause(run_name: &str, json: bool) -> anyhow::Result<()> {
@@ -46,7 +46,7 @@ pub fn run_pause(run_name: &str, json: bool) -> anyhow::Result<()> {
     for worker in &workers {
         // Try to terminate worker process if it has a PID
         if let Some(pid) = worker.pid {
-            if is_process_alive(pid as u32) {
+            if is_pid_alive(pid as u32) {
                 // Send SIGTERM
                 #[cfg(unix)]
                 {
@@ -119,36 +119,4 @@ pub fn run_pause(run_name: &str, json: bool) -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-/// Check if a process is still alive
-fn is_process_alive(pid: u32) -> bool {
-    #[cfg(unix)]
-    {
-        // kill with signal 0 just checks if process exists
-        unsafe { libc::kill(pid as i32, 0) == 0 }
-    }
-    #[cfg(not(unix))]
-    {
-        // On non-Unix systems, assume process is alive
-        true
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_is_process_alive_self() {
-        // Our own process should be alive
-        let pid = std::process::id();
-        assert!(is_process_alive(pid));
-    }
-
-    #[test]
-    fn test_is_process_alive_nonexistent() {
-        // PID 99999 is unlikely to exist
-        assert!(!is_process_alive(99999));
-    }
 }

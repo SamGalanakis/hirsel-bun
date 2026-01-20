@@ -9,29 +9,24 @@
  * - Context injection (run, worker, UI section)
  */
 
-import type {
-  ChatEvent,
-  ChatToolCall,
-  PendingPermission,
-  UIContext,
-} from '../types';
 import {
-  startChatSession,
-  sendChatMessage,
-  respondChatPermission,
-  stopChatSession,
-  listenChatEvents,
   getGypChatHistory,
+  listenChatEvents,
+  respondChatPermission,
   saveGypMessage,
+  sendChatMessage,
+  startChatSession,
+  stopChatSession,
 } from '../api';
-import { chunkRendererHelpers, type OutputChunk } from './chunk-renderer';
+import type { ChatEvent, ChatToolCall, PendingPermission, UIContext } from '../types';
+import { type OutputChunk, chunkRendererHelpers } from './chunk-renderer';
 
 /** A chunk of content in a message - reuse shared type */
 type MessageChunk = OutputChunk & {
   // MessageChunk is same as OutputChunk
   content?: string;
   tool?: ChatToolCall;
-}
+};
 
 /** A chat message with chronologically ordered chunks */
 interface ChatMessageWithChunks {
@@ -107,38 +102,48 @@ export function directChat() {
       try {
         const history = await getGypChatHistory(runName);
         if (history.length > 0) {
-          this.messages = history.map(msg => ({
+          this.messages = history.map((msg) => ({
             id: crypto.randomUUID(),
             role: msg.role as 'user' | 'assistant' | 'system',
             chunks: JSON.parse(msg.chunksJson),
             timestamp: new Date(msg.timestamp),
           }));
-          console.log(`[DirectChat] Loaded ${history.length} messages for context: ${runName || 'general'}`);
+          console.log(
+            `[DirectChat] Loaded ${history.length} messages for context: ${runName || 'general'}`,
+          );
         } else {
           // Show welcome message for empty history
-          this.messages = [{
-            id: crypto.randomUUID(),
-            role: 'assistant',
-            chunks: [{
+          this.messages = [
+            {
               id: crypto.randomUUID(),
-              type: 'text',
-              content: `Hello! I'm Gyp, your AI assistant for Hirsel. I can help you manage runs, tasks, and workers using the hirsel tools.\n\nWhat would you like to do today?`,
-            }],
-            timestamp: new Date(),
-          }];
+              role: 'assistant',
+              chunks: [
+                {
+                  id: crypto.randomUUID(),
+                  type: 'text',
+                  content: `Hello! I'm Gyp, your AI assistant for Hirsel. I can help you manage runs, tasks, and workers using the hirsel tools.\n\nWhat would you like to do today?`,
+                },
+              ],
+              timestamp: new Date(),
+            },
+          ];
         }
       } catch (e) {
         console.warn('[DirectChat] Failed to load chat history:', e);
-        this.messages = [{
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          chunks: [{
+        this.messages = [
+          {
             id: crypto.randomUUID(),
-            type: 'text',
-            content: `Hello! I'm Gyp, your AI assistant for Hirsel. I can help you manage runs, tasks, and workers using the hirsel tools.\n\nWhat would you like to do today?`,
-          }],
-          timestamp: new Date(),
-        }];
+            role: 'assistant',
+            chunks: [
+              {
+                id: crypto.randomUUID(),
+                type: 'text',
+                content: `Hello! I'm Gyp, your AI assistant for Hirsel. I can help you manage runs, tasks, and workers using the hirsel tools.\n\nWhat would you like to do today?`,
+              },
+            ],
+            timestamp: new Date(),
+          },
+        ];
       }
       this.scrollToBottom();
     },
@@ -156,14 +161,14 @@ export function directChat() {
       // Try to find appState from body element (where x-data="appState()" is defined)
       const body = document.body;
       // @ts-expect-error Alpine.js internal property
-      if (body._x_dataStack && body._x_dataStack[0]) {
+      if (body._x_dataStack?.[0]) {
         // @ts-expect-error Alpine.js internal property
         return body._x_dataStack[0];
       }
       // Fallback: walk up from current element
       // @ts-expect-error Alpine.js $el magic property
       let el = this.$el as HTMLElement;
-      while (el && el.parentElement) {
+      while (el?.parentElement) {
         el = el.parentElement;
         // @ts-expect-error Alpine.js internal property
         if (el._x_dataStack) {
@@ -209,12 +214,9 @@ export function directChat() {
       this.error = null;
 
       try {
-        // Start listening for events first
-        // Capture `this` to ensure correct binding in callback
-        const self = this;
         this._unlisten = await listenChatEvents((event) => {
           try {
-            self.handleChatEvent(event);
+            this.handleChatEvent(event);
           } catch (e) {
             console.error('[DirectChat] Error handling event:', e);
           }
@@ -239,14 +241,16 @@ export function directChat() {
           const history = await getGypChatHistory(runName);
           if (history.length > 0) {
             // Restore messages from history
-            this.messages = history.map(msg => ({
+            this.messages = history.map((msg) => ({
               id: crypto.randomUUID(),
               role: msg.role as 'user' | 'assistant' | 'system',
               chunks: JSON.parse(msg.chunksJson),
               timestamp: new Date(msg.timestamp),
             }));
             loadedHistory = true;
-            console.log(`[DirectChat] Loaded ${history.length} messages for context: ${runName || 'general'}`);
+            console.log(
+              `[DirectChat] Loaded ${history.length} messages for context: ${runName || 'general'}`,
+            );
           }
         } catch (e) {
           console.warn('[DirectChat] Failed to load chat history:', e);
@@ -254,16 +258,20 @@ export function directChat() {
 
         // Add static welcome message only if no history loaded
         if (!loadedHistory) {
-          this.messages = [{
-            id: crypto.randomUUID(),
-            role: 'assistant',
-            chunks: [{
+          this.messages = [
+            {
               id: crypto.randomUUID(),
-              type: 'text',
-              content: `Hello! I'm Gyp, your AI assistant for Hirsel. I can help you manage runs, tasks, and workers using the hirsel tools.\n\nWhat would you like to do today?`,
-            }],
-            timestamp: new Date(),
-          }];
+              role: 'assistant',
+              chunks: [
+                {
+                  id: crypto.randomUUID(),
+                  type: 'text',
+                  content: `Hello! I'm Gyp, your AI assistant for Hirsel. I can help you manage runs, tasks, and workers using the hirsel tools.\n\nWhat would you like to do today?`,
+                },
+              ],
+              timestamp: new Date(),
+            },
+          ];
         }
       } catch (e) {
         const error = e as Error;
@@ -479,7 +487,12 @@ Be concise.`;
     },
 
     handleToolCallUpdate(id: string, status: string, title: string | null, output: string | null) {
-      console.log('[DirectChat] toolCallUpdate:', { id, status, title, output: output?.substring(0, 100) });
+      console.log('[DirectChat] toolCallUpdate:', {
+        id,
+        status,
+        title,
+        output: output?.substring(0, 100),
+      });
       // First check the active map
       let chunk = this._toolsById.get(id);
 
@@ -516,11 +529,7 @@ Be concise.`;
       if (!this.pendingPermission || !this.sessionId) return;
 
       try {
-        await respondChatPermission(
-          this.sessionId,
-          this.pendingPermission.requestId,
-          optionId
-        );
+        await respondChatPermission(this.sessionId, this.pendingPermission.requestId, optionId);
       } catch (e) {
         console.error('Failed to respond to permission:', e);
       }
@@ -536,8 +545,9 @@ Be concise.`;
         // Save assistant message to history if we have a run
         if (this._currentRunName) {
           const msgToSave = this._currentMessage;
-          saveGypMessage(this._currentRunName, 'assistant', JSON.stringify(msgToSave.chunks))
-            .catch(e => console.warn('[DirectChat] Failed to save assistant message:', e));
+          saveGypMessage(this._currentRunName, 'assistant', JSON.stringify(msgToSave.chunks)).catch(
+            (e) => console.warn('[DirectChat] Failed to save assistant message:', e),
+          );
         }
       }
 
@@ -555,9 +565,11 @@ Be concise.`;
       const detail = app?.currentRunDetail;
       if (detail?.status === 'draft' && app?.selectedRun) {
         // Emit event to refresh the draft editor
-        window.dispatchEvent(new CustomEvent('draft-refresh', {
-          detail: app.selectedRun
-        }));
+        window.dispatchEvent(
+          new CustomEvent('draft-refresh', {
+            detail: app.selectedRun,
+          }),
+        );
       }
     },
 
@@ -577,16 +589,21 @@ Be concise.`;
     },
 
     addSystemMessage(content: string) {
-      this.messages = [...this.messages, {
-        id: crypto.randomUUID(),
-        role: 'system',
-        chunks: [{
+      this.messages = [
+        ...this.messages,
+        {
           id: crypto.randomUUID(),
-          type: 'text',
-          content,
-        }],
-        timestamp: new Date(),
-      }];
+          role: 'system',
+          chunks: [
+            {
+              id: crypto.randomUUID(),
+              type: 'text',
+              content,
+            },
+          ],
+          timestamp: new Date(),
+        },
+      ];
       this.scrollToBottom();
     },
 
@@ -608,11 +625,13 @@ Be concise.`;
       const userMessage: ChatMessageWithChunks = {
         id: crypto.randomUUID(),
         role: 'user',
-        chunks: [{
-          id: crypto.randomUUID(),
-          type: 'text',
-          content,
-        }],
+        chunks: [
+          {
+            id: crypto.randomUUID(),
+            type: 'text',
+            content,
+          },
+        ],
         timestamp: new Date(),
       };
       this.messages = [...this.messages, userMessage];

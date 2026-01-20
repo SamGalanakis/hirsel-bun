@@ -353,31 +353,6 @@ pub fn run_task_unclaim(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
-
-    #[allow(dead_code)]
-    fn setup_test_run() -> (TempDir, String) {
-        let tmp = TempDir::new().unwrap();
-        let run_name = "test-run";
-
-        // Create run directory structure
-        let run_dir = tmp.path().join("runs").join(run_name);
-        std::fs::create_dir_all(&run_dir).unwrap();
-
-        // Create state
-        let db_path = run_dir.join("hirsel.db");
-        let state = SQLiteState::new(db_path).unwrap();
-        state.init_state(None).unwrap();
-
-        // Add some test tasks
-        state.add_task("task1", "First task", None, None).unwrap();
-        state.add_task("task2", "Second task", None, None).unwrap();
-        state
-            .add_task("subtask1", "Subtask", Some("task1"), None)
-            .unwrap();
-
-        (tmp, run_name.to_string())
-    }
 
     #[test]
     fn test_task_display_from_task() {

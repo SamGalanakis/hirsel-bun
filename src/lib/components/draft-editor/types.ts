@@ -110,6 +110,14 @@ export interface DraftEditorMethods {
 }
 
 /**
+ * Alpine.js runtime methods injected into components
+ */
+export interface AlpineRuntime {
+  $nextTick(callback: () => void): void;
+  $watch<T>(property: string, callback: (value: T) => void): void;
+}
+
+/**
  * Combined draft editor component type
  */
-export type DraftEditorComponent = DraftEditorData & DraftEditorMethods;
+export type DraftEditorComponent = DraftEditorData & DraftEditorMethods & Partial<AlpineRuntime>;

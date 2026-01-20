@@ -6,9 +6,20 @@
  * Uses Tauri event streaming for real-time updates (same pattern as Gyp chat).
  */
 
-import type { ChatToolCall, WorkerEvent, WorkerStreamEvent, WorkerDisplay, SheepConfig } from '../types';
-import { startWorkerEventStream, stopWorkerEventStream, listenWorkerEvents, getWorkers } from '../api';
-import { chunkRendererHelpers, type OutputChunk } from './chunk-renderer';
+import {
+  getWorkers,
+  listenWorkerEvents,
+  startWorkerEventStream,
+  stopWorkerEventStream,
+} from '../api';
+import type {
+  ChatToolCall,
+  SheepConfig,
+  WorkerDisplay,
+  WorkerEvent,
+  WorkerStreamEvent,
+} from '../types';
+import { type OutputChunk, chunkRendererHelpers } from './chunk-renderer';
 
 /**
  * Worker Output Viewer Alpine component
@@ -38,7 +49,9 @@ export function workerOutputViewer() {
     async init() {
       console.log('[WorkerOutput] init() called');
       // Listen for show-worker-output events
-      window.addEventListener('show-worker-output', ((e: CustomEvent<{ runName: string; workerName: string }>) => {
+      window.addEventListener('show-worker-output', ((
+        e: CustomEvent<{ runName: string; workerName: string }>,
+      ) => {
         console.log('[WorkerOutput] show-worker-output event received:', e.detail);
         this.show(e.detail.runName, e.detail.workerName);
       }) as EventListener);
@@ -84,20 +97,19 @@ export function workerOutputViewer() {
 
       try {
         // Fetch worker data for sheep avatar (don't block on this)
-        getWorkers(runName).then(workers => {
-          const worker = workers.find(w => w.name === workerName) as WorkerDisplay | undefined;
-          if (worker?.sheepConfig) {
-            this.sheepConfig = worker.sheepConfig;
-          }
-        }).catch(() => {
-          // Ignore errors fetching worker data
-        });
-
-        // Set up event listener first (before starting stream to not miss events)
-        const self = this;
+        getWorkers(runName)
+          .then((workers) => {
+            const worker = workers.find((w) => w.name === workerName) as WorkerDisplay | undefined;
+            if (worker?.sheepConfig) {
+              this.sheepConfig = worker.sheepConfig;
+            }
+          })
+          .catch(() => {
+            // Ignore errors fetching worker data
+          });
         this._unlisten = await listenWorkerEvents((event) => {
           try {
-            self.handleStreamEvent(event);
+            this.handleStreamEvent(event);
           } catch (err) {
             console.error('[WorkerOutput] Error handling event:', err);
           }
@@ -193,14 +205,14 @@ export function workerOutputViewer() {
             event.toolCallId || crypto.randomUUID(),
             event.toolTitle || 'Unknown tool',
             event.toolKind || null,
-            event.toolInput || null
+            event.toolInput || null,
           );
           break;
         case 'tool_update':
           this.handleToolCallUpdate(
             event.toolCallId || '',
             event.toolStatus || 'completed',
-            event.toolOutput || null
+            event.toolOutput || null,
           );
           break;
       }
@@ -283,7 +295,7 @@ export function workerOutputViewer() {
 
     handleToolCallUpdate(id: string, status: string, output: string | null) {
       const chunk = this._toolsById.get(id);
-      if (chunk && chunk.tool) {
+      if (chunk?.tool) {
         chunk.tool.status = status;
         chunk.tool.output = output;
         this.chunks = [...this.chunks]; // Trigger reactivity
@@ -330,10 +342,8 @@ export function workerOutputViewer() {
     },
 
     formatTime(date: Date): string {
-      if (!(date instanceof Date)) {
-        date = new Date(date);
-      }
-      return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      const d = date instanceof Date ? date : new Date(date);
+      return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
     },
 
     /**

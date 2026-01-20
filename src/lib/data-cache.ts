@@ -7,12 +7,12 @@
  */
 
 import type {
-  RunSummary,
+  HistoryEntry,
   RunDetail,
-  WorkerDisplay,
+  RunSummary,
   Task,
   ThreadSummary,
-  HistoryEntry,
+  WorkerDisplay,
 } from './types';
 
 // Event names for data updates

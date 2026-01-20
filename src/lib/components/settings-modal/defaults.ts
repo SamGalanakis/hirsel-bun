@@ -2,7 +2,19 @@
  * Default configurations for settings modal
  */
 
-import type { AgentAuth, SshHostConfig, SpriteHostConfig, ContainerConfig, RunnerConfig, Settings, AuthMethod, OrchestratorProfile, GitConfig, NavigationState, HostType } from './types';
+import type {
+  AgentAuth,
+  AuthMethod,
+  ContainerConfig,
+  GitConfig,
+  HostType,
+  NavigationState,
+  OrchestratorProfile,
+  RunnerConfig,
+  Settings,
+  SpriteHostConfig,
+  SshHostConfig,
+} from './types';
 
 /**
  * Default agent auth configuration
@@ -79,7 +91,12 @@ export const defaultRemoteProfile = (): OrchestratorProfile => ({
 /**
  * Default Tailscale access configuration
  */
-export const defaultTailscaleAccess = (): { type: 'tailscale'; oauth_client_id: string; oauth_client_secret: string; tag: string | null } => ({
+export const defaultTailscaleAccess = (): {
+  type: 'tailscale';
+  oauth_client_id: string;
+  oauth_client_secret: string;
+  tag: string | null;
+} => ({
   type: 'tailscale',
   oauth_client_id: '',
   oauth_client_secret: '',
@@ -142,10 +159,14 @@ export const defaultSettings = (): Settings => ({
  */
 export function getAuthMethodLabel(method: AuthMethod): string {
   switch (method) {
-    case 'env': return 'Environment Variable';
-    case 'apiKey': return 'API Key';
-    case 'oauth': return 'OAuth';
-    default: return method;
+    case 'env':
+      return 'Environment Variable';
+    case 'apiKey':
+      return 'API Key';
+    case 'oauth':
+      return 'OAuth';
+    default:
+      return method;
   }
 }
 
@@ -154,11 +175,16 @@ export function getAuthMethodLabel(method: AuthMethod): string {
  */
 export function getDefaultEnvVar(agent: string): string {
   switch (agent) {
-    case 'claude': return 'ANTHROPIC_API_KEY';
-    case 'gemini': return 'GOOGLE_API_KEY';
-    case 'codex': return 'OPENAI_API_KEY';
-    case 'goose': return 'ANTHROPIC_API_KEY';
-    default: return '';
+    case 'claude':
+      return 'ANTHROPIC_API_KEY';
+    case 'gemini':
+      return 'GOOGLE_API_KEY';
+    case 'codex':
+      return 'OPENAI_API_KEY';
+    case 'goose':
+      return 'ANTHROPIC_API_KEY';
+    default:
+      return '';
   }
 }
 
@@ -167,11 +193,16 @@ export function getDefaultEnvVar(agent: string): string {
  */
 export function getHostIcon(type: HostType): string {
   switch (type) {
-    case 'local': return 'laptop';
-    case 'client': return 'monitor';
-    case 'ssh': return 'server';
-    case 'sprite': return 'cloud';
-    default: return 'laptop';
+    case 'local':
+      return 'laptop';
+    case 'client':
+      return 'monitor';
+    case 'ssh':
+      return 'server';
+    case 'sprite':
+      return 'cloud';
+    default:
+      return 'laptop';
   }
 }
 
@@ -180,11 +211,16 @@ export function getHostIcon(type: HostType): string {
  */
 export function getHostTypeLabel(type: HostType): string {
   switch (type) {
-    case 'local': return 'Local';
-    case 'client': return 'Client';
-    case 'ssh': return 'SSH';
-    case 'sprite': return 'Sprites';
-    default: return type;
+    case 'local':
+      return 'Local';
+    case 'client':
+      return 'Client';
+    case 'ssh':
+      return 'SSH';
+    case 'sprite':
+      return 'Sprites';
+    default:
+      return type;
   }
 }
 
@@ -193,8 +229,11 @@ export function getHostTypeLabel(type: HostType): string {
  */
 export function getAccessTypeLabel(type: string): string {
   switch (type) {
-    case 'direct': return 'Direct';
-    case 'tailscale': return 'Tailscale';
-    default: return type;
+    case 'direct':
+      return 'Direct';
+    case 'tailscale':
+      return 'Tailscale';
+    default:
+      return type;
   }
 }

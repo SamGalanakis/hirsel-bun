@@ -367,8 +367,6 @@ fn run_command(
                         core::eval::run_eval_from_args(
                             &args.run,
                             &args.run_dir,
-                            &args.spec,
-                            &args.eval_spec,
                             &args.agent_command,
                         )
                         .await
@@ -457,6 +455,7 @@ fn run_command(
 
             let config = DaemonConfig {
                 idle_timeout_secs: args.idle_timeout,
+                tcp_port: args.tcp_port,
             };
 
             let rt = tokio::runtime::Runtime::new()

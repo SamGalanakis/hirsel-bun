@@ -20,8 +20,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 
+use super::lifecycle::{LifecycleEvent, LifecycleManager, LocalLifecycleManager};
 use super::state::{SQLiteState, Status, WorkerStatus, WorkerUpdate};
-use super::workers::maybe_trigger_eval;
 
 // =============================================================================
 // Shared State
@@ -596,12 +596,12 @@ async fn update_worker(
     Json(req): Json<WorkerUpdateRequest>,
 ) -> ApiResult<Json<SuccessResponse>> {
     // Check if status is being set to Awaiting
-    let is_awaiting = req
-        .status
-        .as_ref()
-        .and_then(|s| WorkerStatus::from_str(s))
-        .map(|s| s == WorkerStatus::Awaiting)
-        .unwrap_or(false);
+    let old_status = {
+        let state = api.state.lock().await;
+        state.get_worker(&name).ok().flatten().map(|w| w.status)
+    };
+
+    let new_status = req.status.as_ref().and_then(|s| WorkerStatus::from_str(s));
 
     {
         let state = api.state.lock().await;
@@ -609,8 +609,10 @@ async fn update_worker(
         // Build WorkerUpdate from request
         let updates = WorkerUpdate {
             pid: req.pid,
+            runner_id: None,
+            runner_type: None,
             session_id: req.session_id,
-            status: req.status.as_ref().and_then(|s| WorkerStatus::from_str(s)),
+            status: new_status,
             waiting_thread: req.waiting_thread,
             needs_restart: req.needs_restart,
             last_heartbeat: req.last_heartbeat,
@@ -623,10 +625,22 @@ async fn update_worker(
     }
     // Lock released here
 
-    // If worker just went to Awaiting, check if all workers are inactive
-    // and trigger eval (or mark done if no eval script)
-    if is_awaiting {
-        let _ = maybe_trigger_eval(&api.run_name, &api.run_dir);
+    // If worker status changed to Awaiting, use LifecycleManager to handle it
+    if let (Some(old), Some(new)) = (old_status, new_status) {
+        if old != new && new == WorkerStatus::Awaiting {
+            // Get agent command from config
+            let agent_command = crate::cli::config::get_agent_command();
+
+            if let Ok(lifecycle) =
+                LocalLifecycleManager::new(&api.run_name, api.run_dir.clone(), agent_command)
+            {
+                let _ = lifecycle.process_event(LifecycleEvent::WorkerStatusChanged {
+                    worker_name: name.clone(),
+                    old,
+                    new,
+                });
+            }
+        }
     }
 
     Ok(Json(SuccessResponse::ok()))
@@ -651,6 +665,8 @@ async fn worker_heartbeat(
     let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%S%.6f").to_string();
     let updates = WorkerUpdate {
         pid: None,
+        runner_id: None,
+        runner_type: None,
         session_id: None,
         status: None,
         waiting_thread: None,

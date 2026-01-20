@@ -51,15 +51,9 @@ export interface PollingController {
  */
 export function createPoller(
   callback: () => void | Promise<void>,
-  options: PollingOptions
+  options: PollingOptions,
 ): PollingController {
-  const {
-    interval,
-    immediate = true,
-    pauseOnHidden = true,
-    onStart,
-    onStop,
-  } = options;
+  const { interval, immediate = true, pauseOnHidden = true, onStart, onStop } = options;
 
   let intervalId: ReturnType<typeof setInterval> | null = null;
   let isActive = false;
@@ -152,7 +146,7 @@ export function createPoller(
  */
 export function debounce<T extends (...args: unknown[]) => void>(
   fn: T,
-  delay: number
+  delay: number,
 ): T & { cancel: () => void } {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
@@ -179,10 +173,7 @@ export function debounce<T extends (...args: unknown[]) => void>(
 /**
  * Create a simple throttled function
  */
-export function throttle<T extends (...args: unknown[]) => void>(
-  fn: T,
-  delay: number
-): T {
+export function throttle<T extends (...args: unknown[]) => void>(fn: T, delay: number): T {
   let lastCall = 0;
 
   return ((...args: unknown[]) => {

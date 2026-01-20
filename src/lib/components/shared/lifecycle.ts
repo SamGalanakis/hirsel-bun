@@ -34,25 +34,25 @@ export class LifecycleManager {
     target: Window,
     type: K,
     handler: (this: Window, ev: WindowEventMap[K]) => void,
-    options?: AddEventListenerOptions
+    options?: AddEventListenerOptions,
   ): void;
   addEventListener<K extends keyof DocumentEventMap>(
     target: Document,
     type: K,
     handler: (this: Document, ev: DocumentEventMap[K]) => void,
-    options?: AddEventListenerOptions
+    options?: AddEventListenerOptions,
   ): void;
   addEventListener(
     target: EventTarget,
     type: string,
     handler: EventListener,
-    options?: AddEventListenerOptions
+    options?: AddEventListenerOptions,
   ): void;
   addEventListener(
     target: EventTarget,
     type: string,
     handler: EventListener,
-    options?: AddEventListenerOptions
+    options?: AddEventListenerOptions,
   ): void {
     target.addEventListener(type, handler, options);
     this.eventListeners.push({ target, type, handler, options });

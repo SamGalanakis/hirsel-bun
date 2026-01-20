@@ -4,7 +4,9 @@
 //! in the original project repository. For remote repos, pushes
 //! directly to the remote. For local repos, creates a local branch.
 
-use crate::core::{config, git, state::SQLiteState, state::Status, Files};
+use crate::core::{
+    config, git, lifecycle::LocalLifecycleManager, state::SQLiteState, state::Status, Files,
+};
 
 /// Execute the deliver command for a run
 pub fn execute(
@@ -128,9 +130,9 @@ pub fn execute(
     state.set_status(Status::Delivered)?;
 
     // Trigger auto-improve if enabled
-    let (global_config, _) =
-        config::Config::load().unwrap_or_else(|_| (config::Config::default(), vec![]));
-    let _ = crate::core::workers::maybe_run_improve(run_name, &global_config);
+    if let Ok(lifecycle) = LocalLifecycleManager::new(run_name, run_dir.clone(), vec![]) {
+        lifecycle.run_improve();
+    }
 
     // Output result
     if json {

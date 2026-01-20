@@ -17,31 +17,9 @@ use crate::core::api_types::{
     WorkerLocation, WorkerStatus,
 };
 use crate::core::config::{self, Config};
+use crate::core::names::slugify;
 use crate::core::state::SQLiteState;
 use crate::core::Files;
-
-/// Convert a name to a URL-safe slug
-fn slugify(name: &str) -> String {
-    let mut slug = String::new();
-    let mut last_was_separator = false;
-
-    for c in name.chars() {
-        if c.is_ascii_alphanumeric() {
-            slug.push(c.to_ascii_lowercase());
-            last_was_separator = false;
-        } else if !last_was_separator && !slug.is_empty() {
-            slug.push('-');
-            last_was_separator = true;
-        }
-    }
-
-    // Remove trailing dash
-    if slug.ends_with('-') {
-        slug.pop();
-    }
-
-    slug
-}
 
 /// Local orchestrator that operates directly on the local filesystem
 pub struct LocalOrchestrator {
@@ -349,37 +327,19 @@ impl Orchestrator for LocalOrchestrator {
     }
 
     async fn pause_run(&self, name: &str) -> OrchestratorResult<()> {
-        use crate::core::workers::pause_all_workers;
+        use crate::cli::config::get_agent_command;
+        use crate::core::lifecycle::{LifecycleManager, LocalLifecycleManager};
 
-        let state = self.get_state(name)?;
+        let run_dir = config::run_dir(name);
+        let agent_command = get_agent_command();
 
-        // Check current status
-        let status = state
-            .status()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        // Create lifecycle manager and delegate
+        let lifecycle = LocalLifecycleManager::new(name, run_dir, agent_command)
+            .map_err(|e| OrchestratorError::Other(e.to_string()))?;
 
-        if status == crate::core::state::Status::Paused {
-            return Ok(()); // Already paused
-        }
-        if status != crate::core::state::Status::Working
-            && status != crate::core::state::Status::Eval
-        {
-            return Err(OrchestratorError::InvalidOperation(format!(
-                "Cannot pause run in '{}' status",
-                status
-            )));
-        }
-
-        // Cancel any running evals
-        let _ = state.cancel_running_evals("Run paused");
-
-        // Pause all workers
-        pause_all_workers(&state).map_err(|e| OrchestratorError::Other(e.to_string()))?;
-
-        // Update status
-        state
-            .set_status(crate::core::state::Status::Paused)
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        lifecycle
+            .pause_run("User requested pause")
+            .map_err(|e| OrchestratorError::Other(e.to_string()))?;
 
         Ok(())
     }
@@ -390,63 +350,18 @@ impl Orchestrator for LocalOrchestrator {
         _time_limit_minutes: Option<u32>,
     ) -> OrchestratorResult<()> {
         use crate::cli::config::get_agent_command;
-        use crate::core::workers::{maybe_scale_up, maybe_trigger_eval, resume_awaiting_workers};
+        use crate::core::lifecycle::{LifecycleManager, LocalLifecycleManager};
 
         let run_dir = config::run_dir(name);
-        let state = self.get_state(name)?;
-
-        // Check current status
-        let status = state
-            .status()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-        if status == crate::core::state::Status::Working {
-            return Ok(()); // Already running
-        }
-        if status != crate::core::state::Status::Paused
-            && status != crate::core::state::Status::Failed
-        {
-            return Err(OrchestratorError::InvalidOperation(format!(
-                "Cannot resume run in '{}' status",
-                status
-            )));
-        }
-
-        // Check if there was an eval that was paused
-        let was_in_eval = state
-            .has_paused_eval()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-        if was_in_eval {
-            let _ = state.clear_paused_evals();
-            state
-                .set_status(crate::core::state::Status::Working)
-                .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-            if maybe_trigger_eval(name, &run_dir).unwrap_or(false) {
-                return Ok(());
-            }
-        }
-
-        // Update status first
-        state
-            .set_status(crate::core::state::Status::Working)
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-        // Resume existing workers
         let agent_command = get_agent_command();
-        let _ = resume_awaiting_workers(name, &run_dir, &agent_command);
 
-        // Try to scale up if more tasks are available
-        loop {
-            match maybe_scale_up(name, &run_dir, &agent_command) {
-                Ok(Some(_)) => continue,
-                _ => break,
-            }
-        }
+        // Create lifecycle manager and delegate
+        let lifecycle = LocalLifecycleManager::new(name, run_dir, agent_command)
+            .map_err(|e| OrchestratorError::Other(e.to_string()))?;
 
-        // Check if eval should be triggered
-        let _ = maybe_trigger_eval(name, &run_dir);
+        lifecycle
+            .resume_run()
+            .map_err(|e| OrchestratorError::Other(e.to_string()))?;
 
         Ok(())
     }
@@ -651,40 +566,6 @@ impl Orchestrator for LocalOrchestrator {
         spawn_worker(config, &state).map_err(|e| OrchestratorError::Other(e.to_string()))?;
 
         Ok(())
-    }
-
-    async fn get_worker_log(
-        &self,
-        run: &str,
-        worker: &str,
-        lines: Option<usize>,
-    ) -> OrchestratorResult<String> {
-        use std::io::Read;
-
-        let run_dir = config::run_dir(run);
-        let files = Files::new(&run_dir);
-        let log_path = files.worker_log(worker);
-
-        if !log_path.exists() {
-            return Ok(String::new());
-        }
-
-        let mut file = std::fs::File::open(&log_path)
-            .map_err(|e| OrchestratorError::Other(format!("Failed to open log file: {}", e)))?;
-
-        let mut content = String::new();
-        file.read_to_string(&mut content)
-            .map_err(|e| OrchestratorError::Other(format!("Failed to read log file: {}", e)))?;
-
-        // If lines limit is specified, return only the last N lines
-        if let Some(limit) = lines {
-            let all_lines: Vec<&str> = content.lines().collect();
-            if all_lines.len() > limit {
-                content = all_lines[all_lines.len() - limit..].join("\n");
-            }
-        }
-
-        Ok(content)
     }
 
     async fn get_worker_events(
@@ -1377,21 +1258,24 @@ impl Orchestrator for LocalOrchestrator {
 
             match runner.spawn(&spawn_config).await {
                 Ok(result) => {
-                    // Update worker with PID
+                    // Update worker with PID and runner info
                     let pid = result.pid.map(|p| p as i64);
                     let _ = sqlite_state.update_worker(
                         worker_name,
                         WorkerUpdate {
                             pid,
+                            runner_id: Some(result.handle.runner_id.clone()),
+                            runner_type: Some(result.handle.runner_type.clone()),
                             status: Some(crate::core::state::WorkerStatus::Working),
                             ..Default::default()
                         },
                     );
                     spawned_workers.push(worker_name.clone());
                     tracing::info!(
-                        "Spawned worker '{}' (runner_id: {})",
+                        "Spawned worker '{}' (runner_id: {}, runner_type: {})",
                         worker_name,
-                        result.handle.runner_id
+                        result.handle.runner_id,
+                        result.handle.runner_type
                     );
                 }
                 Err(e) => {

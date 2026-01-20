@@ -375,7 +375,14 @@ export const transitions = {
 
 export type RunStatus = 'idle' | 'working' | 'paused' | 'waiting' | 'done' | 'timed_out' | 'error';
 export type TaskStatus = 'todo' | 'doing' | 'done' | 'blocked';
-export type WorkerStatus = 'idle' | 'working' | 'waiting' | 'awaiting' | 'paused' | 'done' | 'error';
+export type WorkerStatus =
+  | 'idle'
+  | 'working'
+  | 'waiting'
+  | 'awaiting'
+  | 'paused'
+  | 'done'
+  | 'error';
 
 export const statusClasses: Record<RunStatus | TaskStatus | WorkerStatus, string> = {
   idle: 'status-idle',

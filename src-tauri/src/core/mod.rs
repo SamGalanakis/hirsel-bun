@@ -28,6 +28,7 @@ pub mod git;
 #[cfg(feature = "server")]
 pub mod git_http;
 pub mod gyp_chat;
+pub mod lifecycle;
 pub mod metrics;
 pub mod names;
 pub mod ops;
@@ -74,9 +75,14 @@ pub use eval::{
 };
 pub use files::Files;
 pub use gyp_chat::{GypChatError, GypChatMessage, GypChatResult, GypChatStore};
+pub use lifecycle::{
+    create_lifecycle_manager, LifecycleAction, LifecycleContext, LifecycleError, LifecycleEvent,
+    LifecycleManager, LifecycleResult, LocalLifecycleManager, RemoteLifecycleManager,
+    RunStateMachine, WorkerStateMachine,
+};
 pub use names::{
     generate_run_name, generate_unique_names, generate_worker_name, get_available_name,
-    get_available_names,
+    get_available_names, slugify,
 };
 pub use orchestrator::{
     create_local_orchestrator, create_orchestrator, LocalOrchestrator, Orchestrator,
@@ -96,8 +102,7 @@ pub use storage::{
     LocalFileStorage, StorageError, StorageResult,
 };
 pub use workers::{
-    check_and_send_time_notifications, check_time_expired, check_worker_heartbeats,
-    get_agent_command, handle_time_expired, is_pid_alive, maybe_scale_up, maybe_trigger_eval,
-    pause_all_workers, resume_awaiting_workers, spawn_worker, update_worker_heartbeat, SpawnResult,
-    WorkerError, WorkerResult, WorkerScale, WorkerSpawnConfig,
+    check_and_send_time_notifications, check_worker_heartbeats, get_agent_command, is_pid_alive,
+    spawn_worker, update_worker_heartbeat, SpawnResult, WorkerError, WorkerResult, WorkerScale,
+    WorkerSpawnConfig,
 };

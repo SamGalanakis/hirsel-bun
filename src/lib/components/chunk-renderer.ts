@@ -5,8 +5,8 @@
  * to ensure consistent look and behavior for text, thinking, and tool chunks.
  */
 
-import type { ChatToolCall } from '../types';
 import { getIcon, getToolKindIcon, getToolStatusIcon as getToolStatusIconSvg } from '../icons';
+import type { ChatToolCall } from '../types';
 
 /** A chunk of content - text, thinking, or tool */
 export interface OutputChunk {
@@ -54,10 +54,12 @@ export function chunkRendererHelpers() {
      */
     isTerminalTool(tool: ChatToolCall | null | undefined): boolean {
       if (!tool) return false;
-      const isTerminalByKind = tool.kind === 'execute' || tool.kind === 'bash' || tool.kind === 'terminal';
-      const isTerminalByTitle = tool.title?.toLowerCase().includes('terminal') ||
-                                tool.title?.toLowerCase().includes('bash') ||
-                                tool.title?.toLowerCase() === 'bash';
+      const isTerminalByKind =
+        tool.kind === 'execute' || tool.kind === 'bash' || tool.kind === 'terminal';
+      const isTerminalByTitle =
+        tool.title?.toLowerCase().includes('terminal') ||
+        tool.title?.toLowerCase().includes('bash') ||
+        tool.title?.toLowerCase() === 'bash';
       return isTerminalByKind || isTerminalByTitle;
     },
 
@@ -90,7 +92,7 @@ export function chunkRendererHelpers() {
       }
 
       if (cmd.length <= maxLen) return cmd;
-      return cmd.substring(0, maxLen) + '…';
+      return `${cmd.substring(0, maxLen)}…`;
     },
 
     /**
@@ -142,7 +144,7 @@ export function chunkRendererHelpers() {
  */
 export function createToggleToolExpanded(
   getChunks: () => OutputChunk[],
-  setChunks: (chunks: OutputChunk[]) => void
+  setChunks: (chunks: OutputChunk[]) => void,
 ) {
   return function toggleToolExpanded(toolId: string) {
     const chunks = getChunks();

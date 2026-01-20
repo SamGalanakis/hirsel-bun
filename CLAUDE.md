@@ -46,6 +46,34 @@ cargo build             # Build to src-tauri/target/debug/hirsel
 
 **CLI commands:** `runs`, `view <run>`, `attach <run>`, `go <run> <spec>`, `test <scenario> --yolo`
 
+## Dev Tools
+
+Install dev tools:
+```bash
+cargo install cargo-deny cargo-machete cargo-nextest typos-cli tokei prek
+npm install
+```
+
+Run checks:
+```bash
+npm run lint              # Biome lint
+npm run lint:fix          # Biome lint + fix
+npm run test              # cargo nextest
+cargo deny check          # Dependency audit
+cargo machete             # Find unused deps
+typos                     # Spell check
+tokei                     # LOC stats
+```
+
+**Pre-commit with [prek](https://github.com/j178/prek):**
+```bash
+prek install              # Install hooks
+prek                      # Run on staged files
+prek run --all-files      # Run on all files
+```
+
+Hooks: typos, cargo-fmt, cargo-check, cargo-clippy, cargo-deny, tsc, biome.
+
 ## Process Management
 
 Use `AcpChild` for spawning ACP processes - handles process groups and cleanup:

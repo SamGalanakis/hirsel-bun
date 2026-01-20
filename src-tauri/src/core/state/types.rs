@@ -319,6 +319,8 @@ pub struct Worker {
     pub id: i64,
     pub name: String,
     pub pid: Option<i64>,
+    pub runner_id: Option<String>,
+    pub runner_type: Option<String>,
     pub session_id: Option<String>,
     pub session_started_at: Option<String>,
     pub status: WorkerStatus,
@@ -468,6 +470,8 @@ pub type StateResult<T> = Result<T, StateError>;
 #[derive(Default)]
 pub struct WorkerUpdate {
     pub pid: Option<i64>,
+    pub runner_id: Option<String>,
+    pub runner_type: Option<String>,
     pub session_id: Option<String>,
     pub status: Option<WorkerStatus>,
     pub waiting_thread: Option<String>,

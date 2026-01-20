@@ -13,6 +13,11 @@ repos:
       - id: check-json
         exclude: ^(src-tauri/target/|tauri-plugin-mcp/target/|node_modules/|dist/)
 
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.28.4
+    hooks:
+      - id: typos
+
   - repo: local
     hooks:
       - id: typescript
@@ -20,7 +25,7 @@ repos:
         entry: npx tsc --noEmit
         language: system
         pass_filenames: false
-        types: [ts, tsx]
+        stages: [pre-commit]
 
       - id: cargo-fmt
         name: Cargo fmt
@@ -47,3 +52,18 @@ repos:
         types: [rust]
         stages: [pre-commit]
         require_serial: true
+
+      - id: cargo-deny
+        name: Cargo deny
+        entry: cargo deny --manifest-path src-tauri/Cargo.toml check
+        language: system
+        pass_filenames: false
+        types: [rust]
+        stages: [pre-commit]
+
+      - id: biome
+        name: Biome lint & format
+        entry: npx @biomejs/biome check --write src/
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]

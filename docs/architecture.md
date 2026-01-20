@@ -65,18 +65,60 @@ The **SQLite database is the source of truth**. Markdown files (`tasks.md`, `cha
 
 ---
 
+## Lifecycle Management
+
+The `lifecycle` module centralizes all run lifecycle operations:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    LifecycleManager trait                       │
+├─────────────────────────────┬───────────────────────────────────┤
+│   LocalLifecycleManager     │   RemoteLifecycleManager          │
+│   (local/daemon mode)       │   (remote workers)                │
+│   - Eval triggering         │   - Delegates to coordinator      │
+│   - Worker scaling          │   - No-op implementations         │
+│   - Time limit enforcement  │                                   │
+│   - Pause/resume            │                                   │
+└─────────────────────────────┴───────────────────────────────────┘
+```
+
+**Events**: `TimeCheck`, `WorkerDone`, `TaskCompleted`, `RunPaused`, `RunResumed`
+
+**Actions**: `TriggerEval`, `SpawnWorker`, `PauseWorkers`, `MarkDone`, `MarkFailed`
+
+Usage:
+```rust
+let lifecycle = LocalLifecycleManager::new(run_name, run_dir, agent_command)?;
+lifecycle.process_event(LifecycleEvent::TimeCheck)?;  // Returns Vec<LifecycleAction>
+lifecycle.kill_all_workers()?;
+lifecycle.resume_awaiting_workers()?;
+```
+
+---
+
 ## Daemon
 
-Background process managing run lifecycle (polls every 5 seconds):
+Background process using `LocalLifecycleManager` (polls every 5 seconds):
 - Triggers eval when all workers idle
 - Enforces time limits
 - Auto-exits after 5 minutes of no active runs
+- Listens on both Unix socket (`~/.hirsel/hirsel.sock`) and TCP (`localhost:19700`)
 
 ```bash
 hirsel daemon start|stop|status
 ```
 
 Auto-starts when CLI runs `hirsel go` or GUI opens.
+
+### TCP Listener for SSH Tunneling
+
+The daemon's TCP listener on `localhost:19700` enables SSH runners to work with local orchestrator via reverse tunnel. When using an SSH runner in local mode:
+
+1. Daemon starts TCP HTTP server on `127.0.0.1:19700`
+2. SSH connection creates reverse tunnel: `-R 19700:localhost:19700`
+3. Remote worker connects to `http://localhost:19700` (tunneled back to local daemon)
+
+This allows workers on remote SSH hosts to access the local state and git repos without deploying a separate server.
 
 ---
 
@@ -93,8 +135,18 @@ GUI ────┘   orchestrator.spawn_workers()└─► RemoteOrchestrator �
 | Orchestrator | Transport | Use Case |
 |--------------|-----------|----------|
 | **Local** | Direct SQLite access | Internal (daemon, server) |
-| **Daemon** | Unix socket | CLI/GUI local mode |
+| **Daemon** | Unix socket / TCP | CLI/GUI local mode |
 | **Remote** | HTTP API | Remote server mode |
+
+### Orchestrator Mode Compatibility
+
+| Host | Local Mode | Remote Mode | Notes |
+|------|------------|-------------|-------|
+| **Local** | ✅ | ✅ | Direct SQLite access |
+| **SSH** | ✅ | ✅ | Local: reverse tunnel to daemon TCP |
+| **Sprite** | ❌ | ✅ | Requires publicly accessible coordinator |
+| **Fly** | ❌ | ✅ | Requires publicly accessible coordinator |
+| **Client** | ❌ | ✅ | Only available in remote mode |
 
 ### Orchestrator Trait Methods
 
@@ -224,7 +276,8 @@ Workers have local git repos. Coordinator runs a git HTTP server as shared remot
 ~/.hirsel/
 ├── config.toml           # Configuration
 ├── hirsel.db             # Global DB (credentials)
-├── hirsel.sock           # Daemon socket
+├── hirsel.sock           # Daemon Unix socket (CLI/GUI)
+├── hirsel.pid            # Daemon PID file
 └── runs/{run_name}/
     ├── hirsel.db         # Run state (SOURCE OF TRUTH)
     ├── spec.md           # Specification (input)
@@ -234,6 +287,8 @@ Workers have local git repos. Coordinator runs a git HTTP server as shared remot
     ├── work/             # Git worktrees (leader/, worker-2/)
     └── chats/            # Generated from DB
 ```
+
+Daemon also listens on `localhost:19700` (TCP) for SSH reverse tunnels.
 
 ---
 

@@ -23,7 +23,10 @@ export type ShortcutAction =
   | 'focus-message'
   | 'toggle-ai'
   | 'sheep-game'
-  | 'close-panel';
+  | 'close-panel'
+  | 'toggle-sidebar'
+  | 'toggle-theme'
+  | 'show-help';
 
 export type ShortcutCategory = 'navigation' | 'run-controls' | 'communication' | 'other';
 
@@ -53,24 +56,96 @@ export interface ShortcutConfig {
 
 export const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
   // Navigation
-  { action: 'navigate-up', label: 'Navigate runs up', category: 'navigation', binding: { key: 'k' }, defaultBinding: { key: 'k' } },
-  { action: 'navigate-down', label: 'Navigate runs down', category: 'navigation', binding: { key: 'j' }, defaultBinding: { key: 'j' } },
-  { action: 'select-run', label: 'Select run', category: 'navigation', binding: { key: 'Enter' }, defaultBinding: { key: 'Enter' } },
-  { action: 'fullscreen', label: 'Fullscreen activity', category: 'navigation', binding: { key: 'f' }, defaultBinding: { key: 'f' } },
+  {
+    action: 'navigate-up',
+    label: 'Navigate runs up',
+    category: 'navigation',
+    binding: { key: 'k' },
+    defaultBinding: { key: 'k' },
+  },
+  {
+    action: 'navigate-down',
+    label: 'Navigate runs down',
+    category: 'navigation',
+    binding: { key: 'j' },
+    defaultBinding: { key: 'j' },
+  },
+  {
+    action: 'select-run',
+    label: 'Select run',
+    category: 'navigation',
+    binding: { key: 'Enter' },
+    defaultBinding: { key: 'Enter' },
+  },
+  {
+    action: 'fullscreen',
+    label: 'Fullscreen activity',
+    category: 'navigation',
+    binding: { key: 'f' },
+    defaultBinding: { key: 'f' },
+  },
 
   // Run controls
-  { action: 'attach', label: 'Attach to worker', category: 'run-controls', binding: { key: 'a' }, defaultBinding: { key: 'a' } },
-  { action: 'pause', label: 'Pause run', category: 'run-controls', binding: { key: 'p' }, defaultBinding: { key: 'p' } },
-  { action: 'resume', label: 'Resume run', category: 'run-controls', binding: { key: 'r' }, defaultBinding: { key: 'r' } },
+  {
+    action: 'attach',
+    label: 'Attach to worker',
+    category: 'run-controls',
+    binding: { key: 'a' },
+    defaultBinding: { key: 'a' },
+  },
+  {
+    action: 'pause',
+    label: 'Pause run',
+    category: 'run-controls',
+    binding: { key: 'p' },
+    defaultBinding: { key: 'p' },
+  },
+  {
+    action: 'resume',
+    label: 'Resume run',
+    category: 'run-controls',
+    binding: { key: 'r' },
+    defaultBinding: { key: 'r' },
+  },
 
   // Communication
-  { action: 'switch-chat', label: 'Switch to chat', category: 'communication', binding: { key: 'c' }, defaultBinding: { key: 'c' } },
-  { action: 'focus-message', label: 'Focus message input', category: 'communication', binding: { key: 'm' }, defaultBinding: { key: 'm' } },
-  { action: 'toggle-ai', label: 'Toggle AI sidebar', category: 'communication', binding: { key: 'i' }, defaultBinding: { key: 'i' } },
+  {
+    action: 'switch-chat',
+    label: 'Switch to chat',
+    category: 'communication',
+    binding: { key: 'c' },
+    defaultBinding: { key: 'c' },
+  },
+  {
+    action: 'focus-message',
+    label: 'Focus message input',
+    category: 'communication',
+    binding: { key: 'm' },
+    defaultBinding: { key: 'm' },
+  },
+  {
+    action: 'toggle-ai',
+    label: 'Toggle AI sidebar',
+    category: 'communication',
+    binding: { key: 'i' },
+    defaultBinding: { key: 'i' },
+  },
 
   // Other
-  { action: 'sheep-game', label: 'Sheep clicker', category: 'other', binding: { key: 'g' }, defaultBinding: { key: 'g' } },
-  { action: 'close-panel', label: 'Close panels', category: 'other', binding: { key: 'Escape' }, defaultBinding: { key: 'Escape' } },
+  {
+    action: 'sheep-game',
+    label: 'Sheep clicker',
+    category: 'other',
+    binding: { key: 'g' },
+    defaultBinding: { key: 'g' },
+  },
+  {
+    action: 'close-panel',
+    label: 'Close panels',
+    category: 'other',
+    binding: { key: 'Escape' },
+    defaultBinding: { key: 'Escape' },
+  },
 ];
 
 // =============================================================================
@@ -83,14 +158,14 @@ export const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
 export function getShortcuts(): ShortcutConfig[] {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (!stored) {
-    return DEFAULT_SHORTCUTS.map(s => ({ ...s, binding: { ...s.defaultBinding } }));
+    return DEFAULT_SHORTCUTS.map((s) => ({ ...s, binding: { ...s.defaultBinding } }));
   }
 
   try {
     const savedBindings: Record<string, ShortcutBinding> = JSON.parse(stored);
 
     // Merge saved bindings with defaults
-    return DEFAULT_SHORTCUTS.map(shortcut => {
+    return DEFAULT_SHORTCUTS.map((shortcut) => {
       const savedBinding = savedBindings[shortcut.action];
       return {
         ...shortcut,
@@ -99,7 +174,7 @@ export function getShortcuts(): ShortcutConfig[] {
     });
   } catch (e) {
     console.warn('Failed to load shortcuts from localStorage:', e);
-    return DEFAULT_SHORTCUTS.map(s => ({ ...s, binding: { ...s.defaultBinding } }));
+    return DEFAULT_SHORTCUTS.map((s) => ({ ...s, binding: { ...s.defaultBinding } }));
   }
 }
 
@@ -154,7 +229,10 @@ export function matchesBinding(e: KeyboardEvent, binding: ShortcutBinding): bool
 /**
  * Find which action a KeyboardEvent matches, if any
  */
-export function findMatchingAction(e: KeyboardEvent, shortcuts: ShortcutConfig[]): ShortcutAction | null {
+export function findMatchingAction(
+  e: KeyboardEvent,
+  shortcuts: ShortcutConfig[],
+): ShortcutAction | null {
   for (const shortcut of shortcuts) {
     if (matchesBinding(e, shortcut.binding)) {
       return shortcut.action;
@@ -191,7 +269,7 @@ export function bindingsEqual(a: ShortcutBinding, b: ShortcutBinding): boolean {
 export function findConflict(
   action: ShortcutAction,
   binding: ShortcutBinding,
-  shortcuts: ShortcutConfig[]
+  shortcuts: ShortcutConfig[],
 ): string | null {
   for (const shortcut of shortcuts) {
     if (shortcut.action === action) continue;
@@ -274,7 +352,9 @@ export function bindingFromEvent(e: KeyboardEvent): ShortcutBinding {
 /**
  * Get shortcuts grouped by category
  */
-export function getShortcutsByCategory(shortcuts: ShortcutConfig[]): Record<ShortcutCategory, ShortcutConfig[]> {
+export function getShortcutsByCategory(
+  shortcuts: ShortcutConfig[],
+): Record<ShortcutCategory, ShortcutConfig[]> {
   const grouped: Record<ShortcutCategory, ShortcutConfig[]> = {
     navigation: [],
     'run-controls': [],

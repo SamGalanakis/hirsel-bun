@@ -29,9 +29,7 @@ export function sortToggle(config: Partial<SortToggleConfig> = {}) {
   return {
     field: config.field || 'timestamp',
     direction: (config.direction || 'desc') as SortDirection,
-    options: config.options || [
-      { value: 'timestamp', label: 'Time' },
-    ],
+    options: config.options || [{ value: 'timestamp', label: 'Time' }],
     isOpen: false,
     _onChange: config.onChange,
 
@@ -72,9 +70,11 @@ export function sortToggle(config: Partial<SortToggleConfig> = {}) {
         this._onChange(this.field, this.direction);
       }
       // Also dispatch a custom event for flexibility
-      window.dispatchEvent(new CustomEvent('sort-changed', {
-        detail: { field: this.field, direction: this.direction }
-      }));
+      window.dispatchEvent(
+        new CustomEvent('sort-changed', {
+          detail: { field: this.field, direction: this.direction },
+        }),
+      );
     },
   };
 }
@@ -83,7 +83,13 @@ export function sortToggle(config: Partial<SortToggleConfig> = {}) {
  * Simple inline sort button (no dropdown, just toggles direction)
  * Usage: x-data="sortButton({ direction: 'desc', onChange: (d) => ... })"
  */
-export function sortButton(config: { direction?: SortDirection; label?: string; onChange?: (direction: SortDirection) => void } = {}) {
+export function sortButton(
+  config: {
+    direction?: SortDirection;
+    label?: string;
+    onChange?: (direction: SortDirection) => void;
+  } = {},
+) {
   return {
     direction: (config.direction || 'desc') as SortDirection,
     label: config.label || 'Time',

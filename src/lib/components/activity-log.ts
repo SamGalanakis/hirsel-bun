@@ -2,9 +2,9 @@
  * Activity log Alpine component
  */
 
-import type { HistoryEntry, WorkerDisplay } from '../types';
+import { DATA_EVENTS, dataCache } from '../data-cache';
 import { getActionIcon as getActionIconSvg, getIcon } from '../icons';
-import { dataCache, DATA_EVENTS } from '../data-cache';
+import type { HistoryEntry, WorkerDisplay } from '../types';
 
 export type SortDirection = 'asc' | 'desc';
 
@@ -140,7 +140,9 @@ export function activityLog() {
         }
       };
       window.addEventListener(DATA_EVENTS.HISTORY_UPDATED, historyUpdatedHandler);
-      this._eventCleanups.push(() => window.removeEventListener(DATA_EVENTS.HISTORY_UPDATED, historyUpdatedHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener(DATA_EVENTS.HISTORY_UPDATED, historyUpdatedHandler),
+      );
 
       // Listen for workers updates from cache
       const workersUpdatedHandler = (e: Event) => {
@@ -148,7 +150,9 @@ export function activityLog() {
         this.workers = customEvent.detail;
       };
       window.addEventListener(DATA_EVENTS.WORKERS_UPDATED, workersUpdatedHandler);
-      this._eventCleanups.push(() => window.removeEventListener(DATA_EVENTS.WORKERS_UPDATED, workersUpdatedHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener(DATA_EVENTS.WORKERS_UPDATED, workersUpdatedHandler),
+      );
 
       // Listen for run selection changes
       const runSelectedHandler = (e: Event) => {
@@ -172,7 +176,9 @@ export function activityLog() {
         }
       };
       window.addEventListener('run-selected', runSelectedHandler);
-      this._eventCleanups.push(() => window.removeEventListener('run-selected', runSelectedHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener('run-selected', runSelectedHandler),
+      );
 
       const keydownHandler = (e: KeyboardEvent) => {
         if (e.key === 'Escape' && this.isFullscreen) {
@@ -187,7 +193,9 @@ export function activityLog() {
         this.toggleFullscreen();
       };
       window.addEventListener('toggle-activity-fullscreen', toggleFullscreenHandler);
-      this._eventCleanups.push(() => window.removeEventListener('toggle-activity-fullscreen', toggleFullscreenHandler));
+      this._eventCleanups.push(() =>
+        window.removeEventListener('toggle-activity-fullscreen', toggleFullscreenHandler),
+      );
 
       // Get initial data from cache if a run is already selected
       const selectedRun = dataCache.getSelectedRun();
@@ -206,7 +214,7 @@ export function activityLog() {
     },
 
     destroy() {
-      this._eventCleanups.forEach(fn => fn());
+      this._eventCleanups.forEach((fn) => fn());
       this._eventCleanups = [];
       if (this._cacheUnsubscribe) {
         this._cacheUnsubscribe();
@@ -245,7 +253,7 @@ export function activityLog() {
     },
 
     formatActionLabel(action: string): string {
-      return action.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      return action.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
     },
 
     // Extract worker name from entry if this is a worker-related action

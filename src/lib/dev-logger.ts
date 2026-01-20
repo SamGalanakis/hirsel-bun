@@ -8,7 +8,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 // Only enable in development
-const isDev = import.meta.env.DEV;
+const isDev = (import.meta as { env?: { DEV?: boolean } }).env?.DEV ?? false;
 
 // Store original console methods
 const originalConsole = {

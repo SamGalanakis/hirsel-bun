@@ -153,30 +153,6 @@ impl Orchestrator for DaemonOrchestrator {
         Ok(())
     }
 
-    async fn get_worker_log(
-        &self,
-        run: &str,
-        worker: &str,
-        lines: Option<usize>,
-    ) -> OrchestratorResult<String> {
-        #[derive(serde::Deserialize)]
-        struct LogResponse {
-            content: String,
-        }
-
-        let path = match lines {
-            Some(n) => format!("/api/runs/{}/workers/{}/log?lines={}", run, worker, n),
-            None => format!("/api/runs/{}/workers/{}/log", run, worker),
-        };
-
-        let response: LogResponse = self
-            .client
-            .get(&path)
-            .await
-            .map_err(|e| OrchestratorError::Other(e.to_string()))?;
-        Ok(response.content)
-    }
-
     async fn get_worker_events(
         &self,
         run: &str,

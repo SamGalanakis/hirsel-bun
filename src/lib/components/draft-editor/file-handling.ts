@@ -2,7 +2,7 @@
  * File handling utilities for draft editor
  */
 
-import { saveAsset, importAssetFromPath } from '../../api';
+import { importAssetFromPath, saveAsset } from '../../api';
 
 declare const window: Window & {
   toast?: {
@@ -23,9 +23,7 @@ export function isImageFile(filename: string, mimeType?: string): boolean {
  * Create markdown reference for a file
  */
 export function createMarkdownRef(filename: string, isImage: boolean): string {
-  return isImage
-    ? `![${filename}](assets/${filename})`
-    : `[${filename}](assets/${filename})`;
+  return isImage ? `![${filename}](assets/${filename})` : `[${filename}](assets/${filename})`;
 }
 
 /**
@@ -34,7 +32,7 @@ export function createMarkdownRef(filename: string, isImage: boolean): string {
  */
 export async function processDroppedFile(
   runName: string,
-  file: File
+  file: File,
 ): Promise<{ filename: string; markdownRef: string } | null> {
   try {
     const arrayBuffer = await file.arrayBuffer();
@@ -58,7 +56,7 @@ export async function processDroppedFile(
  */
 export async function processNativeFilePath(
   runName: string,
-  filePath: string
+  filePath: string,
 ): Promise<{ filename: string; markdownRef: string } | null> {
   try {
     const savedFilename = await importAssetFromPath(runName, filePath);
@@ -80,7 +78,7 @@ export async function processNativeFilePath(
 export function calculateInsertPosition(
   content: string,
   textarea: HTMLTextAreaElement | null,
-  dropY: number
+  dropY: number,
 ): number {
   if (!textarea) return content.length;
 
@@ -89,8 +87,8 @@ export function calculateInsertPosition(
 
   // Get computed style for line height
   const style = window.getComputedStyle(textarea);
-  const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.2;
-  const paddingTop = parseFloat(style.paddingTop) || 0;
+  const lineHeight = Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize) * 1.2;
+  const paddingTop = Number.parseFloat(style.paddingTop) || 0;
 
   // Calculate which line was dropped on (accounting for scroll)
   const scrollTop = textarea.scrollTop;
@@ -110,11 +108,7 @@ export function calculateInsertPosition(
 /**
  * Insert content at a position with proper newline handling
  */
-export function insertAtPosition(
-  content: string,
-  insertion: string,
-  insertPos: number
-): string {
+export function insertAtPosition(content: string, insertion: string, insertPos: number): string {
   const before = content.slice(0, insertPos);
   const after = content.slice(insertPos);
 
@@ -129,11 +123,11 @@ export function insertAtPosition(
   if (atLineStart && isLineEmpty) {
     // At start of empty line - just insert
     return before + insertion + after;
-  } else if (atLineStart) {
-    // At start of non-empty line - insert before with newline after
-    return before + insertion + '\n' + after;
-  } else {
-    // In middle of content - insert on new line
-    return before + '\n' + insertion + after;
   }
+  if (atLineStart) {
+    // At start of non-empty line - insert before with newline after
+    return `${before + insertion}\n${after}`;
+  }
+  // In middle of content - insert on new line
+  return `${before}\n${insertion}${after}`;
 }

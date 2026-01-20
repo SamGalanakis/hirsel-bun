@@ -7,8 +7,8 @@ use std::path::PathBuf;
 
 use crate::core::config;
 use crate::core::gyp_chat::GypChatStore;
+use crate::core::lifecycle::LocalLifecycleManager;
 use crate::core::state::SQLiteState;
-use crate::core::workers::kill_all_workers;
 use crate::core::Files;
 
 use super::types::{CloneRunConfig, CloneRunResult, DeleteRunConfig, DeleteRunResult};
@@ -46,10 +46,13 @@ pub fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsError> 
     };
 
     // Try to get project path and kill workers
-    let files = Files::new(&run_dir);
-    let project_path = if let Ok(state) = SQLiteState::new(files.db_path()) {
-        // Kill any running worker processes (forcefully)
-        if let Ok(killed) = kill_all_workers(&state) {
+    let project_path = if let Ok(lifecycle) = LocalLifecycleManager::new(
+        &config.run_name,
+        run_dir.clone(),
+        vec![], // Agent command not needed for kill
+    ) {
+        // Kill any running worker processes using lifecycle manager
+        if let Ok(killed) = lifecycle.kill_all_workers() {
             result.workers_killed = killed.len();
             if !killed.is_empty() {
                 tracing::info!(
@@ -61,7 +64,7 @@ pub fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsError> 
         }
 
         // Get project path for remote cleanup
-        state.get_project_path().ok().flatten()
+        lifecycle.state().get_project_path().ok().flatten()
     } else {
         None
     };

@@ -6,10 +6,20 @@
  * Toggle with Ctrl+D.
  */
 
+declare const lucide:
+  | {
+      createIcons: (options?: { inTemplates?: boolean }) => void;
+    }
+  | undefined;
+
 declare global {
   interface Window {
     tauriInvoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
   }
+}
+
+interface AlpineComponent {
+  $watch: (property: string, callback: (value: boolean) => void) => void;
 }
 
 interface ProcessCounts {
@@ -19,7 +29,24 @@ interface ProcessCounts {
   details: string;
 }
 
-export function debugPanel() {
+interface DebugPanelData {
+  isOpen: boolean;
+  counts: ProcessCounts;
+  pollInterval: ReturnType<typeof setInterval> | null;
+  isDevMode: boolean;
+}
+
+interface DebugPanelMethods {
+  init(): void;
+  toggle(): void;
+  startPolling(): void;
+  stopPolling(): void;
+  refreshCounts(): Promise<void>;
+  killOrphanedProcesses(): Promise<void>;
+  destroy(): void;
+}
+
+export function debugPanel(): DebugPanelData & DebugPanelMethods & Partial<AlpineComponent> {
   return {
     isOpen: false,
     counts: {
@@ -29,9 +56,9 @@ export function debugPanel() {
       details: '',
     } as ProcessCounts,
     pollInterval: null as ReturnType<typeof setInterval> | null,
-    isDevMode: import.meta.env.DEV,
+    isDevMode: (import.meta as { env?: { DEV?: boolean } }).env?.DEV ?? false,
 
-    init() {
+    init(this: AlpineComponent & ReturnType<typeof debugPanel>) {
       // Only initialize in dev mode
       if (!this.isDevMode) {
         return;

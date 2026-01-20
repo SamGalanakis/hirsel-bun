@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS workers (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     pid INTEGER,
+    runner_id TEXT,
+    runner_type TEXT,
     session_id TEXT,
     session_started_at TEXT,
     status TEXT NOT NULL DEFAULT 'working',

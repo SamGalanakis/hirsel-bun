@@ -72,7 +72,7 @@ impl LocalRunner {
         env.insert("HIRSEL_RUN".to_string(), config.run_name.clone());
         env.insert("HIRSEL_WORKER".to_string(), config.worker_name.clone());
 
-        // Set agent command for resume_awaiting_workers in worker subprocess
+        // Set agent command for lifecycle manager in worker subprocess
         if let Ok(agent_cmd_json) = serde_json::to_string(&config.agent_command) {
             env.insert("HIRSEL_AGENT_COMMAND".to_string(), agent_cmd_json);
         }
@@ -170,6 +170,15 @@ impl LocalRunner {
     }
 
     /// Spawn a worker inside a Docker container.
+    ///
+    /// The container will:
+    /// 1. Download hirsel binary from GitHub releases
+    /// 2. Install Claude CLI
+    /// 3. Run the worker
+    ///
+    /// Mounts:
+    /// - /work: work directory (project files)
+    /// - /hirsel: run directory (spec, db, etc.)
     async fn spawn_docker(
         &self,
         config: &WorkerSpawnConfig,
@@ -183,47 +192,59 @@ impl LocalRunner {
             RunnerError::SpawnFailed(format!("Failed to serialize agent command: {}", e))
         })?;
 
-        // Build hirsel worker args
-        let mut worker_args = vec![
-            "hirsel".to_string(),
-            "__worker-run".to_string(),
-            "--run".to_string(),
-            config.run_name.clone(),
-            "--worker".to_string(),
-            config.worker_name.clone(),
-            "--work-dir".to_string(),
-            "/work".to_string(), // Inside container
-            "--run-dir".to_string(),
-            "/hirsel".to_string(), // Inside container
-            "--spec".to_string(),
-            "/hirsel/spec.md".to_string(), // Inside container
-            "--agent-command".to_string(),
-            agent_command_json,
+        // Build worker args
+        let mut worker_cmd_parts = vec![
+            "hirsel __worker-run".to_string(),
+            format!("--run '{}'", config.run_name),
+            format!("--worker '{}'", config.worker_name),
+            "--work-dir '/work'".to_string(),
+            "--run-dir '/hirsel'".to_string(),
+            "--spec '/hirsel/spec.md'".to_string(),
+            format!(
+                "--agent-command '{}'",
+                agent_command_json.replace('\'', "'\\''")
+            ),
         ];
 
         if config.is_leader {
-            worker_args.push("--is-leader".to_string());
+            worker_cmd_parts.push("--is-leader".to_string());
         }
 
         if let Some(ref leader) = config.leader_name {
-            worker_args.push("--leader-name".to_string());
-            worker_args.push(leader.clone());
+            worker_cmd_parts.push(format!("--leader-name '{}'", leader));
         }
 
         if let Some(ref teammates) = config.teammates {
             if !teammates.is_empty() {
-                worker_args.push("--teammates".to_string());
-                worker_args.push(teammates.join(","));
+                worker_cmd_parts.push(format!("--teammates '{}'", teammates.join(",")));
             }
         }
 
         if let Some(ref session_id) = config.resume_session_id {
-            worker_args.push("--resume-session-id".to_string());
-            worker_args.push(session_id.clone());
+            worker_cmd_parts.push(format!("--resume-session-id '{}'", session_id));
         }
 
+        let worker_cmd = worker_cmd_parts.join(" ");
+
+        // Build init script that sets up the environment and runs the worker
+        let init_script = format!(
+            r#"set -e
+echo "=== Docker Worker Setup ==="
+
+# Install hirsel and claude from GitHub
+curl -fsSL https://raw.githubusercontent.com/SamGalanakis/hirsel/main/scripts/setup-worker.sh | HIRSEL_AGENT=claude bash
+
+# Add claude to PATH if installed to ~/.claude
+export PATH="$HOME/.claude/local/bin:$PATH"
+
+# Run worker
+cd /work
+exec {worker_cmd}
+"#,
+            worker_cmd = worker_cmd
+        );
+
         // Build docker command
-        // docker run -d --rm -v {work_dir}:/work -v {run_dir}:/hirsel {image} hirsel __worker-run ...
         let mut docker_args = vec![
             "run".to_string(),
             "-d".to_string(),
@@ -266,9 +287,11 @@ impl LocalRunner {
             docker_args.push(format!("{}={}", k, v));
         }
 
-        // Add image and worker command
+        // Add image and run init script via bash
         docker_args.push(container.image.clone());
-        docker_args.extend(worker_args);
+        docker_args.push("bash".to_string());
+        docker_args.push("-c".to_string());
+        docker_args.push(init_script);
 
         debug!("Running docker with args: {:?}", docker_args);
 
