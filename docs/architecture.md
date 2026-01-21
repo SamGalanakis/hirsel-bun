@@ -122,6 +122,33 @@ This allows workers on remote SSH hosts to access the local state and git repos 
 
 ---
 
+## Worker Routes
+
+The `worker_routes` module provides shared HTTP route handlers for worker API endpoints. Both the daemon (multi-run) and coordinator API (single-run) use these shared handlers.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      worker_routes module                        │
+│   - Request/Response types (SuccessResponse, UpdateWorkerRequest)│
+│   - Handler functions (pure logic, no HTTP concerns)             │
+│   - Takes &SQLiteState + Optional &dyn LifecycleManager          │
+└─────────────────────────────────────────────────────────────────┘
+               ▲                                    ▲
+               │                                    │
+┌──────────────┴────────────┐        ┌─────────────┴──────────────┐
+│        Daemon             │        │       Coordinator API      │
+│   (multi-run mode)        │        │   (single-run mode)        │
+│   - Run name in URL path  │        │   - Run name in ApiState   │
+│   - Unix socket + TCP     │        │   - Localhost only         │
+└───────────────────────────┘        └────────────────────────────┘
+```
+
+See [Worker Endpoints](#worker-endpoints-internal) in REST API section for the full endpoint list.
+
+The `update_worker` handler accepts an optional `&dyn LifecycleManager`. When a worker status changes to `Awaiting`, it triggers lifecycle events (e.g., eval triggering when all workers idle).
+
+---
+
 ## Orchestrator Pattern
 
 All run creation and worker spawning goes through the `Orchestrator` trait, providing a unified interface for CLI, GUI, and server:
@@ -352,6 +379,87 @@ let content = files.read_spec_async(&*storage).await?;
 
 ---
 
+## Snapshot Strategy
+
+The snapshot system preserves worker state across pause/resume cycles. Strategy is determined by host type:
+
+| Host | Default Strategy | Behavior |
+|------|------------------|----------|
+| **Local** | PersistentDisk | No-op (files remain on local disk) |
+| **SSH** | PersistentDisk | No-op (files remain on remote disk) |
+| **Sprite** | SpriteCheckpoint | Native Sprites API checkpoint |
+| **Fly** | S3 | Tar/gzip to S3-compatible storage |
+
+**Note**: Docker containers on Local/SSH use volume mounts, so files persist after container stop. Container presence doesn't change the snapshot strategy.
+
+### Strategy Types
+
+| Strategy | Description | Requirements |
+|----------|-------------|--------------|
+| **PersistentDisk** | No-op - files remain in place | None |
+| **SpriteCheckpoint** | Native Sprites.dev VM checkpoint API | Sprites API token |
+| **S3** | Tar/gzip work_dir, upload to S3 | `--features s3-storage`, `[storage.s3]` config |
+
+### S3 Snapshot Layout
+
+```
+s3://bucket/
+└── snapshots/
+    └── {run_name}/
+        └── {worker_name}/
+            └── {timestamp}.tar.gz
+```
+
+### Configuration
+
+```toml
+# Implicit PersistentDisk (inferred from local host)
+[runners.local]
+host = "local"
+
+# Implicit SpriteCheckpoint (inferred from sprite host)
+[runners.sprite]
+[runners.sprite.host]
+type = "sprite"
+api_token = "..."
+
+# Implicit S3 (inferred from fly host + storage.s3 configured)
+[runners.fly]
+[runners.fly.host]
+type = "fly"
+app = "hirsel-workers"
+
+# Explicit S3 config with custom prefix
+[runners.custom]
+[runners.custom.host]
+type = "fly"
+[runners.custom.snapshot]
+type = "s3"
+prefix = "custom-snapshots"
+
+# Explicit SpriteCheckpoint with custom comment prefix
+[runners.sprite-custom]
+[runners.sprite-custom.host]
+type = "sprite"
+[runners.sprite-custom.snapshot]
+type = "sprite_checkpoint"
+comment_prefix = "my-prefix"
+```
+
+### Pause/Resume Flow
+
+**Pause**:
+1. For each active worker, create snapshot (before stopping)
+2. Stop the worker process/VM
+3. Store snapshot handle in worker's database record
+
+**Resume**:
+1. Restore from snapshot (if exists)
+2. Spawn worker process
+3. Clear snapshot handle after successful spawn
+
+---
+
 ## CLI Commands
 
 | Command | Purpose |
@@ -392,6 +500,24 @@ let content = files.read_spec_async(&*storage).await?;
 | `/api/config/runners/{name}` | GET/PUT/DELETE | Runner CRUD |
 | `/api/config/profiles/{name}` | GET/PUT/DELETE | Profile CRUD |
 | `/api/credentials/{key}` | GET/POST/DELETE | Encrypted credentials |
+
+### Worker Endpoints (Internal)
+
+Used by workers to communicate with daemon/coordinator. All endpoints are scoped to a run via the URL path.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/runs/{run}/workers/list` | GET | List all workers |
+| `/api/runs/{run}/workers/active` | GET | List active workers |
+| `/api/runs/{run}/workers/all_done` | GET | Check if all workers inactive |
+| `/api/runs/{run}/workers/{worker}` | GET | Get specific worker |
+| `/api/runs/{run}/workers/{worker}/update` | POST | Update worker state |
+| `/api/runs/{run}/workers/{worker}/heartbeat` | POST | Worker heartbeat (returns run status) |
+| `/api/runs/{run}/workers/{worker}/claimed_task` | GET | Get task claimed by worker |
+| `/api/runs/{run}/config/human_in_the_loop` | GET | Get HITL setting |
+| `/api/runs/{run}/config/request` | GET | Get run spec/request |
+| `/api/runs/{run}/config/project_path` | GET | Get project path |
+| `/api/runs/{run}/config/waiting_reason` | GET/POST | Get/set waiting reason |
 
 ---
 

@@ -50,12 +50,16 @@ pub type HttpStateResult<T> = Result<T, HttpStateError>;
 pub struct HttpState {
     base_url: String,
     worker_name: String,
+    run_name: String,
     client: Client,
 }
 
 impl HttpState {
     /// Create a new HTTP state client.
     pub fn new(base_url: &str, worker_name: &str, timeout_secs: u64) -> Self {
+        // Get run_name from environment variable (set by hirsel when spawning workers)
+        let run_name = std::env::var("HIRSEL_RUN").unwrap_or_default();
+
         let client = Client::builder()
             .timeout(Duration::from_secs(timeout_secs))
             .build()
@@ -64,6 +68,7 @@ impl HttpState {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             worker_name: worker_name.to_string(),
+            run_name,
             client,
         }
     }
@@ -71,6 +76,11 @@ impl HttpState {
     // =========================================================================
     // Internal HTTP methods
     // =========================================================================
+
+    /// Build a run-scoped endpoint path
+    fn run_endpoint(&self, path: &str) -> String {
+        format!("/api/runs/{}{}", self.run_name, path)
+    }
 
     async fn get<T: DeserializeOwned>(&self, endpoint: &str) -> HttpStateResult<T> {
         let url = format!("{}{}", self.base_url, endpoint);
@@ -300,7 +310,8 @@ impl HttpState {
         struct WorkersResponse {
             workers: Vec<Worker>,
         }
-        let result: WorkersResponse = self.get("/workers").await?;
+        let endpoint = self.run_endpoint("/workers/list");
+        let result: WorkersResponse = self.get(&endpoint).await?;
         Ok(result.workers)
     }
 
@@ -309,7 +320,8 @@ impl HttpState {
         struct WorkerResponse {
             worker: Option<Worker>,
         }
-        let result: WorkerResponse = self.get(&format!("/workers/{}", name)).await?;
+        let endpoint = self.run_endpoint(&format!("/workers/{}", name));
+        let result: WorkerResponse = self.get(&endpoint).await?;
         Ok(result.worker)
     }
 
@@ -339,9 +351,10 @@ impl HttpState {
             #[serde(skip_serializing_if = "Option::is_none")]
             last_heartbeat: Option<String>,
         }
+        let endpoint = self.run_endpoint(&format!("/workers/{}/update", name));
         let _: SuccessResponse = self
             .post(
-                &format!("/workers/{}/update", name),
+                &endpoint,
                 &UpdateRequest {
                     pid,
                     session_id: session_id.map(|s| s.to_string()),
@@ -362,12 +375,8 @@ impl HttpState {
         }
         #[derive(Serialize)]
         struct Empty {}
-        let result: HeartbeatResponse = self
-            .post(
-                &format!("/workers/{}/heartbeat", self.worker_name),
-                &Empty {},
-            )
-            .await?;
+        let endpoint = self.run_endpoint(&format!("/workers/{}/heartbeat", self.worker_name));
+        let result: HeartbeatResponse = self.post(&endpoint, &Empty {}).await?;
         Status::from_str(&result.status).ok_or_else(|| {
             HttpStateError::InvalidResponse(format!("Invalid status: {}", result.status))
         })
@@ -378,9 +387,8 @@ impl HttpState {
         struct TaskResponse {
             task: Option<Task>,
         }
-        let result: TaskResponse = self
-            .get(&format!("/workers/{}/claimed_task", worker_name))
-            .await?;
+        let endpoint = self.run_endpoint(&format!("/workers/{}/claimed_task", worker_name));
+        let result: TaskResponse = self.get(&endpoint).await?;
         Ok(result.task)
     }
 
@@ -479,7 +487,8 @@ impl HttpState {
         struct RequestResponse {
             request: Option<String>,
         }
-        let result: RequestResponse = self.get("/config/request").await?;
+        let endpoint = self.run_endpoint("/config/request");
+        let result: RequestResponse = self.get(&endpoint).await?;
         Ok(result.request)
     }
 
@@ -488,7 +497,8 @@ impl HttpState {
         struct PathResponse {
             project_path: Option<String>,
         }
-        let result: PathResponse = self.get("/config/project_path").await?;
+        let endpoint = self.run_endpoint("/config/project_path");
+        let result: PathResponse = self.get(&endpoint).await?;
         Ok(result.project_path)
     }
 
@@ -497,7 +507,8 @@ impl HttpState {
         struct HitlResponse {
             enabled: bool,
         }
-        let result: HitlResponse = self.get("/config/human_in_the_loop").await?;
+        let endpoint = self.run_endpoint("/config/human_in_the_loop");
+        let result: HitlResponse = self.get(&endpoint).await?;
         Ok(result.enabled)
     }
 
@@ -506,9 +517,10 @@ impl HttpState {
         struct ReasonRequest {
             reason: Option<String>,
         }
+        let endpoint = self.run_endpoint("/config/waiting_reason");
         let _: SuccessResponse = self
             .post(
-                "/config/waiting_reason",
+                &endpoint,
                 &ReasonRequest {
                     reason: reason.map(|s| s.to_string()),
                 },
@@ -647,7 +659,8 @@ impl HttpState {
         struct WorkersResponse {
             workers: Vec<Worker>,
         }
-        let result: WorkersResponse = self.get("/workers/active").await?;
+        let endpoint = self.run_endpoint("/workers/active");
+        let result: WorkersResponse = self.get(&endpoint).await?;
         Ok(result.workers)
     }
 
@@ -656,7 +669,8 @@ impl HttpState {
         struct DoneResponse {
             all_done: bool,
         }
-        let result: DoneResponse = self.get("/workers/all_done").await?;
+        let endpoint = self.run_endpoint("/workers/all_done");
+        let result: DoneResponse = self.get(&endpoint).await?;
         Ok(result.all_done)
     }
 

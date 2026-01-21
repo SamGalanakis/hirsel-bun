@@ -4,6 +4,7 @@
 #
 # Environment variables:
 #   HIRSEL_TAG          - Git tag (e.g., "v0.1.0"). If not set, uses latest release.
+#   HIRSEL_BINARY_URL   - Custom URL to download binary from (skips GitHub releases)
 #   HIRSEL_BINARY_TYPE  - Binary type: worker, server, cli (default: worker)
 #   HIRSEL_INSTALL_DIR  - Install directory (default: /usr/local/bin)
 #
@@ -40,10 +41,19 @@ get_latest_tag() {
     echo "$tag"
 }
 
-# Download binary from release
-download_release() {
+# Download binary from release or custom URL
+download_binary() {
     local tag="$1"
     local output="$2"
+
+    # If custom URL provided, use it directly
+    if [ -n "${HIRSEL_BINARY_URL:-}" ]; then
+        info "Downloading from custom URL: ${HIRSEL_BINARY_URL}"
+        if ! curl -sS -L -f -o "$output" "$HIRSEL_BINARY_URL"; then
+            error "Failed to download from ${HIRSEL_BINARY_URL}"
+        fi
+        return
+    fi
 
     # Extract version from tag (v0.1.0 -> 0.1.0)
     local version="${tag#v}"
@@ -63,13 +73,18 @@ main() {
     local tag="${HIRSEL_TAG:-}"
     local tmp_binary="/tmp/hirsel-download-$$"
 
-    if [ -z "$tag" ]; then
-        tag=$(get_latest_tag)
-        info "Latest release: ${tag}"
+    # Skip if HIRSEL_BINARY_URL is set (tag not needed)
+    if [ -z "${HIRSEL_BINARY_URL:-}" ]; then
+        if [ -z "$tag" ]; then
+            tag=$(get_latest_tag)
+            info "Latest release: ${tag}"
+        fi
+        info "Installing hirsel ${BINARY_TYPE} (${tag})"
+    else
+        info "Installing hirsel from custom URL"
     fi
 
-    info "Installing hirsel ${BINARY_TYPE} (${tag})"
-    download_release "$tag" "$tmp_binary"
+    download_binary "$tag" "$tmp_binary"
 
     chmod +x "$tmp_binary"
 

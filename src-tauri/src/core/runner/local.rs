@@ -172,13 +172,14 @@ impl LocalRunner {
     /// Spawn a worker inside a Docker container.
     ///
     /// The container will:
-    /// 1. Download hirsel binary from GitHub releases
+    /// 1. Use mounted hirsel binary (or download from GitHub if not mounted)
     /// 2. Install Claude CLI
     /// 3. Run the worker
     ///
     /// Mounts:
     /// - /work: work directory (project files)
     /// - /hirsel: run directory (spec, db, etc.)
+    /// - /usr/local/bin/hirsel: hirsel binary (from host)
     async fn spawn_docker(
         &self,
         config: &WorkerSpawnConfig,
@@ -186,6 +187,24 @@ impl LocalRunner {
     ) -> RunnerResult<SpawnResult> {
         let work_dir_str = config.work_dir.to_string_lossy().to_string();
         let run_dir_str = config.run_dir.to_string_lossy().to_string();
+
+        // Get executable to mount into container
+        // Prefer hirsel-worker (minimal binary without GUI deps) if available
+        let current_exe = std::env::current_exe()
+            .map_err(|e| RunnerError::SpawnFailed(format!("Failed to get current exe: {}", e)))?;
+        let hirsel_exe = if let Some(parent) = current_exe.parent() {
+            let worker_exe = parent.join("hirsel-worker");
+            if worker_exe.exists() {
+                debug!("Using hirsel-worker binary for Docker: {:?}", worker_exe);
+                worker_exe
+            } else {
+                debug!("hirsel-worker not found, using current exe for Docker");
+                current_exe
+            }
+        } else {
+            current_exe
+        };
+        let hirsel_exe_str = hirsel_exe.to_string_lossy().to_string();
 
         // Build agent command JSON
         let agent_command_json = serde_json::to_string(&config.agent_command).map_err(|e| {
@@ -224,18 +243,39 @@ impl LocalRunner {
             worker_cmd_parts.push(format!("--resume-session-id '{}'", session_id));
         }
 
+        // Pass coordinator URL so worker can communicate status
+        if let Some(ref url) = config.coordinator_url {
+            worker_cmd_parts.push(format!("--api-url '{}'", url));
+        }
+
         let worker_cmd = worker_cmd_parts.join(" ");
 
         // Build init script that sets up the environment and runs the worker
+        // The hirsel binary is mounted from the host, so we only need to install the agent (claude)
         let init_script = format!(
             r#"set -e
+set +o histexpand
 echo "=== Docker Worker Setup ==="
 
-# Install hirsel and claude from GitHub
-curl -fsSL https://raw.githubusercontent.com/SamGalanakis/hirsel/main/scripts/setup-worker.sh | HIRSEL_AGENT=claude bash
+# Install dependencies only if missing (skip apt if image already has them)
+if ! command -v curl >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
+    echo "Installing dependencies..."
+    apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates curl git \
+        && rm -rf /var/lib/apt/lists/*
+fi
 
-# Add claude to PATH if installed to ~/.claude
-export PATH="$HOME/.claude/local/bin:$PATH"
+# Install Claude CLI (if not already available)
+if ! command -v claude >/dev/null 2>&1; then
+    echo "Installing Claude CLI..."
+    curl -fsSL https://claude.ai/install.sh | bash || true
+fi
+
+# Add claude to PATH (may be in ~/.local/bin or ~/.claude/local/bin)
+export PATH="$HOME/.local/bin:$HOME/.claude/local/bin:$PATH"
+
+# Verify tools are available
+echo "hirsel: $(hirsel --version 2>&1 || echo 'not found')"
+echo "claude: $(claude --version 2>&1 || echo 'not found')"
 
 # Run worker
 cd /work
@@ -251,23 +291,28 @@ exec {worker_cmd}
             "--rm".to_string(),
             "--name".to_string(),
             format!("hirsel-{}-{}", config.run_name, config.worker_name),
+            // Enable host.docker.internal on Linux
+            // Note: requires `iptables -I INPUT -i docker0 -j ACCEPT` on host
+            "--add-host=host.docker.internal:host-gateway".to_string(),
             "-v".to_string(),
             format!("{}:/work", work_dir_str),
             "-v".to_string(),
             format!("{}:/hirsel", run_dir_str),
+            "-v".to_string(),
+            format!("{}:/usr/local/bin/hirsel:ro", hirsel_exe_str),
             "-w".to_string(),
             "/work".to_string(),
         ];
 
         // Pass through environment variables
+        // Note: HIRSEL_RUN, HIRSEL_WORKER, HIRSEL_API_URL are passed as CLI args to the worker.
+        // The worker sets these as env vars for child processes (MCP server, agent).
         let mut env_to_pass: HashMap<String, String> = HashMap::new();
         env_to_pass.insert(
             "ACP_PERMISSION_MODE".to_string(),
             "bypassPermissions".to_string(),
         );
         env_to_pass.insert("HIRSEL_WORKER_SUBPROCESS".to_string(), "1".to_string());
-        env_to_pass.insert("HIRSEL_RUN".to_string(), config.run_name.clone());
-        env_to_pass.insert("HIRSEL_WORKER".to_string(), config.worker_name.clone());
 
         // Add credentials/env vars
         let env_vars = config.collect_env_vars();
@@ -275,10 +320,20 @@ exec {worker_cmd}
             env_to_pass.insert(k.clone(), v.clone());
         }
 
-        // Also forward ANTHROPIC_API_KEY from host if not in config
+        // Forward credentials from host if not in config
+        // Priority: config > env var > local OAuth file
         if !env_to_pass.contains_key("ANTHROPIC_API_KEY") {
             if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
                 env_to_pass.insert("ANTHROPIC_API_KEY".to_string(), key);
+            }
+        }
+        if !env_to_pass.contains_key("CLAUDE_CODE_OAUTH_TOKEN") {
+            if let Ok(token) = std::env::var("CLAUDE_CODE_OAUTH_TOKEN") {
+                env_to_pass.insert("CLAUDE_CODE_OAUTH_TOKEN".to_string(), token);
+            } else if let Some(creds) = super::super::credentials::get_local_oauth_credentials() {
+                if let Some(token) = creds.claude_access_token {
+                    env_to_pass.insert("CLAUDE_CODE_OAUTH_TOKEN".to_string(), token);
+                }
             }
         }
 

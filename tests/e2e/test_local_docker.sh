@@ -4,9 +4,10 @@
 # Purpose: Test the local docker runner end-to-end with the noop scenario.
 # This verifies that:
 # 1. Docker container is spawned
-# 2. Setup script downloads hirsel + claude from GitHub
-# 3. Worker runs and completes
-# 4. Container is properly stopped via docker stop
+# 2. Local hirsel binary is mounted into container
+# 3. Setup script installs claude CLI
+# 4. Worker runs and completes
+# 5. Container is properly stopped via docker stop
 #
 # Requirements:
 # - Docker installed and running
@@ -51,11 +52,17 @@ if ! docker info &> /dev/null; then
 fi
 echo "  Docker daemon: running"
 
+CLAUDE_CREDS_FILE="$HOME/.claude/.credentials.json"
 if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-    echo "ERROR: ANTHROPIC_API_KEY not set"
-    exit 1
+    if [ -f "$CLAUDE_CREDS_FILE" ]; then
+        echo "  ANTHROPIC_API_KEY: not set (will use OAuth from $CLAUDE_CREDS_FILE)"
+    else
+        echo "ERROR: ANTHROPIC_API_KEY not set and no OAuth credentials found at $CLAUDE_CREDS_FILE"
+        exit 1
+    fi
+else
+    echo "  ANTHROPIC_API_KEY: set"
 fi
-echo "  ANTHROPIC_API_KEY: set"
 
 # Backup existing config if present
 CONFIG_BACKUP=""
@@ -78,7 +85,7 @@ cat > "$CONFIG_FILE" << 'EOF'
 type = "local"
 
 [runners.docker.container]
-image = "debian:bookworm-slim"
+image = "buildpack-deps:noble"
 EOF
 
 echo "  Config written to $CONFIG_FILE"
@@ -134,7 +141,7 @@ echo "  Spec copied"
 echo ""
 echo "Running noop scenario with docker runner..."
 echo "  Run name: $RUN_NAME"
-echo "  Image: debian:bookworm-slim"
+echo "  Image: buildpack-deps:noble"
 echo ""
 
 # Start in background so we can monitor
@@ -171,16 +178,31 @@ if [ -f "$DB_PATH" ]; then
     fi
 fi
 
-# Wait for completion (with timeout)
+# Wait for hirsel go to finish spawning
+wait $GO_PID || true
+
+# Wait for completion by polling status (with timeout)
 echo ""
 echo "Waiting for run to complete..."
 MAX_WAIT=300  # 5 minutes (setup takes time)
 START_TIME=$(date +%s)
 
-while kill -0 $GO_PID 2>/dev/null; do
+while true; do
     ELAPSED=$(( $(date +%s) - START_TIME ))
+
+    # Check current status
+    CURRENT_STATUS=$("$HIRSEL_BINARY" view "$RUN_NAME" --json 2>/dev/null | jq -r '.status // "unknown"' || echo "unknown")
+
+    # Break if completed
+    case "$CURRENT_STATUS" in
+        "completed"|"delivered"|"pass"|"done"|"fail")
+            echo "  Status changed to: $CURRENT_STATUS"
+            break
+            ;;
+    esac
+
     if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
-        echo "ERROR: Run timed out after ${MAX_WAIT}s"
+        echo "ERROR: Run timed out after ${MAX_WAIT}s (status: $CURRENT_STATUS)"
 
         # Show container logs for debugging
         if [ -n "$CONTAINER_ID" ]; then
@@ -189,15 +211,11 @@ while kill -0 $GO_PID 2>/dev/null; do
             docker logs "$CONTAINER_ID" 2>&1 | tail -50 || true
         fi
 
-        kill $GO_PID 2>/dev/null || true
         exit 1
     fi
-    echo "  Waiting... (${ELAPSED}s)"
+    echo "  Waiting... (${ELAPSED}s, status: $CURRENT_STATUS)"
     sleep 10
 done
-
-# Check exit status
-wait $GO_PID || true
 
 # Check final status
 echo ""

@@ -83,16 +83,20 @@ impl WorkerConfig {
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_else(|| vec!["hirsel".to_string(), "__acp-bridge".to_string()]);
 
-        // Get runs directory from HIRSEL_ROOT or default
-        let hirsel_root = std::env::var("HIRSEL_ROOT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(".hirsel")
-            });
-
-        let run_dir = hirsel_root.join("runs").join(&run_name);
+        // Get run directory - check HIRSEL_RUN_DIR first (for Docker/custom mounts),
+        // then fall back to HIRSEL_ROOT/runs/run_name
+        let run_dir = if let Ok(dir) = std::env::var("HIRSEL_RUN_DIR") {
+            PathBuf::from(dir)
+        } else {
+            let hirsel_root = std::env::var("HIRSEL_ROOT")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| {
+                    dirs::home_dir()
+                        .unwrap_or_else(|| PathBuf::from("."))
+                        .join(".hirsel")
+                });
+            hirsel_root.join("runs").join(&run_name)
+        };
 
         if !run_dir.exists() {
             return Err(WorkerError::RunNotFound(run_dir));

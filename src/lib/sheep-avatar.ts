@@ -252,16 +252,12 @@ export function generateCollieSvg(size = 64): string {
   return `<img src="/gyp.svg" width="${size}" height="${size}" alt="Gyp" style="object-fit: contain;" />`;
 }
 
-// Alias for backwards compatibility
-export const generateAgentSheepSvg = generateCollieSvg;
-
 // Export for use in global scope
 declare global {
   interface Window {
     generateSheepSvg: typeof generateSheepSvg;
     getWorkerSheepSvg: typeof getWorkerSheepSvg;
     generateCollieSvg: typeof generateCollieSvg;
-    generateAgentSheepSvg: typeof generateAgentSheepSvg;
   }
 }
 
@@ -269,5 +265,4 @@ if (typeof window !== 'undefined') {
   window.generateSheepSvg = generateSheepSvg;
   window.getWorkerSheepSvg = getWorkerSheepSvg;
   window.generateCollieSvg = generateCollieSvg;
-  window.generateAgentSheepSvg = generateAgentSheepSvg;
 }

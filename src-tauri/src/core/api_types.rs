@@ -522,7 +522,11 @@ impl From<RunnerConfigResponse> for crate::core::runner::RunnerConfig {
 
         let container = cfg.container.map(|c| ContainerConfig { image: c.image });
 
-        RunnerConfig { host, container }
+        RunnerConfig {
+            host,
+            container,
+            snapshot: None,
+        }
     }
 }
 
@@ -636,6 +640,137 @@ impl From<config::OrchestratorProfile> for OrchestratorProfileResponse {
 }
 
 // =============================================================================
+// Storage Types
+// =============================================================================
+
+/// Storage provider type for frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StorageProviderResponse {
+    S3,
+    Tigris,
+}
+
+impl From<config::StorageProvider> for StorageProviderResponse {
+    fn from(provider: config::StorageProvider) -> Self {
+        match provider {
+            config::StorageProvider::S3 => Self::S3,
+            config::StorageProvider::Tigris => Self::Tigris,
+        }
+    }
+}
+
+impl From<StorageProviderResponse> for config::StorageProvider {
+    fn from(provider: StorageProviderResponse) -> Self {
+        match provider {
+            StorageProviderResponse::S3 => Self::S3,
+            StorageProviderResponse::Tigris => Self::Tigris,
+        }
+    }
+}
+
+/// S3 configuration for frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct S3ConfigResponse {
+    pub provider: StorageProviderResponse,
+    pub endpoint: Option<String>,
+    pub bucket: String,
+    pub region: Option<String>,
+    pub access_key_id: Option<String>,
+    pub secret_access_key: Option<String>,
+}
+
+impl From<&config::S3Config> for S3ConfigResponse {
+    fn from(cfg: &config::S3Config) -> Self {
+        Self {
+            provider: cfg.provider.into(),
+            endpoint: cfg.endpoint.clone(),
+            bucket: cfg.bucket.clone(),
+            region: cfg.region.clone(),
+            access_key_id: cfg.access_key_id.clone(),
+            secret_access_key: cfg.secret_access_key.clone(),
+        }
+    }
+}
+
+impl From<S3ConfigResponse> for config::S3Config {
+    fn from(cfg: S3ConfigResponse) -> Self {
+        Self {
+            provider: cfg.provider.into(),
+            endpoint: cfg.endpoint,
+            bucket: cfg.bucket,
+            region: cfg.region,
+            access_key_id: cfg.access_key_id,
+            secret_access_key: cfg.secret_access_key,
+        }
+    }
+}
+
+/// Storage backend type for frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StorageBackendResponse {
+    Local,
+    S3,
+}
+
+impl From<config::StorageBackend> for StorageBackendResponse {
+    fn from(backend: config::StorageBackend) -> Self {
+        match backend {
+            config::StorageBackend::Local => Self::Local,
+            config::StorageBackend::S3 => Self::S3,
+        }
+    }
+}
+
+impl From<StorageBackendResponse> for config::StorageBackend {
+    fn from(backend: StorageBackendResponse) -> Self {
+        match backend {
+            StorageBackendResponse::Local => Self::Local,
+            StorageBackendResponse::S3 => Self::S3,
+        }
+    }
+}
+
+/// Storage configuration for frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageConfigResponse {
+    pub files: StorageBackendResponse,
+    pub storages: std::collections::HashMap<String, S3ConfigResponse>,
+    pub default_storage: Option<String>,
+}
+
+impl From<&config::StorageConfig> for StorageConfigResponse {
+    fn from(cfg: &config::StorageConfig) -> Self {
+        Self {
+            files: cfg.files.into(),
+            storages: cfg
+                .storages
+                .iter()
+                .map(|(k, v)| (k.clone(), v.into()))
+                .collect(),
+            default_storage: cfg.default_storage.clone(),
+        }
+    }
+}
+
+impl From<StorageConfigResponse> for config::StorageConfig {
+    fn from(cfg: StorageConfigResponse) -> Self {
+        Self {
+            files: cfg.files.into(),
+            storages: cfg
+                .storages
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
+            default_storage: cfg.default_storage,
+        }
+    }
+}
+
+// =============================================================================
 // Git Provider Types
 // =============================================================================
 
@@ -696,6 +831,7 @@ pub struct ConfigResponse {
     pub profiles: std::collections::HashMap<String, OrchestratorProfileResponse>,
     pub default_profile: String,
     pub git: GitConfigResponse,
+    pub storage: StorageConfigResponse,
 }
 
 // =============================================================================

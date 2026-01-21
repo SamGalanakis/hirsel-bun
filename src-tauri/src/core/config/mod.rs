@@ -28,7 +28,7 @@ pub use agent::AgentConfig;
 pub use git::{GitConfig, GitProvider};
 pub use orchestrator::{OrchestratorAccess, OrchestratorMode, OrchestratorProfile};
 pub use paths::{global_db_path, hirsel_dir, list_runs, run_dir, run_exists, runs_dir};
-pub use storage::{S3Config, StorageBackend, StorageConfig};
+pub use storage::{S3Config, StorageBackend, StorageConfig, StorageProvider};
 pub use types::{get_agent_env_vars, AgentAuth, AgentType, AuthConfig, AuthMethod};
 pub use workers::WorkerScale;
 

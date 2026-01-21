@@ -11,14 +11,14 @@ use tracing::{debug, error, info};
 
 use super::setup::{self, WorkerSetupConfig};
 use super::{
-    ContainerConfig, Runner, RunnerError, RunnerResult, SpawnResult, SshRunnerConfig, WorkerHandle,
+    ContainerConfig, Runner, RunnerError, RunnerResult, SpawnResult, SshHostConfig, WorkerHandle,
     WorkerSpawnConfig,
 };
 
 /// SSH runner - spawns workers on remote machines via SSH.
 /// Optionally supports running workers in Docker containers on the remote host.
 pub struct SshRunner {
-    config: SshRunnerConfig,
+    config: SshHostConfig,
     /// Port on remote that tunnels back to coordinator
     tunnel_port: Option<u16>,
     /// Optional container configuration for running workers in Docker
@@ -27,7 +27,7 @@ pub struct SshRunner {
 
 impl SshRunner {
     /// Create a new SSH runner
-    pub fn new(config: SshRunnerConfig, container: Option<ContainerConfig>) -> Self {
+    pub fn new(config: SshHostConfig, container: Option<ContainerConfig>) -> Self {
         Self {
             config,
             tunnel_port: None,
@@ -36,12 +36,12 @@ impl SshRunner {
     }
 
     /// Create a new SSH runner without container support (bare host)
-    pub fn new_bare(config: SshRunnerConfig) -> Self {
+    pub fn new_bare(config: SshHostConfig) -> Self {
         Self::new(config, None)
     }
 
     /// Create a new SSH runner with a tunnel port
-    pub fn with_tunnel_port(config: SshRunnerConfig, tunnel_port: u16) -> Self {
+    pub fn with_tunnel_port(config: SshHostConfig, tunnel_port: u16) -> Self {
         Self {
             config,
             tunnel_port: Some(tunnel_port),
@@ -64,7 +64,7 @@ impl SshRunner {
         let mut cmd = Command::new("ssh");
         cmd.args(["-o", "BatchMode=yes"])
             .args(["-o", "StrictHostKeyChecking=accept-new"])
-            .args(["-p", &self.config.ssh_port.to_string()]);
+            .args(["-p", &self.config.port.to_string()]);
 
         if let Some(ref key) = self.config.ssh_key {
             let key_path = if key.starts_with("~") {
@@ -77,7 +77,7 @@ impl SshRunner {
             cmd.args(["-i", &key_path.to_string_lossy()]);
         }
 
-        cmd.arg(&self.config.host);
+        cmd.arg(&self.config.address);
         cmd
     }
 
@@ -86,7 +86,7 @@ impl SshRunner {
         let mut cmd = self.build_ssh_cmd();
         cmd.arg(script);
 
-        debug!("Running SSH command on {}", self.config.host);
+        debug!("Running SSH command on {}", self.config.address);
 
         let output = cmd
             .stdin(Stdio::null())
@@ -185,14 +185,14 @@ impl Runner for SshRunner {
 
         info!(
             "Spawning SSH worker {} on {} (work_dir: {})",
-            config.worker_name, self.config.host, work_dir
+            config.worker_name, self.config.address, work_dir
         );
 
         // Step 1: Setup Tailscale if auth key provided
         if let Some(ref authkey) = config.tailscale_authkey {
             info!(
                 "Setting up Tailscale for {} on {}",
-                config.worker_name, self.config.host
+                config.worker_name, self.config.address
             );
             let tailscale_script = format!(
                 r#"
@@ -217,7 +217,7 @@ fi
         // Step 2: Download and setup project files from coordinator
         info!(
             "Setting up project files for {} on {}",
-            config.worker_name, self.config.host
+            config.worker_name, self.config.address
         );
         let setup_config = WorkerSetupConfig {
             coordinator_url: coordinator_url.clone(),
@@ -230,14 +230,14 @@ fi
         if !self.run_ssh_command(&files_setup_script, Duration::from_secs(120))? {
             return Err(RunnerError::SetupFailed(format!(
                 "Failed to setup workspace for {} on {}",
-                config.worker_name, self.config.host
+                config.worker_name, self.config.address
             )));
         }
 
         // Step 3: Start worker process (bare or in Docker)
         info!(
             "Starting worker {} on {}",
-            config.worker_name, self.config.host
+            config.worker_name, self.config.address
         );
 
         let agent_command_json =
@@ -267,7 +267,7 @@ fi
             info!(
                 "Worker {} started on {} in Docker (container: {}, image: {})",
                 config.worker_name,
-                self.config.host,
+                self.config.address,
                 &container_id[..12.min(container_id.len())],
                 container.image
             );
@@ -299,7 +299,7 @@ fi
 
             info!(
                 "Worker {} started on {} (PID: {})",
-                config.worker_name, self.config.host, pid
+                config.worker_name, self.config.address, pid
             );
 
             Ok(SpawnResult {
@@ -433,14 +433,14 @@ mod tests {
 
     #[test]
     fn test_ssh_runner_type() {
-        let config = SshRunnerConfig::default();
+        let config = SshHostConfig::default();
         let runner = SshRunner::new_bare(config);
         assert_eq!(runner.runner_type(), "ssh");
     }
 
     #[test]
     fn test_ssh_docker_runner_type() {
-        let config = SshRunnerConfig::default();
+        let config = SshHostConfig::default();
         let runner = SshRunner::new(
             config,
             Some(ContainerConfig {
@@ -452,8 +452,8 @@ mod tests {
 
     #[test]
     fn test_ssh_runner_with_tunnel_port() {
-        let config = SshRunnerConfig {
-            host: "user@example.com".to_string(),
+        let config = SshHostConfig {
+            address: "user@example.com".to_string(),
             ..Default::default()
         };
         let runner = SshRunner::with_tunnel_port(config, 19800);

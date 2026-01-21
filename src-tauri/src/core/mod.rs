@@ -37,12 +37,15 @@ pub mod process;
 pub mod runner;
 #[cfg(feature = "server")]
 pub mod server;
+pub mod snapshot;
 pub mod state;
 pub mod state_access;
 pub mod storage;
 pub mod tailscale;
 #[cfg(feature = "server")]
 pub mod tunnel;
+#[cfg(feature = "server")]
+pub mod worker_routes;
 pub mod workers;
 
 // Re-export commonly used types
@@ -90,8 +93,15 @@ pub use orchestrator::{
 };
 pub use runner::{
     create_runner, parse_remote_spec, parse_remote_specs, LocalRunner, Runner, RunnerConfig,
-    RunnerError, RunnerResult, SpawnResult as RunnerSpawnResult, SpriteRunner, SpriteRunnerConfig,
-    SshRunner, SshRunnerConfig, WorkerHandle, WorkerSpawnConfig as RunnerSpawnConfig,
+    RunnerError, RunnerResult, SpawnResult as RunnerSpawnResult, SpriteHostConfig, SpriteRunner,
+    SshHostConfig, SshRunner, WorkerHandle, WorkerSpawnConfig as RunnerSpawnConfig,
+};
+#[cfg(feature = "s3-storage")]
+pub use snapshot::S3SnapshotStrategy;
+pub use snapshot::{
+    create_snapshot_strategy, infer_snapshot_strategy, PersistentDiskStrategy, SnapshotError,
+    SnapshotHandle, SnapshotResult, SnapshotStrategy, SnapshotStrategyConfig,
+    SpriteCheckpointStrategy,
 };
 pub use state::*;
 pub use state_access::{StateAccess, StateAccessError, StateAccessResult};

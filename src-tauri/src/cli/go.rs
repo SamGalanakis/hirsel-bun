@@ -24,7 +24,7 @@ use crate::core::ops::{
 };
 use crate::core::runner::{
     self, create_runner, parse_remote_spec, HostConfig, Runner, RunnerConfig, RunnerError,
-    SpriteHostConfig, SshRunner, SshRunnerConfig, WorkerSpawnConfig,
+    SpriteHostConfig, SshHostConfig, SshRunner, WorkerSpawnConfig,
 };
 use crate::core::state::{SQLiteState, StateError, Status};
 #[cfg(feature = "server")]
@@ -931,6 +931,25 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
             HostConfig::Local | HostConfig::Client => {
                 // Spawn LOCAL workers using shared ops (or Docker if container is configured)
                 if runner_config.container.is_some() {
+                    // Docker workers need the daemon running to communicate status
+                    // Fail fast if daemon can't be started
+                    let _daemon_client =
+                        crate::daemon::DaemonClient::connect_or_start().map_err(|e| {
+                            GoError::InvalidRunner(format!(
+                                "Docker runner requires the daemon to be running. \
+                                 Failed to start daemon: {}",
+                                e
+                            ))
+                        })?;
+                    info!("Daemon started for Docker worker communication");
+
+                    // Docker containers reach the host via host.docker.internal
+                    // Note: on Linux requires `iptables -I INPUT -i docker0 -j ACCEPT`
+                    let coordinator_url = format!(
+                        "http://host.docker.internal:{}",
+                        hirsel_config.coordinator_port
+                    );
+
                     // Use runner factory for Docker support
                     let runner = create_runner(&runner_config);
                     let spawn_rt = tokio::runtime::Runtime::new()
@@ -968,13 +987,23 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
                             },
                             resume_session_id: None,
                             env_vars: Some(env_vars),
-                            coordinator_url: None,
+                            coordinator_url: Some(coordinator_url.clone()),
                             tailscale_authkey: None,
                             credentials: None,
                         };
 
                         match spawn_rt.block_on(runner.spawn(&spawn_config)) {
                             Ok(result) => {
+                                // Update worker with runner info
+                                let _ = state.update_worker(
+                                    worker_name,
+                                    crate::core::state::WorkerUpdate {
+                                        pid: result.pid.map(|p| p as i64),
+                                        runner_id: Some(result.handle.runner_id.clone()),
+                                        runner_type: Some(result.handle.runner_type.clone()),
+                                        ..Default::default()
+                                    },
+                                );
                                 info!(
                                     "Spawned worker {} in Docker (container: {})",
                                     result.handle.worker_name, result.handle.runner_id
@@ -1037,16 +1066,8 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
                 // Give coordinator time to start
                 std::thread::sleep(std::time::Duration::from_millis(500));
 
-                // Create sprite runner (convert SpriteHostConfig to SpriteRunnerConfig)
-                let sprite_runner_config = runner::SpriteRunnerConfig {
-                    api_token: sprite_config.api_token.clone(),
-                    base_checkpoint: sprite_config.checkpoint.clone(),
-                    auto_destroy: sprite_config.auto_destroy,
-                    idle_timeout_secs: sprite_config.idle_timeout_secs,
-                    api_url: sprite_config.api_url.clone(),
-                    use_file_push: sprite_config.use_file_push,
-                };
-                let sprite_runner = runner::SpriteRunner::new(sprite_runner_config);
+                // Create sprite runner
+                let sprite_runner = runner::SpriteRunner::new(sprite_config.clone());
 
                 // Spawn workers on sprites
                 let spawn_rt = tokio::runtime::Runtime::new()
@@ -1249,10 +1270,10 @@ fn spawn_remote_workers(
         );
 
         // Create SSH runner config
-        let ssh_config = SshRunnerConfig {
-            host: host.clone(),
+        let ssh_config = SshHostConfig {
+            address: host.clone(),
             ssh_key: None,
-            ssh_port: 22,
+            port: 22,
             work_base: "/tmp/hirsel-remote".to_string(),
             location: None,
         };

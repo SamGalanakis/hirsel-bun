@@ -135,7 +135,8 @@ pub async fn start_daemon(config: DaemonConfig) -> Result<()> {
 
     // Bind to TCP port if enabled
     if config.tcp_port > 0 {
-        let tcp_addr = format!("127.0.0.1:{}", config.tcp_port);
+        // Bind to 0.0.0.0 to allow connections from Docker containers via host.docker.internal
+        let tcp_addr = format!("0.0.0.0:{}", config.tcp_port);
         let tcp_listener = TcpListener::bind(&tcp_addr).await?;
         tracing::info!("[Daemon] Listening on TCP: {}", tcp_addr);
 
@@ -254,6 +255,37 @@ fn build_router(state: Arc<AppState>, gyp_state: Arc<gyp::GypState>) -> Router {
         .route("/api/runs/{name}/assets-path", get(gyp::get_assets_path))
         // Config
         .route("/api/config", get(routes::get_config))
+        // Per-run config endpoints for workers
+        .route(
+            "/api/runs/{run}/config/human_in_the_loop",
+            get(get_run_hitl),
+        )
+        .route("/api/runs/{run}/config/request", get(get_run_request))
+        .route(
+            "/api/runs/{run}/config/project_path",
+            get(get_run_project_path),
+        )
+        .route(
+            "/api/runs/{run}/config/waiting_reason",
+            get(get_run_waiting_reason).post(set_run_waiting_reason),
+        )
+        // Worker state endpoints for workers (internal API)
+        .route("/api/runs/{run}/workers/list", get(list_workers))
+        .route("/api/runs/{run}/workers/active", get(list_active_workers))
+        .route("/api/runs/{run}/workers/all_done", get(all_workers_done))
+        .route("/api/runs/{run}/workers/{worker}", get(get_worker))
+        .route(
+            "/api/runs/{run}/workers/{worker}/update",
+            post(update_worker),
+        )
+        .route(
+            "/api/runs/{run}/workers/{worker}/heartbeat",
+            post(worker_heartbeat),
+        )
+        .route(
+            "/api/runs/{run}/workers/{worker}/claimed_task",
+            get(get_worker_claimed_task),
+        )
         // Merge Gyp routes
         .merge(gyp_routes)
         // CORS for browser-based clients
@@ -339,4 +371,276 @@ async fn daemon_stop() -> &'static str {
     });
 
     "Stopping daemon"
+}
+
+// =============================================================================
+// Per-run config and worker routes for workers
+// =============================================================================
+
+use axum::{http::StatusCode, response::IntoResponse};
+use serde::Deserialize;
+
+/// Helper to get SQLite state for a run
+async fn get_run_state(
+    state: &AppState,
+    run_name: &str,
+) -> Result<crate::core::state::SQLiteState, (StatusCode, String)> {
+    let config = state.config.read().await;
+    let run_dir = config.runs_dir().join(run_name);
+    let db_path = run_dir.join("hirsel.db");
+
+    if !db_path.exists() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("Run '{}' not found", run_name),
+        ));
+    }
+
+    crate::core::state::SQLiteState::new(db_path)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+}
+
+#[derive(Serialize)]
+struct HitlResponse {
+    enabled: bool,
+}
+
+/// Get human-in-the-loop setting for a run
+async fn get_run_hitl(
+    axum::extract::Path(run): axum::extract::Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let sqlite_state = match get_run_state(&state, &run).await {
+        Ok(s) => s,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+
+    let enabled = sqlite_state.get_human_in_the_loop().unwrap_or(true);
+    Json(HitlResponse { enabled }).into_response()
+}
+
+#[derive(Serialize)]
+struct RequestResponse {
+    request: Option<String>,
+}
+
+/// Get request (spec) for a run
+async fn get_run_request(
+    axum::extract::Path(run): axum::extract::Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let sqlite_state = match get_run_state(&state, &run).await {
+        Ok(s) => s,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+
+    let request = sqlite_state.get_request().ok().flatten();
+    Json(RequestResponse { request }).into_response()
+}
+
+#[derive(Serialize)]
+struct ProjectPathResponse {
+    project_path: Option<String>,
+}
+
+/// Get project path for a run
+async fn get_run_project_path(
+    axum::extract::Path(run): axum::extract::Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let sqlite_state = match get_run_state(&state, &run).await {
+        Ok(s) => s,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+
+    let project_path = sqlite_state.get_project_path().ok().flatten();
+    Json(ProjectPathResponse { project_path }).into_response()
+}
+
+#[derive(Serialize)]
+struct WaitingReasonResponse {
+    reason: Option<String>,
+}
+
+/// Get waiting reason for a run
+async fn get_run_waiting_reason(
+    axum::extract::Path(run): axum::extract::Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let sqlite_state = match get_run_state(&state, &run).await {
+        Ok(s) => s,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+
+    let reason = sqlite_state.get_waiting_reason().ok().flatten();
+    Json(WaitingReasonResponse { reason }).into_response()
+}
+
+#[derive(Deserialize)]
+struct SetWaitingReasonRequest {
+    reason: Option<String>,
+}
+
+/// Set waiting reason for a run
+async fn set_run_waiting_reason(
+    axum::extract::Path(run): axum::extract::Path<String>,
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SetWaitingReasonRequest>,
+) -> impl IntoResponse {
+    let sqlite_state = match get_run_state(&state, &run).await {
+        Ok(s) => s,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+
+    match sqlite_state.set_waiting_reason(body.reason.as_deref()) {
+        Ok(_) => StatusCode::OK.into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+// =============================================================================
+// Worker state endpoints for remote/Docker workers
+// Uses shared handlers from crate::core::worker_routes
+// =============================================================================
+
+use crate::core::worker_routes::{
+    self, AllDoneResponse, ClaimedTaskResponse, HeartbeatResponse, SuccessResponse,
+    UpdateWorkerRequest, WorkerResponse, WorkersResponse,
+};
+
+/// Helper to create lifecycle manager for a run
+fn create_lifecycle_manager(
+    run_name: &str,
+    config: &crate::core::config::Config,
+) -> Option<crate::core::lifecycle::LocalLifecycleManager> {
+    let run_dir = config.runs_dir().join(run_name);
+    let agent_command = crate::cli::config::get_agent_command();
+    crate::core::lifecycle::LocalLifecycleManager::new(run_name, run_dir, agent_command).ok()
+}
+
+/// Update worker state (status, heartbeat, etc.)
+async fn update_worker(
+    axum::extract::Path((run, worker)): axum::extract::Path<(String, String)>,
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<UpdateWorkerRequest>,
+) -> impl IntoResponse {
+    let sqlite_state = match get_run_state(&state, &run).await {
+        Ok(s) => s,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+
+    // Create lifecycle manager for lifecycle event handling
+    let config = state.config.read().await;
+    let lifecycle = create_lifecycle_manager(&run, &config);
+
+    match worker_routes::update_worker(
+        &sqlite_state,
+        &worker,
+        &body,
+        lifecycle
+            .as_ref()
+            .map(|l| l as &dyn crate::core::lifecycle::LifecycleManager),
+    ) {
+        Ok(_) => Json(SuccessResponse::ok()).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// List all workers for the run
+async fn list_workers(
+    axum::extract::Path(run): axum::extract::Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let sqlite_state = match get_run_state(&state, &run).await {
+        Ok(s) => s,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+
+    match worker_routes::list_workers(&sqlite_state) {
+        Ok(workers) => Json(WorkersResponse { workers }).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// List active workers for the run
+async fn list_active_workers(
+    axum::extract::Path(run): axum::extract::Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let sqlite_state = match get_run_state(&state, &run).await {
+        Ok(s) => s,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+
+    match worker_routes::list_active_workers(&sqlite_state) {
+        Ok(workers) => Json(WorkersResponse { workers }).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Check if all workers are done
+async fn all_workers_done(
+    axum::extract::Path(run): axum::extract::Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let sqlite_state = match get_run_state(&state, &run).await {
+        Ok(s) => s,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+
+    match worker_routes::all_workers_done(&sqlite_state) {
+        Ok(all_done) => Json(AllDoneResponse { all_done }).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Get a specific worker
+async fn get_worker(
+    axum::extract::Path((run, worker)): axum::extract::Path<(String, String)>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let sqlite_state = match get_run_state(&state, &run).await {
+        Ok(s) => s,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+
+    match worker_routes::get_worker(&sqlite_state, &worker) {
+        Ok(worker) => Json(WorkerResponse { worker }).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Update worker heartbeat and return current run status
+async fn worker_heartbeat(
+    axum::extract::Path((run, worker)): axum::extract::Path<(String, String)>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let sqlite_state = match get_run_state(&state, &run).await {
+        Ok(s) => s,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+
+    match worker_routes::worker_heartbeat(&sqlite_state, &worker) {
+        Ok(status) => Json(HeartbeatResponse {
+            status: status.to_string(),
+        })
+        .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Get the task claimed by a worker
+async fn get_worker_claimed_task(
+    axum::extract::Path((run, worker)): axum::extract::Path<(String, String)>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let sqlite_state = match get_run_state(&state, &run).await {
+        Ok(s) => s,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+
+    match worker_routes::get_claimed_task(&sqlite_state, &worker) {
+        Ok(task) => Json(ClaimedTaskResponse { task }).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }

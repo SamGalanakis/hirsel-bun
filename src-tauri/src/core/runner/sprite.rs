@@ -15,7 +15,7 @@ use tracing::{debug, error, info, warn};
 
 use super::setup::{self, WorkerSetupConfig};
 use super::{
-    Runner, RunnerError, RunnerResult, SpawnResult, SpriteRunnerConfig, WorkerHandle,
+    Runner, RunnerError, RunnerResult, SpawnResult, SpriteHostConfig, WorkerHandle,
     WorkerSpawnConfig,
 };
 
@@ -485,14 +485,14 @@ impl SpritesClient {
 
 /// Sprite runner - spawns workers on Sprites.dev cloud VMs
 pub struct SpriteRunner {
-    config: SpriteRunnerConfig,
+    config: SpriteHostConfig,
     client: SpritesClient,
 }
 
 impl SpriteRunner {
     /// Create a new sprite runner
-    pub fn new(config: SpriteRunnerConfig) -> Self {
-        // Get token from config, or fall back to SPRITES_TOKEN env var for backwards compatibility
+    pub fn new(config: SpriteHostConfig) -> Self {
+        // Get token from config, or fall back to SPRITES_TOKEN env var
         let token = config.api_token.clone().unwrap_or_else(|| {
             std::env::var("SPRITES_TOKEN").unwrap_or_else(|_| {
                 warn!("No Sprites API token configured and SPRITES_TOKEN env var not set");
@@ -539,7 +539,7 @@ impl Runner for SpriteRunner {
         );
 
         // Step 1: Create sprite (or from checkpoint if configured)
-        let sprite = if let Some(ref checkpoint) = self.config.base_checkpoint {
+        let sprite = if let Some(ref checkpoint) = self.config.checkpoint {
             self.client
                 .create_from_checkpoint(&sprite_name, checkpoint)
                 .await?
@@ -894,7 +894,7 @@ mod tests {
 
     #[test]
     fn test_sprite_runner_type() {
-        let config = SpriteRunnerConfig::default();
+        let config = SpriteHostConfig::default();
         let runner = SpriteRunner::new(config);
         assert_eq!(runner.runner_type(), "sprite");
     }

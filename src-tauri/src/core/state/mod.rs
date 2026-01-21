@@ -70,7 +70,8 @@ CREATE TABLE IF NOT EXISTS workers (
     location TEXT DEFAULT 'local',
     last_heartbeat TEXT,
     created_at TEXT NOT NULL,
-    hitl_waiting INTEGER DEFAULT 0
+    hitl_waiting INTEGER DEFAULT 0,
+    snapshot_handle TEXT
 );
 
 CREATE TABLE IF NOT EXISTS history (

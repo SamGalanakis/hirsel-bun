@@ -329,6 +329,8 @@ pub struct WorkerRunConfig {
     pub leader_name: Option<String>,
     pub teammates: Option<Vec<String>>,
     pub resume_session_id: Option<String>,
+    /// Optional API URL for reporting status (used by Docker/remote workers)
+    pub api_url: Option<String>,
 }
 
 /// Run the ACP worker loop.

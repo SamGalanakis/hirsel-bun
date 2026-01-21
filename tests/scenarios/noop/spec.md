@@ -1,5 +1,5 @@
 # No-op Test
 
-Your task is complete. Call the `done` MCP tool immediately with message "Task complete".
+Your task is complete. Call the `work_done` MCP tool immediately.
 
-Do not do anything else. Just call done.
+Do not do anything else. Just call `work_done`.

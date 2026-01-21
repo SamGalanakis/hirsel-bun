@@ -11,6 +11,7 @@ use super::{
 use crate::core::config::Config;
 use crate::core::files::Files;
 use crate::core::runner::{create_lifecycle_runner_for_handle, WorkerHandle};
+use crate::core::snapshot::{create_snapshot_strategy, SnapshotHandle};
 use crate::core::state::{FailureReason, SQLiteState, Status, WorkerStatus, WorkerUpdate};
 use crate::core::workers::{spawn_worker, WorkerSpawnConfig};
 use std::path::PathBuf;
@@ -199,11 +200,17 @@ impl LocalLifecycleManager {
     }
 
     /// Pause all workers (kill processes and mark as Paused).
+    ///
+    /// For ephemeral hosts (Sprite, Fly), creates a snapshot of the work directory
+    /// before stopping the worker so it can be restored on resume.
     fn pause_all_workers_internal(&self) -> LifecycleResult<Vec<String>> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(|e| LifecycleError::Worker(format!("Failed to create runtime: {}", e)))?;
+
+        // Load config to get runner and storage settings
+        let (config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
 
         let workers = self
             .state
@@ -216,6 +223,49 @@ impl LocalLifecycleManager {
             if worker.status.is_inactive() {
                 continue;
             }
+
+            // Create snapshot before stopping (for ephemeral hosts)
+            let snapshot_handle_json = if let Some(ref work_dir_str) = worker.work_dir {
+                let work_dir = PathBuf::from(work_dir_str);
+                let runner_config = config.get_runner_for_worker(&worker.name);
+
+                match rt.block_on(create_snapshot_strategy(&runner_config, &config.storage)) {
+                    Ok(strategy) => {
+                        match rt.block_on(strategy.snapshot(
+                            &self.context.run_name,
+                            &worker.name,
+                            &work_dir,
+                        )) {
+                            Ok(handle) => {
+                                info!(
+                                    "Created {} snapshot for worker {}: {}",
+                                    strategy.strategy_type(),
+                                    worker.name,
+                                    handle.snapshot_id
+                                );
+                                serde_json::to_string(&handle).ok()
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "Failed to create snapshot for worker {}: {}",
+                                    worker.name, e
+                                );
+                                None
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // S3 not configured is expected for local runners
+                        debug!(
+                            "No snapshot strategy for worker {} (expected for local): {}",
+                            worker.name, e
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
 
             // Stop using runner_id and runner_type
             if let (Some(runner_id), Some(runner_type)) =
@@ -244,7 +294,7 @@ impl LocalLifecycleManager {
                 warn!("Worker {} has no runner info, cannot stop", worker.name);
             }
 
-            // Mark as paused
+            // Mark as paused with snapshot handle
             self.state
                 .update_worker(
                     &worker.name,
@@ -252,6 +302,7 @@ impl LocalLifecycleManager {
                         pid: None,
                         runner_id: None,
                         status: Some(WorkerStatus::Paused),
+                        snapshot_handle: Some(snapshot_handle_json),
                         ..Default::default()
                     },
                 )
@@ -263,7 +314,19 @@ impl LocalLifecycleManager {
     }
 
     /// Resume workers that are in paused/awaiting/error state.
+    ///
+    /// For workers with snapshots, restores the work directory from the snapshot
+    /// before spawning the worker process.
     fn resume_awaiting_workers_internal(&self) -> LifecycleResult<Vec<String>> {
+        // Load config to get runner and storage settings
+        let (config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
+
+        // Create runtime for async snapshot operations
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| LifecycleError::Worker(format!("Failed to create runtime: {}", e)))?;
+
         // Get claimable tasks (needed for awaiting workers)
         let claimable = self
             .state
@@ -298,7 +361,55 @@ impl LocalLifecycleManager {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| self.context.run_dir.join("workers").join(&worker.name));
 
-            let config = WorkerSpawnConfig {
+            // Restore from snapshot if one exists
+            if let Some(ref snapshot_json) = worker.snapshot_handle {
+                match serde_json::from_str::<SnapshotHandle>(snapshot_json) {
+                    Ok(handle) => {
+                        let runner_config = config.get_runner_for_worker(&worker.name);
+
+                        match rt.block_on(create_snapshot_strategy(&runner_config, &config.storage))
+                        {
+                            Ok(strategy) => {
+                                match rt.block_on(strategy.restore(&handle, &work_dir)) {
+                                    Ok(()) => {
+                                        info!(
+                                            "Restored {} snapshot for worker {}: {}",
+                                            strategy.strategy_type(),
+                                            worker.name,
+                                            handle.snapshot_id
+                                        );
+
+                                        // Delete the snapshot after successful restore
+                                        if let Err(e) = rt.block_on(strategy.delete(&handle)) {
+                                            warn!(
+                                                "Failed to delete snapshot {} after restore: {}",
+                                                handle.snapshot_id, e
+                                            );
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "Failed to restore snapshot for worker {}: {}",
+                                            worker.name, e
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Failed to create snapshot strategy for restore: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to parse snapshot handle for worker {}: {}",
+                            worker.name, e
+                        );
+                    }
+                }
+            }
+
+            let spawn_config = WorkerSpawnConfig {
                 run_name: self.context.run_name.clone(),
                 worker_name: worker.name.clone(),
                 work_dir,
@@ -315,8 +426,21 @@ impl LocalLifecycleManager {
                 tailscale_authkey: None,
             };
 
-            match spawn_worker(config, &self.state) {
+            match spawn_worker(spawn_config, &self.state) {
                 Ok(_) => {
+                    // Clear snapshot handle after successful spawn
+                    if let Err(e) = self.state.update_worker(
+                        &worker.name,
+                        WorkerUpdate {
+                            snapshot_handle: Some(None), // Clear the snapshot handle
+                            ..Default::default()
+                        },
+                    ) {
+                        warn!(
+                            "Failed to clear snapshot handle for worker {}: {}",
+                            worker.name, e
+                        );
+                    }
                     resumed.push(worker.name.clone());
                 }
                 Err(crate::core::workers::WorkerError::RunPaused) => {

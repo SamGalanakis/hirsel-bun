@@ -854,6 +854,7 @@ impl Orchestrator for LocalOrchestrator {
                     configured_providers: configured,
                 }
             },
+            storage: (&self.config.storage).into(),
         })
     }
 

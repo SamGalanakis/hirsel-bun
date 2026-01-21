@@ -712,7 +712,7 @@ Example:
                   <div class="flex items-end gap-3">
                     <div class="grid gap-2 flex-1">
                       <label for="draft-runner">Runner</label>
-                      <div class="select" x-data="{ open: false }">
+                      <div class="select" x-data="{ open: false }" data-select-initialized="true">
                         <button type="button" class="btn-outline w-full" @click="open = !open" @click.away="open = false"
                           aria-haspopup="listbox" :aria-expanded="open">
                           <span class="truncate flex-1 text-left" x-text="runnerDefault === 'local' ? 'Local' : runnerDefault"></span>
@@ -756,7 +756,7 @@ Example:
                               class="text-xs text-wool-500"
                             >default</span>
                             <!-- Compact runner select -->
-                            <div class="select" x-data="{ open: false }">
+                            <div class="select" x-data="{ open: false }" data-select-initialized="true">
                               <button type="button" class="btn-outline text-sm py-1 px-2 h-8 min-w-[120px]" @click="open = !open" @click.away="open = false"
                                 aria-haspopup="listbox" :aria-expanded="open">
                                 <span class="truncate flex-1 text-left" x-text="(getWorkerRunner(workerName) === 'local' ? 'Local' : getWorkerRunner(workerName))"></span>

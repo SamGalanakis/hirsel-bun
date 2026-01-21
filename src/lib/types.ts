@@ -814,7 +814,6 @@ declare global {
       size?: number,
     ) => string;
     getHatName: (hatIndex: number) => string;
-    generateAgentSheepSvg: (size?: number) => string;
 
     // Keyboard shortcuts utilities
     getShortcuts: () => ShortcutConfig[];

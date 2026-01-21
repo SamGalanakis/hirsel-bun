@@ -5,9 +5,10 @@
 use std::fs;
 use std::path::PathBuf;
 
-use crate::core::config;
+use crate::core::config::{self, Config};
 use crate::core::gyp_chat::GypChatStore;
 use crate::core::lifecycle::LocalLifecycleManager;
+use crate::core::snapshot::{create_snapshot_strategy, SnapshotHandle};
 use crate::core::state::SQLiteState;
 use crate::core::Files;
 
@@ -45,12 +46,50 @@ pub fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsError> 
         project_remote_removed: false,
     };
 
-    // Try to get project path and kill workers
+    // Try to get project path, kill workers, and clean up snapshots
     let project_path = if let Ok(lifecycle) = LocalLifecycleManager::new(
         &config.run_name,
         run_dir.clone(),
         vec![], // Agent command not needed for kill
     ) {
+        // Clean up any snapshots before killing workers
+        if let Ok(workers) = lifecycle.state().get_workers() {
+            let (app_config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
+
+            // Create runtime for async snapshot operations
+            if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                for worker in workers {
+                    if let Some(ref snapshot_json) = worker.snapshot_handle {
+                        if let Ok(handle) = serde_json::from_str::<SnapshotHandle>(snapshot_json) {
+                            let runner_config = app_config.get_runner_for_worker(&worker.name);
+                            if let Ok(strategy) = rt.block_on(create_snapshot_strategy(
+                                &runner_config,
+                                &app_config.storage,
+                            )) {
+                                if let Err(e) = rt.block_on(strategy.delete(&handle)) {
+                                    tracing::warn!(
+                                        "Failed to delete snapshot {} for worker {}: {}",
+                                        handle.snapshot_id,
+                                        worker.name,
+                                        e
+                                    );
+                                } else {
+                                    tracing::debug!(
+                                        "Deleted snapshot {} for worker {}",
+                                        handle.snapshot_id,
+                                        worker.name
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Kill any running worker processes using lifecycle manager
         if let Ok(killed) = lifecycle.kill_all_workers() {
             result.workers_killed = killed.len();

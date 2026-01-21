@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::types::{OrchestratorMode, RunnerError, RunnerResult};
+use crate::core::snapshot::SnapshotStrategyConfig;
 
 // =============================================================================
 // Default value functions
@@ -268,6 +269,12 @@ pub struct RunnerConfig {
     /// Optional container configuration (Docker)
     #[serde(default)]
     pub container: Option<ContainerConfig>,
+    /// Optional snapshot strategy configuration.
+    /// If not specified, inferred from host type:
+    /// - Local/SSH: PersistentDisk (files remain on disk)
+    /// - Sprite/Fly: S3 (machines destroyed)
+    #[serde(default)]
+    pub snapshot: Option<SnapshotStrategyConfig>,
 }
 
 impl Default for RunnerConfig {
@@ -275,6 +282,7 @@ impl Default for RunnerConfig {
         RunnerConfig {
             host: HostConfigOrShortcut::default(),
             container: None,
+            snapshot: None,
         }
     }
 }
@@ -285,6 +293,7 @@ impl RunnerConfig {
         RunnerConfig {
             host: HostConfigOrShortcut::Shortcut("local".to_string()),
             container: None,
+            snapshot: None,
         }
     }
 
@@ -293,6 +302,7 @@ impl RunnerConfig {
         RunnerConfig {
             host: HostConfigOrShortcut::Shortcut("local".to_string()),
             container: Some(ContainerConfig { image }),
+            snapshot: None,
         }
     }
 
@@ -301,6 +311,7 @@ impl RunnerConfig {
         RunnerConfig {
             host: HostConfigOrShortcut::Full(HostConfig::Ssh(ssh_config)),
             container: None,
+            snapshot: None,
         }
     }
 
@@ -309,6 +320,7 @@ impl RunnerConfig {
         RunnerConfig {
             host: HostConfigOrShortcut::Full(HostConfig::Ssh(ssh_config)),
             container: Some(ContainerConfig { image }),
+            snapshot: None,
         }
     }
 
@@ -317,6 +329,7 @@ impl RunnerConfig {
         RunnerConfig {
             host: HostConfigOrShortcut::Full(HostConfig::Sprite(sprite_config)),
             container: None, // Sprites don't support containers
+            snapshot: None,
         }
     }
 
@@ -326,6 +339,7 @@ impl RunnerConfig {
         RunnerConfig {
             host: HostConfigOrShortcut::Full(HostConfig::Fly(fly_config)),
             container: Some(ContainerConfig { image }),
+            snapshot: None,
         }
     }
 

@@ -23,7 +23,6 @@ pub mod composed;
 pub mod config;
 pub mod executor;
 pub mod fly;
-pub mod legacy;
 pub mod local;
 pub mod resource;
 pub mod setup;
@@ -45,7 +44,6 @@ pub use config::{
     ContainerConfig, FlyHostConfig, HostConfig, HostConfigOrShortcut, RunnerConfig,
     SpriteHostConfig, SshHostConfig,
 };
-pub use legacy::{SpriteRunnerConfig, SshRunnerConfig};
 pub use types::{
     OrchestratorMode, Runner, RunnerError, RunnerResult, SpawnResult, WorkerHandle,
     WorkerSpawnConfig,
@@ -63,30 +61,13 @@ pub fn create_runner(config: &RunnerConfig) -> Box<dyn Runner> {
             Box::new(LocalRunner::new(config.container.clone()))
         }
         HostConfig::Ssh(ssh_config) => {
-            // Convert SshHostConfig to SshRunnerConfig for backwards compatibility
-            let ssh_runner_config = SshRunnerConfig {
-                host: ssh_config.address,
-                ssh_key: ssh_config.ssh_key,
-                ssh_port: ssh_config.port,
-                work_base: ssh_config.work_base,
-                location: ssh_config.location,
-            };
-            Box::new(SshRunner::new(ssh_runner_config, config.container.clone()))
+            Box::new(SshRunner::new(ssh_config, config.container.clone()))
         }
         HostConfig::Sprite(sprite_config) => {
             if config.container.is_some() {
                 tracing::warn!("Sprites do not support containers - ignoring container config");
             }
-            // Convert SpriteHostConfig to SpriteRunnerConfig for backwards compatibility
-            let sprite_runner_config = SpriteRunnerConfig {
-                api_token: sprite_config.api_token,
-                base_checkpoint: sprite_config.checkpoint,
-                auto_destroy: sprite_config.auto_destroy,
-                idle_timeout_secs: sprite_config.idle_timeout_secs,
-                api_url: sprite_config.api_url,
-                use_file_push: sprite_config.use_file_push,
-            };
-            Box::new(SpriteRunner::new(sprite_runner_config))
+            Box::new(SpriteRunner::new(sprite_config))
         }
         HostConfig::Fly(fly_config) => {
             let image = config

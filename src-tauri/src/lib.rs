@@ -292,6 +292,15 @@ fn run_command(
             // Internal command for worker subprocess
             use std::path::PathBuf;
 
+            // Set env vars for child processes (MCP server, agent)
+            // These are passed as CLI args to avoid duplication, but child processes need env vars
+            std::env::set_var("HIRSEL_RUN", &args.run);
+            std::env::set_var("HIRSEL_WORKER", &args.worker);
+            std::env::set_var("HIRSEL_RUN_DIR", &args.run_dir);
+            if let Some(ref url) = args.api_url {
+                std::env::set_var("HIRSEL_API_URL", url);
+            }
+
             let agent_command: Vec<String> = serde_json::from_str(&args.agent_command)
                 .map_err(|e| format!("Invalid agent_command JSON: {}", e))?;
             let teammates = args.teammates.map(|t| {
@@ -312,6 +321,7 @@ fn run_command(
                 leader_name: args.leader_name,
                 teammates,
                 resume_session_id: args.resume_session_id,
+                api_url: args.api_url,
             };
 
             // Run the async worker in a tokio runtime with signal handling

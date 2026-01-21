@@ -769,6 +769,79 @@
                             Sprites VMs don't support Docker containers.
                           </div>
                         </template>
+
+                        <!-- SNAPSHOT STRATEGY SECTION -->
+                        <div class="grid gap-4">
+                          <div class="flex items-center gap-2">
+                            <span class="text-xs font-semibold text-wool-500 uppercase tracking-wider">Snapshot</span>
+                            <div class="flex-1 border-t border-pasture-600"></div>
+                          </div>
+
+                          <div class="grid gap-2">
+                            <label>Strategy</label>
+                            <div class="select" x-data="{ open: false }" data-select-initialized="true">
+                              <button type="button" class="btn-outline w-full" @click="open = !open" @click.away="open = false"
+                                aria-haspopup="listbox" :aria-expanded="open">
+                                <span class="truncate flex-1 text-left" x-text="getSnapshotStrategyLabel(editSnapshotStrategy)"></span>
+                                <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
+                              </button>
+                              <div data-popover :aria-hidden="!open" x-show="open" x-transition>
+                                <div role="listbox" aria-orientation="vertical">
+                                  <template x-for="strategy in getAvailableSnapshotStrategies(editHostData.type)" :key="strategy">
+                                    <div role="option" :data-value="strategy" :aria-selected="editSnapshotStrategy === strategy"
+                                      @click="editSnapshotStrategy = strategy; open = false" x-text="getSnapshotStrategyLabel(strategy)"></div>
+                                  </template>
+                                </div>
+                              </div>
+                            </div>
+                            <p class="text-muted-foreground text-sm" x-text="getSnapshotStrategyDescription(editSnapshotStrategy)"></p>
+                          </div>
+
+                          <!-- S3 options (only for S3 strategy) -->
+                          <div x-show="editSnapshotStrategy === 's3'" x-cloak class="grid gap-4 pl-4 border-l-2 border-pasture-600">
+                            <!-- Storage selection -->
+                            <div class="grid gap-2">
+                              <label>Storage</label>
+                              <div class="select" x-data="{ open: false }" data-select-initialized="true">
+                                <button type="button" class="btn-outline w-full" @click="open = !open" @click.away="open = false"
+                                  aria-haspopup="listbox" :aria-expanded="open">
+                                  <span class="truncate flex-1 text-left" x-text="editSnapshotS3Storage ? editSnapshotS3Storage : (settings.storage?.defaultStorage ? settings.storage.defaultStorage + ' (default)' : 'Select storage...')"></span>
+                                  <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
+                                </button>
+                                <div data-popover :aria-hidden="!open" x-show="open" x-transition>
+                                  <div role="listbox" aria-orientation="vertical">
+                                    <div role="option" data-value="" :aria-selected="!editSnapshotS3Storage"
+                                      @click="editSnapshotS3Storage = ''; open = false">
+                                      <span x-text="settings.storage?.defaultStorage ? 'Use default (' + settings.storage.defaultStorage + ')' : 'Use default'"></span>
+                                    </div>
+                                    <template x-for="name in storageNames" :key="name">
+                                      <div role="option" :data-value="name" :aria-selected="editSnapshotS3Storage === name"
+                                        @click="editSnapshotS3Storage = name; open = false" x-text="name"></div>
+                                    </template>
+                                  </div>
+                                </div>
+                              </div>
+                              <p class="text-muted-foreground text-sm">
+                                <span x-show="storageNames.length === 0" class="text-amber-500">No storages configured. <a @click="setProfileTab('data')" class="underline cursor-pointer">Add one in Data tab</a>.</span>
+                                <span x-show="storageNames.length > 0">Select which storage to use for snapshots.</span>
+                              </p>
+                            </div>
+
+                            <!-- S3 prefix -->
+                            <div class="grid gap-2">
+                              <label for="s3-prefix">S3 Prefix (optional)</label>
+                              <input id="s3-prefix" type="text" x-model="editSnapshotS3Prefix" placeholder="snapshots" />
+                              <p class="text-muted-foreground text-sm">Key prefix in S3 bucket.</p>
+                            </div>
+                          </div>
+
+                          <!-- Sprite checkpoint comment prefix (only for sprite_checkpoint strategy) -->
+                          <div x-show="editSnapshotStrategy === 'sprite_checkpoint'" x-cloak class="grid gap-2 pl-4 border-l-2 border-pasture-600">
+                            <label for="checkpoint-prefix">Comment Prefix</label>
+                            <input id="checkpoint-prefix" type="text" x-model="editSnapshotCommentPrefix" placeholder="hirsel-snapshot" />
+                            <p class="text-muted-foreground text-sm">Prefix for checkpoint comments</p>
+                          </div>
+                        </div>
                       </form>
                       <div class="flex justify-end gap-2 mt-4">
                         <button type="button" @click="cancelEditRunner()" class="btn btn-ghost">Cancel</button>
@@ -976,6 +1049,60 @@
                     </div>
                   </div>
 
+                  <hr class="border-pasture-600" x-show="isLocalProfile()" />
+
+                  <!-- Storage Configuration (local only) -->
+                  <div x-show="isLocalProfile()" class="grid gap-4">
+                    <div class="flex items-center justify-between">
+                      <div>
+                        <label>Cloud Storage</label>
+                        <p class="text-muted-foreground text-sm">S3-compatible storage for snapshots and files.</p>
+                      </div>
+                      <button type="button" @click="startAddStorage()" class="btn btn-sm">
+                        <i data-lucide="plus" class="w-4 h-4 mr-1"></i>
+                        Add Storage
+                      </button>
+                    </div>
+
+                    <!-- Storage List -->
+                    <div x-show="storageNames.length > 0" class="grid gap-2">
+                      <template x-for="name in storageNames" :key="name">
+                        <div class="flex items-center justify-between p-3 bg-pasture-700/30 rounded-lg">
+                          <div class="flex items-center gap-3">
+                            <i data-lucide="database" class="w-4 h-4 text-sage"></i>
+                            <div>
+                              <div class="flex items-center gap-2">
+                                <span class="font-medium text-wool-200" x-text="name"></span>
+                                <span x-show="settings.storage?.defaultStorage === name" class="text-xs px-1.5 py-0.5 bg-sage/20 text-sage rounded">Default</span>
+                              </div>
+                              <p class="text-xs text-wool-500">
+                                <span x-text="getStorageProviderLabel(getStorage(name)?.provider || 's3')"></span>
+                                <span class="mx-1">•</span>
+                                <span x-text="getStorage(name)?.bucket || 'No bucket'"></span>
+                              </p>
+                            </div>
+                          </div>
+                          <div class="flex items-center gap-1">
+                            <button type="button" @click="setDefaultStorage(name)" x-show="settings.storage?.defaultStorage !== name" class="btn btn-ghost btn-sm" title="Set as default">
+                              <i data-lucide="star" class="w-4 h-4"></i>
+                            </button>
+                            <button type="button" @click="startEditStorage(name)" class="btn btn-ghost btn-sm" title="Edit">
+                              <i data-lucide="pencil" class="w-4 h-4"></i>
+                            </button>
+                            <button type="button" @click="deleteStorage(name)" class="btn btn-ghost btn-sm text-terra hover:text-terra" title="Delete">
+                              <i data-lucide="trash-2" class="w-4 h-4"></i>
+                            </button>
+                          </div>
+                        </div>
+                      </template>
+                    </div>
+
+                    <!-- Empty state -->
+                    <div x-show="storageNames.length === 0" class="text-center py-4 text-wool-500 text-sm">
+                      No storage configurations. Add one to enable cloud snapshots.
+                    </div>
+                  </div>
+
                   <hr class="border-pasture-600" />
 
                   <!-- Danger Zone -->
@@ -1074,6 +1201,86 @@
               <div class="px-6 py-4 border-t border-pasture-600 flex justify-end gap-3 flex-shrink-0">
                 <button type="button" @click="cancelEditProfile()" class="btn btn-ghost">Cancel</button>
                 <button type="button" @click="saveProfile()" class="btn">Save</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Storage Edit Dialog -->
+          <div x-show="editingStorage" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]" @click.self="cancelEditStorage()">
+            <div class="bg-pasture-800 rounded-lg shadow-xl w-[500px] max-h-[80vh] flex flex-col overflow-hidden border border-pasture-600" @click.stop>
+              <div class="px-6 py-4 border-b border-pasture-600 flex-shrink-0">
+                <h3 class="text-lg font-semibold text-wool-100" x-text="editingStorage === '__new__' ? 'Add Storage' : 'Edit Storage'"></h3>
+              </div>
+              <div class="flex-1 overflow-y-auto p-6">
+                <div class="flex flex-col gap-6">
+                  <!-- Name -->
+                  <div class="grid gap-2">
+                    <label for="storage-name">Name</label>
+                    <input id="storage-name" type="text" x-model="newStorageName" placeholder="my-storage" :disabled="editingStorage !== '__new__'" />
+                    <p class="text-muted-foreground text-sm">Unique identifier for this storage configuration.</p>
+                  </div>
+
+                  <!-- Provider -->
+                  <div class="grid gap-2">
+                    <label>Provider</label>
+                    <div class="select" x-data="{ open: false }" data-select-initialized="true">
+                      <button type="button" class="btn-outline w-full" @click="open = !open" @click.away="open = false"
+                        aria-haspopup="listbox" :aria-expanded="open">
+                        <span class="truncate flex-1 text-left" x-text="getStorageProviderLabel(editStorageData.provider || 's3')"></span>
+                        <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
+                      </button>
+                      <div data-popover :aria-hidden="!open" x-show="open" x-transition>
+                        <div role="listbox" aria-orientation="vertical">
+                          <template x-for="provider in getAvailableStorageProviders()" :key="provider">
+                            <div role="option" :data-value="provider" :aria-selected="editStorageData.provider === provider"
+                              @click="onStorageProviderChange(provider); open = false">
+                              <span x-text="getStorageProviderLabel(provider)"></span>
+                              <span class="text-xs text-wool-500 ml-2" x-text="getStorageProviderDescription(provider)"></span>
+                            </div>
+                          </template>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Bucket -->
+                  <div class="grid gap-2">
+                    <label for="storage-bucket">Bucket <span class="text-terra">*</span></label>
+                    <input id="storage-bucket" type="text" x-model="editStorageData.bucket" placeholder="my-bucket" />
+                  </div>
+
+                  <!-- Region -->
+                  <div class="grid gap-2">
+                    <label for="storage-region">Region</label>
+                    <input id="storage-region" type="text" x-model="editStorageData.region" :placeholder="getDefaultRegion(editStorageData.provider || 's3')" />
+                    <p class="text-muted-foreground text-sm">Leave empty for default region.</p>
+                  </div>
+
+                  <!-- Endpoint (for custom S3-compatible) -->
+                  <div class="grid gap-2" x-show="editStorageData.provider !== 'tigris'">
+                    <label for="storage-endpoint">Endpoint (optional)</label>
+                    <input id="storage-endpoint" type="text" x-model="editStorageData.endpoint" placeholder="https://s3.amazonaws.com" />
+                    <p class="text-muted-foreground text-sm">Custom S3 endpoint URL. Leave empty for AWS S3.</p>
+                  </div>
+
+                  <!-- Access Key -->
+                  <div class="grid gap-2">
+                    <label for="storage-access-key">Access Key ID</label>
+                    <input id="storage-access-key" type="text" x-model="editStorageData.accessKeyId" placeholder="" />
+                    <p class="text-muted-foreground text-sm">Can also be set via AWS_ACCESS_KEY_ID env var.</p>
+                  </div>
+
+                  <!-- Secret Key -->
+                  <div class="grid gap-2">
+                    <label for="storage-secret-key">Secret Access Key</label>
+                    <input id="storage-secret-key" type="password" x-model="editStorageData.secretAccessKey" placeholder="" />
+                    <p class="text-muted-foreground text-sm">Can also be set via AWS_SECRET_ACCESS_KEY env var.</p>
+                  </div>
+                </div>
+              </div>
+              <div class="px-6 py-4 border-t border-pasture-600 flex justify-end gap-3 flex-shrink-0">
+                <button type="button" @click="cancelEditStorage()" class="btn btn-ghost">Cancel</button>
+                <button type="button" @click="saveStorage()" class="btn">Save</button>
               </div>
             </div>
           </div>

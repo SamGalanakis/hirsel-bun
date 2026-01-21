@@ -6,8 +6,45 @@ use std::path::Path;
 use super::{
     AgentAuth, AuthConfig, AuthMethod, Config, ConfigError, GitConfig, GitProvider,
     OrchestratorAccess, OrchestratorMode, OrchestratorProfile, S3Config, StorageBackend,
-    StorageConfig,
+    StorageConfig, StorageProvider,
 };
+
+/// Parse an S3Config from a TOML table
+fn parse_s3_config(table: &toml::Table) -> S3Config {
+    let provider = table
+        .get("provider")
+        .and_then(|v| v.as_str())
+        .map(|s| match s {
+            "tigris" => StorageProvider::Tigris,
+            _ => StorageProvider::S3,
+        })
+        .unwrap_or(StorageProvider::S3);
+
+    S3Config {
+        provider,
+        endpoint: table
+            .get("endpoint")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        bucket: table
+            .get("bucket")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        region: table
+            .get("region")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        access_key_id: table
+            .get("access_key_id")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        secret_access_key: table
+            .get("secret_access_key")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+    }
+}
 
 /// Load settings from a TOML config file into the Config struct.
 /// Returns warnings for non-fatal issues.
@@ -416,32 +453,24 @@ fn load_storage_config(
                 };
             }
 
-            // Parse S3 config if present
-            if let Some(s3_data) = storage_table.get("s3") {
-                if let Some(s3_table) = s3_data.as_table() {
-                    storage.s3 = Some(S3Config {
-                        endpoint: s3_table
-                            .get("endpoint")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        bucket: s3_table
-                            .get("bucket")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        region: s3_table
-                            .get("region")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        access_key_id: s3_table
-                            .get("access_key_id")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        secret_access_key: s3_table
-                            .get("secret_access_key")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                    });
+            // Parse default_storage
+            if let Some(default) = storage_table
+                .get("default_storage")
+                .and_then(|v| v.as_str())
+            {
+                storage.default_storage = Some(default.to_string());
+            }
+
+            // Parse named storages: [storage.storages.name]
+            if let Some(storages_data) = storage_table.get("storages") {
+                if let Some(storages_table) = storages_data.as_table() {
+                    for (name, value) in storages_table {
+                        if let Some(s3_table) = value.as_table() {
+                            storage
+                                .storages
+                                .insert(name.clone(), parse_s3_config(s3_table));
+                        }
+                    }
                 }
             }
         }

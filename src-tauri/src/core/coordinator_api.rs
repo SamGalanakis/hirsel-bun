@@ -12,7 +12,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -20,8 +19,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 
-use super::lifecycle::{LifecycleEvent, LifecycleManager, LocalLifecycleManager};
-use super::state::{SQLiteState, Status, WorkerStatus, WorkerUpdate};
+use super::lifecycle::{LifecycleManager, LocalLifecycleManager};
+use super::state::{SQLiteState, Status};
+use super::worker_routes::{self, ReasonRequest, SuccessResponse};
 
 // =============================================================================
 // Shared State
@@ -79,17 +79,6 @@ fn default_location() -> String {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct WorkerUpdateRequest {
-    pub pid: Option<i64>,
-    pub session_id: Option<String>,
-    pub status: Option<String>,
-    pub waiting_thread: Option<String>,
-    pub needs_restart: Option<bool>,
-    pub location: Option<String>,
-    pub last_heartbeat: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct MessageCreateRequest {
     pub thread: String,
     pub sender: String,
@@ -120,34 +109,6 @@ pub struct EvalCompleteRequest {
 #[derive(Debug, Deserialize)]
 pub struct TokensRequest {
     pub tokens: i64,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ReasonRequest {
-    pub reason: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SuccessResponse {
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-impl SuccessResponse {
-    pub fn ok() -> Self {
-        Self {
-            success: true,
-            error: None,
-        }
-    }
-
-    pub fn err(msg: impl Into<String>) -> Self {
-        Self {
-            success: false,
-            error: Some(msg.into()),
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -519,12 +480,12 @@ async fn set_task_tokens(
 }
 
 // =============================================================================
-// Worker Handlers
+// Worker Handlers - using shared logic from worker_routes
 // =============================================================================
 
 async fn list_workers(State(api): State<Arc<ApiState>>) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let workers = state.get_workers().map_err(|e| anyhow::anyhow!("{}", e))?;
+    let workers = worker_routes::list_workers(&state).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "workers": workers })))
 }
 
@@ -533,8 +494,7 @@ async fn create_worker(
     Json(req): Json<WorkerCreateRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let worker = state
-        .add_worker(&req.name, &req.work_dir, &req.location)
+    let worker = worker_routes::create_worker(&state, &req.name, &req.work_dir, &req.location)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "worker": worker })))
 }
@@ -543,17 +503,14 @@ async fn get_active_workers(
     State(api): State<Arc<ApiState>>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let workers = state
-        .get_active_workers()
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let workers =
+        worker_routes::list_active_workers(&state).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "workers": workers })))
 }
 
 async fn all_workers_done(State(api): State<Arc<ApiState>>) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    // Check if all workers are in "awaiting" status (equivalent to done in Python)
-    let workers = state.get_workers().map_err(|e| anyhow::anyhow!("{}", e))?;
-    let all_done = workers.iter().all(|w| w.status == WorkerStatus::Awaiting);
+    let all_done = worker_routes::all_workers_done(&state).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "all_done": all_done })))
 }
 
@@ -562,17 +519,13 @@ async fn pause_all_workers(
     Json(req): Json<ReasonRequest>,
 ) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    state
-        .pause_all_workers(&req.reason)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    worker_routes::pause_all_workers(&state, &req.reason).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }
 
 async fn resume_all_workers(State(api): State<Arc<ApiState>>) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    state
-        .resume_all_workers()
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    worker_routes::resume_all_workers(&state).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }
 
@@ -581,9 +534,7 @@ async fn get_worker(
     Path(name): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let worker = state
-        .get_worker(&name)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let worker = worker_routes::get_worker(&state, &name).map_err(|e| anyhow::anyhow!("{}", e))?;
     match worker {
         Some(w) => Ok(Json(serde_json::json!({ "worker": w }))),
         None => Err(anyhow::anyhow!("Worker '{}' not found", name).into()),
@@ -593,55 +544,21 @@ async fn get_worker(
 async fn update_worker(
     State(api): State<Arc<ApiState>>,
     Path(name): Path<String>,
-    Json(req): Json<WorkerUpdateRequest>,
+    Json(req): Json<worker_routes::UpdateWorkerRequest>,
 ) -> ApiResult<Json<SuccessResponse>> {
-    // Check if status is being set to Awaiting
-    let old_status = {
-        let state = api.state.lock().await;
-        state.get_worker(&name).ok().flatten().map(|w| w.status)
-    };
+    // Create lifecycle manager for handling status transitions
+    let agent_command = crate::cli::config::get_agent_command();
+    let lifecycle =
+        LocalLifecycleManager::new(&api.run_name, api.run_dir.clone(), agent_command).ok();
 
-    let new_status = req.status.as_ref().and_then(|s| WorkerStatus::from_str(s));
-
-    {
-        let state = api.state.lock().await;
-
-        // Build WorkerUpdate from request
-        let updates = WorkerUpdate {
-            pid: req.pid,
-            runner_id: None,
-            runner_type: None,
-            session_id: req.session_id,
-            status: new_status,
-            waiting_thread: req.waiting_thread,
-            needs_restart: req.needs_restart,
-            last_heartbeat: req.last_heartbeat,
-            hitl_waiting: None,
-        };
-
-        state
-            .update_worker(&name, updates)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
-    }
-    // Lock released here
-
-    // If worker status changed to Awaiting, use LifecycleManager to handle it
-    if let (Some(old), Some(new)) = (old_status, new_status) {
-        if old != new && new == WorkerStatus::Awaiting {
-            // Get agent command from config
-            let agent_command = crate::cli::config::get_agent_command();
-
-            if let Ok(lifecycle) =
-                LocalLifecycleManager::new(&api.run_name, api.run_dir.clone(), agent_command)
-            {
-                let _ = lifecycle.process_event(LifecycleEvent::WorkerStatusChanged {
-                    worker_name: name.clone(),
-                    old,
-                    new,
-                });
-            }
-        }
-    }
+    let state = api.state.lock().await;
+    worker_routes::update_worker(
+        &state,
+        &name,
+        &req,
+        lifecycle.as_ref().map(|l| l as &dyn LifecycleManager),
+    )
+    .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     Ok(Json(SuccessResponse::ok()))
 }
@@ -651,9 +568,8 @@ async fn get_claimed_task(
     Path(name): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let task = state
-        .get_claimed_task(&name)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let task =
+        worker_routes::get_claimed_task(&state, &name).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "task": task })))
 }
 
@@ -662,22 +578,8 @@ async fn worker_heartbeat(
     Path(name): Path<String>,
 ) -> ApiResult<Json<StatusResponse>> {
     let state = api.state.lock().await;
-    let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%S%.6f").to_string();
-    let updates = WorkerUpdate {
-        pid: None,
-        runner_id: None,
-        runner_type: None,
-        session_id: None,
-        status: None,
-        waiting_thread: None,
-        needs_restart: None,
-        last_heartbeat: Some(timestamp),
-        hitl_waiting: None,
-    };
-    state
-        .update_worker(&name, updates)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
-    let status = state.status().map_err(|e| anyhow::anyhow!("{}", e))?;
+    let status =
+        worker_routes::worker_heartbeat(&state, &name).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(StatusResponse {
         status: status.to_string(),
     }))

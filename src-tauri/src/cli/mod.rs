@@ -296,6 +296,10 @@ pub struct InternalWorkerRunArgs {
     /// Resume session ID
     #[arg(long)]
     pub resume_session_id: Option<String>,
+
+    /// Coordinator API URL (for remote/Docker workers to report status)
+    #[arg(long)]
+    pub api_url: Option<String>,
 }
 
 /// Arguments for internal eval run command
