@@ -2,8 +2,13 @@
 
 use std::path::PathBuf;
 
-/// Get the hirsel home directory (~/.hirsel)
+/// Get the hirsel home directory.
+///
+/// Checks `HIRSEL_ROOT` env var first, falls back to `~/.hirsel`.
 pub fn hirsel_dir() -> PathBuf {
+    if let Ok(root) = std::env::var("HIRSEL_ROOT") {
+        return PathBuf::from(root);
+    }
     dirs::home_dir()
         .expect("Could not find home directory")
         .join(".hirsel")

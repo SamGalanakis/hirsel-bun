@@ -20,11 +20,14 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use std::collections::HashMap;
+
 use crate::core::api_types::{
     ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, Task, ThreadSummary,
     Worker, WorkerEventsResponse,
 };
 use crate::core::config::{self, Config};
+use crate::core::draft::StartingPoint;
 
 // =============================================================================
 // Error Types
@@ -171,6 +174,43 @@ pub struct SpawnWorkersRequest {
 pub struct SpawnWorkersResponse {
     /// Names of spawned workers
     pub workers: Vec<String>,
+}
+
+/// Request to start a run (unified entry point for CLI and GUI)
+///
+/// This combines workspace setup and worker spawning into a single operation.
+/// The orchestrator handles:
+/// 1. Workspace creation based on starting_point
+/// 2. Worker registration in state
+/// 3. Worker spawning via the appropriate Runner (unless draft mode)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartRunRequest {
+    /// Run name (will be slugified)
+    pub name: String,
+    /// Spec content (markdown)
+    pub spec: String,
+    /// Starting point for workspace (how to initialize the work directory)
+    pub starting_point: StartingPoint,
+    /// Optional eval content (markdown)
+    pub eval: Option<String>,
+    /// Worker scale (max workers for autoscaling, default: 1)
+    pub worker_scale: Option<u32>,
+    /// Time limit in minutes
+    pub time_limit_minutes: Option<i64>,
+    /// Max iterations before pausing
+    pub max_iterations: Option<i64>,
+    /// Human-in-the-loop mode (default: true)
+    pub human_in_the_loop: Option<bool>,
+    /// Runner name (default: from config or "local")
+    pub runner: Option<String>,
+    /// Per-worker runner assignments
+    pub worker_runners: Option<HashMap<String, String>>,
+    /// Tailscale OAuth credentials for worker hosts to join tailnet
+    pub tailscale_oauth: Option<TailscaleOAuth>,
+    /// Draft mode - setup run but don't spawn workers (default: false)
+    #[serde(default)]
+    pub draft: bool,
 }
 
 // =============================================================================
@@ -332,6 +372,54 @@ pub trait Orchestrator: Send + Sync {
         let _ = (run_name, count);
         Err(OrchestratorError::Other(
             "spawn_workers not implemented for this orchestrator".to_string(),
+        ))
+    }
+
+    /// Start a run (unified entry point for CLI and GUI)
+    ///
+    /// This is the preferred method for starting runs as it combines:
+    /// 1. Run directory and database setup
+    /// 2. Workspace creation from the starting point
+    /// 3. Worker registration and spawning
+    ///
+    /// For LocalOrchestrator: Handles all operations locally
+    /// For RemoteOrchestrator: Delegates to server via HTTP
+    ///
+    /// Note: The existing `create_run` + `upload_files` + `spawn_workers` flow
+    /// is kept for backward compatibility with remote workers that need
+    /// fine-grained control over the process.
+    async fn start_run(&self, request: StartRunRequest) -> OrchestratorResult<RunDetail> {
+        let _ = request;
+        Err(OrchestratorError::Other(
+            "start_run not implemented for this orchestrator".to_string(),
+        ))
+    }
+
+    /// Spawn a single worker for an existing run.
+    ///
+    /// This is used by the daemon to spawn additional workers during autoscaling
+    /// or to resume paused/awaiting workers. Unlike `spawn_workers` which is for
+    /// initial run creation, this handles spawning in the context of an already
+    /// running run.
+    ///
+    /// The runner system is used to ensure workers spawn correctly based on
+    /// the runner configuration (local, docker, fly, sprite, etc.).
+    ///
+    /// # Arguments
+    /// * `run_name` - Name of the run
+    /// * `worker_name` - Name of the worker to spawn
+    /// * `work_dir` - Work directory for the worker
+    /// * `resume_session_id` - Optional session ID to resume from (for paused workers)
+    async fn spawn_single_worker(
+        &self,
+        run_name: &str,
+        worker_name: &str,
+        work_dir: &std::path::Path,
+        resume_session_id: Option<&str>,
+    ) -> OrchestratorResult<()> {
+        let _ = (run_name, worker_name, work_dir, resume_session_id);
+        Err(OrchestratorError::Other(
+            "spawn_single_worker not implemented for this orchestrator".to_string(),
         ))
     }
 }

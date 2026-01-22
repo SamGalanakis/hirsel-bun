@@ -14,8 +14,10 @@ pub enum OrchestratorMode {
 /// How workers access the orchestrator
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
+#[derive(Default)]
 pub enum OrchestratorAccess {
     /// Direct access - assumes network is already configured (VPC, same network, etc.)
+    #[default]
     Direct,
     /// Tailscale - workers join the user's tailnet via OAuth-generated auth keys
     Tailscale {
@@ -27,12 +29,6 @@ pub enum OrchestratorAccess {
         #[serde(default)]
         tag: Option<String>,
     },
-}
-
-impl Default for OrchestratorAccess {
-    fn default() -> Self {
-        Self::Direct
-    }
 }
 
 /// Orchestrator profile configuration

@@ -343,8 +343,127 @@
         <span x-text="error"></span>
       </div>
 
-      <!-- Draft Editor Content -->
-      <div x-show="!loading" class="flex-1 flex flex-col overflow-hidden">
+      <!-- Starting Point Selection Phase (shown first for new drafts) -->
+      <div x-show="!loading && !startingPointChosen" class="flex-1 flex flex-col items-center justify-center p-8">
+        <div class="w-full max-w-lg">
+          <h3 class="text-lg font-medium text-wool-100 mb-2 text-center">Choose a Starting Point</h3>
+          <p class="text-sm text-wool-500 mb-6 text-center">Select where the AI workers will work from</p>
+
+          <!-- Starting point options -->
+          <div class="grid gap-3 mb-6">
+            <!-- Greenfield -->
+            <button
+              type="button"
+              @click="startingPointType = 'greenfield'"
+              class="w-full p-4 rounded-lg border-2 transition-all text-left"
+              :class="startingPointType === 'greenfield'
+                ? 'bg-pasture-700 border-amber-500 text-wool-100'
+                : 'bg-pasture-800/50 border-pasture-600 text-wool-300 hover:border-pasture-500'"
+            >
+              <div class="flex items-center gap-3">
+                <i data-lucide="file-plus" class="w-5 h-5" :class="startingPointType === 'greenfield' ? 'text-amber-500' : 'text-wool-500'"></i>
+                <div>
+                  <div class="font-medium">Greenfield</div>
+                  <div class="text-xs text-wool-500">Empty git-initialized workspace for new projects</div>
+                </div>
+              </div>
+            </button>
+
+            <!-- Local Folder -->
+            <button
+              type="button"
+              @click="startingPointType = 'local'"
+              class="w-full p-4 rounded-lg border-2 transition-all text-left"
+              :class="startingPointType === 'local'
+                ? 'bg-pasture-700 border-amber-500 text-wool-100'
+                : 'bg-pasture-800/50 border-pasture-600 text-wool-300 hover:border-pasture-500'"
+            >
+              <div class="flex items-center gap-3">
+                <i data-lucide="folder" class="w-5 h-5" :class="startingPointType === 'local' ? 'text-amber-500' : 'text-wool-500'"></i>
+                <div>
+                  <div class="font-medium">Local Folder</div>
+                  <div class="text-xs text-wool-500">Copy files from a local directory</div>
+                </div>
+              </div>
+            </button>
+
+            <!-- Git Repository -->
+            <button
+              type="button"
+              @click="startingPointType = 'git'"
+              class="w-full p-4 rounded-lg border-2 transition-all text-left"
+              :class="startingPointType === 'git'
+                ? 'bg-pasture-700 border-amber-500 text-wool-100'
+                : 'bg-pasture-800/50 border-pasture-600 text-wool-300 hover:border-pasture-500'"
+            >
+              <div class="flex items-center gap-3">
+                <i data-lucide="git-branch" class="w-5 h-5" :class="startingPointType === 'git' ? 'text-amber-500' : 'text-wool-500'"></i>
+                <div>
+                  <div class="font-medium">Git Repository</div>
+                  <div class="text-xs text-wool-500">Clone from a remote git repository</div>
+                </div>
+              </div>
+            </button>
+          </div>
+
+          <!-- Configuration for selected type -->
+          <div class="mb-6">
+            <!-- Local folder path input -->
+            <div x-show="startingPointType === 'local'" class="grid gap-2">
+              <label class="text-sm font-medium text-wool-300">Folder Path</label>
+              <input
+                type="text"
+                x-model="localPath"
+                placeholder="/path/to/folder"
+                class="w-full"
+              />
+              <p class="text-xs text-wool-500">Enter the full path to your project folder</p>
+            </div>
+
+            <!-- Git URL input -->
+            <div x-show="startingPointType === 'git'" class="grid gap-3">
+              <div class="grid gap-2">
+                <label class="text-sm font-medium text-wool-300">Repository URL</label>
+                <input
+                  type="text"
+                  x-model="gitUrl"
+                  @input="debouncedValidateGitUrl()"
+                  placeholder="https://github.com/owner/repo"
+                  class="w-full"
+                />
+                <div x-show="gitValidating" class="flex items-center gap-2 text-xs text-wool-500">
+                  <div class="spinner w-3 h-3"></div>
+                  Validating...
+                </div>
+                <div x-show="gitError" class="text-xs text-terra" x-text="gitError"></div>
+              </div>
+
+              <div x-show="availableBranches.length > 0" class="grid gap-2">
+                <label class="text-sm font-medium text-wool-300">Branch</label>
+                <select x-model="gitBranch" class="w-full">
+                  <option value="">Select a branch...</option>
+                  <template x-for="branch in availableBranches" :key="branch">
+                    <option :value="branch" x-text="branch"></option>
+                  </template>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Continue button -->
+          <button
+            type="button"
+            @click="confirmStartingPoint()"
+            :disabled="!canConfirmStartingPoint()"
+            class="btn w-full"
+          >
+            Continue
+          </button>
+        </div>
+      </div>
+
+      <!-- Draft Editor Content (shown after starting point is chosen) -->
+      <div x-show="!loading && startingPointChosen" class="flex-1 flex flex-col overflow-hidden">
         <!-- Tabs for Spec/Eval/Settings with Preview Toggle -->
         <div class="flex items-center px-6 border-b border-pasture-600 bg-pasture-800/30">
           <div class="flex items-center gap-1">
@@ -584,70 +703,116 @@ Example:
           <!-- Settings Tab -->
           <div x-show="activeTab === 'settings'" class="h-full overflow-y-auto p-6">
             <form class="form grid gap-6 max-w-xl mx-auto">
-              <!-- Repository Section -->
+              <!-- Starting Point Section -->
               <div class="grid gap-4">
                 <h3 class="text-sm font-medium text-wool-300 flex items-center gap-2">
                   <i data-lucide="folder-git-2" class="w-4 h-4 text-wool-500"></i>
-                  Repository
+                  Starting Point
                 </h3>
-                <!-- Repository Path/URL -->
-                <div class="grid gap-2">
-                  <label for="draft-project-path" class="flex items-center gap-1.5">
-                    Path or URL
-                    <span
-                      x-show="projectPath && repoIsRemote"
-                      class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-400"
-                    >remote</span>
-                    <span
-                      x-show="projectPath && !repoIsRemote && availableBranches.length > 0"
-                      class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-pasture-600 text-wool-400"
-                    >local</span>
-                    <span
-                      x-show="repoValidating"
-                      x-cloak
-                      class="ml-1 flex items-center gap-1 text-[10px] text-wool-500"
-                    >
-                      <div class="spinner w-3 h-3 border-wool-500"></div>
-                      checking...
-                    </span>
-                  </label>
-                  <input
-                    id="draft-project-path"
-                    type="text"
-                    x-model="projectPath"
-                    @input="debouncedSave(); debouncedValidateProjectPath()"
-                    :class="{'!border-terra': repoError}"
-                    placeholder="/path/to/project or https://github.com/user/repo"
-                  />
-                  <p class="text-muted-foreground text-sm">Local path or GitHub URL (branch can be specified in URL like /tree/branch)</p>
-                  <p
-                    x-show="repoError"
-                    x-text="repoError"
-                    class="text-sm text-terra"
-                  ></p>
-                  <p
-                    x-show="!repoError && (needsDirCreate || needsGitInit)"
-                    class="text-sm text-amber-400 flex items-center gap-1"
-                  >
-                    <i data-lucide="info" class="w-3 h-3"></i>
-                    <span x-text="needsDirCreate ? 'Directory will be created and git initialized' : 'Git will be initialized with a main branch'"></span>
-                  </p>
+
+                <!-- Show workspace path if already created -->
+                <div x-show="workspacePath" class="p-3 bg-pasture-700/50 rounded-lg border border-pasture-600">
+                  <div class="flex items-center gap-2 text-sm text-wool-300">
+                    <i data-lucide="folder-check" class="w-4 h-4 text-pasture-400"></i>
+                    <span class="font-medium">Workspace</span>
+                  </div>
+                  <p class="text-xs text-wool-500 mt-1 font-mono break-all" x-text="workspacePath"></p>
                 </div>
-                <!-- Branch -->
-                <div class="grid gap-2" x-show="availableBranches.length > 0">
-                  <label for="draft-branch">Branch</label>
-                  <select
-                    id="draft-branch"
-                    x-model="selectedBranch"
-                    @change="onBranchChange()"
-                    :class="{'!border-terra': !selectedBranch && availableBranches.length > 0}"
-                    class="w-48"
-                  >
-                    <option value="">Select branch...</option>
-                    <template x-for="branch in availableBranches" :key="branch">
-                      <option :value="branch" x-text="branch"></option>
-                    </template>
-                  </select>
+
+                <!-- Starting point selector (only for new drafts without workspace) -->
+                <div x-show="!workspacePath" class="grid gap-4">
+                  <div class="flex gap-2">
+                    <button
+                      type="button"
+                      @click="startingPointType = 'greenfield'"
+                      :class="startingPointType === 'greenfield' ? 'btn' : 'btn-outline'"
+                      class="flex-1"
+                    >
+                      <span><i data-lucide="file-plus" class="w-4 h-4 mr-2 inline"></i></span>
+                      Greenfield
+                    </button>
+                    <button
+                      type="button"
+                      @click="startingPointType = 'local'"
+                      :class="startingPointType === 'local' ? 'btn' : 'btn-outline'"
+                      class="flex-1"
+                    >
+                      <span><i data-lucide="folder" class="w-4 h-4 mr-2 inline"></i></span>
+                      Local Folder
+                    </button>
+                    <button
+                      type="button"
+                      @click="startingPointType = 'git'"
+                      :class="startingPointType === 'git' ? 'btn' : 'btn-outline'"
+                      class="flex-1"
+                    >
+                      <span><i data-lucide="git-branch" class="w-4 h-4 mr-2 inline"></i></span>
+                      Git Repository
+                    </button>
+                  </div>
+
+                  <!-- Greenfield description -->
+                  <p x-show="startingPointType === 'greenfield'" class="text-muted-foreground text-sm">
+                    Start with an empty git-initialized workspace. Good for new projects.
+                  </p>
+
+                  <!-- Local folder input -->
+                  <div x-show="startingPointType === 'local'" class="grid gap-2">
+                    <label for="draft-local-path">Folder Path</label>
+                    <div class="flex gap-2">
+                      <input
+                        id="draft-local-path"
+                        type="text"
+                        x-model="localPath"
+                        placeholder="/path/to/folder"
+                        class="flex-1"
+                      />
+                      <button type="button" @click="browseLocalFolder()" class="btn-outline">Browse</button>
+                    </div>
+                    <p class="text-muted-foreground text-sm">
+                      Copy files from a local folder to the workspace.
+                    </p>
+                  </div>
+
+                  <!-- Git repo input -->
+                  <div x-show="startingPointType === 'git'" class="grid gap-4">
+                    <div class="grid gap-2">
+                      <label for="draft-git-url" class="flex items-center gap-1.5">
+                        Repository URL
+                        <span
+                          x-show="gitValidating"
+                          x-cloak
+                          class="ml-1 flex items-center gap-1 text-[10px] text-wool-500"
+                        >
+                          <div class="spinner w-3 h-3 border-wool-500"></div>
+                          checking...
+                        </span>
+                      </label>
+                      <input
+                        id="draft-git-url"
+                        type="text"
+                        x-model="gitUrl"
+                        @input="debouncedValidateGitUrl()"
+                        :class="{'!border-terra': gitError}"
+                        placeholder="https://github.com/user/repo"
+                      />
+                      <p x-show="gitError" x-text="gitError" class="text-sm text-terra"></p>
+                    </div>
+                    <div x-show="availableBranches.length > 0" class="grid gap-2">
+                      <label for="draft-git-branch">Branch</label>
+                      <select
+                        id="draft-git-branch"
+                        x-model="gitBranch"
+                        :class="{'!border-terra': !gitBranch && availableBranches.length > 0}"
+                        class="w-48"
+                      >
+                        <option value="">Select branch...</option>
+                        <template x-for="branch in availableBranches" :key="branch">
+                          <option :value="branch" x-text="branch"></option>
+                        </template>
+                      </select>
+                    </div>
+                  </div>
                 </div>
               </div>
 

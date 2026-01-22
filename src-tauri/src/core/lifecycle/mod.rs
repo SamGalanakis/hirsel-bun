@@ -103,8 +103,31 @@ pub enum LifecycleAction {
     /// Workers were resumed.
     WorkersResumed(Vec<String>),
 
-    /// A new worker was scaled up.
+    /// A new worker was scaled up (legacy - for backwards compat, use SpawnWorker).
     WorkerScaledUp(String),
+
+    /// Request to spawn a new worker.
+    ///
+    /// The caller (daemon) should handle actual spawning via the orchestrator,
+    /// which uses the runner system to spawn workers correctly based on runner type.
+    SpawnWorker {
+        /// Name of the worker to spawn.
+        worker_name: String,
+        /// Work directory for the worker.
+        work_dir: PathBuf,
+    },
+
+    /// Request to resume a paused/awaiting worker.
+    ///
+    /// Like SpawnWorker, the caller should use the orchestrator to spawn via runner.
+    ResumeWorker {
+        /// Name of the worker to resume.
+        worker_name: String,
+        /// Work directory for the worker.
+        work_dir: PathBuf,
+        /// Session ID to resume from (if any).
+        resume_session_id: Option<String>,
+    },
 
     /// Eval was triggered.
     EvalTriggered,

@@ -396,39 +396,20 @@ impl WorkerRunner {
         .to_string())
     }
 
-    /// Try to resume awaiting workers and scale up if needed.
-    /// This provides immediate responsiveness when tasks become available.
-    /// The daemon's polling loop also handles this, but with a 5-second interval.
+    /// Notify that tasks may have become available.
+    ///
+    /// Workers don't handle lifecycle management directly - the daemon polls
+    /// every 5 seconds and handles spawning/resuming workers via the orchestrator.
+    /// This method is kept for interface compatibility but is now a no-op.
     fn try_resume_awaiting_workers(&self) {
-        use crate::core::lifecycle::{LifecycleEvent, LifecycleManager, LocalLifecycleManager};
-        use tracing::debug;
-
-        // In remote mode, coordinator handles this
-        if std::env::var("HIRSEL_API_URL").is_ok() {
-            return;
-        }
-
-        // Local mode - use lifecycle manager
-        if let Ok(lifecycle) = LocalLifecycleManager::new(
-            &self.config.run_name,
-            self.config.run_dir.clone(),
-            self.config.agent_command.clone(),
-        ) {
-            // Process TaskCompleted event which handles resume and scale up
-            match lifecycle.process_event(LifecycleEvent::TaskCompleted {
-                task_id: String::new(),
-                worker_name: self.config.worker_name.clone(),
-            }) {
-                Ok(actions) => {
-                    for action in actions {
-                        debug!("Lifecycle action: {:?}", action);
-                    }
-                }
-                Err(e) => {
-                    debug!("Failed to process lifecycle event: {}", e);
-                }
-            }
-        }
+        // Workers are "dumb" - they just do tasks and report status.
+        // The daemon handles all lifecycle management (scaling, resume, eval triggers).
+        // This is intentionally a no-op; the daemon will detect available tasks
+        // on its next polling cycle and handle worker scaling/resuming.
+        tracing::debug!(
+            "[{}] Task completed - daemon will handle worker scaling on next poll",
+            self.config.worker_name
+        );
     }
 
     /// Delete a task.
@@ -570,28 +551,21 @@ impl WorkerRunner {
     // =========================================================================
 
     /// Signal that worker has no more work to do.
-    /// This sets the worker to Awaiting status and may trigger evaluation
-    /// if all workers are inactive.
+    ///
+    /// This sets the worker to Awaiting status. The daemon will detect this
+    /// on its next polling cycle and handle eval triggering if all workers
+    /// are inactive.
+    ///
+    /// Workers are "dumb" - they just do tasks and report status.
+    /// The daemon handles all lifecycle management.
     pub fn work_done(&self) -> WorkerResult<String> {
-        // In remote mode, just set status - coordinator handles lifecycle
-        if std::env::var("HIRSEL_API_URL").is_ok() {
-            self.set_status(WorkerStatus::Awaiting)?;
-        } else {
-            // In local mode, use LifecycleManager for immediate response
-            use crate::core::lifecycle::{LifecycleManager, LocalLifecycleManager};
+        // Just set status to Awaiting - daemon will handle eval triggering
+        self.set_status(WorkerStatus::Awaiting)?;
 
-            // Set status first
-            self.set_status(WorkerStatus::Awaiting)?;
-
-            // Use lifecycle manager to check/trigger eval
-            if let Ok(lifecycle) = LocalLifecycleManager::new(
-                &self.config.run_name,
-                self.config.run_dir.clone(),
-                self.config.agent_command.clone(),
-            ) {
-                let _ = lifecycle.worker_done(&self.config.worker_name);
-            }
-        }
+        tracing::info!(
+            "[{}] work_done: status set to Awaiting, daemon will handle lifecycle",
+            self.config.worker_name
+        );
 
         Ok(serde_json::json!({
             "success": true,

@@ -538,13 +538,21 @@
                                 </g>
                               </svg>
                             </template>
-                            <!-- Server icon for SSH runners -->
-                            <template x-if="getRunner(name)?.host?.type === 'ssh'">
+                            <!-- Container icon for Docker runners (takes precedence over host type) -->
+                            <template x-if="getRunner(name)?.container && getRunner(name)?.type !== 'sprite'">
+                              <i data-lucide="container" class="w-4 h-4 text-sage"></i>
+                            </template>
+                            <!-- Server icon for SSH runners (without Docker) -->
+                            <template x-if="getRunner(name)?.host?.type === 'ssh' && !getRunner(name)?.container">
                               <i data-lucide="server" class="w-4 h-4 text-sage"></i>
                             </template>
-                            <!-- Client icon for client runners -->
-                            <template x-if="getRunner(name)?.host?.type === 'client'">
+                            <!-- Client icon for client runners (without Docker) -->
+                            <template x-if="getRunner(name)?.host?.type === 'client' && !getRunner(name)?.container">
                               <i data-lucide="monitor" class="w-4 h-4 text-sage"></i>
+                            </template>
+                            <!-- Laptop icon for local runners (without Docker) -->
+                            <template x-if="getRunner(name)?.host?.type === 'local' && !getRunner(name)?.container && getRunner(name)?.type !== 'sprite'">
+                              <i data-lucide="laptop" class="w-4 h-4 text-sage"></i>
                             </template>
                             <span class="font-medium text-wool-200" x-text="name"></span>
                             <span class="badge-secondary" x-text="getHostTypeLabel(getRunner(name)?.host?.type)"></span>

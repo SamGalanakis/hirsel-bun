@@ -14,24 +14,17 @@ import {
   deleteRun,
   getAssetsPath,
   getRunDetail,
-  initProjectRepo,
   openAssetsFolder,
   readEvalFile,
   readSpecFile,
   startDraft,
   updateDraft,
-  validateRepo,
   writeEvalFile,
   writeSpecFile,
 } from '../../api';
 import { showConfirm } from '../../confirm-dialog';
-import type {
-  DraftUpdateRequest,
-  RepoValidation,
-  RunDetail,
-  RunnerConfig,
-  RunnerEntry,
-} from '../../types';
+import type { StartingPoint } from '../../types';
+import type { DraftUpdateRequest, RunDetail, RunnerConfig, RunnerEntry } from '../../types';
 
 import {
   calculateInsertPosition,
@@ -76,7 +69,14 @@ export function draftEditor(): DraftEditorComponent {
     timeLimitMinutes: null,
     timeLimitInput: '',
     humanInTheLoop: true,
-    projectPath: '',
+    // Starting point selection phase
+    startingPointChosen: false,
+    // Starting point configuration
+    startingPointType: 'greenfield' as const,
+    localPath: '',
+    gitUrl: '',
+    gitBranch: '',
+    workspacePath: null as string | null,
     saving: false,
     savingSpec: false,
     savingEval: false,
@@ -88,20 +88,14 @@ export function draftEditor(): DraftEditorComponent {
     isEditing: false,
     activeTab: 'spec' as const,
     previewMode: true,
-    // Branch selection state
-    selectedBranch: '',
-    availableBranches: [],
-    repoValidating: false,
-    repoError: null,
-    repoIsRemote: false,
-    normalizedRepoUrl: '',
-    repoValidateTimeout: null,
+    // Git URL validation state
+    gitValidating: false,
+    gitError: null as string | null,
+    availableBranches: [] as string[],
+    gitValidateTimeout: null as ReturnType<typeof setTimeout> | null,
     // Field validation errors
     workerScaleError: null,
     timeLimitError: null,
-    // Project setup flags (non-git directory handling)
-    needsDirCreate: false,
-    needsGitInit: false,
     // File drop state
     specDragOver: false,
     evalDragOver: false,
@@ -137,6 +131,23 @@ export function draftEditor(): DraftEditorComponent {
       window.addEventListener('run-selected', ((_e: CustomEvent<string | null>) => {
         // The run-list component will dispatch draft-selected when a draft is selected
         // This handler is for cleanup when switching away from a draft
+      }) as EventListener);
+
+      // Listen for run deletion (e.g., via CLI) to clear draft if it was deleted
+      window.addEventListener('data:run-deleted', ((e: CustomEvent<string>) => {
+        if (e.detail === this.runName) {
+          this.clearDraft();
+        }
+      }) as EventListener);
+
+      // Defensive: check if our run still exists when runs list updates
+      window.addEventListener('data:runs-updated', ((e: CustomEvent<Array<{ name: string }>>) => {
+        if (this.runName && e.detail) {
+          const stillExists = e.detail.some((r) => r.name === this.runName);
+          if (!stillExists) {
+            this.clearDraft();
+          }
+        }
       }) as EventListener);
 
       // Listen for draft refresh events (e.g., after Gyp edits spec.md or eval.md)
@@ -208,9 +219,9 @@ export function draftEditor(): DraftEditorComponent {
         clearTimeout(this.evalSaveTimeout);
         this.evalSaveTimeout = null;
       }
-      if (this.repoValidateTimeout) {
-        clearTimeout(this.repoValidateTimeout);
-        this.repoValidateTimeout = null;
+      if (this.gitValidateTimeout) {
+        clearTimeout(this.gitValidateTimeout);
+        this.gitValidateTimeout = null;
       }
       if (this._unlistenDragDrop) {
         this._unlistenDragDrop();
@@ -354,7 +365,10 @@ export function draftEditor(): DraftEditorComponent {
         this.timeLimitMinutes = detail.timeLimitMinutes;
         this.timeLimitInput = formatTimeLimitDisplay(detail.timeLimitMinutes);
         this.humanInTheLoop = detail.humanInTheLoop;
-        this.projectPath = detail.projectPath || '';
+        this.workspacePath = detail.projectPath || null;
+        // If workspace exists, starting point was already chosen (e.g., from clone_run)
+        // Otherwise, show the starting point selection phase
+        this.startingPointChosen = Boolean(detail.projectPath);
         this.runnerDefault = detail.runner || 'local';
         this.workerRunners = detail.workerRunners || {};
 
@@ -369,11 +383,6 @@ export function draftEditor(): DraftEditorComponent {
         this.assetsPath = assetsPath;
 
         this.loading = false;
-
-        // Validate project path if set (this will populate branches)
-        if (this.projectPath) {
-          this.validateProjectPath();
-        }
       } catch (err) {
         this.error = err instanceof Error ? err.message : String(err);
         this.loading = false;
@@ -392,9 +401,9 @@ export function draftEditor(): DraftEditorComponent {
         clearTimeout(this.evalSaveTimeout);
         this.evalSaveTimeout = null;
       }
-      if (this.repoValidateTimeout) {
-        clearTimeout(this.repoValidateTimeout);
-        this.repoValidateTimeout = null;
+      if (this.gitValidateTimeout) {
+        clearTimeout(this.gitValidateTimeout);
+        this.gitValidateTimeout = null;
       }
       this.runName = null;
       this.name = '';
@@ -404,22 +413,22 @@ export function draftEditor(): DraftEditorComponent {
       this.timeLimitMinutes = null;
       this.timeLimitInput = '';
       this.humanInTheLoop = true;
-      this.projectPath = '';
+      // Reset starting point phase and configuration
+      this.startingPointChosen = false;
+      this.startingPointType = 'greenfield';
+      this.localPath = '';
+      this.gitUrl = '';
+      this.gitBranch = '';
+      this.workspacePath = null;
       this.loading = false;
       this.error = null;
-      // Reset branch state
-      this.selectedBranch = '';
+      // Reset git validation state
+      this.gitValidating = false;
+      this.gitError = null;
       this.availableBranches = [];
-      this.repoValidating = false;
-      this.repoError = null;
-      this.repoIsRemote = false;
-      this.normalizedRepoUrl = '';
       // Reset validation errors
       this.workerScaleError = null;
       this.timeLimitError = null;
-      // Reset setup flags
-      this.needsDirCreate = false;
-      this.needsGitInit = false;
       // Reset drag state
       this.specDragOver = false;
       this.evalDragOver = false;
@@ -539,7 +548,7 @@ export function draftEditor(): DraftEditorComponent {
      * Check if all fields are valid
      */
     hasValidationErrors(): boolean {
-      return !!(this.workerScaleError || this.timeLimitError || this.repoError);
+      return !!(this.workerScaleError || this.timeLimitError || this.gitError);
     },
 
     /**
@@ -563,10 +572,10 @@ export function draftEditor(): DraftEditorComponent {
         const timeLimitResult = parseTimeLimit(this.timeLimitInput);
         const updates: DraftUpdateRequest = {
           // Note: spec is NOT saved here - it's file-based via saveSpec()
+          // Note: projectPath is NOT saved here - workspace is created during create_draft
           workerScale: this.workerScale,
           timeLimitMinutes: timeLimitResult.value ?? undefined,
           humanInTheLoop: this.humanInTheLoop,
-          projectPath: this.projectPath || undefined,
           runner: this.runnerDefault || undefined,
           workerRunners:
             Object.keys(this.workerRunners).length > 0 ? this.workerRunners : undefined,
@@ -611,22 +620,6 @@ export function draftEditor(): DraftEditorComponent {
       this.validateWorkerScale();
       this.validateTimeLimit();
 
-      // Validate required fields
-      if (!this.projectPath.trim()) {
-        window.toast?.error('Repository path is required');
-        return;
-      }
-
-      if (!this.selectedBranch) {
-        window.toast?.error('Please select a branch');
-        return;
-      }
-
-      if (this.repoError) {
-        window.toast?.error(this.repoError || 'Invalid repository');
-        return;
-      }
-
       if (this.workerScaleError) {
         window.toast?.error(this.workerScaleError || 'Invalid workers');
         return;
@@ -637,43 +630,26 @@ export function draftEditor(): DraftEditorComponent {
         return;
       }
 
-      // If project needs setup, confirm with user first
-      if (this.needsDirCreate || this.needsGitInit) {
-        const setupActions: string[] = [];
-        if (this.needsDirCreate) {
-          setupActions.push('create the directory');
-        }
-        if (this.needsGitInit) {
-          setupActions.push('initialize a git repository');
-        }
-
-        const confirmed = await showConfirm({
-          title: 'Initialize Project Directory?',
-          message: `The path "${this.projectPath}" doesn't exist or isn't a git repository. Hirsel will ${setupActions.join(' and ')} with an initial commit on the "main" branch. Continue?`,
-          confirmText: 'Initialize & Start',
-          cancelText: 'Cancel',
-        });
-
-        if (!confirmed) {
+      // For git starting point, validate the URL
+      if (this.startingPointType === 'git' && !this.workspacePath) {
+        if (!this.gitUrl.trim()) {
+          window.toast?.error('Git repository URL is required');
           return;
         }
+        if (!this.gitBranch) {
+          window.toast?.error('Please select a branch');
+          return;
+        }
+        if (this.gitError) {
+          window.toast?.error(this.gitError || 'Invalid repository');
+          return;
+        }
+      }
 
-        // Initialize the project
-        try {
-          const result = await initProjectRepo(this.projectPath);
-
-          if (!result.valid) {
-            window.toast?.error(result.error || 'Failed to initialize project');
-            return;
-          }
-
-          // Update state with initialized repo
-          this.needsDirCreate = false;
-          this.needsGitInit = false;
-          this.availableBranches = result.branches;
-          this.selectedBranch = result.currentBranch || 'main';
-        } catch (err) {
-          window.toast?.error('Failed to initialize project');
+      // For local folder, validate path exists
+      if (this.startingPointType === 'local' && !this.workspacePath) {
+        if (!this.localPath.trim()) {
+          window.toast?.error('Local folder path is required');
           return;
         }
       }
@@ -682,11 +658,31 @@ export function draftEditor(): DraftEditorComponent {
       this.error = null;
 
       try {
-        // Save any pending changes first (including branch)
+        // Save any pending changes first
         await this.saveDraft();
 
-        // Start the draft
-        const detail = await startDraft(this.runName);
+        // Build StartingPoint based on selection (only if no workspace exists yet)
+        let startingPoint: StartingPoint | undefined;
+        if (!this.workspacePath) {
+          switch (this.startingPointType) {
+            case 'greenfield':
+              startingPoint = { type: 'greenfield' };
+              break;
+            case 'local':
+              startingPoint = { type: 'localFolder', path: this.localPath };
+              break;
+            case 'git':
+              startingPoint = {
+                type: 'gitRepo',
+                url: this.gitUrl,
+                branch: this.gitBranch || undefined,
+              };
+              break;
+          }
+        }
+
+        // Start the draft with the starting point
+        const detail = await startDraft(this.runName, startingPoint);
 
         window.toast?.success(`Run "${detail.name}" started`);
 
@@ -719,11 +715,11 @@ export function draftEditor(): DraftEditorComponent {
         await deleteRun(this.runName);
         window.toast?.info(`Draft "${this.name}" deleted`);
 
-        // Clear selection
+        // Clear selection - dispatch both events
         window.dispatchEvent(new CustomEvent('run-selected', { detail: null }));
+        window.dispatchEvent(new CustomEvent('draft-selected', { detail: null }));
         this.clearDraft();
       } catch (err) {
-        const error = err instanceof Error ? err.message : String(err);
         window.toast?.error('Failed to delete draft');
       }
     },
@@ -806,124 +802,146 @@ export function draftEditor(): DraftEditorComponent {
     },
 
     /**
-     * Validate the project path and populate branch information
+     * Validate git URL and fetch available branches
      */
-    async validateProjectPath(): Promise<void> {
-      const path = this.projectPath.trim();
+    async validateGitUrl(): Promise<void> {
+      const url = this.gitUrl.trim();
 
-      // Reset state if path is empty
-      if (!path) {
+      // Reset state if URL is empty
+      if (!url) {
         this.availableBranches = [];
-        this.selectedBranch = '';
-        this.repoError = null;
-        this.repoValidating = false;
-        this.repoIsRemote = false;
-        this.normalizedRepoUrl = '';
-        this.needsDirCreate = false;
-        this.needsGitInit = false;
+        this.gitBranch = '';
+        this.gitError = null;
+        this.gitValidating = false;
         return;
       }
 
-      this.repoValidating = true;
-      this.repoError = null;
-      this.needsDirCreate = false;
-      this.needsGitInit = false;
+      this.gitValidating = true;
+      this.gitError = null;
 
       try {
-        // Add timeout to prevent hanging on slow/unresponsive remotes
+        // Use git ls-remote to list branches (via validateRepo for now, but only for URLs)
+        // For the new architecture, we don't need to validate local paths
+        // The workspace provider handles that during init
         const timeoutMs = 15000;
+
+        // Import validateRepo only for git URL validation
+        const { validateRepo } = await import('../../api');
         const result = await Promise.race([
-          validateRepo(path),
+          validateRepo(url),
           new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error('Validation timed out')), timeoutMs),
           ),
         ]);
 
-        this.repoIsRemote = result.isRemote;
-        this.normalizedRepoUrl = result.repoUrl;
-
-        // Check for setup flags (local paths that need initialization)
-        this.needsDirCreate = result.needsDirCreate;
-        this.needsGitInit = result.needsGitInit;
-
-        if (!result.valid && !this.needsDirCreate && !this.needsGitInit) {
-          // Only show error if it's not a "needs setup" situation
-          this.repoError = result.error || 'Invalid repository';
-          this.availableBranches = result.branches;
-          this.selectedBranch = '';
-        } else if (this.needsDirCreate || this.needsGitInit) {
-          // Path needs initialization - not an error, but needs setup
-          this.repoError = null;
-          this.availableBranches = ['main']; // Will be created on init
-          this.selectedBranch = 'main';
+        if (!result.valid) {
+          this.gitError = result.error || 'Invalid repository';
+          this.availableBranches = [];
+          this.gitBranch = '';
         } else {
-          this.repoError = null;
+          this.gitError = null;
           this.availableBranches = result.branches;
-
-          // Update projectPath to normalized URL (strip branch from URL)
-          if (result.repoUrl !== path) {
-            this.projectPath = result.repoUrl;
-          }
 
           // Set default branch selection
           if (result.urlBranch && result.urlBranchValid) {
-            // Branch was in URL and exists - preselect it
-            this.selectedBranch = result.urlBranch;
-          } else if (result.currentBranch && !result.isRemote) {
-            // Local repo - select currently checked out branch
-            this.selectedBranch = result.currentBranch;
-          } else {
-            // Remote without branch in URL - clear selection (user must choose)
-            this.selectedBranch = '';
+            this.gitBranch = result.urlBranch;
+          } else if (!this.gitBranch && result.branches.length > 0) {
+            // Select first branch (usually main/master)
+            this.gitBranch = result.branches[0];
           }
         }
       } catch (err) {
-        this.repoError = err instanceof Error ? err.message : 'Failed to validate repository';
+        this.gitError = err instanceof Error ? err.message : 'Failed to validate repository';
         this.availableBranches = [];
-        this.selectedBranch = '';
-        this.needsDirCreate = false;
-        this.needsGitInit = false;
+        this.gitBranch = '';
       } finally {
-        this.repoValidating = false;
+        this.gitValidating = false;
       }
     },
 
     /**
-     * Debounced validation - waits 500ms after last change
+     * Debounced git URL validation - waits 500ms after last change
      */
-    debouncedValidateProjectPath(): void {
-      if (this.repoValidateTimeout) {
-        clearTimeout(this.repoValidateTimeout);
+    debouncedValidateGitUrl(): void {
+      if (this.gitValidateTimeout) {
+        clearTimeout(this.gitValidateTimeout);
       }
-      this.repoValidateTimeout = setTimeout(() => {
-        this.validateProjectPath();
+      this.gitValidateTimeout = setTimeout(() => {
+        this.validateGitUrl();
       }, 500);
     },
 
     /**
-     * Handle branch selection change
+     * Browse for local folder (not yet implemented - requires dialog plugin)
      */
-    onBranchChange(): void {
-      // Save draft when branch changes
-      this.debouncedSave();
+    async browseLocalFolder(): Promise<void> {
+      // The @tauri-apps/plugin-dialog is not installed
+      // For now, users need to type the path manually
+      window.toast?.info('Please type the folder path manually');
     },
 
     /**
      * Check if run can be started
      */
     canStart(): boolean {
-      // Can start if we have a valid path + branch OR if path needs setup
-      const hasValidRepo = !this.repoError && this.selectedBranch;
-      const needsSetup = this.needsDirCreate || this.needsGitInit;
+      // For existing drafts with workspace already created, can always start
+      if (this.workspacePath) {
+        return !this.starting && !this.workerScaleError && !this.timeLimitError;
+      }
 
-      return Boolean(
-        this.projectPath.trim() &&
-          (hasValidRepo || needsSetup) &&
-          !this.repoValidating &&
-          !this.starting &&
-          !this.workerScaleError &&
-          !this.timeLimitError,
-      );
+      // For new drafts, check starting point validity
+      switch (this.startingPointType) {
+        case 'greenfield':
+          // Greenfield can always start
+          return !this.starting && !this.workerScaleError && !this.timeLimitError;
+        case 'local':
+          // Local folder needs a path
+          return Boolean(
+            this.localPath.trim() &&
+              !this.starting &&
+              !this.workerScaleError &&
+              !this.timeLimitError,
+          );
+        case 'git':
+          // Git needs valid URL and selected branch
+          return Boolean(
+            this.gitUrl.trim() &&
+              this.gitBranch &&
+              !this.gitError &&
+              !this.gitValidating &&
+              !this.starting &&
+              !this.workerScaleError &&
+              !this.timeLimitError,
+          );
+        default:
+          return false;
+      }
+    },
+
+    /**
+     * Check if starting point selection can be confirmed
+     */
+    canConfirmStartingPoint(): boolean {
+      switch (this.startingPointType) {
+        case 'greenfield':
+          return true;
+        case 'local':
+          return Boolean(this.localPath.trim());
+        case 'git':
+          return Boolean(
+            this.gitUrl.trim() && this.gitBranch && !this.gitError && !this.gitValidating,
+          );
+        default:
+          return false;
+      }
+    },
+
+    /**
+     * Confirm starting point selection and proceed to main editor
+     */
+    confirmStartingPoint(): void {
+      if (!this.canConfirmStartingPoint()) return;
+      this.startingPointChosen = true;
     },
 
     /**

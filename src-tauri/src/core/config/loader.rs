@@ -394,16 +394,14 @@ fn load_profiles(
                     };
 
                     // Validate remote profiles have required fields
-                    if mode == OrchestratorMode::Remote {
-                        if profile.url.is_none() {
-                            warnings.push(format!(
-                                "Config warning: [profiles.{}] remote mode requires 'url' field",
-                                name
-                            ));
-                            continue;
-                        }
-                        // Note: api_key is optional in config - it can be loaded from credential store
+                    if mode == OrchestratorMode::Remote && profile.url.is_none() {
+                        warnings.push(format!(
+                            "Config warning: [profiles.{}] remote mode requires 'url' field",
+                            name
+                        ));
+                        continue;
                     }
+                    // Note: api_key is optional in config - it can be loaded from credential store
 
                     profiles.insert(name.clone(), profile);
                 }

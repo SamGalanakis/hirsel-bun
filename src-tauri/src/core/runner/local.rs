@@ -264,14 +264,19 @@ if ! command -v curl >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
         && rm -rf /var/lib/apt/lists/*
 fi
 
-# Install Claude CLI (if not already available)
+# Install Claude CLI via direct binary download (faster than install.sh)
 if ! command -v claude >/dev/null 2>&1; then
     echo "Installing Claude CLI..."
-    curl -fsSL https://claude.ai/install.sh | bash || true
+    CLAUDE_VERSION=$(curl -fsSL "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest")
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        x86_64|amd64) PLATFORM="linux-x64" ;;
+        aarch64|arm64) PLATFORM="linux-arm64" ;;
+        *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
+    esac
+    curl -fsSL "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/$CLAUDE_VERSION/$PLATFORM/claude" \
+        -o /usr/local/bin/claude && chmod +x /usr/local/bin/claude
 fi
-
-# Add claude to PATH (may be in ~/.local/bin or ~/.claude/local/bin)
-export PATH="$HOME/.local/bin:$HOME/.claude/local/bin:$PATH"
 
 # Verify tools are available
 echo "hirsel: $(hirsel --version 2>&1 || echo 'not found')"

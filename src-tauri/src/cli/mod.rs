@@ -20,6 +20,7 @@ pub mod deliver;
 pub mod diff;
 #[cfg(feature = "full-cli")]
 pub mod go;
+pub mod helpers;
 pub mod improve;
 pub mod log;
 pub mod man;

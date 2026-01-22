@@ -2,9 +2,9 @@
 //!
 //! Handles:
 //! - Triggering eval when all workers become inactive
-//! - Scaling up workers when tasks are available
+//! - Scaling up workers when tasks are available (via orchestrator)
 //! - Enforcing time limits
-//! - Triggering learnings compaction
+//! - Resuming workers (via orchestrator)
 //! - Auto-exit when idle
 
 use std::sync::Arc;
@@ -13,10 +13,12 @@ use tokio::time::interval;
 
 use crate::core::api_types::RunStatus;
 use crate::core::config;
-use crate::core::lifecycle::{LifecycleEvent, LifecycleManager, LocalLifecycleManager};
-use crate::core::orchestrator::Orchestrator;
+use crate::core::lifecycle::{
+    LifecycleAction, LifecycleEvent, LifecycleManager, LocalLifecycleManager,
+};
+use crate::core::orchestrator::{create_local_orchestrator, Orchestrator};
 use crate::core::server::AppState;
-use crate::core::state::Status;
+use crate::core::state::{SQLiteState, Status};
 use crate::core::Files;
 
 use super::server::DaemonConfig;
@@ -51,7 +53,7 @@ pub async fn run_polling_loop(state: Arc<AppState>, config: DaemonConfig) {
                 last_active = Instant::now();
 
                 // Process active run using LifecycleManager
-                if let Err(e) = process_active_run(&run.name) {
+                if let Err(e) = process_active_run(&run.name).await {
                     tracing::warn!("[Daemon] Error processing run '{}': {}", run.name, e);
                 }
             }
@@ -74,7 +76,12 @@ pub async fn run_polling_loop(state: Arc<AppState>, config: DaemonConfig) {
 }
 
 /// Process an active run using LifecycleManager
-fn process_active_run(run_name: &str) -> anyhow::Result<()> {
+///
+/// This is the core lifecycle loop. The daemon polls every 5 seconds and:
+/// 1. Creates a LocalLifecycleManager for the run
+/// 2. Processes TimeCheck event which returns lifecycle actions
+/// 3. Handles actions like SpawnWorker via the orchestrator
+async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
     let run_dir = config::run_dir(run_name);
     let files = Files::new(&run_dir);
     let db_path = files.db_path();
@@ -87,7 +94,7 @@ fn process_active_run(run_name: &str) -> anyhow::Result<()> {
     let agent_command = crate::cli::config::get_agent_command();
 
     // Create lifecycle manager
-    let lifecycle = match LocalLifecycleManager::new(run_name, run_dir, agent_command) {
+    let lifecycle = match LocalLifecycleManager::new(run_name, run_dir.clone(), agent_command) {
         Ok(lm) => lm,
         Err(e) => {
             tracing::warn!(
@@ -107,9 +114,12 @@ fn process_active_run(run_name: &str) -> anyhow::Result<()> {
             // Process TimeCheck event - handles time limit, eval triggering, and scaling
             match lifecycle.process_event(LifecycleEvent::TimeCheck) {
                 Ok(actions) => {
-                    for action in actions {
+                    for action in &actions {
                         tracing::debug!("[Daemon] Run '{}' action: {:?}", run_name, action);
                     }
+
+                    // Handle actions that require spawning via orchestrator
+                    handle_lifecycle_actions(run_name, &run_dir, actions).await;
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -136,4 +146,178 @@ fn process_active_run(run_name: &str) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Handle lifecycle actions that require spawning workers via the orchestrator.
+///
+/// This ensures workers are spawned using the correct runner (local/docker/fly/sprite)
+/// based on the run's configuration.
+async fn handle_lifecycle_actions(
+    run_name: &str,
+    run_dir: &std::path::Path,
+    actions: Vec<LifecycleAction>,
+) {
+    // Create orchestrator for spawning
+    let orchestrator = match create_local_orchestrator() {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::warn!(
+                "[Daemon] Failed to create orchestrator for '{}': {}",
+                run_name,
+                e
+            );
+            return;
+        }
+    };
+
+    for action in actions {
+        match action {
+            LifecycleAction::SpawnWorker {
+                worker_name,
+                work_dir,
+            } => {
+                tracing::info!(
+                    "[Daemon] Spawning worker '{}' for run '{}' via orchestrator",
+                    worker_name,
+                    run_name
+                );
+
+                match orchestrator
+                    .spawn_single_worker(run_name, &worker_name, &work_dir, None)
+                    .await
+                {
+                    Ok(()) => {
+                        tracing::info!(
+                            "[Daemon] Successfully spawned worker '{}' for run '{}'",
+                            worker_name,
+                            run_name
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "[Daemon] Failed to spawn worker '{}' for run '{}': {}",
+                            worker_name,
+                            run_name,
+                            e
+                        );
+                    }
+                }
+            }
+
+            LifecycleAction::ResumeWorker {
+                worker_name,
+                work_dir,
+                resume_session_id,
+            } => {
+                tracing::info!(
+                    "[Daemon] Resuming worker '{}' for run '{}' via orchestrator",
+                    worker_name,
+                    run_name
+                );
+
+                match orchestrator
+                    .spawn_single_worker(
+                        run_name,
+                        &worker_name,
+                        &work_dir,
+                        resume_session_id.as_deref(),
+                    )
+                    .await
+                {
+                    Ok(()) => {
+                        tracing::info!(
+                            "[Daemon] Successfully resumed worker '{}' for run '{}'",
+                            worker_name,
+                            run_name
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "[Daemon] Failed to resume worker '{}' for run '{}': {}",
+                            worker_name,
+                            run_name,
+                            e
+                        );
+                    }
+                }
+            }
+
+            LifecycleAction::WorkersResumed(workers) => {
+                // Workers to resume - spawn each one via orchestrator
+                let state = match SQLiteState::new(run_dir.join("hirsel.db")) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!("[Daemon] Failed to open state for '{}': {}", run_name, e);
+                        continue;
+                    }
+                };
+
+                for worker_name in workers {
+                    // Get worker info for work_dir and session_id
+                    let worker = match state.get_worker(&worker_name) {
+                        Ok(Some(w)) => w,
+                        Ok(None) => {
+                            tracing::warn!(
+                                "[Daemon] Worker '{}' not found for resume",
+                                worker_name
+                            );
+                            continue;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "[Daemon] Failed to get worker '{}' info: {}",
+                                worker_name,
+                                e
+                            );
+                            continue;
+                        }
+                    };
+
+                    let work_dir = worker
+                        .work_dir
+                        .as_ref()
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|| run_dir.join("workers").join(&worker_name));
+
+                    match orchestrator
+                        .spawn_single_worker(
+                            run_name,
+                            &worker_name,
+                            &work_dir,
+                            worker.session_id.as_deref(),
+                        )
+                        .await
+                    {
+                        Ok(()) => {
+                            tracing::info!(
+                                "[Daemon] Successfully resumed worker '{}' for run '{}'",
+                                worker_name,
+                                run_name
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "[Daemon] Failed to resume worker '{}' for run '{}': {}",
+                                worker_name,
+                                run_name,
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Other actions are handled directly by the lifecycle manager
+            LifecycleAction::EvalTriggered => {
+                tracing::info!("[Daemon] Eval triggered for run '{}'", run_name);
+            }
+            LifecycleAction::RunFailed { reason } => {
+                tracing::info!("[Daemon] Run '{}' failed: {:?}", run_name, reason);
+            }
+            LifecycleAction::RunCompleted => {
+                tracing::info!("[Daemon] Run '{}' completed", run_name);
+            }
+            _ => {}
+        }
+    }
 }

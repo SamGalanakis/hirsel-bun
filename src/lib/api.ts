@@ -21,6 +21,7 @@ import type {
   RepoValidation,
   RunDetail,
   RunSummary,
+  StartingPoint,
   Task,
   ThreadSummary,
   UIContext,
@@ -109,10 +110,11 @@ export async function cloneRun(sourceRun: string, newName: string): Promise<RunD
  * Create a new draft run
  *
  * Creates a draft run with a random friendly name. The draft can be configured
- * before being started. No workers are spawned until startDraft is called.
+ * before being started. No workspace is created - that happens in startDraft
+ * when the user chooses a starting point.
  */
-export async function createDraft(projectPath?: string): Promise<RunDetail> {
-  return invoke<RunDetail>('create_draft', { projectPath });
+export async function createDraft(): Promise<RunDetail> {
+  return invoke<RunDetail>('create_draft');
 }
 
 /**
@@ -128,11 +130,19 @@ export async function updateDraft(runName: string, updates: DraftUpdateRequest):
 /**
  * Start a draft run
  *
- * Spawns workers and transitions the draft to a running state.
- * The draft must have a project path set.
+ * Creates the workspace based on the starting point, spawns workers,
+ * and transitions the draft to a running state.
+ *
+ * @param runName - The run name
+ * @param startingPoint - How to initialize the workspace (greenfield, localFolder, or gitRepo)
+ * @param profile - Optional profile name for remote orchestrator mode
  */
-export async function startDraft(runName: string): Promise<RunDetail> {
-  return invoke<RunDetail>('start_draft', { runName });
+export async function startDraft(
+  runName: string,
+  startingPoint?: StartingPoint,
+  profile?: string,
+): Promise<RunDetail> {
+  return invoke<RunDetail>('start_draft', { runName, startingPoint, profile });
 }
 
 /**
@@ -143,14 +153,6 @@ export async function startDraft(runName: string): Promise<RunDetail> {
  */
 export async function validateRepo(path: string): Promise<RepoValidation> {
   return invoke<RepoValidation>('validate_repo', { path });
-}
-
-/**
- * Initialize a project directory for use with Hirsel
- * Creates the directory if needed and initializes git repository
- */
-export async function initProjectRepo(path: string): Promise<RepoValidation> {
-  return invoke<RepoValidation>('init_project_repo', { path });
 }
 
 // =============================================================================

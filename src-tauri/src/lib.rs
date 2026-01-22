@@ -538,12 +538,10 @@ fn run_command(
                             println!("Daemon is running");
                             println!("Socket: {}", daemon::socket_path().display());
                         }
+                    } else if json {
+                        println!(r#"{{"running": false}}"#);
                     } else {
-                        if json {
-                            println!(r#"{{"running": false}}"#);
-                        } else {
-                            println!("Daemon is not running");
-                        }
+                        println!("Daemon is not running");
                     }
                 }
             }

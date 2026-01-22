@@ -245,6 +245,10 @@ impl Default for Config {
 
 impl Config {
     /// Create a new config from environment and config file
+    ///
+    /// Environment variables:
+    /// - `HIRSEL_ROOT`: Override the hirsel root directory (default: ~/.hirsel)
+    /// - `HIRSEL_RUN`: Set the current run name
     pub fn load() -> Result<(Self, Vec<String>), ConfigError> {
         let mut config = Self::from_env();
         let config_path = config.config_file();
@@ -446,6 +450,112 @@ impl Config {
     }
 }
 
+/// Test utilities for setting up isolated hirsel environments.
+///
+/// Use `TestEnv` to create a temporary hirsel root with custom config:
+///
+/// ```ignore
+/// use hirsel::core::config::TestEnv;
+///
+/// let env = TestEnv::new()
+///     .with_config(r#"
+///         [runners.docker]
+///         host = "local"
+///         [runners.docker.container]
+///         image = "rust:latest"
+///     "#)
+///     .build();
+///
+/// // HIRSEL_ROOT is now set to a temp directory
+/// let (config, _) = Config::load().unwrap();
+/// assert!(config.runners.contains_key("docker"));
+/// ```
+#[cfg(test)]
+pub mod testing {
+    use std::fs;
+    use tempfile::TempDir;
+
+    /// A test environment with isolated HIRSEL_ROOT.
+    pub struct TestEnv {
+        #[allow(dead_code)]
+        temp_dir: TempDir,
+        prev_root: Option<String>,
+    }
+
+    impl TestEnv {
+        /// Create a new test environment builder.
+        pub fn new() -> TestEnvBuilder {
+            TestEnvBuilder {
+                config_content: None,
+            }
+        }
+    }
+
+    impl Drop for TestEnv {
+        fn drop(&mut self) {
+            // Restore previous HIRSEL_ROOT
+            match &self.prev_root {
+                Some(prev) => std::env::set_var("HIRSEL_ROOT", prev),
+                None => std::env::remove_var("HIRSEL_ROOT"),
+            }
+        }
+    }
+
+    /// Builder for TestEnv.
+    pub struct TestEnvBuilder {
+        config_content: Option<String>,
+    }
+
+    impl TestEnvBuilder {
+        /// Create a new builder with default settings.
+        pub fn new() -> Self {
+            Self {
+                config_content: None,
+            }
+        }
+
+        /// Set custom config content (TOML format).
+        pub fn with_config(mut self, content: &str) -> Self {
+            self.config_content = Some(content.to_string());
+            self
+        }
+
+        /// Build the test environment.
+        ///
+        /// This creates a temp directory, writes the config, and sets HIRSEL_ROOT.
+        pub fn build(self) -> TestEnv {
+            let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+            // Write config if provided
+            if let Some(content) = &self.config_content {
+                let config_path = temp_dir.path().join("config.toml");
+                fs::write(&config_path, content).expect("Failed to write config");
+            }
+
+            // Create runs directory
+            let runs_dir = temp_dir.path().join("runs");
+            fs::create_dir_all(&runs_dir).expect("Failed to create runs dir");
+
+            // Save previous HIRSEL_ROOT and set new one
+            let prev_root = std::env::var("HIRSEL_ROOT").ok();
+            std::env::set_var("HIRSEL_ROOT", temp_dir.path());
+
+            TestEnv {
+                temp_dir,
+                prev_root,
+            }
+        }
+    }
+
+    impl Default for TestEnvBuilder {
+        fn default() -> Self {
+            Self {
+                config_content: None,
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -457,5 +567,15 @@ mod tests {
         assert!(Config::validate_run_name("").is_err());
         assert!(Config::validate_run_name("my/run").is_err());
         assert!(Config::validate_run_name("my\\run").is_err());
+    }
+
+    #[test]
+    fn test_hirsel_root() {
+        let _env = testing::TestEnv::new()
+            .with_config(r#"eval_timeout = 120"#)
+            .build();
+
+        let (config, _) = Config::load().unwrap();
+        assert_eq!(config.eval_timeout, 120);
     }
 }

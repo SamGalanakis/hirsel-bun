@@ -25,7 +25,6 @@ use chrono::Utc;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use std::io::{Read, Write};
 use std::path::Path;
 use tar::{Archive, Builder};
 use tracing::{debug, info};
@@ -107,12 +106,12 @@ impl S3SnapshotStrategy {
             // so files are extracted relative to the target directory
             archive
                 .append_dir_all(".", dir)
-                .map_err(|e| SnapshotError::Io(e))?;
+                .map_err(SnapshotError::Io)?;
 
-            archive.finish().map_err(|e| SnapshotError::Io(e))?;
+            archive.finish().map_err(SnapshotError::Io)?;
         }
 
-        encoder.finish().map_err(|e| SnapshotError::Io(e))
+        encoder.finish().map_err(SnapshotError::Io)
     }
 
     /// Extract a tar.gz archive to a directory.
@@ -121,7 +120,7 @@ impl S3SnapshotStrategy {
         let mut archive = Archive::new(decoder);
 
         // Extract all files to the target directory
-        archive.unpack(dir).map_err(|e| SnapshotError::Io(e))?;
+        archive.unpack(dir).map_err(SnapshotError::Io)?;
 
         Ok(())
     }

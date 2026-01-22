@@ -86,8 +86,10 @@ pub struct SnapshotHandle {
 /// Configuration for snapshot strategy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SnapshotStrategyConfig {
     /// Persistent disk strategy - files remain on disk (no-op)
+    #[default]
     PersistentDisk,
     /// S3 strategy - tar/gzip and upload to S3
     S3 {
@@ -104,12 +106,6 @@ pub enum SnapshotStrategyConfig {
         #[serde(default)]
         comment_prefix: Option<String>,
     },
-}
-
-impl Default for SnapshotStrategyConfig {
-    fn default() -> Self {
-        SnapshotStrategyConfig::PersistentDisk
-    }
 }
 
 /// Trait for snapshot strategies.

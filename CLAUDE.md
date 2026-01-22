@@ -1,5 +1,12 @@
 # Hirsel Development Guidelines
 
+## Code Quality Rules
+- **NEVER** leave legacy code paths - consolidate everything
+- **NEVER** add "TODO" or "FIXME" comments for future work
+- **NEVER** leave deprecated or backward-compatibility code
+- **NEVER** duplicate logic across CLI/GUI - use shared abstractions
+- If you're refactoring, FINISH the refactor completely - no half measures
+
 ## Architecture
 See [`docs/architecture.md`](docs/architecture.md) for system architecture. **Keep it updated.**
 

@@ -326,8 +326,8 @@ export function runDetail() {
               this.tasks = (tasks || []).filter((t): t is Task => t != null);
               this.workers = (workers || []).filter((w): w is WorkerDisplay => w != null);
               this.evals = sortEvals(evals);
-            } catch (err) {
-              console.error('Failed to poll:', err);
+            } catch {
+              // Errors likely because run was deleted - dataCache.fetchRuns handles cleanup
             }
           }, 2000);
         } else {

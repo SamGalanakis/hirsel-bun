@@ -2,34 +2,40 @@
 //!
 //! Removes a hirsel run, killing any running workers and cleaning up
 //! worktrees, directories, and database files.
+//!
+//! Uses the Orchestrator trait to support both local and remote modes.
 
-use crate::core::ops::{delete_run, DeleteRunConfig, OpsError};
+use crate::cli::helpers::{block_on, get_orchestrator};
+use crate::core::orchestrator::OrchestratorError;
 
 /// Execute the delete command for a run
 pub fn execute(run_name: &str, json: bool) -> Result<(), Box<dyn std::error::Error>> {
-    // Use CLI configuration: cleanup remote, don't delete gyp chat
-    let config = DeleteRunConfig::for_cli(run_name);
+    execute_with_profile(run_name, None, json)
+}
 
-    match delete_run(config) {
-        Ok(result) => {
+/// Execute the delete command with a specific profile
+pub fn execute_with_profile(
+    run_name: &str,
+    profile: Option<&str>,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let orch = get_orchestrator(profile)?;
+
+    match block_on(orch.delete_run(run_name)) {
+        Ok(()) => {
             if json {
                 let output = serde_json::json!({
                     "success": true,
-                    "run": result.run_name,
-                    "message": format!("Removed: {}", result.run_name),
-                    "workers_killed": result.workers_killed,
-                    "project_remote_removed": result.project_remote_removed,
+                    "run": run_name,
+                    "message": format!("Removed: {}", run_name),
                 });
                 println!("{}", serde_json::to_string_pretty(&output)?);
             } else {
-                if result.workers_killed > 0 {
-                    println!("Killed {} worker(s)", result.workers_killed);
-                }
-                println!("Removed: {}", result.run_name);
+                println!("Removed: {}", run_name);
             }
             Ok(())
         }
-        Err(OpsError::RunNotFound(name)) => {
+        Err(OrchestratorError::RunNotFound(name)) => {
             if json {
                 let output = serde_json::json!({
                     "success": false,
@@ -52,7 +58,7 @@ pub fn execute(run_name: &str, json: bool) -> Result<(), Box<dyn std::error::Err
                 println!("{}", serde_json::to_string_pretty(&output)?);
                 Ok(())
             } else {
-                Err(Box::new(e))
+                Err(e.into())
             }
         }
     }

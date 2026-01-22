@@ -22,13 +22,20 @@ pub mod config;
 #[cfg(feature = "server")]
 pub mod coordinator_api;
 pub mod credentials;
+pub mod draft;
+pub mod error;
 pub mod eval;
+#[cfg(feature = "server")]
+pub mod eval_routes;
 pub mod files;
 pub mod git;
 #[cfg(feature = "server")]
 pub mod git_http;
 pub mod gyp_chat;
+pub mod gyp_context;
 pub mod lifecycle;
+#[cfg(feature = "server")]
+pub mod message_routes;
 pub mod metrics;
 pub mod names;
 pub mod ops;
@@ -42,6 +49,8 @@ pub mod state;
 pub mod state_access;
 pub mod storage;
 pub mod tailscale;
+#[cfg(feature = "server")]
+pub mod task_routes;
 #[cfg(feature = "server")]
 pub mod tunnel;
 #[cfg(feature = "server")]
@@ -72,6 +81,7 @@ pub use credentials::{
     get_local_oauth_credentials, CredentialError, CredentialResult, CredentialStore,
     ForwardedCredentials,
 };
+pub use error::{ErrorKind, HirselError, HirselResult};
 pub use eval::{
     run_eval_acp, run_eval_from_args, EvalAcpConfig, EvalAcpResult, EvalConfig, EvalError,
     EvalResult,
@@ -116,3 +126,14 @@ pub use workers::{
     spawn_worker, update_worker_heartbeat, SpawnResult, WorkerError, WorkerResult, WorkerScale,
     WorkerSpawnConfig,
 };
+
+// Draft workspace management
+#[cfg(feature = "s3-storage")]
+pub use draft::S3WorkspaceProvider;
+pub use draft::{
+    create_local_workspace_provider, create_workspace_provider, FileEntry, LocalWorkspaceProvider,
+    StartingPoint, WorkspaceInfo, WorkspaceProvider,
+};
+
+// Gyp context
+pub use gyp_context::GypContext;

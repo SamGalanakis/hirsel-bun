@@ -226,10 +226,15 @@ export function directChat() {
         const runName = this.getEffectiveRunName();
         this._currentRunName = runName;
 
+        // Get project path from run detail for working directory context
+        const appState = this.getAppState();
+        const projectPath = appState?.currentRunDetail?.projectPath || undefined;
+
         // Start the session (pass selected run for MCP tools, regardless of chat context)
         const sessionId = await startChatSession(this.agentCommand, {
           runName: this.getSelectedRunName() || undefined,
           systemPrompt: this.getSystemPrompt(),
+          workingDir: projectPath, // Give Gyp access to the actual project
         });
         this.sessionId = sessionId;
 

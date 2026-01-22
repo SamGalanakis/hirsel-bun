@@ -10,12 +10,13 @@ use serde::Serialize;
 use super::{
     AddTaskRequest, CreateRunRequest, CreateRunResponse, DeliverRunRequest, HealthResponse,
     Orchestrator, OrchestratorError, OrchestratorResult, ResumeRunRequest, SendMessageRequest,
-    SpawnWorkersRequest, SpawnWorkersResponse,
+    SpawnWorkersRequest, SpawnWorkersResponse, StartRunRequest,
 };
 use crate::core::api_types::{
     ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, Task, ThreadSummary,
     Worker, WorkerEventsResponse,
 };
+use crate::core::draft::StartingPoint;
 
 /// Remote orchestrator that communicates with a Hirsel server over HTTP
 pub struct RemoteOrchestrator {
@@ -519,4 +520,109 @@ impl Orchestrator for RemoteOrchestrator {
         )
         .await
     }
+
+    async fn start_run(&self, request: StartRunRequest) -> OrchestratorResult<RunDetail> {
+        // 1. Create tarball if starting from local folder
+        let tarball = match &request.starting_point {
+            StartingPoint::LocalFolder { path } => {
+                let project_path = std::path::Path::new(path);
+                Some(create_project_tarball(project_path).map_err(|e| {
+                    OrchestratorError::Other(format!("Failed to create tarball: {}", e))
+                })?)
+            }
+            _ => None,
+        };
+
+        // 2. Convert to CreateRunRequest
+        let create_request = CreateRunRequest {
+            name: request.name.clone(),
+            spec: request.spec,
+            runner: request.runner,
+            worker_scale: request.worker_scale,
+            time_limit_minutes: request.time_limit_minutes.map(|m| m as u32),
+            max_iterations: request.max_iterations.map(|m| m as u32),
+            human_in_the_loop: request.human_in_the_loop,
+            eval: request.eval,
+            tailscale_oauth: request.tailscale_oauth,
+        };
+
+        // 3. Create run on remote server
+        let create_response = self.create_run(create_request).await?;
+
+        // 4. Upload files if tarball exists
+        if let Some(tarball) = tarball {
+            self.upload_files(&create_response.name, tarball).await?;
+        }
+
+        // 5. Spawn initial worker
+        let _ = self.spawn_workers(&create_response.name, 1).await?;
+
+        // 6. Return run detail
+        self.get_run(&create_response.name).await
+    }
+}
+
+/// Create a tarball of a project directory, excluding common build artifacts
+fn create_project_tarball(project_path: &std::path::Path) -> Result<Vec<u8>, std::io::Error> {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use tar::Builder;
+    use walkdir::WalkDir;
+
+    let mut buffer = Vec::new();
+    let encoder = GzEncoder::new(&mut buffer, Compression::fast());
+    let mut builder = Builder::new(encoder);
+
+    // Walk the project directory, excluding common build artifacts
+    for entry in WalkDir::new(project_path)
+        .into_iter()
+        .filter_entry(|e| {
+            let name = e.file_name().to_str().unwrap_or("");
+            // Exclude common build/cache directories and files
+            !matches!(
+                name,
+                "node_modules"
+                    | "target"
+                    | ".git"
+                    | ".venv"
+                    | "__pycache__"
+                    | ".mypy_cache"
+                    | ".pytest_cache"
+                    | "dist"
+                    | "build"
+                    | ".next"
+                    | ".nuxt"
+                    | "coverage"
+                    | ".turbo"
+                    | ".vercel"
+                    | ".netlify"
+            )
+        })
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        let relative_path = path.strip_prefix(project_path).unwrap_or(path);
+
+        if path == project_path {
+            continue; // Skip root directory itself
+        }
+
+        if path.is_file() {
+            builder
+                .append_path_with_name(path, relative_path)
+                .map_err(std::io::Error::other)?;
+        } else if path.is_dir() {
+            builder
+                .append_dir(relative_path, path)
+                .map_err(std::io::Error::other)?;
+        }
+    }
+
+    builder
+        .into_inner()
+        .map_err(std::io::Error::other)?
+        .finish()
+        .map_err(std::io::Error::other)?;
+
+    Ok(buffer)
 }

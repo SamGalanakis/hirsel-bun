@@ -44,7 +44,6 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         runs::deliver_run,
         // Draft commands
         drafts::validate_repo,
-        drafts::init_project_repo,
         drafts::create_draft,
         drafts::clone_run,
         drafts::update_draft,

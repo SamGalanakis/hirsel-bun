@@ -126,6 +126,12 @@ export interface RunDetail {
   metricsAvailable: boolean;
 }
 
+/** Starting point for a draft workspace */
+export type StartingPoint =
+  | { type: 'greenfield' }
+  | { type: 'localFolder'; path: string }
+  | { type: 'gitRepo'; url: string; branch?: string };
+
 /** Request to update a draft run */
 export interface DraftUpdateRequest {
   spec?: string;

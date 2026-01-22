@@ -64,19 +64,19 @@ fn create_project_tarball(project_path: &Path) -> Result<Vec<u8>, std::io::Error
         if entry.file_type().is_file() {
             builder
                 .append_path_with_name(path, relative_path)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                .map_err(std::io::Error::other)?;
         } else if entry.file_type().is_dir() {
             builder
                 .append_dir(relative_path, path)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                .map_err(std::io::Error::other)?;
         }
     }
 
     builder
         .into_inner()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
+        .map_err(std::io::Error::other)?
         .finish()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        .map_err(std::io::Error::other)?;
 
     debug!("Created tarball: {} bytes", buffer.len());
     Ok(buffer)

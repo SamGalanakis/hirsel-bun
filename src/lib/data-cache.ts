@@ -23,6 +23,7 @@ export const DATA_EVENTS = {
   TASKS_UPDATED: 'data:tasks-updated',
   THREADS_UPDATED: 'data:threads-updated',
   HISTORY_UPDATED: 'data:history-updated',
+  RUN_DELETED: 'data:run-deleted', // Fired when selected run no longer exists
 } as const;
 
 interface CacheState {
@@ -140,6 +141,32 @@ class DataCache {
   }
 
   /**
+   * Handle when the selected run is detected as deleted (e.g., deleted via CLI)
+   */
+  private handleRunDeleted(deletedRunName: string): void {
+    // Only act if this is still the selected run
+    if (this.state.selectedRun !== deletedRunName) return;
+
+    console.log(`[DataCache] Run '${deletedRunName}' was deleted, clearing selection`);
+
+    // Clear selection
+    this.state.selectedRun = null;
+    this.state.runDetail = null;
+    this.state.workers = [];
+    this.state.tasks = [];
+    this.state.threads = [];
+    this.state.history = [];
+
+    // Emit events so UI can update
+    this.emit(DATA_EVENTS.RUN_DELETED, deletedRunName);
+    window.dispatchEvent(new CustomEvent('run-selected', { detail: null }));
+    window.dispatchEvent(new CustomEvent('draft-selected', { detail: null }));
+
+    // Refresh runs list to remove the deleted run
+    this.invalidateRuns();
+  }
+
+  /**
    * Main poll function - fetches stale data
    */
   private async poll(): Promise<void> {
@@ -169,6 +196,14 @@ class DataCache {
       this.state.runs = filtered;
       this.state.lastFetch.runs = Date.now();
       this.emit(DATA_EVENTS.RUNS_UPDATED, filtered);
+
+      // Check if selected run still exists - if not, it was deleted externally
+      if (this.state.selectedRun) {
+        const stillExists = filtered.some((r) => r.name === this.state.selectedRun);
+        if (!stillExists) {
+          this.handleRunDeleted(this.state.selectedRun);
+        }
+      }
     } catch (e) {
       console.error('[DataCache] Failed to fetch runs:', e);
     }
@@ -214,7 +249,11 @@ class DataCache {
         this.emit(DATA_EVENTS.RUN_DETAIL_UPDATED, detail);
       }
     } catch (e) {
-      console.error('[DataCache] Failed to fetch run detail:', e);
+      // Errors here are likely because the run was deleted - fetchRuns will detect and handle this
+      // Don't spam console with errors for deleted runs
+      if (this.state.selectedRun === runName) {
+        console.debug('[DataCache] Failed to fetch run detail (run may be deleted):', e);
+      }
     }
   }
 
@@ -228,8 +267,8 @@ class DataCache {
         this.state.lastFetch.workers = Date.now();
         this.emit(DATA_EVENTS.WORKERS_UPDATED, filtered);
       }
-    } catch (e) {
-      console.error('[DataCache] Failed to fetch workers:', e);
+    } catch {
+      // Errors likely because run was deleted - fetchRuns handles this
     }
   }
 
@@ -243,8 +282,8 @@ class DataCache {
         this.state.lastFetch.tasks = Date.now();
         this.emit(DATA_EVENTS.TASKS_UPDATED, filtered);
       }
-    } catch (e) {
-      console.error('[DataCache] Failed to fetch tasks:', e);
+    } catch {
+      // Errors likely because run was deleted - fetchRuns handles this
     }
   }
 
@@ -258,8 +297,8 @@ class DataCache {
         this.state.lastFetch.threads = Date.now();
         this.emit(DATA_EVENTS.THREADS_UPDATED, filtered);
       }
-    } catch (e) {
-      console.error('[DataCache] Failed to fetch threads:', e);
+    } catch {
+      // Errors likely because run was deleted - fetchRuns handles this
     }
   }
 
@@ -276,8 +315,8 @@ class DataCache {
         this.state.lastFetch.history = Date.now();
         this.emit(DATA_EVENTS.HISTORY_UPDATED, filtered);
       }
-    } catch (e) {
-      console.error('[DataCache] Failed to fetch history:', e);
+    } catch {
+      // Errors likely because run was deleted - fetchRuns handles this
     }
   }
 

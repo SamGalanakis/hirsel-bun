@@ -31,7 +31,7 @@ use super::OpsError;
 ///
 /// * `Ok(DeleteRunResult)` - Details about what was deleted
 /// * `Err(OpsError)` - If the operation failed
-pub fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsError> {
+pub async fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsError> {
     let run_dir = config::run_dir(&config.run_name);
 
     // Check run exists
@@ -56,33 +56,26 @@ pub fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsError> 
         if let Ok(workers) = lifecycle.state().get_workers() {
             let (app_config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
 
-            // Create runtime for async snapshot operations
-            if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                for worker in workers {
-                    if let Some(ref snapshot_json) = worker.snapshot_handle {
-                        if let Ok(handle) = serde_json::from_str::<SnapshotHandle>(snapshot_json) {
-                            let runner_config = app_config.get_runner_for_worker(&worker.name);
-                            if let Ok(strategy) = rt.block_on(create_snapshot_strategy(
-                                &runner_config,
-                                &app_config.storage,
-                            )) {
-                                if let Err(e) = rt.block_on(strategy.delete(&handle)) {
-                                    tracing::warn!(
-                                        "Failed to delete snapshot {} for worker {}: {}",
-                                        handle.snapshot_id,
-                                        worker.name,
-                                        e
-                                    );
-                                } else {
-                                    tracing::debug!(
-                                        "Deleted snapshot {} for worker {}",
-                                        handle.snapshot_id,
-                                        worker.name
-                                    );
-                                }
+            for worker in workers {
+                if let Some(ref snapshot_json) = worker.snapshot_handle {
+                    if let Ok(handle) = serde_json::from_str::<SnapshotHandle>(snapshot_json) {
+                        let runner_config = app_config.get_runner_for_worker(&worker.name);
+                        if let Ok(strategy) =
+                            create_snapshot_strategy(&runner_config, &app_config.storage).await
+                        {
+                            if let Err(e) = strategy.delete(&handle).await {
+                                tracing::warn!(
+                                    "Failed to delete snapshot {} for worker {}: {}",
+                                    handle.snapshot_id,
+                                    worker.name,
+                                    e
+                                );
+                            } else {
+                                tracing::debug!(
+                                    "Deleted snapshot {} for worker {}",
+                                    handle.snapshot_id,
+                                    worker.name
+                                );
                             }
                         }
                     }
@@ -317,10 +310,10 @@ mod tests {
         assert!(config.remove_project_remote);
     }
 
-    #[test]
-    fn test_delete_nonexistent_run() {
+    #[tokio::test]
+    async fn test_delete_nonexistent_run() {
         let config = DeleteRunConfig::for_cli("nonexistent-run-12345");
-        let result = delete_run(config);
+        let result = delete_run(config).await;
         assert!(matches!(result, Err(OpsError::RunNotFound(_))));
     }
 

@@ -1361,8 +1361,8 @@ pub async fn run_claude_worker(_config: ClaudeWorkerConfig) -> Result<WorkerResu
 /// This is the entry point for spawning workers - it sets up the tokio runtime
 /// and LocalSet required for the async operations.
 pub fn execute_claude_worker(config: ClaudeWorkerConfig) -> Result<WorkerResult> {
-    let rt = tokio::runtime::Runtime::new()
-        .map_err(|e| ClaudeCliError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    let rt =
+        tokio::runtime::Runtime::new().map_err(|e| ClaudeCliError::Io(std::io::Error::other(e)))?;
 
     rt.block_on(async {
         tokio::task::LocalSet::new()

@@ -9,8 +9,8 @@ use std::sync::Arc;
 use futures::StreamExt;
 
 use crate::core::{
-    create_chat_orchestrator, get_local_oauth_credentials, ChatContext, ChatEvent,
-    ChatOrchestrator, ChatSessionManager, LocalChatOrchestrator, UIContext,
+    create_chat_orchestrator, create_workspace_provider, get_local_oauth_credentials, ChatContext,
+    ChatEvent, ChatOrchestrator, ChatSessionManager, GypContext, LocalChatOrchestrator, UIContext,
 };
 
 /// Manages chat orchestrators for different profiles
@@ -90,9 +90,19 @@ pub async fn start_chat_session(
         None
     };
 
+    // Resolve working directory via GypContext if we have a run
+    let resolved_working_dir = if let Some(ref name) = run_name {
+        // Use workspace provider to get the correct working directory for the run
+        let workspace = create_workspace_provider(profile.as_deref());
+        let gyp_context = GypContext::for_run(name, workspace.as_ref());
+        Some(gyp_context.working_dir_string())
+    } else {
+        working_dir
+    };
+
     let context = ChatContext {
         agent_command,
-        working_dir,
+        working_dir: resolved_working_dir,
         run_name,
         system_prompt,
         credentials,

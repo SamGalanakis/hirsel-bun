@@ -141,8 +141,13 @@ export function runList() {
       const runSelectedHandler = (e: Event) => {
         const customEvent = e as CustomEvent<string | null>;
         this.selectedRun = customEvent.detail;
-        const index = this.runs.findIndex((r) => r.name === customEvent.detail);
-        if (index >= 0) this.selectedIndex = index;
+        if (customEvent.detail) {
+          const index = this.runs.findIndex((r) => r.name === customEvent.detail);
+          if (index >= 0) this.selectedIndex = index;
+        } else {
+          // Selection cleared (e.g., run was deleted)
+          this.selectedIndex = -1;
+        }
       };
       window.addEventListener('run-selected', runSelectedHandler);
       this._eventCleanups.push(() =>

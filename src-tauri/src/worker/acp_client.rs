@@ -793,7 +793,7 @@ pub async fn run_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
         // - "claude" or path ending in "/claude"
         // - "hirsel __acp-bridge" (our built-in bridge, now uses SDK)
         let use_sdk = config.agent_command.is_empty()
-            || config.agent_command.first().map_or(false, |cmd| {
+            || config.agent_command.first().is_some_and(|cmd| {
                 cmd == "claude" || cmd.ends_with("/claude") || cmd.contains("claude-code")
             })
             || config.agent_command.iter().any(|arg| arg == "__acp-bridge");

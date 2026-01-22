@@ -21,7 +21,10 @@ use tower_http::cors::{Any, CorsLayer};
 
 use super::lifecycle::{LifecycleManager, LocalLifecycleManager};
 use super::state::{SQLiteState, Status};
-use super::worker_routes::{self, ReasonRequest, SuccessResponse};
+use super::{
+    eval_routes, message_routes, task_routes,
+    worker_routes::{self, ReasonRequest, SuccessResponse},
+};
 
 // =============================================================================
 // Shared State
@@ -288,12 +291,12 @@ async fn set_status(
 }
 
 // =============================================================================
-// Task Handlers
+// Task Handlers - using shared logic from task_routes
 // =============================================================================
 
 async fn list_tasks(State(api): State<Arc<ApiState>>) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let tasks = state.get_tasks().map_err(|e| anyhow::anyhow!("{}", e))?;
+    let tasks = task_routes::list_tasks(&state).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "tasks": tasks })))
 }
 
@@ -302,20 +305,19 @@ async fn create_task(
     Json(req): Json<TaskCreateRequest>,
 ) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    // Convert Vec<String> to Vec<&str> for the add_task call
     let blocked_by_refs: Option<Vec<&str>> = req
         .blocked_by
         .as_ref()
         .map(|v| v.iter().map(|s| s.as_str()).collect());
     let blocked_by_slice: Option<&[&str]> = blocked_by_refs.as_deref();
-    state
-        .add_task(
-            &req.task_id,
-            &req.name,
-            req.parent_id.as_deref(),
-            blocked_by_slice,
-        )
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    task_routes::create_task(
+        &state,
+        &req.task_id,
+        &req.name,
+        req.parent_id.as_deref(),
+        blocked_by_slice,
+    )
+    .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }
 
@@ -323,9 +325,7 @@ async fn get_claimable_tasks(
     State(api): State<Arc<ApiState>>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let tasks = state
-        .get_claimable_tasks()
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let tasks = task_routes::get_claimable_tasks(&state).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "tasks": tasks })))
 }
 
@@ -334,9 +334,7 @@ async fn get_task(
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let task = state
-        .get_task(&task_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let task = task_routes::get_task(&state, &task_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     match task {
         Some(t) => Ok(Json(serde_json::json!({ "task": t }))),
         None => Err(anyhow::anyhow!("Task '{}' not found", task_id).into()),
@@ -348,9 +346,7 @@ async fn delete_task(
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    state
-        .delete_task(&task_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    task_routes::delete_task(&state, &task_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }
 
@@ -360,8 +356,7 @@ async fn claim_task(
     Json(req): Json<WorkerNameRequest>,
 ) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    state
-        .claim_task(&task_id, &req.worker_name)
+    task_routes::claim_task(&state, &task_id, &req.worker_name)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }
@@ -372,8 +367,7 @@ async fn complete_task(
     Json(req): Json<WorkerNameRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    state
-        .complete_task(&task_id, &req.worker_name)
+    task_routes::complete_task(&state, &task_id, &req.worker_name)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "success": () })))
 }
@@ -384,8 +378,7 @@ async fn unclaim_task(
     Json(req): Json<WorkerNameRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    state
-        .unclaim_task(&task_id, &req.worker_name)
+    task_routes::unclaim_task(&state, &task_id, &req.worker_name)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "success": () })))
 }
@@ -395,9 +388,8 @@ async fn is_task_blocked(
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let blocked = state
-        .is_task_blocked(&task_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let blocked =
+        task_routes::is_task_blocked(&state, &task_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "blocked": blocked })))
 }
 
@@ -406,9 +398,8 @@ async fn get_blockers(
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let blockers = state
-        .get_blockers(&task_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let blockers =
+        task_routes::get_blockers(&state, &task_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "blockers": blockers })))
 }
 
@@ -417,9 +408,7 @@ async fn has_children(
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let has = state
-        .has_children(&task_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let has = task_routes::has_children(&state, &task_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "has_children": has })))
 }
 
@@ -428,9 +417,8 @@ async fn get_children(
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let children = state
-        .get_children(&task_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let children =
+        task_routes::get_children(&state, &task_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "children": children })))
 }
 
@@ -439,9 +427,7 @@ async fn set_pending_done(
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    state
-        .set_task_pending_done(&task_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    task_routes::set_pending_done(&state, &task_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }
 
@@ -450,9 +436,7 @@ async fn clear_pending_done(
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    state
-        .clear_task_pending_done(&task_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    task_routes::clear_pending_done(&state, &task_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }
 
@@ -461,9 +445,7 @@ async fn reopen_task(
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    state
-        .reopen_task(&task_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    task_routes::reopen_task(&state, &task_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "success": () })))
 }
 
@@ -473,8 +455,7 @@ async fn set_task_tokens(
     Json(req): Json<TokensRequest>,
 ) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    state
-        .set_task_tokens(&task_id, req.tokens)
+    task_routes::set_task_tokens(&state, &task_id, req.tokens)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }
@@ -586,12 +567,12 @@ async fn worker_heartbeat(
 }
 
 // =============================================================================
-// Message Handlers
+// Message Handlers - using shared logic from message_routes
 // =============================================================================
 
 async fn list_threads(State(api): State<Arc<ApiState>>) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let threads = state.get_threads().map_err(|e| anyhow::anyhow!("{}", e))?;
+    let threads = message_routes::list_threads(&state).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "threads": threads })))
 }
 
@@ -600,9 +581,9 @@ async fn create_message(
     Json(req): Json<MessageCreateRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let id = state
-        .add_message(&req.thread, &req.sender, &req.content, req.waiting)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let id =
+        message_routes::create_message(&state, &req.thread, &req.sender, &req.content, req.waiting)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "id": id })))
 }
 
@@ -612,8 +593,7 @@ async fn get_messages(
     Query(query): Query<LimitQuery>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let messages = state
-        .get_messages(&thread, query.limit)
+    let messages = message_routes::get_messages(&state, &thread, query.limit)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "messages": messages })))
 }
@@ -623,8 +603,7 @@ async fn get_unread_messages(
     Path((thread, reader)): Path<(String, String)>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let messages = state
-        .get_unread_messages(&thread, &reader)
+    let messages = message_routes::get_unread_messages(&state, &thread, &reader)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "messages": messages })))
 }
@@ -634,9 +613,8 @@ async fn get_all_unread(
     Path(reader): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let messages = state
-        .get_all_unread_messages(&reader)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let messages =
+        message_routes::get_all_unread(&state, &reader).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "messages": messages })))
 }
 
@@ -646,14 +624,13 @@ async fn mark_messages_read(
     Json(req): Json<MessageMarkReadRequest>,
 ) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    state
-        .mark_messages_read(&thread, &req.reader, req.up_to_id)
+    message_routes::mark_messages_read(&state, &thread, &req.reader, req.up_to_id)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }
 
 // =============================================================================
-// Eval Handlers
+// Eval Handlers - using shared logic from eval_routes
 // =============================================================================
 
 async fn list_evals(
@@ -661,9 +638,8 @@ async fn list_evals(
     Query(query): Query<LimitQuery>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let evals = state
-        .get_evals(query.limit)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let evals =
+        eval_routes::list_evals(&state, query.limit).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "evals": evals })))
 }
 
@@ -672,21 +648,19 @@ async fn create_eval(
     Json(req): Json<EvalCreateRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let id = state
-        .start_eval(
-            &req.branch,
-            req.eval_name.as_deref(),
-            req.log_file.as_deref(),
-        )
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let id = eval_routes::start_eval(
+        &state,
+        &req.branch,
+        req.eval_name.as_deref(),
+        req.log_file.as_deref(),
+    )
+    .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "id": id })))
 }
 
 async fn get_running_eval(State(api): State<Arc<ApiState>>) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let eval = state
-        .get_running_eval()
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let eval = eval_routes::get_running_eval(&state).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "eval": eval })))
 }
 
@@ -695,8 +669,7 @@ async fn cancel_running_evals(
     Json(req): Json<ReasonRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let count = state
-        .cancel_running_evals(&req.reason)
+    let count = eval_routes::cancel_running_evals(&state, &req.reason)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "count": count })))
 }
@@ -706,9 +679,7 @@ async fn get_eval(
     Path(eval_id): Path<i64>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let eval = state
-        .get_eval(eval_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let eval = eval_routes::get_eval(&state, eval_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     match eval {
         Some(e) => Ok(Json(serde_json::json!({ "eval": e }))),
         None => Err(anyhow::anyhow!("Eval {} not found", eval_id).into()),
@@ -721,8 +692,7 @@ async fn complete_eval(
     Json(req): Json<EvalCompleteRequest>,
 ) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    state
-        .complete_eval(eval_id, req.success, &req.feedback)
+    eval_routes::complete_eval(&state, eval_id, req.success, &req.feedback)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }

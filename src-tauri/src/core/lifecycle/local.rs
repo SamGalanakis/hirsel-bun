@@ -13,7 +13,8 @@ use crate::core::files::Files;
 use crate::core::runner::{create_lifecycle_runner_for_handle, WorkerHandle};
 use crate::core::snapshot::{create_snapshot_strategy, SnapshotHandle};
 use crate::core::state::{FailureReason, SQLiteState, Status, WorkerStatus, WorkerUpdate};
-use crate::core::workers::{spawn_worker, WorkerSpawnConfig};
+// Note: Workers are no longer spawned directly from the lifecycle manager.
+// The daemon handles spawning via the orchestrator, which uses the runner system.
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use tracing::{debug, info, warn};
@@ -316,7 +317,10 @@ impl LocalLifecycleManager {
     /// Resume workers that are in paused/awaiting/error state.
     ///
     /// For workers with snapshots, restores the work directory from the snapshot
-    /// before spawning the worker process.
+    /// before returning the ResumeWorker action.
+    ///
+    /// Returns a list of worker names that should be resumed. The caller (daemon)
+    /// handles actual spawning via the orchestrator using spawn_single_worker.
     fn resume_awaiting_workers_internal(&self) -> LifecycleResult<Vec<String>> {
         // Load config to get runner and storage settings
         let (config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
@@ -354,6 +358,16 @@ impl LocalLifecycleManager {
 
         let mut resumed = Vec::new();
 
+        // Check if run is paused - don't resume workers if so
+        let status = self
+            .state
+            .status()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        if status == Status::Paused {
+            debug!("resume_awaiting_workers: run is paused, not resuming");
+            return Ok(Vec::new());
+        }
+
         for worker in to_resume {
             let work_dir = worker
                 .work_dir
@@ -386,6 +400,20 @@ impl LocalLifecycleManager {
                                                 handle.snapshot_id, e
                                             );
                                         }
+
+                                        // Clear snapshot handle after successful restore
+                                        if let Err(e) = self.state.update_worker(
+                                            &worker.name,
+                                            WorkerUpdate {
+                                                snapshot_handle: Some(None),
+                                                ..Default::default()
+                                            },
+                                        ) {
+                                            warn!(
+                                                "Failed to clear snapshot handle for worker {}: {}",
+                                                worker.name, e
+                                            );
+                                        }
                                     }
                                     Err(e) => {
                                         warn!(
@@ -396,7 +424,11 @@ impl LocalLifecycleManager {
                                 }
                             }
                             Err(e) => {
-                                warn!("Failed to create snapshot strategy for restore: {}", e);
+                                // S3 not configured is expected for local runners
+                                debug!(
+                                    "No snapshot strategy for worker {} (expected for local): {}",
+                                    worker.name, e
+                                );
                             }
                         }
                     }
@@ -409,55 +441,23 @@ impl LocalLifecycleManager {
                 }
             }
 
-            let spawn_config = WorkerSpawnConfig {
-                run_name: self.context.run_name.clone(),
-                worker_name: worker.name.clone(),
-                work_dir,
-                run_dir: self.context.run_dir.clone(),
-                spec_path: self.files.spec(),
-                agent_command: self.context.agent_command.clone(),
-                is_leader: false,
-                leader_name: None,
-                teammates: None,
-                resume_session_id: worker.session_id.clone(),
-                env_vars: None,
-                credentials: None,
-                coordinator_url: None,
-                tailscale_authkey: None,
-            };
-
-            match spawn_worker(spawn_config, &self.state) {
-                Ok(_) => {
-                    // Clear snapshot handle after successful spawn
-                    if let Err(e) = self.state.update_worker(
-                        &worker.name,
-                        WorkerUpdate {
-                            snapshot_handle: Some(None), // Clear the snapshot handle
-                            ..Default::default()
-                        },
-                    ) {
-                        warn!(
-                            "Failed to clear snapshot handle for worker {}: {}",
-                            worker.name, e
-                        );
-                    }
-                    resumed.push(worker.name.clone());
-                }
-                Err(crate::core::workers::WorkerError::RunPaused) => {
-                    // Run was paused while we were processing
-                    break;
-                }
-                Err(e) => {
-                    warn!("Failed to resume worker {}: {}", worker.name, e);
-                }
-            }
+            // Add to resumed list - the daemon will handle actual spawning
+            resumed.push(worker.name.clone());
+            info!(
+                "resume_awaiting_workers: worker {} ready to resume, work_dir: {}",
+                worker.name,
+                work_dir.display()
+            );
         }
 
         Ok(resumed)
     }
 
     /// Try to scale up workers if autoscale is enabled and tasks are available.
-    fn maybe_scale_up_internal(&self) -> LifecycleResult<Option<String>> {
+    ///
+    /// Returns a `SpawnWorker` action if a new worker should be spawned.
+    /// The caller (daemon) handles actual spawning via the orchestrator.
+    fn maybe_scale_up_internal(&self) -> LifecycleResult<Option<LifecycleAction>> {
         use crate::core::git::create_worker_clone;
         use crate::core::workers::WorkerScale;
 
@@ -543,7 +543,7 @@ impl LocalLifecycleManager {
             }
         };
 
-        // Add worker to state
+        // Add worker to state (status will be set to Working by spawn_single_worker)
         self.state
             .add_worker(&new_name, worker_dir.to_str().unwrap_or("."), "local")
             .map_err(|e| LifecycleError::State(e.to_string()))?;
@@ -558,7 +558,7 @@ impl LocalLifecycleManager {
         let reason = format!(
             "Autoscaling: {} tasks available, {} workers total",
             claimable.len(),
-            current_count
+            current_count + 1
         );
         self.state
             .add_message(
@@ -572,44 +572,16 @@ impl LocalLifecycleManager {
             )
             .map_err(|e| LifecycleError::State(e.to_string()))?;
 
-        // Get leader info
-        let leader = workers.first();
-        let leader_name = leader.map(|l| l.name.clone());
+        info!(
+            "maybe_scale_up: prepared worker {} for spawning, returning SpawnWorker action",
+            new_name
+        );
 
-        // Get teammates
-        let teammates: Vec<String> = workers.iter().map(|w| w.name.clone()).collect();
-
-        // Spawn the worker
-        let config = WorkerSpawnConfig {
-            run_name: self.context.run_name.clone(),
-            worker_name: new_name.clone(),
+        // Return the SpawnWorker action - daemon will handle actual spawning via orchestrator
+        Ok(Some(LifecycleAction::SpawnWorker {
+            worker_name: new_name,
             work_dir: worker_dir,
-            run_dir: self.context.run_dir.clone(),
-            spec_path: self.files.spec(),
-            agent_command: self.context.agent_command.clone(),
-            is_leader: false,
-            leader_name,
-            teammates: Some(teammates),
-            resume_session_id: None,
-            env_vars: None,
-            credentials: None,
-            coordinator_url: None,
-            tailscale_authkey: None,
-        };
-
-        match spawn_worker(config, &self.state) {
-            Ok(result) => {
-                info!(
-                    "Scaled up: spawned new worker {} (PID {})",
-                    new_name, result.pid
-                );
-                Ok(Some(new_name))
-            }
-            Err(e) => {
-                warn!("maybe_scale_up: failed to spawn worker: {}", e);
-                Ok(None)
-            }
-        }
+        }))
     }
 
     /// Spawn the eval agent as a background process.
@@ -831,8 +803,8 @@ impl LifecycleManager for LocalLifecycleManager {
                     actions.push(LifecycleAction::WorkersResumed(resumed));
                 }
 
-                if let Some(new_worker) = self.maybe_scale_up_internal()? {
-                    actions.push(LifecycleAction::WorkerScaledUp(new_worker));
+                if let Some(action) = self.maybe_scale_up_internal()? {
+                    actions.push(action);
                 }
             }
 
@@ -844,8 +816,8 @@ impl LifecycleManager for LocalLifecycleManager {
                     actions.push(LifecycleAction::WorkersResumed(resumed));
                 }
 
-                if let Some(new_worker) = self.maybe_scale_up_internal()? {
-                    actions.push(LifecycleAction::WorkerScaledUp(new_worker));
+                if let Some(action) = self.maybe_scale_up_internal()? {
+                    actions.push(action);
                 }
             }
 
@@ -869,8 +841,8 @@ impl LifecycleManager for LocalLifecycleManager {
                 }
 
                 // Check if we should scale up
-                if let Some(new_worker) = self.maybe_scale_up_internal()? {
-                    actions.push(LifecycleAction::WorkerScaledUp(new_worker));
+                if let Some(action) = self.maybe_scale_up_internal()? {
+                    actions.push(action);
                 }
             }
 
@@ -985,17 +957,10 @@ impl LifecycleManager for LocalLifecycleManager {
             .map_err(|e| LifecycleError::State(e.to_string()))?;
 
         // Resume existing workers
-        let mut resumed = self.resume_awaiting_workers_internal()?;
+        let resumed = self.resume_awaiting_workers_internal()?;
 
-        // Try to scale up if more tasks are available
-        loop {
-            match self.maybe_scale_up_internal() {
-                Ok(Some(name)) => {
-                    resumed.push(name);
-                }
-                _ => break,
-            }
-        }
+        // Note: Scaling is now handled by the daemon through SpawnWorker actions.
+        // The daemon will process actions and spawn workers via the orchestrator.
 
         // Check if eval should be triggered
         let _ = self.maybe_trigger_eval();

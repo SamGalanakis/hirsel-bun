@@ -5,6 +5,9 @@
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { RunnerConfig, RunnerEntry } from '../../types';
 
+/** Starting point type for new drafts */
+export type StartingPointType = 'greenfield' | 'local' | 'git';
+
 /**
  * Draft editor component data
  */
@@ -17,7 +20,15 @@ export interface DraftEditorData {
   timeLimitMinutes: number | null;
   timeLimitInput: string;
   humanInTheLoop: boolean;
-  projectPath: string;
+  // Starting point selection phase
+  startingPointChosen: boolean; // false = show selection UI, true = show full editor
+  // Starting point configuration (replaces projectPath)
+  startingPointType: StartingPointType;
+  localPath: string;
+  gitUrl: string;
+  gitBranch: string;
+  // Workspace path after creation (read-only display)
+  workspacePath: string | null;
   saving: boolean;
   savingSpec: boolean;
   savingEval: boolean;
@@ -29,20 +40,14 @@ export interface DraftEditorData {
   isEditing: boolean;
   activeTab: 'spec' | 'eval' | 'settings';
   previewMode: boolean;
-  // Branch selection state
-  selectedBranch: string;
+  // Git URL validation state
+  gitValidating: boolean;
+  gitError: string | null;
   availableBranches: string[];
-  repoValidating: boolean;
-  repoError: string | null;
-  repoIsRemote: boolean;
-  normalizedRepoUrl: string;
-  repoValidateTimeout: ReturnType<typeof setTimeout> | null;
+  gitValidateTimeout: ReturnType<typeof setTimeout> | null;
   // Field validation errors
   workerScaleError: string | null;
   timeLimitError: string | null;
-  // Project setup flags (non-git directory handling)
-  needsDirCreate: boolean;
-  needsGitInit: boolean;
   // File drop state
   specDragOver: boolean;
   evalDragOver: boolean;
@@ -83,10 +88,11 @@ export interface DraftEditorMethods {
   handleNameEdit(): void;
   finishNameEdit(): void;
   renderMarkdown(content: string): string;
-  validateProjectPath(): Promise<void>;
-  debouncedValidateProjectPath(): void;
-  onBranchChange(): void;
+  validateGitUrl(): Promise<void>;
+  debouncedValidateGitUrl(): void;
   canStart(): boolean;
+  confirmStartingPoint(): void;
+  canConfirmStartingPoint(): boolean;
   validateTimeLimit(): boolean;
   validateWorkerScale(): boolean;
   hasValidationErrors(): boolean;
@@ -98,6 +104,7 @@ export interface DraftEditorMethods {
   trackCursorPosition(type: 'spec' | 'eval', event: Event): void;
   openFilePicker(type: 'spec' | 'eval'): void;
   openAssets(): Promise<void>;
+  browseLocalFolder(): Promise<void>;
   // Runner methods
   loadRunners(): Promise<void>;
   getWorkerNames(): string[];

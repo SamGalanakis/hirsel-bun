@@ -67,42 +67,92 @@ The **SQLite database is the source of truth**. Markdown files (`tasks.md`, `cha
 
 ## Lifecycle Management
 
-The `lifecycle` module centralizes all run lifecycle operations:
+The `lifecycle` module centralizes all run lifecycle operations. **The daemon owns all lifecycle management** - workers are "dumb" executors that just do tasks and report status.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    LifecycleManager trait                       │
-├─────────────────────────────┬───────────────────────────────────┤
+│                    Daemon (polling every 5s)                     │
+│   lifecycle.process_event(TimeCheck)                             │
+│       → Returns actions: SpawnWorker, EvalTriggered, etc.        │
+│   handle_lifecycle_actions()                                     │
+│       → orchestrator.spawn_single_worker() for spawning          │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                    Workers (dumb executors)                      │
+│   - Claim tasks from state                                       │
+│   - Execute work                                                 │
+│   - Update status (Working → Awaiting)                           │
+│   - Send heartbeats                                              │
+│   - NO lifecycle management, NO spawning other workers           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### LifecycleManager Trait
+
+```
+┌─────────────────────────────┬───────────────────────────────────┐
 │   LocalLifecycleManager     │   RemoteLifecycleManager          │
 │   (local/daemon mode)       │   (remote workers)                │
 │   - Eval triggering         │   - Delegates to coordinator      │
-│   - Worker scaling          │   - No-op implementations         │
+│   - Worker scaling checks   │   - No-op implementations         │
 │   - Time limit enforcement  │                                   │
 │   - Pause/resume            │                                   │
 └─────────────────────────────┴───────────────────────────────────┘
 ```
 
-**Events**: `TimeCheck`, `WorkerDone`, `TaskCompleted`, `RunPaused`, `RunResumed`
+**Events**: `TimeCheck`, `WorkerDone`, `TaskCompleted`, `PauseRequested`, `ResumeRequested`
 
-**Actions**: `TriggerEval`, `SpawnWorker`, `PauseWorkers`, `MarkDone`, `MarkFailed`
+**Actions**:
+- `SpawnWorker { worker_name, work_dir }` - daemon spawns via orchestrator
+- `ResumeWorker { worker_name, work_dir, resume_session_id }` - daemon spawns via orchestrator
+- `EvalTriggered`, `RunFailed`, `RunCompleted`, `WorkersPaused`, etc.
 
 Usage:
 ```rust
 let lifecycle = LocalLifecycleManager::new(run_name, run_dir, agent_command)?;
-lifecycle.process_event(LifecycleEvent::TimeCheck)?;  // Returns Vec<LifecycleAction>
-lifecycle.kill_all_workers()?;
-lifecycle.resume_awaiting_workers()?;
+let actions = lifecycle.process_event(LifecycleEvent::TimeCheck)?;
+// Daemon handles SpawnWorker/ResumeWorker actions via orchestrator.spawn_single_worker()
 ```
+
+### Why Daemon Owns Spawning
+
+Workers don't spawn other workers because:
+1. **Correct runner usage**: The orchestrator knows the runner config (local/docker/fly/sprite)
+2. **Docker fix**: A worker inside a Docker container calling `spawn_worker()` would spawn inside the same container (wrong). The daemon uses the runner to spawn in a new container.
+3. **Centralized control**: All lifecycle decisions come from one place
 
 ---
 
 ## Daemon
 
-Background process using `LocalLifecycleManager` (polls every 5 seconds):
-- Triggers eval when all workers idle
+Background process that owns all lifecycle management (polls every 5 seconds):
+
+**Responsibilities:**
+- Triggers eval when all workers become idle
 - Enforces time limits
+- **Spawns workers** for autoscaling (via `orchestrator.spawn_single_worker()`)
+- **Resumes workers** after pause (via `orchestrator.spawn_single_worker()`)
 - Auto-exits after 5 minutes of no active runs
-- Listens on both Unix socket (`~/.hirsel/hirsel.sock`) and TCP (`localhost:19700`)
+
+**Polling Loop:**
+```rust
+// Every 5 seconds for each active run:
+let actions = lifecycle.process_event(LifecycleEvent::TimeCheck)?;
+for action in actions {
+    match action {
+        LifecycleAction::SpawnWorker { worker_name, work_dir } => {
+            orchestrator.spawn_single_worker(run_name, &worker_name, &work_dir, None).await?;
+        }
+        LifecycleAction::EvalTriggered => { /* eval agent spawned by lifecycle */ }
+        // ...
+    }
+}
+```
+
+**Listeners:**
+- Unix socket (`~/.hirsel/hirsel.sock`) - CLI/GUI communication
+- TCP (`localhost:19700`) - SSH reverse tunnels
 
 ```bash
 hirsel daemon start|stop|status
@@ -183,13 +233,16 @@ The trait provides these key methods for run lifecycle:
 |--------|-------------|
 | `create_run(request)` | Create run directory, state, spec, initial worker |
 | `upload_files(name, tarball)` | Upload project files as gzipped tarball |
-| `spawn_workers(name, count)` | Spawn workers for a run |
+| `spawn_workers(name, count)` | Spawn workers for a run (initial creation) |
+| `spawn_single_worker(name, worker, work_dir, session_id)` | Spawn one worker (scaling/resume) |
 | `list_runs()` | List all runs |
 | `get_run(name)` | Get run details |
 | `pause_run(name)` | Pause a running run |
 | `resume_run(name)` | Resume a paused run |
 | `list_workers(name)` | List workers for a run |
 | `restart_worker(name, worker)` | Restart a worker |
+
+**spawn_single_worker**: Used by the daemon when lifecycle manager returns `SpawnWorker` or `ResumeWorker` actions. Uses the runner system to spawn correctly based on runner config (local/docker/fly/sprite).
 
 ### Run Creation Flow
 
