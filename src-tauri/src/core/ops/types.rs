@@ -9,46 +9,24 @@ use std::path::PathBuf;
 pub struct DeleteRunConfig {
     /// Name of the run to delete
     pub run_name: String,
-
-    /// Whether to delete GypChat messages for this run
-    /// GUI: true (cleanup chat history), CLI: false (not needed)
-    pub delete_gyp_chat: bool,
-
-    /// Whether to remove the hirsel_work remote from the project repository
-    /// CLI: true (cleanup remote), GUI: false (not typically needed)
-    pub remove_project_remote: bool,
 }
 
 impl DeleteRunConfig {
-    /// Create a new DeleteRunConfig with all options
-    pub fn new(
-        run_name: impl Into<String>,
-        delete_gyp_chat: bool,
-        remove_project_remote: bool,
-    ) -> Self {
+    /// Create a DeleteRunConfig
+    pub fn new(run_name: impl Into<String>) -> Self {
         Self {
             run_name: run_name.into(),
-            delete_gyp_chat,
-            remove_project_remote,
         }
     }
 
-    /// Create a config for GUI delete (deletes gyp chat, no remote cleanup)
+    /// Alias for backward compatibility with GUI code
     pub fn for_gui(run_name: impl Into<String>) -> Self {
-        Self {
-            run_name: run_name.into(),
-            delete_gyp_chat: true,
-            remove_project_remote: false,
-        }
+        Self::new(run_name)
     }
 
-    /// Create a config for CLI delete (no gyp chat, cleans up remote)
+    /// Alias for backward compatibility with CLI code
     pub fn for_cli(run_name: impl Into<String>) -> Self {
-        Self {
-            run_name: run_name.into(),
-            delete_gyp_chat: false,
-            remove_project_remote: true,
-        }
+        Self::new(run_name)
     }
 }
 
@@ -60,12 +38,6 @@ pub struct DeleteRunResult {
 
     /// Number of workers killed (if any were running)
     pub workers_killed: usize,
-
-    /// Whether GypChat messages were deleted
-    pub gyp_chat_deleted: bool,
-
-    /// Whether the project remote was removed
-    pub project_remote_removed: bool,
 }
 
 /// Configuration for cloning a run

@@ -42,8 +42,6 @@ pub async fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsE
     let mut result = DeleteRunResult {
         run_name: config.run_name.clone(),
         workers_killed: 0,
-        gyp_chat_deleted: false,
-        project_remote_removed: false,
     };
 
     // Try to get project path, kill workers, and clean up snapshots
@@ -101,31 +99,25 @@ pub async fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsE
         None
     };
 
-    // Remove hirsel_work remote from project repo if requested
-    if config.remove_project_remote {
-        if let Some(project_path_str) = &project_path {
-            let project_path = PathBuf::from(project_path_str);
-            if project_path.exists() {
-                if let Ok(repo) = git2::Repository::open(&project_path) {
-                    if repo.remote_delete("hirsel_work").is_ok() {
-                        result.project_remote_removed = true;
-                        tracing::debug!(
-                            "Removed hirsel_work remote from project for run '{}'",
-                            config.run_name
-                        );
-                    }
+    // Remove hirsel_work remote from project repo
+    if let Some(project_path_str) = &project_path {
+        let project_path = PathBuf::from(project_path_str);
+        if project_path.exists() {
+            if let Ok(repo) = git2::Repository::open(&project_path) {
+                if repo.remote_delete("hirsel_work").is_ok() {
+                    tracing::debug!(
+                        "Removed hirsel_work remote from project for run '{}'",
+                        config.run_name
+                    );
                 }
             }
         }
     }
 
-    // Delete Gyp chat history if requested
-    if config.delete_gyp_chat {
-        if let Ok(store) = GypChatStore::open() {
-            if store.delete_run_messages(&config.run_name).is_ok() {
-                result.gyp_chat_deleted = true;
-                tracing::debug!("Deleted GypChat messages for run '{}'", config.run_name);
-            }
+    // Delete Gyp chat history
+    if let Ok(store) = GypChatStore::open() {
+        if store.delete_run_messages(&config.run_name).is_ok() {
+            tracing::debug!("Deleted GypChat messages for run '{}'", config.run_name);
         }
     }
 
