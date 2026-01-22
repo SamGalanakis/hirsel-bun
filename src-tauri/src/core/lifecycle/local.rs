@@ -728,10 +728,46 @@ impl LocalLifecycleManager {
             return Ok(false);
         }
 
+        // Check if there are still claimable tasks
+        let claimable = self
+            .state
+            .get_claimable_tasks()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+        if !claimable.is_empty() {
+            // There are still tasks to do - don't trigger eval or mark done
+            // The daemon will try to resume/scale workers on the next poll
+            debug!(
+                "maybe_trigger_eval: {} claimable tasks remain, not triggering eval",
+                claimable.len()
+            );
+            return Ok(false);
+        }
+
         // Check if there's an eval script configured
         let eval_path = self.files.eval_spec();
         if !eval_path.exists() {
-            // No eval script - kill any remaining workers and set run to Done status
+            // No eval script and no claimable tasks - check if ALL tasks are done
+            let tasks = self
+                .state
+                .get_tasks()
+                .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+            let incomplete_tasks: Vec<_> = tasks
+                .iter()
+                .filter(|t| t.status != crate::core::state::TaskStatus::Done)
+                .collect();
+
+            if !incomplete_tasks.is_empty() {
+                // There are still incomplete tasks (blocked, doing, etc.)
+                debug!(
+                    "maybe_trigger_eval: {} incomplete tasks remain (not claimable), waiting",
+                    incomplete_tasks.len()
+                );
+                return Ok(false);
+            }
+
+            // All tasks done - kill any remaining workers and set run to Done status
             let killed = self.kill_all_workers_internal()?;
             if !killed.is_empty() {
                 info!(
@@ -741,7 +777,7 @@ impl LocalLifecycleManager {
                 );
             }
 
-            info!("maybe_trigger_eval: all workers inactive, no eval script, marking run as Done");
+            info!("maybe_trigger_eval: all workers inactive, all tasks done, no eval script, marking run as Done");
             self.state
                 .set_status(Status::Done)
                 .map_err(|e| LifecycleError::State(e.to_string()))?;
