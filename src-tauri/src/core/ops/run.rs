@@ -188,6 +188,7 @@ pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
     let time_limit_minutes = source_state.get_time_limit_minutes().ok().flatten();
     let human_in_the_loop = source_state.get_human_in_the_loop().unwrap_or(true);
     let max_iterations = source_state.get_max_iterations().ok().flatten();
+    let default_runner = source_state.get_default_runner().ok().flatten();
 
     // Read spec.md from source
     let source_spec_path = source_dir.join("spec.md");
@@ -266,6 +267,9 @@ pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
     if let Some(max_iter) = max_iterations {
         new_state.set_max_iterations(Some(max_iter))?;
     }
+    if let Some(ref runner) = default_runner {
+        new_state.set_default_runner(Some(runner))?;
+    }
     if !spec_content.is_empty() {
         new_state.set_request(Some(&spec_content))?;
     }
@@ -283,6 +287,7 @@ pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
         time_limit_minutes,
         human_in_the_loop,
         max_iterations,
+        default_runner,
         spec_content,
         has_eval,
         assets_copied,

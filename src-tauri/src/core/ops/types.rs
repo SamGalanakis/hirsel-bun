@@ -117,6 +117,9 @@ pub struct CloneRunResult {
     /// Max iterations (if set)
     pub max_iterations: Option<i64>,
 
+    /// Default runner (if set)
+    pub default_runner: Option<String>,
+
     /// The spec content that was cloned
     pub spec_content: String,
 
