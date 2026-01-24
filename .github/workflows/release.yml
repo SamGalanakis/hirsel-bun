@@ -56,8 +56,8 @@ jobs:
           # macOS Apple Silicon (M1+)
           - platform: macos-latest
             args: '--target aarch64-apple-darwin'
-          # macOS Intel
-          - platform: macos-latest
+          # macOS Intel (use macos-13 for native Intel build)
+          - platform: macos-13
             args: '--target x86_64-apple-darwin'
           # Linux x64
           - platform: ubuntu-22.04
