@@ -1,6 +1,48 @@
 # E2E Tests for Remote Orchestration
 
-This directory contains end-to-end tests for hirsel's remote execution capabilities.
+This directory contains end-to-end tests for hirsel's remote execution capabilities using pytest.
+
+## Quick Start
+
+```bash
+cd tests/e2e
+
+# Install dependencies
+uv sync
+
+# Run fast tests (default: local runner, noop scenario)
+uv run pytest
+
+# Run with Claude API (requires ANTHROPIC_API_KEY in .env)
+uv run pytest --scenario=hello_world --scenario=calculator
+
+# Run specific runner
+uv run pytest --runner=fly --runner=ssh
+
+# Run specific scenario
+uv run pytest --scenario=calculator
+
+# Full matrix
+uv run pytest --runner=local --runner=docker --runner=fly \
+              --scenario=hello_world --scenario=calculator
+
+# Use a profile (from config.toml)
+uv run pytest --profile=local           # Local orchestrator (default)
+uv run pytest --profile=fly-remote      # Remote Fly.io coordinator
+uv run pytest --profile=my-ssh-server   # Remote via SSH
+
+# Control worker scale per run
+uv run pytest --workers=3               # Use 3 hirsel workers per run
+
+# Use isolated hirsel directory (default: creates temp dir)
+uv run pytest --hirsel-dir=/tmp/test-hirsel  # Use specific directory
+
+# Run only fast tests
+uv run pytest -m "not slow"
+
+# Verbose with timeout override
+uv run pytest -v --timeout=900
+```
 
 ## Architecture
 
@@ -12,101 +54,128 @@ This directory contains end-to-end tests for hirsel's remote execution capabilit
           │
           ▼
 ┌─────────────────────────────────────────────────────┐
-│  Sprite #1: Orchestrator Server                     │
-│  - hirsel serve --port 8080                         │
-│  - HIRSEL_API_KEY=<generated>                       │
-│  - Receives forwarded credentials from test runner  │
+│  Orchestrator (profile-based)                       │
+│  - local: hirsel binary on local machine            │
+│  - remote: existing remote coordinator (Fly, SSH)   │
 └─────────────────────────────────────────────────────┘
           │
-    ┌─────┴─────┬─────────────┐
-    ▼           ▼             ▼
-┌────────┐  ┌────────┐  ┌──────────┐
-│ Local  │  │Sprite 2│  │SSH back  │
-│ Runner │  │ Runner │  │to Sprite1│
-└────────┘  └────────┘  └──────────┘
+    ┌─────┴─────┬─────────────┬──────────┐
+    ▼           ▼             ▼          ▼
+┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐
+│ Local  │  │ Docker │  │  SSH   │  │  Fly   │
+│ Runner │  │ Runner │  │ Runner │  │ Runner │
+└────────┘  └────────┘  └────────┘  └────────┘
 ```
+
+## Profiles
+
+Profiles determine where the orchestrator runs. Configure in `~/.hirsel/config.toml`:
+
+```toml
+[profiles.local]
+mode = "local"
+
+[profiles.fly-remote]
+mode = "remote"
+url = "https://hirsel-coordinator.fly.dev"
+api_key = "secret"
+
+[profiles.my-ssh-server]
+mode = "remote"
+url = "http://my-server:8080"
+api_key = "secret"
+```
+
+Use with `--profile=<name>`. Default is `local`.
+
+## Runners
+
+| Runner | Description | Requirements |
+|--------|-------------|--------------|
+| `local` | Runs directly on orchestrator | None |
+| `docker` | Runs in Docker container | Docker daemon |
+| `ssh` | Runs via SSH | SSH access |
+| `fly` | Runs on Fly.io machine | `FLY_API_TOKEN` |
 
 ## Prerequisites
 
-**Required credentials:**
-- `SPRITES_TOKEN` - sprites.dev API access
-- Local Claude OAuth (from `~/.claude/.credentials.json`) - forwarded automatically
-
-**Binary (one of the following):**
-- Set `HIRSEL_RELEASE_URL` to a public download URL for the binary
-- Configure SSH access to sprites.dev (for SCP upload)
-- Build locally: `cd src-tauri && cargo build --release --no-default-features`
-
-## Test Scenarios
-
-### test_server_deploy.sh
-Deploys hirsel server to a sprites.dev machine and verifies health check.
-
-### test_local_runner.sh
-Runs hello_world on the orchestrator server itself using local runner.
-
-### test_sprite_runner.sh
-Runs hello_world on a second sprites.dev machine.
-
-### test_ssh_runner.sh
-Runs hello_world via SSH connection back to the server sprite.
-
-## Running Tests
+**Environment variables** (loaded from `.env` in `tests/e2e/` or project root):
 
 ```bash
-# Set required environment variable
-export SPRITES_TOKEN="your-token"
-
-# Option A: Use a release URL (recommended)
-export HIRSEL_RELEASE_URL="https://github.com/your-org/hirsel/releases/download/v1.0.0/hirsel-linux-x64"
-
-# Option B: Use SCP (requires sprites.dev SSH access)
-# No extra config needed if SSH is set up
-
-# Run all tests
-./tests/e2e/run_all.sh
-
-# Run individual test
-./tests/e2e/test_server_deploy.sh
-
-# Run with custom scenario (default: hello_world)
-TEST_SCENARIO=calculator ./tests/e2e/test_local_runner.sh
-
-# Override binary location (for SCP method)
-HIRSEL_BINARY=/path/to/hirsel ./tests/e2e/run_all.sh
+# tests/e2e/.env
+ANTHROPIC_API_KEY=sk-ant-...      # For Claude API
+FLY_API_TOKEN=...                  # For fly runner
+FLY_WORKERS_APP=hirsel-workers     # Fly.io workers app name
 ```
 
-## Credentials Flow
+**Binary (one of the following):**
+- Set `HIRSEL_BINARY` to path of hirsel binary
+- Build locally: `cd src-tauri && cargo build --release --no-default-features`
+
+**Credentials:**
+- Local Claude OAuth (from `~/.claude/.credentials.json`) - forwarded automatically
+- Or `ANTHROPIC_API_KEY` from `.env`
+
+## Test Structure
 
 ```
-Local Machine                    Server Sprite                Worker
-─────────────────────────────────────────────────────────────────────
-~/.claude/.credentials.json
-        │
-        ▼
-ForwardedCredentials {
-  claude_access_token: "..."
-}
-        │
-        │  (HTTP header or request body)
-        ▼
-Orchestrator receives creds
-        │
-        │  (env vars on spawn)
-        ▼
-CLAUDE_ACCESS_TOKEN=...
-Worker process uses OAuth
+tests/e2e/
+├── pyproject.toml          # uv project config
+├── conftest.py             # pytest fixtures
+├── test_runs.py            # Main parametrized tests
+├── orchestrator.py         # Orchestrator setup
+├── runners/                # Runner implementations
+│   ├── base.py
+│   ├── local.py
+│   ├── docker.py
+│   ├── ssh.py
+│   └── fly.py
+└── README.md
 ```
+
+## Adding a New Runner
+
+1. Create `runners/myrunner.py`:
+
+```python
+from .base import BaseRunner, RunnerConfig
+
+class MyRunner(BaseRunner):
+    config = RunnerConfig(
+        name="myrunner",
+        timeout=600,
+        markers=["slow"],
+    )
+
+    def skip_if_unavailable(self) -> None:
+        # Check prerequisites, call pytest.skip() if not met
+        pass
+
+    def configure(self, orchestrator) -> None:
+        # Write config to orchestrator.write_config()
+        pass
+
+    def verify_output(self, orchestrator, run_name, scenario) -> None:
+        # Verify scenario output
+        pass
+```
+
+2. Register in `runners/__init__.py`
+3. Add to `RUNNERS` dict in `conftest.py`
+
+## Markers
+
+- `slow` - Tests that take significant time (fly runners)
+- `docker` - Tests requiring Docker
+- `fly` - Tests requiring fly CLI
 
 ## CI Integration
-
-These tests are designed for manual or CI execution:
 
 ```yaml
 # .github/workflows/e2e.yml
 name: E2E Tests
 on:
-  workflow_dispatch:  # Manual trigger only (costs money)
+  workflow_dispatch:  # Manual trigger (costs money)
 
 jobs:
   e2e:
@@ -115,12 +184,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build CLI
         run: cd src-tauri && cargo build --release --no-default-features
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
       - name: Run E2E
         env:
-          SPRITES_TOKEN: ${{ secrets.SPRITES_TOKEN }}
-        run: ./tests/e2e/run_all.sh
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          cd tests/e2e
+          uv sync
+          uv run pytest --runner=local --runner=docker -v
 ```
-
-## Cleanup
-
-Each test cleans up its sprites on exit (success or failure). If a test is interrupted, sprites may remain running. Check sprites.dev dashboard to manually clean up.

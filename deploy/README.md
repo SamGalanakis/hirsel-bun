@@ -11,7 +11,7 @@ Your machine ──┐
                │ Tailscale network (WireGuard encrypted)
 Orchestrator ──┼── 100.x.x.x:8080
                │
-Sprite workers─┘
+Fly workers ───┘
 ```
 
 Workers connect to the orchestrator via its Tailscale IP. No domains, certificates, or port forwarding needed.

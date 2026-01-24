@@ -365,8 +365,8 @@ export function draftEditor(): DraftEditorComponent {
           return 'monitor';
         case 'ssh':
           return 'server';
-        case 'sprite':
-          return 'cloud';
+        case 'fly':
+          return 'plane';
         default:
           return 'laptop';
       }

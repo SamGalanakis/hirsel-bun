@@ -4,7 +4,14 @@
 
 // Navigation types for profile-centric UI
 export type AppSection = 'theme' | 'controls';
-export type ProfileTab = 'connection' | 'agents' | 'runners' | 'defaults' | 'git' | 'data';
+export type ProfileTab =
+  | 'connection'
+  | 'agents'
+  | 'runners'
+  | 'defaults'
+  | 'git'
+  | 'data'
+  | 'services';
 export type ActiveSection = 'app' | 'profile';
 
 export interface NavigationState {
@@ -22,7 +29,7 @@ export interface ProfileSettingsCache {
 }
 
 export type AuthMethod = 'env' | 'apiKey' | 'oauth';
-export type HostType = 'local' | 'client' | 'ssh' | 'sprite' | 'fly';
+export type HostType = 'local' | 'client' | 'ssh' | 'fly';
 
 export interface AgentAuth {
   method: AuthMethod;
@@ -44,7 +51,7 @@ export interface ContainerConfig {
 }
 
 // Snapshot strategy types
-export type SnapshotStrategyType = 'persistent_disk' | 's3' | 'sprite_checkpoint';
+export type SnapshotStrategyType = 'persistent_disk' | 's3';
 
 export interface PersistentDiskSnapshotConfig {
   type: 'persistent_disk';
@@ -56,15 +63,7 @@ export interface S3SnapshotConfig {
   storage?: string; // Named storage config reference
 }
 
-export interface SpriteCheckpointSnapshotConfig {
-  type: 'sprite_checkpoint';
-  comment_prefix?: string;
-}
-
-export type SnapshotConfig =
-  | PersistentDiskSnapshotConfig
-  | S3SnapshotConfig
-  | SpriteCheckpointSnapshotConfig;
+export type SnapshotConfig = PersistentDiskSnapshotConfig | S3SnapshotConfig;
 
 // Host configs (where compute runs)
 export interface SshHostConfig {
@@ -74,16 +73,6 @@ export interface SshHostConfig {
   sshKey: string | null;
   workBase: string;
   location: string | null;
-}
-
-export interface SpriteHostConfig {
-  type: 'sprite';
-  apiToken: string | null;
-  checkpoint: string | null;
-  autoDestroy: boolean;
-  idleTimeoutSecs: number;
-  apiUrl: string;
-  useFilePush: boolean;
 }
 
 export interface FlyHostConfig {
@@ -96,12 +85,7 @@ export interface FlyHostConfig {
   memoryMb: number;
 }
 
-export type HostConfig =
-  | { type: 'local' }
-  | { type: 'client' }
-  | SshHostConfig
-  | SpriteHostConfig
-  | FlyHostConfig;
+export type HostConfig = { type: 'local' } | { type: 'client' } | SshHostConfig | FlyHostConfig;
 
 // Runner config (Host + optional Container + optional Snapshot)
 export interface RunnerConfig {
@@ -159,6 +143,18 @@ export interface StorageConfig {
   defaultStorage?: string;
 }
 
+// Service workers configuration
+export interface ServiceWorkerConfig {
+  runner?: string;
+  idleTimeoutSeconds?: number;
+}
+
+export interface ServiceWorkersConfig {
+  runner?: string;
+  scribe: ServiceWorkerConfig;
+  gyp: ServiceWorkerConfig;
+}
+
 export interface Settings {
   agentCommand: string;
   evalTimeout: number;
@@ -180,6 +176,7 @@ export interface Settings {
   defaultProfile: string;
   git: GitConfig;
   storage: StorageConfig;
+  serviceWorkers: ServiceWorkersConfig;
 }
 
 // Remote config response from server API

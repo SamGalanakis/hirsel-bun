@@ -13,10 +13,10 @@ import type {
   OrchestratorProfile,
   RunnerConfig,
   S3Config,
+  ServiceWorkersConfig,
   Settings,
   SnapshotConfig,
   SnapshotStrategyType,
-  SpriteHostConfig,
   SshHostConfig,
   StorageConfig,
   StorageProvider,
@@ -41,19 +41,6 @@ export const defaultSshHostConfig = (): SshHostConfig => ({
   sshKey: null,
   workBase: '/tmp/hirsel-remote',
   location: null,
-});
-
-/**
- * Default Sprite host configuration
- */
-export const defaultSpriteHostConfig = (): SpriteHostConfig => ({
-  type: 'sprite',
-  apiToken: null,
-  checkpoint: null,
-  autoDestroy: true,
-  idleTimeoutSecs: 30,
-  apiUrl: 'https://api.sprites.dev',
-  useFilePush: false,
 });
 
 /**
@@ -96,13 +83,6 @@ export const defaultLocalRunnerConfig = (): RunnerConfig => ({
  */
 export const defaultSshRunnerConfig = (): RunnerConfig => ({
   host: defaultSshHostConfig(),
-});
-
-/**
- * Default Sprite runner configuration (host, no container - Sprites don't support Docker)
- */
-export const defaultSpriteRunnerConfig = (): RunnerConfig => ({
-  host: defaultSpriteHostConfig(),
 });
 
 /**
@@ -160,6 +140,21 @@ export const defaultStorageConfig = (): StorageConfig => ({
 });
 
 /**
+ * Default service workers configuration
+ */
+export const defaultServiceWorkersConfig = (): ServiceWorkersConfig => ({
+  runner: undefined,
+  scribe: {
+    runner: undefined,
+    idleTimeoutSeconds: undefined,
+  },
+  gyp: {
+    runner: undefined,
+    idleTimeoutSeconds: undefined,
+  },
+});
+
+/**
  * Default navigation state - starts with default profile selected
  */
 export const defaultNavigationState = (): NavigationState => ({
@@ -201,6 +196,7 @@ export const defaultSettings = (): Settings => ({
   defaultProfile: 'local',
   git: defaultGitConfig(),
   storage: defaultStorageConfig(),
+  serviceWorkers: defaultServiceWorkersConfig(),
 });
 
 /**
@@ -248,8 +244,6 @@ export function getHostIcon(type: HostType): string {
       return 'monitor';
     case 'ssh':
       return 'server';
-    case 'sprite':
-      return 'cloud';
     case 'fly':
       return 'plane';
     default:
@@ -268,8 +262,6 @@ export function getHostTypeLabel(type: HostType): string {
       return 'Client';
     case 'ssh':
       return 'SSH';
-    case 'sprite':
-      return 'Sprites';
     case 'fly':
       return 'Fly.io';
     default:
@@ -300,8 +292,6 @@ export function getDefaultSnapshotStrategy(hostType: HostType): SnapshotStrategy
     case 'ssh':
     case 'client':
       return 'persistent_disk';
-    case 'sprite':
-      return 'sprite_checkpoint';
     case 'fly':
       return 's3'; // Fly machines are ephemeral, need S3 for persistence
     default:
@@ -318,8 +308,6 @@ export function getSnapshotStrategyLabel(strategy: SnapshotStrategyType): string
       return 'Persistent Disk';
     case 's3':
       return 'S3 Storage';
-    case 'sprite_checkpoint':
-      return 'Sprite Checkpoint';
     default:
       return strategy;
   }
@@ -334,8 +322,6 @@ export function getSnapshotStrategyDescription(strategy: SnapshotStrategyType): 
       return 'Files remain on disk (no transfer needed)';
     case 's3':
       return 'Archive and upload to S3-compatible storage';
-    case 'sprite_checkpoint':
-      return 'Native Sprites VM checkpoint (recommended)';
     default:
       return '';
   }
@@ -350,8 +336,6 @@ export function getAvailableSnapshotStrategies(hostType: HostType): SnapshotStra
     case 'ssh':
     case 'client':
       return ['persistent_disk', 's3'];
-    case 'sprite':
-      return ['sprite_checkpoint', 's3'];
     case 'fly':
       return ['s3']; // Fly machines are ephemeral, only S3 makes sense
     default:
@@ -368,8 +352,6 @@ export function createSnapshotConfig(strategy: SnapshotStrategyType): SnapshotCo
       return { type: 'persistent_disk' };
     case 's3':
       return { type: 's3' };
-    case 'sprite_checkpoint':
-      return { type: 'sprite_checkpoint' };
     default:
       return { type: 'persistent_disk' };
   }
