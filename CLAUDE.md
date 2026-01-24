@@ -86,6 +86,20 @@ prek run --all-files      # Run on all files
 
 Hooks: typos, cargo-fmt, cargo-check, cargo-clippy, cargo-deny, tsc, biome.
 
+## Daemon
+
+The daemon (`hirsel __daemon`) runs as a background process managing run lifecycle:
+- Polls active runs every 5 seconds
+- Triggers eval when all workers become inactive
+- Enforces time limits
+- Processes scribe batches
+
+**Singleton pattern:** One daemon per user. PID file at `~/.hirsel/hirsel.pid` stores PID and binary path.
+
+**Binary mismatch detection:** If daemon was started from a different binary (e.g., debug vs release), it auto-restarts with the current binary when `connect_or_start()` is called.
+
+**Port:** Default 19700, configurable via `HIRSEL_DAEMON_PORT` env var (escape hatch if port conflicts).
+
 ## Process Management
 
 Use `AcpChild` for spawning ACP processes - handles process groups and cleanup:
