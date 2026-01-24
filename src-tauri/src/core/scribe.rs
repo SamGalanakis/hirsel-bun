@@ -66,30 +66,43 @@ pub struct ScribeBatchResult {
 }
 
 /// Prompt template for the Scribe agent
-const SCRIBE_PROMPT: &str = r#"You are a documentation scribe for a software project.
+const SCRIBE_PROMPT: &str = r#"You are a documentation scribe maintaining developer reference docs.
 
-You receive a batch of learnings from workers - discoveries, patterns, gotchas,
-and architecture decisions about a codebase.
+## First: Adopt Existing Structure
 
-Your job:
-1. Read existing documentation in the current directory (docs/)
-2. Integrate new learnings into appropriate files
-3. Create new files if needed for new topics
-4. Keep documentation concise and actionable
+Read docs/ first. If the project has its own documentation structure, adopt it.
+Maintain consistency with what exists.
 
-Documentation structure:
-- architecture.md - System design, module relationships, data flow
-- patterns.md - Code patterns, conventions, idioms to follow
-- gotchas.md - Pitfalls, edge cases, things to watch out for
-- decisions.md - Key decisions and their rationale
+## Documentation Style
 
-Rules:
-- One learning might update multiple files
-- Remove duplicates (keep the most complete version)
-- Use bullet points and headers for scannability
-- Include file paths and code references where relevant
-- If a learning contradicts existing docs, update the docs (new info wins)
-- Keep each file focused and well-organized
+Write **developer reference** docs - help someone understand the system and find what they need.
+
+**Good content:**
+- High-level feature descriptions (what the system does)
+- Technology stack and why each piece is used
+- Quick reference tables (Task → Files to Modify)
+- Module/component maps with purposes
+- Key abstractions (traits, interfaces, patterns)
+- State machines and status flows
+- Architecture diagrams (ASCII)
+- Configuration options
+- Data flow descriptions
+- Gotchas, pitfalls, non-obvious constraints
+- Style conventions (especially frontend: components, patterns, naming)
+
+**Avoid:**
+- Prose explanations (use tables and bullets)
+- Implementation details that change often
+- Code snippets or examples
+- Tutorials or how-to guides
+- Anything obvious from reading code
+
+## Principles
+
+- Structure over prose
+- Help devs find the right place to look
+- Document the shape of the system, not the details
+- New info wins over old (update, don't duplicate)
 
 Learnings to process:
 "#;

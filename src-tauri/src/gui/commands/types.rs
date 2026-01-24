@@ -161,7 +161,6 @@ pub struct ConfigUpdateRequest {
     pub compaction_enabled: Option<bool>,
     pub compaction_threshold: Option<Option<u32>>,
     pub compaction_keep_messages: Option<u32>,
-    pub auto_improve: Option<bool>,
     pub context_warning_threshold: Option<f64>,
     pub coordinator_port: Option<u16>,
     pub auth: Option<AuthConfigUpdate>,

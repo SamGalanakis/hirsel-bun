@@ -99,14 +99,6 @@ impl LocalLifecycleManager {
             .collect())
     }
 
-    /// Trigger the auto-improve agent if enabled in config.
-    ///
-    /// This spawns a subprocess to run the `improve` command which analyzes
-    /// learnings and updates the project memory file.
-    pub fn run_improve(&self) {
-        self.maybe_run_improve()
-    }
-
     // =========================================================================
     // Internal Helpers
     // =========================================================================
@@ -703,54 +695,6 @@ impl LocalLifecycleManager {
         }
     }
 
-    /// Trigger auto-improve if enabled.
-    fn maybe_run_improve(&self) {
-        let (config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
-
-        if !config.auto_improve {
-            debug!("maybe_run_improve: auto_improve disabled");
-            return;
-        }
-
-        info!("Running auto-improve for {}", self.context.run_name);
-
-        let hirsel_exe = match std::env::current_exe() {
-            Ok(exe) => exe,
-            Err(e) => {
-                warn!("Failed to get current exe: {}", e);
-                return;
-            }
-        };
-
-        let mut cmd = Command::new(&hirsel_exe);
-        cmd.arg("improve")
-            .arg("--run")
-            .arg(&self.context.run_name)
-            .arg("--json")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            cmd.process_group(0);
-        }
-
-        match cmd.spawn() {
-            Ok(child) => {
-                info!(
-                    "Spawned improve agent for {}, pid={}",
-                    self.context.run_name,
-                    child.id()
-                );
-            }
-            Err(e) => {
-                warn!("Failed to spawn improve agent: {}", e);
-            }
-        }
-    }
-
     /// Check if eval should be triggered and trigger it.
     ///
     /// Returns true if eval was triggered, false otherwise.
@@ -831,9 +775,6 @@ impl LocalLifecycleManager {
             self.state
                 .set_status(Status::Done)
                 .map_err(|e| LifecycleError::State(e.to_string()))?;
-
-            // Trigger auto-improve if enabled
-            self.maybe_run_improve();
 
             return Ok(false);
         }
@@ -947,7 +888,6 @@ impl LifecycleManager for LocalLifecycleManager {
                     self.state
                         .set_status(Status::Done)
                         .map_err(|e| LifecycleError::State(e.to_string()))?;
-                    self.maybe_run_improve();
                     actions.push(LifecycleAction::RunCompleted);
                 } else {
                     // Eval failed - check if we should retry or fail the run

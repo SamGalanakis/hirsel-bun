@@ -1,7 +1,7 @@
 //! Chat/messaging system for hirsel
 //!
 //! Handles:
-//! - Markdown-based chat files (user.md, group.md, learnings.md, worker.md)
+//! - Markdown-based chat files (user.md, group.md, worker.md)
 //! - Message formatting with timestamps
 //! - Thread management and creation
 
@@ -187,31 +187,6 @@ pub fn create_default_group_chat(
     Ok(group_chat)
 }
 
-/// Create the learnings thread for shared knowledge
-pub fn create_learnings_thread(chats_dir: &Path, worker_names: &[String]) -> Result<PathBuf> {
-    fs::create_dir_all(chats_dir)?;
-    let learnings_chat = chats_dir.join("learnings.md");
-
-    if learnings_chat.exists() {
-        return Ok(learnings_chat);
-    }
-
-    let workers_list = worker_names.join(", ");
-    let description = format!(
-        "Shared knowledge base for workers: {}.\n\n\
-         **Purpose:** Record discoveries, patterns, gotchas, and insights.\n\
-         **Read this** at the start of each task to benefit from past learnings.\n\
-         **Write here** when you discover something useful for future work.\n\n\
-         Keep entries concise and actionable.",
-        workers_list
-    );
-
-    let header = ChatHeader::new("learnings", ChatMode::TwoWay).with_description(description);
-
-    fs::write(&learnings_chat, format_chat_header(&header))?;
-    Ok(learnings_chat)
-}
-
 /// Create a direct message thread for a worker
 pub fn create_worker_chat(chats_dir: &Path, worker_name: &str) -> Result<PathBuf> {
     fs::create_dir_all(chats_dir)?;
@@ -303,13 +278,13 @@ mod tests {
         let chats_dir = temp_dir.path().join("chats");
         fs::create_dir_all(&chats_dir).unwrap();
 
-        fs::write(chats_dir.join("learnings.md"), "test").unwrap();
+        fs::write(chats_dir.join("worker1.md"), "test").unwrap();
         fs::write(chats_dir.join("group.md"), "test").unwrap();
         fs::write(chats_dir.join("other.txt"), "test").unwrap(); // Should be ignored
 
         let names = get_thread_names(&chats_dir).unwrap();
         assert_eq!(names.len(), 2);
-        assert!(names.contains(&"learnings".to_string()));
+        assert!(names.contains(&"worker1".to_string()));
         assert!(names.contains(&"group".to_string()));
     }
 

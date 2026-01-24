@@ -520,8 +520,17 @@ pub fn build_worker_prompt(
 
     // Git workflow
     prompt.push_str("## Git Workflow\n\n");
-    prompt.push_str("You're working on a `staging` branch in your own isolated workspace.\n");
-    prompt.push_str("Your `origin` remote points to the shared staging repository.\n\n");
+
+    if is_multi_worker {
+        // Multi-worker: isolated clone with origin pointing to shared staging
+        prompt.push_str("You're working on a `staging` branch in your own isolated workspace.\n");
+        prompt.push_str("Your `origin` remote points to the shared staging repository.\n\n");
+    } else {
+        // Single-worker: working directly in staging workspace, no remote
+        prompt.push_str("You're working directly on the `staging` branch.\n");
+        prompt.push_str("This is a single-worker run - no git remote is configured.\n");
+        prompt.push_str("Your changes stay local until the run completes.\n\n");
+    }
 
     prompt.push_str("**Commit Discipline (IMPORTANT):**\n");
     prompt.push_str("- **One commit per logical change** - atomic commits make debugging easy\n");
@@ -535,23 +544,39 @@ pub fn build_worker_prompt(
     prompt.push_str("git add . && git commit -m \"Add authentication\"  # DON'T DO THIS\n");
     prompt.push_str("```\n\n");
 
-    prompt.push_str("**Before Completing a Task:**\n");
-    prompt
-        .push_str("You MUST push your changes to the shared staging before calling `task_done`:\n");
-    prompt.push_str("```bash\n");
-    prompt.push_str("git add . && git commit -m \"feat: final changes\"  # if any uncommitted\n");
-    prompt.push_str("git pull origin staging                            # get others' changes\n");
-    prompt.push_str("# resolve any conflicts if needed, then:\n");
-    prompt.push_str("git push origin staging                            # share your work\n");
-    prompt.push_str("```\n");
-    prompt.push_str("Only call `task_done` AFTER your changes are pushed.\n\n");
+    if is_multi_worker {
+        // Multi-worker: must push to share changes
+        prompt.push_str("**Before Completing a Task:**\n");
+        prompt.push_str(
+            "You MUST push your changes to the shared staging before calling `task_done`:\n",
+        );
+        prompt.push_str("```bash\n");
+        prompt
+            .push_str("git add . && git commit -m \"feat: final changes\"  # if any uncommitted\n");
+        prompt
+            .push_str("git pull origin staging                            # get others' changes\n");
+        prompt.push_str("# resolve any conflicts if needed, then:\n");
+        prompt.push_str("git push origin staging                            # share your work\n");
+        prompt.push_str("```\n");
+        prompt.push_str("Only call `task_done` AFTER your changes are pushed.\n\n");
 
-    prompt.push_str("**Handling Merge Conflicts:**\n");
-    prompt.push_str("If `git pull` shows conflicts:\n");
-    prompt.push_str("1. Edit conflicted files (remove `<<<<<<<`, `=======`, `>>>>>>>` markers)\n");
-    prompt.push_str("2. `git add <resolved-files>`\n");
-    prompt.push_str("3. `git commit`\n");
-    prompt.push_str("4. `git push origin staging`\n\n");
+        prompt.push_str("**Handling Merge Conflicts:**\n");
+        prompt.push_str("If `git pull` shows conflicts:\n");
+        prompt.push_str(
+            "1. Edit conflicted files (remove `<<<<<<<`, `=======`, `>>>>>>>` markers)\n",
+        );
+        prompt.push_str("2. `git add <resolved-files>`\n");
+        prompt.push_str("3. `git commit`\n");
+        prompt.push_str("4. `git push origin staging`\n\n");
+    } else {
+        // Single-worker: just commit, no push needed
+        prompt.push_str("**Before Completing a Task:**\n");
+        prompt.push_str("Commit any uncommitted changes before calling `task_done`:\n");
+        prompt.push_str("```bash\n");
+        prompt.push_str("git add . && git commit -m \"feat: final changes\"\n");
+        prompt.push_str("```\n");
+        prompt.push_str("No git push is needed - your changes are already in the workspace.\n\n");
+    }
 
     // MCP Tools - IMPORTANT: These are MCP tools, not CLI commands
     prompt.push_str("## Available MCP Tools\n\n");

@@ -4,7 +4,7 @@
 //! - Worker spawning and management
 //! - Eval triggering when workers become inactive
 //! - Time limit enforcement
-//! - Compaction of learnings
+//! - Scribe batch processing
 //!
 //! The daemon listens on a TCP port (default 19700, configurable via HIRSEL_DAEMON_PORT).
 //! Local CLI/GUI connects via localhost, remote workers via Docker host or SSH tunnels.

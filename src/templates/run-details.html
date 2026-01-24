@@ -1,0 +1,172 @@
+    <!-- Center Panel: Run Details (hidden when draft is selected) -->
+    <section class="flex-1 flex flex-col overflow-hidden bg-pasture-900" x-data="runDetail()" x-show="runName && detail?.status !== 'draft'" x-cloak>
+
+      <!-- Run Header -->
+      <div x-show="runName" class="run-header p-4 border-b border-pasture-600">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <h2 class="text-xl font-semibold text-wool-100" x-text="detail?.name || runName"></h2>
+            <span
+              class="status-badge px-2 py-0.5 rounded text-xs font-medium"
+              :class="getStatusBadgeClass(detail?.status)"
+              x-text="getStatusLabel(detail?.status)"
+            ></span>
+            <!-- Human in the loop indicator -->
+            <span x-show="detail?.humanInTheLoop" class="text-xs text-amber-400 flex items-center gap-1" data-tooltip="Human in the Loop mode" data-side="bottom">
+              <i data-lucide="user" class="w-3 h-3"></i>
+              HITL
+            </span>
+          </div>
+          <div class="flex items-center gap-2">
+            <button
+              @click="handlePause()"
+              x-show="canPause()"
+              class="btn btn-sm btn-ghost"
+            >
+              Pause
+            </button>
+            <button
+              @click="handleResume()"
+              x-show="canResume()"
+              class="btn btn-sm"
+            >
+              Resume
+            </button>
+            <button
+              @click="handleDeliver()"
+              x-show="canDeliver()"
+              class="btn btn-sm btn-success"
+            >
+              Deliver
+            </button>
+          </div>
+        </div>
+
+        <!-- Time progress / no limit indicator -->
+        <div class="mt-3">
+          <template x-if="detail?.timeLimitMinutes">
+            <div>
+              <div class="flex justify-between text-xs text-wool-500 mb-1">
+                <span x-text="formatElapsed(Math.floor((Date.now() - new Date(detail?.startedAt || Date.now()).getTime()) / 60000)) + ' elapsed'"></span>
+                <span x-text="formatTimeRemaining(detail?.timeLimitMinutes, Math.floor((Date.now() - new Date(detail?.startedAt || Date.now()).getTime()) / 60000))"></span>
+              </div>
+              <div class="h-1.5 bg-pasture-600 rounded-full overflow-hidden">
+                <div
+                  class="h-full rounded-full transition-all duration-1000"
+                  :class="calculateTimeProgress(Math.floor((Date.now() - new Date(detail?.startedAt || Date.now()).getTime()) / 60000), detail?.timeLimitMinutes) > 80 ? 'bg-terra' : 'bg-amber-500'"
+                  :style="'width: ' + calculateTimeProgress(Math.floor((Date.now() - new Date(detail?.startedAt || Date.now()).getTime()) / 60000), detail?.timeLimitMinutes) + '%'"
+                ></div>
+              </div>
+            </div>
+          </template>
+          <template x-if="!detail?.timeLimitMinutes && detail?.startedAt">
+            <div class="flex items-center gap-2 text-xs text-wool-500">
+              <span x-text="formatElapsed(Math.floor((Date.now() - new Date(detail?.startedAt || Date.now()).getTime()) / 60000)) + ' elapsed'"></span>
+              <span class="text-wool-600">·</span>
+              <span class="flex items-center gap-1 text-wool-600">
+                <i data-lucide="infinity" class="w-3 h-3"></i>
+                <span>no limit</span>
+              </span>
+            </div>
+          </template>
+        </div>
+
+
+        <!-- Waiting reason (when status is waiting) -->
+        <div x-show="detail?.waitingReason" class="mt-3 p-2 bg-golden/10 border border-golden/30 rounded text-sm text-golden">
+          <span class="font-medium">Waiting:</span>
+          <span x-text="detail?.waitingReason"></span>
+        </div>
+      </div>
+
+      <!-- Tab Navigation -->
+      <div x-show="runName" class="tab-bar flex items-center gap-1 px-4 border-b border-pasture-600 bg-pasture-800/50">
+        <button
+          @click="activeTab = 'overview'"
+          class="tab-btn px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-2"
+          :class="activeTab === 'overview' ? 'text-wool-100 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
+        >
+          <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
+          Overview
+        </button>
+        <button
+          @click="activeTab = 'tasks'"
+          class="tab-btn px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-2"
+          :class="activeTab === 'tasks' ? 'text-wool-100 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
+        >
+          <i data-lucide="list-checks" class="w-4 h-4"></i>
+          Tasks
+        </button>
+        <button
+          @click="activeTab = 'specs'"
+          class="tab-btn px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-2"
+          :class="activeTab === 'specs' ? 'text-wool-100 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
+        >
+          <i data-lucide="file-text" class="w-4 h-4"></i>
+          Specs
+        </button>
+        <button
+          x-show="evals.length > 0"
+          @click="activeTab = 'evals'"
+          class="tab-btn px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-2"
+          :class="activeTab === 'evals' ? 'text-wool-100 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
+        >
+          <i data-lucide="clipboard-check" class="w-4 h-4"></i>
+          Evals <span class="text-wool-600 font-normal" x-text="'(' + evals.length + ')'"></span>
+        </button>
+        <button
+          @click="activeTab = 'chat'"
+          class="tab-btn px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px relative flex items-center gap-2"
+          :class="activeTab === 'chat' ? 'text-wool-100 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
+        >
+          <i data-lucide="message-square" class="w-4 h-4"></i>
+          Chat
+          <span x-show="unreadCount > 0" class="absolute -top-1 -right-1 min-w-[16px] h-4 bg-terra rounded-full text-[10px] text-white font-bold flex items-center justify-center px-1" x-text="unreadCount"></span>
+        </button>
+        <button
+          @click="activeTab = 'config'"
+          class="tab-btn px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-2"
+          :class="activeTab === 'config' ? 'text-wool-100 border-amber-500' : 'text-wool-500 border-transparent hover:text-wool-300'"
+        >
+          <i data-lucide="settings" class="w-4 h-4"></i>
+          Config
+        </button>
+      </div>
+
+      <!-- Loading state -->
+      <div x-show="loading" class="p-4 text-center text-wool-500">
+        <div class="animate-pulse">Loading run details...</div>
+      </div>
+
+      <!-- Error state -->
+      <div x-show="error" class="p-4 text-center text-terra">
+        <p class="text-sm" x-text="error"></p>
+        <button @click="loadRunDetail(runName)" class="mt-2 text-xs text-amber-500 hover:underline">Retry</button>
+      </div>
+
+      <!-- Empty state when no run selected -->
+      <div x-show="!runName && !loading" class="flex-1 flex items-center justify-center">
+        <div class="empty-state text-center text-wool-500 max-w-md">
+          <svg class="w-32 h-16 mx-auto mb-4 text-wool-600">
+            <use href="#sheep-flock"/>
+          </svg>
+          <p class="text-lg text-wool-400">Select a run to view details</p>
+          <p class="text-sm mt-3 text-wool-500">or use <code class="bg-pasture-700 px-2 py-1 rounded text-wool-300">hirsel go &lt;name&gt; &lt;spec&gt;</code> to start a new one</p>
+        </div>
+      </div>
+
+<!--#include file="./run-details/overview-tab.html" -->
+
+<!--#include file="./run-details/tasks-tab.html" -->
+
+<!--#include file="./run-details/specs-tab.html" -->
+
+<!--#include file="./run-details/evals-tab.html" -->
+
+<!--#include file="./run-details/chat-tab.html" -->
+
+<!--#include file="./run-details/config-tab.html" -->
+
+<!--#include file="./run-details/deliver-modal.html" -->
+
+    </section>

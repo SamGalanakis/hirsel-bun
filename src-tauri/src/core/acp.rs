@@ -372,7 +372,17 @@ impl AcpChild {
             return Err(ACPError::Protocol("Empty command".into()));
         }
 
-        let mut cmd = Command::new(&config.command[0]);
+        // Resolve "hirsel" command to current executable path
+        // This ensures the command works even when hirsel isn't in PATH
+        let exe_path = if config.command[0] == "hirsel" {
+            std::env::current_exe()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| config.command[0].clone())
+        } else {
+            config.command[0].clone()
+        };
+
+        let mut cmd = Command::new(&exe_path);
         if config.command.len() > 1 {
             cmd.args(&config.command[1..]);
         }

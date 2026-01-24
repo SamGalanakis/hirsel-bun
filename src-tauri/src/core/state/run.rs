@@ -559,28 +559,6 @@ impl SQLiteState {
         }
     }
 
-    /// Get learnings processed at timestamp
-    pub fn get_learnings_processed_at(&self) -> StateResult<Option<String>> {
-        match self.db.query_row(
-            "SELECT learnings_processed_at FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-        ) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
-    }
-
-    /// Set learnings processed at timestamp
-    pub fn set_learnings_processed_at(&self, timestamp: &str) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET learnings_processed_at = ?1, updated_at = ?2 WHERE id = 1",
-            params![timestamp, self.now()],
-        )?;
-        Ok(())
-    }
-
     /// Get last compaction timestamp
     pub fn get_last_compaction_at(&self) -> StateResult<Option<String>> {
         match self.db.query_row(
@@ -809,6 +787,55 @@ impl SQLiteState {
         self.db.execute(
             "UPDATE state SET starting_point = ?1, updated_at = ?2 WHERE id = 1",
             params![starting_point, self.now()],
+        )?;
+        Ok(())
+    }
+
+    // =========================================================================
+    // Docs Persistence Settings
+    // =========================================================================
+
+    /// Get the docs path for this run (relative to workspace)
+    pub fn get_docs_path(&self) -> StateResult<Option<String>> {
+        match self
+            .db
+            .query_row("SELECT docs_path FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set the docs path for this run (relative to workspace)
+    pub fn set_docs_path(&self, path: Option<&str>) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET docs_path = ?1, updated_at = ?2 WHERE id = 1",
+            params![path, self.now()],
+        )?;
+        Ok(())
+    }
+
+    /// Get whether to persist docs changes on delivery
+    pub fn get_persist_docs_changes(&self) -> StateResult<bool> {
+        match self.db.query_row(
+            "SELECT persist_docs_changes FROM state WHERE id = 1",
+            [],
+            |row| row.get::<_, Option<i64>>(0),
+        ) {
+            Ok(Some(val)) => Ok(val != 0),
+            Ok(None) => Ok(true), // Default to persisting
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(true),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set whether to persist docs changes on delivery
+    pub fn set_persist_docs_changes(&self, persist: bool) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET persist_docs_changes = ?1, updated_at = ?2 WHERE id = 1",
+            params![if persist { 1 } else { 0 }, self.now()],
         )?;
         Ok(())
     }

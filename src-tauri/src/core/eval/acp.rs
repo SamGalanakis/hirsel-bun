@@ -169,9 +169,6 @@ pub async fn run_eval_from_args(
             cleanup_test_run(run_name);
             return Ok(());
         }
-
-        // Trigger auto-improve if enabled
-        lifecycle.run_improve();
     } else {
         // Check retry count
         let evals = state.get_evals(100)?;

@@ -281,9 +281,6 @@ fn run_command(
         Commands::Man(args) => {
             run_man(&args)?;
         }
-        Commands::Improve(args) => {
-            cli::improve::execute(args.run_name.as_deref(), json)?;
-        }
         Commands::Reset(args) => {
             let target = if args.all {
                 cli::reset::ResetTarget::All
@@ -401,17 +398,6 @@ fn run_command(
                     .await
             })
             .map_err(|e| format!("Eval error: {}", e))?;
-        }
-        Commands::CompactLearnings(args) => {
-            // Internal command to run learnings compaction
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| format!("Failed to create runtime: {}", e))?;
-            rt.block_on(async {
-                tokio::task::LocalSet::new()
-                    .run_until(async { cli::compact::execute(&args.run_name).await })
-                    .await
-            })
-            .map_err(|e| format!("Compaction error: {}", e))?;
         }
         Commands::Scribe(args) => {
             // Internal command to run scribe processing

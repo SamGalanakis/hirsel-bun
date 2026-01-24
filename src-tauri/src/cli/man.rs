@@ -83,7 +83,6 @@ CONFIGURATION
     hirsel templates            List spec templates
     hirsel completions          Install shell completions
     hirsel man                  Show this manual
-    hirsel improve [run]        Update project memory from learnings
     hirsel reset --runs         Delete all runs (requires typing 'reset')
     hirsel reset --config       Reset config to defaults
     hirsel reset --all          Reset everything

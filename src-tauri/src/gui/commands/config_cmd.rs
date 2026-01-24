@@ -55,9 +55,6 @@ pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
     if let Some(keep) = updates.compaction_keep_messages {
         cfg.compaction_keep_messages = keep;
     }
-    if let Some(auto) = updates.auto_improve {
-        cfg.auto_improve = auto;
-    }
     if let Some(warning) = updates.context_warning_threshold {
         cfg.context_warning_threshold = warning;
     }
