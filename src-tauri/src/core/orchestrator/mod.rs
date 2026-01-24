@@ -1,10 +1,34 @@
-//! Orchestrator abstraction for remote/local Hirsel coordination
+//! Coordinator-facing run management for creating runs, spawning workers, and lifecycle.
 //!
 //! This module provides the `Orchestrator` trait that abstracts high-level
-//! operations for managing runs, workers, tasks, and messages. It has two
-//! implementations:
-//! - `LocalOrchestrator`: Direct calls to local state (default)
+//! operations for managing runs across the entire system. The CLI and GUI use
+//! this trait to create runs, spawn workers, and control run lifecycle without
+//! knowing if they're operating locally or against a remote server.
+//!
+//! ## Implementations
+//!
+//! - `LocalOrchestrator`: Direct calls to local state (default for CLI/GUI)
 //! - `RemoteOrchestrator`: HTTP calls to a remote Hirsel server
+//! - `DaemonOrchestrator`: Server-side implementation for handling remote requests
+//!
+//! ## Orchestrator vs StateAccess
+//!
+//! These two traits serve different purposes:
+//!
+//! - **`Orchestrator`** (this module): Coordinator-side, cross-run management
+//!   - Creating and deleting runs
+//!   - Spawning workers
+//!   - Managing run lifecycle (pause, resume, deliver)
+//!   - Listing runs and their status
+//!
+//! - **`StateAccess`** (see `state_access` module): Worker-side, per-run operations
+//!   - Task claiming and completion
+//!   - Worker heartbeats and status updates
+//!   - Message sending between workers
+//!   - Reading/writing run configuration
+//!
+//! The CLI/GUI uses `Box<dyn Orchestrator>` for run management commands.
+//! Workers receive a `Box<dyn StateAccess>` for runtime state operations.
 
 #[cfg(feature = "server")]
 mod daemon;
@@ -468,7 +492,7 @@ pub trait Orchestrator: Send + Sync {
     /// running run.
     ///
     /// The runner system is used to ensure workers spawn correctly based on
-    /// the runner configuration (local, docker, fly, sprite, etc.).
+    /// the runner configuration (local, docker, fly, ssh, etc.).
     async fn spawn_single_worker(
         &self,
         run_name: &str,
@@ -487,7 +511,7 @@ pub trait Orchestrator: Send + Sync {
     /// 5. Updates worker state (pid, runner_id, status)
     ///
     /// Unlike `spawn_single_worker`, this method handles snapshot restoration
-    /// for ephemeral runners (Fly, Sprite) and checks if the worker is already
+    /// for ephemeral runners (Fly) and checks if the worker is already
     /// running to avoid duplicate container errors.
     async fn resume_worker(
         &self,

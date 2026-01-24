@@ -561,6 +561,133 @@ impl Files {
     }
 }
 
+// =========================================================================
+// Docs Directory Methods
+// =========================================================================
+
+/// A documentation file from the docs/ directory
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocFile {
+    pub name: String,
+    pub content: String,
+}
+
+/// Documentation content - either a single file or all files
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum DocsContent {
+    Single { name: String, content: String },
+    All { files: Vec<DocFile> },
+}
+
+impl Files {
+    /// Path to the docs/ directory - contains project documentation.
+    pub fn docs_dir(&self) -> PathBuf {
+        self.run_dir.join("docs")
+    }
+
+    /// Initialize the docs/ directory with default documentation files.
+    ///
+    /// Creates the docs directory and default markdown files if they don't exist:
+    /// - architecture.md - System design and module relationships
+    /// - patterns.md - Code patterns and conventions
+    /// - gotchas.md - Pitfalls and things to watch out for
+    /// - decisions.md - Key decisions and rationale
+    pub fn init_docs(&self) -> io::Result<()> {
+        let dir = self.docs_dir();
+        fs::create_dir_all(&dir)?;
+
+        let defaults = [
+            (
+                "architecture.md",
+                "# Architecture\n\nSystem design and module relationships.\n",
+            ),
+            (
+                "patterns.md",
+                "# Patterns\n\nCode patterns and conventions.\n",
+            ),
+            (
+                "gotchas.md",
+                "# Gotchas\n\nPitfalls and things to watch out for.\n",
+            ),
+            (
+                "decisions.md",
+                "# Decisions\n\nKey decisions and rationale.\n",
+            ),
+        ];
+
+        for (name, content) in defaults {
+            let path = dir.join(name);
+            if !path.exists() {
+                fs::write(&path, content)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Read documentation files from docs/.
+    ///
+    /// If `file` is Some, reads that specific file.
+    /// If `file` is None, reads all markdown files in the docs directory.
+    pub fn read_docs(&self, file: Option<&str>) -> io::Result<DocsContent> {
+        let dir = self.docs_dir();
+        if let Some(name) = file {
+            let content = fs::read_to_string(dir.join(name))?;
+            Ok(DocsContent::Single {
+                name: name.to_string(),
+                content,
+            })
+        } else {
+            let mut files = Vec::new();
+            if dir.exists() {
+                for entry in fs::read_dir(&dir)? {
+                    let entry = entry?;
+                    if entry.path().extension().is_some_and(|e| e == "md") {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        let content = fs::read_to_string(entry.path())?;
+                        files.push(DocFile { name, content });
+                    }
+                }
+            }
+            // Sort by name for consistent ordering
+            files.sort_by(|a, b| a.name.cmp(&b.name));
+            Ok(DocsContent::All { files })
+        }
+    }
+
+    /// Compute hashes for all doc files.
+    ///
+    /// Returns a map of filename -> SHA256 hash for sync purposes.
+    pub fn get_docs_hashes(&self) -> io::Result<std::collections::HashMap<String, String>> {
+        use std::collections::HashMap;
+
+        let dir = self.docs_dir();
+        let mut hashes = HashMap::new();
+
+        if !dir.exists() {
+            return Ok(hashes);
+        }
+
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            if entry.path().extension().is_some_and(|e| e == "md") {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let content = fs::read_to_string(entry.path())?;
+
+                // Compute simple hash using a fast hash function
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                content.hash(&mut hasher);
+                let hash = format!("{:016x}", hasher.finish());
+
+                hashes.insert(name, hash);
+            }
+        }
+
+        Ok(hashes)
+    }
+}
+
 /// Create a Files instance for the given run directory.
 ///
 /// This is a convenience function matching the Python API.

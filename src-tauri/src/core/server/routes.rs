@@ -385,6 +385,153 @@ pub async fn send_message(
 }
 
 // =============================================================================
+// Scribe - Documentation
+// =============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct ScribeSubmitRequest {
+    pub worker_name: String,
+    pub content: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ScribeSubmitResponse {
+    pub id: i64,
+}
+
+pub async fn add_scribe(
+    Path(name): Path<String>,
+    Json(body): Json<ScribeSubmitRequest>,
+) -> Result<Json<ScribeSubmitResponse>> {
+    use crate::core::{config, state::SQLiteState, Files};
+
+    let run_dir = config::run_dir(&name);
+    let files = Files::new(&run_dir);
+    let state =
+        SQLiteState::new(files.db_path()).map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+    let id = state
+        .add_scribe_submission(&body.worker_name, &body.content)
+        .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+    Ok(Json(ScribeSubmitResponse { id }))
+}
+
+// =============================================================================
+// Docs
+// =============================================================================
+
+#[derive(Debug, Serialize)]
+pub struct DocsResponse {
+    pub files: Vec<DocFileResponse>,
+    pub hashes: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DocFileResponse {
+    pub name: String,
+    pub content: String,
+}
+
+/// Get all docs with hashes
+pub async fn get_docs(Path(name): Path<String>) -> Result<Json<DocsResponse>> {
+    use crate::core::{config, Files};
+
+    let run_dir = config::run_dir(&name);
+    if !run_dir.exists() {
+        return Err(OrchestratorError::RunNotFound(name));
+    }
+
+    let files = Files::new(&run_dir);
+    let docs = files
+        .read_docs(None)
+        .map_err(|e| OrchestratorError::Other(format!("Failed to read docs: {}", e)))?;
+    let hashes = files
+        .get_docs_hashes()
+        .map_err(|e| OrchestratorError::Other(format!("Failed to get hashes: {}", e)))?;
+
+    let doc_files = match docs {
+        crate::core::files::DocsContent::All { files } => files
+            .into_iter()
+            .map(|f| DocFileResponse {
+                name: f.name,
+                content: f.content,
+            })
+            .collect(),
+        crate::core::files::DocsContent::Single { name, content } => {
+            vec![DocFileResponse { name, content }]
+        }
+    };
+
+    Ok(Json(DocsResponse {
+        files: doc_files,
+        hashes,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DocsSyncRequest {
+    /// Current hashes on the client side
+    pub hashes: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DocsSyncResponse {
+    /// Files that have changed (content included)
+    pub files: Vec<DocFileResponse>,
+    /// New hashes for all files
+    pub hashes: std::collections::HashMap<String, String>,
+}
+
+/// Sync docs - returns only changed files based on hash comparison
+pub async fn sync_docs(
+    Path(name): Path<String>,
+    Json(body): Json<DocsSyncRequest>,
+) -> Result<Json<DocsSyncResponse>> {
+    use crate::core::{config, Files};
+
+    let run_dir = config::run_dir(&name);
+    if !run_dir.exists() {
+        return Err(OrchestratorError::RunNotFound(name));
+    }
+
+    let files = Files::new(&run_dir);
+    let docs = files
+        .read_docs(None)
+        .map_err(|e| OrchestratorError::Other(format!("Failed to read docs: {}", e)))?;
+    let server_hashes = files
+        .get_docs_hashes()
+        .map_err(|e| OrchestratorError::Other(format!("Failed to get hashes: {}", e)))?;
+
+    // Find changed files (hash mismatch or new files)
+    let changed_files: Vec<DocFileResponse> = match docs {
+        crate::core::files::DocsContent::All { files } => files
+            .into_iter()
+            .filter(|f| {
+                // Include if hash doesn't match or file is new to client
+                body.hashes.get(&f.name) != server_hashes.get(&f.name)
+            })
+            .map(|f| DocFileResponse {
+                name: f.name,
+                content: f.content,
+            })
+            .collect(),
+        crate::core::files::DocsContent::Single { name, content } => {
+            if body.hashes.get(&name) != server_hashes.get(&name) {
+                vec![DocFileResponse { name, content }]
+            } else {
+                vec![]
+            }
+        }
+    };
+
+    Ok(Json(DocsSyncResponse {
+        files: changed_files,
+        hashes: server_hashes,
+    }))
+}
+
+// =============================================================================
 // Evals
 // =============================================================================
 

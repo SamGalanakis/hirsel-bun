@@ -569,12 +569,17 @@ pub fn build_worker_prompt(
     prompt.push_str("- `task_await` - Wait for tasks to become available\n\n");
     prompt.push_str("### Messaging\n");
     prompt.push_str("- `msg_send(thread, message, wait?)` - Send a message\n");
-    prompt
-        .push_str("  - Threads: `user` (human), `learnings` (shared knowledge), `group` (team)\n");
+    prompt.push_str("  - Threads: `user` (human), `group` (team coordination)\n");
     prompt.push_str("  - Set `wait: true` to pause until reply (auto for `user` thread)\n");
     prompt.push_str("- `msg_read(thread?)` - Read all unread messages\n");
     prompt.push_str("- `msg_inbox` - Quick check for new messages this session\n");
     prompt.push_str("- `msg_list` - List available threads\n\n");
+    prompt.push_str("### Documentation\n");
+    prompt.push_str("- `scribe(content)` - Record a learning or discovery\n");
+    prompt.push_str("  - Examples: patterns, gotchas, architecture decisions, conventions\n");
+    prompt.push_str("  - Batched and integrated into docs/ by a Scribe agent\n");
+    prompt.push_str("- `read_docs(file?)` - Read project documentation maintained by Scribe\n");
+    prompt.push_str("  - Omit `file` to get all docs, or specify e.g. `patterns.md`\n\n");
     prompt.push_str("### Completion\n");
     prompt.push_str("- `work_done` - Signal all work is complete (triggers verification)\n");
     prompt.push_str("- `time_status` - Check time limit status\n\n");
@@ -606,9 +611,9 @@ pub fn build_worker_prompt(
     prompt.push_str("3. **Quickly scan the codebase** - get a high-level sense of structure\n");
     prompt.push_str("4. **Create exploration tasks** - one per area needing investigation:\n");
     prompt.push_str("   ```\n");
-    prompt.push_str("   task_add(\"explore_existing\", \"Explore existing code structure. Post findings to learnings.\")\n");
+    prompt.push_str("   task_add(\"explore_existing\", \"Explore existing code structure. Use scribe() to record findings.\")\n");
     prompt.push_str(
-        "   task_add(\"explore_tests\", \"Explore test patterns. Post findings to learnings.\")\n",
+        "   task_add(\"explore_tests\", \"Explore test patterns. Use scribe() to record findings.\")\n",
     );
     prompt.push_str("   ```\n");
     prompt.push_str("5. **Create implementation planning task** blocked by exploration:\n");
@@ -620,15 +625,15 @@ pub fn build_worker_prompt(
     prompt.push_str("### Phase 2: Exploration\n\n");
     prompt.push_str("For each exploration task:\n");
     prompt.push_str("1. Deep-dive into that area\n");
-    prompt.push_str("2. **Document findings in learnings chat:**\n");
+    prompt.push_str("2. **Record discoveries with scribe:**\n");
     prompt.push_str("   ```\n");
-    prompt.push_str("   msg_send(\"learnings\", \"AUTH: Uses JWT tokens in src/auth/jwt.py\")\n");
-    prompt.push_str("   msg_send(\"learnings\", \"TESTS: pytest with fixtures in conftest.py\")\n");
+    prompt.push_str("   scribe(\"AUTH: Uses JWT tokens in src/auth/jwt.py\")\n");
+    prompt.push_str("   scribe(\"TESTS: pytest with fixtures in conftest.py\")\n");
     prompt.push_str("   ```\n");
     prompt.push_str("3. Complete the task\n\n");
 
     prompt.push_str("### Phase 3: Implementation Planning\n\n");
-    prompt.push_str("1. Read all learnings: `msg_read(\"learnings\")`\n");
+    prompt.push_str("1. Read all documentation: `read_docs()`\n");
     prompt.push_str("2. Create concrete implementation tasks with full context\n");
     prompt.push_str("3. Apply task design principles (see below)\n");
     prompt.push_str("4. Complete the planning task\n\n");
@@ -662,13 +667,16 @@ pub fn build_worker_prompt(
     );
     prompt.push_str("```\n\n");
 
-    // Learnings
-    prompt.push_str("## Learnings Chat\n\n");
-    prompt.push_str("The `learnings` thread is for recording discoveries:\n");
-    prompt.push_str("- Patterns found in the codebase\n");
-    prompt.push_str("- Gotchas and surprises\n");
-    prompt.push_str("- Architecture decisions\n\n");
-    prompt.push_str("Keep entries concise - one sentence per message.\n\n");
+    // Documentation
+    prompt.push_str("## Project Documentation\n\n");
+    prompt
+        .push_str("Use `scribe(content)` to record discoveries. A Scribe agent maintains docs/:\n");
+    prompt.push_str("- `architecture.md` - System design, module relationships\n");
+    prompt.push_str("- `patterns.md` - Code patterns and conventions\n");
+    prompt.push_str("- `gotchas.md` - Pitfalls and things to watch out for\n");
+    prompt.push_str("- `decisions.md` - Key decisions and rationale\n\n");
+    prompt.push_str("**At task start:** Call `read_docs()` to check accumulated knowledge.\n");
+    prompt.push_str("**During work:** Call `scribe()` when you discover something useful.\n\n");
 
     // Role-specific section
     if is_multi_worker {

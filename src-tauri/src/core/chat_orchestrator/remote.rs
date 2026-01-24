@@ -17,15 +17,12 @@ use super::{
     PermissionResponseRequest, SendMessageRequest, SessionInfo, StartSessionRequest,
 };
 use crate::core::chat_session::{ChatEvent, UIContext};
+use crate::core::http_client::AuthenticatedClient;
 
 /// Remote chat orchestrator that connects to a Hirsel server
 pub struct RemoteChatOrchestrator {
-    /// Base URL of the remote server
-    base_url: String,
-    /// API key for authentication
-    api_key: String,
-    /// HTTP client
-    client: Client,
+    /// Authenticated HTTP client for API calls
+    client: AuthenticatedClient,
     /// Active SSE connections (session_id -> abort handle)
     active_streams: Arc<Mutex<Vec<String>>>,
 }
@@ -33,27 +30,15 @@ pub struct RemoteChatOrchestrator {
 impl RemoteChatOrchestrator {
     /// Create a new remote chat orchestrator
     pub fn new(base_url: String, api_key: String) -> Self {
-        let client = Client::builder()
+        let reqwest_client = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .expect("Failed to create HTTP client");
 
         Self {
-            base_url: base_url.trim_end_matches('/').to_string(),
-            api_key,
-            client,
+            client: AuthenticatedClient::with_client(reqwest_client, base_url, api_key),
             active_streams: Arc::new(Mutex::new(Vec::new())),
         }
-    }
-
-    /// Make an authenticated request
-    fn auth_header(&self) -> String {
-        format!("Bearer {}", self.api_key)
-    }
-
-    /// Build a URL for the API
-    fn url(&self, path: &str) -> String {
-        format!("{}{}", self.base_url, path)
     }
 }
 
@@ -62,24 +47,11 @@ impl ChatOrchestrator for RemoteChatOrchestrator {
     async fn start_session(&self, context: ChatContext) -> ChatOrchestratorResult<SessionInfo> {
         let request = StartSessionRequest { context };
 
-        let response = self
+        let info: SessionInfo = self
             .client
-            .post(self.url("/api/gyp/sessions"))
-            .header("Authorization", self.auth_header())
-            .json(&request)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            return Err(ChatOrchestratorError::Http(format!(
-                "Failed to start session: {} - {}",
-                status, text
-            )));
-        }
-
-        let info: SessionInfo = response.json().await?;
+            .post("/api/gyp/sessions", &request)
+            .await
+            .map_err(|e| ChatOrchestratorError::Http(format!("Failed to start session: {}", e)))?;
 
         // Track active session
         {
@@ -101,24 +73,13 @@ impl ChatOrchestrator for RemoteChatOrchestrator {
             context,
         };
 
-        let response = self
-            .client
-            .post(self.url(&format!("/api/gyp/sessions/{}/messages", session_id)))
-            .header("Authorization", self.auth_header())
-            .json(&request)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            return Err(ChatOrchestratorError::Http(format!(
-                "Failed to send message: {} - {}",
-                status, text
-            )));
-        }
-
-        Ok(())
+        self.client
+            .post_empty(
+                &format!("/api/gyp/sessions/{}/messages", session_id),
+                &request,
+            )
+            .await
+            .map_err(|e| ChatOrchestratorError::Http(format!("Failed to send message: {}", e)))
     }
 
     async fn respond_permission(
@@ -132,65 +93,45 @@ impl ChatOrchestrator for RemoteChatOrchestrator {
             option_id: option_id.to_string(),
         };
 
-        let response = self
-            .client
-            .post(self.url(&format!("/api/gyp/sessions/{}/permission", session_id)))
-            .header("Authorization", self.auth_header())
-            .json(&request)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            return Err(ChatOrchestratorError::Http(format!(
-                "Failed to respond to permission: {} - {}",
-                status, text
-            )));
-        }
-
-        Ok(())
+        self.client
+            .post_empty(
+                &format!("/api/gyp/sessions/{}/permission", session_id),
+                &request,
+            )
+            .await
+            .map_err(|e| {
+                ChatOrchestratorError::Http(format!("Failed to respond to permission: {}", e))
+            })
     }
 
     async fn stop_session(&self, session_id: &str) -> ChatOrchestratorResult<()> {
-        let response = self
-            .client
-            .delete(self.url(&format!("/api/gyp/sessions/{}", session_id)))
-            .header("Authorization", self.auth_header())
-            .send()
-            .await?;
-
-        // Remove from active sessions
+        // Remove from active sessions first
         {
             let mut streams = self.active_streams.lock().await;
             streams.retain(|id| id != session_id);
         }
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            return Err(ChatOrchestratorError::Http(format!(
-                "Failed to stop session: {} - {}",
-                status, text
-            )));
-        }
-
-        Ok(())
+        self.client
+            .delete(&format!("/api/gyp/sessions/{}", session_id))
+            .await
+            .map_err(|e| ChatOrchestratorError::Http(format!("Failed to stop session: {}", e)))
     }
 
     async fn subscribe_events(
         &self,
         session_id: &str,
     ) -> ChatOrchestratorResult<BoxStream<'static, ChatEvent>> {
-        let url = self.url(&format!("/api/gyp/sessions/{}/events", session_id));
-        let auth = self.auth_header();
+        let url = self
+            .client
+            .url(&format!("/api/gyp/sessions/{}/events", session_id));
+        let auth = self.client.auth_header();
 
         // Create a new client without timeout for SSE (long-lived connection)
-        let client = Client::builder()
+        let sse_client = Client::builder()
             .build()
             .map_err(|e| ChatOrchestratorError::Connection(e.to_string()))?;
 
-        let response = client
+        let response = sse_client
             .get(&url)
             .header("Authorization", auth)
             .header("Accept", "text/event-stream")
@@ -214,24 +155,10 @@ impl ChatOrchestrator for RemoteChatOrchestrator {
     }
 
     async fn list_sessions(&self) -> ChatOrchestratorResult<Vec<String>> {
-        let response = self
-            .client
-            .get(self.url("/api/gyp/sessions"))
-            .header("Authorization", self.auth_header())
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            return Err(ChatOrchestratorError::Http(format!(
-                "Failed to list sessions: {} - {}",
-                status, text
-            )));
-        }
-
-        let sessions: Vec<String> = response.json().await?;
-        Ok(sessions)
+        self.client
+            .get("/api/gyp/sessions")
+            .await
+            .map_err(|e| ChatOrchestratorError::Http(format!("Failed to list sessions: {}", e)))
     }
 }
 

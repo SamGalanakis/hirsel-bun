@@ -24,17 +24,14 @@ pub mod credentials;
 pub mod draft;
 pub mod error;
 pub mod eval;
-#[cfg(feature = "server")]
-pub mod eval_routes;
 pub mod files;
 pub mod git;
 #[cfg(feature = "server")]
 pub mod git_http;
 pub mod gyp_chat;
 pub mod gyp_context;
+pub mod http_client;
 pub mod lifecycle;
-#[cfg(feature = "server")]
-pub mod message_routes;
 pub mod metrics;
 pub mod names;
 pub mod ops;
@@ -42,19 +39,17 @@ pub mod orchestrator;
 pub mod process;
 pub mod run_manager;
 pub mod runner;
+pub mod scribe;
 #[cfg(feature = "server")]
 pub mod server;
+pub mod service_worker;
 pub mod snapshot;
 pub mod state;
 pub mod state_access;
 pub mod storage;
 pub mod tailscale;
 #[cfg(feature = "server")]
-pub mod task_routes;
-#[cfg(feature = "server")]
 pub mod tunnel;
-#[cfg(feature = "server")]
-pub mod worker_routes;
 pub mod workers;
 
 // Re-export commonly used types
@@ -106,15 +101,19 @@ pub use run_manager::{
 };
 pub use runner::{
     create_runner, parse_remote_spec, parse_remote_specs, LocalRunner, Runner, RunnerConfig,
-    RunnerError, RunnerResult, SpawnResult as RunnerSpawnResult, SpriteHostConfig, SpriteRunner,
-    SshHostConfig, SshRunner, WorkerHandle, WorkerSpawnConfig as RunnerSpawnConfig,
+    RunnerError, RunnerResult, SpawnResult as RunnerSpawnResult, SshHostConfig, SshRunner,
+    WorkerHandle, WorkerSpawnConfig as RunnerSpawnConfig,
+};
+pub use scribe::{process_scribe_batch, should_process_batch, ScribeBatchResult, ScribeError};
+pub use service_worker::{
+    create_scribe_service, ScribeService, ServiceWorkerError, ServiceWorkerHandle,
+    ServiceWorkerResult, ServiceWorkerType,
 };
 #[cfg(feature = "s3-storage")]
 pub use snapshot::S3ArchiveStrategy;
 pub use snapshot::{
     create_archive_strategy, AgentSnapshot, ArchiveHandle, ArchiveResult, ArchiveStrategy,
-    NoOpArchiveStrategy, SnapshotError, SnapshotResult, SpriteCheckpointStrategy, WorkDirSnapshot,
-    WorkerStateHandle,
+    NoOpArchiveStrategy, SnapshotError, SnapshotResult, WorkDirSnapshot, WorkerStateHandle,
 };
 pub use state::*;
 pub use state_access::{StateAccess, StateAccessError, StateAccessResult};

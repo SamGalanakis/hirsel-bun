@@ -8,13 +8,14 @@
 
 | Task | Files to Modify |
 |------|-----------------|
-| Add CLI command | `src/cli/mod.rs:95` (Commands enum), new `src/cli/<cmd>.rs` |
-| Add GUI command | `src/gui/commands/mod.rs:36` (get_handlers), new handler in relevant submodule |
-| Add REST endpoint | `src/core/server/mod.rs:71` (router), `src/core/server/routes.rs` |
-| Modify run state | `src/core/state/mod.rs:27` (SCHEMA), `src/core/state/types.rs` |
-| Add runner type | `src/core/runner/mod.rs:57`, new `src/core/runner/<type>.rs` |
-| Modify lifecycle | `src/core/lifecycle/mod.rs`, `src/core/lifecycle/local.rs` |
-| Add archive strategy | `src/core/snapshot/mod.rs`, new strategy impl of `ArchiveStrategy` |
+| Add CLI command | `src-tauri/src/cli/mod.rs` → `Commands` enum, new `src-tauri/src/cli/<cmd>.rs` |
+| Add GUI command | `src-tauri/src/gui/commands/mod.rs` → `get_handlers()`, new handler in relevant submodule |
+| Add REST endpoint | `src-tauri/src/core/server/mod.rs` → router, `src-tauri/src/core/server/routes.rs` |
+| Modify run state | `src-tauri/src/core/state/mod.rs` → `SCHEMA` const, `src-tauri/src/core/state/types.rs` |
+| Add runner type | `src-tauri/src/core/runner/mod.rs` → `create_runner()`, new `src-tauri/src/core/runner/<type>.rs` |
+| Modify lifecycle | `src-tauri/src/core/lifecycle/mod.rs`, `src-tauri/src/core/lifecycle/local.rs` |
+| Add archive strategy | `src-tauri/src/core/snapshot/mod.rs`, new strategy impl of `ArchiveStrategy` |
+| Add service worker | `src-tauri/src/core/service_worker/scribe.rs`, `src-tauri/src/cli/service_worker.rs` |
 
 ### Feature Flags
 
@@ -55,12 +56,12 @@ cargo build --features s3-storage               # With S3 support
            ┌───────────────────┼───────────────────┐
            ▼                   ▼                   ▼
     LocalOrchestrator   DaemonOrchestrator   RemoteOrchestrator
-    (direct access)     (Unix socket)        (HTTP API)
+    (direct access)     (TCP)                (HTTP API)
                                │
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │   SQLite State              │   Worker Processes                 │
-│   (runs, workers, tasks,    │   (Local, SSH, Sprite, Fly)        │
+│   (runs, workers, tasks,    │   (Local, SSH, Fly)                │
 │    messages, events)        │   + optional Docker container      │
 └─────────────────────────────┴───────────────────────────────────┘
 ```
@@ -69,30 +70,46 @@ cargo build --features s3-storage               # With S3 support
 
 ## Module Map
 
-### `src/core/` - Core Business Logic
+### `src-tauri/src/core/` - Core Business Logic
 
 | Submodule | Key Files | Purpose |
 |-----------|-----------|---------|
 | `state/` | `mod.rs`, `types.rs`, `run.rs`, `workers.rs`, `tasks.rs`, `messages.rs`, `events.rs`, `evals.rs`, `history.rs` | SQLite state management |
-| `orchestrator/` | `mod.rs:229`, `local.rs`, `remote.rs`, `daemon.rs` | Run orchestration pattern |
-| `lifecycle/` | `mod.rs:181`, `local.rs`, `remote.rs`, `transitions.rs` | Event-driven state machine |
-| `runner/` | `types.rs:139`, `local.rs`, `fly.rs`, `sprite.rs`, `ssh.rs`, `composed.rs`, `config.rs`, `setup.rs` | Worker host implementations |
-| `snapshot/` | `mod.rs`, `archive.rs`, `noop.rs`, `s3.rs`, `sprite_checkpoint.rs`, `claude_session.rs` | Work/session persistence |
-| `draft/` | `mod.rs`, `types.rs:11`, `workspace.rs`, `local_workspace.rs`, `s3_workspace.rs` | StartingPoint, workspace init |
+| `orchestrator/` | `mod.rs` → `Orchestrator` trait, `local.rs`, `remote.rs`, `daemon.rs` | Run orchestration pattern |
+| `lifecycle/` | `mod.rs` → `LifecycleManager` trait, `local.rs`, `remote.rs`, `transitions.rs` | Event-driven state machine |
+| `runner/` | `types.rs` → `Runner` trait, `local.rs`, `fly.rs`, `ssh.rs`, `composed.rs`, `config.rs`, `setup.rs` | Worker host implementations |
+| `run_manager/` | `mod.rs`, `local.rs`, `remote.rs` | Unified run management wrapping Orchestrator + Lifecycle |
+| `chat_orchestrator/` | `mod.rs` → `ChatOrchestrator` trait, `local.rs`, `remote.rs` | Chat session orchestration (local/remote) |
+| `snapshot/` | `mod.rs`, `archive.rs`, `noop.rs`, `s3.rs`, `claude_session.rs` | Work/session persistence |
+| `draft/` | `mod.rs`, `types.rs` → `StartingPoint`, `workspace.rs`, `local_workspace.rs`, `s3_workspace.rs` | StartingPoint, workspace init |
 | `config/` | `mod.rs`, `store.rs`, `loader.rs`, `saver.rs`, `types.rs`, `agent.rs`, `storage.rs`, `orchestrator.rs`, `paths.rs` | Config struct, DB storage, profiles, runners |
 | `ops/` | `mod.rs`, `run.rs`, `setup.rs`, `spawn.rs`, `project.rs`, `types.rs` | Shared CLI/GUI operations |
-| `server/` | `mod.rs:32`, `routes.rs`, `auth.rs`, `gyp.rs` | HTTP server for remote mode |
+| `server/` | `mod.rs` → `start_server()`, `routes.rs`, `auth.rs`, `gyp.rs` | HTTP server for remote mode |
+| `eval/` | `mod.rs` | Eval runner and management |
+| `storage/` | `mod.rs` | File storage abstraction (local/S3) |
+| `service_worker/` | `mod.rs`, `scribe.rs`, `types.rs` | ScribeService for documentation batches |
+| `error.rs` | - | `HirselError` enum with `ErrorKind` categorization |
+| `acp.rs` | - | Agent Control Protocol types, `AcpChild` process wrapper |
+| `state_access.rs` | - | Worker state abstraction (SQLite vs HTTP) |
+| `chat_session.rs` | - | Chat session management with event channels |
+| `metrics.rs` | - | Session metrics extraction with TTL cache |
 | `files.rs` | - | Run directory file operations |
 | `chats.rs` | - | GypChat message storage |
 | `gyp_chat.rs` | - | Project-level chat history |
-| `acp.rs` | - | Agent Control Protocol types |
+| `gyp_context.rs` | - | Gyp context building |
 | `api_types.rs` | - | Shared API response types |
 | `worker_routes.rs` | - | Worker HTTP handlers |
+| `message_routes.rs` | - | Message HTTP handlers |
+| `task_routes.rs` | - | Task HTTP handlers |
+| `eval_routes.rs` | - | Eval HTTP handlers |
+| `coordinator_api.rs` | - | Coordinator API client |
+| `git_http.rs` | - | Git HTTP server for remote workers |
 | `credentials.rs` | - | Encrypted credential store |
 | `git.rs` | - | Git operations |
 | `compaction.rs` | - | Context compaction for long sessions |
+| `tailscale.rs` | - | Tailscale integration |
 
-### `src/worker/` - Worker Subprocess
+### `src-tauri/src/worker/` - Worker Subprocess
 
 | File | Purpose |
 |------|---------|
@@ -105,30 +122,32 @@ cargo build --features s3-storage               # With S3 support
 | `http_state.rs` | HTTP-based state for remote workers |
 | `file_server.rs` | File upload server for remote workers |
 
-### `src/gui/commands/` - Tauri IPC Commands
+### `src-tauri/src/gui/commands/` - Tauri IPC Commands
 
 | File | Commands |
 |------|----------|
-| `runs.rs` | `get_runs`, `get_run_detail`, `pause_run`, `resume_run`, `delete_run`, `deliver_run` |
-| `drafts.rs` | `validate_repo`, `create_draft`, `clone_run`, `update_draft`, `start_draft` |
-| `workers.rs` | `get_workers`, `attach_worker`, `open_worker_terminal`, `restart_worker` |
-| `tasks.rs` | `get_tasks`, `add_task`, `delete_task`, `complete_task`, `reopen_task` |
-| `messages.rs` | `get_messages`, `get_threads`, `send_message`, `mark_messages_read` |
-| `events.rs` | `get_worker_events`, `start_worker_event_stream`, `stop_worker_event_stream` |
-| `chat.rs` | `start_chat_session`, `send_chat_message`, `respond_chat_permission` |
-| `config_cmd.rs` | `get_config`, `save_config`, `get_tailscale_info` |
-| `credentials.rs` | `store_credential`, `delete_credential`, `has_credential` |
-| `files.rs` | `read_spec_file`, `write_spec_file`, `save_asset` |
+| `runs.rs` | `get_runs`, `get_run_detail`, `pause_run`, `resume_run`, `delete_run`, `delete_all_runs`, `deliver_run` |
+| `drafts.rs` | `validate_repo`, `create_draft`, `clone_run`, `update_draft`, `start_draft`, `change_starting_point` |
+| `workers.rs` | `get_workers`, `attach_worker`, `open_worker_terminal`, `detach_worker`, `restart_worker` |
+| `tasks.rs` | `get_tasks`, `add_task`, `delete_task`, `complete_task`, `unclaim_task`, `reopen_task` |
+| `messages.rs` | `get_messages`, `get_threads`, `get_all_unread_notifications`, `send_message`, `mark_messages_read` |
+| `events.rs` | `get_worker_events`, `clear_worker_events`, `start_worker_event_stream`, `stop_worker_event_stream` |
+| `chat.rs` | `start_chat_session`, `send_chat_message`, `respond_chat_permission`, `stop_chat_session`, `list_chat_sessions` |
+| `config_cmd.rs` | `get_config`, `save_config`, `get_tailscale_info`, `check_ssh_runner` |
+| `credentials.rs` | `store_credential`, `delete_credential`, `has_credential`, `get_credential`, `get_credential_masked` |
+| `files.rs` | `read_spec_file`, `write_spec_file`, `read_eval_file`, `write_eval_file`, `save_asset`, `import_asset_from_path`, `open_assets_folder`, `get_assets_path` |
+| `logs.rs` | `get_eval_log`, `get_eval_log_by_path`, `get_history`, `get_eval_spec`, `get_evals` |
 | `filesystem.rs` | `pick_folder`, `suggest_paths` |
-| `logs.rs` | `get_eval_log`, `get_history`, `get_evals` |
+| `debug.rs` | `log_frontend`, `get_version`, `get_process_counts`, `kill_orphaned_acp_processes`, `get_gyp_chat_history`, `save_gyp_message`, `clear_gyp_chat_history` |
 
-### `src/cli/` - CLI Commands
+### `src-tauri/src/cli/` - CLI Commands
 
 | File | Command | Feature |
 |------|---------|---------|
 | `go.rs` | `hirsel go <run> <spec>` | `cli` |
 | `runs.rs` | `hirsel runs` | - |
 | `view.rs` | `hirsel view <run>` | - |
+| `log.rs` | `hirsel log <run>` | - |
 | `attach.rs` | `hirsel attach <run>` | `cli` |
 | `pause.rs` | `hirsel pause <run>` | - |
 | `resume.rs` | `hirsel resume <run>` | - |
@@ -138,16 +157,28 @@ cargo build --features s3-storage               # With S3 support
 | `tasks.rs` | `hirsel tasks <run>` | - |
 | `diff.rs` | `hirsel diff <run>` | - |
 | `summary.rs` | `hirsel summary <run>` | - |
+| `spec.rs` | `hirsel spec <run>` | - |
+| `asset.rs` | `hirsel asset <run>` | - |
 | `config.rs` | `hirsel config` | - |
+| `prune.rs` | `hirsel prune` | - |
+| `reset.rs` | `hirsel reset` | - |
+| `improve.rs` | `hirsel improve` | - |
+| `templates.rs` | `hirsel templates` | - |
+| `man.rs` | `hirsel man` | - |
+| `completions.rs` | `hirsel completions` | - |
+| `compact.rs` | `hirsel compact` | - |
 | `test.rs` | `hirsel test <scenario>` | `cli` |
 | `acp_bridge.rs` | `hirsel __acp-bridge` | - |
+| `service_worker.rs` | `hirsel __service-worker --type scribe` | `cli` |
+| `mod.rs` | `hirsel clone <run>` (inline) | - |
+| `mod.rs` | `hirsel serve` (inline) | `server` |
 
-### `src/daemon/` - Background Process
+### `src-tauri/src/daemon/` - Background Process
 
 | File | Purpose |
 |------|---------|
 | `mod.rs` | Socket/PID paths, `is_daemon_running()` |
-| `server.rs` | Daemon server, TCP + Unix socket listeners |
+| `server.rs` | Daemon server, TCP listener |
 | `lifecycle.rs` | Polling loop, lifecycle action handling |
 | `client.rs` | Client for daemon communication |
 
@@ -155,7 +186,7 @@ cargo build --features s3-storage               # With S3 support
 
 ## Key Traits
 
-### `Orchestrator` (`src/core/orchestrator/mod.rs:229`)
+### `Orchestrator` (`src-tauri/src/core/orchestrator/mod.rs`)
 
 High-level run management interface. CLI, GUI, and server use this trait.
 
@@ -179,10 +210,10 @@ pub trait Orchestrator: Send + Sync {
 | Implementation | Location | Use Case |
 |----------------|----------|----------|
 | `LocalOrchestrator` | `orchestrator/local.rs` | Direct SQLite access (daemon, server) |
-| `DaemonOrchestrator` | `orchestrator/daemon.rs` | Unix socket/TCP to daemon (CLI/GUI local mode) |
+| `DaemonOrchestrator` | `orchestrator/daemon.rs` | TCP to daemon (CLI/GUI local mode) |
 | `RemoteOrchestrator` | `orchestrator/remote.rs` | HTTP API to remote server |
 
-### `LifecycleManager` (`src/core/lifecycle/mod.rs:181`)
+### `LifecycleManager` (`src-tauri/src/core/lifecycle/mod.rs`)
 
 Centralized lifecycle state machine. Returns actions for daemon to execute.
 
@@ -209,7 +240,7 @@ pub trait LifecycleManager {
 | `LocalLifecycleManager` | `lifecycle/local.rs` | Local/daemon mode |
 | `RemoteLifecycleManager` | `lifecycle/remote.rs` | Remote workers (delegates to coordinator) |
 
-### `Runner` (`src/core/runner/types.rs:139`)
+### `Runner` (`src-tauri/src/core/runner/types.rs`)
 
 Worker spawning interface. Host + optional Container model.
 
@@ -220,7 +251,8 @@ pub trait Runner: Send + Sync {
     async fn stop(&self, handle: &WorkerHandle) -> RunnerResult<()>;
     async fn is_alive(&self, handle: &WorkerHandle) -> bool;
     fn runner_type(&self) -> &'static str;
-    fn is_ephemeral(&self) -> bool; // true for Fly, Sprite
+    async fn setup(&self) -> RunnerResult<()>;
+    async fn cleanup(&self) -> RunnerResult<()>;
 }
 ```
 
@@ -228,11 +260,10 @@ pub trait Runner: Send + Sync {
 |----------------|----------|-----------|-----------|
 | `LocalRunner` | `runner/local.rs` | Local machine | No |
 | `SshRunner` | `runner/ssh.rs` | Remote via SSH | No |
-| `SpriteRunner` | `runner/sprite.rs` | Sprites.dev VM | Yes |
 | `FlyRunner` | `runner/fly.rs` | Fly.io machine | Yes |
 | `ComposedRunner` | `runner/composed.rs` | Executor + Resource | Varies |
 
-### `ArchiveStrategy` (`src/core/snapshot/archive.rs`)
+### `ArchiveStrategy` (`src-tauri/src/core/snapshot/archive.rs`)
 
 Unified directory archiving for pause/resume. Replaces the separate `SnapshotStrategy` and `AgentSessionStorage` traits.
 
@@ -250,9 +281,8 @@ pub trait ArchiveStrategy: Send + Sync {
 |----------------|----------|------------|-------------|
 | `NoOpArchiveStrategy` | `snapshot/noop.rs` | Local, SSH, Client | None (files persist on disk) |
 | `S3ArchiveStrategy` | `snapshot/s3.rs` | Fly | `s3-storage` feature |
-| `SpriteCheckpointStrategy` | `snapshot/sprite_checkpoint.rs` | Sprite | Sprites API |
 
-### `WorkspaceProvider` (`src/core/draft/workspace.rs`)
+### `WorkspaceProvider` (`src-tauri/src/core/draft/workspace.rs`)
 
 Workspace initialization from StartingPoint.
 
@@ -271,9 +301,91 @@ pub trait WorkspaceProvider: Send + Sync {
 
 ---
 
+## Cross-Cutting Patterns
+
+### Error Handling (`src-tauri/src/core/error.rs`)
+
+Unified error hierarchy for the codebase.
+
+- `HirselError` enum with variants for all error types
+- `ErrorKind` for categorization: `NotFound`, `AlreadyExists`, `InvalidState`, `InvalidInput`, `State`, `Io`, `Git`, `Network`, `Auth`, `Process`, `Serialization`, `Timeout`, `Internal`
+- Automatic HTTP status mapping via `http_status()` method
+- `is_user_error()` distinguishes user errors from system errors
+
+### Process Management (`src-tauri/src/core/acp.rs`)
+
+`AcpChild` wraps subprocess lifecycle for clean process management.
+
+```rust
+pub struct AcpChild {
+    child: Child,
+    context: String,
+    pid: Option<u32>,
+}
+```
+
+- Creates process groups on Unix for proper cleanup of child processes
+- Drop impl: SIGTERM → wait with timeout → SIGKILL
+- Used for workers, chat sessions, ACP bridge
+
+### State Access Abstraction (`src-tauri/src/core/state_access.rs`)
+
+Workers transparently use local (SQLite) or remote (HTTP) state.
+
+```rust
+#[async_trait(?Send)]
+pub trait StateAccess: Send {
+    async fn status(&self) -> StateAccessResult<Status>;
+    async fn set_status(&self, status: Status) -> StateAccessResult<()>;
+    async fn add_task(&self, ...) -> StateAccessResult<()>;
+    async fn claim_task(&self, ...) -> StateAccessResult<bool>;
+    // ... task, message, worker operations
+}
+```
+
+- Workers use `HIRSEL_API_URL` environment variable to determine mode
+- Enables same worker binary for local and remote deployment
+- `SQLiteState` for local, `HttpState` for remote
+
+---
+
+## Real-Time Events
+
+### SSE Streaming (`src-tauri/src/core/server/gyp.rs`)
+
+Server-Sent Events for chat/worker updates.
+
+- Channel-based: `tokio::sync::mpsc::UnboundedChannel`
+- Event types: `TextDelta`, `ToolCallStart`, `ToolCallDelta`, `ToolCallComplete`, `PermissionRequest`, `SessionComplete`, `Error`
+- Endpoint: `/api/gyp/sessions/{id}/events`
+- GypState manages active sessions with cleanup on disconnect
+
+### ChatOrchestrator Trait (`src-tauri/src/core/chat_orchestrator/mod.rs`)
+
+Mirrors Orchestrator pattern for chat-specific operations.
+
+```rust
+#[async_trait]
+pub trait ChatOrchestrator: Send + Sync {
+    async fn start_session(&self, context: ChatContext) -> ChatOrchestratorResult<String>;
+    async fn stop_session(&self, session_id: &str) -> ChatOrchestratorResult<()>;
+    async fn send_message(&self, session_id: &str, message: &str) -> ChatOrchestratorResult<()>;
+    async fn respond_permission(&self, session_id: &str, response: PermissionResponse) -> ChatOrchestratorResult<()>;
+    async fn list_sessions(&self) -> ChatOrchestratorResult<Vec<SessionInfo>>;
+    fn subscribe(&self, session_id: &str) -> ChatOrchestratorResult<BoxStream<'static, ChatEvent>>;
+}
+```
+
+| Implementation | Location | Use Case |
+|----------------|----------|----------|
+| `LocalChatOrchestrator` | `chat_orchestrator/local.rs` | Direct in-process |
+| `RemoteChatOrchestrator` | `chat_orchestrator/remote.rs` | HTTP + SSE to coordinator |
+
+---
+
 ## State Machine
 
-### Run Status (`src/core/state/types.rs:15`)
+### Run Status (`src-tauri/src/core/state/types.rs`)
 
 ```
 Draft ──start──► Working ──eval──► Eval ──pass──► Done ──deliver──► Delivered
@@ -300,7 +412,7 @@ Draft ──start──► Working ──eval──► Eval ──pass──► 
 | `Delivered` | Changes pushed to branch | Yes |
 | `Failed` | Run failed (see `failure_reason`) | Yes |
 
-### Worker Status (`src/core/state/types.rs:151`)
+### Worker Status (`src-tauri/src/core/state/types.rs`)
 
 | Status | Description |
 |--------|-------------|
@@ -309,7 +421,7 @@ Draft ──start──► Working ──eval──► Eval ──pass──► 
 | `Paused` | Stopped (run is paused) |
 | `Error` | Process died unexpectedly |
 
-### Task Status (`src/core/state/types.rs:201`)
+### Task Status (`src-tauri/src/core/state/types.rs`)
 
 | Status | Description |
 |--------|-------------|
@@ -327,7 +439,7 @@ Draft ──start──► Working ──eval──► Eval ──pass──► 
 CLI/GUI
    │
    ▼ StartRunRequest
-DaemonOrchestrator ──Unix socket──► Daemon
+DaemonOrchestrator ──TCP──► Daemon
                                       │
                                       ▼ start_run_internal
                                 LocalOrchestrator
@@ -488,7 +600,7 @@ Daemon handles each ResumeWorker:
 
 ---
 
-## Configuration (`src/core/config/mod.rs`)
+## Configuration (`src-tauri/src/core/config/mod.rs`)
 
 ### DB-First Loading
 
@@ -518,8 +630,9 @@ When a config file exists, its values are loaded into the database. This enables
 | `default_runner` | `Option<String>` | `None` | Default runner name |
 | `profiles` | `HashMap<String, OrchestratorProfile>` | local | Orchestrator profiles |
 | `storage` | `StorageConfig` | local | Storage backend config |
+| `service_workers` | `ServiceWorkersConfig` | local | Service worker runner config |
 
-### Runner Configuration (`src/core/runner/config.rs`)
+### Runner Configuration (`src-tauri/src/core/runner/config.rs`)
 
 ```toml
 # Local runner (default)
@@ -539,14 +652,6 @@ type = "ssh"
 address = "user@server.com"
 port = 22
 work_base = "/tmp/hirsel"
-
-# Sprite runner
-[runners.sprite]
-[runners.sprite.host]
-type = "sprite"
-api_token = "..."
-checkpoint = "hirsel-v1"
-auto_destroy = true
 
 # Fly runner
 [runners.fly]
@@ -573,9 +678,33 @@ api_key = "secret"
 default_runner = "fly"
 ```
 
+### Service Workers Configuration
+
+Service workers provide warm worker support for background services like Scribe.
+
+```toml
+[service_workers]
+runner = "fly"                    # Default runner for service workers
+
+[service_workers.scribe]
+runner = "local"                  # Override for scribe (docs agent)
+idle_timeout_seconds = 300        # 5 min default
+```
+
+**Resolution order:**
+1. Service-specific runner (`service_workers.scribe.runner`)
+2. Default service runner (`service_workers.runner`)
+3. Local (fallback)
+
+**Behavior:**
+- `ScribeService.process_batch(run_name)` handles local vs remote internally
+- If runner is "local" or unset: runs scribe directly in-process (no HTTP)
+- If runner is a configured remote runner: spawns HTTP service worker, routes requests to it
+- Callers don't need to know about local vs remote - just call `process_batch()`
+
 ---
 
-## REST API (`src/core/server/mod.rs:71`)
+## REST API (`src-tauri/src/core/server/mod.rs`)
 
 **Auth:** `Authorization: Bearer $HIRSEL_API_KEY`
 
@@ -622,14 +751,31 @@ default_runner = "fly"
 | GET/PUT/DELETE | `/api/config/profiles/{name}` | profile CRUD |
 | POST/GET/DELETE | `/api/credentials/{key}` | credential CRUD |
 
+### Gyp Chat Endpoints
+
+| Method | Path | Handler |
+|--------|------|---------|
+| GET | `/api/gyp/sessions` | `list_sessions` |
+| POST | `/api/gyp/sessions` | `start_session` |
+| DELETE | `/api/gyp/sessions/{id}` | `stop_session` |
+| POST | `/api/gyp/sessions/{id}/messages` | `send_message` |
+| POST | `/api/gyp/sessions/{id}/permission` | `respond_permission` |
+| GET | `/api/gyp/sessions/{id}/events` | `session_events` (SSE) |
+
 ---
 
-## Daemon (`src/daemon/`)
+## Daemon (`src-tauri/src/daemon/`)
 
 Background process that owns lifecycle management.
 
 **Listeners:**
-- TCP: `0.0.0.0:19700` (CLI/GUI via localhost, Docker via host.docker.internal)
+- TCP: `0.0.0.0:{port}` where port is `HIRSEL_DAEMON_PORT` env var (default: 19700)
+- CLI/GUI connects via localhost, Docker via host.docker.internal
+
+**Port Configuration:**
+- Set `HIRSEL_DAEMON_PORT` to use a different port (useful for testing or multiple instances)
+- On startup, daemon checks if port is already in use and errors with helpful message
+- Each `HIRSEL_ROOT` should use a unique port to avoid conflicts
 
 **Polling Loop (every 5s):**
 ```rust
@@ -667,10 +813,10 @@ All orchestrator methods are fully implemented across Local, Daemon, and Remote:
 | Implementation | Transport | Use Case |
 |----------------|-----------|----------|
 | `LocalOrchestrator` | Direct SQLite | Server, daemon internals |
-| `DaemonOrchestrator` | Unix socket (HTTP) | CLI/GUI in local mode |
+| `DaemonOrchestrator` | TCP (HTTP) | CLI/GUI in local mode |
 | `RemoteOrchestrator` | TCP (HTTP) | CLI/GUI in remote mode |
 
-The daemon exposes the same HTTP API over Unix socket that the remote server exposes over TCP. This allows all orchestrator implementations to share the same route handlers.
+The daemon exposes the same HTTP API over TCP that the remote server exposes. This allows all orchestrator implementations to share the same route handlers.
 
 ### RemoteLifecycleManager (Intentional No-op)
 
@@ -704,7 +850,7 @@ Methods in `state/run.rs`:
 
 ### Remote Worker Bootstrap
 
-Ephemeral runners (Fly, Sprite) bootstrap workers via init scripts in `runner/setup.rs`:
+Ephemeral runners (Fly) bootstrap workers via init scripts in `runner/setup.rs`:
 
 1. **Download hirsel binary** - From GitHub releases with version pinning (`HIRSEL_TAG=v{VERSION}`)
 2. **Install dependencies** - Node.js for agent tools if not in image
@@ -714,10 +860,135 @@ Ephemeral runners (Fly, Sprite) bootstrap workers via init scripts in `runner/se
 
 The coordinator embeds its version at compile time and passes it to workers, ensuring binary compatibility.
 
+### Service Workers
+
+Service workers (`service_worker/`) manage background services that benefit from "warm" instances:
+
+| Service | Purpose | Default Timeout |
+|---------|---------|-----------------|
+| Scribe | Documentation agent processing learnings | 5 min |
+
+**Architecture:**
+```
+ScribeService.process_batch(run_name)
+    │
+    ├─ should_use_remote()?
+    │   │
+    │   ├─ No → process_locally()
+    │   │       └─ Run scribe directly (spawn_blocking + LocalSet)
+    │   │
+    │   └─ Yes → process_via_remote()
+    │           │
+    │           ├─ get_or_spawn_worker()
+    │           │   ├─ Health check existing worker
+    │           │   │   └─ Yes → reuse endpoint
+    │           │   │   └─ No → spawn new worker
+    │           │
+    │           └─ POST to /scribe/batch endpoint
+    │
+    └─ Worker self-terminates after idle timeout
+```
+
+**Key files:**
+- `core/service_worker/scribe.rs` - `ScribeService` handles local vs remote internally
+- `core/service_worker/types.rs` - `ServiceWorkerType`, `ServiceWorkerHandle`
+- `cli/service_worker.rs` - HTTP server for `__service-worker` command (remote only)
+- `daemon/lifecycle.rs` - Integration in `maybe_process_scribe()`
+
+**HTTP API (exposed by service worker binary):**
+- `GET /health` - Health check with idle time
+- `POST /scribe/batch` - Process scribe batch
+- `POST /shutdown` - Graceful shutdown
+
 ### Known Constraints
 
-- **Sprites cannot run Docker** - Firecracker VMs don't support nested containers
 - **Fly requires container.image** - Machines ARE containers
 - **Client host only in remote mode** - Requires Tailscale for SSH-back
 - **SSH reverse tunnel required for local mode** - Workers connect to `localhost:19700`
 - **Worker binary version** - Must match coordinator version (auto-pinned via `HIRSEL_TAG`)
+
+---
+
+## Testing
+
+### E2E Tests (`tests/e2e/`)
+
+Pytest-based tests with runner × scenario matrix.
+
+```
+tests/e2e/
+├── pyproject.toml          # uv project config
+├── conftest.py             # pytest fixtures, parametrization
+├── test_runs.py            # Main tests (3 classes)
+├── orchestrator.py         # Orchestrator setup (LOCAL, REMOTE)
+└── runners/                # Runner implementations
+    ├── base.py             # BaseRunner, RunnerConfig
+    ├── local.py            # LocalRunner
+    ├── docker.py           # DockerRunner
+    ├── ssh.py              # SshRunner
+    └── fly.py              # FlyRunner
+```
+
+**Test classes:**
+- `TestRunScenario` - Main parametrized runner × scenario tests
+- `TestPauseResume` - Pause/resume functionality (`@pytest.mark.slow`)
+- `TestDockerLifecycle` - Docker container cleanup (`@pytest.mark.docker`)
+
+**Running tests:**
+```bash
+cd tests/e2e
+uv sync
+uv run pytest                                    # Default (local, noop)
+uv run pytest --runner=fly --scenario=calculator # Specific
+uv run pytest -m "not slow"                      # Skip slow
+uv run pytest --profile=fly                      # Remote orchestrator
+```
+
+**Adding a runner:**
+1. Create `runners/myrunner.py` extending `BaseRunner`
+2. Implement `configure()`, `verify_output()`, `skip_if_unavailable()`
+3. Register in `conftest.py` → `RUNNERS` dict
+
+### Unit Tests
+
+Inline Rust tests in source files (`#[test]`, `#[tokio::test]`).
+- `src-tauri/src/core/orchestrator/test_harness.rs` - TestHarness for integration tests
+- CLI modules have unit tests for argument parsing
+
+Run with:
+```bash
+cargo nextest run
+```
+
+### MCP UI Tests (`tests/e2e/create-run.test.ts`)
+
+TypeScript test for UI automation via MCP client.
+
+### Scenarios (`tests/scenarios/`)
+
+| Scenario | Purpose |
+|----------|---------|
+| `hello_world` | Basic file creation |
+| `calculator` | Python with pytest |
+| `noop` | Minimal validation |
+| `todo_api` | FastAPI with eval |
+| `multi_file` | Multi-file changes |
+| `tic_tac_toe` | Game implementation |
+
+---
+
+## Future Directions
+
+### Sprites.dev Support (Removed)
+
+Sprite runner support was removed because:
+- Requires publicly-accessible coordinator URL (workers can't connect to localhost)
+- Fly.io provides similar ephemeral VM functionality with better integration
+- Adds maintenance burden for a rarely-used runner type
+
+If sprites.dev support is reconsidered in the future, it would require:
+1. Remote orchestrator mode (coordinator on Fly.io or similar)
+2. Or Tailscale integration for private connectivity
+3. Restore files from git history:
+   - `src-tauri/src/core/runner/sprite.rs`
+   - `src-tauri/src/core/snapshot/sprite_checkpoint.rs`

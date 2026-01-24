@@ -8,7 +8,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::time::Duration;
 
-use super::DEFAULT_TCP_PORT;
+use super::{get_daemon_port, DAEMON_PORT_ENV};
 
 /// Client for the hirsel daemon
 #[derive(Clone)]
@@ -32,28 +32,28 @@ impl DaemonClient {
 
     /// Connect to an existing daemon
     pub fn connect() -> Result<Self> {
-        if !super::is_daemon_running() {
-            return Err(anyhow!(
-                "Daemon is not running on port {}",
-                DEFAULT_TCP_PORT
-            ));
+        let port = get_daemon_port();
+        if !super::is_daemon_running_on_port(port) {
+            return Err(anyhow!("Daemon is not running on port {}", port));
         }
 
-        Self::new(DEFAULT_TCP_PORT)
+        Self::new(port)
     }
 
     /// Connect to daemon, starting it if needed
     pub fn connect_or_start() -> Result<Self> {
+        let port = get_daemon_port();
+
         match Self::connect() {
             Ok(client) => Ok(client),
             Err(_) => {
-                Self::start_daemon()?;
+                Self::start_daemon(port)?;
                 // Wait for daemon to be ready
                 for i in 0..50 {
                     std::thread::sleep(Duration::from_millis(100));
-                    if super::is_daemon_running() {
+                    if super::is_daemon_running_on_port(port) {
                         tracing::debug!("Connected to daemon after {}ms", (i + 1) * 100);
-                        return Self::new(DEFAULT_TCP_PORT);
+                        return Self::new(port);
                     }
                 }
                 Err(anyhow!("Daemon failed to start within 5 seconds"))
@@ -62,20 +62,31 @@ impl DaemonClient {
     }
 
     /// Start the daemon process
-    fn start_daemon() -> Result<()> {
+    fn start_daemon(port: u16) -> Result<()> {
         use std::process::{Command, Stdio};
 
         let exe = std::env::current_exe()?;
 
-        tracing::info!("Starting daemon: {} __daemon", exe.display());
+        tracing::info!(
+            "Starting daemon: {} __daemon (port {})",
+            exe.display(),
+            port
+        );
 
-        // Spawn daemon in background
-        Command::new(&exe)
-            .arg("__daemon")
+        // Spawn daemon in background, passing port via env var
+        let mut cmd = Command::new(&exe);
+        cmd.arg("__daemon")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()?;
+            .stderr(Stdio::null());
+
+        // Pass current environment including HIRSEL_ROOT and HIRSEL_DAEMON_PORT
+        if let Ok(root) = std::env::var("HIRSEL_ROOT") {
+            cmd.env("HIRSEL_ROOT", root);
+        }
+        cmd.env(DAEMON_PORT_ENV, port.to_string());
+
+        cmd.spawn()?;
 
         Ok(())
     }

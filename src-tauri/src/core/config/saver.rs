@@ -90,6 +90,9 @@ pub fn save_config(config: &Config, config_path: &Path) -> Result<(), ConfigErro
     // Storage section (only write if non-default)
     write_storage_section(&mut output, config);
 
+    // Service workers section (only write if configured)
+    write_service_workers_section(&mut output, config);
+
     // Ensure parent directory exists
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent).map_err(|e| ConfigError::ReadError {
@@ -188,27 +191,6 @@ fn write_runners_section(output: &mut String, config: &Config) {
                         output.push_str(&format!("work_base = \"{}\"\n", ssh.work_base));
                         if let Some(ref loc) = ssh.location {
                             output.push_str(&format!("location = \"{}\"\n", loc));
-                        }
-                    }
-                    HostConfig::Sprite(sprite) => {
-                        output.push_str(&format!("\n[runners.{}.host]\n", name));
-                        output.push_str("type = \"sprite\"\n");
-                        if let Some(ref token) = sprite.api_token {
-                            output.push_str(&format!("api_token = \"{}\"\n", token));
-                        }
-                        if let Some(ref cp) = sprite.checkpoint {
-                            output.push_str(&format!("checkpoint = \"{}\"\n", cp));
-                        }
-                        output.push_str(&format!("auto_destroy = {}\n", sprite.auto_destroy));
-                        output.push_str(&format!(
-                            "idle_timeout_secs = {}\n",
-                            sprite.idle_timeout_secs
-                        ));
-                        if sprite.api_url != "https://api.sprites.dev" {
-                            output.push_str(&format!("api_url = \"{}\"\n", sprite.api_url));
-                        }
-                        if sprite.use_file_push {
-                            output.push_str("use_file_push = true\n");
                         }
                     }
                     HostConfig::Fly(fly) => {
@@ -343,6 +325,47 @@ fn write_storage_section(output: &mut String, config: &Config) {
         for (name, s3) in &config.storage.storages {
             output.push_str(&format!("\n[storage.storages.{}]\n", name));
             write_s3_config(output, s3);
+        }
+
+        output.push('\n');
+    }
+}
+
+fn write_service_workers_section(output: &mut String, config: &Config) {
+    let sw = &config.service_workers;
+    let has_content = sw.runner.is_some()
+        || sw.scribe.runner.is_some()
+        || sw.scribe.idle_timeout_seconds.is_some()
+        || sw.gyp.runner.is_some()
+        || sw.gyp.idle_timeout_seconds.is_some();
+
+    if has_content {
+        output.push_str("[service_workers]\n");
+
+        if let Some(ref runner) = sw.runner {
+            output.push_str(&format!("runner = \"{}\"\n", runner));
+        }
+
+        // Scribe section
+        if sw.scribe.runner.is_some() || sw.scribe.idle_timeout_seconds.is_some() {
+            output.push_str("\n[service_workers.scribe]\n");
+            if let Some(ref runner) = sw.scribe.runner {
+                output.push_str(&format!("runner = \"{}\"\n", runner));
+            }
+            if let Some(timeout) = sw.scribe.idle_timeout_seconds {
+                output.push_str(&format!("idle_timeout_seconds = {}\n", timeout));
+            }
+        }
+
+        // Gyp section
+        if sw.gyp.runner.is_some() || sw.gyp.idle_timeout_seconds.is_some() {
+            output.push_str("\n[service_workers.gyp]\n");
+            if let Some(ref runner) = sw.gyp.runner {
+                output.push_str(&format!("runner = \"{}\"\n", runner));
+            }
+            if let Some(timeout) = sw.gyp.idle_timeout_seconds {
+                output.push_str(&format!("idle_timeout_seconds = {}\n", timeout));
+            }
         }
 
         output.push('\n');

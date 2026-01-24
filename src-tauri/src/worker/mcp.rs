@@ -189,7 +189,7 @@ fn get_tools() -> Vec<Tool> {
                 "properties": {
                     "thread": {
                         "type": "string",
-                        "description": "Thread name: 'user' for DM to human, 'group' for team chat, 'learnings' for shared notes"
+                        "description": "Thread name: 'user' for DM to human, 'group' for team chat"
                     },
                     "message": {
                         "type": "string",
@@ -255,6 +255,33 @@ fn get_tools() -> Vec<Tool> {
             input_schema: json!({
                 "type": "object",
                 "properties": {}
+            }),
+        },
+        Tool {
+            name: "scribe",
+            description: "Record a learning or discovery about the codebase. Use for patterns, gotchas, architecture decisions, or anything future workers should know. Learnings are batched and integrated into docs/ by a Scribe agent.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "The learning to record (patterns, gotchas, architecture decisions, etc.)"
+                    }
+                },
+                "required": ["content"]
+            }),
+        },
+        Tool {
+            name: "read_docs",
+            description: "Read the current project documentation maintained by the Scribe. Returns all docs or a specific file. Check docs at task start for accumulated project knowledge.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "file": {
+                        "type": "string",
+                        "description": "Optional: specific file to read (e.g., 'architecture.md'). If omitted, returns all docs."
+                    }
+                }
             }),
         },
     ]
@@ -430,6 +457,17 @@ impl McpServer {
                 self.runner.work_done()
             }
             "time_status" => self.time_status(),
+            "scribe" => {
+                let content = args
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("content is required".into()))?;
+                self.runner.scribe(content)
+            }
+            "read_docs" => {
+                let file = args.get("file").and_then(|v| v.as_str());
+                self.runner.read_docs(file)
+            }
             _ => Err(WorkerError::Config(format!("Unknown tool: {}", name))),
         }
     }

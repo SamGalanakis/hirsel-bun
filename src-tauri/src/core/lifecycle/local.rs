@@ -215,7 +215,7 @@ impl LocalLifecycleManager {
 
     /// Pause all workers (kill processes and mark as Paused).
     ///
-    /// For ephemeral hosts (Sprite, Fly), creates a snapshot of the work directory
+    /// For ephemeral hosts (Fly), creates a snapshot of the work directory
     /// before stopping the worker so it can be restored on resume.
     fn pause_all_workers_internal(&self) -> LifecycleResult<Vec<String>> {
         // Helper to run async code - handles being called from within or outside a runtime
@@ -577,8 +577,15 @@ impl LocalLifecycleManager {
         };
 
         // Add worker to state (status will be set to Working by spawn_single_worker)
+        // Use the default runner from the run config, not hardcoded "local"
+        let location = self
+            .state
+            .get_default_runner()
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "local".to_string());
         self.state
-            .add_worker(&new_name, worker_dir.to_str().unwrap_or("."), "local")
+            .add_worker(&new_name, worker_dir.to_str().unwrap_or("."), &location)
             .map_err(|e| LifecycleError::State(e.to_string()))?;
 
         // Create worker chat file

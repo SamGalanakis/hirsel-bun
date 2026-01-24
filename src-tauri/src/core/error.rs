@@ -467,6 +467,108 @@ impl From<crate::core::storage::StorageError> for HirselError {
     }
 }
 
+impl From<crate::core::runner::RunnerError> for HirselError {
+    fn from(err: crate::core::runner::RunnerError) -> Self {
+        match err {
+            crate::core::runner::RunnerError::SpawnFailed(msg) => HirselError::Process(msg),
+            crate::core::runner::RunnerError::StopFailed(msg) => HirselError::Process(msg),
+            crate::core::runner::RunnerError::WorkerNotFound(name) => {
+                HirselError::WorkerNotFound(name)
+            }
+            crate::core::runner::RunnerError::SetupFailed(msg) => HirselError::Process(msg),
+            crate::core::runner::RunnerError::Io(e) => HirselError::Io(e),
+            crate::core::runner::RunnerError::Ssh(msg) => HirselError::Connection(msg),
+            crate::core::runner::RunnerError::Api(msg) => HirselError::Http(msg),
+            crate::core::runner::RunnerError::Config(msg) => HirselError::InvalidInput(msg),
+            crate::core::runner::RunnerError::State(msg) => HirselError::State(msg),
+            crate::core::runner::RunnerError::RunPaused => {
+                HirselError::InvalidState("Run is paused".to_string())
+            }
+            crate::core::runner::RunnerError::Timeout(msg) => HirselError::Timeout(msg),
+            crate::core::runner::RunnerError::IncompatibleMode(msg) => {
+                HirselError::InvalidInput(msg)
+            }
+        }
+    }
+}
+
+impl From<crate::core::acp::ACPError> for HirselError {
+    fn from(err: crate::core::acp::ACPError) -> Self {
+        match err {
+            crate::core::acp::ACPError::NotStarted => {
+                HirselError::InvalidState("Agent not started".to_string())
+            }
+            crate::core::acp::ACPError::ProcessExited => {
+                HirselError::Process("Agent process exited unexpectedly".to_string())
+            }
+            crate::core::acp::ACPError::SessionNotFound(id) => {
+                HirselError::NotFound(format!("Session '{}'", id))
+            }
+            crate::core::acp::ACPError::Protocol(msg) => HirselError::Internal(msg),
+            crate::core::acp::ACPError::Io(e) => HirselError::Io(e),
+            crate::core::acp::ACPError::Serialization(e) => HirselError::Json(e),
+        }
+    }
+}
+
+impl From<crate::core::state_access::StateAccessError> for HirselError {
+    fn from(err: crate::core::state_access::StateAccessError) -> Self {
+        match err {
+            crate::core::state_access::StateAccessError::Database(msg) => HirselError::State(msg),
+            crate::core::state_access::StateAccessError::Http(msg) => HirselError::Http(msg),
+            crate::core::state_access::StateAccessError::Connection(msg) => {
+                HirselError::Connection(msg)
+            }
+            crate::core::state_access::StateAccessError::NotFound(msg) => {
+                HirselError::NotFound(msg)
+            }
+            crate::core::state_access::StateAccessError::InvalidOperation(msg) => {
+                HirselError::InvalidState(msg)
+            }
+        }
+    }
+}
+
+impl From<crate::core::chat_orchestrator::ChatOrchestratorError> for HirselError {
+    fn from(err: crate::core::chat_orchestrator::ChatOrchestratorError) -> Self {
+        match err {
+            crate::core::chat_orchestrator::ChatOrchestratorError::SessionNotFound(id) => {
+                HirselError::NotFound(format!("Session '{}'", id))
+            }
+            crate::core::chat_orchestrator::ChatOrchestratorError::SessionExists(id) => {
+                HirselError::AlreadyExists(format!("Session '{}' already exists", id))
+            }
+            crate::core::chat_orchestrator::ChatOrchestratorError::StartFailed(msg) => {
+                HirselError::Process(msg)
+            }
+            crate::core::chat_orchestrator::ChatOrchestratorError::Connection(msg) => {
+                HirselError::Connection(msg)
+            }
+            crate::core::chat_orchestrator::ChatOrchestratorError::Http(msg) => {
+                HirselError::Http(msg)
+            }
+            crate::core::chat_orchestrator::ChatOrchestratorError::StreamError(msg) => {
+                HirselError::Http(msg)
+            }
+            crate::core::chat_orchestrator::ChatOrchestratorError::Serialization(msg) => {
+                HirselError::InvalidInput(msg)
+            }
+            crate::core::chat_orchestrator::ChatOrchestratorError::Channel(msg) => {
+                HirselError::Internal(msg)
+            }
+            crate::core::chat_orchestrator::ChatOrchestratorError::Config(msg) => {
+                HirselError::InvalidInput(msg)
+            }
+            crate::core::chat_orchestrator::ChatOrchestratorError::UnknownProfile(name) => {
+                HirselError::NotFound(format!("Profile '{}'", name))
+            }
+            crate::core::chat_orchestrator::ChatOrchestratorError::Other(msg) => {
+                HirselError::Internal(msg)
+            }
+        }
+    }
+}
+
 // =============================================================================
 // Result type alias
 // =============================================================================

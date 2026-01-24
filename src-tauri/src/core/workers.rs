@@ -59,6 +59,10 @@ pub struct SpawnResult {
 ///
 /// Creates a detached subprocess running the worker runner, which manages
 /// the ACP client and task claim/done cycle.
+///
+/// Note: Worker status is only set to Working AFTER successful spawn and
+/// process alive verification. This prevents race conditions where the
+/// status shows Working but the process failed to start.
 pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerResult<SpawnResult> {
     // Check if run is paused before spawning
     if state.status()? == Status::Paused {
@@ -76,16 +80,7 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
         return Err(WorkerError::RunPaused);
     }
 
-    // Update worker status to working
-    state.update_worker(
-        &config.worker_name,
-        WorkerUpdate {
-            status: Some(WorkerStatus::Working),
-            ..Default::default()
-        },
-    )?;
-
-    // Build environment for worker subprocess
+    // Build environment for worker subprocess BEFORE updating state
     let mut env: HashMap<String, String> = std::env::vars().collect();
     env.insert(
         "ACP_PERMISSION_MODE".to_string(),
@@ -111,12 +106,31 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
     }
 
     // Get the current executable path
-    let hirsel_exe = std::env::current_exe()
-        .map_err(|e| WorkerError::SpawnFailed(format!("Failed to get current exe: {}", e)))?;
+    let hirsel_exe = std::env::current_exe().map_err(|e| {
+        let err = WorkerError::SpawnFailed(format!("Failed to get current exe: {}", e));
+        // Mark worker as error state on failure
+        let _ = state.update_worker(
+            &config.worker_name,
+            WorkerUpdate {
+                status: Some(WorkerStatus::Error),
+                ..Default::default()
+            },
+        );
+        err
+    })?;
 
     // Build args for hirsel __worker-run
     let agent_command_json = serde_json::to_string(&config.agent_command).map_err(|e| {
-        WorkerError::SpawnFailed(format!("Failed to serialize agent command: {}", e))
+        let err = WorkerError::SpawnFailed(format!("Failed to serialize agent command: {}", e));
+        // Mark worker as error state on failure
+        let _ = state.update_worker(
+            &config.worker_name,
+            WorkerUpdate {
+                status: Some(WorkerStatus::Error),
+                ..Default::default()
+            },
+        );
+        err
     })?;
 
     let mut args = vec![
@@ -174,16 +188,47 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
         cmd.process_group(0);
     }
 
-    let child = cmd
-        .spawn()
-        .map_err(|e| WorkerError::SpawnFailed(e.to_string()))?;
+    let child = cmd.spawn().map_err(|e| {
+        let err = WorkerError::SpawnFailed(e.to_string());
+        // Mark worker as error state on spawn failure
+        let _ = state.update_worker(
+            &config.worker_name,
+            WorkerUpdate {
+                status: Some(WorkerStatus::Error),
+                ..Default::default()
+            },
+        );
+        err
+    })?;
 
     let pid = child.id();
 
-    // Update worker with PID and runner info
+    // Verify the process is actually alive after spawn
+    // This catches cases where the process exits immediately
+    if !is_pid_alive(pid) {
+        warn!(
+            "[{}] spawn_worker: process {} died immediately after spawn",
+            config.worker_name, pid
+        );
+        state.update_worker(
+            &config.worker_name,
+            WorkerUpdate {
+                status: Some(WorkerStatus::Error),
+                ..Default::default()
+            },
+        )?;
+        return Err(WorkerError::SpawnFailed(format!(
+            "Process {} exited immediately after spawn",
+            pid
+        )));
+    }
+
+    // SUCCESS: Update worker with status, PID, and runner info
+    // Status is only set to Working AFTER successful spawn and alive check
     state.update_worker(
         &config.worker_name,
         WorkerUpdate {
+            status: Some(WorkerStatus::Working),
             pid: Some(pid as i64),
             runner_id: Some(pid.to_string()),
             runner_type: Some("local".to_string()),

@@ -10,7 +10,10 @@ use std::collections::HashMap;
 use std::path::Path;
 use thiserror::Error;
 
-use super::{AgentConfig, AuthConfig, Config, GitConfig, OrchestratorProfile, StorageConfig};
+use super::{
+    AgentConfig, AuthConfig, Config, GitConfig, OrchestratorProfile, ServiceWorkersConfig,
+    StorageConfig,
+};
 use crate::core::runner::RunnerConfig;
 
 const SCHEMA: &str = r#"
@@ -62,6 +65,7 @@ pub struct PartialConfig {
     pub git: Option<GitConfig>,
     pub storage: Option<StorageConfig>,
     pub allow_local_workers: Option<bool>,
+    pub service_workers: Option<ServiceWorkersConfig>,
 }
 
 /// Database-backed configuration store.
@@ -223,6 +227,9 @@ impl ConfigStore {
                 "allow_local_workers" => {
                     partial.allow_local_workers = Some(value == "true");
                 }
+                "service_workers" => {
+                    partial.service_workers = serde_json::from_str(&value).ok();
+                }
                 _ => {
                     // Unknown key, ignore
                 }
@@ -314,6 +321,12 @@ impl ConfigStore {
             } else {
                 "false"
             },
+        )?;
+
+        // Service workers
+        self.set(
+            "service_workers",
+            &serde_json::to_string(&config.service_workers)?,
         )?;
 
         Ok(())

@@ -10,14 +10,16 @@ mod events;
 mod history;
 mod messages;
 mod run;
+mod scribe;
 mod tasks;
 pub mod types;
 mod workers;
 
 use chrono::Utc;
 use rusqlite::{params, Connection};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+pub use scribe::ScribeSubmission;
 pub use types::*;
 
 // =============================================================================
@@ -54,7 +56,9 @@ CREATE TABLE IF NOT EXISTS state (
     default_runner TEXT,
     worker_runners TEXT,
     starting_point TEXT,
-    runner_configs TEXT
+    runner_configs TEXT,
+    scribe_batch_started_at TEXT,
+    docs_version INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS workers (
@@ -152,6 +156,20 @@ CREATE TABLE IF NOT EXISTS worker_events (
     tool_output TEXT
 );
 
+-- Scribe submissions for documentation updates
+-- status: 'pending', 'processing', 'done', 'failed'
+CREATE TABLE IF NOT EXISTS scribe_submissions (
+    id INTEGER PRIMARY KEY,
+    worker_name TEXT NOT NULL,
+    content TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    batch_id INTEGER,
+    retry_count INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    processed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_scribe_status ON scribe_submissions(status);
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread);
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 CREATE INDEX IF NOT EXISTS idx_worker_events_worker ON worker_events(worker_name);
@@ -188,6 +206,11 @@ impl SQLiteState {
         // Enable WAL mode for better concurrent read/write performance
         self.db.pragma_update(None, "journal_mode", "WAL")?;
         Ok(())
+    }
+
+    /// Get the database path
+    pub fn db_path(&self) -> &Path {
+        &self.db_path
     }
 
     fn init_db(&mut self) -> StateResult<()> {

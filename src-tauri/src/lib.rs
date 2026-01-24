@@ -413,6 +413,26 @@ fn run_command(
             })
             .map_err(|e| format!("Compaction error: {}", e))?;
         }
+        Commands::Scribe(args) => {
+            // Internal command to run scribe processing
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| format!("Failed to create runtime: {}", e))?;
+            rt.block_on(async {
+                tokio::task::LocalSet::new()
+                    .run_until(async { cli::scribe::execute(&args.run_name).await })
+                    .await
+            })
+            .map_err(|e| format!("Scribe error: {}", e))?;
+        }
+        Commands::ServiceWorker(args) => {
+            // Internal command to run service worker (scribe/gyp HTTP server)
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| format!("Failed to create runtime: {}", e))?;
+            rt.block_on(async {
+                cli::service_worker::execute(&args.r#type, args.idle_timeout, args.port).await
+            })
+            .map_err(|e| format!("Service worker error: {}", e))?;
+        }
         Commands::RemoteWorker(args) => {
             // Internal command for remote worker subprocess
             let agent_command: Vec<String> = serde_json::from_str(&args.agent_command)

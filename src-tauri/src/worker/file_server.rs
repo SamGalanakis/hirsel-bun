@@ -1,7 +1,7 @@
 //! HTTP file receiver for remote workers.
 //!
 //! This module implements a lightweight HTTP server that receives file uploads
-//! from the coordinator. This is used by sprite workers to receive the project
+//! from the coordinator. This is used by remote workers to receive the project
 //! files (spec, code, etc.) without needing to pull from a URL.
 //!
 //! Endpoints:

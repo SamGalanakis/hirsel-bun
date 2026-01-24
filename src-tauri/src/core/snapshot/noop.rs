@@ -7,7 +7,6 @@
 //!
 //! - **Local host**: Files persist in the run directory
 //! - **SSH host**: Files persist on the remote disk
-//! - **Sprite VMs**: VM checkpoint captures all state (archive is handled by VM)
 //! - **Docker with mounts**: Session directories are mounted from host
 
 use async_trait::async_trait;
@@ -23,7 +22,6 @@ use super::SnapshotError;
 /// any data during archive/restore operations. It's used for:
 ///
 /// - Local and SSH hosts where files remain on disk
-/// - Sprite VMs where the VM checkpoint handles state preservation
 /// - Docker containers where directories are bind-mounted from the host
 #[derive(Debug, Clone, Default)]
 pub struct NoOpArchiveStrategy;

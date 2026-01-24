@@ -11,7 +11,7 @@ mod agent;
 mod git;
 mod loader;
 mod orchestrator;
-mod paths;
+pub mod paths;
 mod saver;
 mod storage;
 pub mod store;
@@ -143,10 +143,77 @@ fn default_allow_local_workers() -> bool {
     true
 }
 
+fn default_scribe_enabled() -> bool {
+    true
+}
+
+fn default_scribe_batch_window() -> u32 {
+    3
+}
+
+fn default_scribe_idle_timeout() -> u32 {
+    300 // 5 minutes
+}
+
+fn default_gyp_idle_timeout() -> u32 {
+    600 // 10 minutes
+}
+
 fn default_profiles() -> HashMap<String, OrchestratorProfile> {
     let mut profiles = HashMap::new();
     profiles.insert("local".to_string(), OrchestratorProfile::default());
     profiles
+}
+
+/// Configuration for a single service worker (scribe or gyp)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ServiceWorkerConfig {
+    /// Runner name override for this service worker
+    #[serde(default)]
+    pub runner: Option<String>,
+    /// Idle timeout in seconds before the worker self-terminates
+    #[serde(default)]
+    pub idle_timeout_seconds: Option<u32>,
+}
+
+/// Configuration for service workers (scribe, gyp)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ServiceWorkersConfig {
+    /// Default runner for all service workers (falls back to local)
+    #[serde(default)]
+    pub runner: Option<String>,
+    /// Scribe service worker configuration
+    #[serde(default)]
+    pub scribe: ServiceWorkerConfig,
+    /// Gyp service worker configuration
+    #[serde(default)]
+    pub gyp: ServiceWorkerConfig,
+}
+
+impl ServiceWorkersConfig {
+    /// Get the effective runner for scribe
+    pub fn scribe_runner(&self) -> Option<&str> {
+        self.scribe.runner.as_deref().or(self.runner.as_deref())
+    }
+
+    /// Get the effective runner for gyp
+    pub fn gyp_runner(&self) -> Option<&str> {
+        self.gyp.runner.as_deref().or(self.runner.as_deref())
+    }
+
+    /// Get the idle timeout for scribe in seconds
+    pub fn scribe_idle_timeout(&self) -> u32 {
+        self.scribe
+            .idle_timeout_seconds
+            .unwrap_or(default_scribe_idle_timeout())
+    }
+
+    /// Get the idle timeout for gyp in seconds
+    pub fn gyp_idle_timeout(&self) -> u32 {
+        self.gyp
+            .idle_timeout_seconds
+            .unwrap_or(default_gyp_idle_timeout())
+    }
 }
 
 /// Main configuration struct
@@ -226,6 +293,18 @@ pub struct Config {
     /// Set to false on remote coordinators (e.g., Fly.io) where local workers don't make sense
     #[serde(default = "default_allow_local_workers")]
     pub allow_local_workers: bool,
+
+    /// Whether to enable the scribe system for documentation updates (default: true)
+    #[serde(default = "default_scribe_enabled")]
+    pub scribe_enabled: bool,
+
+    /// How long to wait (in seconds) for more submissions before processing a scribe batch (default: 3)
+    #[serde(default = "default_scribe_batch_window")]
+    pub scribe_batch_window_seconds: u32,
+
+    /// Service workers configuration (scribe, gyp)
+    #[serde(default)]
+    pub service_workers: ServiceWorkersConfig,
 }
 
 impl Default for Config {
@@ -254,6 +333,9 @@ impl Default for Config {
             git: GitConfig::default(),
             storage: StorageConfig::default(),
             allow_local_workers: default_allow_local_workers(),
+            scribe_enabled: default_scribe_enabled(),
+            scribe_batch_window_seconds: default_scribe_batch_window(),
+            service_workers: ServiceWorkersConfig::default(),
         }
     }
 }
@@ -386,6 +468,9 @@ impl Config {
         }
         if let Some(allow_local_workers) = partial.allow_local_workers {
             self.allow_local_workers = allow_local_workers;
+        }
+        if let Some(service_workers) = partial.service_workers {
+            self.service_workers = service_workers;
         }
     }
 

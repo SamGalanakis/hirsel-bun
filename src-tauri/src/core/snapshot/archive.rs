@@ -17,9 +17,8 @@
 //!
 //! | Strategy | Use Case | Implementation |
 //! |----------|----------|----------------|
-//! | `NoOpArchiveStrategy` | Local/SSH hosts, Sprite VMs | Files persist on disk/VM checkpoint |
+//! | `NoOpArchiveStrategy` | Local/SSH hosts | Files persist on disk |
 //! | `S3ArchiveStrategy` | Fly.io, ephemeral hosts | Tar + upload to S3 |
-//! | `SpriteCheckpointStrategy` | Sprite VMs | Native VM checkpoint API |
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -35,9 +34,9 @@ pub type ArchiveResult<T> = Result<T, SnapshotError>;
 /// A generic archive handle that can represent any archived directory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArchiveHandle {
-    /// Type of strategy that created this archive (e.g., "noop", "s3", "sprite").
+    /// Type of strategy that created this archive (e.g., "noop", "s3").
     pub strategy_type: String,
-    /// Storage identifier (S3 key, local path, sprite checkpoint ID, etc.).
+    /// Storage identifier (S3 key, local path, etc.).
     pub storage_id: String,
     /// Size of the archive in bytes (if known).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -75,7 +74,6 @@ impl ArchiveHandle {
 ///
 /// - **NoOp**: For local/SSH hosts where files persist on disk
 /// - **S3**: For ephemeral hosts (Fly.io) where directories must be uploaded
-/// - **Sprite**: For Sprite VMs using native checkpoint API
 #[async_trait]
 pub trait ArchiveStrategy: Send + Sync {
     /// Archive a directory to storage.

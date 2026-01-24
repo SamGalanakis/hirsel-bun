@@ -11,6 +11,7 @@ pub mod acp_bridge;
 pub mod asset;
 #[cfg(feature = "cli")]
 pub mod attach;
+pub mod clone;
 pub mod compact;
 pub mod completions;
 pub mod config;
@@ -29,6 +30,8 @@ pub mod prune;
 pub mod reset;
 pub mod resume;
 pub mod runs;
+pub mod scribe;
+pub mod service_worker;
 pub mod spec;
 pub mod summary;
 pub mod tasks;
@@ -220,6 +223,14 @@ pub enum Commands {
     /// Run learnings compaction (internal, spawned by GUI polling)
     #[command(name = "__compact-learnings", hide = true)]
     CompactLearnings(RunNameArg),
+
+    /// Run scribe processing (internal, spawned by daemon)
+    #[command(name = "__scribe", hide = true)]
+    Scribe(RunNameArg),
+
+    /// Run service worker (internal, spawned for scribe/gyp remote processing)
+    #[command(name = "__service-worker", hide = true)]
+    ServiceWorker(ServiceWorkerArgs),
 
     /// Run remote worker (internal, spawned on remote machine via SSH)
     #[command(name = "__remote-worker", hide = true)]
@@ -428,7 +439,7 @@ pub struct GoArgs {
     #[arg(long)]
     pub assets: Option<String>,
 
-    /// Runner to use for workers (e.g., "local", "sprites", or a named runner from config)
+    /// Runner to use for workers (e.g., "local", "fly", or a named runner from config)
     #[arg(long)]
     pub runner: Option<String>,
 }
@@ -664,7 +675,7 @@ pub struct TestArgs {
     #[arg(long)]
     pub remote: Option<String>,
 
-    /// Runner to use for workers (e.g., "local", "sprites", or a named runner from config)
+    /// Runner to use for workers (e.g., "local", "fly", or a named runner from config)
     #[arg(long)]
     pub runner: Option<String>,
 }
@@ -674,6 +685,22 @@ pub struct TestArgs {
 pub struct ServeArgs {
     /// Port to listen on
     #[arg(long, default_value = "8080")]
+    pub port: u16,
+}
+
+/// Arguments for `hirsel __service-worker` (internal)
+#[derive(Args, Debug)]
+pub struct ServiceWorkerArgs {
+    /// Service worker type (scribe or gyp)
+    #[arg(long, value_parser = ["scribe", "gyp"])]
+    pub r#type: String,
+
+    /// Idle timeout in seconds (worker exits if no activity)
+    #[arg(long, default_value = "300")]
+    pub idle_timeout: u32,
+
+    /// Port to listen on (0 for random)
+    #[arg(long, default_value = "0")]
     pub port: u16,
 }
 
@@ -812,7 +839,7 @@ pub struct WorkerTaskDoneArgs {
 /// Arguments for worker msg send
 #[derive(Args, Debug)]
 pub struct WorkerMsgSendArgs {
-    /// Thread name: "user" for DM to human, "group" for team chat, "learnings" for shared notes
+    /// Thread name: "user" for DM to human, "group" for team chat
     pub thread: String,
 
     /// Message content
@@ -1007,28 +1034,9 @@ pub fn run_cli() -> anyhow::Result<bool> {
             }
         }
         Commands::Clone(args) => {
-            use crate::core::ops::{clone_run, CloneRunConfig};
-
-            let config = CloneRunConfig::new(&args.source_run, &args.new_name);
-
-            match clone_run(config) {
-                Ok(result) => {
-                    if json {
-                        println!(
-                            r#"{{"source": "{}", "new_name": "{}", "status": "draft"}}"#,
-                            result.source_run, result.new_name
-                        );
-                    } else {
-                        println!(
-                            "Cloned '{}' to '{}' (draft)",
-                            result.source_run, result.new_name
-                        );
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
-                }
+            if let Err(e) = clone::execute(&args.source_run, &args.new_name, json) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
             }
         }
         Commands::Prune => {
@@ -1312,6 +1320,18 @@ pub fn run_cli() -> anyhow::Result<bool> {
             // This is handled by lib.rs run_cli() for compatibility
             // Should not reach here in normal CLI flow
             eprintln!("Compact learnings command should be called via hirsel binary directly");
+            std::process::exit(1);
+        }
+        Commands::Scribe(_args) => {
+            // This is handled by lib.rs run_cli() for compatibility
+            // Should not reach here in normal CLI flow
+            eprintln!("Scribe command should be called via hirsel binary directly");
+            std::process::exit(1);
+        }
+        Commands::ServiceWorker(_args) => {
+            // This is handled by lib.rs run_cli() for compatibility
+            // Should not reach here in normal CLI flow
+            eprintln!("Service worker command should be called via hirsel binary directly");
             std::process::exit(1);
         }
         Commands::RemoteWorker(_args) => {

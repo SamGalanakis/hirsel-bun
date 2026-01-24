@@ -479,6 +479,83 @@ impl HttpState {
     }
 
     // =========================================================================
+    // Scribe operations
+    // =========================================================================
+
+    pub async fn add_scribe_submission(
+        &self,
+        worker_name: &str,
+        content: &str,
+    ) -> HttpStateResult<i64> {
+        #[derive(Serialize)]
+        struct ScribeRequest {
+            worker_name: String,
+            content: String,
+        }
+        #[derive(Deserialize)]
+        struct ScribeResponse {
+            id: i64,
+        }
+        let result: ScribeResponse = self
+            .post(
+                "/scribe",
+                &ScribeRequest {
+                    worker_name: worker_name.to_string(),
+                    content: content.to_string(),
+                },
+            )
+            .await?;
+        Ok(result.id)
+    }
+
+    pub async fn read_docs(
+        &self,
+        file: Option<&str>,
+    ) -> HttpStateResult<crate::core::files::DocsContent> {
+        use crate::core::files::{DocFile, DocsContent};
+
+        #[derive(Deserialize)]
+        struct DocFileResponse {
+            name: String,
+            content: String,
+        }
+        #[derive(Deserialize)]
+        struct DocsResponse {
+            files: Vec<DocFileResponse>,
+        }
+
+        let endpoint = self.run_endpoint("/docs");
+        let result: DocsResponse = self.get(&endpoint).await?;
+
+        if let Some(filename) = file {
+            // Return single file
+            if let Some(doc) = result.files.into_iter().find(|f| f.name == filename) {
+                Ok(DocsContent::Single {
+                    name: doc.name,
+                    content: doc.content,
+                })
+            } else {
+                Ok(DocsContent::Single {
+                    name: filename.to_string(),
+                    content: String::new(),
+                })
+            }
+        } else {
+            // Return all files
+            Ok(DocsContent::All {
+                files: result
+                    .files
+                    .into_iter()
+                    .map(|f| DocFile {
+                        name: f.name,
+                        content: f.content,
+                    })
+                    .collect(),
+            })
+        }
+    }
+
+    // =========================================================================
     // Config operations
     // =========================================================================
 
@@ -1076,6 +1153,21 @@ impl StateAccess for HttpState {
     async fn get_history(&self, _limit: i64) -> StateAccessResult<Vec<HistoryEntry>> {
         // Not implemented for remote workers
         Ok(vec![])
+    }
+
+    async fn add_scribe_submission(
+        &self,
+        worker_name: &str,
+        content: &str,
+    ) -> StateAccessResult<i64> {
+        Ok(HttpState::add_scribe_submission(self, worker_name, content).await?)
+    }
+
+    async fn read_docs(
+        &self,
+        file: Option<&str>,
+    ) -> StateAccessResult<crate::core::files::DocsContent> {
+        Ok(HttpState::read_docs(self, file).await?)
     }
 
     async fn init_state(&self, _project_path: Option<&str>) -> StateAccessResult<()> {

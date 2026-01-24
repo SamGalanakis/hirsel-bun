@@ -378,19 +378,6 @@ pub enum HostConfigResponse {
         work_base: String,
         location: Option<String>,
     },
-    #[serde(rename = "sprite")]
-    Sprite {
-        api_token: Option<String>,
-        checkpoint: Option<String>,
-        #[serde(default = "default_auto_destroy")]
-        auto_destroy: bool,
-        #[serde(default = "default_idle_timeout_secs")]
-        idle_timeout_secs: u32,
-        #[serde(default = "default_api_url")]
-        api_url: String,
-        #[serde(default)]
-        use_file_push: bool,
-    },
     #[serde(rename = "fly")]
     Fly {
         api_token: Option<String>,
@@ -435,14 +422,6 @@ impl From<crate::core::runner::RunnerConfig> for RunnerConfigResponse {
                     work_base: ssh.work_base.clone(),
                     location: ssh.location.clone(),
                 },
-                HostConfig::Sprite(sprite) => HostConfigResponse::Sprite {
-                    api_token: sprite.api_token.clone(),
-                    checkpoint: sprite.checkpoint.clone(),
-                    auto_destroy: sprite.auto_destroy,
-                    idle_timeout_secs: sprite.idle_timeout_secs,
-                    api_url: sprite.api_url.clone(),
-                    use_file_push: sprite.use_file_push,
-                },
                 HostConfig::Fly(fly) => HostConfigResponse::Fly {
                     api_token: fly.api_token.clone(),
                     app: fly.app.clone(),
@@ -467,7 +446,7 @@ impl From<RunnerConfigResponse> for crate::core::runner::RunnerConfig {
     fn from(cfg: RunnerConfigResponse) -> Self {
         use crate::core::runner::{
             ContainerConfig, FlyHostConfig, HostConfig, HostConfigOrShortcut, RunnerConfig,
-            SpriteHostConfig, SshHostConfig,
+            SshHostConfig,
         };
 
         let host = match cfg.host {
@@ -485,21 +464,6 @@ impl From<RunnerConfigResponse> for crate::core::runner::RunnerConfig {
                 ssh_key,
                 work_base,
                 location,
-            })),
-            HostConfigResponse::Sprite {
-                api_token,
-                checkpoint,
-                auto_destroy,
-                idle_timeout_secs,
-                api_url,
-                use_file_push,
-            } => HostConfigOrShortcut::Full(HostConfig::Sprite(SpriteHostConfig {
-                api_token,
-                checkpoint,
-                auto_destroy,
-                idle_timeout_secs,
-                api_url,
-                use_file_push,
             })),
             HostConfigResponse::Fly {
                 api_token,
@@ -528,12 +492,6 @@ impl From<RunnerConfigResponse> for crate::core::runner::RunnerConfig {
 
 fn default_auto_destroy() -> bool {
     true
-}
-fn default_idle_timeout_secs() -> u32 {
-    30
-}
-fn default_api_url() -> String {
-    "https://api.sprites.dev".to_string()
 }
 fn default_fly_cpu_kind() -> String {
     "shared".to_string()
