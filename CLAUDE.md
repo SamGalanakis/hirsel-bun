@@ -111,24 +111,6 @@ cargo build --no-default-features -F worker    # Remote worker
 cargo build --features s3-storage              # With S3 storage support
 ```
 
-## Sprites
-
-Cloud VMs via [sprites.dev](https://sprites.dev). Setup checkpoint:
-```bash
-cargo build --release --no-default-features --features worker
-SPRITES_TOKEN=xxx ./scripts/setup-sprite-checkpoint.sh my-checkpoint
-```
-
-Config (`~/.hirsel/config.toml`):
-```toml
-[runners.cloud]
-[runners.cloud.host]
-type = "sprite"
-api_token = "..."
-checkpoint = "checkpoint-id"
-auto_destroy = true
-```
-
 ## Fly.io
 
 Deploy coordinator and workers on [Fly.io](https://fly.io).

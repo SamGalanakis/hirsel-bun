@@ -10,7 +10,7 @@
 // =============================================================================
 
 /** Host type - where compute runs */
-export type HostType = 'local' | 'client' | 'ssh' | 'sprite';
+export type HostType = 'local' | 'client' | 'ssh' | 'fly';
 
 /** Container configuration for Docker */
 export interface ContainerConfig {
@@ -27,19 +27,20 @@ export interface SshHostConfig {
   location: string | null;
 }
 
-/** Sprite (cloud VM) host configuration */
-export interface SpriteHostConfig {
-  type: 'sprite';
+/** Fly.io host configuration */
+export interface FlyHostConfig {
+  type: 'fly';
   apiToken: string | null;
-  checkpoint: string | null;
+  app: string;
+  region: string | null;
+  cpuKind: string;
+  cpus: number;
+  memoryMb: number;
   autoDestroy: boolean;
-  idleTimeoutSecs: number;
-  apiUrl: string;
-  useFilePush: boolean;
 }
 
 /** Host configuration - where workers run */
-export type HostConfig = { type: 'local' } | { type: 'client' } | SshHostConfig | SpriteHostConfig;
+export type HostConfig = { type: 'local' } | { type: 'client' } | SshHostConfig | FlyHostConfig;
 
 /** Runner configuration - Host + optional Container */
 export interface RunnerConfig {

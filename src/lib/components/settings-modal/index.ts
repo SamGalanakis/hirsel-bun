@@ -29,9 +29,8 @@ import {
   defaultNavigationState,
   defaultRemoteProfile,
   defaultS3Config,
+  defaultServiceWorkersConfig,
   defaultSettings,
-  defaultSpriteHostConfig,
-  defaultSpriteRunnerConfig,
   defaultSshHostConfig,
   defaultSshRunnerConfig,
   defaultStorageConfig,
@@ -72,10 +71,9 @@ import type {
   RunnerHealthStatus,
   S3Config,
   S3SnapshotConfig,
+  ServiceWorkersConfig,
   Settings,
   SnapshotStrategyType,
-  SpriteCheckpointSnapshotConfig,
-  SpriteHostConfig,
   SshHostConfig,
   StorageConfig,
   StorageProvider,
@@ -622,11 +620,6 @@ export function settingsModal() {
         this.editHostData = { type: 'client' };
       } else if (this.newHostType === 'ssh') {
         this.editHostData = defaultSshHostConfig();
-      } else if (this.newHostType === 'sprite') {
-        this.editHostData = defaultSpriteHostConfig();
-        // Sprites don't support containers
-        this.editContainerEnabled = false;
-        this.editContainerImage = '';
       } else if (this.newHostType === 'fly') {
         this.editHostData = defaultFlyHostConfig();
         // Fly requires a container image
@@ -650,9 +643,7 @@ export function settingsModal() {
       this.newHostType = runner.host.type as HostType;
 
       // Merge with defaults to ensure all required fields are present
-      if (runner.host.type === 'sprite') {
-        this.editHostData = { ...defaultSpriteHostConfig(), ...runner.host };
-      } else if (runner.host.type === 'ssh') {
+      if (runner.host.type === 'ssh') {
         this.editHostData = { ...defaultSshHostConfig(), ...runner.host };
       } else if (runner.host.type === 'fly') {
         this.editHostData = { ...defaultFlyHostConfig(), ...runner.host };
@@ -676,9 +667,6 @@ export function settingsModal() {
           const s3Snapshot = runner.snapshot as S3SnapshotConfig;
           this.editSnapshotS3Prefix = s3Snapshot.prefix || '';
           this.editSnapshotS3Storage = s3Snapshot.storage || '';
-        } else if (runner.snapshot.type === 'sprite_checkpoint') {
-          this.editSnapshotCommentPrefix =
-            (runner.snapshot as SpriteCheckpointSnapshotConfig).comment_prefix || '';
         }
       } else {
         // Default based on host type
@@ -705,12 +693,6 @@ export function settingsModal() {
           window.toast?.error('SSH address is required');
           return;
         }
-      } else if (this.editHostData.type === 'sprite') {
-        const sprite = this.editHostData as SpriteHostConfig;
-        if (!sprite.apiToken?.trim()) {
-          window.toast?.error('API token is required');
-          return;
-        }
       } else if (this.editHostData.type === 'fly') {
         const fly = this.editHostData as FlyHostConfig;
         if (!fly.app?.trim()) {
@@ -722,12 +704,6 @@ export function settingsModal() {
       // Validate container if enabled
       if (this.editContainerEnabled && !this.editContainerImage?.trim()) {
         window.toast?.error('Container image is required when container is enabled');
-        return;
-      }
-
-      // Sprites don't support containers
-      if (this.editHostData.type === 'sprite' && this.editContainerEnabled) {
-        window.toast?.error('Sprites do not support Docker containers');
         return;
       }
 
@@ -750,14 +726,6 @@ export function settingsModal() {
           type: 's3',
           prefix: this.editSnapshotS3Prefix || undefined,
           storage: this.editSnapshotS3Storage || undefined,
-        };
-      } else if (
-        this.editSnapshotStrategy === 'sprite_checkpoint' &&
-        this.editSnapshotCommentPrefix
-      ) {
-        snapshotConfig = {
-          type: 'sprite_checkpoint',
-          comment_prefix: this.editSnapshotCommentPrefix,
         };
       }
 
@@ -1534,6 +1502,7 @@ export function settingsModal() {
             defaultProfile: string;
             git: GitConfig;
             storage: StorageConfig;
+            serviceWorkers: ServiceWorkersConfig;
           }>('get_config');
 
           this.settings = {
@@ -1559,6 +1528,7 @@ export function settingsModal() {
             defaultProfile: config.defaultProfile || 'local',
             git: config.git || defaultGitConfig(),
             storage: config.storage || defaultStorageConfig(),
+            serviceWorkers: config.serviceWorkers || defaultServiceWorkersConfig(),
           };
 
           // Load masked API keys from credential store for profiles and ensure access field
@@ -1704,6 +1674,7 @@ export function settingsModal() {
             defaultProvider: this.settings.git?.defaultProvider || null,
           },
           storage: this.settings.storage || defaultStorageConfig(),
+          serviceWorkers: this.settings.serviceWorkers || defaultServiceWorkersConfig(),
         },
       });
 
