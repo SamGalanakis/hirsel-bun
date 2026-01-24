@@ -273,53 +273,200 @@ impl LocalRunner {
         // Note: Container runs as non-root user, so we install to /tmp and update PATH
         // Note: $HOME/.claude is mounted from host for session persistence
         let init_script = format!(
-            r#"set -e
-set +o histexpand
-echo "=== Docker Worker Setup ==="
+            r#"#!/bin/sh
+# Hirsel Docker Worker Init Script
+# All output goes to /hirsel/worker-init.log AND stdout
 
-# Set up HOME directory for Claude CLI config (container runs as non-root user)
-# Note: .claude directory is mounted from host for session persistence
+LOG="/hirsel/worker-init.log"
+
+# Initialize log file
+: > "$LOG" 2>/dev/null || LOG="/tmp/worker-init.log"
+
+# Wrap entire script to capture all output
+{{
+
+echo "=== Docker Worker Setup ==="
+echo "Started at: $(date -Iseconds 2>/dev/null || date)"
+echo "Container: $(hostname)"
+echo "User: $(id)"
+echo "Log file: $LOG"
+echo ""
+
+# Exit on error
+set -e
+
+# =============================================================================
+# Helper functions (inspired by rustup/nvm install scripts)
+# =============================================================================
+
+has_cmd() {{
+    command -v "$1" >/dev/null 2>&1
+}}
+
+need_cmd() {{
+    if ! has_cmd "$1"; then
+        echo "ERROR: Required command '$1' not found" >&2
+        exit 1
+    fi
+}}
+
+# Download with curl or wget fallback
+download() {{
+    local url="$1"
+    local output="${{2:-}}"
+
+    if has_cmd curl; then
+        if [ -n "$output" ]; then
+            curl -fsSL "$url" -o "$output"
+        else
+            curl -fsSL "$url"
+        fi
+    elif has_cmd wget; then
+        if [ -n "$output" ]; then
+            wget -qO "$output" "$url"
+        else
+            wget -qO- "$url"
+        fi
+    else
+        echo "ERROR: Neither curl nor wget available" >&2
+        exit 1
+    fi
+}}
+
+ensure_downloader() {{
+    if has_cmd curl || has_cmd wget; then
+        return 0
+    fi
+
+    echo "No downloader (curl/wget) found, attempting to install..."
+
+    # Check if we can install packages (need root or sudo)
+    CAN_INSTALL=false
+    if [ "$(id -u)" = "0" ]; then
+        CAN_INSTALL=true
+    elif has_cmd sudo; then
+        CAN_INSTALL=true
+        APT_PREFIX="sudo"
+    fi
+
+    if [ "$CAN_INSTALL" = "false" ]; then
+        echo "" >&2
+        echo "ERROR: Container image missing curl/wget and running as non-root" >&2
+        echo "" >&2
+        echo "Please use a container image with curl or wget. Recommended:" >&2
+        echo "  [runners.docker.container]" >&2
+        echo "  image = \"alpine:latest\"   # Has wget, lightweight" >&2
+        echo "" >&2
+        echo "Alternative images: curlimages/curl, bitnami/minideb" >&2
+        exit 1
+    fi
+
+    # Try to install curl
+    if has_cmd apt-get; then
+        ${{APT_PREFIX:-}} apt-get update -qq && ${{APT_PREFIX:-}} apt-get install -y -qq curl ca-certificates
+    elif has_cmd apk; then
+        ${{APT_PREFIX:-}} apk add --no-cache curl ca-certificates
+    elif has_cmd yum; then
+        ${{APT_PREFIX:-}} yum install -y -q curl ca-certificates
+    else
+        echo "ERROR: Cannot install curl - no supported package manager" >&2
+        exit 1
+    fi
+
+    if ! has_cmd curl && ! has_cmd wget; then
+        echo "ERROR: Failed to install downloader" >&2
+        exit 1
+    fi
+}}
+
+# =============================================================================
+# Setup
+# =============================================================================
+
+# Ensure we have a downloader
+ensure_downloader
+
+# Check other required commands
+need_cmd uname
+need_cmd chmod
+need_cmd mkdir
+
+# Set up HOME directory for Claude CLI config
 export HOME=/tmp/home
 mkdir -p "$HOME/.claude"
+echo "HOME=$HOME"
 
 # Write Claude credentials from env var if provided
-# Claude CLI reads from ~/.claude/.credentials.json with full OAuth structure
-if [ -n "$CLAUDE_CREDENTIALS_JSON" ]; then
+if [ -n "${{CLAUDE_CREDENTIALS_JSON:-}}" ]; then
     echo "$CLAUDE_CREDENTIALS_JSON" > "$HOME/.claude/.credentials.json"
     echo "Claude credentials configured"
 fi
 
-# Install hirsel worker binary from GitHub releases (matching coordinator version)
+# =============================================================================
+# Install hirsel worker binary
+# =============================================================================
+
 mkdir -p /tmp/bin
-echo "Installing hirsel worker binary v{version}..."
-export HIRSEL_TAG="v{version}"
-export HIRSEL_BINARY_TYPE="worker"
-export HIRSEL_INSTALL_DIR="/tmp/bin"
-curl -fsSL https://raw.githubusercontent.com/SamGalanakis/hirsel/main/scripts/install-hirsel-worker.sh | bash
 export PATH="/tmp/bin:$PATH"
 
-# Install Claude CLI to /tmp/bin (user-writable) if not already available
-# Note: Must use /tmp/bin not /tmp/claude because Claude uses /tmp/claude as a work directory
-# Clean up any stale /tmp/claude file (Claude needs this as a directory for Task tool)
+echo "Installing hirsel worker binary v{version}..."
+HIRSEL_TAG="v{version}"
+HIRSEL_BINARY_TYPE="worker"
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64|amd64) HIRSEL_ARCH="amd64" ;;
+    aarch64|arm64) HIRSEL_ARCH="arm64" ;;
+    *) echo "ERROR: Unsupported architecture: $ARCH" >&2; exit 1 ;;
+esac
+
+# Download hirsel binary directly (simpler than install script)
+HIRSEL_URL="https://github.com/SamGalanakis/hirsel/releases/download/${{HIRSEL_TAG}}/hirsel-${{HIRSEL_BINARY_TYPE}}-${{HIRSEL_TAG#v}}-linux-${{HIRSEL_ARCH}}"
+echo "Downloading from: $HIRSEL_URL"
+download "$HIRSEL_URL" "/tmp/bin/hirsel"
+chmod +x /tmp/bin/hirsel
+
+# Verify hirsel
+if ! /tmp/bin/hirsel --version; then
+    echo "ERROR: hirsel binary verification failed" >&2
+    exit 1
+fi
+
+# =============================================================================
+# Install Claude CLI
+# =============================================================================
+
+# Clean up any stale /tmp/claude file (Claude needs this as a directory)
 [ -f /tmp/claude ] && rm -f /tmp/claude
-if ! command -v claude >/dev/null 2>&1; then
+
+if ! has_cmd claude; then
     echo "Installing Claude CLI..."
-    CLAUDE_VERSION=$(curl -fsSL "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest")
-    ARCH=$(uname -m)
+    CLAUDE_VERSION=$(download "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest")
     case "$ARCH" in
         x86_64|amd64) PLATFORM="linux-x64" ;;
         aarch64|arm64) PLATFORM="linux-arm64" ;;
-        *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
     esac
-    curl -fsSL "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/$CLAUDE_VERSION/$PLATFORM/claude" \
-        -o /tmp/bin/claude && chmod +x /tmp/bin/claude
+    CLAUDE_URL="https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/$CLAUDE_VERSION/$PLATFORM/claude"
+    echo "Downloading Claude from: $CLAUDE_URL"
+    download "$CLAUDE_URL" "/tmp/bin/claude"
+    chmod +x /tmp/bin/claude
 fi
 
-# Verify tools are available
-echo "hirsel: $(hirsel --version 2>&1 || echo 'not found')"
-echo "claude: $(claude --version 2>&1 || echo 'not found')"
+# Verify claude
+if ! /tmp/bin/claude --version; then
+    echo "ERROR: claude binary verification failed" >&2
+    exit 1
+fi
 
-# Fix git remote to use container path (host path won't work inside container)
+# =============================================================================
+# Final setup
+# =============================================================================
+
+echo ""
+echo "Installed tools:"
+echo "  hirsel: $(hirsel --version 2>&1)"
+echo "  claude: $(claude --version 2>&1)"
+
+# Fix git remote to use container path
 cd /work
 if [ -d .git ]; then
     git remote set-url origin /hirsel/work/staging 2>/dev/null || true
@@ -327,9 +474,15 @@ if [ -d .git ]; then
     git config user.name "Hirsel Worker"
 fi
 
-# Run worker (with /tmp/bin in PATH for claude)
-export PATH="/tmp/bin:$PATH"
-exec {worker_cmd}
+echo ""
+echo "=== Starting worker ==="
+echo "Command: {worker_cmd}"
+
+}} 2>&1 | tee -a "$LOG"
+
+# Run worker with HOME set correctly
+# The exec replaces the shell, so we need to set HOME inline
+exec env HOME=/tmp/home {worker_cmd}
 "#,
             version = version,
             worker_cmd = worker_cmd
@@ -372,6 +525,8 @@ exec {worker_cmd}
             "bypassPermissions".to_string(),
         );
         env_to_pass.insert("HIRSEL_WORKER_SUBPROCESS".to_string(), "1".to_string());
+        // Set HOME to /tmp/home where we mount the session directory and write credentials
+        env_to_pass.insert("HOME".to_string(), "/tmp/home".to_string());
 
         // Add credentials/env vars
         let env_vars = config.collect_env_vars();
@@ -398,9 +553,9 @@ exec {worker_cmd}
             docker_args.push(format!("{}={}", k, v));
         }
 
-        // Add image and run init script via bash
+        // Add image and run init script via sh (POSIX compatible)
         docker_args.push(container.image.clone());
-        docker_args.push("bash".to_string());
+        docker_args.push("sh".to_string());
         docker_args.push("-c".to_string());
         docker_args.push(init_script);
 
