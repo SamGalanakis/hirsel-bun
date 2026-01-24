@@ -276,6 +276,15 @@ pub fn get_local_oauth_credentials() -> Option<ForwardedCredentials> {
     })
 }
 
+/// Read the raw Claude credentials JSON from ~/.claude/.credentials.json
+///
+/// Returns the full JSON content as a string, suitable for passing to containers
+/// or remote workers that need the complete credentials file.
+pub fn get_local_oauth_credentials_raw() -> Option<String> {
+    let creds_path = dirs::home_dir()?.join(".claude").join(".credentials.json");
+    std::fs::read_to_string(&creds_path).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

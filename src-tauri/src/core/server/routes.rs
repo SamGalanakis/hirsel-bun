@@ -17,8 +17,8 @@ use crate::core::api_types::{
 };
 use crate::core::orchestrator::{
     AddTaskRequest, CreateRunRequest, CreateRunResponse, DeliverRunRequest, HealthResponse,
-    Orchestrator, OrchestratorError, ResumeRunRequest, SendMessageRequest, SpawnWorkersRequest,
-    SpawnWorkersResponse,
+    Orchestrator, OrchestratorError, ResumeRunRequest, ResumeWorkerRequest, SendMessageRequest,
+    SpawnSingleWorkerRequest, SpawnWorkersRequest, SpawnWorkersResponse,
 };
 
 /// Convert OrchestratorError to HTTP response
@@ -140,6 +140,21 @@ pub async fn upload_files(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Initialize or reinitialize workspace for a run
+///
+/// This allows workspace setup to be done separately from run creation.
+/// Useful for:
+/// - Initializing workspace for a run created without a starting_point
+/// - Reinitializing workspace (e.g., to switch to a different branch)
+pub async fn init_workspace(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Json(body): Json<crate::core::orchestrator::InitWorkspaceRequest>,
+) -> Result<Json<crate::core::orchestrator::InitWorkspaceResponse>> {
+    let response = state.orchestrator.init_workspace(&name, body).await?;
+    Ok(Json(response))
+}
+
 /// Download working directory as tarball
 ///
 /// Returns a gzipped tar archive of the run's work directory.
@@ -237,6 +252,40 @@ pub async fn restart_worker(
     Path((name, worker)): Path<(String, String)>,
 ) -> Result<StatusCode> {
     state.orchestrator.restart_worker(&name, &worker).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Spawn a single worker (used by daemon for lifecycle management)
+pub async fn spawn_single_worker(
+    State(state): State<Arc<AppState>>,
+    Path((name, worker)): Path<(String, String)>,
+    Json(body): Json<SpawnSingleWorkerRequest>,
+) -> Result<StatusCode> {
+    let work_dir = std::path::PathBuf::from(&body.work_dir);
+    state
+        .orchestrator
+        .spawn_single_worker(&name, &worker, &work_dir, body.resume_session_id.as_deref())
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Resume a worker with optional snapshot/session restoration
+pub async fn resume_worker(
+    State(state): State<Arc<AppState>>,
+    Path((name, worker)): Path<(String, String)>,
+    Json(body): Json<ResumeWorkerRequest>,
+) -> Result<StatusCode> {
+    let work_dir = std::path::PathBuf::from(&body.work_dir);
+    state
+        .orchestrator
+        .resume_worker(
+            &name,
+            &worker,
+            &work_dir,
+            body.resume_session_id.as_deref(),
+            body.state_handle.as_ref(),
+        )
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

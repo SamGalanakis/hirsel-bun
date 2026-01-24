@@ -15,7 +15,6 @@ pub mod api_types;
 pub mod chat_orchestrator;
 pub mod chat_session;
 pub mod chats;
-#[cfg(feature = "claude")]
 pub mod claude_cli;
 pub mod compaction;
 pub mod config;
@@ -41,6 +40,7 @@ pub mod names;
 pub mod ops;
 pub mod orchestrator;
 pub mod process;
+pub mod run_manager;
 pub mod runner;
 #[cfg(feature = "server")]
 pub mod server;
@@ -71,7 +71,6 @@ pub use chat_session::{
     PermissionOption, PermissionResponse, UIContext,
 };
 pub use chats::{ChatHeader, ChatMode};
-#[cfg(feature = "claude")]
 pub use claude_cli::{
     execute_claude_worker, run_claude_worker, BridgeEvent, ClaudeCliBridge, ClaudeCliConfig,
     ClaudeCliError, ClaudeWorkerConfig, WorkerResult as ClaudeWorkerResult,
@@ -101,17 +100,21 @@ pub use orchestrator::{
     create_local_orchestrator, create_orchestrator, LocalOrchestrator, Orchestrator,
     OrchestratorError, OrchestratorResult, RemoteOrchestrator,
 };
+pub use run_manager::{
+    create_local_run_manager, create_run_manager, LocalRunManager, RemoteRunManager, RunManager,
+    RunManagerError, RunManagerResult,
+};
 pub use runner::{
     create_runner, parse_remote_spec, parse_remote_specs, LocalRunner, Runner, RunnerConfig,
     RunnerError, RunnerResult, SpawnResult as RunnerSpawnResult, SpriteHostConfig, SpriteRunner,
     SshHostConfig, SshRunner, WorkerHandle, WorkerSpawnConfig as RunnerSpawnConfig,
 };
 #[cfg(feature = "s3-storage")]
-pub use snapshot::S3SnapshotStrategy;
+pub use snapshot::S3ArchiveStrategy;
 pub use snapshot::{
-    create_snapshot_strategy, infer_snapshot_strategy, PersistentDiskStrategy, SnapshotError,
-    SnapshotHandle, SnapshotResult, SnapshotStrategy, SnapshotStrategyConfig,
-    SpriteCheckpointStrategy,
+    create_archive_strategy, AgentSnapshot, ArchiveHandle, ArchiveResult, ArchiveStrategy,
+    NoOpArchiveStrategy, SnapshotError, SnapshotResult, SpriteCheckpointStrategy, WorkDirSnapshot,
+    WorkerStateHandle,
 };
 pub use state::*;
 pub use state_access::{StateAccess, StateAccessError, StateAccessResult};

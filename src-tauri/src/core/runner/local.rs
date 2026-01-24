@@ -180,6 +180,7 @@ impl LocalRunner {
     /// - /work: work directory (project files)
     /// - /hirsel: run directory (spec, db, etc.)
     /// - /usr/local/bin/hirsel: hirsel binary (from host)
+    /// - /tmp/home/.claude: agent session directory (for pause/resume)
     async fn spawn_docker(
         &self,
         config: &WorkerSpawnConfig,
@@ -187,6 +188,38 @@ impl LocalRunner {
     ) -> RunnerResult<SpawnResult> {
         let work_dir_str = config.work_dir.to_string_lossy().to_string();
         let run_dir_str = config.run_dir.to_string_lossy().to_string();
+
+        // Create session directory on host for persistent agent sessions
+        // This allows Claude sessions to persist across container restarts
+        let session_path = config
+            .run_dir
+            .join("agent-sessions")
+            .join(&config.worker_name);
+        std::fs::create_dir_all(&session_path).map_err(|e| {
+            RunnerError::SpawnFailed(format!(
+                "Failed to create session directory {}: {}",
+                session_path.display(),
+                e
+            ))
+        })?;
+        let session_path_str = session_path.to_string_lossy().to_string();
+
+        // Validate work_dir is not empty - empty work_dir causes Docker to create
+        // an anonymous volume which gets deleted when container exits (--rm)
+        if work_dir_str.is_empty() {
+            return Err(RunnerError::SpawnFailed(
+                "work_dir is empty - cannot spawn Docker worker without valid work directory"
+                    .into(),
+            ));
+        }
+
+        // Validate work_dir exists on host
+        if !config.work_dir.exists() {
+            return Err(RunnerError::SpawnFailed(format!(
+                "work_dir does not exist: {}",
+                work_dir_str
+            )));
+        }
 
         // Get executable to mount into container
         // Prefer hirsel-worker (minimal binary without GUI deps) if available
@@ -252,19 +285,30 @@ impl LocalRunner {
 
         // Build init script that sets up the environment and runs the worker
         // The hirsel binary is mounted from the host, so we only need to install the agent (claude)
+        // Note: Container runs as non-root user, so we install to /tmp and update PATH
+        // Note: $HOME/.claude is mounted from host for session persistence
         let init_script = format!(
             r#"set -e
 set +o histexpand
 echo "=== Docker Worker Setup ==="
 
-# Install dependencies only if missing (skip apt if image already has them)
-if ! command -v curl >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
-    echo "Installing dependencies..."
-    apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates curl git \
-        && rm -rf /var/lib/apt/lists/*
+# Set up HOME directory for Claude CLI config (container runs as non-root user)
+# Note: .claude directory is mounted from host for session persistence
+export HOME=/tmp/home
+mkdir -p "$HOME/.claude"
+
+# Write Claude credentials from env var if provided
+# Claude CLI reads from ~/.claude/.credentials.json with full OAuth structure
+if [ -n "$CLAUDE_CREDENTIALS_JSON" ]; then
+    echo "$CLAUDE_CREDENTIALS_JSON" > "$HOME/.claude/.credentials.json"
+    echo "Claude credentials configured"
 fi
 
-# Install Claude CLI via direct binary download (faster than install.sh)
+# Install Claude CLI to /tmp/bin (user-writable) if not already available
+# Note: Must use /tmp/bin not /tmp/claude because Claude uses /tmp/claude as a work directory
+mkdir -p /tmp/bin
+# Clean up any stale /tmp/claude file (Claude needs this as a directory for Task tool)
+[ -f /tmp/claude ] && rm -f /tmp/claude
 if ! command -v claude >/dev/null 2>&1; then
     echo "Installing Claude CLI..."
     CLAUDE_VERSION=$(curl -fsSL "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest")
@@ -275,15 +319,24 @@ if ! command -v claude >/dev/null 2>&1; then
         *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
     esac
     curl -fsSL "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/$CLAUDE_VERSION/$PLATFORM/claude" \
-        -o /usr/local/bin/claude && chmod +x /usr/local/bin/claude
+        -o /tmp/bin/claude && chmod +x /tmp/bin/claude
+    export PATH="/tmp/bin:$PATH"
 fi
 
 # Verify tools are available
 echo "hirsel: $(hirsel --version 2>&1 || echo 'not found')"
 echo "claude: $(claude --version 2>&1 || echo 'not found')"
 
-# Run worker
+# Fix git remote to use container path (host path won't work inside container)
 cd /work
+if [ -d .git ]; then
+    git remote set-url origin /hirsel/work/staging 2>/dev/null || true
+    git config user.email "worker@hirsel.local"
+    git config user.name "Hirsel Worker"
+fi
+
+# Run worker (with /tmp/bin in PATH for claude)
+export PATH="/tmp/bin:$PATH"
 exec {worker_cmd}
 "#,
             worker_cmd = worker_cmd
@@ -296,6 +349,11 @@ exec {worker_cmd}
             "--rm".to_string(),
             "--name".to_string(),
             format!("hirsel-{}-{}", config.run_name, config.worker_name),
+            // Run as current user to avoid root-owned files in mounted volumes
+            "--user".to_string(),
+            format!("{}:{}", unsafe { libc::getuid() }, unsafe {
+                libc::getgid()
+            }),
             // Enable host.docker.internal on Linux
             // Note: requires `iptables -I INPUT -i docker0 -j ACCEPT` on host
             "--add-host=host.docker.internal:host-gateway".to_string(),
@@ -305,6 +363,11 @@ exec {worker_cmd}
             format!("{}:/hirsel", run_dir_str),
             "-v".to_string(),
             format!("{}:/usr/local/bin/hirsel:ro", hirsel_exe_str),
+            // Mount session directory as HOME for Claude session persistence across container restarts
+            // This allows pause/resume to work by preserving Claude's session state
+            // Note: Mount to /tmp/home (not /tmp/home/.claude) so both .claude/ and .claude.json are writable
+            "-v".to_string(),
+            format!("{}:/tmp/home", session_path_str),
             "-w".to_string(),
             "/work".to_string(),
         ];
@@ -332,13 +395,10 @@ exec {worker_cmd}
                 env_to_pass.insert("ANTHROPIC_API_KEY".to_string(), key);
             }
         }
-        if !env_to_pass.contains_key("CLAUDE_CODE_OAUTH_TOKEN") {
-            if let Ok(token) = std::env::var("CLAUDE_CODE_OAUTH_TOKEN") {
-                env_to_pass.insert("CLAUDE_CODE_OAUTH_TOKEN".to_string(), token);
-            } else if let Some(creds) = super::super::credentials::get_local_oauth_credentials() {
-                if let Some(token) = creds.claude_access_token {
-                    env_to_pass.insert("CLAUDE_CODE_OAUTH_TOKEN".to_string(), token);
-                }
+        // Pass full credentials JSON for Claude CLI (needs all fields, not just access token)
+        if !env_to_pass.contains_key("CLAUDE_CREDENTIALS_JSON") {
+            if let Some(creds_json) = super::super::credentials::get_local_oauth_credentials_raw() {
+                env_to_pass.insert("CLAUDE_CREDENTIALS_JSON".to_string(), creds_json);
             }
         }
 

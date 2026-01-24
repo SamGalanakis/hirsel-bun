@@ -146,6 +146,41 @@ export async function startDraft(
 }
 
 /**
+ * Change the starting point for a draft run
+ *
+ * Deletes the existing workspace and re-initializes it with a new starting point.
+ * Only works for drafts (not running or completed runs).
+ *
+ * @param runName - The run name
+ * @param startingPoint - How to initialize the new workspace
+ */
+export async function changeStartingPoint(
+  runName: string,
+  startingPoint: StartingPoint,
+): Promise<RunDetail> {
+  return invoke<RunDetail>('change_starting_point', { runName, startingPoint });
+}
+
+/**
+ * Open a native folder picker dialog
+ *
+ * @returns The selected folder path, or null if cancelled
+ */
+export async function pickFolder(): Promise<string | null> {
+  return invoke<string | null>('pick_folder');
+}
+
+/**
+ * Get path suggestions for autocomplete
+ *
+ * @param partial - Partial path to complete
+ * @returns List of matching directory paths
+ */
+export async function suggestPaths(partial: string): Promise<string[]> {
+  return invoke<string[]>('suggest_paths', { partial });
+}
+
+/**
  * Validate a repository path or URL
  *
  * Checks if the path/URL is valid, extracts branch information from URLs,

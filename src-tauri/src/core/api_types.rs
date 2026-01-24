@@ -522,11 +522,7 @@ impl From<RunnerConfigResponse> for crate::core::runner::RunnerConfig {
 
         let container = cfg.container.map(|c| ContainerConfig { image: c.image });
 
-        RunnerConfig {
-            host,
-            container,
-            snapshot: None,
-        }
+        RunnerConfig { host, container }
     }
 }
 

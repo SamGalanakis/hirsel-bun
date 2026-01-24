@@ -11,7 +11,8 @@
     "tauri": "tauri",
     "lint": "biome check src/",
     "lint:fix": "biome check --write src/",
-    "test": "cargo nextest run --manifest-path src-tauri/Cargo.toml"
+    "test": "cargo nextest run --manifest-path src-tauri/Cargo.toml",
+    "test:e2e": "npx tsx tests/e2e/create-run.test.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
@@ -20,9 +21,11 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/cli": "^2",
     "@types/alpinejs": "^3.13.11",
+    "@types/node": "^22",
     "alpinejs": "^3",
     "basecoat-css": "^0.3",
     "tailwindcss": "^4.1.18",
+    "tsx": "^4",
     "typescript": "^5",
     "vite": "^7.3.1"
   },

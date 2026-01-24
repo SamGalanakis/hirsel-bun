@@ -9,47 +9,35 @@ name = "hirsel_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
-# Default: full CLI + GUI with Claude support
-default = ["gui", "full-cli", "claude"]
+# Default: GUI (includes CLI)
+default = ["gui"]
 
-# GUI (Tauri desktop app)
+# GUI (Tauri desktop app, includes full CLI)
 gui = [
     "dep:tauri",
     "dep:tauri-plugin-log",
     "dep:tauri-plugin-single-instance",
     "dep:tauri-plugin-mcp",
+    "dep:rfd",
     "tauri-build",
-    "full-cli",
+    "cli",
 ]
 
-# Full CLI with all commands (server, TUI, etc.)
-full-cli = ["server", "tui"]
+# Full CLI (includes server + TUI attach)
+cli = ["server", "dep:ratatui", "dep:crossterm"]
 
 # Server mode (hirsel serve) - coordinator/orchestrator
 server = ["dep:axum", "dep:tower-http", "dep:hyper-util"]
-
-# TUI mode (attach command)
-tui = ["dep:ratatui", "dep:crossterm"]
 
 # Minimal worker binary - only remote worker + MCP server + file receiver
 # Build with: cargo build --release --no-default-features --features worker
 worker = ["dep:axum", "dep:tower-http"]
 
-# === Agent backends ===
-# Claude CLI integration (wraps claude binary)
-claude = []
-
-# Codex support (future: native Rust adapter)
-codex = []
-
-# Legacy feature (no longer used - ACP bridge is now built-in)
-acp-nodejs = []
-
-# All agent backends
-all-agents = ["claude", "codex"]
-
 # S3 storage backend (MinIO, Tigris, AWS S3)
-s3-storage = ["dep:aws-sdk-s3", "dep:aws-config"]
+s3-storage = ["dep:aws-sdk-s3", "dep:aws-config", "dep:tempfile"]
+
+# Development features (debug logging, etc.)
+dev = ["dep:tracing-subscriber"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [], optional = true }
@@ -61,6 +49,7 @@ tauri = { version = "2", features = ["protocol-asset"], optional = true }
 tauri-plugin-log = { version = "2", optional = true }
 tauri-plugin-single-instance = { version = "2", optional = true }
 tauri-plugin-mcp = { path = "../tauri-plugin-mcp", optional = true }
+rfd = { version = "0.15", optional = true }
 
 # === Server dependencies (feature-gated) ===
 axum = { version = "0.8", features = ["multipart"], optional = true }
@@ -86,7 +75,7 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 anyhow = "1"
 libc = "0.2"
-agent-client-protocol = "0.9.3"
+agent-client-protocol = { version = "0.9.3", features = ["unstable_session_resume"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 tokio-stream = "0.1"
@@ -110,6 +99,10 @@ hex = "0.4"
 # S3 storage (feature-gated)
 aws-sdk-s3 = { version = "1", optional = true }
 aws-config = { version = "1", features = ["behavior-version-latest"], optional = true }
+tempfile = { version = "3", optional = true }
+
+# Development/debugging (feature-gated)
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"

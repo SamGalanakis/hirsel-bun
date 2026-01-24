@@ -287,8 +287,18 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
         ));
     }
 
+    // Resolve "hirsel" to current executable path (it may not be in PATH)
+    let mut resolved_command = config.agent_command.clone();
+    if let Some(first) = resolved_command.first_mut() {
+        if first == "hirsel" || first.ends_with("/hirsel") {
+            if let Ok(exe) = std::env::current_exe() {
+                *first = exe.to_string_lossy().into_owned();
+            }
+        }
+    }
+
     let spawn_config = AcpSpawnConfig::new(
-        config.agent_command.clone(),
+        resolved_command,
         config.work_dir.clone(),
         config.eval_name.clone(),
     );

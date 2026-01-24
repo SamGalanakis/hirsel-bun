@@ -36,15 +36,34 @@ export interface DraftEditorData {
   loading: boolean;
   error: string | null;
   saveTimeout: ReturnType<typeof setTimeout> | null;
+  specSaveTimeout: ReturnType<typeof setTimeout> | null;
   evalSaveTimeout: ReturnType<typeof setTimeout> | null;
   isEditing: boolean;
   activeTab: 'spec' | 'eval' | 'settings';
   previewMode: boolean;
+  isNewDraft: boolean;
   // Git URL validation state
   gitValidating: boolean;
   gitError: string | null;
   availableBranches: string[];
   gitValidateTimeout: ReturnType<typeof setTimeout> | null;
+  // Change starting point dialog state
+  showChangeStartingPointDialog: boolean;
+  changingStartingPoint: boolean;
+  newStartingPointType: 'greenfield' | 'local' | 'git';
+  newLocalPath: string;
+  newGitUrl: string;
+  newGitBranch: string;
+  newGitValidating: boolean;
+  newGitError: string | null;
+  newAvailableBranches: string[];
+  newGitValidateTimeout: ReturnType<typeof setTimeout> | null;
+  // Path autocomplete state
+  pathSuggestions: string[];
+  pathSuggestionsLoading: boolean;
+  pathSuggestTimeout: ReturnType<typeof setTimeout> | null;
+  showPathSuggestions: boolean;
+  selectedSuggestionIndex: number;
   // Field validation errors
   workerScaleError: string | null;
   timeLimitError: string | null;
@@ -105,6 +124,19 @@ export interface DraftEditorMethods {
   openFilePicker(type: 'spec' | 'eval'): void;
   openAssets(): Promise<void>;
   browseLocalFolder(): Promise<void>;
+  // Path autocomplete methods
+  fetchPathSuggestions(): Promise<void>;
+  debouncedFetchPathSuggestions(): void;
+  selectPathSuggestion(path: string): void;
+  handlePathKeydown(event: KeyboardEvent): void;
+  hidePathSuggestions(): void;
+  // Change starting point dialog methods
+  openChangeStartingPointDialog(): void;
+  closeChangeStartingPointDialog(): void;
+  validateNewGitUrl(): Promise<void>;
+  debouncedValidateNewGitUrl(): void;
+  canConfirmChange(): boolean;
+  confirmChangeStartingPoint(): Promise<void>;
   // Runner methods
   loadRunners(): Promise<void>;
   getWorkerNames(): string[];

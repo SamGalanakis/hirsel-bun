@@ -24,10 +24,14 @@
 mod local;
 #[cfg(feature = "s3-storage")]
 mod s3;
+#[cfg(feature = "s3-storage")]
+mod s3_client;
 
 pub use local::LocalFileStorage;
 #[cfg(feature = "s3-storage")]
 pub use s3::S3FileStorage;
+#[cfg(feature = "s3-storage")]
+pub use s3_client::S3ClientFactory;
 
 use async_trait::async_trait;
 use std::path::Path;

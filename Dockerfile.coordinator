@@ -3,7 +3,7 @@
 # Uses LiteFS for distributed SQLite replication.
 #
 # Build:
-#   cargo build --release --no-default-features --features full-cli
+#   cd src-tauri && cargo build --release --no-default-features --features cli
 #   fly deploy
 
 FROM debian:bookworm-slim
@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y \
 COPY --from=flyio/litefs:0.5 /usr/local/bin/litefs /usr/local/bin/litefs
 
 # Copy the pre-built binary
-COPY target/release/hirsel /usr/local/bin/hirsel
+COPY src-tauri/target/release/hirsel /usr/local/bin/hirsel
 
 # Copy LiteFS config
 COPY litefs.yml /etc/litefs.yml

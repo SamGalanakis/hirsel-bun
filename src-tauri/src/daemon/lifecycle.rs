@@ -68,7 +68,7 @@ pub async fn run_polling_loop(state: Arc<AppState>, config: DaemonConfig) {
                     idle_duration.as_secs()
                 );
                 // Clean up and exit
-                super::server::cleanup_socket(&super::socket_path(), &super::pid_path());
+                super::server::cleanup_pid_file(&super::pid_path());
                 std::process::exit(0);
             }
         }
@@ -208,19 +208,30 @@ async fn handle_lifecycle_actions(
                 worker_name,
                 work_dir,
                 resume_session_id,
+                state_handle,
             } => {
                 tracing::info!(
-                    "[Daemon] Resuming worker '{}' for run '{}' via orchestrator",
+                    "[Daemon] Resuming worker '{}' for run '{}' via orchestrator (has_state: {})",
                     worker_name,
-                    run_name
+                    run_name,
+                    state_handle
+                        .as_ref()
+                        .map(|h| h.has_state())
+                        .unwrap_or(false)
                 );
 
+                // Use resume_worker which handles:
+                // 1. Check if already running (skip if yes)
+                // 2. Restore work snapshot if runner is ephemeral
+                // 3. Restore agent session if handle exists
+                // 4. Spawn worker via runner
                 match orchestrator
-                    .spawn_single_worker(
+                    .resume_worker(
                         run_name,
                         &worker_name,
                         &work_dir,
                         resume_session_id.as_deref(),
+                        state_handle.as_ref(),
                     )
                     .await
                 {
@@ -273,11 +284,14 @@ async fn handle_lifecycle_actions(
                         }
                     };
 
+                    // Get work_dir from database, fallback to standard location
+                    // Note: work_dir should never be empty, but if it is, use default
                     let work_dir = worker
                         .work_dir
                         .as_ref()
+                        .filter(|s| !s.is_empty())
                         .map(std::path::PathBuf::from)
-                        .unwrap_or_else(|| run_dir.join("workers").join(&worker_name));
+                        .unwrap_or_else(|| run_dir.join("work").join(&worker_name));
 
                     match orchestrator
                         .spawn_single_worker(

@@ -368,6 +368,8 @@ export function runList() {
         // Select the new draft
         this.selectRun(detail.name);
 
+        // Notify draft editor this is a newly created draft (for edit mode)
+        window.dispatchEvent(new CustomEvent('draft-created'));
         // Dispatch draft-selected event for the draft editor
         window.dispatchEvent(new CustomEvent('draft-selected', { detail: detail.name }));
       } catch (err) {

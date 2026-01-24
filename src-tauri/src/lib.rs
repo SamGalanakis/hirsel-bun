@@ -13,6 +13,21 @@ pub mod gui;
 pub mod version;
 pub mod worker;
 
+/// Initialize tracing subscriber for debug logging.
+/// Only active when built with `--features dev` AND RUST_LOG is set.
+#[cfg(feature = "dev")]
+fn init_tracing() {
+    use tracing_subscriber::EnvFilter;
+    // Only initialize once, ignore errors from multiple calls
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .try_init();
+}
+
+/// No-op tracing init when dev feature is not enabled.
+#[cfg(not(feature = "dev"))]
+fn init_tracing() {}
+
 // Re-export commonly used types
 pub use cli::{parse_cli, parse_worker_cli, Cli, Commands, WorkerCli, WorkerCommands};
 pub use core::state;
@@ -21,6 +36,8 @@ pub use worker::{WorkerConfig, WorkerError, WorkerRunner};
 
 /// Run the CLI commands (called when invoked with arguments)
 pub fn run_cli() -> i32 {
+    init_tracing();
+
     use clap::Parser;
     use cli::*;
 
@@ -63,7 +80,7 @@ fn run_command(
     match cmd {
         Commands::Runs => list_runs(json)?,
         Commands::View(args) => view::execute(&args.run_name, json)?,
-        #[cfg(feature = "full-cli")]
+        #[cfg(feature = "cli")]
         Commands::Go(args) => {
             let result = run_go(&args)?;
             if json {
@@ -91,7 +108,7 @@ fn run_command(
                 log::LogResult::Error(e) => return Err(e.into()),
             }
         }
-        #[cfg(feature = "tui")]
+        #[cfg(feature = "cli")]
         Commands::Attach(args) => {
             run_attach(&args.run_name, args.target.as_deref(), json)?;
         }
@@ -432,12 +449,11 @@ fn run_command(
             })
             .map_err(|e| format!("Remote worker error: {}", e))?;
         }
-        #[cfg(feature = "claude")]
         Commands::AcpBridge => {
             // Run ACP bridge server for Claude CLI
             cli::acp_bridge::run_acp_bridge().map_err(|e| format!("ACP bridge error: {}", e))?;
         }
-        #[cfg(feature = "full-cli")]
+        #[cfg(feature = "cli")]
         Commands::Test(args) => {
             cli::test::execute(
                 args.scenario.as_deref(),
@@ -536,7 +552,7 @@ fn run_command(
                             println!("{}", serde_json::to_string_pretty(&status).unwrap());
                         } else {
                             println!("Daemon is running");
-                            println!("Socket: {}", daemon::socket_path().display());
+                            println!("Port: {}", daemon::DEFAULT_TCP_PORT);
                         }
                     } else if json {
                         println!(r#"{{"running": false}}"#);
@@ -560,6 +576,8 @@ fn run_command(
 #[cfg(feature = "gui")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    init_tracing();
+
     use std::sync::Arc;
 
     let mut builder = tauri::Builder::default()
@@ -628,10 +646,11 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(move |window, event| {
-            // Clean up when the main window is about to close
+            // Clean up GUI-specific processes when main window closes
+            // Workers continue running - they are managed by the daemon
             if let tauri::WindowEvent::Destroyed = event {
                 if window.label() == "main" {
-                    tracing::info!("[GUI] Main window destroyed, cleaning up all processes");
+                    tracing::info!("[GUI] Main window closed");
                     cleanup_all_processes(&chat_manager);
                 }
             }
@@ -640,74 +659,19 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-/// Kill all worker and chat session processes on GUI exit
+/// Clean up GUI-specific processes on exit (chat sessions only)
+///
+/// Workers are NOT killed when the UI closes - they continue running and are
+/// managed by the daemon. This allows users to close the UI while work continues.
 #[cfg(feature = "gui")]
 fn cleanup_all_processes(chat_manager: &std::sync::Arc<core::ChatSessionManager>) {
-    tracing::info!("[GUI] Killing all worker processes");
+    tracing::info!("[GUI] Main window closing, cleaning up GUI processes");
 
-    // Get the runs directory
-    let runs_dir = match dirs::home_dir() {
-        Some(home) => home.join(".hirsel").join("runs"),
-        None => {
-            tracing::warn!("[GUI] Could not determine home directory");
-            stop_chat_sessions(chat_manager);
-            return;
-        }
-    };
-
-    // Iterate over all run directories and open their databases
-    if let Ok(entries) = std::fs::read_dir(&runs_dir) {
-        let mut all_pids: Vec<i64> = Vec::new();
-
-        for entry in entries.flatten() {
-            let db_path = entry.path().join("hirsel.db");
-            if db_path.exists() {
-                if let Ok(state) = core::state::SQLiteState::new(db_path) {
-                    if let Ok(workers) = state.get_workers() {
-                        for worker in workers {
-                            if let Some(pid) = worker.pid {
-                                tracing::info!(
-                                    "[GUI] Found worker {} (pid {}) in {}",
-                                    worker.name,
-                                    pid,
-                                    entry.path().display()
-                                );
-                                all_pids.push(pid);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Kill all found worker process groups
-        #[cfg(unix)]
-        {
-            // First SIGTERM
-            for &pid in &all_pids {
-                unsafe {
-                    libc::kill(-(pid as i32), libc::SIGTERM);
-                }
-            }
-
-            // Brief wait then force kill
-            std::thread::sleep(std::time::Duration::from_millis(100));
-
-            // Then SIGKILL
-            for &pid in &all_pids {
-                unsafe {
-                    libc::kill(-(pid as i32), libc::SIGKILL);
-                }
-            }
-        }
-
-        tracing::info!("[GUI] Killed {} worker process groups", all_pids.len());
-    }
-
-    // Stop all active chat sessions
+    // Stop all active chat sessions (these are GUI-specific)
     stop_chat_sessions(chat_manager);
 
-    tracing::info!("[GUI] Cleanup complete");
+    // Workers continue running - they are managed by the daemon
+    tracing::info!("[GUI] Cleanup complete (workers continue running)");
 }
 
 #[cfg(feature = "gui")]

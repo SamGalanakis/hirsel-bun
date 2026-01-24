@@ -10,26 +10,25 @@ use super::{
 use crate::core::state::Status;
 use std::path::PathBuf;
 
-/// Remote lifecycle manager - delegates to coordinator via HTTP.
+/// Remote lifecycle manager - a no-op implementation for remote workers.
 ///
-/// For remote workers, most lifecycle operations are no-ops since the
-/// coordinator (running LocalLifecycleManager) handles:
-/// - Eval triggering when workers go inactive
-/// - Worker scaling
-/// - Time limit enforcement
+/// Remote workers don't manage lifecycle directly. All lifecycle operations
+/// are handled by the coordinator (running LocalLifecycleManager), which:
+/// - Triggers evals when workers go inactive
+/// - Manages worker scaling
+/// - Enforces time limits
+///
+/// This implementation returns no-ops for all operations, allowing the
+/// coordinator to drive lifecycle decisions via the HTTP API.
 pub struct RemoteLifecycleManager {
     context: LifecycleContext,
-    #[allow(dead_code)]
-    api_url: String,
-    #[allow(dead_code)]
-    worker_name: String,
 }
 
 impl RemoteLifecycleManager {
     pub fn new(
         run_name: impl Into<String>,
-        api_url: impl Into<String>,
-        worker_name: impl Into<String>,
+        _api_url: impl Into<String>,
+        _worker_name: impl Into<String>,
     ) -> Self {
         Self {
             context: LifecycleContext::new(
@@ -37,8 +36,6 @@ impl RemoteLifecycleManager {
                 PathBuf::new(), // Not used for remote
                 vec![],         // Not used for remote
             ),
-            api_url: api_url.into(),
-            worker_name: worker_name.into(),
         }
     }
 }
@@ -55,7 +52,7 @@ impl LifecycleManager for RemoteLifecycleManager {
         ))
     }
 
-    fn resume_run(&self) -> LifecycleResult<Vec<String>> {
+    fn resume_run(&self) -> LifecycleResult<Vec<LifecycleAction>> {
         Err(LifecycleError::Config(
             "Cannot resume from remote worker".into(),
         ))

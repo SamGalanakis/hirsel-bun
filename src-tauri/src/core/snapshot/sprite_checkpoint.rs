@@ -1,4 +1,4 @@
-//! Sprite checkpoint snapshot strategy.
+//! Sprite checkpoint archive strategy.
 //!
 //! This strategy uses the Sprites.dev native checkpoint API to create
 //! and restore snapshots of sprite VMs. This is more efficient than
@@ -22,7 +22,8 @@ use async_trait::async_trait;
 use std::path::Path;
 use tracing::{debug, info};
 
-use super::{SnapshotError, SnapshotHandle, SnapshotResult, SnapshotStrategy};
+use super::archive::{ArchiveHandle, ArchiveResult, ArchiveStrategy};
+use super::SnapshotError;
 use crate::core::runner::sprite::SpritesClient;
 use crate::core::runner::SpriteHostConfig;
 
@@ -34,7 +35,7 @@ pub struct SpriteCheckpointStrategy {
 
 impl SpriteCheckpointStrategy {
     /// Create a new Sprite checkpoint strategy.
-    pub fn new(config: &SpriteHostConfig, comment_prefix: Option<String>) -> SnapshotResult<Self> {
+    pub fn new(config: &SpriteHostConfig, comment_prefix: Option<String>) -> ArchiveResult<Self> {
         let token = config
             .api_token
             .clone()
@@ -50,7 +51,7 @@ impl SpriteCheckpointStrategy {
 
         Ok(Self {
             client,
-            comment_prefix: comment_prefix.unwrap_or_else(|| "hirsel-snapshot".to_string()),
+            comment_prefix: comment_prefix.unwrap_or_else(|| "hirsel-archive".to_string()),
         })
     }
 
@@ -71,19 +72,25 @@ impl SpriteCheckpointStrategy {
 }
 
 #[async_trait]
-impl SnapshotStrategy for SpriteCheckpointStrategy {
-    async fn snapshot(
-        &self,
-        run_name: &str,
-        worker_name: &str,
-        _work_dir: &Path,
-    ) -> SnapshotResult<SnapshotHandle> {
+impl ArchiveStrategy for SpriteCheckpointStrategy {
+    async fn archive(&self, key: &str, _source_dir: &Path) -> ArchiveResult<ArchiveHandle> {
+        // Parse run_name/worker_name from key (format: "run_name/worker_name/...")
+        let parts: Vec<&str> = key.split('/').collect();
+        if parts.len() < 2 {
+            return Err(SnapshotError::Config(format!(
+                "Invalid key format for Sprite checkpoint: '{}' (expected 'run_name/worker_name/...')",
+                key
+            )));
+        }
+
+        let run_name = parts[0];
+        let worker_name = parts[1];
         let sprite_name = Self::sprite_name(run_name, worker_name);
-        let comment = format!("{}-{}-{}", self.comment_prefix, run_name, worker_name);
+        let comment = format!("{}-{}", self.comment_prefix, key.replace('/', "-"));
 
         info!(
-            "Creating Sprite checkpoint for {} (sprite: {})",
-            worker_name, sprite_name
+            "Creating Sprite checkpoint for key '{}' (sprite: {})",
+            key, sprite_name
         );
 
         let checkpoint = self
@@ -93,47 +100,33 @@ impl SnapshotStrategy for SpriteCheckpointStrategy {
             .map_err(|e| SnapshotError::Storage(format!("Failed to create checkpoint: {}", e)))?;
 
         info!(
-            "Created Sprite checkpoint {} for worker {}",
-            checkpoint.id, worker_name
+            "Created Sprite checkpoint {} for key '{}'",
+            checkpoint.id, key
         );
 
-        Ok(SnapshotHandle {
-            strategy_type: self.strategy_type().to_string(),
-            snapshot_id: checkpoint.id,
-            created_at: checkpoint.created_at,
-            size_bytes: None, // Sprites API doesn't report checkpoint size
-        })
+        Ok(ArchiveHandle::new(self.strategy_type(), checkpoint.id))
     }
 
-    async fn restore(&self, handle: &SnapshotHandle, _work_dir: &Path) -> SnapshotResult<()> {
+    async fn restore(&self, handle: &ArchiveHandle, _target_dir: &Path) -> ArchiveResult<()> {
         // Note: For Sprite checkpoints, we don't restore to an existing sprite.
         // Instead, we use create_from_checkpoint when spawning a new sprite.
         // This restore function is called, but the actual restore happens
         // in the spawn process which uses the checkpoint_id from the handle.
-        //
-        // The work_dir is not used because the checkpoint contains the full VM state.
 
         info!(
-            "Sprite checkpoint {} is ready for restore (will be used on next spawn)",
-            handle.snapshot_id
+            "Sprite checkpoint '{}' is ready for restore (will be used on next spawn)",
+            handle.storage_id
         );
-
-        // We could verify the checkpoint exists here
-        // For now, we just log and return success - the actual restore
-        // happens when SpriteRunner::spawn() is called with the checkpoint
 
         Ok(())
     }
 
-    async fn delete(&self, handle: &SnapshotHandle) -> SnapshotResult<()> {
-        info!("Deleting Sprite checkpoint {}", handle.snapshot_id);
-
+    async fn delete(&self, handle: &ArchiveHandle) -> ArchiveResult<()> {
         // Note: The Sprites API doesn't have a delete checkpoint endpoint
         // Checkpoints are cleaned up automatically or managed via the web UI
-        // For now, we just log and return success
         debug!(
-            "Sprite checkpoint {} deletion skipped (API doesn't support delete)",
-            handle.snapshot_id
+            "Sprite checkpoint '{}' deletion skipped (API doesn't support delete)",
+            handle.storage_id
         );
 
         Ok(())

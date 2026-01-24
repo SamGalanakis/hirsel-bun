@@ -304,7 +304,8 @@ git merge origin/HEAD --no-edit 2>&1 || echo "Merge failed (may have conflicts)"
 /// Generate init script for Fly machines.
 ///
 /// This script is run as the machine's init command (entrypoint).
-/// It downloads hirsel binary, installs agent tools, fetches project files, and starts the worker.
+/// It downloads hirsel binary from GitHub releases, installs agent tools,
+/// fetches project files, and starts the worker.
 ///
 /// Note: The worker environment variables (ANTHROPIC_API_KEY, etc.) are passed via Fly's
 /// machine config, not in this script.
@@ -341,6 +342,9 @@ pub fn generate_fly_init_script(
     // Escape agent command for shell
     let agent_command_escaped = agent_command_json.replace('\'', "'\\''");
 
+    // Get coordinator version for worker binary compatibility
+    let version = crate::version::VERSION;
+
     format!(
         r#"#!/bin/sh
 set -e
@@ -349,11 +353,11 @@ echo "=== Fly Worker Setup ==="
 echo "Coordinator: {coordinator_url}"
 echo "Run: {run_name}, Worker: {worker_name}"
 
-# Step 1: Download hirsel binary from coordinator
-echo "Downloading hirsel binary..."
-curl -sSL -H "Authorization: Bearer $HIRSEL_API_KEY" \
-    "{coordinator_url}/api/binary/hirsel" -o /usr/local/bin/hirsel
-chmod +x /usr/local/bin/hirsel
+# Step 1: Install hirsel binary from GitHub releases (matching coordinator version)
+echo "Installing hirsel worker binary v{version}..."
+export HIRSEL_TAG="v{version}"
+export HIRSEL_BINARY_TYPE="worker"
+curl -fsSL https://raw.githubusercontent.com/SamGalanakis/hirsel/main/scripts/install-hirsel-worker.sh | bash
 
 # Step 2: Install Node.js and agent tools if not present
 if ! command -v node > /dev/null 2>&1; then
@@ -407,6 +411,7 @@ exec hirsel __remote-worker \
         coordinator_url = coordinator_url,
         run_name = run_name,
         worker_name = worker_name,
+        version = version,
         work_dir = work_dir,
         files_url = files_url,
         git_url = git_url,

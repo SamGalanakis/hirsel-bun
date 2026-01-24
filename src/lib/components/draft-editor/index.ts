@@ -10,15 +10,19 @@ import { type UnlistenFn, listen } from '@tauri-apps/api/event';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import {
+  changeStartingPoint,
   createDraft,
   deleteRun,
   getAssetsPath,
   getRunDetail,
   openAssetsFolder,
+  pickFolder,
   readEvalFile,
   readSpecFile,
   startDraft,
+  suggestPaths,
   updateDraft,
+  validateRepo,
   writeEvalFile,
   writeSpecFile,
 } from '../../api';
@@ -84,15 +88,34 @@ export function draftEditor(): DraftEditorComponent {
     loading: false,
     error: null,
     saveTimeout: null,
+    specSaveTimeout: null,
     evalSaveTimeout: null,
     isEditing: false,
     activeTab: 'spec' as const,
     previewMode: true,
+    isNewDraft: false,
     // Git URL validation state
     gitValidating: false,
     gitError: null as string | null,
     availableBranches: [] as string[],
     gitValidateTimeout: null as ReturnType<typeof setTimeout> | null,
+    // Change starting point dialog state
+    showChangeStartingPointDialog: false,
+    changingStartingPoint: false,
+    newStartingPointType: 'greenfield' as 'greenfield' | 'local' | 'git',
+    newLocalPath: '',
+    newGitUrl: '',
+    newGitBranch: '',
+    newGitValidating: false,
+    newGitError: null as string | null,
+    newAvailableBranches: [] as string[],
+    newGitValidateTimeout: null as ReturnType<typeof setTimeout> | null,
+    // Path autocomplete state
+    pathSuggestions: [] as string[],
+    pathSuggestionsLoading: false,
+    pathSuggestTimeout: null as ReturnType<typeof setTimeout> | null,
+    showPathSuggestions: false,
+    selectedSuggestionIndex: -1,
     // Field validation errors
     workerScaleError: null,
     timeLimitError: null,
@@ -117,6 +140,11 @@ export function draftEditor(): DraftEditorComponent {
     init(): void {
       // Load available runners from config
       this.loadRunners();
+
+      // Listen for draft-created to know this is a newly created draft
+      window.addEventListener('draft-created', (() => {
+        this.isNewDraft = true;
+      }) as EventListener);
 
       // Listen for draft selection events
       window.addEventListener('draft-selected', ((e: CustomEvent<string | null>) => {
@@ -214,6 +242,10 @@ export function draftEditor(): DraftEditorComponent {
       if (this.saveTimeout) {
         clearTimeout(this.saveTimeout);
         this.saveTimeout = null;
+      }
+      if (this.specSaveTimeout) {
+        clearTimeout(this.specSaveTimeout);
+        this.specSaveTimeout = null;
       }
       if (this.evalSaveTimeout) {
         clearTimeout(this.evalSaveTimeout);
@@ -382,6 +414,16 @@ export function draftEditor(): DraftEditorComponent {
         this.eval = evalContent;
         this.assetsPath = assetsPath;
 
+        // Set preview mode: edit mode for new drafts, view mode for existing with >5 lines
+        if (this.isNewDraft) {
+          this.previewMode = false;
+          this.isNewDraft = false;
+        } else {
+          // Count non-empty lines in spec
+          const lineCount = specContent.split('\n').filter((line) => line.trim()).length;
+          this.previewMode = lineCount > 5;
+        }
+
         this.loading = false;
       } catch (err) {
         this.error = err instanceof Error ? err.message : String(err);
@@ -397,6 +439,10 @@ export function draftEditor(): DraftEditorComponent {
         clearTimeout(this.saveTimeout);
         this.saveTimeout = null;
       }
+      if (this.specSaveTimeout) {
+        clearTimeout(this.specSaveTimeout);
+        this.specSaveTimeout = null;
+      }
       if (this.evalSaveTimeout) {
         clearTimeout(this.evalSaveTimeout);
         this.evalSaveTimeout = null;
@@ -405,6 +451,7 @@ export function draftEditor(): DraftEditorComponent {
         clearTimeout(this.gitValidateTimeout);
         this.gitValidateTimeout = null;
       }
+      this.isNewDraft = false;
       this.runName = null;
       this.name = '';
       this.spec = '';
@@ -421,6 +468,9 @@ export function draftEditor(): DraftEditorComponent {
       this.gitBranch = '';
       this.workspacePath = null;
       this.loading = false;
+      this.saving = false;
+      this.savingSpec = false;
+      this.savingEval = false;
       this.error = null;
       // Reset git validation state
       this.gitValidating = false;
@@ -506,10 +556,10 @@ export function draftEditor(): DraftEditorComponent {
      * Debounced save spec - waits 500ms after last change
      */
     debouncedSaveSpec(): void {
-      if (this.saveTimeout) {
-        clearTimeout(this.saveTimeout);
+      if (this.specSaveTimeout) {
+        clearTimeout(this.specSaveTimeout);
       }
-      this.saveTimeout = setTimeout(() => {
+      this.specSaveTimeout = setTimeout(() => {
         this.saveSpec();
       }, 500);
     },
@@ -872,12 +922,121 @@ export function draftEditor(): DraftEditorComponent {
     },
 
     /**
-     * Browse for local folder (not yet implemented - requires dialog plugin)
+     * Browse for local folder using native file picker
      */
     async browseLocalFolder(): Promise<void> {
-      // The @tauri-apps/plugin-dialog is not installed
-      // For now, users need to type the path manually
-      window.toast?.info('Please type the folder path manually');
+      try {
+        const folder = await pickFolder();
+        if (folder) {
+          this.localPath = folder;
+          this.showPathSuggestions = false;
+        }
+      } catch (err) {
+        console.error('Failed to open folder picker:', err);
+        window.toast?.error('Failed to open folder picker');
+      }
+    },
+
+    /**
+     * Fetch path suggestions for autocomplete
+     */
+    async fetchPathSuggestions(): Promise<void> {
+      const partial = this.localPath;
+      if (!partial || partial.length < 1) {
+        this.pathSuggestions = [];
+        this.showPathSuggestions = false;
+        return;
+      }
+
+      this.pathSuggestionsLoading = true;
+      try {
+        const suggestions = await suggestPaths(partial);
+        this.pathSuggestions = suggestions;
+        this.showPathSuggestions = suggestions.length > 0;
+        this.selectedSuggestionIndex = -1;
+      } catch (err) {
+        console.error('Failed to fetch path suggestions:', err);
+        this.pathSuggestions = [];
+        this.showPathSuggestions = false;
+      } finally {
+        this.pathSuggestionsLoading = false;
+      }
+    },
+
+    /**
+     * Debounced path suggestions
+     */
+    debouncedFetchPathSuggestions(): void {
+      if (this.pathSuggestTimeout) {
+        clearTimeout(this.pathSuggestTimeout);
+      }
+      this.pathSuggestTimeout = setTimeout(() => {
+        this.fetchPathSuggestions();
+      }, 150);
+    },
+
+    /**
+     * Select a path suggestion
+     */
+    selectPathSuggestion(path: string): void {
+      this.localPath = path;
+      this.showPathSuggestions = false;
+      this.selectedSuggestionIndex = -1;
+      // Fetch new suggestions for the selected directory
+      this.debouncedFetchPathSuggestions();
+    },
+
+    /**
+     * Handle keyboard navigation in path suggestions
+     */
+    handlePathKeydown(event: KeyboardEvent): void {
+      if (!this.showPathSuggestions || this.pathSuggestions.length === 0) {
+        return;
+      }
+
+      switch (event.key) {
+        case 'ArrowDown':
+          event.preventDefault();
+          this.selectedSuggestionIndex = Math.min(
+            this.selectedSuggestionIndex + 1,
+            this.pathSuggestions.length - 1,
+          );
+          break;
+        case 'ArrowUp':
+          event.preventDefault();
+          this.selectedSuggestionIndex = Math.max(this.selectedSuggestionIndex - 1, -1);
+          break;
+        case 'Enter':
+          if (this.selectedSuggestionIndex >= 0) {
+            event.preventDefault();
+            this.selectPathSuggestion(this.pathSuggestions[this.selectedSuggestionIndex]);
+          }
+          break;
+        case 'Tab':
+          if (this.pathSuggestions.length === 1) {
+            event.preventDefault();
+            this.selectPathSuggestion(this.pathSuggestions[0]);
+          } else if (this.selectedSuggestionIndex >= 0) {
+            event.preventDefault();
+            this.selectPathSuggestion(this.pathSuggestions[this.selectedSuggestionIndex]);
+          }
+          break;
+        case 'Escape':
+          this.showPathSuggestions = false;
+          this.selectedSuggestionIndex = -1;
+          break;
+      }
+    },
+
+    /**
+     * Hide path suggestions when clicking outside
+     */
+    hidePathSuggestions(): void {
+      // Delay to allow click on suggestion to register
+      setTimeout(() => {
+        this.showPathSuggestions = false;
+        this.selectedSuggestionIndex = -1;
+      }, 150);
     },
 
     /**
@@ -1178,6 +1337,158 @@ export function draftEditor(): DraftEditorComponent {
       } catch (err) {
         console.error('Failed to open assets folder:', err);
         window.toast?.error('Failed to open assets folder');
+      }
+    },
+
+    /**
+     * Open the change starting point dialog
+     */
+    openChangeStartingPointDialog(): void {
+      // Reset dialog state
+      this.newStartingPointType = 'greenfield';
+      this.newLocalPath = '';
+      this.newGitUrl = '';
+      this.newGitBranch = '';
+      this.newGitValidating = false;
+      this.newGitError = null;
+      this.newAvailableBranches = [];
+      this.showChangeStartingPointDialog = true;
+    },
+
+    /**
+     * Close the change starting point dialog
+     */
+    closeChangeStartingPointDialog(): void {
+      if (this.newGitValidateTimeout) {
+        clearTimeout(this.newGitValidateTimeout);
+        this.newGitValidateTimeout = null;
+      }
+      this.showChangeStartingPointDialog = false;
+      this.changingStartingPoint = false;
+    },
+
+    /**
+     * Validate git URL in the change dialog
+     */
+    async validateNewGitUrl(): Promise<void> {
+      const url = this.newGitUrl.trim();
+
+      if (!url) {
+        this.newAvailableBranches = [];
+        this.newGitBranch = '';
+        this.newGitError = null;
+        this.newGitValidating = false;
+        return;
+      }
+
+      this.newGitValidating = true;
+      this.newGitError = null;
+
+      try {
+        const timeoutMs = 15000;
+        const result = await Promise.race([
+          validateRepo(url),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Validation timed out')), timeoutMs),
+          ),
+        ]);
+
+        if (!result.valid) {
+          this.newGitError = result.error || 'Invalid repository';
+          this.newAvailableBranches = [];
+          this.newGitBranch = '';
+        } else {
+          this.newGitError = null;
+          this.newAvailableBranches = result.branches;
+
+          if (result.urlBranch && result.urlBranchValid) {
+            this.newGitBranch = result.urlBranch;
+          } else if (!this.newGitBranch && result.branches.length > 0) {
+            this.newGitBranch = result.branches[0];
+          }
+        }
+      } catch (err) {
+        this.newGitError = err instanceof Error ? err.message : 'Failed to validate repository';
+        this.newAvailableBranches = [];
+        this.newGitBranch = '';
+      } finally {
+        this.newGitValidating = false;
+      }
+    },
+
+    /**
+     * Debounced git URL validation for change dialog
+     */
+    debouncedValidateNewGitUrl(): void {
+      if (this.newGitValidateTimeout) {
+        clearTimeout(this.newGitValidateTimeout);
+      }
+      this.newGitValidateTimeout = setTimeout(() => {
+        this.validateNewGitUrl();
+      }, 500);
+    },
+
+    /**
+     * Check if the change starting point can be confirmed
+     */
+    canConfirmChange(): boolean {
+      if (this.changingStartingPoint) return false;
+
+      switch (this.newStartingPointType) {
+        case 'greenfield':
+          return true;
+        case 'local':
+          return Boolean(this.newLocalPath.trim());
+        case 'git':
+          return Boolean(
+            this.newGitUrl.trim() &&
+              this.newGitBranch &&
+              !this.newGitError &&
+              !this.newGitValidating,
+          );
+        default:
+          return false;
+      }
+    },
+
+    /**
+     * Confirm and execute the starting point change
+     */
+    async confirmChangeStartingPoint(): Promise<void> {
+      if (!this.runName || !this.canConfirmChange()) return;
+
+      this.changingStartingPoint = true;
+
+      try {
+        let startingPoint: StartingPoint;
+        switch (this.newStartingPointType) {
+          case 'greenfield':
+            startingPoint = { type: 'greenfield' };
+            break;
+          case 'local':
+            startingPoint = { type: 'localFolder', path: this.newLocalPath };
+            break;
+          case 'git':
+            startingPoint = {
+              type: 'gitRepo',
+              url: this.newGitUrl,
+              branch: this.newGitBranch || undefined,
+            };
+            break;
+        }
+
+        const detail = await changeStartingPoint(this.runName, startingPoint);
+
+        // Update local state with new workspace path
+        this.workspacePath = detail.projectPath || null;
+
+        window.toast?.success('Starting point changed successfully');
+        this.closeChangeStartingPointDialog();
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        window.toast?.error(`Failed to change starting point: ${error}`);
+      } finally {
+        this.changingStartingPoint = false;
       }
     },
   };

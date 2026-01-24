@@ -177,6 +177,23 @@ pub trait Runner: Send + Sync {
         // Use the orchestrator's get_worker_events method instead
         Ok(String::new())
     }
+
+    /// Does the work directory persist across worker restarts?
+    ///
+    /// Returns `false` for runners where files remain on disk between restarts:
+    /// - Local (bare process): files on local disk
+    /// - Docker (volume mount): host directory persists
+    /// - SSH: files on remote disk
+    ///
+    /// Returns `true` for ephemeral runners where machines are destroyed:
+    /// - Fly.io: machines are destroyed on stop
+    /// - Sprite: VMs are ephemeral (use checkpoints)
+    ///
+    /// The orchestrator uses this to decide whether to restore snapshots
+    /// during resume operations.
+    fn is_ephemeral(&self) -> bool {
+        false // default: persistent (most runners)
+    }
 }
 
 /// Orchestrator mode - determines which runners are available.

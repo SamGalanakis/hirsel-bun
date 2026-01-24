@@ -435,15 +435,16 @@ impl WorkerRunner {
     }
 
     /// Wait for tasks to become available.
+    ///
+    /// Returns the current list of claimable tasks. If empty, the worker should
+    /// call `work_done` to signal completion - the orchestrator will restart
+    /// the worker (with session resume) when new tasks become available.
     pub fn task_await(&self) -> WorkerResult<String> {
         // Set worker status to awaiting
         self.set_status(WorkerStatus::Awaiting)?;
 
         // Check for available tasks
         let claimable = self.run_async(self.state().get_claimable_tasks())?;
-
-        // Note: Lifecycle management (eval triggering, scaling) is handled by
-        // the daemon's polling loop, not by individual worker processes
 
         Ok(serde_json::json!({
             "available_tasks": claimable.len(),
@@ -460,18 +461,37 @@ impl WorkerRunner {
     // =========================================================================
 
     /// Send a message to a thread.
-    pub fn msg_send(&self, thread: &str, message: &str, wait: bool) -> WorkerResult<String> {
+    /// When thread is "user", messages are sent to the worker's own DM thread
+    /// and HITL pause is triggered automatically (if HITL mode is enabled).
+    pub fn msg_send(&self, thread: &str, message: &str) -> WorkerResult<String> {
         let worker_name = self.config.worker_name.clone();
-        self.run_async(self.state().add_message(thread, &worker_name, message))?;
+        let is_user_dm = thread == "user";
 
-        if wait {
-            // Set to Awaiting with hitl_waiting flag
+        // Translate "user" thread to worker's own DM thread
+        let actual_thread = if is_user_dm {
+            worker_name.as_str()
+        } else {
+            thread
+        };
+
+        self.run_async(
+            self.state()
+                .add_message(actual_thread, &worker_name, message),
+        )?;
+
+        // Auto-trigger HITL pause when messaging the user (if HITL enabled)
+        let hitl_enabled = self
+            .run_async(self.state().get_human_in_the_loop())
+            .unwrap_or(true);
+        let waiting = is_user_dm && hitl_enabled;
+
+        if waiting {
             self.set_status(WorkerStatus::Awaiting)?;
             self.run_async(self.state().update_worker(
                 &worker_name,
                 WorkerUpdate {
                     hitl_waiting: Some(true),
-                    waiting_thread: Some(thread.to_string()),
+                    waiting_thread: Some(actual_thread.to_string()),
                     ..Default::default()
                 },
             ))?;
@@ -479,8 +499,8 @@ impl WorkerRunner {
 
         Ok(serde_json::json!({
             "success": true,
-            "thread": thread,
-            "waiting": wait,
+            "thread": actual_thread,
+            "waiting": waiting,
         })
         .to_string())
     }
@@ -615,7 +635,7 @@ impl WorkerRunner {
             },
 
             WorkerCommands::Msg(msg_cmd) => match msg_cmd {
-                MsgSubcommands::Send(args) => self.msg_send(&args.thread, &args.message, args.wait),
+                MsgSubcommands::Send(args) => self.msg_send(&args.thread, &args.message),
                 MsgSubcommands::Read(args) => self.msg_read(args.thread.as_deref()),
                 MsgSubcommands::List => self.msg_list(),
                 MsgSubcommands::Inbox => self.msg_inbox(),

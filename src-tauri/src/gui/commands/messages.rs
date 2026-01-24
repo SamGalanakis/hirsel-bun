@@ -62,9 +62,10 @@ pub async fn get_all_unread_notifications() -> Result<UnreadNotificationsRespons
             runs_with_unread += 1;
 
             for msg in unread_messages {
-                // Only notify for direct messages to the user (thread="user")
-                // Skip: group messages, system messages, learnings, etc.
-                if msg.thread != "user" {
+                // Notify for DM threads (worker→human messages)
+                // Skip: group chat, learnings, and system senders
+                // Worker DM threads are named after the worker (e.g., "willow-coopworth")
+                if msg.thread == "group" || msg.thread == "learnings" {
                     continue;
                 }
 

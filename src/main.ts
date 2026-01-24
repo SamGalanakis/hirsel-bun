@@ -199,7 +199,7 @@ listen('got-dom-content', async () => {
 
 // Handle get-element-position requests
 interface ElementPositionRequest {
-  selectorType: 'id' | 'class' | 'tag' | 'text';
+  selectorType: 'id' | 'class' | 'tag' | 'text' | 'data-test';
   selectorValue: string;
   shouldClick?: boolean;
   rawCoordinates?: boolean;
@@ -235,6 +235,9 @@ listen<ElementPositionRequest>('get-element-position', async (event) => {
         }
         break;
       }
+      case 'data-test':
+        element = document.querySelector(`[data-test="${selectorValue}"]`);
+        break;
     }
 
     if (!element) {
@@ -287,7 +290,7 @@ listen<ElementPositionRequest>('get-element-position', async (event) => {
 
 // Handle send-text-to-element requests
 interface SendTextRequest {
-  selectorType: 'id' | 'class' | 'tag' | 'text';
+  selectorType: 'id' | 'class' | 'tag' | 'text' | 'data-test';
   selectorValue: string;
   text: string;
   delayMs?: number;
@@ -323,6 +326,9 @@ listen<SendTextRequest>('send-text-to-element', async (event) => {
         }
         break;
       }
+      case 'data-test':
+        element = document.querySelector(`[data-test="${selectorValue}"]`);
+        break;
     }
 
     if (!element) {

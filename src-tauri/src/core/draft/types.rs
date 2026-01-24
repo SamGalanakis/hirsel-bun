@@ -23,6 +23,17 @@ impl Default for StartingPoint {
     }
 }
 
+impl StartingPoint {
+    /// Get the type name as a string (for serialization/logging).
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Self::Greenfield => "greenfield",
+            Self::LocalFolder { .. } => "local_folder",
+            Self::GitRepo { .. } => "git_repo",
+        }
+    }
+}
+
 /// Information about an initialized workspace
 #[derive(Debug, Clone)]
 pub struct WorkspaceInfo {

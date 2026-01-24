@@ -407,6 +407,71 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
     Ok(())
 }
 
+/// Change the starting point for a draft run
+///
+/// Deletes the existing workspace and re-initializes it with a new starting point.
+/// Only works for drafts (not running or completed runs).
+#[tauri::command]
+pub async fn change_starting_point(
+    run_name: String,
+    starting_point: StartingPoint,
+) -> Result<RunDetail, String> {
+    use std::fs;
+
+    let run_dir = config::run_dir(&run_name);
+    let db_path = run_dir.join("hirsel.db");
+
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
+
+    // Verify it's a draft
+    let status = state
+        .status()
+        .map_err(|e| format!("Failed to get status: {}", e))?;
+    if status != crate::core::state::Status::Draft {
+        return Err("Can only change starting point for draft runs".to_string());
+    }
+
+    // Delete existing workspace if it exists
+    let workspace_dir = run_dir.join("workspace");
+    if workspace_dir.exists() {
+        fs::remove_dir_all(&workspace_dir)
+            .map_err(|e| format!("Failed to remove existing workspace: {}", e))?;
+    }
+
+    // Clear workspace-related state fields
+    state
+        .clear_project_path()
+        .map_err(|e| format!("Failed to clear project path: {}", e))?;
+    state
+        .set_branch(None)
+        .map_err(|e| format!("Failed to clear branch: {}", e))?;
+
+    // Initialize new workspace
+    let workspace = create_workspace_provider(None);
+    let workspace_info = workspace
+        .init(&run_name, &starting_point)
+        .await
+        .map_err(|e| format!("Failed to initialize workspace: {}", e))?;
+
+    // Update state with new workspace info
+    state
+        .set_project_path(workspace_info.path.to_str().unwrap_or("."))
+        .map_err(|e| format!("Failed to set project path: {}", e))?;
+
+    if let Some(ref branch) = workspace_info.default_branch {
+        state
+            .set_branch(Some(branch))
+            .map_err(|e| format!("Failed to set branch: {}", e))?;
+    }
+
+    // Return updated run detail
+    get_run_detail(run_name).await
+}
+
 /// Start a draft run
 ///
 /// Creates the workspace based on the starting point, spawns workers,
@@ -456,8 +521,17 @@ pub async fn start_draft(
         path
     } else {
         // Create workspace from starting point
+        // Priority: 1. Passed starting_point, 2. Stored in database, 3. Default to Greenfield
+        let sp = if let Some(sp) = starting_point {
+            sp
+        } else if let Ok(Some(sp_json)) = state.get_starting_point() {
+            serde_json::from_str::<StartingPoint>(&sp_json)
+                .map_err(|e| format!("Failed to parse stored starting_point: {}", e))?
+        } else {
+            StartingPoint::Greenfield
+        };
+
         let workspace = create_workspace_provider(profile.as_deref());
-        let sp = starting_point.unwrap_or(StartingPoint::Greenfield);
         let workspace_info = workspace
             .init(&run_name, &sp)
             .await
@@ -467,6 +541,15 @@ pub async fn start_draft(
         state
             .set_project_path(workspace_info.path.to_str().unwrap_or("."))
             .map_err(|e| format!("Failed to set project path: {}", e))?;
+
+        // Store starting_point in state (if not already stored)
+        if state.get_starting_point().ok().flatten().is_none() {
+            let sp_json = serde_json::to_string(&sp)
+                .map_err(|e| format!("Failed to serialize starting_point: {}", e))?;
+            state
+                .set_starting_point(Some(&sp_json))
+                .map_err(|e| format!("Failed to set starting_point: {}", e))?;
+        }
 
         // Set branch if available from workspace init
         if let Some(ref branch) = workspace_info.default_branch {
@@ -525,12 +608,10 @@ pub async fn start_draft(
         .set_status(crate::core::state::Status::Working)
         .map_err(|e| format!("Failed to set status: {}", e))?;
 
-    // Set started_at if time limit is set
-    if state.get_time_limit_minutes().ok().flatten().is_some() {
-        state
-            .set_started_at(None)
-            .map_err(|e| format!("Failed to set started_at: {}", e))?;
-    }
+    // Always set started_at when run starts (for elapsed time calculation)
+    state
+        .set_started_at(None)
+        .map_err(|e| format!("Failed to set started_at: {}", e))?;
 
     // Save spec content to database for display in Specs tab
     let spec_path = run_dir.join("spec.md");

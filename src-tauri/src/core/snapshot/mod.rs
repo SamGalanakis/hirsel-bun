@@ -1,43 +1,159 @@
-//! Snapshot strategy system for worker pause/resume.
+//! Archive strategy system for worker pause/resume.
 //!
-//! This module provides a unified interface for snapshotting worker state
+//! This module provides a unified interface for archiving worker state
 //! across pause/resume cycles. The strategy is determined by host type:
 //!
-//! - **PersistentDisk**: For Local and SSH hosts where files persist on disk.
-//! - **S3**: For Sprite and Fly hosts where machines are destroyed.
+//! - **NoOp**: For Local and SSH hosts where files persist on disk.
+//! - **S3**: For Fly hosts where machines are destroyed.
+//! - **SpriteCheckpoint**: For Sprite hosts using native VM checkpoints.
 //!
 //! # Usage
 //!
 //! ```rust,ignore
-//! use hirsel_lib::core::snapshot::{create_snapshot_strategy, SnapshotStrategy};
+//! use hirsel_lib::core::snapshot::{create_archive_strategy, ArchiveStrategy};
 //!
 //! // Create strategy based on runner config
-//! let strategy = create_snapshot_strategy(&runner_config, &storage_config).await?;
+//! let strategy = create_archive_strategy(&runner_config, &storage_config).await?;
 //!
-//! // Snapshot before stopping
-//! let handle = strategy.snapshot(&run_name, &worker_name, &work_dir).await?;
+//! // Archive before stopping
+//! let handle = strategy.archive("run/worker/workdir", &work_dir).await?;
 //!
 //! // Restore after starting
 //! strategy.restore(&handle, &work_dir).await?;
 //! ```
 
-mod persistent_disk;
+mod archive;
+mod claude_session;
+mod noop;
 #[cfg(feature = "s3-storage")]
 mod s3;
 mod sprite_checkpoint;
 
-pub use persistent_disk::PersistentDiskStrategy;
+pub use archive::{ArchiveHandle, ArchiveResult, ArchiveStrategy};
+pub use claude_session::{claude_session_dir, host_session_path};
+pub use noop::NoOpArchiveStrategy;
 #[cfg(feature = "s3-storage")]
-pub use s3::S3SnapshotStrategy;
+pub use s3::S3ArchiveStrategy;
 pub use sprite_checkpoint::SpriteCheckpointStrategy;
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use thiserror::Error;
 
 use crate::core::config::StorageConfig;
 use crate::core::runner::{HostConfig, RunnerConfig};
+
+// =============================================================================
+// Unified Worker State Handle
+// =============================================================================
+
+/// Unified handle for all worker state that needs to persist across pause/resume.
+///
+/// Contains optional work directory and agent session snapshots.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkerStateHandle {
+    /// Snapshot of the work directory (for ephemeral runners).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub work_dir: Option<WorkDirSnapshot>,
+    /// Snapshot of the agent session (e.g., ~/.claude).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_session: Option<AgentSnapshot>,
+}
+
+impl WorkerStateHandle {
+    /// Create a new empty state handle.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create with just a work directory snapshot.
+    pub fn with_work_dir(snapshot: WorkDirSnapshot) -> Self {
+        Self {
+            work_dir: Some(snapshot),
+            agent_session: None,
+        }
+    }
+
+    /// Create with just an agent session snapshot.
+    pub fn with_agent_session(snapshot: AgentSnapshot) -> Self {
+        Self {
+            work_dir: None,
+            agent_session: Some(snapshot),
+        }
+    }
+
+    /// Check if this handle has any state to restore.
+    pub fn has_state(&self) -> bool {
+        self.work_dir.is_some() || self.agent_session.is_some()
+    }
+}
+
+/// Snapshot of a worker's work directory.
+///
+/// Used to persist and restore the work directory for ephemeral runners
+/// (Fly, Sprite with S3 strategy) across pause/resume cycles.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkDirSnapshot {
+    /// Type of strategy that created this snapshot (e.g., "s3", "persistent_disk").
+    pub strategy_type: String,
+    /// Storage identifier (S3 key, local path, etc.).
+    pub storage_id: String,
+    /// Size of the snapshot in bytes (if known).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+}
+
+impl WorkDirSnapshot {
+    /// Create a new work directory snapshot.
+    pub fn new(strategy_type: impl Into<String>, storage_id: impl Into<String>) -> Self {
+        Self {
+            strategy_type: strategy_type.into(),
+            storage_id: storage_id.into(),
+            size_bytes: None,
+        }
+    }
+
+    /// Create with size information.
+    pub fn with_size(
+        strategy_type: impl Into<String>,
+        storage_id: impl Into<String>,
+        size_bytes: u64,
+    ) -> Self {
+        Self {
+            strategy_type: strategy_type.into(),
+            storage_id: storage_id.into(),
+            size_bytes: Some(size_bytes),
+        }
+    }
+}
+
+/// Snapshot of an agent's session state.
+///
+/// Used to persist and restore agent session data (e.g., Claude's `.claude` directory)
+/// across pause/resume cycles.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSnapshot {
+    /// Type of agent (e.g., "claude").
+    pub agent_type: String,
+    /// Session ID for resuming the agent session.
+    pub session_id: String,
+    /// Storage identifier (S3 key, local path, etc.).
+    pub storage_id: String,
+}
+
+impl AgentSnapshot {
+    /// Create a new agent snapshot.
+    pub fn new(
+        agent_type: impl Into<String>,
+        session_id: impl Into<String>,
+        storage_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            agent_type: agent_type.into(),
+            session_id: session_id.into(),
+            storage_id: storage_id.into(),
+        }
+    }
+}
 
 /// Snapshot errors
 #[derive(Debug, Error)]
@@ -49,6 +165,10 @@ pub enum SnapshotError {
     /// Storage backend error
     #[error("Storage error: {0}")]
     Storage(String),
+
+    /// S3 error
+    #[error("S3 error: {0}")]
+    S3(String),
 
     /// Configuration error
     #[error("Configuration error: {0}")]
@@ -70,144 +190,58 @@ pub enum SnapshotError {
 /// Result type for snapshot operations
 pub type SnapshotResult<T> = Result<T, SnapshotError>;
 
-/// Handle to a snapshot, stored in the database for later restoration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SnapshotHandle {
-    /// Type of strategy that created this snapshot
-    pub strategy_type: String,
-    /// Unique identifier for the snapshot (S3 key, local path, etc.)
-    pub snapshot_id: String,
-    /// ISO 8601 timestamp when the snapshot was created
-    pub created_at: String,
-    /// Size of the snapshot in bytes (if known)
-    pub size_bytes: Option<u64>,
-}
+// =============================================================================
+// Unified Archive Strategy Factory
+// =============================================================================
 
-/// Configuration for snapshot strategy.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-#[derive(Default)]
-pub enum SnapshotStrategyConfig {
-    /// Persistent disk strategy - files remain on disk (no-op)
-    #[default]
-    PersistentDisk,
-    /// S3 strategy - tar/gzip and upload to S3
-    S3 {
-        /// Optional prefix for S3 keys (default: "snapshots")
-        #[serde(default)]
-        prefix: Option<String>,
-        /// Optional named storage config to use (default: use default_storage or legacy s3)
-        #[serde(default)]
-        storage: Option<String>,
-    },
-    /// Sprite checkpoint strategy - uses native Sprites.dev checkpoint API
-    SpriteCheckpoint {
-        /// Optional comment prefix for checkpoints (default: "hirsel-snapshot")
-        #[serde(default)]
-        comment_prefix: Option<String>,
-    },
-}
-
-/// Trait for snapshot strategies.
+/// Create an archive strategy based on runner and storage configuration.
 ///
-/// Implementations handle snapshotting and restoring worker state
-/// for different deployment scenarios.
-#[async_trait]
-pub trait SnapshotStrategy: Send + Sync {
-    /// Create a snapshot of the worker's work directory.
-    ///
-    /// Called before stopping a worker during pause operations.
-    async fn snapshot(
-        &self,
-        run_name: &str,
-        worker_name: &str,
-        work_dir: &Path,
-    ) -> SnapshotResult<SnapshotHandle>;
-
-    /// Restore a snapshot to the worker's work directory.
-    ///
-    /// Called before starting a worker during resume operations.
-    async fn restore(&self, handle: &SnapshotHandle, work_dir: &Path) -> SnapshotResult<()>;
-
-    /// Delete a snapshot.
-    ///
-    /// Called during cleanup (run deletion, successful restore, etc.)
-    async fn delete(&self, handle: &SnapshotHandle) -> SnapshotResult<()>;
-
-    /// Get the strategy type name.
-    fn strategy_type(&self) -> &'static str;
-}
-
-/// Infer snapshot strategy from runner config and host type.
+/// This is the preferred factory for new code. It returns a unified `ArchiveStrategy`
+/// that can be used for both work directories and agent sessions.
 ///
-/// - Local and SSH hosts use PersistentDisk (files remain on disk)
-/// - Sprite hosts use SpriteCheckpoint (native Sprites API)
-/// - Fly hosts use S3 (machines are destroyed)
-pub fn infer_snapshot_strategy(runner_config: &RunnerConfig) -> SnapshotStrategyConfig {
-    match runner_config.snapshot {
-        Some(ref config) => config.clone(),
-        None => {
-            // Infer from host type
-            match runner_config.host.resolve() {
-                HostConfig::Local | HostConfig::Ssh(_) => SnapshotStrategyConfig::PersistentDisk,
-                HostConfig::Sprite(_) => SnapshotStrategyConfig::SpriteCheckpoint {
-                    comment_prefix: None,
-                },
-                HostConfig::Fly(_) | HostConfig::Client => SnapshotStrategyConfig::S3 {
-                    prefix: None,
-                    storage: None,
-                },
-            }
-        }
-    }
-}
-
-/// Create a snapshot strategy based on configuration.
-pub async fn create_snapshot_strategy(
+/// # Strategy Selection
+///
+/// | Host Type | Strategy |
+/// |-----------|----------|
+/// | Local | NoOpArchiveStrategy (files persist on disk) |
+/// | SSH | NoOpArchiveStrategy (files persist on remote disk) |
+/// | Sprite | SpriteCheckpointStrategy (VM checkpoint captures all state) |
+/// | Fly | S3ArchiveStrategy (machines are destroyed, need S3 storage) |
+/// | Client | NoOpArchiveStrategy (no archiving needed) |
+pub async fn create_archive_strategy(
     runner_config: &RunnerConfig,
     storage_config: &StorageConfig,
-) -> SnapshotResult<Box<dyn SnapshotStrategy>> {
-    let strategy_config = infer_snapshot_strategy(runner_config);
-
-    match strategy_config {
-        SnapshotStrategyConfig::PersistentDisk => Ok(Box::new(PersistentDiskStrategy::new())),
-        SnapshotStrategyConfig::S3 { prefix, storage } => {
+) -> ArchiveResult<Box<dyn ArchiveStrategy>> {
+    match runner_config.host.resolve() {
+        HostConfig::Local | HostConfig::Ssh(_) | HostConfig::Client => {
+            Ok(Box::new(NoOpArchiveStrategy::new()))
+        }
+        HostConfig::Sprite(sprite_config) => {
+            let strategy = SpriteCheckpointStrategy::new(&sprite_config, None)?;
+            Ok(Box::new(strategy))
+        }
+        HostConfig::Fly(_) => {
             #[cfg(feature = "s3-storage")]
             {
-                let s3_config = storage_config
-                    .get_storage(storage.as_deref())
-                    .ok_or_else(|| {
-                        SnapshotError::Config(
-                            "S3 snapshot strategy requires storage configuration. \
-                             Add a storage in Settings > Storage, or configure [storage.s3] in config.toml"
-                                .into(),
-                        )
-                    })?;
-                let strategy = S3SnapshotStrategy::new(s3_config, prefix).await?;
+                let s3_config = storage_config.get_storage(None).ok_or_else(|| {
+                    SnapshotError::Config(
+                        "Fly runner requires S3 storage configuration for pause/resume. \
+                         Add a storage in Settings > Storage, or configure [storage.storages] in config.toml"
+                            .into(),
+                    )
+                })?;
+                let strategy = S3ArchiveStrategy::new(s3_config, None).await?;
                 Ok(Box::new(strategy))
             }
             #[cfg(not(feature = "s3-storage"))]
             {
-                let _ = prefix;
-                let _ = storage;
                 let _ = storage_config;
-                Err(SnapshotError::Config(
-                    "S3 snapshot strategy requires --features s3-storage".into(),
-                ))
+                // Fall back to no-op - sessions won't persist across Fly machine restarts
+                tracing::warn!(
+                    "S3 storage feature not enabled - Fly sessions will not persist across restarts"
+                );
+                Ok(Box::new(NoOpArchiveStrategy::new()))
             }
-        }
-        SnapshotStrategyConfig::SpriteCheckpoint { comment_prefix } => {
-            // Get sprite config from runner
-            let sprite_config = match runner_config.host.resolve() {
-                HostConfig::Sprite(config) => config,
-                _ => {
-                    return Err(SnapshotError::Config(
-                        "SpriteCheckpoint strategy requires a Sprite host".into(),
-                    ))
-                }
-            };
-            let strategy = SpriteCheckpointStrategy::new(&sprite_config, comment_prefix)?;
-            Ok(Box::new(strategy))
         }
     }
 }
@@ -217,53 +251,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_snapshot_handle_serialization() {
-        let handle = SnapshotHandle {
-            strategy_type: "s3".to_string(),
-            snapshot_id: "snapshots/my-run/worker1/2024-01-15T10:30:00Z.tar.gz".to_string(),
-            created_at: "2024-01-15T10:30:00Z".to_string(),
-            size_bytes: Some(1024 * 1024),
-        };
+    fn test_work_dir_snapshot_serialization() {
+        let snapshot =
+            WorkDirSnapshot::with_size("s3", "archives/my-run/worker1/workdir.tar.gz", 1024 * 1024);
+
+        let json = serde_json::to_string(&snapshot).unwrap();
+        let restored: WorkDirSnapshot = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(snapshot.strategy_type, restored.strategy_type);
+        assert_eq!(snapshot.storage_id, restored.storage_id);
+        assert_eq!(snapshot.size_bytes, restored.size_bytes);
+    }
+
+    #[test]
+    fn test_worker_state_handle_serialization() {
+        let handle = WorkerStateHandle::with_work_dir(WorkDirSnapshot::new("noop", "/path/to/dir"));
 
         let json = serde_json::to_string(&handle).unwrap();
-        let restored: SnapshotHandle = serde_json::from_str(&json).unwrap();
+        let restored: WorkerStateHandle = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(handle.strategy_type, restored.strategy_type);
-        assert_eq!(handle.snapshot_id, restored.snapshot_id);
-        assert_eq!(handle.size_bytes, restored.size_bytes);
+        assert!(restored.work_dir.is_some());
+        assert!(restored.agent_session.is_none());
     }
 
     #[test]
-    fn test_infer_strategy_local() {
-        let config = RunnerConfig::local();
-        let strategy = infer_snapshot_strategy(&config);
-        assert!(matches!(strategy, SnapshotStrategyConfig::PersistentDisk));
-    }
+    fn test_agent_snapshot_serialization() {
+        let snapshot = AgentSnapshot::new("claude", "session-123", "s3://bucket/key");
 
-    #[test]
-    fn test_infer_strategy_fly() {
-        use crate::core::runner::FlyHostConfig;
+        let json = serde_json::to_string(&snapshot).unwrap();
+        let restored: AgentSnapshot = serde_json::from_str(&json).unwrap();
 
-        let config = RunnerConfig::fly(
-            FlyHostConfig {
-                app: "test-app".to_string(),
-                ..Default::default()
-            },
-            "debian:bookworm".to_string(),
-        );
-        let strategy = infer_snapshot_strategy(&config);
-        assert!(matches!(strategy, SnapshotStrategyConfig::S3 { .. }));
-    }
-
-    #[test]
-    fn test_infer_strategy_sprite() {
-        use crate::core::runner::SpriteHostConfig;
-
-        let config = RunnerConfig::sprite(SpriteHostConfig::default());
-        let strategy = infer_snapshot_strategy(&config);
-        assert!(matches!(
-            strategy,
-            SnapshotStrategyConfig::SpriteCheckpoint { .. }
-        ));
+        assert_eq!(snapshot.agent_type, restored.agent_type);
+        assert_eq!(snapshot.session_id, restored.session_id);
+        assert_eq!(snapshot.storage_id, restored.storage_id);
     }
 }

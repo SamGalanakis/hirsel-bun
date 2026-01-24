@@ -8,7 +8,12 @@
 - If you're refactoring, FINISH the refactor completely - no half measures
 
 ## Architecture
-See [`docs/architecture.md`](docs/architecture.md) for system architecture. **Keep it updated.**
+See [`docs/architecture.md`](docs/architecture.md) for system architecture.
+
+**CRITICAL:** Before implementing any feature or fix:
+1. **READ** `docs/architecture.md` to understand the module structure and traits
+2. **UPDATE** `docs/architecture.md` when you add/modify modules, traits, or APIs
+3. Use the Quick Reference table to find the right files to modify
 
 ## No Backwards Compatibility
 Development project - no database migrations needed. Modify schema directly in `src-tauri/src/core/state/mod.rs`.
@@ -93,16 +98,15 @@ let mut acp_child = AcpChild::spawn(AcpSpawnConfig::new(cmd, dir, "context"))?;
 
 | Feature | Use |
 |---------|-----|
-| `gui` | Tauri desktop (default) |
-| `full-cli` | All CLI commands |
+| `gui` | Tauri desktop (default, includes `cli`) |
+| `cli` | Full CLI (includes server + TUI attach) |
 | `server` | HTTP server, daemon |
-| `tui` | Terminal UI (attach) |
 | `worker` | Minimal remote worker |
 | `s3-storage` | S3-compatible storage (MinIO, Tigris, AWS S3) |
 
 ```bash
 cargo build                                    # Full GUI
-cargo build --no-default-features -F full-cli  # CLI only
+cargo build --no-default-features -F cli       # CLI only
 cargo build --no-default-features -F worker    # Remote worker
 cargo build --features s3-storage              # With S3 storage support
 ```
@@ -138,7 +142,7 @@ fly volumes create hirsel_data --size 10 --region ams
 fly secrets set HIRSEL_API_KEY=<secret> ANTHROPIC_API_KEY=<key>
 
 # Build and deploy
-cargo build --release --no-default-features --features full-cli
+cargo build --release --no-default-features --features cli
 fly deploy
 ```
 

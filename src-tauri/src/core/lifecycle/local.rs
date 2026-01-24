@@ -11,7 +11,10 @@ use super::{
 use crate::core::config::Config;
 use crate::core::files::Files;
 use crate::core::runner::{create_lifecycle_runner_for_handle, WorkerHandle};
-use crate::core::snapshot::{create_snapshot_strategy, SnapshotHandle};
+use crate::core::snapshot::{
+    create_archive_strategy, host_session_path, AgentSnapshot, ArchiveStrategy, WorkDirSnapshot,
+    WorkerStateHandle,
+};
 use crate::core::state::{FailureReason, SQLiteState, Status, WorkerStatus, WorkerUpdate};
 // Note: Workers are no longer spawned directly from the lifecycle manager.
 // The daemon handles spawning via the orchestrator, which uses the runner system.
@@ -83,7 +86,17 @@ impl LocalLifecycleManager {
     /// This is the public interface for resuming workers after an eval fails
     /// or when workers need to be restarted.
     pub fn resume_awaiting_workers(&self) -> LifecycleResult<Vec<String>> {
-        self.resume_awaiting_workers_internal()
+        let actions = self.resume_awaiting_workers_internal()?;
+        Ok(actions
+            .into_iter()
+            .filter_map(|action| {
+                if let LifecycleAction::ResumeWorker { worker_name, .. } = action {
+                    Some(worker_name)
+                } else {
+                    None
+                }
+            })
+            .collect())
     }
 
     /// Trigger the auto-improve agent if enabled in config.
@@ -205,10 +218,20 @@ impl LocalLifecycleManager {
     /// For ephemeral hosts (Sprite, Fly), creates a snapshot of the work directory
     /// before stopping the worker so it can be restored on resume.
     fn pause_all_workers_internal(&self) -> LifecycleResult<Vec<String>> {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| LifecycleError::Worker(format!("Failed to create runtime: {}", e)))?;
+        // Helper to run async code - handles being called from within or outside a runtime
+        fn run_async<F: std::future::Future>(f: F) -> F::Output {
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                // Already in a runtime - use block_in_place to avoid nesting
+                tokio::task::block_in_place(|| handle.block_on(f))
+            } else {
+                // Not in a runtime - create one
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("Failed to create runtime")
+                    .block_on(f)
+            }
+        }
 
         // Load config to get runner and storage settings
         let (config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
@@ -225,45 +248,104 @@ impl LocalLifecycleManager {
                 continue;
             }
 
-            // Create snapshot before stopping (for ephemeral hosts)
-            let snapshot_handle_json = if let Some(ref work_dir_str) = worker.work_dir {
-                let work_dir = PathBuf::from(work_dir_str);
-                let runner_config = config.get_runner_for_worker(&worker.name);
+            // Build unified state handle from work dir snapshot and agent session
+            // Use stored runner configs (captured at run creation) with fallback to global config
+            let runner_config = self
+                .state
+                .get_runner_config_for_worker(&worker.name, &config)
+                .unwrap_or_default();
+            let mut state_handle = WorkerStateHandle::new();
 
-                match rt.block_on(create_snapshot_strategy(&runner_config, &config.storage)) {
-                    Ok(strategy) => {
-                        match rt.block_on(strategy.snapshot(
-                            &self.context.run_name,
-                            &worker.name,
-                            &work_dir,
-                        )) {
-                            Ok(handle) => {
-                                info!(
-                                    "Created {} snapshot for worker {}: {}",
-                                    strategy.strategy_type(),
-                                    worker.name,
-                                    handle.snapshot_id
-                                );
-                                serde_json::to_string(&handle).ok()
-                            }
-                            Err(e) => {
-                                warn!(
-                                    "Failed to create snapshot for worker {}: {}",
-                                    worker.name, e
-                                );
-                                None
-                            }
-                        }
-                    }
+            // Create unified archive strategy
+            let archive_strategy: Option<Box<dyn ArchiveStrategy>> =
+                match run_async(create_archive_strategy(&runner_config, &config.storage)) {
+                    Ok(strategy) => Some(strategy),
                     Err(e) => {
-                        // S3 not configured is expected for local runners
+                        // No archive strategy is expected for local runners
                         debug!(
-                            "No snapshot strategy for worker {} (expected for local): {}",
+                            "No archive strategy for worker {} (expected for local): {}",
                             worker.name, e
                         );
                         None
                     }
+                };
+
+            // Archive work directory (for ephemeral hosts)
+            if let (Some(ref work_dir_str), Some(ref strategy)) =
+                (&worker.work_dir, &archive_strategy)
+            {
+                // Skip archive for no-op strategies (files persist on disk)
+                if !strategy.is_noop() {
+                    let work_dir = PathBuf::from(work_dir_str);
+                    let archive_key = format!("{}/{}/workdir", self.context.run_name, worker.name);
+
+                    match run_async(strategy.archive(&archive_key, &work_dir)) {
+                        Ok(handle) => {
+                            info!(
+                                "Archived work dir for worker {}: {} -> {}",
+                                worker.name,
+                                strategy.strategy_type(),
+                                handle.storage_id
+                            );
+                            state_handle.work_dir = Some(WorkDirSnapshot {
+                                strategy_type: handle.strategy_type,
+                                storage_id: handle.storage_id,
+                                size_bytes: handle.size_bytes,
+                            });
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to archive work dir for worker {}: {}",
+                                worker.name, e
+                            );
+                        }
+                    }
                 }
+            }
+
+            // Archive agent session (for session resume on ephemeral hosts)
+            if let (Some(ref session_id), Some(ref strategy)) =
+                (&worker.session_id, &archive_strategy)
+            {
+                // Skip archive for no-op strategies (files persist on disk)
+                if !strategy.is_noop() {
+                    let session_dir = host_session_path(&self.context.run_dir, &worker.name);
+                    let archive_key = format!("{}/{}/session", self.context.run_name, worker.name);
+
+                    match run_async(strategy.archive(&archive_key, &session_dir)) {
+                        Ok(handle) => {
+                            info!(
+                                "Archived agent session for worker {}: {} -> {}",
+                                worker.name,
+                                strategy.strategy_type(),
+                                handle.storage_id
+                            );
+                            state_handle.agent_session = Some(AgentSnapshot {
+                                agent_type: "claude".to_string(),
+                                session_id: session_id.clone(),
+                                storage_id: handle.storage_id,
+                            });
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to archive agent session for worker {}: {}",
+                                worker.name, e
+                            );
+                        }
+                    }
+                } else {
+                    // For no-op strategy, still store the session_id for resume
+                    state_handle.agent_session = Some(AgentSnapshot {
+                        agent_type: "claude".to_string(),
+                        session_id: session_id.clone(),
+                        storage_id: String::new(),
+                    });
+                }
+            }
+
+            // Serialize unified state handle (only if we have state to persist)
+            let state_handle_json = if state_handle.has_state() {
+                serde_json::to_string(&state_handle).ok()
             } else {
                 None
             };
@@ -280,7 +362,7 @@ impl LocalLifecycleManager {
 
                 let runner = create_lifecycle_runner_for_handle(&handle);
 
-                if let Err(e) = rt.block_on(runner.stop(&handle)) {
+                if let Err(e) = run_async(runner.stop(&handle)) {
                     warn!(
                         "Runner stop failed for {} (runner_type: {}): {}",
                         worker.name, runner_type, e
@@ -295,7 +377,7 @@ impl LocalLifecycleManager {
                 warn!("Worker {} has no runner info, cannot stop", worker.name);
             }
 
-            // Mark as paused with snapshot handle
+            // Mark as paused with unified state handle
             self.state
                 .update_worker(
                     &worker.name,
@@ -303,7 +385,7 @@ impl LocalLifecycleManager {
                         pid: None,
                         runner_id: None,
                         status: Some(WorkerStatus::Paused),
-                        snapshot_handle: Some(snapshot_handle_json),
+                        state_handle: Some(state_handle_json),
                         ..Default::default()
                     },
                 )
@@ -316,21 +398,10 @@ impl LocalLifecycleManager {
 
     /// Resume workers that are in paused/awaiting/error state.
     ///
-    /// For workers with snapshots, restores the work directory from the snapshot
-    /// before returning the ResumeWorker action.
-    ///
-    /// Returns a list of worker names that should be resumed. The caller (daemon)
-    /// handles actual spawning via the orchestrator using spawn_single_worker.
-    fn resume_awaiting_workers_internal(&self) -> LifecycleResult<Vec<String>> {
-        // Load config to get runner and storage settings
-        let (config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
-
-        // Create runtime for async snapshot operations
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| LifecycleError::Worker(format!("Failed to create runtime: {}", e)))?;
-
+    /// Returns a list of ResumeWorker actions. The caller (daemon) handles actual
+    /// spawning via the orchestrator using resume_worker(). The orchestrator
+    /// will restore snapshots for ephemeral runners.
+    fn resume_awaiting_workers_internal(&self) -> LifecycleResult<Vec<LifecycleAction>> {
         // Get claimable tasks (needed for awaiting workers)
         let claimable = self
             .state
@@ -346,6 +417,10 @@ impl LocalLifecycleManager {
         let to_resume: Vec<_> = workers
             .iter()
             .filter(|w| {
+                // Never auto-resume workers waiting for human input
+                if w.hitl_waiting {
+                    return false;
+                }
                 w.status == WorkerStatus::Paused
                     || w.status == WorkerStatus::Error
                     || (w.status == WorkerStatus::Awaiting && !claimable.is_empty())
@@ -355,8 +430,6 @@ impl LocalLifecycleManager {
         if to_resume.is_empty() {
             return Ok(Vec::new());
         }
-
-        let mut resumed = Vec::new();
 
         // Check if run is paused - don't resume workers if so
         let status = self
@@ -368,89 +441,49 @@ impl LocalLifecycleManager {
             return Ok(Vec::new());
         }
 
+        let mut actions = Vec::new();
+
         for worker in to_resume {
+            // Get work_dir from database, fallback to standard location
+            // Note: work_dir should never be empty, but if it is, use default
             let work_dir = worker
                 .work_dir
                 .as_ref()
+                .filter(|s| !s.is_empty())
                 .map(PathBuf::from)
-                .unwrap_or_else(|| self.context.run_dir.join("workers").join(&worker.name));
+                .unwrap_or_else(|| self.context.run_dir.join("work").join(&worker.name));
 
-            // Restore from snapshot if one exists
-            if let Some(ref snapshot_json) = worker.snapshot_handle {
-                match serde_json::from_str::<SnapshotHandle>(snapshot_json) {
-                    Ok(handle) => {
-                        let runner_config = config.get_runner_for_worker(&worker.name);
-
-                        match rt.block_on(create_snapshot_strategy(&runner_config, &config.storage))
-                        {
-                            Ok(strategy) => {
-                                match rt.block_on(strategy.restore(&handle, &work_dir)) {
-                                    Ok(()) => {
-                                        info!(
-                                            "Restored {} snapshot for worker {}: {}",
-                                            strategy.strategy_type(),
-                                            worker.name,
-                                            handle.snapshot_id
-                                        );
-
-                                        // Delete the snapshot after successful restore
-                                        if let Err(e) = rt.block_on(strategy.delete(&handle)) {
-                                            warn!(
-                                                "Failed to delete snapshot {} after restore: {}",
-                                                handle.snapshot_id, e
-                                            );
-                                        }
-
-                                        // Clear snapshot handle after successful restore
-                                        if let Err(e) = self.state.update_worker(
-                                            &worker.name,
-                                            WorkerUpdate {
-                                                snapshot_handle: Some(None),
-                                                ..Default::default()
-                                            },
-                                        ) {
-                                            warn!(
-                                                "Failed to clear snapshot handle for worker {}: {}",
-                                                worker.name, e
-                                            );
-                                        }
-                                    }
-                                    Err(e) => {
-                                        warn!(
-                                            "Failed to restore snapshot for worker {}: {}",
-                                            worker.name, e
-                                        );
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                // S3 not configured is expected for local runners
-                                debug!(
-                                    "No snapshot strategy for worker {} (expected for local): {}",
-                                    worker.name, e
-                                );
-                            }
-                        }
-                    }
+            // Parse unified state handle if exists (don't restore here - orchestrator will do it)
+            let state_handle = worker.state_handle.as_ref().and_then(|json| {
+                match serde_json::from_str::<WorkerStateHandle>(json) {
+                    Ok(handle) => Some(handle),
                     Err(e) => {
                         warn!(
-                            "Failed to parse snapshot handle for worker {}: {}",
+                            "Failed to parse state handle for worker {}: {}",
                             worker.name, e
                         );
+                        None
                     }
                 }
-            }
+            });
 
-            // Add to resumed list - the daemon will handle actual spawning
-            resumed.push(worker.name.clone());
             info!(
-                "resume_awaiting_workers: worker {} ready to resume, work_dir: {}",
+                "resume_awaiting_workers: worker {} ready to resume, work_dir: {}, has_work_dir_snapshot: {}, has_agent_session: {}",
                 worker.name,
-                work_dir.display()
+                work_dir.display(),
+                state_handle.as_ref().map(|h| h.work_dir.is_some()).unwrap_or(false),
+                state_handle.as_ref().map(|h| h.agent_session.is_some()).unwrap_or(false)
             );
+
+            actions.push(LifecycleAction::ResumeWorker {
+                worker_name: worker.name.clone(),
+                work_dir,
+                resume_session_id: worker.session_id.clone(),
+                state_handle,
+            });
         }
 
-        Ok(resumed)
+        Ok(actions)
     }
 
     /// Try to scale up workers if autoscale is enabled and tasks are available.
@@ -595,6 +628,10 @@ impl LocalLifecycleManager {
         let agent_command = config.agent.command.clone();
 
         // Spawn the eval subprocess
+        // Capture stderr to a log file for debugging
+        let eval_log_path = self.context.run_dir.join("eval_spawn.log");
+        let log_file = std::fs::File::create(&eval_log_path).ok();
+
         let mut cmd = Command::new(&hirsel_exe);
         cmd.arg("__eval-run")
             .arg("--run")
@@ -604,8 +641,14 @@ impl LocalLifecycleManager {
             .arg("--agent-command")
             .arg(serde_json::to_string(&agent_command).unwrap_or_else(|_| "[]".to_string()))
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stdout(Stdio::null());
+
+        // Capture stderr to log file for debugging, fall back to null
+        if let Some(file) = log_file {
+            cmd.stderr(Stdio::from(file));
+        } else {
+            cmd.stderr(Stdio::null());
+        }
 
         // Spawn detached
         #[cfg(unix)]
@@ -834,10 +877,8 @@ impl LifecycleManager for LocalLifecycleManager {
             } => {
                 // Task completion might unblock other tasks
                 // Try to resume awaiting workers and scale up
-                let resumed = self.resume_awaiting_workers_internal()?;
-                if !resumed.is_empty() {
-                    actions.push(LifecycleAction::WorkersResumed(resumed));
-                }
+                let resume_actions = self.resume_awaiting_workers_internal()?;
+                actions.extend(resume_actions);
 
                 if let Some(action) = self.maybe_scale_up_internal()? {
                     actions.push(action);
@@ -847,10 +888,8 @@ impl LifecycleManager for LocalLifecycleManager {
             LifecycleEvent::TaskAdded { task_id: _ }
             | LifecycleEvent::TaskUnclaimed { task_id: _ } => {
                 // New or unclaimed task - try to resume awaiting workers
-                let resumed = self.resume_awaiting_workers_internal()?;
-                if !resumed.is_empty() {
-                    actions.push(LifecycleAction::WorkersResumed(resumed));
-                }
+                let resume_actions = self.resume_awaiting_workers_internal()?;
+                actions.extend(resume_actions);
 
                 if let Some(action) = self.maybe_scale_up_internal()? {
                     actions.push(action);
@@ -891,10 +930,8 @@ impl LifecycleManager for LocalLifecycleManager {
             }
 
             LifecycleEvent::ResumeRequested => {
-                let resumed = self.resume_run()?;
-                if !resumed.is_empty() {
-                    actions.push(LifecycleAction::WorkersResumed(resumed));
-                }
+                let resume_actions = self.resume_run()?;
+                actions.extend(resume_actions);
                 actions.push(LifecycleAction::RunStatusChanged(Status::Working));
             }
 
@@ -912,10 +949,8 @@ impl LifecycleManager for LocalLifecycleManager {
                     self.state
                         .set_status(Status::Working)
                         .map_err(|e| LifecycleError::State(e.to_string()))?;
-                    let resumed = self.resume_awaiting_workers_internal()?;
-                    if !resumed.is_empty() {
-                        actions.push(LifecycleAction::WorkersResumed(resumed));
-                    }
+                    let resume_actions = self.resume_awaiting_workers_internal()?;
+                    actions.extend(resume_actions);
                     actions.push(LifecycleAction::RunStatusChanged(Status::Working));
                 }
             }
@@ -956,7 +991,7 @@ impl LifecycleManager for LocalLifecycleManager {
         Ok(paused)
     }
 
-    fn resume_run(&self) -> LifecycleResult<Vec<String>> {
+    fn resume_run(&self) -> LifecycleResult<Vec<LifecycleAction>> {
         // Check current status
         let status = self
             .state
@@ -987,13 +1022,19 @@ impl LifecycleManager for LocalLifecycleManager {
             }
         }
 
+        // Clear HITL waiting flags for all workers - this allows workers
+        // that were waiting for human input to continue
+        self.state
+            .clear_all_hitl_waiting()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+
         // Update status first
         self.state
             .set_status(Status::Working)
             .map_err(|e| LifecycleError::State(e.to_string()))?;
 
-        // Resume existing workers
-        let resumed = self.resume_awaiting_workers_internal()?;
+        // Resume existing workers (returns ResumeWorker actions)
+        let resume_actions = self.resume_awaiting_workers_internal()?;
 
         // Note: Scaling is now handled by the daemon through SpawnWorker actions.
         // The daemon will process actions and spawn workers via the orchestrator.
@@ -1001,7 +1042,7 @@ impl LifecycleManager for LocalLifecycleManager {
         // Check if eval should be triggered
         let _ = self.maybe_trigger_eval();
 
-        Ok(resumed)
+        Ok(resume_actions)
     }
 
     fn worker_done(&self, worker_name: &str) -> LifecycleResult<Vec<LifecycleAction>> {

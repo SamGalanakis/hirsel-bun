@@ -7,13 +7,14 @@ use async_trait::async_trait;
 
 use super::{
     AddTaskRequest, CreateRunRequest, CreateRunResponse, DeliverRunRequest, HealthResponse,
-    Orchestrator, OrchestratorError, OrchestratorResult, ResumeRunRequest, SendMessageRequest,
-    SpawnWorkersRequest, SpawnWorkersResponse,
+    Orchestrator, OrchestratorError, OrchestratorResult, ResumeRunRequest, ResumeWorkerRequest,
+    SendMessageRequest, SpawnSingleWorkerRequest, SpawnWorkersRequest, SpawnWorkersResponse,
 };
 use crate::core::api_types::{
     ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, Task, ThreadSummary,
     Worker, WorkerEventsResponse,
 };
+use crate::core::snapshot::WorkerStateHandle;
 use crate::daemon::DaemonClient;
 
 /// Orchestrator that communicates with the local daemon
@@ -34,29 +35,6 @@ impl DaemonOrchestrator {
         let client = DaemonClient::connect_or_start()
             .map_err(|e| OrchestratorError::Other(format!("Failed to connect to daemon: {}", e)))?;
         Ok(Self { client })
-    }
-
-    /// Create a new run via the daemon
-    pub async fn create_run(
-        &self,
-        request: CreateRunRequest,
-    ) -> OrchestratorResult<CreateRunResponse> {
-        self.client
-            .post("/api/runs", request)
-            .await
-            .map_err(|e| OrchestratorError::Other(e.to_string()))
-    }
-
-    /// Spawn workers for a run via the daemon
-    pub async fn spawn_workers(
-        &self,
-        run: &str,
-        request: SpawnWorkersRequest,
-    ) -> OrchestratorResult<SpawnWorkersResponse> {
-        self.client
-            .post(&format!("/api/runs/{}/spawn", run), request)
-            .await
-            .map_err(|e| OrchestratorError::Other(e.to_string()))
     }
 }
 
@@ -328,6 +306,17 @@ impl Orchestrator for DaemonOrchestrator {
             .map_err(|e| OrchestratorError::Other(e.to_string()))
     }
 
+    async fn init_workspace(
+        &self,
+        run_name: &str,
+        request: super::InitWorkspaceRequest,
+    ) -> OrchestratorResult<super::InitWorkspaceResponse> {
+        self.client
+            .post(&format!("/api/runs/{}/workspace", run_name), request)
+            .await
+            .map_err(|e| OrchestratorError::Other(e.to_string()))
+    }
+
     async fn spawn_workers(
         &self,
         run_name: &str,
@@ -338,5 +327,51 @@ impl Orchestrator for DaemonOrchestrator {
             .post(&format!("/api/runs/{}/spawn", run_name), request)
             .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))
+    }
+
+    async fn spawn_single_worker(
+        &self,
+        run_name: &str,
+        worker_name: &str,
+        work_dir: &std::path::Path,
+        resume_session_id: Option<&str>,
+    ) -> OrchestratorResult<()> {
+        let request = SpawnSingleWorkerRequest {
+            work_dir: work_dir.to_string_lossy().to_string(),
+            resume_session_id: resume_session_id.map(|s| s.to_string()),
+        };
+        let _: serde_json::Value = self
+            .client
+            .post(
+                &format!("/api/runs/{}/workers/{}/spawn", run_name, worker_name),
+                request,
+            )
+            .await
+            .map_err(|e| OrchestratorError::Other(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn resume_worker(
+        &self,
+        run_name: &str,
+        worker_name: &str,
+        work_dir: &std::path::Path,
+        resume_session_id: Option<&str>,
+        state_handle: Option<&WorkerStateHandle>,
+    ) -> OrchestratorResult<()> {
+        let request = ResumeWorkerRequest {
+            work_dir: work_dir.to_string_lossy().to_string(),
+            resume_session_id: resume_session_id.map(|s| s.to_string()),
+            state_handle: state_handle.cloned(),
+        };
+        let _: serde_json::Value = self
+            .client
+            .post(
+                &format!("/api/runs/{}/workers/{}/resume", run_name, worker_name),
+                request,
+            )
+            .await
+            .map_err(|e| OrchestratorError::Other(e.to_string()))?;
+        Ok(())
     }
 }

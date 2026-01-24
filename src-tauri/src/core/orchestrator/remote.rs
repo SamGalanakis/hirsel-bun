@@ -9,14 +9,16 @@ use serde::Serialize;
 
 use super::{
     AddTaskRequest, CreateRunRequest, CreateRunResponse, DeliverRunRequest, HealthResponse,
-    Orchestrator, OrchestratorError, OrchestratorResult, ResumeRunRequest, SendMessageRequest,
-    SpawnWorkersRequest, SpawnWorkersResponse, StartRunRequest,
+    Orchestrator, OrchestratorError, OrchestratorResult, ResumeRunRequest, ResumeWorkerRequest,
+    SendMessageRequest, SpawnSingleWorkerRequest, SpawnWorkersRequest, SpawnWorkersResponse,
+    StartRunRequest,
 };
 use crate::core::api_types::{
     ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, Task, ThreadSummary,
     Worker, WorkerEventsResponse,
 };
 use crate::core::draft::StartingPoint;
+use crate::core::snapshot::WorkerStateHandle;
 
 /// Remote orchestrator that communicates with a Hirsel server over HTTP
 pub struct RemoteOrchestrator {
@@ -147,45 +149,6 @@ impl RemoteOrchestrator {
     ///
     /// This sets up the run's state, spec, and initial worker.
     /// After this, call upload_files() and then spawn_workers().
-    pub async fn create_run(
-        &self,
-        request: CreateRunRequest,
-    ) -> OrchestratorResult<CreateRunResponse> {
-        self.post("/api/runs", &request).await
-    }
-
-    /// Upload working directory as tarball to the server
-    ///
-    /// The tarball should be a gzipped tar archive of the project files.
-    /// Workers will download and extract these files before starting.
-    pub async fn upload_files(&self, run_name: &str, tarball: Vec<u8>) -> OrchestratorResult<()> {
-        let url = format!(
-            "{}/api/runs/{}/files",
-            self.base_url,
-            urlencoding::encode(run_name)
-        );
-
-        let resp = self
-            .client
-            .post(&url)
-            .bearer_auth(&self.api_key)
-            .header("Content-Type", "application/gzip")
-            .body(tarball)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(OrchestratorError::Http(format!(
-                "HTTP {} from {}: {}",
-                status, url, body
-            )));
-        }
-
-        Ok(())
-    }
-
     /// Download working directory tarball from the server
     ///
     /// Returns a gzipped tar archive of the run's work directory.
@@ -218,23 +181,6 @@ impl RemoteOrchestrator {
             .map_err(|e| OrchestratorError::Http(format!("Failed to read response: {}", e)))?;
 
         Ok(bytes.to_vec())
-    }
-
-    /// Spawn workers on the remote server
-    ///
-    /// Creates and starts the specified number of workers.
-    /// The run must have files uploaded first.
-    pub async fn spawn_workers(
-        &self,
-        run_name: &str,
-        count: u32,
-    ) -> OrchestratorResult<SpawnWorkersResponse> {
-        let body = SpawnWorkersRequest { count };
-        self.post(
-            &format!("/api/runs/{}/spawn", urlencoding::encode(run_name)),
-            &body,
-        )
-        .await
     }
 }
 
@@ -508,6 +454,18 @@ impl Orchestrator for RemoteOrchestrator {
         Ok(())
     }
 
+    async fn init_workspace(
+        &self,
+        run_name: &str,
+        request: super::InitWorkspaceRequest,
+    ) -> OrchestratorResult<super::InitWorkspaceResponse> {
+        self.post(
+            &format!("/api/runs/{}/workspace", urlencoding::encode(run_name)),
+            &request,
+        )
+        .await
+    }
+
     async fn spawn_workers(
         &self,
         run_name: &str,
@@ -534,9 +492,16 @@ impl Orchestrator for RemoteOrchestrator {
         };
 
         // 2. Convert to CreateRunRequest
+        // For LocalFolder, we upload files separately, so don't include the local path
+        let starting_point_for_server = match &request.starting_point {
+            StartingPoint::LocalFolder { .. } => None, // Files uploaded via tarball
+            sp => Some(sp.clone()),
+        };
+
         let create_request = CreateRunRequest {
             name: request.name.clone(),
             spec: request.spec,
+            starting_point: starting_point_for_server,
             runner: request.runner,
             worker_scale: request.worker_scale,
             time_limit_minutes: request.time_limit_minutes.map(|m| m as u32),
@@ -559,6 +524,56 @@ impl Orchestrator for RemoteOrchestrator {
 
         // 6. Return run detail
         self.get_run(&create_response.name).await
+    }
+
+    async fn spawn_single_worker(
+        &self,
+        run_name: &str,
+        worker_name: &str,
+        work_dir: &std::path::Path,
+        resume_session_id: Option<&str>,
+    ) -> OrchestratorResult<()> {
+        let request = SpawnSingleWorkerRequest {
+            work_dir: work_dir.to_string_lossy().to_string(),
+            resume_session_id: resume_session_id.map(|s| s.to_string()),
+        };
+        let _: serde_json::Value = self
+            .post(
+                &format!(
+                    "/api/runs/{}/workers/{}/spawn",
+                    urlencoding::encode(run_name),
+                    urlencoding::encode(worker_name)
+                ),
+                &request,
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn resume_worker(
+        &self,
+        run_name: &str,
+        worker_name: &str,
+        work_dir: &std::path::Path,
+        resume_session_id: Option<&str>,
+        state_handle: Option<&WorkerStateHandle>,
+    ) -> OrchestratorResult<()> {
+        let request = ResumeWorkerRequest {
+            work_dir: work_dir.to_string_lossy().to_string(),
+            resume_session_id: resume_session_id.map(|s| s.to_string()),
+            state_handle: state_handle.cloned(),
+        };
+        let _: serde_json::Value = self
+            .post(
+                &format!(
+                    "/api/runs/{}/workers/{}/resume",
+                    urlencoding::encode(run_name),
+                    urlencoding::encode(worker_name)
+                ),
+                &request,
+            )
+            .await?;
+        Ok(())
     }
 }
 

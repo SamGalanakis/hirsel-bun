@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use crate::core::config::{self, Config};
 use crate::core::gyp_chat::GypChatStore;
 use crate::core::lifecycle::LocalLifecycleManager;
-use crate::core::snapshot::{create_snapshot_strategy, SnapshotHandle};
+use crate::core::snapshot::{create_archive_strategy, ArchiveHandle, WorkerStateHandle};
 use crate::core::state::SQLiteState;
 use crate::core::Files;
 
@@ -55,25 +55,35 @@ pub async fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsE
             let (app_config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
 
             for worker in workers {
-                if let Some(ref snapshot_json) = worker.snapshot_handle {
-                    if let Ok(handle) = serde_json::from_str::<SnapshotHandle>(snapshot_json) {
-                        let runner_config = app_config.get_runner_for_worker(&worker.name);
-                        if let Ok(strategy) =
-                            create_snapshot_strategy(&runner_config, &app_config.storage).await
-                        {
-                            if let Err(e) = strategy.delete(&handle).await {
-                                tracing::warn!(
-                                    "Failed to delete snapshot {} for worker {}: {}",
-                                    handle.snapshot_id,
-                                    worker.name,
-                                    e
-                                );
-                            } else {
-                                tracing::debug!(
-                                    "Deleted snapshot {} for worker {}",
-                                    handle.snapshot_id,
-                                    worker.name
-                                );
+                if let Some(ref state_handle_json) = worker.state_handle {
+                    if let Ok(state_handle) =
+                        serde_json::from_str::<WorkerStateHandle>(state_handle_json)
+                    {
+                        // Delete archived work directory if present
+                        if let Some(ref work_dir_snapshot) = state_handle.work_dir {
+                            let runner_config = app_config.get_runner_for_worker(&worker.name);
+                            if let Ok(strategy) =
+                                create_archive_strategy(&runner_config, &app_config.storage).await
+                            {
+                                let handle = ArchiveHandle {
+                                    strategy_type: work_dir_snapshot.strategy_type.clone(),
+                                    storage_id: work_dir_snapshot.storage_id.clone(),
+                                    size_bytes: work_dir_snapshot.size_bytes,
+                                };
+                                if let Err(e) = strategy.delete(&handle).await {
+                                    tracing::warn!(
+                                        "Failed to delete archive {} for worker {}: {}",
+                                        work_dir_snapshot.storage_id,
+                                        worker.name,
+                                        e
+                                    );
+                                } else {
+                                    tracing::debug!(
+                                        "Deleted archive {} for worker {}",
+                                        work_dir_snapshot.storage_id,
+                                        worker.name
+                                    );
+                                }
                             }
                         }
                     }
@@ -170,8 +180,52 @@ pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
     // Open source database to read settings
     let source_state = SQLiteState::new(source_db_path)?;
 
+    // Read starting_point from source (if stored)
+    let starting_point_json = source_state.get_starting_point().ok().flatten();
+
     // Read settings from source
-    let project_path = source_state.get_project_path().ok().flatten();
+    // For greenfield/gitrepo starting points, don't copy project_path - the cloned draft
+    // will create its own workspace when started. For LocalFolder, keep the external path.
+    let project_path = source_state
+        .get_project_path()
+        .ok()
+        .flatten()
+        .and_then(|p| {
+            // Check if we have starting_point info
+            if let Some(ref sp_json) = starting_point_json {
+                if let Ok(sp) = serde_json::from_str::<crate::core::draft::StartingPoint>(sp_json) {
+                    match sp {
+                        crate::core::draft::StartingPoint::LocalFolder { .. } => {
+                            // External folder - keep the reference
+                            return Some(p);
+                        }
+                        _ => {
+                            // Greenfield or GitRepo - don't copy (internal workspace)
+                            tracing::debug!(
+                                "Skipping project_path for clone - starting_point is {:?}",
+                                sp
+                            );
+                            return None;
+                        }
+                    }
+                }
+            }
+
+            // Fallback: check if project_path is inside source run directory
+            let path = PathBuf::from(&p);
+            let source_dir_canonical = source_dir.canonicalize().ok()?;
+            let path_canonical = path.canonicalize().ok()?;
+
+            if path_canonical.starts_with(&source_dir_canonical) {
+                tracing::debug!(
+                    "Skipping project_path '{}' for clone - it's inside source run directory",
+                    p
+                );
+                None
+            } else {
+                Some(p)
+            }
+        });
     let worker_scale = source_state
         .get_worker_scale()
         .ok()
@@ -266,6 +320,11 @@ pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
         new_state.set_request(Some(&spec_content))?;
     }
 
+    // Copy starting_point from source (if exists)
+    if let Some(ref sp_json) = starting_point_json {
+        new_state.set_starting_point(Some(sp_json))?;
+    }
+
     // Add initial scope task
     let _ = new_state.add_task("scope", "Read spec, create exploration tasks", None, None);
 
@@ -292,24 +351,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_delete_run_config_for_gui() {
-        let config = DeleteRunConfig::for_gui("test-run");
+    fn test_delete_run_config() {
+        let config = DeleteRunConfig::new("test-run");
         assert_eq!(config.run_name, "test-run");
-        assert!(config.delete_gyp_chat);
-        assert!(!config.remove_project_remote);
-    }
-
-    #[test]
-    fn test_delete_run_config_for_cli() {
-        let config = DeleteRunConfig::for_cli("test-run");
-        assert_eq!(config.run_name, "test-run");
-        assert!(!config.delete_gyp_chat);
-        assert!(config.remove_project_remote);
     }
 
     #[tokio::test]
     async fn test_delete_nonexistent_run() {
-        let config = DeleteRunConfig::for_cli("nonexistent-run-12345");
+        let config = DeleteRunConfig::new("nonexistent-run-12345");
         let result = delete_run(config).await;
         assert!(matches!(result, Err(OpsError::RunNotFound(_))));
     }

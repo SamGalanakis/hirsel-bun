@@ -12,6 +12,7 @@ mod debug;
 mod drafts;
 mod events;
 mod files;
+mod filesystem;
 pub mod helpers;
 mod logs;
 mod messages;
@@ -48,6 +49,7 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         drafts::clone_run,
         drafts::update_draft,
         drafts::start_draft,
+        drafts::change_starting_point,
         // Spec/Eval file commands
         files::read_spec_file,
         files::write_spec_file,
@@ -117,5 +119,8 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         debug::get_gyp_chat_history,
         debug::save_gyp_message,
         debug::clear_gyp_chat_history,
+        // Filesystem commands
+        filesystem::pick_folder,
+        filesystem::suggest_paths,
     ]
 }

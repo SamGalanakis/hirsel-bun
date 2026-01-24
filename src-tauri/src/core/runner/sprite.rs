@@ -837,6 +837,10 @@ impl Runner for SpriteRunner {
         "sprite"
     }
 
+    fn is_ephemeral(&self) -> bool {
+        true // Sprite VMs are ephemeral
+    }
+
     async fn setup(&self) -> RunnerResult<()> {
         // Verify we have a valid token
         if self.client.token.is_empty() {

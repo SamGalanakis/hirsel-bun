@@ -331,7 +331,7 @@ pub struct Worker {
     pub last_heartbeat: Option<String>,
     pub created_at: String,
     pub hitl_waiting: bool, // True if worker is awaiting user input (HITL)
-    pub snapshot_handle: Option<String>, // JSON-serialized SnapshotHandle for pause/resume
+    pub state_handle: Option<String>, // JSON-serialized WorkerStateHandle for pause/resume
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -479,8 +479,8 @@ pub struct WorkerUpdate {
     pub needs_restart: Option<bool>,
     pub last_heartbeat: Option<String>,
     pub hitl_waiting: Option<bool>,
-    /// Snapshot handle (JSON-serialized). Use Some(Some(json)) to set, Some(None) to clear.
-    pub snapshot_handle: Option<Option<String>>,
+    /// Worker state handle (JSON-serialized). Use Some(Some(json)) to set, Some(None) to clear.
+    pub state_handle: Option<Option<String>>,
 }
 
 // =============================================================================

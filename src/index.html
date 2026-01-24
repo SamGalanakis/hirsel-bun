@@ -67,6 +67,7 @@
               class="p-1 rounded hover:bg-pasture-700 text-wool-500 hover:text-wool-300"
               data-tooltip="New draft run"
               data-side="bottom"
+              data-test="new-run-btn"
             >
               <i data-lucide="plus" class="w-3.5 h-3.5"></i>
             </button>
@@ -121,6 +122,7 @@
             @click="selectRunWithDraft(run.name, run.status)"
             @contextmenu="showContextMenu($event, run)"
             :class="{ 'bg-pasture-700': selectedRun === run.name }"
+            :data-test="'run-item-' + run.name"
             class="run-item px-3 py-2.5 cursor-pointer hover:bg-pasture-700 border-b border-pasture-800 transition-colors"
           >
             <!-- Header: name + status badge -->
@@ -320,9 +322,11 @@
             <span class="px-2 py-0.5 rounded text-xs font-medium bg-sky-500/20 text-sky-400">Draft</span>
           </div>
           <button
+            x-show="startingPointChosen || workspacePath"
             @click="startRun()"
             :disabled="!canStart()"
             class="btn btn-success flex items-center gap-2"
+            data-test="start-run-btn"
           >
             <template x-if="starting">
               <div class="spinner w-4 h-4 border-pasture-900"></div>
@@ -361,7 +365,9 @@
                 : 'bg-pasture-800/50 border-pasture-600 text-wool-300 hover:border-pasture-500'"
             >
               <div class="flex items-center gap-3">
-                <i data-lucide="file-plus" class="w-5 h-5" :class="startingPointType === 'greenfield' ? 'text-amber-500' : 'text-wool-500'"></i>
+                <span :class="startingPointType === 'greenfield' ? 'text-amber-500' : 'text-wool-500'">
+                  <i data-lucide="file-plus" class="w-5 h-5"></i>
+                </span>
                 <div>
                   <div class="font-medium">Greenfield</div>
                   <div class="text-xs text-wool-500">Empty git-initialized workspace for new projects</div>
@@ -370,82 +376,122 @@
             </button>
 
             <!-- Local Folder -->
-            <button
-              type="button"
-              @click="startingPointType = 'local'"
-              class="w-full p-4 rounded-lg border-2 transition-all text-left"
+            <div
+              class="w-full rounded-lg border-2 transition-all text-left"
               :class="startingPointType === 'local'
                 ? 'bg-pasture-700 border-amber-500 text-wool-100'
                 : 'bg-pasture-800/50 border-pasture-600 text-wool-300 hover:border-pasture-500'"
             >
-              <div class="flex items-center gap-3">
-                <i data-lucide="folder" class="w-5 h-5" :class="startingPointType === 'local' ? 'text-amber-500' : 'text-wool-500'"></i>
-                <div>
-                  <div class="font-medium">Local Folder</div>
-                  <div class="text-xs text-wool-500">Copy files from a local directory</div>
+              <!-- Header (clickable) -->
+              <button
+                type="button"
+                @click="startingPointType = 'local'"
+                class="w-full p-4 text-left"
+              >
+                <div class="flex items-center gap-3">
+                  <i data-lucide="folder" class="w-5 h-5" :class="startingPointType === 'local' ? 'text-amber-500' : 'text-wool-500'"></i>
+                  <div>
+                    <div class="font-medium">Local Folder</div>
+                    <div x-show="startingPointType !== 'local'" class="text-xs text-wool-500">Copy files from a local directory</div>
+                  </div>
+                </div>
+              </button>
+              <!-- Expanded input (shown when selected) -->
+              <div x-show="startingPointType === 'local'" class="px-4 pb-4">
+                <div class="relative">
+                  <div class="flex gap-2">
+                    <input
+                      type="text"
+                      x-model="localPath"
+                      @click.stop
+                      @input="debouncedFetchPathSuggestions()"
+                      @keydown="handlePathKeydown($event)"
+                      @focus="debouncedFetchPathSuggestions()"
+                      @blur="hidePathSuggestions()"
+                      placeholder="/path/to/folder or ~/projects"
+                      class="flex-1 font-mono text-sm bg-pasture-800 border-pasture-500"
+                    />
+                    <button type="button" @click.stop="browseLocalFolder()" class="btn-outline shrink-0">
+                      <i data-lucide="folder-open" class="w-4 h-4"></i>
+                    </button>
+                  </div>
+                  <!-- Path suggestions dropdown -->
+                  <div
+                    x-show="showPathSuggestions && pathSuggestions.length > 0"
+                    x-cloak
+                    @click.stop
+                    class="absolute z-50 w-full mt-1 bg-pasture-800 border border-pasture-500 rounded-lg shadow-lg overflow-hidden"
+                  >
+                    <template x-for="(suggestion, index) in pathSuggestions" :key="suggestion">
+                      <button
+                        type="button"
+                        @mousedown.prevent="selectPathSuggestion(suggestion)"
+                        class="w-full px-3 py-2 text-left text-sm font-mono truncate transition-colors"
+                        :class="index === selectedSuggestionIndex ? 'bg-amber-500/20 text-amber-300' : 'text-wool-300 hover:bg-pasture-700'"
+                        x-text="suggestion"
+                      ></button>
+                    </template>
+                  </div>
                 </div>
               </div>
-            </button>
+            </div>
 
             <!-- Git Repository -->
-            <button
-              type="button"
-              @click="startingPointType = 'git'"
-              class="w-full p-4 rounded-lg border-2 transition-all text-left"
+            <div
+              class="w-full rounded-lg border-2 transition-all text-left"
               :class="startingPointType === 'git'
                 ? 'bg-pasture-700 border-amber-500 text-wool-100'
                 : 'bg-pasture-800/50 border-pasture-600 text-wool-300 hover:border-pasture-500'"
             >
-              <div class="flex items-center gap-3">
-                <i data-lucide="git-branch" class="w-5 h-5" :class="startingPointType === 'git' ? 'text-amber-500' : 'text-wool-500'"></i>
+              <!-- Header (clickable) -->
+              <button
+                type="button"
+                @click="startingPointType = 'git'"
+                class="w-full p-4 text-left"
+              >
+                <div class="flex items-center gap-3">
+                  <i data-lucide="git-branch" class="w-5 h-5" :class="startingPointType === 'git' ? 'text-amber-500' : 'text-wool-500'"></i>
+                  <div>
+                    <div class="font-medium">Git Repository</div>
+                    <div x-show="startingPointType !== 'git'" class="text-xs text-wool-500">Clone from a remote git repository</div>
+                  </div>
+                </div>
+              </button>
+              <!-- Expanded inputs (shown when selected) -->
+              <div x-show="startingPointType === 'git'" class="px-4 pb-4 grid gap-3">
                 <div>
-                  <div class="font-medium">Git Repository</div>
-                  <div class="text-xs text-wool-500">Clone from a remote git repository</div>
+                  <input
+                    type="text"
+                    x-model="gitUrl"
+                    @click.stop
+                    @input="debouncedValidateGitUrl()"
+                    placeholder="https://github.com/owner/repo"
+                    class="w-full font-mono text-sm bg-pasture-800 border-pasture-500"
+                  />
+                  <div x-show="gitValidating" class="flex items-center gap-2 text-xs text-wool-500 mt-2">
+                    <div class="spinner w-3 h-3"></div>
+                    Validating...
+                  </div>
+                  <div x-show="gitError" class="text-xs text-terra mt-2" x-text="gitError"></div>
                 </div>
-              </div>
-            </button>
-          </div>
-
-          <!-- Configuration for selected type -->
-          <div class="mb-6">
-            <!-- Local folder path input -->
-            <div x-show="startingPointType === 'local'" class="grid gap-2">
-              <label class="text-sm font-medium text-wool-300">Folder Path</label>
-              <input
-                type="text"
-                x-model="localPath"
-                placeholder="/path/to/folder"
-                class="w-full"
-              />
-              <p class="text-xs text-wool-500">Enter the full path to your project folder</p>
-            </div>
-
-            <!-- Git URL input -->
-            <div x-show="startingPointType === 'git'" class="grid gap-3">
-              <div class="grid gap-2">
-                <label class="text-sm font-medium text-wool-300">Repository URL</label>
-                <input
-                  type="text"
-                  x-model="gitUrl"
-                  @input="debouncedValidateGitUrl()"
-                  placeholder="https://github.com/owner/repo"
-                  class="w-full"
-                />
-                <div x-show="gitValidating" class="flex items-center gap-2 text-xs text-wool-500">
-                  <div class="spinner w-3 h-3"></div>
-                  Validating...
+                <div x-show="availableBranches.length > 0">
+                  <div class="select min-w-32 max-w-48" x-data="{ open: false }">
+                    <button type="button" class="btn-outline w-full font-mono text-sm" @click.stop="open = !open" @click.away="open = false"
+                      aria-haspopup="listbox" :aria-expanded="open">
+                      <span class="truncate flex-1 text-left" x-text="gitBranch || 'Select a branch...'"></span>
+                      <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
+                    </button>
+                    <div data-popover :aria-hidden="!open" x-show="open" x-transition @click.stop>
+                      <div role="listbox" aria-orientation="vertical">
+                        <template x-for="branch in availableBranches" :key="branch">
+                          <div role="option" :data-value="branch" :aria-selected="gitBranch === branch"
+                            @click="gitBranch = branch; open = false"
+                            x-text="branch" class="font-mono text-sm"></div>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div x-show="gitError" class="text-xs text-terra" x-text="gitError"></div>
-              </div>
-
-              <div x-show="availableBranches.length > 0" class="grid gap-2">
-                <label class="text-sm font-medium text-wool-300">Branch</label>
-                <select x-model="gitBranch" class="w-full">
-                  <option value="">Select a branch...</option>
-                  <template x-for="branch in availableBranches" :key="branch">
-                    <option :value="branch" x-text="branch"></option>
-                  </template>
-                </select>
               </div>
             </div>
           </div>
@@ -567,6 +613,7 @@
                   @keyup="trackCursorPosition('spec', $event)"
                   @select="trackCursorPosition('spec', $event)"
                   class="flex-1 w-full p-4 bg-transparent text-wool-100 text-sm font-mono resize-none focus:outline-none"
+                  data-test="spec-input"
                   placeholder="Describe what the AI workers should accomplish...
 
 Example:
@@ -712,9 +759,21 @@ Example:
 
                 <!-- Show workspace path if already created -->
                 <div x-show="workspacePath" class="p-3 bg-pasture-700/50 rounded-lg border border-pasture-600">
-                  <div class="flex items-center gap-2 text-sm text-wool-300">
-                    <i data-lucide="folder-check" class="w-4 h-4 text-pasture-400"></i>
-                    <span class="font-medium">Workspace</span>
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2 text-sm text-wool-300">
+                      <i data-lucide="folder-check" class="w-4 h-4 text-pasture-400"></i>
+                      <span class="font-medium">Workspace</span>
+                    </div>
+                    <button
+                      type="button"
+                      @click="openChangeStartingPointDialog()"
+                      class="btn-ghost text-xs h-6 px-2"
+                    >
+                      <span class="flex items-center gap-1">
+                        <i data-lucide="edit-2" class="w-3 h-3"></i>
+                        Change
+                      </span>
+                    </button>
                   </div>
                   <p class="text-xs text-wool-500 mt-1 font-mono break-all" x-text="workspacePath"></p>
                 </div>
@@ -905,8 +964,8 @@ Example:
                   </div>
 
                   <!-- Per-worker runner list (only show when multiple workers) -->
-                  <div x-show="getWorkerNames().length > 1" class="rounded-lg border border-pasture-600 overflow-hidden">
-                    <div class="px-3 py-2 bg-pasture-700/30 border-b border-pasture-600 flex items-center justify-between">
+                  <div x-show="getWorkerNames().length > 1" class="rounded-lg border border-pasture-600">
+                    <div class="px-3 py-2 bg-pasture-700/30 border-b border-pasture-600 flex items-center justify-between rounded-t-lg">
                       <span class="text-xs font-medium text-wool-400 uppercase tracking-wider">Workers</span>
                       <span class="text-xs text-wool-500" x-text="getWorkerNames().length + ' workers'"></span>
                     </div>
@@ -947,6 +1006,148 @@ Example:
                 </div>
               </div>
             </form>
+          </div>
+        </div>
+      </div>
+
+      <!-- Change Starting Point Dialog -->
+      <div
+        x-show="showChangeStartingPointDialog"
+        x-cloak
+        class="fixed inset-0 z-50 flex items-center justify-center"
+        @keydown.escape.window="closeChangeStartingPointDialog()"
+      >
+        <!-- Backdrop -->
+        <div class="fixed inset-0 bg-black/60" @click="closeChangeStartingPointDialog()"></div>
+
+        <!-- Dialog -->
+        <div class="relative bg-pasture-800 rounded-lg border border-pasture-600 shadow-xl w-full max-w-md mx-4 p-6">
+          <h3 class="text-lg font-semibold text-wool-100 mb-4">Change Starting Point</h3>
+
+          <!-- Warning Banner -->
+          <div class="mb-4 p-3 bg-amber-900/30 border border-amber-700/50 rounded-lg">
+            <div class="flex items-start gap-2">
+              <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-500 mt-0.5 shrink-0"></i>
+              <p class="text-sm text-amber-200">
+                The current workspace will be deleted and replaced. This cannot be undone.
+              </p>
+            </div>
+          </div>
+
+          <!-- Starting Point Type Selector -->
+          <div class="grid gap-4">
+            <div class="flex gap-2">
+              <button
+                type="button"
+                @click="newStartingPointType = 'greenfield'"
+                :class="newStartingPointType === 'greenfield' ? 'btn' : 'btn-outline'"
+                class="flex-1"
+              >
+                <span><i data-lucide="file-plus" class="w-4 h-4 mr-2 inline"></i></span>
+                Greenfield
+              </button>
+              <button
+                type="button"
+                @click="newStartingPointType = 'local'"
+                :class="newStartingPointType === 'local' ? 'btn' : 'btn-outline'"
+                class="flex-1"
+              >
+                <span><i data-lucide="folder" class="w-4 h-4 mr-2 inline"></i></span>
+                Local Folder
+              </button>
+              <button
+                type="button"
+                @click="newStartingPointType = 'git'"
+                :class="newStartingPointType === 'git' ? 'btn' : 'btn-outline'"
+                class="flex-1"
+              >
+                <span><i data-lucide="git-branch" class="w-4 h-4 mr-2 inline"></i></span>
+                Git Repo
+              </button>
+            </div>
+
+            <!-- Greenfield description -->
+            <p x-show="newStartingPointType === 'greenfield'" class="text-muted-foreground text-sm">
+              Start with an empty git-initialized workspace.
+            </p>
+
+            <!-- Local folder input -->
+            <div x-show="newStartingPointType === 'local'" class="grid gap-2">
+              <label for="change-local-path">Folder Path</label>
+              <input
+                id="change-local-path"
+                type="text"
+                x-model="newLocalPath"
+                placeholder="/path/to/folder"
+              />
+              <p class="text-muted-foreground text-sm">
+                Copy files from a local folder.
+              </p>
+            </div>
+
+            <!-- Git repo input -->
+            <div x-show="newStartingPointType === 'git'" class="grid gap-3">
+              <div class="grid gap-2">
+                <label for="change-git-url" class="flex items-center gap-1.5">
+                  Repository URL
+                  <span
+                    x-show="newGitValidating"
+                    x-cloak
+                    class="ml-1 flex items-center gap-1 text-[10px] text-wool-500"
+                  >
+                    <div class="spinner w-3 h-3 border-wool-500"></div>
+                    checking...
+                  </span>
+                </label>
+                <input
+                  id="change-git-url"
+                  type="text"
+                  x-model="newGitUrl"
+                  @input="debouncedValidateNewGitUrl()"
+                  :class="{'!border-terra': newGitError}"
+                  placeholder="https://github.com/user/repo"
+                />
+                <p x-show="newGitError" x-text="newGitError" class="text-sm text-terra"></p>
+              </div>
+              <div x-show="newAvailableBranches.length > 0" class="grid gap-2">
+                <label for="change-git-branch">Branch</label>
+                <select
+                  id="change-git-branch"
+                  x-model="newGitBranch"
+                  :class="{'!border-terra': !newGitBranch && newAvailableBranches.length > 0}"
+                  class="w-full"
+                >
+                  <option value="">Select branch...</option>
+                  <template x-for="branch in newAvailableBranches" :key="branch">
+                    <option :value="branch" x-text="branch"></option>
+                  </template>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Dialog Actions -->
+          <div class="flex justify-end gap-3 mt-6">
+            <button
+              type="button"
+              @click="closeChangeStartingPointDialog()"
+              class="btn-outline"
+              :disabled="changingStartingPoint"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              @click="confirmChangeStartingPoint()"
+              class="btn-destructive"
+              :disabled="!canConfirmChange()"
+            >
+              <span x-show="changingStartingPoint" class="flex items-center gap-2">
+                <div class="spinner w-4 h-4"></div>
+                Resetting...
+              </span>
+              <span x-show="!changingStartingPoint">Reset Workspace</span>
+            </button>
           </div>
         </div>
       </div>
@@ -1998,22 +2199,19 @@ Example:
               <h4 class="text-[10px] font-semibold text-wool-500 uppercase tracking-wider px-1">Group Chats</h4>
             </div>
             <div class="py-1">
-              <template x-for="thread in groupChats" :key="thread.name">
+              <template x-for="gc in groupChats" :key="gc.name">
                 <button
-                  @click="selectThread(thread.name)"
+                  @click="selectThread(gc.name)"
                   class="w-full px-3 py-1.5 text-left text-sm hover:bg-pasture-700 transition-colors flex items-center justify-between"
-                  :class="{ 'bg-pasture-700 border-l-2 border-amber-500': selectedThread === thread.name }"
+                  :class="{ 'bg-pasture-700 border-l-2 border-amber-500': selectedThread === gc.name }"
                 >
                   <span class="flex items-center gap-2">
-                    <span class="w-3 h-3 text-wool-500" x-html="getGroupChatIcon(thread.name)"></span>
-                    <span class="truncate" x-text="thread.name"></span>
+                    <span class="w-3 h-3 text-wool-500" x-html="getGroupChatIcon(gc.name)"></span>
+                    <span class="truncate" x-text="gc.name"></span>
                   </span>
-                  <span x-show="thread.unreadCount > 0" class="ml-2 min-w-[18px] h-[18px] bg-terra rounded-full text-[10px] text-white font-bold flex items-center justify-center px-1" x-text="thread.unreadCount"></span>
+                  <span x-show="gc.thread?.unreadCount > 0" class="ml-2 min-w-[18px] h-[18px] bg-terra rounded-full text-[10px] text-white font-bold flex items-center justify-center px-1" x-text="gc.thread?.unreadCount"></span>
                 </button>
               </template>
-              <div x-show="groupChats.length === 0" class="px-3 py-2 text-xs text-wool-600 italic">
-                No group chats yet
-              </div>
             </div>
 
             <!-- DMs Section -->
@@ -2091,11 +2289,13 @@ Example:
                 :disabled="!selectedThread"
                 placeholder="Type a message..."
                 class="inline-chat-input flex-1 px-3 py-2 text-sm bg-pasture-900 border border-pasture-600 rounded focus:outline-none focus:border-amber-500 disabled:opacity-50"
+                data-test="chat-input"
               >
               <button
                 @click="sendMessage()"
                 :disabled="!selectedThread"
                 class="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:hover:bg-amber-600 rounded text-sm font-medium transition-colors"
+                data-test="chat-send-btn"
               >
                 Send
               </button>
@@ -2169,13 +2369,30 @@ Example:
                   Repository
                 </h3>
                 <div class="space-y-3 text-sm">
-                  <div>
-                    <div class="text-wool-500 text-xs mb-1">Project</div>
-                    <div class="text-wool-200 font-mono text-xs break-all leading-relaxed" x-text="detail?.projectPath || '-'"></div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-wool-500">Source</span>
+                    <span class="text-wool-200 font-medium flex items-center gap-1.5">
+                      <template x-if="detail?.remoteUrl">
+                        <span class="flex items-center gap-1.5">
+                          <i data-lucide="cloud" class="w-3.5 h-3.5 text-sky-400"></i>
+                          Git Clone
+                        </span>
+                      </template>
+                      <template x-if="!detail?.remoteUrl">
+                        <span class="flex items-center gap-1.5">
+                          <i data-lucide="file-plus" class="w-3.5 h-3.5 text-green-400"></i>
+                          Greenfield
+                        </span>
+                      </template>
+                    </span>
                   </div>
                   <div x-show="detail?.remoteUrl">
                     <div class="text-wool-500 text-xs mb-1">Remote</div>
                     <div class="text-wool-200 font-mono text-xs break-all leading-relaxed" x-text="detail?.remoteUrl"></div>
+                  </div>
+                  <div>
+                    <div class="text-wool-500 text-xs mb-1">Workspace</div>
+                    <div class="text-wool-200 font-mono text-xs break-all leading-relaxed" x-text="detail?.projectPath || '-'"></div>
                   </div>
                   <div x-show="detail?.branch" class="flex items-center justify-between">
                     <span class="text-wool-500">Branch</span>
@@ -2290,9 +2507,9 @@ Example:
                 data-side="bottom"
               ></span>
             </div>
-            <!-- Context indicator with toggle -->
+            <!-- Context indicator with toggle (only show when run has workspace) -->
             <label
-              x-show="getSelectedRunName()"
+              x-show="canUseRunContext()"
               class="label flex items-center gap-2 mt-0.5 cursor-pointer"
               :data-tooltip="useRunContext ? 'Using run-specific chat' : 'Using general chat'"
               data-side="bottom"

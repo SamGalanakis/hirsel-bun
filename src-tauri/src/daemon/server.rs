@@ -1,7 +1,8 @@
-//! Unix socket and TCP server for the hirsel daemon
+//! TCP server for the hirsel daemon
 //!
-//! Reuses the existing axum router from core/server/ but binds to both a Unix socket
-//! (for local CLI access) and a TCP socket on localhost:19700 (for SSH reverse tunnels).
+//! Listens on TCP port 19700 (configurable) for all HTTP requests.
+//! Local CLI/GUI connects via localhost, remote workers via Docker host
+//! or SSH tunnels.
 
 use anyhow::Result;
 use axum::{
@@ -10,7 +11,7 @@ use axum::{
 };
 use std::path::Path;
 use std::sync::Arc;
-use tokio::net::{TcpListener, UnixListener};
+use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -43,19 +44,13 @@ impl Default for DaemonConfig {
     }
 }
 
-/// Start the daemon server on both Unix socket and TCP
+/// Start the daemon server on TCP
 pub async fn start_daemon(config: DaemonConfig) -> Result<()> {
-    let socket_path = super::socket_path();
     let pid_path = super::pid_path();
 
     // Ensure the parent directory exists
-    if let Some(parent) = socket_path.parent() {
+    if let Some(parent) = pid_path.parent() {
         std::fs::create_dir_all(parent)?;
-    }
-
-    // Remove stale socket if it exists
-    if socket_path.exists() {
-        std::fs::remove_file(&socket_path)?;
     }
 
     // Write PID file
@@ -63,12 +58,11 @@ pub async fn start_daemon(config: DaemonConfig) -> Result<()> {
     std::fs::write(&pid_path, pid.to_string())?;
 
     // Create cleanup handler for graceful shutdown
-    let socket_path_clone = socket_path.clone();
     let pid_path_clone = pid_path.clone();
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.ok();
         tracing::info!("[Daemon] Received shutdown signal");
-        cleanup_socket(&socket_path_clone, &pid_path_clone);
+        cleanup_pid_file(&pid_path_clone);
         std::process::exit(0);
     });
 
@@ -97,79 +91,37 @@ pub async fn start_daemon(config: DaemonConfig) -> Result<()> {
     let gyp_state = Arc::new(gyp::GypState::new());
     let router = build_router(state, gyp_state);
 
-    // Bind to Unix socket
-    let unix_listener = UnixListener::bind(&socket_path)?;
-    tracing::info!(
-        "[Daemon] Listening on Unix socket: {}",
-        socket_path.display()
-    );
+    // Bind to TCP port
+    // Use 0.0.0.0 to allow connections from Docker containers via host.docker.internal
+    let tcp_addr = format!("0.0.0.0:{}", config.tcp_port);
+    let tcp_listener = TcpListener::bind(&tcp_addr).await?;
+    tracing::info!("[Daemon] Listening on TCP: {}", tcp_addr);
     tracing::info!("[Daemon] PID: {}", pid);
 
-    // Spawn Unix socket accept loop
-    let unix_router = router.clone();
-    tokio::spawn(async move {
-        loop {
-            match unix_listener.accept().await {
-                Ok((stream, _addr)) => {
-                    let router = unix_router.clone();
-                    tokio::spawn(async move {
-                        let io = hyper_util::rt::TokioIo::new(stream);
-                        let service =
-                            hyper_util::service::TowerToHyperService::new(router.into_service());
-                        if let Err(e) = hyper_util::server::conn::auto::Builder::new(
-                            hyper_util::rt::TokioExecutor::new(),
-                        )
-                        .serve_connection(io, service)
-                        .await
-                        {
-                            tracing::warn!("[Daemon] Unix socket connection error: {}", e);
-                        }
-                    });
-                }
-                Err(e) => {
-                    tracing::warn!("[Daemon] Unix socket accept error: {}", e);
-                }
+    // TCP accept loop (main loop)
+    loop {
+        match tcp_listener.accept().await {
+            Ok((stream, addr)) => {
+                let router = router.clone();
+                tokio::spawn(async move {
+                    tracing::debug!("[Daemon] TCP connection from {}", addr);
+                    let io = hyper_util::rt::TokioIo::new(stream);
+                    let service =
+                        hyper_util::service::TowerToHyperService::new(router.into_service());
+                    if let Err(e) = hyper_util::server::conn::auto::Builder::new(
+                        hyper_util::rt::TokioExecutor::new(),
+                    )
+                    .serve_connection(io, service)
+                    .await
+                    {
+                        tracing::warn!("[Daemon] TCP connection error: {}", e);
+                    }
+                });
+            }
+            Err(e) => {
+                tracing::warn!("[Daemon] TCP accept error: {}", e);
             }
         }
-    });
-
-    // Bind to TCP port if enabled
-    if config.tcp_port > 0 {
-        // Bind to 0.0.0.0 to allow connections from Docker containers via host.docker.internal
-        let tcp_addr = format!("0.0.0.0:{}", config.tcp_port);
-        let tcp_listener = TcpListener::bind(&tcp_addr).await?;
-        tracing::info!("[Daemon] Listening on TCP: {}", tcp_addr);
-
-        // TCP accept loop (main loop)
-        loop {
-            match tcp_listener.accept().await {
-                Ok((stream, addr)) => {
-                    let router = router.clone();
-                    tokio::spawn(async move {
-                        tracing::debug!("[Daemon] TCP connection from {}", addr);
-                        let io = hyper_util::rt::TokioIo::new(stream);
-                        let service =
-                            hyper_util::service::TowerToHyperService::new(router.into_service());
-                        if let Err(e) = hyper_util::server::conn::auto::Builder::new(
-                            hyper_util::rt::TokioExecutor::new(),
-                        )
-                        .serve_connection(io, service)
-                        .await
-                        {
-                            tracing::warn!("[Daemon] TCP connection error: {}", e);
-                        }
-                    });
-                }
-                Err(e) => {
-                    tracing::warn!("[Daemon] TCP accept error: {}", e);
-                }
-            }
-        }
-    } else {
-        // No TCP, just wait forever (Unix socket loop is in background task)
-        tracing::info!("[Daemon] TCP listener disabled");
-        std::future::pending::<()>().await;
-        Ok(())
     }
 }
 
@@ -218,6 +170,14 @@ fn build_router(state: Arc<AppState>, gyp_state: Arc<gyp::GypState>) -> Router {
         .route(
             "/api/runs/{name}/workers/{worker}/restart",
             post(routes::restart_worker),
+        )
+        .route(
+            "/api/runs/{name}/workers/{worker}/spawn",
+            post(routes::spawn_single_worker),
+        )
+        .route(
+            "/api/runs/{name}/workers/{worker}/resume",
+            post(routes::resume_worker),
         )
         .route(
             "/api/runs/{name}/workers/{worker}/events",
@@ -298,11 +258,8 @@ fn build_router(state: Arc<AppState>, gyp_state: Arc<gyp::GypState>) -> Router {
         .with_state(state)
 }
 
-/// Clean up socket and PID file
-pub(crate) fn cleanup_socket(socket_path: &Path, pid_path: &Path) {
-    if socket_path.exists() {
-        let _ = std::fs::remove_file(socket_path);
-    }
+/// Clean up PID file
+pub(crate) fn cleanup_pid_file(pid_path: &Path) {
     if pid_path.exists() {
         let _ = std::fs::remove_file(pid_path);
     }
@@ -366,7 +323,7 @@ async fn daemon_stop() -> &'static str {
     tokio::spawn(async {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         tracing::info!("[Daemon] Stopping via API request");
-        cleanup_socket(&super::socket_path(), &super::pid_path());
+        cleanup_pid_file(&super::pid_path());
         std::process::exit(0);
     });
 

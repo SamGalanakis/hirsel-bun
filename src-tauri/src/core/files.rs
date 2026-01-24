@@ -309,16 +309,6 @@ impl Files {
         Ok(threads)
     }
 
-    /// Read a chat file's content.
-    pub fn read_chat(&self, name: &str) -> io::Result<Option<String>> {
-        let path = self.chat_file(name);
-        if path.exists() {
-            Ok(Some(fs::read_to_string(path)?))
-        } else {
-            Ok(None)
-        }
-    }
-
     /// List all worker log files and return their names.
     pub fn list_worker_logs(&self) -> io::Result<Vec<String>> {
         let tmp_dir = self.run_dir.join("tmp");
@@ -463,31 +453,6 @@ impl Files {
         content: &str,
     ) -> StorageResult<()> {
         let path = self.storage_path(&format!("tasks/{}.md", task_id));
-        storage.write_string(&path, content).await
-    }
-
-    /// Read a chat file using FileStorage.
-    pub async fn read_chat_async(
-        &self,
-        storage: &dyn FileStorage,
-        name: &str,
-    ) -> StorageResult<Option<String>> {
-        let path = self.storage_path(&format!("chats/{}.md", name));
-        match storage.read_string(&path).await {
-            Ok(content) => Ok(Some(content)),
-            Err(super::storage::StorageError::NotFound(_)) => Ok(None),
-            Err(e) => Err(e),
-        }
-    }
-
-    /// Write a chat file using FileStorage.
-    pub async fn write_chat_async(
-        &self,
-        storage: &dyn FileStorage,
-        name: &str,
-        content: &str,
-    ) -> StorageResult<()> {
-        let path = self.storage_path(&format!("chats/{}.md", name));
         storage.write_string(&path, content).await
     }
 
