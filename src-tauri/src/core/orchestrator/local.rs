@@ -27,6 +27,24 @@ use crate::core::runner::{create_runner, Runner, WorkerSpawnConfig as RunnerSpaw
 use crate::core::state::{SQLiteState, Status, WorkerUpdate};
 use crate::core::Files;
 
+/// Get the coordinator's Tailscale hostname if connected to a tailnet.
+///
+/// Returns the DNS name (e.g., "my-machine.tailnet-name.ts.net") that workers
+/// can use to reach this coordinator via Tailscale.
+fn get_tailscale_hostname() -> Option<String> {
+    std::process::Command::new("tailscale")
+        .args(["status", "--json"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok())
+        .and_then(|v| {
+            v["Self"]["DNSName"]
+                .as_str()
+                .map(|s| s.trim_end_matches('.').to_string())
+        })
+}
+
 /// Local orchestrator that operates directly on the local filesystem
 pub struct LocalOrchestrator {
     config: Config,
@@ -1379,23 +1397,6 @@ impl Orchestrator for LocalOrchestrator {
                 None
             };
 
-            // Generate fresh Tailscale auth key for this worker if OAuth is configured
-            let tailscale_authkey = if let Some(ref client) = tailscale_client {
-                match client.generate_auth_key(worker_name).await {
-                    Ok(key) => Some(key),
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to generate Tailscale auth key for '{}': {}",
-                            worker_name,
-                            e
-                        );
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-
             // Get runner config for this worker (from stored configs or fallback to global)
             let runner_config = sqlite_state
                 .get_runner_config_for_worker(worker_name, &self.config)
@@ -1407,6 +1408,37 @@ impl Orchestrator for LocalOrchestrator {
                     "Local workers are not allowed on this coordinator. Configure a remote runner (fly, ssh).".to_string()
                 ));
             }
+
+            // For remote runners (Fly, SSH), determine coordinator URL and Tailscale auth
+            let (coordinator_url, tailscale_authkey) = if runner_config.requires_coordinator_url() {
+                // Validate Tailscale OAuth is configured
+                let Some(ref client) = tailscale_client else {
+                    return Err(OrchestratorError::Config(
+                        "Fly/SSH runner requires Tailscale. Store tailscale_oauth in run config."
+                            .into(),
+                    ));
+                };
+
+                // Validate coordinator is connected to Tailscale
+                let Some(hostname) = get_tailscale_hostname() else {
+                    return Err(OrchestratorError::Config(
+                        "Coordinator must be connected to Tailscale for Fly/SSH runners. Run 'tailscale up' first.".into()
+                    ));
+                };
+
+                // Generate ephemeral auth key for this worker
+                let authkey = client.generate_auth_key(worker_name).await.map_err(|e| {
+                    OrchestratorError::Config(format!(
+                        "Failed to generate Tailscale auth key for '{}': {}",
+                        worker_name, e
+                    ))
+                })?;
+
+                let url = format!("http://{}:{}", hostname, self.config.coordinator_port);
+                (Some(url), Some(authkey))
+            } else {
+                (None, None)
+            };
 
             let runner: Box<dyn Runner> = create_runner(&runner_config);
 
@@ -1422,7 +1454,7 @@ impl Orchestrator for LocalOrchestrator {
                 teammates,
                 resume_session_id: None,
                 env_vars: None,
-                coordinator_url: None,
+                coordinator_url,
                 tailscale_authkey,
                 credentials: None,
             };
@@ -1450,7 +1482,10 @@ impl Orchestrator for LocalOrchestrator {
                     );
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to spawn worker '{}': {}", worker_name, e);
+                    return Err(OrchestratorError::Other(format!(
+                        "Failed to spawn worker '{}': {}",
+                        worker_name, e
+                    )));
                 }
             }
         }
@@ -1710,6 +1745,15 @@ impl Orchestrator for LocalOrchestrator {
                 })
                 .collect();
 
+            // Create Tailscale client if OAuth credentials provided (for remote runners)
+            let tailscale_client = request.tailscale_oauth.as_ref().map(|oauth| {
+                crate::core::tailscale::TailscaleClient::new(
+                    oauth.client_id.clone(),
+                    oauth.client_secret.clone(),
+                    oauth.tag.clone(),
+                )
+            });
+
             for (i, (worker_name, work_dir)) in setup_result.worker_dirs.iter().enumerate() {
                 let is_leader = i == 0 && is_multi_worker;
 
@@ -1738,6 +1782,41 @@ impl Orchestrator for LocalOrchestrator {
                     ));
                 }
 
+                // For remote runners (Fly, SSH), determine coordinator URL and Tailscale auth
+                let (coordinator_url, tailscale_authkey) = if runner_config
+                    .requires_coordinator_url()
+                {
+                    // Validate Tailscale OAuth is configured
+                    let Some(ref client) = tailscale_client else {
+                        return Err(OrchestratorError::Config(
+                            "Fly/SSH runner requires Tailscale. Provide tailscale_oauth in request or configure [profiles.X.access] with:\n\
+                             type = \"tailscale\"\n\
+                             oauth_client_id = \"...\"\n\
+                             oauth_client_secret = \"...\"".into()
+                        ));
+                    };
+
+                    // Validate coordinator is connected to Tailscale
+                    let Some(hostname) = get_tailscale_hostname() else {
+                        return Err(OrchestratorError::Config(
+                            "Coordinator must be connected to Tailscale for Fly/SSH runners. Run 'tailscale up' first.".into()
+                        ));
+                    };
+
+                    // Generate ephemeral auth key for this worker
+                    let authkey = client.generate_auth_key(worker_name).await.map_err(|e| {
+                        OrchestratorError::Config(format!(
+                            "Failed to generate Tailscale auth key for '{}': {}",
+                            worker_name, e
+                        ))
+                    })?;
+
+                    let url = format!("http://{}:{}", hostname, self.config.coordinator_port);
+                    (Some(url), Some(authkey))
+                } else {
+                    (None, None)
+                };
+
                 let runner: Box<dyn Runner> = create_runner(&runner_config);
 
                 let spawn_config = RunnerSpawnConfig {
@@ -1752,8 +1831,8 @@ impl Orchestrator for LocalOrchestrator {
                     teammates,
                     resume_session_id: None,
                     env_vars: Some(env_vars.clone()),
-                    coordinator_url: None,
-                    tailscale_authkey: None,
+                    coordinator_url,
+                    tailscale_authkey,
                     credentials: None,
                 };
 
@@ -1779,7 +1858,10 @@ impl Orchestrator for LocalOrchestrator {
                         );
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to spawn worker '{}': {}", worker_name, e);
+                        return Err(OrchestratorError::Other(format!(
+                            "Failed to spawn worker '{}': {}",
+                            worker_name, e
+                        )));
                     }
                 }
             }
@@ -1867,6 +1949,47 @@ impl Orchestrator for LocalOrchestrator {
             ));
         }
 
+        // For remote runners (Fly, SSH), determine coordinator URL and Tailscale auth
+        let (coordinator_url, tailscale_authkey) = if runner_config.requires_coordinator_url() {
+            // Read tailscale OAuth credentials if present
+            let tailscale_oauth: Option<TailscaleOAuth> =
+                std::fs::read_to_string(run_dir.join(".tailscale_oauth.json"))
+                    .ok()
+                    .and_then(|s| serde_json::from_str(&s).ok());
+
+            // Validate Tailscale OAuth is configured
+            let Some(oauth) = tailscale_oauth else {
+                return Err(OrchestratorError::Config(
+                    "Fly/SSH runner requires Tailscale. Store tailscale_oauth when creating the run.".into()
+                ));
+            };
+
+            // Validate coordinator is connected to Tailscale
+            let Some(hostname) = get_tailscale_hostname() else {
+                return Err(OrchestratorError::Config(
+                    "Coordinator must be connected to Tailscale for Fly/SSH runners. Run 'tailscale up' first.".into()
+                ));
+            };
+
+            // Create client and generate auth key
+            let client = crate::core::tailscale::TailscaleClient::new(
+                oauth.client_id,
+                oauth.client_secret,
+                oauth.tag,
+            );
+            let authkey = client.generate_auth_key(worker_name).await.map_err(|e| {
+                OrchestratorError::Config(format!(
+                    "Failed to generate Tailscale auth key for '{}': {}",
+                    worker_name, e
+                ))
+            })?;
+
+            let url = format!("http://{}:{}", hostname, self.config.coordinator_port);
+            (Some(url), Some(authkey))
+        } else {
+            (None, None)
+        };
+
         let runner: Box<dyn Runner> = create_runner(&runner_config);
 
         // Build spawn config
@@ -1892,8 +2015,8 @@ impl Orchestrator for LocalOrchestrator {
             teammates,
             resume_session_id: resume_session_id.map(String::from),
             env_vars: Some(env_vars),
-            coordinator_url: None,
-            tailscale_authkey: None,
+            coordinator_url,
+            tailscale_authkey,
             credentials: None,
         };
 
@@ -2155,6 +2278,47 @@ impl Orchestrator for LocalOrchestrator {
             })
             .collect();
 
+        // For remote runners (Fly, SSH), determine coordinator URL and Tailscale auth
+        let (coordinator_url, tailscale_authkey) = if runner_config.requires_coordinator_url() {
+            // Read tailscale OAuth credentials if present
+            let tailscale_oauth: Option<TailscaleOAuth> =
+                std::fs::read_to_string(run_dir.join(".tailscale_oauth.json"))
+                    .ok()
+                    .and_then(|s| serde_json::from_str(&s).ok());
+
+            // Validate Tailscale OAuth is configured
+            let Some(oauth) = tailscale_oauth else {
+                return Err(OrchestratorError::Config(
+                    "Fly/SSH runner requires Tailscale. Store tailscale_oauth when creating the run.".into()
+                ));
+            };
+
+            // Validate coordinator is connected to Tailscale
+            let Some(hostname) = get_tailscale_hostname() else {
+                return Err(OrchestratorError::Config(
+                    "Coordinator must be connected to Tailscale for Fly/SSH runners. Run 'tailscale up' first.".into()
+                ));
+            };
+
+            // Create client and generate auth key
+            let client = crate::core::tailscale::TailscaleClient::new(
+                oauth.client_id,
+                oauth.client_secret,
+                oauth.tag,
+            );
+            let authkey = client.generate_auth_key(worker_name).await.map_err(|e| {
+                OrchestratorError::Config(format!(
+                    "Failed to generate Tailscale auth key for '{}': {}",
+                    worker_name, e
+                ))
+            })?;
+
+            let url = format!("http://{}:{}", hostname, self.config.coordinator_port);
+            (Some(url), Some(authkey))
+        } else {
+            (None, None)
+        };
+
         let spawn_config = RunnerSpawnConfig {
             run_name: run_name.to_string(),
             worker_name: worker_name.to_string(),
@@ -2167,8 +2331,8 @@ impl Orchestrator for LocalOrchestrator {
             teammates,
             resume_session_id: resume_session_id.map(String::from),
             env_vars: Some(env_vars),
-            coordinator_url: None,
-            tailscale_authkey: None,
+            coordinator_url,
+            tailscale_authkey,
             credentials: None,
         };
 
