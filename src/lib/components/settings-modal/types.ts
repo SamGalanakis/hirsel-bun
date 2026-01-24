@@ -22,7 +22,7 @@ export interface ProfileSettingsCache {
 }
 
 export type AuthMethod = 'env' | 'apiKey' | 'oauth';
-export type HostType = 'local' | 'client' | 'ssh' | 'sprite';
+export type HostType = 'local' | 'client' | 'ssh' | 'sprite' | 'fly';
 
 export interface AgentAuth {
   method: AuthMethod;
@@ -86,7 +86,22 @@ export interface SpriteHostConfig {
   useFilePush: boolean;
 }
 
-export type HostConfig = { type: 'local' } | { type: 'client' } | SshHostConfig | SpriteHostConfig;
+export interface FlyHostConfig {
+  type: 'fly';
+  app: string;
+  apiToken: string | null;
+  region: string | null;
+  cpuKind: string;
+  cpus: number;
+  memoryMb: number;
+}
+
+export type HostConfig =
+  | { type: 'local' }
+  | { type: 'client' }
+  | SshHostConfig
+  | SpriteHostConfig
+  | FlyHostConfig;
 
 // Runner config (Host + optional Container + optional Snapshot)
 export interface RunnerConfig {

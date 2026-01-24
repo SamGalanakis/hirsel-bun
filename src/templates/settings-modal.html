@@ -651,7 +651,7 @@
                                 <button type="button" class="btn-outline w-full" @click="open = !open" @click.away="open = false"
                                   aria-haspopup="listbox" :aria-expanded="open">
                                   <span class="truncate flex-1 text-left"
-                                    x-text="{ local: 'Local Machine', ssh: 'SSH Remote', sprite: 'Sprites Cloud' }[newHostType] || 'Local Machine'"></span>
+                                    x-text="{ local: 'Local Machine', ssh: 'SSH Remote', sprite: 'Sprites Cloud', fly: 'Fly.io' }[newHostType] || 'Local Machine'"></span>
                                   <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
                                 </button>
                                 <div data-popover :aria-hidden="!open" x-show="open" x-transition>
@@ -662,6 +662,8 @@
                                       @click="newHostType = 'ssh'; onHostTypeChange(); open = false">SSH Remote</div>
                                     <div role="option" data-value="sprite" :aria-selected="newHostType === 'sprite'"
                                       @click="newHostType = 'sprite'; onHostTypeChange(); open = false">Sprites Cloud</div>
+                                    <div role="option" data-value="fly" :aria-selected="newHostType === 'fly'"
+                                      @click="newHostType = 'fly'; onHostTypeChange(); open = false">Fly.io</div>
                                   </div>
                                 </div>
                               </div>
@@ -717,6 +719,37 @@
                                     <p class="text-muted-foreground text-sm">Destroy VM when worker completes.</p>
                                   </div>
                                   <input id="auto-destroy" type="checkbox" role="switch" x-model="editHostData.autoDestroy" />
+                                </div>
+                              </div>
+                            </template>
+
+                            <!-- Fly.io Fields -->
+                            <template x-if="editHostData.type === 'fly'">
+                              <div class="grid gap-4 pl-4 border-l-2 border-pasture-600">
+                                <div class="grid gap-2">
+                                  <label for="fly-app">App Name <span class="text-destructive">*</span></label>
+                                  <input id="fly-app" type="text" x-model="editHostData.app" placeholder="hirsel-workers" />
+                                  <p class="text-muted-foreground text-sm">Fly app for worker machines. Create with <code class="text-xs bg-pasture-600 px-1 py-0.5 rounded">fly apps create</code></p>
+                                </div>
+                                <div class="grid gap-2">
+                                  <label for="fly-token">API Token</label>
+                                  <input id="fly-token" type="password" x-model="editHostData.apiToken" placeholder="••••••••" />
+                                  <p class="text-muted-foreground text-sm">Or set FLY_API_TOKEN env var. Get from <a href="https://fly.io/user/personal_access_tokens" target="_blank" class="text-primary hover:underline">fly.io tokens</a></p>
+                                </div>
+                                <div class="grid gap-2">
+                                  <label for="fly-region">Region</label>
+                                  <input id="fly-region" type="text" x-model="editHostData.region" placeholder="auto" />
+                                  <p class="text-muted-foreground text-sm">Leave empty for auto-selection (nearest region).</p>
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                  <div class="grid gap-2">
+                                    <label for="fly-cpus">CPUs</label>
+                                    <input id="fly-cpus" type="number" x-model.number="editHostData.cpus" placeholder="1" min="1" max="8" />
+                                  </div>
+                                  <div class="grid gap-2">
+                                    <label for="fly-memory">Memory (MB)</label>
+                                    <input id="fly-memory" type="number" x-model.number="editHostData.memoryMb" placeholder="1024" min="256" step="256" />
+                                  </div>
                                 </div>
                               </div>
                             </template>
