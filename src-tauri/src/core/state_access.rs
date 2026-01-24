@@ -1,10 +1,28 @@
-//! State access trait for abstracting local vs remote state operations.
+//! Worker-facing state operations for task claiming, messaging, and heartbeats.
 //!
-//! This trait defines the interface that both SQLiteState (local) and HttpState (remote)
-//! implement. Workers use this trait and don't care whether they're accessing state
-//! directly or via HTTP.
+//! This module provides the `StateAccess` trait that abstracts low-level state
+//! operations needed by workers during run execution. Workers use this trait
+//! to interact with run state without knowing if they're accessing SQLite directly
+//! (local workers) or via HTTP (remote workers through SSH tunnels).
 //!
-//! Mirrors the Python `StateProtocol` from `state_protocol.py`.
+//! ## StateAccess vs Orchestrator
+//!
+//! These two traits serve different purposes:
+//!
+//! - **`StateAccess`** (this module): Worker-side, per-run operations during execution
+//!   - Task claiming and completion
+//!   - Worker heartbeats and status updates
+//!   - Message sending between workers
+//!   - Reading/writing run configuration
+//!
+//! - **`Orchestrator`** (see `orchestrator` module): Coordinator-side, cross-run management
+//!   - Creating and deleting runs
+//!   - Spawning workers
+//!   - Managing run lifecycle (pause, resume, deliver)
+//!   - Listing runs and their status
+//!
+//! Workers receive a `Box<dyn StateAccess>` and use it for all state operations.
+//! The CLI/GUI uses `Box<dyn Orchestrator>` for run management commands.
 
 use async_trait::async_trait;
 
@@ -236,6 +254,23 @@ pub trait StateAccess: Send {
     async fn get_max_iterations(&self) -> StateAccessResult<Option<i64>>;
 
     async fn set_max_iterations(&self, max_iter: Option<i64>) -> StateAccessResult<()>;
+
+    // =========================================================================
+    // Scribe - Documentation
+    // =========================================================================
+
+    /// Record a learning for the Scribe to integrate into documentation.
+    async fn add_scribe_submission(
+        &self,
+        worker_name: &str,
+        content: &str,
+    ) -> StateAccessResult<i64>;
+
+    /// Read project documentation maintained by the Scribe.
+    async fn read_docs(
+        &self,
+        file: Option<&str>,
+    ) -> StateAccessResult<crate::core::files::DocsContent>;
 
     // =========================================================================
     // History
@@ -587,6 +622,36 @@ impl StateAccess for SQLiteState {
         limit: i64,
     ) -> StateAccessResult<Vec<crate::core::state::HistoryEntry>> {
         Ok(SQLiteState::get_history(self, limit)?)
+    }
+
+    async fn add_scribe_submission(
+        &self,
+        worker_name: &str,
+        content: &str,
+    ) -> StateAccessResult<i64> {
+        Ok(SQLiteState::add_scribe_submission(
+            self,
+            worker_name,
+            content,
+        )?)
+    }
+
+    async fn read_docs(
+        &self,
+        file: Option<&str>,
+    ) -> StateAccessResult<crate::core::files::DocsContent> {
+        use crate::core::Files;
+
+        // Get run_dir from db_path (db_path is run_dir/hirsel.db)
+        let run_dir = self
+            .db_path()
+            .parent()
+            .ok_or_else(|| StateAccessError::Database("Invalid db path".to_string()))?;
+        let files = Files::new(run_dir);
+
+        files
+            .read_docs(file)
+            .map_err(|e| StateAccessError::Database(format!("Failed to read docs: {}", e)))
     }
 
     async fn init_state(&self, project_path: Option<&str>) -> StateAccessResult<()> {

@@ -6,6 +6,7 @@ import type {
   AgentAuth,
   AuthMethod,
   ContainerConfig,
+  FlyHostConfig,
   GitConfig,
   HostType,
   NavigationState,
@@ -53,6 +54,27 @@ export const defaultSpriteHostConfig = (): SpriteHostConfig => ({
   idleTimeoutSecs: 30,
   apiUrl: 'https://api.sprites.dev',
   useFilePush: false,
+});
+
+/**
+ * Default Fly.io host configuration
+ */
+export const defaultFlyHostConfig = (): FlyHostConfig => ({
+  type: 'fly',
+  app: '',
+  apiToken: null,
+  region: null,
+  cpuKind: 'shared',
+  cpus: 1,
+  memoryMb: 1024,
+});
+
+/**
+ * Default Fly runner configuration
+ */
+export const defaultFlyRunnerConfig = (): RunnerConfig => ({
+  host: defaultFlyHostConfig(),
+  container: { image: 'debian:bookworm-slim' },
 });
 
 /**
@@ -228,6 +250,8 @@ export function getHostIcon(type: HostType): string {
       return 'server';
     case 'sprite':
       return 'cloud';
+    case 'fly':
+      return 'plane';
     default:
       return 'laptop';
   }
@@ -246,6 +270,8 @@ export function getHostTypeLabel(type: HostType): string {
       return 'SSH';
     case 'sprite':
       return 'Sprites';
+    case 'fly':
+      return 'Fly.io';
     default:
       return type;
   }
@@ -276,6 +302,8 @@ export function getDefaultSnapshotStrategy(hostType: HostType): SnapshotStrategy
       return 'persistent_disk';
     case 'sprite':
       return 'sprite_checkpoint';
+    case 'fly':
+      return 's3'; // Fly machines are ephemeral, need S3 for persistence
     default:
       return 'persistent_disk';
   }
@@ -324,6 +352,8 @@ export function getAvailableSnapshotStrategies(hostType: HostType): SnapshotStra
       return ['persistent_disk', 's3'];
     case 'sprite':
       return ['sprite_checkpoint', 's3'];
+    case 'fly':
+      return ['s3']; // Fly machines are ephemeral, only S3 makes sense
     default:
       return ['persistent_disk'];
   }

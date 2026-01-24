@@ -385,6 +385,153 @@ pub async fn send_message(
 }
 
 // =============================================================================
+// Scribe - Documentation
+// =============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct ScribeSubmitRequest {
+    pub worker_name: String,
+    pub content: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ScribeSubmitResponse {
+    pub id: i64,
+}
+
+pub async fn add_scribe(
+    Path(name): Path<String>,
+    Json(body): Json<ScribeSubmitRequest>,
+) -> Result<Json<ScribeSubmitResponse>> {
+    use crate::core::{config, state::SQLiteState, Files};
+
+    let run_dir = config::run_dir(&name);
+    let files = Files::new(&run_dir);
+    let state =
+        SQLiteState::new(files.db_path()).map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+    let id = state
+        .add_scribe_submission(&body.worker_name, &body.content)
+        .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+    Ok(Json(ScribeSubmitResponse { id }))
+}
+
+// =============================================================================
+// Docs
+// =============================================================================
+
+#[derive(Debug, Serialize)]
+pub struct DocsResponse {
+    pub files: Vec<DocFileResponse>,
+    pub hashes: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DocFileResponse {
+    pub name: String,
+    pub content: String,
+}
+
+/// Get all docs with hashes
+pub async fn get_docs(Path(name): Path<String>) -> Result<Json<DocsResponse>> {
+    use crate::core::{config, Files};
+
+    let run_dir = config::run_dir(&name);
+    if !run_dir.exists() {
+        return Err(OrchestratorError::RunNotFound(name));
+    }
+
+    let files = Files::new(&run_dir);
+    let docs = files
+        .read_docs(None)
+        .map_err(|e| OrchestratorError::Other(format!("Failed to read docs: {}", e)))?;
+    let hashes = files
+        .get_docs_hashes()
+        .map_err(|e| OrchestratorError::Other(format!("Failed to get hashes: {}", e)))?;
+
+    let doc_files = match docs {
+        crate::core::files::DocsContent::All { files } => files
+            .into_iter()
+            .map(|f| DocFileResponse {
+                name: f.name,
+                content: f.content,
+            })
+            .collect(),
+        crate::core::files::DocsContent::Single { name, content } => {
+            vec![DocFileResponse { name, content }]
+        }
+    };
+
+    Ok(Json(DocsResponse {
+        files: doc_files,
+        hashes,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DocsSyncRequest {
+    /// Current hashes on the client side
+    pub hashes: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DocsSyncResponse {
+    /// Files that have changed (content included)
+    pub files: Vec<DocFileResponse>,
+    /// New hashes for all files
+    pub hashes: std::collections::HashMap<String, String>,
+}
+
+/// Sync docs - returns only changed files based on hash comparison
+pub async fn sync_docs(
+    Path(name): Path<String>,
+    Json(body): Json<DocsSyncRequest>,
+) -> Result<Json<DocsSyncResponse>> {
+    use crate::core::{config, Files};
+
+    let run_dir = config::run_dir(&name);
+    if !run_dir.exists() {
+        return Err(OrchestratorError::RunNotFound(name));
+    }
+
+    let files = Files::new(&run_dir);
+    let docs = files
+        .read_docs(None)
+        .map_err(|e| OrchestratorError::Other(format!("Failed to read docs: {}", e)))?;
+    let server_hashes = files
+        .get_docs_hashes()
+        .map_err(|e| OrchestratorError::Other(format!("Failed to get hashes: {}", e)))?;
+
+    // Find changed files (hash mismatch or new files)
+    let changed_files: Vec<DocFileResponse> = match docs {
+        crate::core::files::DocsContent::All { files } => files
+            .into_iter()
+            .filter(|f| {
+                // Include if hash doesn't match or file is new to client
+                body.hashes.get(&f.name) != server_hashes.get(&f.name)
+            })
+            .map(|f| DocFileResponse {
+                name: f.name,
+                content: f.content,
+            })
+            .collect(),
+        crate::core::files::DocsContent::Single { name, content } => {
+            if body.hashes.get(&name) != server_hashes.get(&name) {
+                vec![DocFileResponse { name, content }]
+            } else {
+                vec![]
+            }
+        }
+    };
+
+    Ok(Json(DocsSyncResponse {
+        files: changed_files,
+        hashes: server_hashes,
+    }))
+}
+
+// =============================================================================
 // Evals
 // =============================================================================
 
@@ -755,6 +902,134 @@ pub async fn delete_credential(Path(key): Path<String>) -> Result<StatusCode> {
     store
         .delete(&key)
         .map_err(|e| OrchestratorError::Other(format!("Failed to delete credential: {}", e)))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// =============================================================================
+// Config - Full Replace/Merge
+// =============================================================================
+
+use crate::core::config::PartialConfig;
+
+/// Request body for PUT /api/config (full config replacement)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PutConfigRequest {
+    #[serde(default)]
+    pub runners: Option<std::collections::HashMap<String, RunnerConfig>>,
+    #[serde(default)]
+    pub default_runner: Option<Option<String>>,
+    #[serde(default)]
+    pub profiles: Option<std::collections::HashMap<String, OrchestratorProfile>>,
+    #[serde(default)]
+    pub default_profile: Option<String>,
+    #[serde(default)]
+    pub allow_local_workers: Option<bool>,
+    #[serde(default)]
+    pub eval_timeout: Option<u32>,
+    #[serde(default)]
+    pub auto_learn: Option<bool>,
+    #[serde(default)]
+    pub human_in_the_loop: Option<bool>,
+    #[serde(default)]
+    pub max_iterations: Option<Option<u32>>,
+    #[serde(default)]
+    pub coordinator_port: Option<u16>,
+    #[serde(default)]
+    pub compaction_enabled: Option<bool>,
+    #[serde(default)]
+    pub compaction_threshold: Option<Option<u32>>,
+    #[serde(default)]
+    pub compaction_keep_messages: Option<u32>,
+    #[serde(default)]
+    pub auth: Option<crate::core::config::AuthConfig>,
+    #[serde(default)]
+    pub storage: Option<crate::core::config::StorageConfig>,
+}
+
+/// Replace entire config (PUT /api/config)
+///
+/// Replaces all provided fields in the config. Fields not provided are left unchanged.
+/// Saves to both file and database.
+pub async fn put_config(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<PutConfigRequest>,
+) -> Result<StatusCode> {
+    let mut config = state.config.write().await;
+
+    // Apply all provided fields
+    if let Some(runners) = body.runners {
+        config.runners = runners;
+    }
+    if let Some(default_runner) = body.default_runner {
+        config.default_runner = default_runner;
+    }
+    if let Some(profiles) = body.profiles {
+        config.profiles = profiles;
+    }
+    if let Some(default_profile) = body.default_profile {
+        config.default_profile = default_profile;
+    }
+    if let Some(allow_local_workers) = body.allow_local_workers {
+        config.allow_local_workers = allow_local_workers;
+    }
+    if let Some(eval_timeout) = body.eval_timeout {
+        config.eval_timeout = eval_timeout;
+    }
+    if let Some(auto_learn) = body.auto_learn {
+        config.auto_learn = auto_learn;
+    }
+    if let Some(human_in_the_loop) = body.human_in_the_loop {
+        config.human_in_the_loop = human_in_the_loop;
+    }
+    if let Some(max_iterations) = body.max_iterations {
+        config.max_iterations = max_iterations;
+    }
+    if let Some(coordinator_port) = body.coordinator_port {
+        config.coordinator_port = coordinator_port;
+    }
+    if let Some(compaction_enabled) = body.compaction_enabled {
+        config.compaction_enabled = compaction_enabled;
+    }
+    if let Some(compaction_threshold) = body.compaction_threshold {
+        config.compaction_threshold = compaction_threshold;
+    }
+    if let Some(compaction_keep_messages) = body.compaction_keep_messages {
+        config.compaction_keep_messages = compaction_keep_messages;
+    }
+    if let Some(auth) = body.auth {
+        config.auth = auth;
+    }
+    if let Some(storage) = body.storage {
+        config.storage = storage;
+    }
+
+    // Save to database (primary) and file
+    config
+        .save()
+        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Merge partial config (PATCH /api/config)
+///
+/// Merges the provided partial config into the existing config.
+/// Only provided fields are updated. Saves to both file and database.
+pub async fn patch_config(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<PartialConfig>,
+) -> Result<StatusCode> {
+    let mut config = state.config.write().await;
+
+    // Merge partial config
+    config.merge_from(body);
+
+    // Save to database (primary) and file
+    config
+        .save()
+        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
 
     Ok(StatusCode::NO_CONTENT)
 }

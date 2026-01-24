@@ -2,10 +2,20 @@
 //!
 //! This module provides a standalone HTTP server that exposes the Orchestrator
 //! API for remote clients. It's used in headless server mode.
+//!
+//! Route handlers for state operations are in submodules:
+//! - `eval_routes` - Eval API endpoints
+//! - `message_routes` - Message/thread API endpoints
+//! - `task_routes` - Task API endpoints
+//! - `worker_routes` - Worker API endpoints
 
 mod auth;
+pub mod eval_routes;
 pub mod gyp;
+pub mod message_routes;
 pub mod routes;
+pub mod task_routes;
+pub mod worker_routes;
 
 use axum::{
     routing::{delete, get, patch, post},
@@ -127,6 +137,10 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
             "/api/runs/{name}/threads/{thread}/messages",
             get(routes::get_messages).post(routes::send_message),
         )
+        // Scribe - documentation
+        .route("/api/runs/{name}/scribe", post(routes::add_scribe))
+        .route("/api/runs/{name}/docs", get(routes::get_docs))
+        .route("/api/runs/{name}/docs/sync", post(routes::sync_docs))
         // Evals
         .route("/api/runs/{name}/evals", get(routes::list_evals))
         // History
@@ -134,8 +148,13 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
         // Assets
         .route("/api/runs/{name}/assets", post(gyp::upload_asset))
         .route("/api/runs/{name}/assets-path", get(gyp::get_assets_path))
-        // Config - read
-        .route("/api/config", get(routes::get_config))
+        // Config - read and update
+        .route(
+            "/api/config",
+            get(routes::get_config)
+                .put(routes::put_config)
+                .patch(routes::patch_config),
+        )
         // Config - granular updates
         .route("/api/config/general", patch(routes::patch_general_config))
         .route("/api/config/agent", patch(routes::patch_agent_config))

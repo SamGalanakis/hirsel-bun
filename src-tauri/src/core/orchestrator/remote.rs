@@ -3,7 +3,6 @@
 //! Implements the Orchestrator trait using HTTP calls to a remote Hirsel server.
 
 use async_trait::async_trait;
-use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
@@ -18,50 +17,35 @@ use crate::core::api_types::{
     Worker, WorkerEventsResponse,
 };
 use crate::core::draft::StartingPoint;
+use crate::core::http_client::{AuthenticatedClient, HttpError};
 use crate::core::snapshot::WorkerStateHandle;
 
 /// Remote orchestrator that communicates with a Hirsel server over HTTP
 pub struct RemoteOrchestrator {
-    client: Client,
-    base_url: String,
-    api_key: String,
+    client: AuthenticatedClient,
 }
 
 impl RemoteOrchestrator {
     pub fn new(base_url: String, api_key: String) -> Self {
-        // Remove trailing slash from base URL
-        let base_url = base_url.trim_end_matches('/').to_string();
-
         Self {
-            client: Client::new(),
-            base_url,
-            api_key,
+            client: AuthenticatedClient::new(base_url, api_key),
+        }
+    }
+
+    /// Wrapper to convert HttpError to OrchestratorError
+    fn convert_error(e: HttpError) -> OrchestratorError {
+        match e {
+            HttpError::Response { status, url, body } => {
+                OrchestratorError::Http(format!("HTTP {} from {}: {}", status, url, body))
+            }
+            HttpError::Request(e) => OrchestratorError::Http(e.to_string()),
+            HttpError::Parse(msg) => OrchestratorError::Http(msg),
         }
     }
 
     /// Make a GET request to the server
     async fn get<T: DeserializeOwned>(&self, path: &str) -> OrchestratorResult<T> {
-        let url = format!("{}{}", self.base_url, path);
-
-        let resp = self
-            .client
-            .get(&url)
-            .bearer_auth(&self.api_key)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(OrchestratorError::Http(format!(
-                "HTTP {} from {}: {}",
-                status, url, body
-            )));
-        }
-
-        resp.json()
-            .await
-            .map_err(|e| OrchestratorError::Http(format!("JSON parse error: {}", e)))
+        self.client.get(path).await.map_err(Self::convert_error)
     }
 
     /// Make a POST request to the server
@@ -70,117 +54,38 @@ impl RemoteOrchestrator {
         path: &str,
         body: &B,
     ) -> OrchestratorResult<T> {
-        let url = format!("{}{}", self.base_url, path);
-
-        let resp = self
-            .client
-            .post(&url)
-            .bearer_auth(&self.api_key)
-            .json(body)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(OrchestratorError::Http(format!(
-                "HTTP {} from {}: {}",
-                status, url, body
-            )));
-        }
-
-        resp.json()
+        self.client
+            .post(path, body)
             .await
-            .map_err(|e| OrchestratorError::Http(format!("JSON parse error: {}", e)))
+            .map_err(Self::convert_error)
     }
 
     /// Make a POST request that returns nothing
     async fn post_empty<B: Serialize>(&self, path: &str, body: &B) -> OrchestratorResult<()> {
-        let url = format!("{}{}", self.base_url, path);
-
-        let resp = self
-            .client
-            .post(&url)
-            .bearer_auth(&self.api_key)
-            .json(body)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(OrchestratorError::Http(format!(
-                "HTTP {} from {}: {}",
-                status, url, body
-            )));
-        }
-
-        Ok(())
+        self.client
+            .post_empty(path, body)
+            .await
+            .map_err(Self::convert_error)
     }
 
     /// Make a DELETE request to the server
     async fn delete(&self, path: &str) -> OrchestratorResult<()> {
-        let url = format!("{}{}", self.base_url, path);
-
-        let resp = self
-            .client
-            .delete(&url)
-            .bearer_auth(&self.api_key)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(OrchestratorError::Http(format!(
-                "HTTP {} from {}: {}",
-                status, url, body
-            )));
-        }
-
-        Ok(())
+        self.client.delete(path).await.map_err(Self::convert_error)
     }
 
     // =========================================================================
     // Server-Side Run Creation (not part of Orchestrator trait)
     // =========================================================================
 
-    /// Create a new run on the remote server
-    ///
-    /// This sets up the run's state, spec, and initial worker.
-    /// After this, call upload_files() and then spawn_workers().
     /// Download working directory tarball from the server
     ///
     /// Returns a gzipped tar archive of the run's work directory.
     pub async fn download_files(&self, run_name: &str) -> OrchestratorResult<Vec<u8>> {
-        let url = format!(
-            "{}/api/runs/{}/files",
-            self.base_url,
-            urlencoding::encode(run_name)
-        );
-
-        let resp = self
-            .client
-            .get(&url)
-            .bearer_auth(&self.api_key)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(OrchestratorError::Http(format!(
-                "HTTP {} from {}: {}",
-                status, url, body
-            )));
-        }
-
-        let bytes = resp
-            .bytes()
+        let path = format!("/api/runs/{}/files", urlencoding::encode(run_name));
+        self.client
+            .get_bytes(&path)
             .await
-            .map_err(|e| OrchestratorError::Http(format!("Failed to read response: {}", e)))?;
-
-        Ok(bytes.to_vec())
+            .map_err(Self::convert_error)
     }
 }
 
@@ -427,31 +332,11 @@ impl Orchestrator for RemoteOrchestrator {
     }
 
     async fn upload_files(&self, run_name: &str, tarball: Vec<u8>) -> OrchestratorResult<()> {
-        let url = format!(
-            "{}/api/runs/{}/files",
-            self.base_url,
-            urlencoding::encode(run_name)
-        );
-
-        let resp = self
-            .client
-            .post(&url)
-            .bearer_auth(&self.api_key)
-            .header("Content-Type", "application/gzip")
-            .body(tarball)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(OrchestratorError::Http(format!(
-                "HTTP {} from {}: {}",
-                status, url, body
-            )));
-        }
-
-        Ok(())
+        let path = format!("/api/runs/{}/files", urlencoding::encode(run_name));
+        self.client
+            .post_bytes(&path, tarball, "application/gzip")
+            .await
+            .map_err(Self::convert_error)
     }
 
     async fn init_workspace(

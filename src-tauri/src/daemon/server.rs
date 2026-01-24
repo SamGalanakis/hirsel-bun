@@ -1,10 +1,9 @@
 //! TCP server for the hirsel daemon
 //!
-//! Listens on TCP port 19700 (configurable) for all HTTP requests.
-//! Local CLI/GUI connects via localhost, remote workers via Docker host
-//! or SSH tunnels.
+//! Listens on a TCP port (default 19700, configurable via HIRSEL_DAEMON_PORT) for HTTP requests.
+//! Local CLI/GUI connects via localhost, remote workers via Docker host or SSH tunnels.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use axum::{
     routing::{delete, get, post},
     Router,
@@ -15,7 +14,7 @@ use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::core::config::Config;
+use crate::core::config::{paths::hirsel_dir, Config};
 use crate::core::orchestrator::{LocalOrchestrator, Orchestrator};
 use crate::core::server::{gyp, AppState};
 
@@ -39,13 +38,36 @@ impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
             idle_timeout_secs: 300, // 5 minutes
-            tcp_port: DEFAULT_TCP_PORT,
+            tcp_port: super::get_daemon_port(),
         }
     }
 }
 
+/// Check if port is already in use
+fn check_port_conflict(port: u16) -> Result<()> {
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    let addr = format!("127.0.0.1:{}", port);
+    if TcpStream::connect_timeout(&addr.parse().unwrap(), Duration::from_millis(100)).is_ok() {
+        // Port is in use - could be another hirsel daemon or something else
+        return Err(anyhow!(
+            "Port {} is already in use.\n\
+             This may be another hirsel daemon (for a different HIRSEL_ROOT).\n\
+             Set HIRSEL_DAEMON_PORT to use a different port.\n\
+             Current HIRSEL_ROOT: {}",
+            port,
+            hirsel_dir().display()
+        ));
+    }
+    Ok(())
+}
+
 /// Start the daemon server on TCP
 pub async fn start_daemon(config: DaemonConfig) -> Result<()> {
+    // Check for port conflicts before starting
+    check_port_conflict(config.tcp_port)?;
+
     let pid_path = super::pid_path();
 
     // Ensure the parent directory exists
@@ -144,7 +166,7 @@ fn build_router(state: Arc<AppState>, gyp_state: Arc<gyp::GypState>) -> Router {
         .route("/api/gyp/sessions/{id}/events", get(gyp::session_events))
         .with_state(gyp_state);
 
-    // Build the main router (no auth layer for Unix socket - filesystem permissions are enough)
+    // Build the main router (no auth layer for local daemon - localhost only)
     Router::new()
         // Health check
         .route("/health", get(routes::health))
@@ -277,6 +299,7 @@ struct DaemonStatus {
     running: bool,
     pid: u32,
     tcp_port: u16,
+    hirsel_root: String,
     uptime_secs: u64,
     active_runs: usize,
 }
@@ -311,7 +334,8 @@ async fn daemon_status(State(state): State<Arc<AppState>>) -> Json<DaemonStatus>
     Json(DaemonStatus {
         running: true,
         pid: std::process::id(),
-        tcp_port: DEFAULT_TCP_PORT,
+        tcp_port: super::get_daemon_port(),
+        hirsel_root: hirsel_dir().display().to_string(),
         uptime_secs,
         active_runs,
     })
@@ -457,10 +481,10 @@ async fn set_run_waiting_reason(
 
 // =============================================================================
 // Worker state endpoints for remote/Docker workers
-// Uses shared handlers from crate::core::worker_routes
+// Uses shared handlers from crate::core::server::worker_routes
 // =============================================================================
 
-use crate::core::worker_routes::{
+use crate::core::server::worker_routes::{
     self, AllDoneResponse, ClaimedTaskResponse, HeartbeatResponse, SuccessResponse,
     UpdateWorkerRequest, WorkerResponse, WorkersResponse,
 };

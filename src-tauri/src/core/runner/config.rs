@@ -20,14 +20,6 @@ fn default_auto_destroy() -> bool {
     true
 }
 
-fn default_idle_timeout() -> u32 {
-    30
-}
-
-fn default_api_url() -> String {
-    "https://api.sprites.dev".to_string()
-}
-
 fn default_fly_cpu_kind() -> String {
     "shared".to_string()
 }
@@ -82,45 +74,6 @@ impl Default for SshHostConfig {
             ssh_key: None,
             work_base: default_work_base(),
             location: None,
-        }
-    }
-}
-
-/// Sprite host configuration for Sprites.dev cloud VMs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SpriteHostConfig {
-    /// Sprites API token (stored directly)
-    #[serde(default)]
-    pub api_token: Option<String>,
-    /// Base checkpoint to clone from (pre-configured image)
-    #[serde(default)]
-    pub checkpoint: Option<String>,
-    /// Auto-destroy sprite when worker completes
-    #[serde(default = "default_auto_destroy")]
-    pub auto_destroy: bool,
-    /// Max idle time before sleep (sprites auto-hibernate at 30s anyway)
-    #[serde(default = "default_idle_timeout")]
-    pub idle_timeout_secs: u32,
-    /// Sprites API base URL
-    #[serde(default = "default_api_url")]
-    pub api_url: String,
-    /// Use push mode to send files directly to worker via HTTP.
-    /// When enabled, the worker starts a file receiver server (port 19800)
-    /// and files are pushed from the coordinator. Requires Tailscale
-    /// connectivity between coordinator and sprites.
-    #[serde(default)]
-    pub use_file_push: bool,
-}
-
-impl Default for SpriteHostConfig {
-    fn default() -> Self {
-        Self {
-            api_token: None,
-            checkpoint: None,
-            auto_destroy: default_auto_destroy(),
-            idle_timeout_secs: default_idle_timeout(),
-            api_url: default_api_url(),
-            use_file_push: false,
         }
     }
 }
@@ -180,8 +133,6 @@ pub enum HostConfig {
     Client,
     /// SSH host - run on remote machine via SSH
     Ssh(SshHostConfig),
-    /// Sprite host - run on Sprites.dev cloud VM
-    Sprite(SpriteHostConfig),
     /// Fly host - run on Fly.io ephemeral machines
     Fly(FlyHostConfig),
 }
@@ -209,7 +160,6 @@ impl HostConfig {
         match self {
             HostConfig::Local => None,
             HostConfig::Ssh(_) => None, // SSH works via reverse tunnel to daemon TCP
-            HostConfig::Sprite(_) => Some("Sprite runner requires publicly accessible HTTP coordinator (use `hirsel serve` or remote mode)"),
             HostConfig::Fly(_) => Some("Fly runner requires publicly accessible HTTP coordinator (use `hirsel serve` or remote mode)"),
             HostConfig::Client => Some("Client runner is only available in remote mode"),
         }
@@ -299,14 +249,6 @@ impl RunnerConfig {
         }
     }
 
-    /// Create a Sprite runner config.
-    pub fn sprite(sprite_config: SpriteHostConfig) -> Self {
-        RunnerConfig {
-            host: HostConfigOrShortcut::Full(HostConfig::Sprite(sprite_config)),
-            container: None, // Sprites don't support containers
-        }
-    }
-
     /// Create a Fly runner config with container image.
     /// Fly machines ARE containers, so the image is required.
     pub fn fly(fly_config: FlyHostConfig, image: String) -> Self {
@@ -327,7 +269,6 @@ impl RunnerConfig {
             HostConfig::Local => "local",
             HostConfig::Client => "client",
             HostConfig::Ssh(_) => "ssh",
-            HostConfig::Sprite(_) => "sprite",
             HostConfig::Fly(_) => "fly",
         }
     }

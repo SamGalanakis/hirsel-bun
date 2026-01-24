@@ -20,11 +20,11 @@ use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 
 use super::lifecycle::{LifecycleManager, LocalLifecycleManager};
-use super::state::{SQLiteState, Status};
-use super::{
+use super::server::{
     eval_routes, message_routes, task_routes,
     worker_routes::{self, ReasonRequest, SuccessResponse},
 };
+use super::state::{SQLiteState, Status};
 
 // =============================================================================
 // Shared State

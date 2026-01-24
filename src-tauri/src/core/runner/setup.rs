@@ -1,7 +1,7 @@
 //! Shared worker setup scripts for all remote runners.
 //!
 //! This module provides standardized shell scripts for setting up worker
-//! environments. All remote runners (SSH, Sprite) use these to ensure
+//! environments. All remote runners (SSH, Fly) use these to ensure
 //! consistent file structure and git configuration.
 //!
 //! ## Worker Directory Structure

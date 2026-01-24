@@ -605,6 +605,35 @@ impl WorkerRunner {
     }
 
     // =========================================================================
+    // Scribe - Documentation
+    // =========================================================================
+
+    /// Record a learning for the Scribe to integrate into docs.
+    ///
+    /// Learnings are batched and processed by an ephemeral Scribe agent
+    /// that maintains documentation in the run's docs/ directory.
+    pub fn scribe(&self, content: &str) -> WorkerResult<String> {
+        let worker_name = &self.config.worker_name;
+        self.run_async(self.state().add_scribe_submission(worker_name, content))?;
+
+        Ok(serde_json::json!({
+            "success": true,
+            "message": "Learning recorded. The Scribe will integrate it into docs shortly.",
+        })
+        .to_string())
+    }
+
+    /// Read documentation maintained by the Scribe.
+    ///
+    /// Returns all docs or a specific file from the run's docs/ directory.
+    pub fn read_docs(&self, file: Option<&str>) -> WorkerResult<String> {
+        let files = Files::new(&self.config.run_dir);
+        let docs = files.read_docs(file).map_err(|e| WorkerError::Io(e))?;
+
+        Ok(serde_json::to_string(&docs).unwrap_or_else(|_| "{}".to_string()))
+    }
+
+    // =========================================================================
     // Command Execution
     // =========================================================================
 

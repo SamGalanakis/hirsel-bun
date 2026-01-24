@@ -6,7 +6,6 @@
 //! ## Hosts (where compute runs)
 //! - `local` - on this machine (contextual: GUI/CLI machine in local mode, orchestrator in remote mode)
 //! - `ssh` - remote machine via SSH
-//! - `sprite` - Sprites.dev cloud VM
 //! - `fly` - Fly.io ephemeral machines
 //! - `client` - (remote mode only) SSH back to the GUI/CLI user's machine via Tailscale
 //!
@@ -15,7 +14,6 @@
 //! - `docker` - run in Docker container (image URI only)
 //!
 //! ## Constraints
-//! - Sprites cannot run Docker (Firecracker limitation)
 //! - Fly requires container.image (machines ARE containers)
 //! - `client` host only available in remote mode
 
@@ -26,7 +24,6 @@ pub mod fly;
 pub mod local;
 pub mod resource;
 pub mod setup;
-pub mod sprite;
 pub mod ssh;
 pub mod types;
 
@@ -36,13 +33,11 @@ pub use executor::{CommandExecutor, LocalExecutor, SshExecutor};
 pub use fly::FlyRunner;
 pub use local::LocalRunner;
 pub use resource::{DockerResource, ProcessResource, ResourceManager};
-pub use sprite::SpriteRunner;
 pub use ssh::SshRunner;
 
 // Re-export types
 pub use config::{
-    ContainerConfig, FlyHostConfig, HostConfig, HostConfigOrShortcut, RunnerConfig,
-    SpriteHostConfig, SshHostConfig,
+    ContainerConfig, FlyHostConfig, HostConfig, HostConfigOrShortcut, RunnerConfig, SshHostConfig,
 };
 pub use types::{
     OrchestratorMode, Runner, RunnerError, RunnerResult, SpawnResult, WorkerHandle,
@@ -62,12 +57,6 @@ pub fn create_runner(config: &RunnerConfig) -> Box<dyn Runner> {
         }
         HostConfig::Ssh(ssh_config) => {
             Box::new(SshRunner::new(ssh_config, config.container.clone()))
-        }
-        HostConfig::Sprite(sprite_config) => {
-            if config.container.is_some() {
-                tracing::warn!("Sprites do not support containers - ignoring container config");
-            }
-            Box::new(SpriteRunner::new(sprite_config))
         }
         HostConfig::Fly(fly_config) => {
             let image = config
@@ -99,7 +88,6 @@ pub fn create_runner(config: &RunnerConfig) -> Box<dyn Runner> {
 /// - "docker" -> LocalExecutor + DockerResource
 /// - "ssh" -> SshExecutor + ProcessResource (requires ssh_config)
 /// - "ssh-docker" -> SshExecutor + DockerResource (requires ssh_config)
-/// - "sprite" -> Handled by SpriteRunner (requires config)
 /// - "fly" -> Handled by FlyRunner (requires config)
 ///
 /// Returns None if the runner_type is not supported or required config is missing.
@@ -130,9 +118,9 @@ pub fn create_lifecycle_runner(
                 DockerResource::new(),
             )))
         }
-        // Sprite and Fly require full config, not just lifecycle runner
-        // For now, return None - these should use their own runners
-        "sprite" | "fly" => None,
+        // Fly requires full config, not just lifecycle runner
+        // For now, return None - should use FlyRunner directly
+        "fly" => None,
         _ => None,
     }
 }
@@ -142,7 +130,7 @@ pub fn create_lifecycle_runner(
 /// This is a convenience function that determines the runner type from the handle
 /// and creates the appropriate lifecycle runner for local/docker runners.
 ///
-/// For remote runners (ssh, sprite, fly), this returns a local runner as a fallback
+/// For remote runners (ssh, fly), this returns a local runner as a fallback
 /// since we don't have the SSH/API config stored in the handle.
 pub fn create_lifecycle_runner_for_handle(handle: &WorkerHandle) -> Box<dyn Runner> {
     match handle.runner_type.as_str() {
@@ -261,33 +249,6 @@ mod tests {
     }
 
     #[test]
-    fn test_sprite_config_default() {
-        let config = SpriteHostConfig::default();
-        assert!(config.api_token.is_none());
-        assert!(config.auto_destroy);
-        assert_eq!(config.idle_timeout_secs, 30);
-    }
-
-    #[test]
-    fn test_runner_config_serialization() {
-        let config = RunnerConfig::sprite(SpriteHostConfig {
-            api_token: Some("my-secret-token".to_string()),
-            checkpoint: Some("hirsel-v1".to_string()),
-            auto_destroy: false,
-            idle_timeout_secs: 60,
-            api_url: "https://api.sprites.dev".to_string(),
-            use_file_push: false,
-        });
-
-        let json = serde_json::to_string(&config).unwrap();
-        assert!(json.contains("sprite"));
-        assert!(json.contains("my-secret-token"));
-
-        let parsed: RunnerConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.host_type(), "sprite");
-    }
-
-    #[test]
     fn test_host_compatibility_local_mode() {
         // Local and SSH work with local orchestrator
         // SSH uses reverse tunnel to daemon TCP on localhost:19700
@@ -296,9 +257,7 @@ mod tests {
             HostConfig::Ssh(SshHostConfig::default()).is_compatible_with(OrchestratorMode::Local)
         );
 
-        // Sprite, Fly, Client require publicly accessible HTTP coordinator
-        assert!(!HostConfig::Sprite(SpriteHostConfig::default())
-            .is_compatible_with(OrchestratorMode::Local));
+        // Fly, Client require publicly accessible HTTP coordinator
         assert!(
             !HostConfig::Fly(FlyHostConfig::default()).is_compatible_with(OrchestratorMode::Local)
         );
@@ -312,8 +271,6 @@ mod tests {
         assert!(
             HostConfig::Ssh(SshHostConfig::default()).is_compatible_with(OrchestratorMode::Remote)
         );
-        assert!(HostConfig::Sprite(SpriteHostConfig::default())
-            .is_compatible_with(OrchestratorMode::Remote));
         assert!(
             HostConfig::Fly(FlyHostConfig::default()).is_compatible_with(OrchestratorMode::Remote)
         );
@@ -334,9 +291,5 @@ mod tests {
         let fly = RunnerConfig::fly(FlyHostConfig::default(), "debian:latest".to_string());
         assert!(fly.validate_for_mode(OrchestratorMode::Local).is_err());
         assert!(fly.validate_for_mode(OrchestratorMode::Remote).is_ok());
-
-        let sprite = RunnerConfig::sprite(SpriteHostConfig::default());
-        assert!(sprite.validate_for_mode(OrchestratorMode::Local).is_err());
-        assert!(sprite.validate_for_mode(OrchestratorMode::Remote).is_ok());
     }
 }

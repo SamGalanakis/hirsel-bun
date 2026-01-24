@@ -118,7 +118,7 @@ impl WorkerSpawnConfig {
 pub struct WorkerHandle {
     /// Worker name
     pub worker_name: String,
-    /// Runner-specific identifier (PID for local, sprite name for sprites, etc.)
+    /// Runner-specific identifier (PID for local, machine ID for Fly, etc.)
     pub runner_id: String,
     /// Runner type that spawned this worker
     pub runner_type: String,
@@ -134,7 +134,7 @@ pub struct SpawnResult {
 }
 
 /// Trait for worker runners - implementations spawn and manage workers
-/// on different platforms (local, SSH, Sprites).
+/// on different platforms (local, SSH, Fly).
 #[async_trait]
 pub trait Runner: Send + Sync {
     /// Spawn a worker on this runner.
@@ -187,7 +187,6 @@ pub trait Runner: Send + Sync {
     ///
     /// Returns `true` for ephemeral runners where machines are destroyed:
     /// - Fly.io: machines are destroyed on stop
-    /// - Sprite: VMs are ephemeral (use checkpoints)
     ///
     /// The orchestrator uses this to decide whether to restore snapshots
     /// during resume operations.
@@ -203,6 +202,6 @@ pub enum OrchestratorMode {
     /// Compatible hosts: Local, SSH (via reverse tunnel to daemon TCP on localhost:19700)
     Local,
     /// Remote mode - HTTP API coordinator required.
-    /// Compatible hosts: All (Local, SSH, Sprite, Fly, Client)
+    /// Compatible hosts: All (Local, SSH, Fly, Client)
     Remote,
 }

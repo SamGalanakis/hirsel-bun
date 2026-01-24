@@ -1,6 +1,6 @@
 [package]
 name = "hirsel"
-version = "0.1.0"
+version = "0.2.0"
 description = "Herd your AI coding agents"
 edition = "2021"
 

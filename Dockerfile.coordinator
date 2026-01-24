@@ -1,36 +1,27 @@
 # Dockerfile.coordinator - Hirsel coordinator for Fly.io
 #
-# Uses LiteFS for distributed SQLite replication.
-#
 # Build:
-#   cd src-tauri && cargo build --release --no-default-features --features cli
+#   cd src-tauri && cargo build --release --no-default-features --features cli,s3-storage
 #   fly deploy
 
-FROM debian:bookworm-slim
+FROM ubuntu:24.04
 
-# Install dependencies + FUSE for LiteFS
+# Install dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     git \
     curl \
-    fuse3 \
     sqlite3 \
     && rm -rf /var/lib/apt/lists/*
-
-# Install LiteFS
-COPY --from=flyio/litefs:0.5 /usr/local/bin/litefs /usr/local/bin/litefs
 
 # Copy the pre-built binary
 COPY src-tauri/target/release/hirsel /usr/local/bin/hirsel
 
-# Copy LiteFS config
-COPY litefs.yml /etc/litefs.yml
-
 # Create data directory
-RUN mkdir -p /litefs/data
+RUN mkdir -p /data
 
 # Expose the coordinator port
 EXPOSE 3000
 
-# LiteFS runs as init, then launches hirsel
-ENTRYPOINT ["litefs", "mount"]
+# Run hirsel server
+ENTRYPOINT ["hirsel", "serve", "--port", "3000"]

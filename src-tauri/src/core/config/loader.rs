@@ -5,8 +5,8 @@ use std::path::Path;
 
 use super::{
     AgentAuth, AuthConfig, AuthMethod, Config, ConfigError, GitConfig, GitProvider,
-    OrchestratorAccess, OrchestratorMode, OrchestratorProfile, S3Config, StorageBackend,
-    StorageConfig, StorageProvider,
+    OrchestratorAccess, OrchestratorMode, OrchestratorProfile, S3Config, ServiceWorkerConfig,
+    ServiceWorkersConfig, StorageBackend, StorageConfig, StorageProvider,
 };
 
 /// Parse an S3Config from a TOML table
@@ -268,6 +268,21 @@ pub fn load_config_file(
     // Load storage configuration
     load_storage_config(&table, &mut config.storage, &mut warnings);
 
+    // Load allow_local_workers
+    if let Some(val) = table.get("allow_local_workers") {
+        if let Some(b) = val.as_bool() {
+            config.allow_local_workers = b;
+        } else {
+            warnings.push(format!(
+                "Config warning: allow_local_workers should be a boolean, got {}",
+                val.type_str()
+            ));
+        }
+    }
+
+    // Load service_workers configuration
+    load_service_workers_config(&table, &mut config.service_workers, &mut warnings);
+
     Ok(warnings)
 }
 
@@ -426,6 +441,48 @@ fn load_git_config(table: &toml::Table, git: &mut GitConfig, warnings: &mut Vec<
                 };
             }
         }
+    }
+}
+
+fn load_service_workers_config(
+    table: &toml::Table,
+    service_workers: &mut ServiceWorkersConfig,
+    _warnings: &mut Vec<String>,
+) {
+    if let Some(sw_data) = table.get("service_workers") {
+        if let Some(sw_table) = sw_data.as_table() {
+            // Load default runner
+            if let Some(runner) = sw_table.get("runner").and_then(|v| v.as_str()) {
+                service_workers.runner = Some(runner.to_string());
+            }
+
+            // Load scribe config
+            if let Some(scribe_data) = sw_table.get("scribe") {
+                if let Some(scribe_table) = scribe_data.as_table() {
+                    service_workers.scribe = load_service_worker_entry(scribe_table);
+                }
+            }
+
+            // Load gyp config
+            if let Some(gyp_data) = sw_table.get("gyp") {
+                if let Some(gyp_table) = gyp_data.as_table() {
+                    service_workers.gyp = load_service_worker_entry(gyp_table);
+                }
+            }
+        }
+    }
+}
+
+fn load_service_worker_entry(table: &toml::Table) -> ServiceWorkerConfig {
+    ServiceWorkerConfig {
+        runner: table
+            .get("runner")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        idle_timeout_seconds: table
+            .get("idle_timeout_seconds")
+            .and_then(|v| v.as_integer())
+            .map(|v| v as u32),
     }
 }
 

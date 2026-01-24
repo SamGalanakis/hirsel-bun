@@ -5,7 +5,6 @@
 //!
 //! - **NoOp**: For Local and SSH hosts where files persist on disk.
 //! - **S3**: For Fly hosts where machines are destroyed.
-//! - **SpriteCheckpoint**: For Sprite hosts using native VM checkpoints.
 //!
 //! # Usage
 //!
@@ -27,14 +26,12 @@ mod claude_session;
 mod noop;
 #[cfg(feature = "s3-storage")]
 mod s3;
-mod sprite_checkpoint;
 
 pub use archive::{ArchiveHandle, ArchiveResult, ArchiveStrategy};
 pub use claude_session::{claude_session_dir, host_session_path};
 pub use noop::NoOpArchiveStrategy;
 #[cfg(feature = "s3-storage")]
 pub use s3::S3ArchiveStrategy;
-pub use sprite_checkpoint::SpriteCheckpointStrategy;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -90,7 +87,7 @@ impl WorkerStateHandle {
 /// Snapshot of a worker's work directory.
 ///
 /// Used to persist and restore the work directory for ephemeral runners
-/// (Fly, Sprite with S3 strategy) across pause/resume cycles.
+/// (Fly with S3 strategy) across pause/resume cycles.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkDirSnapshot {
     /// Type of strategy that created this snapshot (e.g., "s3", "persistent_disk").
@@ -205,7 +202,6 @@ pub type SnapshotResult<T> = Result<T, SnapshotError>;
 /// |-----------|----------|
 /// | Local | NoOpArchiveStrategy (files persist on disk) |
 /// | SSH | NoOpArchiveStrategy (files persist on remote disk) |
-/// | Sprite | SpriteCheckpointStrategy (VM checkpoint captures all state) |
 /// | Fly | S3ArchiveStrategy (machines are destroyed, need S3 storage) |
 /// | Client | NoOpArchiveStrategy (no archiving needed) |
 pub async fn create_archive_strategy(
@@ -215,10 +211,6 @@ pub async fn create_archive_strategy(
     match runner_config.host.resolve() {
         HostConfig::Local | HostConfig::Ssh(_) | HostConfig::Client => {
             Ok(Box::new(NoOpArchiveStrategy::new()))
-        }
-        HostConfig::Sprite(sprite_config) => {
-            let strategy = SpriteCheckpointStrategy::new(&sprite_config, None)?;
-            Ok(Box::new(strategy))
         }
         HostConfig::Fly(_) => {
             #[cfg(feature = "s3-storage")]

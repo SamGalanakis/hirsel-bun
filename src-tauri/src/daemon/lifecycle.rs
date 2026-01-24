@@ -5,6 +5,7 @@
 //! - Scaling up workers when tasks are available (via orchestrator)
 //! - Enforcing time limits
 //! - Resuming workers (via orchestrator)
+//! - Processing scribe batches for documentation updates
 //! - Auto-exit when idle
 
 use std::sync::Arc;
@@ -12,12 +13,14 @@ use std::time::{Duration, Instant};
 use tokio::time::interval;
 
 use crate::core::api_types::RunStatus;
-use crate::core::config;
+use crate::core::config::{self, Config};
 use crate::core::lifecycle::{
     LifecycleAction, LifecycleEvent, LifecycleManager, LocalLifecycleManager,
 };
 use crate::core::orchestrator::{create_local_orchestrator, Orchestrator};
+use crate::core::scribe;
 use crate::core::server::AppState;
+use crate::core::service_worker::ScribeService;
 use crate::core::state::{SQLiteState, Status};
 use crate::core::Files;
 
@@ -94,17 +97,18 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
     let agent_command = crate::cli::config::get_agent_command();
 
     // Create lifecycle manager
-    let lifecycle = match LocalLifecycleManager::new(run_name, run_dir.clone(), agent_command) {
-        Ok(lm) => lm,
-        Err(e) => {
-            tracing::warn!(
-                "[Daemon] Failed to create lifecycle manager for '{}': {}",
-                run_name,
-                e
-            );
-            return Ok(());
-        }
-    };
+    let lifecycle =
+        match LocalLifecycleManager::new(run_name, run_dir.clone(), agent_command.clone()) {
+            Ok(lm) => lm,
+            Err(e) => {
+                tracing::warn!(
+                    "[Daemon] Failed to create lifecycle manager for '{}': {}",
+                    run_name,
+                    e
+                );
+                return Ok(());
+            }
+        };
 
     // Check run status
     let status = lifecycle.run_status().unwrap_or(Status::Draft);
@@ -129,6 +133,11 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
                     );
                 }
             }
+
+            // Process scribe batches for documentation updates
+            if let Err(e) = maybe_process_scribe(run_name, &files) {
+                tracing::debug!("[Daemon] Scribe processing for '{}': {}", run_name, e);
+            }
         }
         Status::Eval => {
             // Check time limit even during eval
@@ -148,9 +157,49 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Check and process scribe batches if the batch window has expired.
+///
+/// Uses ScribeService which handles local vs remote execution internally.
+fn maybe_process_scribe(run_name: &str, files: &Files) -> anyhow::Result<()> {
+    let config = Config::load().map(|(c, _)| c).unwrap_or_default();
+
+    if !config.scribe_enabled {
+        return Ok(());
+    }
+
+    // Check if we should process
+    let should_process = {
+        let state = SQLiteState::new(files.db_path())?;
+        scribe::should_process_batch(&state, &config)
+    };
+
+    if should_process {
+        let run_name = run_name.to_string();
+        let scribe_service = ScribeService::with_config(config);
+
+        // Spawn async task to process the batch
+        tokio::spawn(async move {
+            match scribe_service.process_batch(&run_name).await {
+                Ok(result) => {
+                    tracing::info!(
+                        "[Daemon] Scribe batch processed for '{}': {} submissions",
+                        run_name,
+                        result.submissions_processed
+                    );
+                }
+                Err(e) => {
+                    tracing::debug!("[Daemon] Scribe processing for '{}': {}", run_name, e);
+                }
+            }
+        });
+    }
+
+    Ok(())
+}
+
 /// Handle lifecycle actions that require spawning workers via the orchestrator.
 ///
-/// This ensures workers are spawned using the correct runner (local/docker/fly/sprite)
+/// This ensures workers are spawned using the correct runner (local/docker/fly/ssh)
 /// based on the run's configuration.
 async fn handle_lifecycle_actions(
     run_name: &str,

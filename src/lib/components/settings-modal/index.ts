@@ -22,6 +22,8 @@ import {
   createSnapshotConfig,
   defaultAgentAuth,
   defaultContainerConfig,
+  defaultFlyHostConfig,
+  defaultFlyRunnerConfig,
   defaultGitConfig,
   defaultLocalRunnerConfig,
   defaultNavigationState,
@@ -57,6 +59,7 @@ import type {
   AuthConfig,
   AuthMethod,
   ContainerConfig,
+  FlyHostConfig,
   GitConfig,
   HostConfig,
   HostType,
@@ -624,6 +627,11 @@ export function settingsModal() {
         // Sprites don't support containers
         this.editContainerEnabled = false;
         this.editContainerImage = '';
+      } else if (this.newHostType === 'fly') {
+        this.editHostData = defaultFlyHostConfig();
+        // Fly requires a container image
+        this.editContainerEnabled = true;
+        this.editContainerImage = 'debian:bookworm-slim';
       }
       // Update snapshot strategy default for the new host type
       this.editSnapshotStrategy = getDefaultSnapshotStrategy(this.newHostType);
@@ -646,6 +654,8 @@ export function settingsModal() {
         this.editHostData = { ...defaultSpriteHostConfig(), ...runner.host };
       } else if (runner.host.type === 'ssh') {
         this.editHostData = { ...defaultSshHostConfig(), ...runner.host };
+      } else if (runner.host.type === 'fly') {
+        this.editHostData = { ...defaultFlyHostConfig(), ...runner.host };
       } else if (runner.host.type === 'local') {
         this.editHostData = { type: 'local' };
       } else if (runner.host.type === 'client') {
@@ -699,6 +709,12 @@ export function settingsModal() {
         const sprite = this.editHostData as SpriteHostConfig;
         if (!sprite.apiToken?.trim()) {
           window.toast?.error('API token is required');
+          return;
+        }
+      } else if (this.editHostData.type === 'fly') {
+        const fly = this.editHostData as FlyHostConfig;
+        if (!fly.app?.trim()) {
+          window.toast?.error('Fly app name is required');
           return;
         }
       }

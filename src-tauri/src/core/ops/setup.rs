@@ -4,9 +4,7 @@
 
 use std::path::PathBuf;
 
-use crate::core::chats::{
-    create_default_group_chat, create_learnings_thread, create_worker_chat, ChatError,
-};
+use crate::core::chats::{create_default_group_chat, create_worker_chat, ChatError};
 use crate::core::git::{create_worker_clone, create_workspace, GitError};
 use crate::core::state::SQLiteState;
 use crate::core::Files;
@@ -29,7 +27,7 @@ pub struct RunSetupConfig {
     /// Names of workers to create clones for (local workers)
     pub worker_names: Vec<String>,
     /// Additional workers that need chats but not clones (e.g., remote workers)
-    /// These workers are included in group chat and learnings thread, and get individual chats
+    /// These workers are included in group chat and get individual chats
     pub additional_chat_workers: Vec<String>,
     /// Whether this is a multi-worker run (affects workspace layout)
     pub is_multi_worker: bool,
@@ -108,7 +106,8 @@ pub fn compute_multi_worker_config(
 /// This operation:
 /// 1. Creates the main workspace (staging) from the project
 /// 2. Creates worker clone directories (in multi-worker mode) or uses workspace directly
-/// 3. Creates chat files (user chat, group chat if multi-worker, learnings thread, worker chats)
+/// 3. Creates chat files (group chat if multi-worker, worker chats)
+/// 4. Initializes the docs directory for the scribe system
 ///
 /// # Arguments
 ///
@@ -161,8 +160,8 @@ pub fn setup_run_workspace(config: &RunSetupConfig) -> Result<RunSetupResult, Op
         create_default_group_chat(&chats_dir, &all_workers, config.leader_name.as_deref())?;
     }
 
-    // Create learnings thread
-    create_learnings_thread(&chats_dir, &all_workers)?;
+    // Initialize docs directory for scribe system
+    files.init_docs()?;
 
     // Create individual worker chats for all workers
     for worker_name in &all_workers {

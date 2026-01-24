@@ -1,21 +1,27 @@
 # fly.toml - Hirsel coordinator deployment for Fly.io
 #
 # Deploy the coordinator to Fly.io for remote orchestration.
-# Uses LiteFS for distributed SQLite replication.
+# Uses Tigris for S3-compatible object storage (snapshots, file sync).
 #
 # Quick start:
 #   1. Create the app:
-#      fly apps create hirsel-coordinator --org hirsel
+#      fly apps create hirsel-coordinator
 #
-#   2. Set secrets:
+#   2. Create a volume for data persistence:
+#      fly volumes create hirsel_data --size 1 --region ams
+#
+#   3. Create Tigris storage (for snapshots):
+#      fly storage create --name hirsel-storage
+#      (This auto-sets AWS_* env vars)
+#
+#   4. Set secrets:
 #      fly secrets set HIRSEL_API_KEY=<your-secret-key>
-#      fly secrets set ANTHROPIC_API_KEY=<your-api-key>
 #
-#   3. Build and deploy:
-#      cd src-tauri && cargo build --release --no-default-features --features cli
+#   5. Build and deploy:
+#      cd src-tauri && cargo build --release --no-default-features --features cli,s3-storage
 #      fly deploy
 #
-# See docs/architecture.md for full deployment guide.
+# See docs/fly-deployment.md for full guide.
 
 app = "hirsel-coordinator"
 primary_region = "ams"
@@ -24,39 +30,29 @@ primary_region = "ams"
   dockerfile = "Dockerfile.coordinator"
 
 [env]
-  HIRSEL_ROOT = "/litefs/data"
+  HIRSEL_ROOT = "/data"
   RUST_LOG = "info,hirsel=debug"
+  # Tigris/S3 env vars (AWS_*) are set automatically by `fly storage create`
 
-# LiteFS for distributed SQLite
-[litefs]
-  mount = "/litefs"
+[mounts]
+  source = "hirsel_data"
+  destination = "/data"
 
-[consul]
-  # LiteFS uses Consul for leader election
-  enabled = true
-
-[[services]]
+[http_service]
   internal_port = 3000
-  protocol = "tcp"
-  auto_stop_machines = false
+  force_https = true
+  auto_stop_machines = "off"
   auto_start_machines = true
   min_machines_running = 1
 
-  [[services.ports]]
-    port = 80
-    handlers = ["http"]
-    force_https = true
-
-  [[services.ports]]
-    port = 443
-    handlers = ["tls", "http"]
-
-  [services.concurrency]
-    type = "connections"
-    hard_limit = 100
-    soft_limit = 80
+[checks]
+  [checks.health]
+    type = "http"
+    port = 3000
+    path = "/health"
+    interval = "30s"
+    timeout = "5s"
 
 [[vm]]
-  cpu_kind = "shared"
-  cpus = 1
-  memory_mb = 512
+  size = "shared-cpu-1x"
+  memory = "512mb"

@@ -933,9 +933,7 @@ impl Orchestrator for LocalOrchestrator {
     // -------------------------------------------------------------------------
 
     async fn create_run(&self, request: CreateRunRequest) -> OrchestratorResult<CreateRunResponse> {
-        use crate::core::chats::{
-            create_default_group_chat, create_learnings_thread, create_worker_chat,
-        };
+        use crate::core::chats::{create_default_group_chat, create_worker_chat};
         use crate::core::files::Files;
         use crate::core::names;
         use crate::core::state::{SQLiteState, Status};
@@ -1100,8 +1098,10 @@ impl Orchestrator for LocalOrchestrator {
             .map_err(|e| OrchestratorError::Other(format!("Failed to create group chat: {}", e)))?;
         }
 
-        create_learnings_thread(&chats_dir, &[first_worker_name.clone()])
-            .map_err(|e| OrchestratorError::Other(format!("Failed to create learnings: {}", e)))?;
+        // Initialize docs directory for scribe system
+        files
+            .init_docs()
+            .map_err(|e| OrchestratorError::Other(format!("Failed to init docs: {}", e)))?;
 
         create_worker_chat(&chats_dir, &first_worker_name).map_err(|e| {
             OrchestratorError::Other(format!("Failed to create worker chat: {}", e))
@@ -1387,6 +1387,14 @@ impl Orchestrator for LocalOrchestrator {
             let runner_config = sqlite_state
                 .get_runner_config_for_worker(worker_name, &self.config)
                 .unwrap_or_default();
+
+            // Check if local workers are allowed
+            if runner_config.host_type() == "local" && !self.config.allow_local_workers {
+                return Err(OrchestratorError::InvalidOperation(
+                    "Local workers are not allowed on this coordinator. Configure a remote runner (fly, ssh).".to_string()
+                ));
+            }
+
             let runner: Box<dyn Runner> = create_runner(&runner_config);
 
             let spawn_config = RunnerSpawnConfig {
@@ -1652,8 +1660,9 @@ impl Orchestrator for LocalOrchestrator {
         let setup_result = setup_run_workspace(&setup_config)
             .map_err(|e| OrchestratorError::Other(format!("Failed to setup workspace: {}", e)))?;
 
-        // 8. Register workers in state
-        register_workers(&state, &setup_result.worker_dirs, "local")
+        // 8. Register workers in state (use runner name as location)
+        let worker_location = request.runner.as_deref().unwrap_or("local");
+        register_workers(&state, &setup_result.worker_dirs, worker_location)
             .map_err(|e| OrchestratorError::Other(format!("Failed to register workers: {}", e)))?;
 
         // 9. Handle draft mode vs normal mode
@@ -1697,6 +1706,14 @@ impl Orchestrator for LocalOrchestrator {
                 let runner_config = state
                     .get_runner_config_for_worker(worker_name, &self.config)
                     .unwrap_or_default();
+
+                // Check if local workers are allowed
+                if runner_config.host_type() == "local" && !self.config.allow_local_workers {
+                    return Err(OrchestratorError::InvalidOperation(
+                        "Local workers are not allowed on this coordinator. Configure a remote runner (fly, ssh).".to_string()
+                    ));
+                }
+
                 let runner: Box<dyn Runner> = create_runner(&runner_config);
 
                 let spawn_config = RunnerSpawnConfig {
@@ -1818,6 +1835,14 @@ impl Orchestrator for LocalOrchestrator {
         let runner_config = state
             .get_runner_config_for_worker(worker_name, &self.config)
             .unwrap_or_default();
+
+        // Check if local workers are allowed
+        if runner_config.host_type() == "local" && !self.config.allow_local_workers {
+            return Err(OrchestratorError::InvalidOperation(
+                "Local workers are not allowed on this coordinator. Configure a remote runner (fly, ssh).".to_string()
+            ));
+        }
+
         let runner: Box<dyn Runner> = create_runner(&runner_config);
 
         // Build spawn config
@@ -1848,7 +1873,7 @@ impl Orchestrator for LocalOrchestrator {
             credentials: None,
         };
 
-        // Spawn via runner (handles local/docker/fly/sprite correctly)
+        // Spawn via runner (handles local/docker/fly/ssh correctly)
         match runner.spawn(&spawn_config).await {
             Ok(result) => {
                 // Update worker with PID and runner info
@@ -1924,6 +1949,14 @@ impl Orchestrator for LocalOrchestrator {
         let runner_config = state
             .get_runner_config_for_worker(worker_name, &self.config)
             .unwrap_or_default();
+
+        // Check if local workers are allowed
+        if runner_config.host_type() == "local" && !self.config.allow_local_workers {
+            return Err(OrchestratorError::InvalidOperation(
+                "Local workers are not allowed on this coordinator. Configure a remote runner (fly, ssh).".to_string()
+            ));
+        }
+
         let runner: Box<dyn Runner> = create_runner(&runner_config);
 
         // 1. Check if already running
