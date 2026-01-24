@@ -1089,7 +1089,6 @@ export function settingsModal() {
             compactionEnabled: remoteConfig.compactionEnabled,
             compactionThreshold: remoteConfig.compactionThreshold,
             compactionKeepMessages: remoteConfig.compactionKeepMessages,
-            autoImprove: remoteConfig.autoImprove,
             contextWarningThreshold: remoteConfig.contextWarningThreshold,
             auth: remoteConfig.auth,
             runners: remoteConfig.runners || {},
@@ -1176,7 +1175,6 @@ export function settingsModal() {
           compactionEnabled: settings.compactionEnabled,
           compactionThreshold: settings.compactionThreshold || null,
           compactionKeepMessages: settings.compactionKeepMessages,
-          autoImprove: settings.autoImprove,
           contextWarningThreshold: settings.contextWarningThreshold,
           runners: settings.runners,
           defaultRunner: settings.defaultRunner,
@@ -1491,7 +1489,6 @@ export function settingsModal() {
             compactionEnabled: boolean;
             compactionThreshold: number | null;
             compactionKeepMessages: number;
-            autoImprove: boolean;
             contextWarningThreshold: number;
             coordinatorPort: number;
             auth: AuthConfig;
@@ -1515,7 +1512,6 @@ export function settingsModal() {
             compactionEnabled: config.compactionEnabled,
             compactionThreshold: config.compactionThreshold,
             compactionKeepMessages: config.compactionKeepMessages,
-            autoImprove: config.autoImprove,
             contextWarningThreshold: config.contextWarningThreshold,
             coordinatorPort: config.coordinatorPort,
             auth: config.auth,
@@ -1661,7 +1657,6 @@ export function settingsModal() {
           compactionEnabled: this.settings.compactionEnabled,
           compactionThreshold: this.settings.compactionThreshold || null,
           compactionKeepMessages: this.settings.compactionKeepMessages,
-          autoImprove: this.settings.autoImprove,
           contextWarningThreshold: this.settings.contextWarningThreshold,
           coordinatorPort: this.settings.coordinatorPort,
           auth: authUpdate,

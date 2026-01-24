@@ -55,7 +55,7 @@ fn get_worker_name() -> MsgResult<String> {
 /// When sending to "user" with HITL disabled (YOLO mode):
 /// - The function polls for a reply and returns immediately when one arrives
 ///
-/// For other threads (group, learnings), messages are sent without waiting.
+/// For other threads (group chat), messages are sent without waiting.
 pub fn send(thread: &str, message: &str) -> MsgResult<serde_json::Value> {
     let run_dir = get_run_dir()?;
     let worker_name = get_worker_name()?;

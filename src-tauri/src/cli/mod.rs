@@ -12,7 +12,6 @@ pub mod asset;
 #[cfg(feature = "cli")]
 pub mod attach;
 pub mod clone;
-pub mod compact;
 pub mod completions;
 pub mod config;
 pub mod delete;
@@ -21,7 +20,6 @@ pub mod diff;
 #[cfg(feature = "cli")]
 pub mod go;
 pub mod helpers;
-pub mod improve;
 pub mod log;
 pub mod man;
 pub mod msg;
@@ -189,9 +187,6 @@ pub enum Commands {
     /// Show manual
     Man(ManArgs),
 
-    /// Update project memory from learnings
-    Improve(ImproveArgs),
-
     /// Reset runs and/or config (requires typing 'reset' to confirm)
     Reset(ResetArgs),
 
@@ -219,10 +214,6 @@ pub enum Commands {
     /// Run eval agent (internal, spawned by lifecycle manager)
     #[command(name = "__eval-run", hide = true)]
     EvalRun(InternalEvalRunArgs),
-
-    /// Run learnings compaction (internal, spawned by GUI polling)
-    #[command(name = "__compact-learnings", hide = true)]
-    CompactLearnings(RunNameArg),
 
     /// Run scribe processing (internal, spawned by daemon)
     #[command(name = "__scribe", hide = true)]
@@ -624,13 +615,6 @@ pub struct ManArgs {
     /// Show agent-specific manual
     #[arg(long)]
     pub agent: bool,
-}
-
-/// Arguments for `hirsel improve`
-#[derive(Args, Debug)]
-pub struct ImproveArgs {
-    /// Run name (optional, uses current directory context if not provided)
-    pub run_name: Option<String>,
 }
 
 /// Arguments for `hirsel reset`
@@ -1233,12 +1217,6 @@ pub fn run_cli() -> anyhow::Result<bool> {
                 std::process::exit(1);
             }
         }
-        Commands::Improve(args) => {
-            if let Err(e) = improve::execute(args.run_name.as_deref(), json) {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
-        }
         Commands::Reset(args) => {
             // Determine target
             let target = if args.all {
@@ -1314,12 +1292,6 @@ pub fn run_cli() -> anyhow::Result<bool> {
             // This is handled by lib.rs run_cli() for compatibility
             // Should not reach here in normal CLI flow
             eprintln!("Eval run command should be called via hirsel binary directly");
-            std::process::exit(1);
-        }
-        Commands::CompactLearnings(_args) => {
-            // This is handled by lib.rs run_cli() for compatibility
-            // Should not reach here in normal CLI flow
-            eprintln!("Compact learnings command should be called via hirsel binary directly");
             std::process::exit(1);
         }
         Commands::Scribe(_args) => {

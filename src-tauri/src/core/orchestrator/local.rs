@@ -286,8 +286,6 @@ impl Orchestrator for LocalOrchestrator {
 
         let remote_url = state.get_remote_url().ok().flatten();
         let branch = state.get_branch().ok().flatten();
-        let learnings_count = state.get_messages_count("learnings").unwrap_or(0) as u32;
-        let learnings_processed_at = state.get_learnings_processed_at().ok().flatten();
 
         let agent_type = self.config.agent.agent_type();
         let metrics_available = agent_type.supports_context_tracking();
@@ -319,8 +317,6 @@ impl Orchestrator for LocalOrchestrator {
             workers_active,
             workers_total,
             elapsed_minutes,
-            learnings_count,
-            learnings_processed_at,
             agent_type: format!("{:?}", agent_type).to_lowercase(),
             metrics_available,
             runner,
@@ -475,6 +471,24 @@ impl Orchestrator for LocalOrchestrator {
                 "No git repository found in work directory".into(),
             ));
         }
+
+        // Deliver docs (restore or persist based on settings)
+        let docs_path = state
+            .get_docs_path()
+            .map_err(|e| OrchestratorError::State(e.to_string()))?
+            .unwrap_or_else(|| "docs".to_string());
+        let persist_docs = state
+            .get_persist_docs_changes()
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+        let docs_config = crate::core::ops::DocsDeliveryConfig {
+            workspace_dir: &work_dir,
+            run_dir: &run_dir,
+            docs_path: &docs_path,
+            persist: persist_docs,
+        };
+        crate::core::ops::deliver_docs(&docs_config)
+            .map_err(|e| OrchestratorError::Other(format!("Failed to deliver docs: {}", e)))?;
 
         // Check for unmerged branches
         let unmerged = git::list_unmerged_branches(&work_dir)
@@ -881,7 +895,6 @@ impl Orchestrator for LocalOrchestrator {
             compaction_enabled: self.config.compaction_enabled,
             compaction_threshold: self.config.compaction_threshold,
             compaction_keep_messages: self.config.compaction_keep_messages,
-            auto_improve: self.config.auto_improve,
             context_warning_threshold: self.config.context_warning_threshold,
             coordinator_port: self.config.coordinator_port,
             auth: self.config.auth.clone().into(),
@@ -1646,6 +1659,16 @@ impl Orchestrator for LocalOrchestrator {
         let first_worker = &worker_names[0];
         let _ = state.claim_task("scope", first_worker);
 
+        // Store docs config from global settings
+        state
+            .set_docs_path(Some(&self.config.scribe_docs_path))
+            .map_err(|e| OrchestratorError::Other(format!("Failed to set docs path: {}", e)))?;
+        state
+            .set_persist_docs_changes(self.config.scribe_persist_docs_changes)
+            .map_err(|e| {
+                OrchestratorError::Other(format!("Failed to set persist_docs_changes: {}", e))
+            })?;
+
         // 7. Set up workspace clones and chats using shared ops
         let setup_config = RunSetupConfig {
             run_name: run_name.clone(),
@@ -1655,6 +1678,7 @@ impl Orchestrator for LocalOrchestrator {
             additional_chat_workers: Vec::new(),
             is_multi_worker,
             leader_name: leader_name.clone(),
+            docs_path: self.config.scribe_docs_path.clone(),
         };
 
         let setup_result = setup_run_workspace(&setup_config)

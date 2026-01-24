@@ -1,0 +1,298 @@
+      <!-- OVERVIEW TAB: Workers + Activity -->
+      <div x-show="runName && activeTab === 'overview'" class="flex-1 flex flex-col overflow-hidden">
+
+        <!-- Workers and Activity side by side -->
+        <div class="flex-1 flex overflow-hidden">
+
+          <!-- Workers Panel - Left side -->
+          <div class="workers-panel w-1/2 border-r border-pasture-600 flex flex-col overflow-hidden">
+            <div class="p-3 border-b border-pasture-700 flex items-center gap-2">
+              <i data-lucide="users" class="w-4 h-4 text-wool-500"></i>
+              <h3 class="text-sm font-medium text-wool-300">Workers</h3>
+              <span class="text-xs text-wool-600" x-text="workers.length ? '(' + workers.length + ')' : ''"></span>
+            </div>
+            <div class="flex-1 overflow-y-auto p-2 space-y-2" x-data="workerPanel()">
+              <template x-for="worker in workers" :key="worker.id">
+                <div
+                  @click="highlightWorker(worker)"
+                  @dblclick="openWorkerDetail(worker)"
+                  class="worker-card p-3 rounded-lg cursor-pointer transition-colors"
+                  :class="highlightedWorker === worker.name ? 'bg-amber-500/20 ring-1 ring-amber-500/50' : 'bg-pasture-800 hover:bg-pasture-700'"
+                >
+                  <div class="flex items-center gap-3">
+                    <!-- Sheep avatar -->
+                    <div
+                      class="size-10 shrink-0 flex items-center justify-center"
+                      x-html="worker.sheepConfig ? getWorkerSheepSvg(worker, 40) : ''"
+                    ></div>
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-2">
+                        <span class="text-sm font-medium text-wool-100 truncate" x-text="worker.name"></span>
+                        <span x-show="worker.isLeader" class="inline-flex shrink-0" data-tooltip="Leader" data-side="top"><i data-lucide="star" class="w-3.5 h-3.5 text-amber-500 fill-amber-500"></i></span>
+                      </div>
+                      <span class="text-xs text-wool-500" x-text="worker.status"></span>
+                    </div>
+                  </div>
+                  <!-- Metrics row: elapsed time, tokens, context -->
+                  <div class="mt-2 flex items-center gap-3 text-xs">
+                    <!-- Elapsed time -->
+                    <span class="text-wool-500" x-text="worker.sessionStartedAt ? formatElapsedTime(worker.sessionStartedAt) : '--'"></span>
+                    <!-- Token counts (only shown for agents with metrics) -->
+                    <template x-if="$store.app?.currentRunDetail?.metricsAvailable">
+                      <span x-show="worker.inputTokens || worker.outputTokens" class="text-wool-600">
+                        <span class="text-wool-500" x-text="formatTokens(worker.inputTokens)"></span>/<span class="text-sage" x-text="formatTokens(worker.outputTokens)"></span>
+                      </span>
+                    </template>
+                    <!-- Context utilization (value is 0-1 from backend, display as percentage) -->
+                    <template x-if="$store.app?.currentRunDetail?.metricsAvailable">
+                      <span
+                        x-show="worker.contextUtilization != null"
+                        class="ml-auto"
+                        :class="getContextClass((worker.contextUtilization || 0) * 100)"
+                        :data-tooltip="'Context: ' + ((worker.contextUtilization || 0) * 100).toFixed(1) + '%'"
+                        data-side="left"
+                      >
+                        <span x-text="Math.round((worker.contextUtilization || 0) * 100) + '%'"></span>
+                      </span>
+                    </template>
+                  </div>
+                  <div x-show="worker.currentTask" class="mt-1 text-xs text-wool-500 truncate">
+                    <span class="text-wool-700">Task:</span>
+                    <span x-text="worker.currentTask"></span>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Empty workers state -->
+              <div x-show="workers.length === 0 && !loading" class="empty-state text-center text-wool-500 py-6">
+                <svg class="w-12 h-12 mx-auto mb-2 text-wool-600">
+                  <use href="#sheep-sleeping"/>
+                </svg>
+                <p class="text-sm text-wool-400">No workers</p>
+                <p class="text-xs mt-1">Workers will appear when the run starts</p>
+              </div>
+
+              <!-- Loading workers state - skeleton -->
+              <div x-show="loading" class="space-y-2 py-2">
+                <template x-for="i in 3" :key="i">
+                  <div class="px-3 py-2.5 border-b border-pasture-700">
+                    <div class="flex items-center gap-3">
+                      <div class="skeleton w-3 h-3 rounded-full"></div>
+                      <div class="flex-1">
+                        <div class="skeleton h-4 w-20 mb-1"></div>
+                        <div class="skeleton h-3 w-24"></div>
+                      </div>
+                      <div class="skeleton h-3 w-12"></div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+
+              <!-- Worker Detail Modal -->
+              <div
+                x-cloak
+                x-show="showWorkerDetail"
+                x-transition.opacity
+                @click.self="closeWorkerDetail()"
+                @keydown.escape.window="closeWorkerDetail()"
+                class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+              >
+                <div class="bg-pasture-800 rounded-lg shadow-xl w-[500px] max-h-[80vh] overflow-hidden border border-pasture-600" @click.stop>
+                  <!-- Modal Header -->
+                  <div class="p-4 border-b border-pasture-600 flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                      <!-- Larger sheep avatar for modal header -->
+                      <div
+                        class="size-12 shrink-0 flex items-center justify-center"
+                        x-html="selectedWorker?.sheepConfig ? getWorkerSheepSvg(selectedWorker, 48) : ''"
+                      ></div>
+                      <div>
+                        <h2 class="text-lg font-semibold text-wool-100" x-text="selectedWorker?.name"></h2>
+                        <span class="text-xs text-wool-500 capitalize" x-text="selectedWorker?.status"></span>
+                      </div>
+                    </div>
+                    <button @click="closeWorkerDetail()" class="text-wool-500 hover:text-wool-300">
+                      <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                  </div>
+
+                  <!-- Modal Content -->
+                  <div class="p-4 space-y-4 overflow-y-auto max-h-[50vh]">
+                    <!-- Status & Time -->
+                    <div class="grid grid-cols-2 gap-4">
+                      <div class="bg-pasture-700/50 rounded-lg p-3">
+                        <div class="text-xs text-wool-500 mb-1">Status</div>
+                        <div class="text-sm font-medium text-wool-100 capitalize" x-text="selectedWorker?.status"></div>
+                      </div>
+                      <div class="bg-pasture-700/50 rounded-lg p-3">
+                        <div class="text-xs text-wool-500 mb-1">Session Time</div>
+                        <div class="text-sm font-medium text-wool-100" x-text="selectedWorker?.sessionStartedAt ? formatElapsedTime(selectedWorker.sessionStartedAt) : '--'"></div>
+                      </div>
+                    </div>
+
+                    <!-- Token Usage (only shown for agents with metrics) -->
+                    <div x-show="$store.app?.currentRunDetail?.metricsAvailable" class="bg-pasture-700/50 rounded-lg p-3">
+                      <div class="text-xs text-wool-500 mb-2">Token Usage</div>
+                      <div class="flex items-center gap-6">
+                        <div>
+                          <span class="text-lg font-medium text-wool-300" x-text="formatTokens(selectedWorker?.inputTokens)"></span>
+                          <span class="text-xs text-wool-500 ml-1">input</span>
+                        </div>
+                        <div>
+                          <span class="text-lg font-medium text-sage" x-text="formatTokens(selectedWorker?.outputTokens)"></span>
+                          <span class="text-xs text-wool-500 ml-1">output</span>
+                        </div>
+                        <div class="ml-auto">
+                          <span
+                            class="text-lg font-medium"
+                            :class="getContextClass((selectedWorker?.contextUtilization || 0) * 100)"
+                            x-text="Math.round((selectedWorker?.contextUtilization || 0) * 100) + '%'"
+                          ></span>
+                          <span class="text-xs text-wool-500 ml-1">context</span>
+                        </div>
+                      </div>
+                      <!-- Context bar -->
+                      <div class="mt-2 h-1.5 bg-pasture-600 rounded-full overflow-hidden">
+                        <div
+                          class="h-full rounded-full transition-all"
+                          :class="{
+                            'bg-terra': (selectedWorker?.contextUtilization || 0) >= 0.9,
+                            'bg-amber-500': (selectedWorker?.contextUtilization || 0) >= 0.75 && (selectedWorker?.contextUtilization || 0) < 0.9,
+                            'bg-sage': (selectedWorker?.contextUtilization || 0) < 0.75
+                          }"
+                          :style="'width: ' + Math.round((selectedWorker?.contextUtilization || 0) * 100) + '%'"
+                        ></div>
+                      </div>
+                    </div>
+
+                    <!-- Current Task -->
+                    <div x-show="selectedWorker?.currentTask" class="bg-pasture-700/50 rounded-lg p-3">
+                      <div class="text-xs text-wool-500 mb-1">Current Task</div>
+                      <div class="text-sm font-medium text-wool-100" x-text="selectedWorker?.currentTask"></div>
+                    </div>
+
+                    <!-- Waiting Thread -->
+                    <div x-show="selectedWorker?.waitingThread" class="bg-golden/10 border border-golden/30 rounded-lg p-3">
+                      <div class="text-xs text-golden mb-1">Waiting on Thread</div>
+                      <div class="text-sm font-medium text-golden" x-text="selectedWorker?.waitingThread"></div>
+                    </div>
+
+                    <!-- Work Directory -->
+                    <div x-show="selectedWorker?.workDir" class="bg-pasture-700/50 rounded-lg p-3">
+                      <div class="text-xs text-wool-500 mb-1">Work Directory</div>
+                      <div class="text-xs font-mono text-wool-400 truncate" x-text="selectedWorker?.workDir"></div>
+                    </div>
+
+                    <!-- Technical Info -->
+                    <div class="grid grid-cols-3 gap-2 text-xs">
+                      <div class="bg-pasture-900/50 rounded p-2">
+                        <span class="text-wool-600">PID:</span>
+                        <span class="text-wool-400 ml-1" x-text="selectedWorker?.pid || 'N/A'"></span>
+                      </div>
+                      <div class="bg-pasture-900/50 rounded p-2">
+                        <span class="text-wool-600">Location:</span>
+                        <span class="text-wool-400 ml-1 capitalize" x-text="selectedWorker?.location || 'local'"></span>
+                      </div>
+                      <div class="bg-pasture-900/50 rounded p-2">
+                        <span class="text-wool-600">Turns:</span>
+                        <span class="text-wool-400 ml-1" x-text="selectedWorker?.turns || 0"></span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Modal Footer -->
+                  <div class="p-4 border-t border-pasture-600 flex justify-end gap-3">
+                    <button
+                      @click="closeWorkerDetail()"
+                      class="px-4 py-2 text-sm rounded border border-pasture-500 text-wool-300 hover:bg-pasture-700"
+                    >
+                      Close
+                    </button>
+                    <button
+                      @click="attachAndClose(selectedWorker?.name)"
+                      class="px-4 py-2 text-sm rounded bg-amber-600 hover:bg-amber-500 text-white font-medium"
+                    >
+                      Attach to Terminal
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Activity Panel - Right side -->
+          <div
+            class="activity-panel w-1/2 flex flex-col transition-all duration-200 overflow-hidden"
+            x-data="activityLog()"
+            :class="isFullscreen ? 'fixed inset-0 z-50 bg-pasture-900 w-full' : ''"
+          >
+            <div class="p-3 border-b border-pasture-700 flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <i data-lucide="activity" class="w-4 h-4 text-wool-500"></i>
+                <h3 class="text-sm font-medium text-wool-300">Activity</h3>
+              </div>
+              <div class="flex items-center gap-2">
+                <!-- Sort toggle button -->
+                <button
+                  @click="toggleSort()"
+                  class="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium bg-pasture-700 hover:bg-pasture-600 text-wool-300 hover:text-wool-200 transition-colors"
+                  :title="sortDirection === 'desc' ? 'Showing latest first' : 'Showing oldest first'"
+                >
+                  <span x-text="sortIcon" class="text-amber-500"></span>
+                  <span x-text="sortLabel"></span>
+                </button>
+              <!-- Scroll to bottom (only when not auto-scrolling in desc mode) -->
+              <button
+                @click="scrollToBottom(); autoScroll = true"
+                x-show="!autoScroll && sortDirection === 'desc'"
+                class="text-xs text-amber-500 hover:text-amber-400"
+              >
+                ↓ Jump
+              </button>
+              <button
+                @click="toggleFullscreen()"
+                class="p-1 rounded hover:bg-pasture-600 text-wool-500 hover:text-wool-300 transition-colors"
+                :title="isFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'"
+              >
+                <i x-show="!isFullscreen" data-lucide="maximize-2" class="w-4 h-4"></i>
+                <i x-show="isFullscreen" data-lucide="minimize-2" class="w-4 h-4"></i>
+              </button>
+            </div>
+          </div>
+          <div
+            class="flex-1 overflow-y-auto font-mono text-xs"
+            @scroll="handleScroll($event)"
+          >
+            <div x-show="loading" class="text-center text-wool-500 py-4">
+              <span class="animate-pulse">Loading activity...</span>
+            </div>
+            <div x-show="error && !loading" class="text-center text-terra py-4">
+              <p x-text="error"></p>
+              <button @click="loadHistory(runName)" class="mt-2 text-xs text-amber-500 hover:underline">Retry</button>
+            </div>
+            <template x-for="entry in sortedEntries" :key="entry.id">
+              <div class="px-3 py-1.5 hover:bg-pasture-700/30 flex items-start gap-3 group transition-colors">
+                <span class="text-wool-600 flex-shrink-0 text-[11px] tabular-nums pt-0.5" x-text="formatTime(entry.timestamp)"></span>
+                <span
+                  class="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center overflow-hidden"
+                  :class="isWorkerEntry(entry) ? '' : getActionBgClass(entry.action)"
+                  x-html="getEntryAvatar(entry)"
+                ></span>
+                <div class="flex-1 min-w-0">
+                  <span class="font-medium text-[11px]" :class="getActionColor(entry.action)" x-text="formatActionLabel(entry.action)"></span>
+                  <span x-show="entry.detail" class="text-wool-400 text-[11px] ml-1" x-text="entry.detail"></span>
+                </div>
+              </div>
+            </template>
+            <div x-show="!loading && !error && sortedEntries.length === 0" class="empty-state text-center text-wool-500 py-4">
+              <svg class="w-10 h-10 mx-auto mb-2 text-wool-600">
+                <use href="#sheep-sleeping"/>
+              </svg>
+              <p class="text-sm text-wool-400">No activity yet</p>
+              <p class="text-xs mt-1">Events will appear here as agents work</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      </div>
+      <!-- END OVERVIEW TAB -->

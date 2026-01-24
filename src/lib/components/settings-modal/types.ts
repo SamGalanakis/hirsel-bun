@@ -165,7 +165,6 @@ export interface Settings {
   compactionEnabled: boolean;
   compactionThreshold: number | null;
   compactionKeepMessages: number;
-  autoImprove: boolean;
   contextWarningThreshold: number;
   coordinatorPort: number;
   auth: AuthConfig;
@@ -190,7 +189,6 @@ export interface RemoteConfig {
   compactionEnabled: boolean;
   compactionThreshold: number | null;
   compactionKeepMessages: number;
-  autoImprove: boolean;
   contextWarningThreshold: number;
   auth: AuthConfig;
   runners: Record<string, RunnerConfig>;

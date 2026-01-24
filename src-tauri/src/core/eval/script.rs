@@ -74,9 +74,6 @@ pub fn run_eval(
         let _ = lifecycle.kill_all_workers();
 
         state.set_status(Status::Done)?;
-
-        // Trigger auto-improve if enabled
-        lifecycle.run_improve();
     } else {
         // Check retry count
         let evals = state.get_evals(100)?;

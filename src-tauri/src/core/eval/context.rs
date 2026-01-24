@@ -10,7 +10,6 @@ pub struct EvalContext {
     pub spec: String,
     pub eval_spec: String,
     pub assets_path: PathBuf,
-    pub learnings: String,
     pub group_chat: String,
     pub previous_failures: Vec<EvalFailure>,
 }
@@ -73,12 +72,6 @@ pub fn build_eval_context(files: &Files, state: &SQLiteState) -> EvalContext {
     // Get assets path
     let assets_path = files.assets();
 
-    // Get learnings messages
-    let learnings = match state.get_messages("learnings", 500) {
-        Ok(msgs) => format_messages(&msgs),
-        Err(_) => String::new(),
-    };
-
     // Get group chat messages (NOT DMs)
     let group_chat = match state.get_messages("group", 500) {
         Ok(msgs) => format_messages(&msgs),
@@ -104,7 +97,6 @@ pub fn build_eval_context(files: &Files, state: &SQLiteState) -> EvalContext {
         spec,
         eval_spec,
         assets_path,
-        learnings,
         group_chat,
         previous_failures,
     }
@@ -154,11 +146,6 @@ pub fn build_eval_prompt(ctx: &EvalContext) -> String {
         ctx.assets_path.display()
     ));
     prompt.push_str("Images and files referenced in spec/eval are available here.\n");
-
-    if !ctx.learnings.is_empty() {
-        prompt.push_str("\n\n## Learnings (discoveries made during implementation)\n\n");
-        prompt.push_str(&ctx.learnings);
-    }
 
     if !ctx.group_chat.is_empty() {
         prompt.push_str("\n\n## Team Discussion\n\n");

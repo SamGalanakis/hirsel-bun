@@ -177,7 +177,6 @@ export const defaultSettings = (): Settings => ({
   compactionEnabled: true,
   compactionThreshold: 10000,
   compactionKeepMessages: 40,
-  autoImprove: true,
   contextWarningThreshold: 0.5,
   coordinatorPort: 19700,
   auth: {

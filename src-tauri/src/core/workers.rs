@@ -4,20 +4,17 @@
 //! - Spawning worker processes as detached subprocesses
 //! - Worker lifecycle tracking (heartbeats, status updates)
 //! - Time notifications
-//! - Compaction triggering
 //! - Reconciliation of stale workers on startup
 //!
 //! Note: Core lifecycle operations (pause/resume, eval triggering, scaling)
 //! have been moved to the `lifecycle` module for centralized management.
 
 use crate::cli::AgentPreset;
-use crate::core::config::Config;
-use crate::core::files::Files;
 use crate::core::state::{SQLiteState, StateError, Status, WorkerStatus, WorkerUpdate};
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 // Re-export WorkerSpawnConfig from runner module for backwards compatibility
 pub use crate::core::runner::WorkerSpawnConfig;
@@ -426,76 +423,6 @@ impl WorkerScale {
     /// Check if we can scale up from current count
     pub fn can_scale_up(&self, current: usize) -> bool {
         current < self.max
-    }
-}
-
-/// Internal cooldown for compaction checks (10 seconds)
-const COMPACTION_INTERNAL_COOLDOWN_SECONDS: i64 = 10;
-
-/// Check if learnings compaction should run, and if so, trigger it.
-///
-/// This function checks:
-/// 1. If compaction is enabled in config
-/// 2. If the internal cooldown (10s) has elapsed since the last compaction
-/// 3. If there are enough messages to warrant compaction
-///
-/// If all conditions are met, it spawns an async task to perform compaction.
-/// Returns true if compaction was triggered.
-pub async fn maybe_compact_learnings(
-    state: &SQLiteState,
-    files: &Files,
-    config: &Config,
-) -> WorkerResult<bool> {
-    use chrono::{DateTime, Utc};
-
-    // Quick check: is compaction enabled?
-    if !config.compaction_enabled {
-        debug!("maybe_compact_learnings: compaction disabled");
-        return Ok(false);
-    }
-
-    // Internal cooldown check (10 seconds) - just to prevent rapid-fire triggers
-    if let Some(last_compaction) = state.get_last_compaction_at()? {
-        if let Ok(last_time) = DateTime::parse_from_rfc3339(&last_compaction) {
-            let now = Utc::now();
-            let elapsed_seconds = (now - last_time.with_timezone(&Utc)).num_seconds();
-
-            if elapsed_seconds < COMPACTION_INTERNAL_COOLDOWN_SECONDS {
-                warn!(
-                    "maybe_compact_learnings: triggered within {}s of last compaction ({}s ago)",
-                    COMPACTION_INTERNAL_COOLDOWN_SECONDS, elapsed_seconds
-                );
-                return Ok(false);
-            }
-        }
-    }
-
-    // Try to run compaction
-    use crate::core::compaction::{compact_learnings_with_agent, CompactionError};
-
-    match compact_learnings_with_agent(state, files, config).await {
-        Ok(result) => {
-            info!(
-                "maybe_compact_learnings: compacted {} messages",
-                result.messages_compacted
-            );
-
-            // Update the last compaction timestamp
-            let now = Utc::now().to_rfc3339();
-            if let Err(e) = state.set_last_compaction_at(&now) {
-                warn!("Failed to update last_compaction_at: {}", e);
-            }
-
-            Ok(true)
-        }
-        Err(CompactionError::NotNeeded) => {
-            debug!("maybe_compact_learnings: compaction not needed");
-            Ok(false)
-        }
-        Err(e) => {
-            warn!("maybe_compact_learnings: compaction failed: {}", e);
-            Ok(false)
-        }
     }
 }
 

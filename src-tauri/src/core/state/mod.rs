@@ -46,7 +46,6 @@ CREATE TABLE IF NOT EXISTS state (
     time_limit_minutes INTEGER,
     started_at TEXT,
     last_time_notification_pct INTEGER,
-    learnings_processed_at TEXT,
     last_compaction_at TEXT,
     iteration_count INTEGER DEFAULT 0,
     max_iterations INTEGER,
@@ -58,7 +57,9 @@ CREATE TABLE IF NOT EXISTS state (
     starting_point TEXT,
     runner_configs TEXT,
     scribe_batch_started_at TEXT,
-    docs_version INTEGER DEFAULT 0
+    docs_version INTEGER DEFAULT 0,
+    docs_path TEXT,
+    persist_docs_changes INTEGER DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS workers (

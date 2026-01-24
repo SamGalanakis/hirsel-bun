@@ -53,7 +53,6 @@ pub struct PartialConfig {
     pub compaction_enabled: Option<bool>,
     pub compaction_threshold: Option<Option<u32>>,
     pub compaction_keep_messages: Option<u32>,
-    pub auto_improve: Option<bool>,
     pub context_warning_threshold: Option<f64>,
     pub coordinator_port: Option<u16>,
     pub auth: Option<AuthConfig>,
@@ -66,6 +65,8 @@ pub struct PartialConfig {
     pub storage: Option<StorageConfig>,
     pub allow_local_workers: Option<bool>,
     pub service_workers: Option<ServiceWorkersConfig>,
+    pub scribe_docs_path: Option<String>,
+    pub scribe_persist_docs_changes: Option<bool>,
 }
 
 /// Database-backed configuration store.
@@ -187,9 +188,6 @@ impl ConfigStore {
                 "compaction_keep_messages" => {
                     partial.compaction_keep_messages = value.parse().ok();
                 }
-                "auto_improve" => {
-                    partial.auto_improve = Some(value == "true");
-                }
                 "context_warning_threshold" => {
                     partial.context_warning_threshold = value.parse().ok();
                 }
@@ -229,6 +227,12 @@ impl ConfigStore {
                 }
                 "service_workers" => {
                     partial.service_workers = serde_json::from_str(&value).ok();
+                }
+                "scribe_docs_path" => {
+                    partial.scribe_docs_path = Some(value);
+                }
+                "scribe_persist_docs_changes" => {
+                    partial.scribe_persist_docs_changes = Some(value == "true");
                 }
                 _ => {
                     // Unknown key, ignore
@@ -280,10 +284,6 @@ impl ConfigStore {
             &config.compaction_keep_messages.to_string(),
         )?;
         self.set(
-            "auto_improve",
-            if config.auto_improve { "true" } else { "false" },
-        )?;
-        self.set(
             "context_warning_threshold",
             &config.context_warning_threshold.to_string(),
         )?;
@@ -327,6 +327,17 @@ impl ConfigStore {
         self.set(
             "service_workers",
             &serde_json::to_string(&config.service_workers)?,
+        )?;
+
+        // Scribe docs settings
+        self.set("scribe_docs_path", &config.scribe_docs_path)?;
+        self.set(
+            "scribe_persist_docs_changes",
+            if config.scribe_persist_docs_changes {
+                "true"
+            } else {
+                "false"
+            },
         )?;
 
         Ok(())

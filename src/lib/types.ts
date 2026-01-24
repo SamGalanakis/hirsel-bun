@@ -116,9 +116,6 @@ export interface RunDetail {
   workersActive: number;
   workersTotal: number;
   elapsedMinutes: number;
-  // Learnings info
-  learningsCount: number;
-  learningsProcessedAt: string | null;
   // Runner configuration
   runner: string | null;
   workerRunners: Record<string, string> | null;
@@ -187,7 +184,6 @@ export interface RunState {
   humanInTheLoop: boolean;
   waitingReason: string | null;
   unreadCount: number;
-  learningsProcessedAt: string | null;
   lastTimeNotificationPct: number | null;
 }
 

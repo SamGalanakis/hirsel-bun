@@ -8,7 +8,7 @@ import type { Message, SheepConfig, ThreadSummary, WorkerDisplay } from '../type
 import { formatDate, formatTimeHHMM } from '../utils/formatters';
 
 // Known group chat thread names (shown under "Group Chats" section)
-const GROUP_CHAT_NAMES = ['group', 'learnings'];
+const GROUP_CHAT_NAMES = ['group'];
 
 // Hidden thread names (should not appear in UI)
 // "user" thread is hidden - workers send to their own DM thread instead
@@ -110,7 +110,7 @@ export function chatPanel() {
       this._eventCleanups = [];
     },
 
-    // Get group chat threads (group, learnings) - always shows both even if empty
+    // Get group chat threads - always shows even if empty
     get groupChats(): Array<{ name: string; thread: ThreadSummary | null }> {
       return GROUP_CHAT_NAMES.map((name) => ({
         name,
@@ -386,7 +386,6 @@ export function chatPanel() {
       const iconNames: Record<string, string> = {
         user: 'user',
         group: 'users',
-        learnings: 'library',
       };
       const iconName = iconNames[threadName] || 'hash';
       return getIcon(iconName, 12);

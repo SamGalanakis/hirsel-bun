@@ -250,8 +250,6 @@ pub async fn create_draft() -> Result<RunDetail, String> {
         workers_active: 0,
         workers_total: 0,
         elapsed_minutes: 0.0,
-        learnings_count: 0,
-        learnings_processed_at: None,
         agent_type: format!("{:?}", agent_type).to_lowercase(),
         metrics_available,
         runner: None,
@@ -300,8 +298,6 @@ pub async fn clone_run(source_run: String, new_name: String) -> Result<RunDetail
         workers_active: 0,
         workers_total: 0,
         elapsed_minutes: 0.0,
-        learnings_count: 0,
-        learnings_processed_at: None,
         agent_type: format!("{:?}", agent_type).to_lowercase(),
         metrics_available,
         runner: None,
@@ -576,6 +572,18 @@ pub async fn start_draft(
     // Determine if multi-worker mode (current or potential via autoscale)
     let (is_multi_worker, leader) = compute_multi_worker_config(&worker_names, scale.max);
 
+    // Load config for scribe docs settings
+    let (global_config, _) =
+        config::Config::load().unwrap_or_else(|_| (config::Config::default(), vec![]));
+
+    // Store docs config in run state
+    state
+        .set_docs_path(Some(&global_config.scribe_docs_path))
+        .map_err(|e| format!("Failed to set docs path: {}", e))?;
+    state
+        .set_persist_docs_changes(global_config.scribe_persist_docs_changes)
+        .map_err(|e| format!("Failed to set persist_docs_changes: {}", e))?;
+
     // Set up workspace, worker clones, and chats using shared ops
     let setup_config = RunSetupConfig {
         run_name: run_name.clone(),
@@ -585,6 +593,7 @@ pub async fn start_draft(
         additional_chat_workers: Vec::new(), // GUI only has local workers
         is_multi_worker,
         leader_name: leader.clone(),
+        docs_path: global_config.scribe_docs_path.clone(),
     };
 
     let setup_result = setup_run_workspace(&setup_config).map_err(|e| e.to_string())?;

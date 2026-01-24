@@ -123,10 +123,6 @@ fn default_compaction_keep_messages() -> u32 {
     40
 }
 
-fn default_auto_improve() -> bool {
-    true
-}
-
 fn default_context_warning_threshold() -> f64 {
     0.5
 }
@@ -157,6 +153,14 @@ fn default_scribe_idle_timeout() -> u32 {
 
 fn default_gyp_idle_timeout() -> u32 {
     600 // 10 minutes
+}
+
+fn default_scribe_docs_path() -> String {
+    "docs".to_string()
+}
+
+fn default_scribe_persist_docs_changes() -> bool {
+    true
 }
 
 fn default_profiles() -> HashMap<String, OrchestratorProfile> {
@@ -249,9 +253,6 @@ pub struct Config {
     #[serde(default = "default_compaction_keep_messages")]
     pub compaction_keep_messages: u32,
 
-    #[serde(default = "default_auto_improve")]
-    pub auto_improve: bool,
-
     #[serde(default = "default_context_warning_threshold")]
     pub context_warning_threshold: f64,
 
@@ -305,6 +306,14 @@ pub struct Config {
     /// Service workers configuration (scribe, gyp)
     #[serde(default)]
     pub service_workers: ServiceWorkersConfig,
+
+    /// Path to documentation directory relative to workspace (default: "docs")
+    #[serde(default = "default_scribe_docs_path")]
+    pub scribe_docs_path: String,
+
+    /// Whether to persist scribe documentation changes back to workspace on delivery (default: true)
+    #[serde(default = "default_scribe_persist_docs_changes")]
+    pub scribe_persist_docs_changes: bool,
 }
 
 impl Default for Config {
@@ -321,7 +330,6 @@ impl Default for Config {
             compaction_enabled: default_compaction_enabled(),
             compaction_threshold: default_compaction_threshold(),
             compaction_keep_messages: default_compaction_keep_messages(),
-            auto_improve: default_auto_improve(),
             context_warning_threshold: default_context_warning_threshold(),
             coordinator_port: default_coordinator_port(),
             auth: AuthConfig::default(),
@@ -336,6 +344,8 @@ impl Default for Config {
             scribe_enabled: default_scribe_enabled(),
             scribe_batch_window_seconds: default_scribe_batch_window(),
             service_workers: ServiceWorkersConfig::default(),
+            scribe_docs_path: default_scribe_docs_path(),
+            scribe_persist_docs_changes: default_scribe_persist_docs_changes(),
         }
     }
 }
@@ -433,9 +443,6 @@ impl Config {
         if let Some(compaction_keep_messages) = partial.compaction_keep_messages {
             self.compaction_keep_messages = compaction_keep_messages;
         }
-        if let Some(auto_improve) = partial.auto_improve {
-            self.auto_improve = auto_improve;
-        }
         if let Some(context_warning_threshold) = partial.context_warning_threshold {
             self.context_warning_threshold = context_warning_threshold;
         }
@@ -471,6 +478,12 @@ impl Config {
         }
         if let Some(service_workers) = partial.service_workers {
             self.service_workers = service_workers;
+        }
+        if let Some(scribe_docs_path) = partial.scribe_docs_path {
+            self.scribe_docs_path = scribe_docs_path;
+        }
+        if let Some(scribe_persist_docs_changes) = partial.scribe_persist_docs_changes {
+            self.scribe_persist_docs_changes = scribe_persist_docs_changes;
         }
     }
 

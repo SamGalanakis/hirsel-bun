@@ -1,0 +1,272 @@
+    <!-- Left Panel: Run List (Collapsible) -->
+    <aside
+      class="run-list-panel flex-shrink-0 border-r border-pasture-600 flex flex-col transition-all duration-200"
+      :class="sidebarCollapsed ? 'w-10 collapsed' : 'w-56'"
+    >
+      <!-- Collapsed state: just a vertical rail -->
+      <div x-show="sidebarCollapsed" class="flex flex-col items-center py-3 h-full">
+        <button
+          @click="toggleSidebar()"
+          class="p-2 rounded hover:bg-pasture-700 text-wool-400 hover:text-wool-200"
+          data-tooltip="Expand runs panel"
+          data-side="right"
+        >
+          <i data-lucide="chevrons-right" class="w-4 h-4"></i>
+        </button>
+        <div class="w-6 border-t border-pasture-600 my-2"></div>
+        <!-- Mini run indicators when collapsed -->
+        <div class="flex-1 flex flex-col gap-2 overflow-y-auto px-2" x-data="runList()">
+          <template x-for="run in runs" :key="run.name">
+            <button
+              @click="selectRunWithDraft(run.name, run.status); $dispatch('toggle-sidebar')"
+              :data-tooltip="run.name + ' (' + run.status + ')'"
+              data-side="right"
+              class="w-6 h-6 rounded-md flex items-center justify-center transition-colors shrink-0 border-2 border-transparent"
+              :class="{
+                'bg-pasture-600 border-amber-500': selectedRun === run.name,
+                'hover:bg-pasture-700': selectedRun !== run.name
+              }"
+            >
+              <span
+                class="w-2.5 h-2.5 rounded-full"
+                :class="getStatusDotClass(run.status)"
+              ></span>
+            </button>
+          </template>
+        </div>
+      </div>
+
+      <!-- Expanded state: full run list -->
+      <div x-show="!sidebarCollapsed" class="flex flex-col h-full">
+        <div class="p-3 border-b border-pasture-600 flex items-center justify-between">
+          <h2 class="text-sm font-medium text-wool-300 uppercase tracking-wide">Runs</h2>
+          <div class="flex items-center gap-1">
+            <button
+              x-data
+              @click="$dispatch('create-draft')"
+              class="p-1 rounded hover:bg-pasture-700 text-wool-500 hover:text-wool-300"
+              data-tooltip="New draft run"
+              data-side="bottom"
+              data-test="new-run-btn"
+            >
+              <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+            </button>
+            <button
+              @click="toggleSidebar()"
+              class="p-1 rounded hover:bg-pasture-700 text-wool-500 hover:text-wool-300"
+              data-tooltip="Collapse runs panel"
+              data-side="bottom"
+            >
+              <i data-lucide="chevrons-left" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+        </div>
+      <div class="flex-1 overflow-y-auto" x-data="runList()" @create-draft.window="createNewDraft()">
+        <!-- Empty state -->
+        <div x-show="runs.length === 0 && !loading" class="empty-state p-6 text-center text-wool-500">
+          <svg class="w-24 h-12 mx-auto mb-3 text-wool-600">
+            <use href="#sheep-flock"/>
+          </svg>
+          <p class="text-sm font-medium text-wool-400">No runs yet</p>
+          <p class="text-xs mt-2">Use <code class="bg-pasture-700 px-1.5 py-0.5 rounded text-wool-300">hirsel go</code> to start</p>
+        </div>
+
+        <!-- Loading state - skeleton run items -->
+        <div x-show="loading" class="space-y-1 p-2">
+          <template x-for="i in 4" :key="i">
+            <div class="px-3 py-2.5 border-b border-pasture-800">
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                  <div class="skeleton w-2 h-2 rounded-full"></div>
+                  <div class="skeleton h-4 w-24"></div>
+                </div>
+                <div class="skeleton h-4 w-12 rounded"></div>
+              </div>
+              <div class="flex items-center justify-between mt-1.5">
+                <div class="skeleton h-3 w-32"></div>
+                <div class="skeleton h-3 w-8"></div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Error state -->
+        <div x-show="error" class="p-4 text-center text-terra">
+          <p class="text-sm" x-text="error"></p>
+          <button @click="fetchRuns()" class="mt-2 text-xs text-amber-500 hover:underline">Retry</button>
+        </div>
+
+        <!-- Run list items -->
+        <template x-for="run in runs" :key="run.name">
+          <div
+            @click="selectRunWithDraft(run.name, run.status)"
+            @contextmenu="showContextMenu($event, run)"
+            :class="{ 'bg-pasture-700': selectedRun === run.name }"
+            :data-test="'run-item-' + run.name"
+            class="run-item px-3 py-2.5 cursor-pointer hover:bg-pasture-700 border-b border-pasture-800 transition-colors"
+          >
+            <!-- Header: name + status badge -->
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2 min-w-0">
+                <span
+                  class="status-dot w-2 h-2 rounded-full flex-shrink-0"
+                  :class="getStatusDotClass(run.status)"
+                ></span>
+                <span class="text-sm text-wool-100 truncate" x-text="run.name"></span>
+                <span x-show="run.hasUnreadMessages" class="w-1.5 h-1.5 bg-amber-500 rounded-full flex-shrink-0"></span>
+              </div>
+              <span
+                class="text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0"
+                :class="getStatusBadgeClass(run.status)"
+                x-text="getStatusLabel(run.status)"
+              ></span>
+            </div>
+
+            <!-- Stats row: tasks, workers, time (hide for drafts) -->
+            <div x-show="run.status !== 'draft'" class="flex items-center justify-between mt-1.5 text-xs text-wool-500">
+              <span class="flex items-center gap-2">
+                <span x-text="run.tasksDone + '/' + run.tasksTotal"></span>
+                <span class="text-wool-600">•</span>
+                <span :class="run.workersActive > 0 ? 'text-sage' : ''" x-text="run.workersActive + '/' + run.workersTotal + ' workers'"></span>
+              </span>
+              <span x-text="getTimeDisplay(run)"></span>
+            </div>
+            <!-- Draft: just show creation time -->
+            <div x-show="run.status === 'draft'" class="mt-1.5 text-xs text-wool-500">
+              <span x-text="getTimeDisplay(run)"></span>
+            </div>
+
+            <!-- Progress bar with percentage (hide for drafts) -->
+            <div x-show="run.status !== 'draft'" class="mt-2 flex items-center gap-2">
+              <div class="flex-1 h-2 bg-pasture-600/50 rounded-full overflow-hidden relative">
+                <div
+                  class="h-full rounded-full transition-all duration-500 ease-out"
+                  :class="[
+                    getProgressBarClass(run.status, run.tasksDone, run.tasksTotal),
+                    run.status === 'working' ? 'animate-pulse-subtle' : ''
+                  ]"
+                  :style="'width: ' + formatProgress(run.tasksDone, run.tasksTotal) + '%'"
+                ></div>
+                <!-- Shine effect for completed runs -->
+                <div
+                  x-show="formatProgress(run.tasksDone, run.tasksTotal) === 100"
+                  class="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent"
+                ></div>
+              </div>
+              <span
+                class="text-[10px] font-medium w-8 text-right tabular-nums"
+                :class="formatProgress(run.tasksDone, run.tasksTotal) === 100 ? 'text-sage' : 'text-wool-500'"
+                x-text="formatProgress(run.tasksDone, run.tasksTotal) + '%'"
+              ></span>
+            </div>
+
+            <!-- Time limit/remaining (only show if time limit is set) -->
+            <div x-show="run.timeLimitMinutes" class="mt-1 text-[10px] text-wool-600 flex items-center gap-1">
+              <template x-if="run.status === 'draft'">
+                <span x-text="formatElapsed(run.timeLimitMinutes) + ' limit'"></span>
+              </template>
+              <template x-if="run.status !== 'draft'">
+                <span x-text="formatTimeRemaining(run.timeLimitMinutes, run.elapsedMinutes)"></span>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <!-- Context menu -->
+        <div
+          x-show="contextMenuVisible"
+          x-transition
+          @click.away="hideContextMenu()"
+          @keydown.escape.window="hideContextMenu()"
+          :style="'left: ' + contextMenuX + 'px; top: ' + contextMenuY + 'px'"
+          class="fixed z-50 bg-pasture-700 border border-pasture-600 rounded shadow-lg py-1 min-w-[160px]"
+        >
+          <!-- Pause: only for active runs -->
+          <button
+            x-show="canPause()"
+            @click="contextPause()"
+            class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600 flex items-center gap-2"
+          >
+            <i data-lucide="pause" class="w-3.5 h-3.5"></i> Pause
+          </button>
+          <!-- Resume: only for paused runs -->
+          <button
+            x-show="canResume()"
+            @click="contextResume()"
+            class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600 flex items-center gap-2"
+          >
+            <i data-lucide="play" class="w-3.5 h-3.5"></i> Resume
+          </button>
+          <!-- Divider: show if pause/resume visible -->
+          <div x-show="canPause() || canResume()" class="border-t border-pasture-600 my-1"></div>
+          <!-- Clone: always available -->
+          <button
+            @click="showCloneDialog()"
+            class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600 flex items-center gap-2"
+          >
+            <i data-lucide="copy" class="w-3.5 h-3.5"></i> Clone
+          </button>
+          <!-- Deliver: not for drafts or already delivered -->
+          <button
+            x-show="canDeliver()"
+            @click="contextDeliver()"
+            class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600 flex items-center gap-2"
+          >
+            <i data-lucide="git-branch" class="w-3.5 h-3.5"></i> Deliver
+          </button>
+          <div class="border-t border-pasture-600 my-1"></div>
+          <!-- Delete: always available -->
+          <button
+            @click="contextDelete()"
+            class="w-full px-3 py-1.5 text-left text-sm text-terra hover:bg-pasture-600 flex items-center gap-2"
+          >
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete
+          </button>
+        </div>
+
+        <!-- Clone dialog -->
+        <div
+          x-show="cloneDialogVisible"
+          x-cloak
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          @click.self="hideCloneDialog()"
+          @keydown.escape.window="hideCloneDialog()"
+        >
+          <div class="bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl p-6 w-[400px]">
+            <h3 class="text-lg font-medium text-wool-100 mb-4">Clone Run</h3>
+            <p class="text-sm text-wool-400 mb-4">
+              Create a new draft from "<span x-text="cloneSourceRun" class="text-wool-200"></span>"
+            </p>
+            <div class="mb-4">
+              <label class="block text-sm text-wool-300 mb-1.5">New run name</label>
+              <input
+                id="clone-name-input"
+                type="text"
+                x-model="cloneNewName"
+                @keydown.enter="executeClone()"
+                class="input w-full"
+                placeholder="my-new-run"
+              />
+            </div>
+            <div class="flex justify-end gap-2">
+              <button
+                @click="hideCloneDialog()"
+                class="btn btn-ghost"
+                :disabled="cloneLoading"
+              >
+                Cancel
+              </button>
+              <button
+                @click="executeClone()"
+                class="btn"
+                :disabled="!cloneNewName.trim() || cloneLoading"
+              >
+                <span x-show="cloneLoading" class="spinner mr-2"></span>
+                Clone
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      </div> <!-- End expanded state -->
+    </aside>

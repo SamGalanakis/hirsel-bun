@@ -161,54 +161,6 @@ pub fn compact_thread_with_summary(
     Ok(true)
 }
 
-/// Check if the learnings thread needs compaction
-/// Returns the messages to compact and the prompt if compaction is needed
-pub fn check_learnings_compaction_with_config(
-    state: &SQLiteState,
-    config: &Config,
-) -> StateResult<Option<(Vec<Message>, String)>> {
-    // Check if compaction is enabled
-    if !config.compaction_enabled {
-        return Ok(None);
-    }
-
-    let threshold = match config.compaction_threshold {
-        Some(t) => t,
-        None => return Ok(None),
-    };
-    let keep_count = config.compaction_keep_messages;
-
-    // Get all messages in learnings thread (use large limit)
-    let messages = state.get_messages("learnings", 100000)?;
-
-    if !should_compact(&messages, threshold, keep_count) {
-        return Ok(None);
-    }
-
-    let keep_count = keep_count as usize;
-
-    // Split into messages to compact (older)
-    let messages_to_compact: Vec<Message> = if keep_count > 0 && messages.len() > keep_count {
-        messages[..messages.len() - keep_count].to_vec()
-    } else {
-        messages
-    };
-
-    // Generate the prompt
-    let prompt = get_compaction_prompt(&messages_to_compact);
-
-    Ok(Some((messages_to_compact, prompt)))
-}
-
-/// Check if the learnings thread needs compaction (using default config)
-/// Returns the messages to compact and the prompt if compaction is needed
-pub fn check_learnings_compaction(
-    state: &SQLiteState,
-) -> StateResult<Option<(Vec<Message>, String)>> {
-    let config = Config::default();
-    check_learnings_compaction_with_config(state, &config)
-}
-
 /// Rewrite a chat file with new messages
 fn rewrite_chat_file(path: &Path, messages: &[Message]) -> std::io::Result<()> {
     use std::fs::File;
@@ -463,73 +415,6 @@ pub async fn generate_compaction_summary(
     );
 
     Ok(summary)
-}
-
-/// Result of a successful compaction operation
-#[derive(Debug)]
-pub struct CompactionResult {
-    /// Whether compaction was performed
-    pub compacted: bool,
-    /// Number of messages that were compacted
-    pub messages_compacted: usize,
-    /// Preview of the generated summary (first 200 chars)
-    pub summary_preview: String,
-}
-
-/// Compact the learnings thread using an AI agent to generate the summary
-///
-/// This is the main entry point for automatic compaction. It:
-/// 1. Checks if compaction is needed
-/// 2. Generates a summary using the configured AI agent
-/// 3. Performs the compaction in the database
-pub async fn compact_learnings_with_agent(
-    state: &SQLiteState,
-    files: &Files,
-    config: &Config,
-) -> Result<CompactionResult, CompactionError> {
-    // Check if compaction is needed and get messages to compact
-    // (this also checks if compaction is enabled via config)
-    let (messages_to_compact, _prompt) =
-        match check_learnings_compaction_with_config(state, config)? {
-            Some(result) => result,
-            None => return Err(CompactionError::NotNeeded),
-        };
-
-    let messages_count = messages_to_compact.len();
-
-    // Get project path for agent context
-    let project_path = state.get_project_path().ok().flatten();
-    let project_path = project_path
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| files.run_dir().to_path_buf());
-
-    // Generate summary using AI agent
-    let summary =
-        generate_compaction_summary(&messages_to_compact, &project_path, &config.agent.command)
-            .await?;
-
-    // Create summary preview
-    let summary_preview = if summary.len() > 200 {
-        format!("{}...", &summary[..200])
-    } else {
-        summary.clone()
-    };
-
-    // Perform the compaction
-    compact_thread_with_summary(
-        state,
-        files,
-        "learnings",
-        &summary,
-        config.compaction_threshold,
-        Some(config.compaction_keep_messages),
-    )?;
-
-    Ok(CompactionResult {
-        compacted: true,
-        messages_compacted: messages_count,
-        summary_preview,
-    })
 }
 
 #[cfg(test)]

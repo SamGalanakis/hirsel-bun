@@ -83,7 +83,7 @@ cargo build --features s3-storage               # With S3 support
 | `snapshot/` | `mod.rs`, `archive.rs`, `noop.rs`, `s3.rs`, `claude_session.rs` | Work/session persistence |
 | `draft/` | `mod.rs`, `types.rs` → `StartingPoint`, `workspace.rs`, `local_workspace.rs`, `s3_workspace.rs` | StartingPoint, workspace init |
 | `config/` | `mod.rs`, `store.rs`, `loader.rs`, `saver.rs`, `types.rs`, `agent.rs`, `storage.rs`, `orchestrator.rs`, `paths.rs` | Config struct, DB storage, profiles, runners |
-| `ops/` | `mod.rs`, `run.rs`, `setup.rs`, `spawn.rs`, `project.rs`, `types.rs` | Shared CLI/GUI operations |
+| `ops/` | `mod.rs`, `run.rs`, `setup.rs`, `spawn.rs`, `project.rs`, `docs.rs`, `types.rs` | Shared CLI/GUI operations |
 | `server/` | `mod.rs` → `start_server()`, `routes.rs`, `auth.rs`, `gyp.rs` | HTTP server for remote mode |
 | `eval/` | `mod.rs` | Eval runner and management |
 | `storage/` | `mod.rs` | File storage abstraction (local/S3) |
@@ -598,6 +598,41 @@ Daemon handles each ResumeWorker:
         └── eval_log.md
 ```
 
+### Git Workspace Setup (`src-tauri/src/core/git.rs`, `ops/setup.rs`)
+
+The git workspace structure differs based on whether the run uses single or multiple workers.
+
+**Single-Worker Mode:**
+```
+work/
+└── staging/              # Worker works directly here
+    └── .git/             # Original project's .git (no remotes configured)
+```
+- The single worker uses the staging workspace directly
+- No `origin` remote is configured (no push/pull needed)
+- Changes stay local until run completion
+- Worker instructions tell the agent: "No git push is needed"
+
+**Multi-Worker Mode:**
+```
+work/
+├── staging/              # Shared staging repository
+│   └── .git/
+│       └── config        # receive.denyCurrentBranch = updateInstead
+├── leader/               # Worker clone (origin → staging/)
+│   └── .git/
+│       └── config        # origin = /path/to/staging
+└── worker-2/             # Worker clone (origin → staging/)
+    └── .git/
+        └── config        # origin = /path/to/staging
+```
+- Each worker has an isolated clone with `origin` pointing to `staging/`
+- Workers must `git push origin staging` before completing tasks
+- `staging/` accepts pushes via `receive.denyCurrentBranch = updateInstead`
+- Workers handle merge conflicts when pulling others' changes
+
+This distinction is automatically detected in the worker prompt generation based on whether teammates are present.
+
 ---
 
 ## Configuration (`src-tauri/src/core/config/mod.rs`)
@@ -899,6 +934,39 @@ ScribeService.process_batch(run_name)
 - `GET /health` - Health check with idle time
 - `POST /scribe/batch` - Process scribe batch
 - `POST /shutdown` - Graceful shutdown
+
+### Docs Persistence
+
+Project documentation is copied to the run directory at start, allowing Scribe to maintain it during the run without polluting the workspace git state.
+
+**Flow:**
+```
+Run Start:
+  workspace/docs/ ──copy──► run_dir/docs/
+  git update-index --skip-worktree docs/*
+  rm -rf workspace/docs/
+
+During Run:
+  Scribe writes to run_dir/docs/
+  Workers read via read_docs MCP tool
+
+Delivery (persist=true):
+  run_dir/docs/ ──copy──► workspace/docs/
+  git add docs/ && git commit
+
+Delivery (persist=false):
+  git checkout docs/  (restore original)
+```
+
+**Config:**
+```toml
+scribe_docs_path = "docs"           # Relative to workspace
+scribe_persist_docs_changes = true  # Commit changes on delivery
+```
+
+**Key files:**
+- `core/ops/docs.rs` - `setup_docs()`, `deliver_docs()`
+- `core/scribe.rs` - Scribe agent prompt and batch processing
 
 ### Known Constraints
 

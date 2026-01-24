@@ -33,6 +33,8 @@ pub struct RunSetupConfig {
     pub is_multi_worker: bool,
     /// Name of the leader worker (first worker in multi-worker mode)
     pub leader_name: Option<String>,
+    /// Relative path to docs directory in workspace (default: "docs")
+    pub docs_path: String,
 }
 
 /// Result of setting up a run's workspace
@@ -126,6 +128,14 @@ pub fn setup_run_workspace(config: &RunSetupConfig) -> Result<RunSetupResult, Op
 
     // Create workspace with staging branch
     let workspace_dir = create_workspace(&config.run_name, &config.project_path, runs_dir)?;
+
+    // Set up docs: copy project docs to run_dir, hide from git
+    let docs_config = super::DocsSetupConfig {
+        workspace_dir: &workspace_dir,
+        run_dir: &config.run_dir,
+        docs_path: &config.docs_path,
+    };
+    super::setup_docs(&docs_config)?;
 
     // Create worker clones/worktrees
     let mut worker_dirs: Vec<(String, PathBuf)> = Vec::new();

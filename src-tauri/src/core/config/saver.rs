@@ -51,7 +51,6 @@ pub fn save_config(config: &Config, config_path: &Path) -> Result<(), ConfigErro
         "compaction_keep_messages = {}\n",
         config.compaction_keep_messages
     ));
-    output.push_str(&format!("auto_improve = {}\n", config.auto_improve));
     output.push_str(&format!(
         "context_warning_threshold = {}\n",
         config.context_warning_threshold
@@ -89,6 +88,19 @@ pub fn save_config(config: &Config, config_path: &Path) -> Result<(), ConfigErro
 
     // Storage section (only write if non-default)
     write_storage_section(&mut output, config);
+
+    // Scribe docs settings (only write if non-default)
+    if config.scribe_docs_path != "docs" || !config.scribe_persist_docs_changes {
+        output.push_str(&format!(
+            "scribe_docs_path = \"{}\"\n",
+            config.scribe_docs_path
+        ));
+        output.push_str(&format!(
+            "scribe_persist_docs_changes = {}\n",
+            config.scribe_persist_docs_changes
+        ));
+        output.push('\n');
+    }
 
     // Service workers section (only write if configured)
     write_service_workers_section(&mut output, config);
