@@ -9,7 +9,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Git commit SHA (short form, with -dirty suffix if uncommitted changes)
 pub const GIT_SHA: &str = env!("HIRSEL_GIT_SHA");
 
-/// Build date (YYYY-MM-DD format)
+/// Build date (YYYY-MM-DD format, set at compile time)
 pub const BUILD_DATE: &str = env!("HIRSEL_BUILD_DATE");
 
 /// Full version string for CLI (compile-time constant)
@@ -25,13 +25,6 @@ pub fn full_version() -> String {
 }
 
 /// Get detailed build information
-///
-/// Format:
-/// ```text
-/// hirsel 0.1.0 (abc1234)
-/// Built: 2024-01-15
-/// Features: full-cli, server, tui
-/// ```
 pub fn build_info() -> String {
     let features = active_features().join(", ");
     format!(
