@@ -411,6 +411,9 @@ impl From<crate::core::config::ConfigError> for HirselError {
             crate::core::config::ConfigError::ValidationError(msg) => {
                 HirselError::InvalidInput(msg)
             }
+            crate::core::config::ConfigError::Store(e) => {
+                HirselError::State(format!("Config store error: {}", e))
+            }
         }
     }
 }

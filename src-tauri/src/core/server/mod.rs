@@ -134,8 +134,13 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
         // Assets
         .route("/api/runs/{name}/assets", post(gyp::upload_asset))
         .route("/api/runs/{name}/assets-path", get(gyp::get_assets_path))
-        // Config - read
-        .route("/api/config", get(routes::get_config))
+        // Config - read and update
+        .route(
+            "/api/config",
+            get(routes::get_config)
+                .put(routes::put_config)
+                .patch(routes::patch_config),
+        )
         // Config - granular updates
         .route("/api/config/general", patch(routes::patch_general_config))
         .route("/api/config/agent", patch(routes::patch_agent_config))

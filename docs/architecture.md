@@ -79,7 +79,7 @@ cargo build --features s3-storage               # With S3 support
 | `runner/` | `types.rs:139`, `local.rs`, `fly.rs`, `sprite.rs`, `ssh.rs`, `composed.rs`, `config.rs`, `setup.rs` | Worker host implementations |
 | `snapshot/` | `mod.rs`, `archive.rs`, `noop.rs`, `s3.rs`, `sprite_checkpoint.rs`, `claude_session.rs` | Work/session persistence |
 | `draft/` | `mod.rs`, `types.rs:11`, `workspace.rs`, `local_workspace.rs`, `s3_workspace.rs` | StartingPoint, workspace init |
-| `config/` | `mod.rs:144`, `types.rs`, `agent.rs`, `storage.rs`, `orchestrator.rs`, `paths.rs` | Config struct, profiles, runners |
+| `config/` | `mod.rs`, `store.rs`, `loader.rs`, `saver.rs`, `types.rs`, `agent.rs`, `storage.rs`, `orchestrator.rs`, `paths.rs` | Config struct, DB storage, profiles, runners |
 | `ops/` | `mod.rs`, `run.rs`, `setup.rs`, `spawn.rs`, `project.rs`, `types.rs` | Shared CLI/GUI operations |
 | `server/` | `mod.rs:32`, `routes.rs`, `auth.rs`, `gyp.rs` | HTTP server for remote mode |
 | `files.rs` | - | Run directory file operations |
@@ -416,9 +416,22 @@ Daemon handles each ResumeWorker:
 
 ---
 
-## Database Schema (`src/core/state/mod.rs:27`)
+## Database Schema
 
-### Tables
+### Global Database (`~/.hirsel/hirsel.db`)
+
+| Table | Primary Key | Purpose |
+|-------|-------------|---------|
+| `config` | `key` | Configuration key-value store |
+| `credentials` | `key_type` | Encrypted credential storage |
+| `gyp_chat_messages` | `id` | GYP chat history |
+
+**config:**
+- `key` - Configuration key (e.g., "runners", "auth", "eval_timeout")
+- `value` - JSON or string value
+- `updated_at` - Last modification timestamp
+
+### Run Database (`~/.hirsel/runs/{name}/hirsel.db`)
 
 | Table | Primary Key | Purpose |
 |-------|-------------|---------|
@@ -454,8 +467,9 @@ Daemon handles each ResumeWorker:
 
 ```
 ~/.hirsel/
-├── config.toml           # Global configuration
-├── hirsel.db             # Global DB (credentials)
+├── config.toml           # Initial config / one-time override (optional)
+├── hirsel.db             # Global DB (config, credentials, gyp_chat)
+├── key                   # Encryption key for credentials
 ├── hirsel.pid            # Daemon PID file
 └── runs/{run_name}/
     ├── hirsel.db         # Run state (SOURCE OF TRUTH)
@@ -474,7 +488,21 @@ Daemon handles each ResumeWorker:
 
 ---
 
-## Configuration (`src/core/config/mod.rs:144`)
+## Configuration (`src/core/config/mod.rs`)
+
+### DB-First Loading
+
+Configuration is loaded with the following priority (later sources override earlier):
+
+1. **Default values** - Built-in defaults
+2. **Database** (`~/.hirsel/hirsel.db`) - Source of truth
+3. **Config file** (`~/.hirsel/config.toml`) - Seeds DB on first run, or overrides DB
+4. **Environment variables** - Always win
+
+When a config file exists, its values are loaded into the database. This enables:
+- Remote coordinators (Fly.io) to work without persistent volumes
+- API-based config management via PUT/PATCH `/api/config`
+- Config changes to persist across restarts
 
 ### Config Struct Fields
 
@@ -586,6 +614,8 @@ default_runner = "fly"
 | Method | Path | Handler |
 |--------|------|---------|
 | GET | `/api/config` | `get_config` |
+| PUT | `/api/config` | `put_config` - Replace config fields |
+| PATCH | `/api/config` | `patch_config` - Merge partial config |
 | PATCH | `/api/config/general` | `patch_general_config` |
 | PATCH | `/api/config/agent` | `patch_agent_config` |
 | GET/PUT/DELETE | `/api/config/runners/{name}` | runner CRUD |

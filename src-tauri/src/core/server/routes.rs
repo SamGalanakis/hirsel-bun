@@ -758,3 +758,131 @@ pub async fn delete_credential(Path(key): Path<String>) -> Result<StatusCode> {
 
     Ok(StatusCode::NO_CONTENT)
 }
+
+// =============================================================================
+// Config - Full Replace/Merge
+// =============================================================================
+
+use crate::core::config::PartialConfig;
+
+/// Request body for PUT /api/config (full config replacement)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PutConfigRequest {
+    #[serde(default)]
+    pub runners: Option<std::collections::HashMap<String, RunnerConfig>>,
+    #[serde(default)]
+    pub default_runner: Option<Option<String>>,
+    #[serde(default)]
+    pub profiles: Option<std::collections::HashMap<String, OrchestratorProfile>>,
+    #[serde(default)]
+    pub default_profile: Option<String>,
+    #[serde(default)]
+    pub allow_local_workers: Option<bool>,
+    #[serde(default)]
+    pub eval_timeout: Option<u32>,
+    #[serde(default)]
+    pub auto_learn: Option<bool>,
+    #[serde(default)]
+    pub human_in_the_loop: Option<bool>,
+    #[serde(default)]
+    pub max_iterations: Option<Option<u32>>,
+    #[serde(default)]
+    pub coordinator_port: Option<u16>,
+    #[serde(default)]
+    pub compaction_enabled: Option<bool>,
+    #[serde(default)]
+    pub compaction_threshold: Option<Option<u32>>,
+    #[serde(default)]
+    pub compaction_keep_messages: Option<u32>,
+    #[serde(default)]
+    pub auth: Option<crate::core::config::AuthConfig>,
+    #[serde(default)]
+    pub storage: Option<crate::core::config::StorageConfig>,
+}
+
+/// Replace entire config (PUT /api/config)
+///
+/// Replaces all provided fields in the config. Fields not provided are left unchanged.
+/// Saves to both file and database.
+pub async fn put_config(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<PutConfigRequest>,
+) -> Result<StatusCode> {
+    let mut config = state.config.write().await;
+
+    // Apply all provided fields
+    if let Some(runners) = body.runners {
+        config.runners = runners;
+    }
+    if let Some(default_runner) = body.default_runner {
+        config.default_runner = default_runner;
+    }
+    if let Some(profiles) = body.profiles {
+        config.profiles = profiles;
+    }
+    if let Some(default_profile) = body.default_profile {
+        config.default_profile = default_profile;
+    }
+    if let Some(allow_local_workers) = body.allow_local_workers {
+        config.allow_local_workers = allow_local_workers;
+    }
+    if let Some(eval_timeout) = body.eval_timeout {
+        config.eval_timeout = eval_timeout;
+    }
+    if let Some(auto_learn) = body.auto_learn {
+        config.auto_learn = auto_learn;
+    }
+    if let Some(human_in_the_loop) = body.human_in_the_loop {
+        config.human_in_the_loop = human_in_the_loop;
+    }
+    if let Some(max_iterations) = body.max_iterations {
+        config.max_iterations = max_iterations;
+    }
+    if let Some(coordinator_port) = body.coordinator_port {
+        config.coordinator_port = coordinator_port;
+    }
+    if let Some(compaction_enabled) = body.compaction_enabled {
+        config.compaction_enabled = compaction_enabled;
+    }
+    if let Some(compaction_threshold) = body.compaction_threshold {
+        config.compaction_threshold = compaction_threshold;
+    }
+    if let Some(compaction_keep_messages) = body.compaction_keep_messages {
+        config.compaction_keep_messages = compaction_keep_messages;
+    }
+    if let Some(auth) = body.auth {
+        config.auth = auth;
+    }
+    if let Some(storage) = body.storage {
+        config.storage = storage;
+    }
+
+    // Save to database (primary) and file
+    config
+        .save()
+        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Merge partial config (PATCH /api/config)
+///
+/// Merges the provided partial config into the existing config.
+/// Only provided fields are updated. Saves to both file and database.
+pub async fn patch_config(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<PartialConfig>,
+) -> Result<StatusCode> {
+    let mut config = state.config.write().await;
+
+    // Merge partial config
+    config.merge_from(body);
+
+    // Save to database (primary) and file
+    config
+        .save()
+        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}

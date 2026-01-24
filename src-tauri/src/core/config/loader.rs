@@ -268,6 +268,18 @@ pub fn load_config_file(
     // Load storage configuration
     load_storage_config(&table, &mut config.storage, &mut warnings);
 
+    // Load allow_local_workers
+    if let Some(val) = table.get("allow_local_workers") {
+        if let Some(b) = val.as_bool() {
+            config.allow_local_workers = b;
+        } else {
+            warnings.push(format!(
+                "Config warning: allow_local_workers should be a boolean, got {}",
+                val.type_str()
+            ));
+        }
+    }
+
     Ok(warnings)
 }
 

@@ -14,6 +14,7 @@ mod orchestrator;
 mod paths;
 mod saver;
 mod storage;
+pub mod store;
 mod types;
 mod workers;
 
@@ -29,6 +30,7 @@ pub use git::{GitConfig, GitProvider};
 pub use orchestrator::{OrchestratorAccess, OrchestratorMode, OrchestratorProfile};
 pub use paths::{global_db_path, hirsel_dir, list_runs, run_dir, run_exists, runs_dir};
 pub use storage::{S3Config, StorageBackend, StorageConfig, StorageProvider};
+pub use store::{ConfigStore, ConfigStoreError, PartialConfig};
 pub use types::{get_agent_env_vars, AgentAuth, AgentType, AuthConfig, AuthMethod};
 pub use workers::WorkerScale;
 
@@ -85,6 +87,9 @@ pub enum ConfigError {
 
     #[error("{0}")]
     ValidationError(String),
+
+    #[error("Config store error: {0}")]
+    Store(#[from] store::ConfigStoreError),
 }
 
 // Default value functions
@@ -132,6 +137,10 @@ fn default_coordinator_port() -> u16 {
 
 fn default_profile() -> String {
     "local".to_string()
+}
+
+fn default_allow_local_workers() -> bool {
+    true
 }
 
 fn default_profiles() -> HashMap<String, OrchestratorProfile> {
@@ -212,6 +221,11 @@ pub struct Config {
     /// Storage configuration for files and database
     #[serde(default)]
     pub storage: StorageConfig,
+
+    /// Whether to allow local workers (default: true)
+    /// Set to false on remote coordinators (e.g., Fly.io) where local workers don't make sense
+    #[serde(default = "default_allow_local_workers")]
+    pub allow_local_workers: bool,
 }
 
 impl Default for Config {
@@ -239,21 +253,140 @@ impl Default for Config {
             profiles: default_profiles(),
             git: GitConfig::default(),
             storage: StorageConfig::default(),
+            allow_local_workers: default_allow_local_workers(),
         }
     }
 }
 
 impl Config {
-    /// Create a new config from environment and config file
+    /// Create a new config from environment, database, and config file
+    ///
+    /// Load priority (later sources override earlier):
+    /// 1. Default values
+    /// 2. Database (`~/.hirsel/hirsel.db`)
+    /// 3. Config file (`~/.hirsel/config.toml`) - also saves to DB
+    /// 4. Environment variables (always win)
     ///
     /// Environment variables:
     /// - `HIRSEL_ROOT`: Override the hirsel root directory (default: ~/.hirsel)
     /// - `HIRSEL_RUN`: Set the current run name
+    /// - `HIRSEL_ALLOW_LOCAL_WORKERS`: Override allow_local_workers setting
     pub fn load() -> Result<(Self, Vec<String>), ConfigError> {
-        let mut config = Self::from_env();
-        let config_path = config.config_file();
-        let warnings = loader::load_config_file(&mut config, &config_path)?;
+        let mut config = Self::default();
+        let mut warnings = Vec::new();
+
+        // Apply env vars for root path first (needed for DB path)
+        if let Ok(root) = env::var("HIRSEL_ROOT") {
+            config.root = PathBuf::from(root);
+        }
+
+        // 1. Try loading from DB
+        match ConfigStore::open() {
+            Ok(store) => {
+                if let Some(partial) = store.load_config()? {
+                    config.merge_from(partial);
+                }
+
+                // 2. Check for config file override
+                let config_path = config.config_file();
+                if config_path.exists() {
+                    let file_warnings = loader::load_config_file(&mut config, &config_path)?;
+                    warnings.extend(file_warnings);
+
+                    // Save file config to DB (one-time migration or update)
+                    if let Err(e) = store.save_config(&config) {
+                        warnings.push(format!("Failed to save config to database: {}", e));
+                    }
+                }
+            }
+            Err(e) => {
+                warnings.push(format!("Failed to open config store: {}", e));
+
+                // Fall back to file-only loading
+                let config_path = config.config_file();
+                if config_path.exists() {
+                    let file_warnings = loader::load_config_file(&mut config, &config_path)?;
+                    warnings.extend(file_warnings);
+                }
+            }
+        }
+
+        // 3. Apply environment overrides (always win)
+        if let Ok(run) = env::var("HIRSEL_RUN") {
+            config.run = Some(run);
+        }
+        if let Ok(val) = env::var("HIRSEL_ALLOW_LOCAL_WORKERS") {
+            config.allow_local_workers = val != "0" && val.to_lowercase() != "false";
+        }
+
         Ok((config, warnings))
+    }
+
+    /// Merge values from a PartialConfig, overwriting existing values
+    pub fn merge_from(&mut self, partial: PartialConfig) {
+        if let Some(agent) = partial.agent {
+            self.agent = agent;
+        }
+        if let Some(eval_timeout) = partial.eval_timeout {
+            self.eval_timeout = eval_timeout;
+        }
+        if let Some(auto_learn) = partial.auto_learn {
+            self.auto_learn = auto_learn;
+        }
+        if let Some(max_iterations) = partial.max_iterations {
+            self.max_iterations = max_iterations;
+        }
+        if let Some(user_message_pause) = partial.user_message_pause {
+            self.user_message_pause = user_message_pause;
+        }
+        if let Some(human_in_the_loop) = partial.human_in_the_loop {
+            self.human_in_the_loop = human_in_the_loop;
+        }
+        if let Some(compaction_enabled) = partial.compaction_enabled {
+            self.compaction_enabled = compaction_enabled;
+        }
+        if let Some(compaction_threshold) = partial.compaction_threshold {
+            self.compaction_threshold = compaction_threshold;
+        }
+        if let Some(compaction_keep_messages) = partial.compaction_keep_messages {
+            self.compaction_keep_messages = compaction_keep_messages;
+        }
+        if let Some(auto_improve) = partial.auto_improve {
+            self.auto_improve = auto_improve;
+        }
+        if let Some(context_warning_threshold) = partial.context_warning_threshold {
+            self.context_warning_threshold = context_warning_threshold;
+        }
+        if let Some(coordinator_port) = partial.coordinator_port {
+            self.coordinator_port = coordinator_port;
+        }
+        if let Some(auth) = partial.auth {
+            self.auth = auth;
+        }
+        if let Some(runners) = partial.runners {
+            self.runners = runners;
+        }
+        if let Some(default_runner) = partial.default_runner {
+            self.default_runner = default_runner;
+        }
+        if let Some(worker_runners) = partial.worker_runners {
+            self.worker_runners = worker_runners;
+        }
+        if let Some(default_profile) = partial.default_profile {
+            self.default_profile = default_profile;
+        }
+        if let Some(profiles) = partial.profiles {
+            self.profiles = profiles;
+        }
+        if let Some(git) = partial.git {
+            self.git = git;
+        }
+        if let Some(storage) = partial.storage {
+            self.storage = storage;
+        }
+        if let Some(allow_local_workers) = partial.allow_local_workers {
+            self.allow_local_workers = allow_local_workers;
+        }
     }
 
     /// Create config from environment variables
@@ -266,6 +399,11 @@ impl Config {
 
         if let Ok(run) = env::var("HIRSEL_RUN") {
             config.run = Some(run);
+        }
+
+        // Allow disabling local workers via env var (useful for Fly.io deployments)
+        if let Ok(val) = env::var("HIRSEL_ALLOW_LOCAL_WORKERS") {
+            config.allow_local_workers = val != "0" && val.to_lowercase() != "false";
         }
 
         config
@@ -367,9 +505,23 @@ impl Config {
         names
     }
 
-    /// Save the current configuration to config.toml
+    /// Save the current configuration to config.toml and database
     pub fn save(&self) -> Result<(), ConfigError> {
-        saver::save_config(self, &self.config_file())
+        // Save to file
+        saver::save_config(self, &self.config_file())?;
+
+        // Also save to database
+        let store = ConfigStore::open()?;
+        store.save_config(self)?;
+
+        Ok(())
+    }
+
+    /// Save the current configuration only to the database (no file write)
+    pub fn save_to_db(&self) -> Result<(), ConfigError> {
+        let store = ConfigStore::open()?;
+        store.save_config(self)?;
+        Ok(())
     }
 
     /// Update general settings (max_workers, default_runner, etc.)
