@@ -1,0 +1,65 @@
+name: Auto-tag Release
+
+# Creates a git tag when version in Cargo.toml changes on main
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src-tauri/Cargo.toml'
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need previous commit to detect changes
+
+      - name: Get current version
+        id: current
+        run: |
+          version=$(grep '^version' src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
+          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "Current version: $version"
+
+      - name: Get previous version
+        id: previous
+        run: |
+          git checkout HEAD~1 -- src-tauri/Cargo.toml 2>/dev/null || echo "No previous version"
+          version=$(grep '^version' src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
+          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "Previous version: $version"
+          git checkout HEAD -- src-tauri/Cargo.toml
+
+      - name: Check if tag exists
+        id: check_tag
+        run: |
+          if git ls-remote --tags origin | grep -q "refs/tags/v${{ steps.current.outputs.version }}$"; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Tag v${{ steps.current.outputs.version }} already exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Tag v${{ steps.current.outputs.version }} does not exist"
+          fi
+
+      - name: Create and push tag
+        if: steps.current.outputs.version != steps.previous.outputs.version && steps.check_tag.outputs.exists == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ steps.current.outputs.version }}" -m "Release v${{ steps.current.outputs.version }}"
+          git push origin "v${{ steps.current.outputs.version }}"
+          echo "Created and pushed tag v${{ steps.current.outputs.version }}"
+
+      - name: Skip reason
+        if: steps.current.outputs.version == steps.previous.outputs.version || steps.check_tag.outputs.exists == 'true'
+        run: |
+          if [ "${{ steps.check_tag.outputs.exists }}" == "true" ]; then
+            echo "Skipped: Tag v${{ steps.current.outputs.version }} already exists"
+          else
+            echo "Skipped: Version unchanged (${{ steps.current.outputs.version }})"
+          fi
