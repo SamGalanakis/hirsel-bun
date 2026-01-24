@@ -290,4 +290,11 @@ impl RunnerConfig {
         }
         Ok(())
     }
+
+    /// Check if this runner requires a coordinator URL (remote runners like Fly, SSH).
+    ///
+    /// These runners need to connect back to the coordinator via HTTP/Tailscale.
+    pub fn requires_coordinator_url(&self) -> bool {
+        matches!(self.host.resolve(), HostConfig::Fly(_) | HostConfig::Ssh(_))
+    }
 }

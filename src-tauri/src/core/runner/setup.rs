@@ -186,6 +186,7 @@ echo $!
 /// Generate script to start worker in a Docker container on remote host.
 ///
 /// This runs `docker run` with the work directory mounted and the worker command inside.
+/// Downloads hirsel worker binary from GitHub releases before running.
 #[allow(clippy::too_many_arguments)]
 pub fn generate_docker_worker_script(
     work_dir: &str,
@@ -200,6 +201,9 @@ pub fn generate_docker_worker_script(
     env_vars: &[(String, String)],
     docker_image: &str,
 ) -> String {
+    // Get coordinator version for worker binary compatibility
+    let version = crate::version::VERSION;
+
     // Build environment variables for docker -e flags
     let mut env_flags = vec![
         format!("-e HIRSEL_RUN={}", run_name),
@@ -207,6 +211,8 @@ pub fn generate_docker_worker_script(
         format!("-e HIRSEL_API_URL={}", api_url),
         "-e HIRSEL_REMOTE=1".to_string(),
         "-e ACP_PERMISSION_MODE=bypassPermissions".to_string(),
+        format!("-e HIRSEL_TAG=v{}", version),
+        "-e HIRSEL_BINARY_TYPE=worker".to_string(),
     ];
 
     // Add custom environment variables
@@ -234,6 +240,40 @@ pub fn generate_docker_worker_script(
     // Container name for lifecycle management
     let container_name = format!("hirsel-{}-{}", run_name, worker_name);
 
+    // Build init script that downloads hirsel and runs the worker
+    let init_script = format!(
+        r#"set -e
+echo '=== Docker Worker Setup ==='
+
+# Install hirsel worker binary from GitHub releases
+mkdir -p /tmp/bin
+echo 'Installing hirsel worker binary...'
+export HIRSEL_INSTALL_DIR="/tmp/bin"
+curl -fsSL https://raw.githubusercontent.com/SamGalanakis/hirsel/main/scripts/install-hirsel-worker.sh | bash
+export PATH="/tmp/bin:$PATH"
+
+# Run worker
+exec hirsel __remote-worker \
+    --api-url '{api_url}' \
+    --run-name '{run_name}' \
+    --worker-name '{worker_name}' \
+    --work-dir '/work' \
+    --spec '/work/spec.md' \
+    --agent-command '{agent_command}' \
+    {leader_arg} {leader_name_arg} {teammates_arg}
+"#,
+        api_url = api_url,
+        run_name = run_name,
+        worker_name = worker_name,
+        agent_command = agent_command_escaped,
+        leader_arg = leader_arg,
+        leader_name_arg = leader_name_arg,
+        teammates_arg = teammates_arg,
+    );
+
+    // Escape init script for shell embedding
+    let init_script_escaped = init_script.replace('\'', "'\\''");
+
     format!(
         r#"
 # Run worker in Docker container
@@ -243,26 +283,13 @@ docker run -d --rm \
     -w /work \
     {env_block} \
     '{docker_image}' \
-    hirsel __remote-worker \
-        --api-url '{api_url}' \
-        --run-name '{run_name}' \
-        --worker-name '{worker_name}' \
-        --work-dir '/work' \
-        --spec '/work/spec.md' \
-        --agent-command '{agent_command}' \
-        {leader_arg} {leader_name_arg} {teammates_arg}
+    bash -c '{init_script}'
 "#,
         container_name = container_name,
         work_dir = work_dir,
         env_block = env_block,
         docker_image = docker_image,
-        api_url = api_url,
-        run_name = run_name,
-        worker_name = worker_name,
-        agent_command = agent_command_escaped,
-        leader_arg = leader_arg,
-        leader_name_arg = leader_name_arg,
-        teammates_arg = teammates_arg,
+        init_script = init_script_escaped,
     )
 }
 
@@ -353,10 +380,19 @@ echo "=== Fly Worker Setup ==="
 echo "Coordinator: {coordinator_url}"
 echo "Run: {run_name}, Worker: {worker_name}"
 
+# Step 0: Join Tailscale if auth key provided
+if [ -n "$TAILSCALE_AUTHKEY" ]; then
+    echo "Setting up Tailscale..."
+    curl -fsSL https://tailscale.com/install.sh | sh
+    tailscale up --authkey="$TAILSCALE_AUTHKEY" --hostname="hirsel-{worker_name}"
+    echo "Joined Tailscale as hirsel-{worker_name}"
+fi
+
 # Step 1: Install hirsel binary from GitHub releases (matching coordinator version)
 echo "Installing hirsel worker binary v{version}..."
 export HIRSEL_TAG="v{version}"
 export HIRSEL_BINARY_TYPE="worker"
+export HIRSEL_INSTALL_DIR="/usr/local/bin"
 curl -fsSL https://raw.githubusercontent.com/SamGalanakis/hirsel/main/scripts/install-hirsel-worker.sh | bash
 
 # Step 2: Install Node.js and agent tools if not present

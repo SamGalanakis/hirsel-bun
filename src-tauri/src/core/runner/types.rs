@@ -99,6 +99,11 @@ impl WorkerSpawnConfig {
             env.extend(vars.clone());
         }
 
+        // Add Tailscale auth key if present (for Fly workers to join tailnet)
+        if let Some(ref authkey) = self.tailscale_authkey {
+            env.insert("TAILSCALE_AUTHKEY".to_string(), authkey.clone());
+        }
+
         // Add credentials (override env_vars)
         if let Some(ref creds) = self.credentials {
             if let Some(ref key) = creds.anthropic_api_key {

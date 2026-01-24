@@ -221,23 +221,8 @@ impl LocalRunner {
             )));
         }
 
-        // Get executable to mount into container
-        // Prefer hirsel-worker (minimal binary without GUI deps) if available
-        let current_exe = std::env::current_exe()
-            .map_err(|e| RunnerError::SpawnFailed(format!("Failed to get current exe: {}", e)))?;
-        let hirsel_exe = if let Some(parent) = current_exe.parent() {
-            let worker_exe = parent.join("hirsel-worker");
-            if worker_exe.exists() {
-                debug!("Using hirsel-worker binary for Docker: {:?}", worker_exe);
-                worker_exe
-            } else {
-                debug!("hirsel-worker not found, using current exe for Docker");
-                current_exe
-            }
-        } else {
-            current_exe
-        };
-        let hirsel_exe_str = hirsel_exe.to_string_lossy().to_string();
+        // Get coordinator version for worker binary compatibility
+        let version = crate::version::VERSION;
 
         // Build agent command JSON
         let agent_command_json = serde_json::to_string(&config.agent_command).map_err(|e| {
@@ -284,7 +269,7 @@ impl LocalRunner {
         let worker_cmd = worker_cmd_parts.join(" ");
 
         // Build init script that sets up the environment and runs the worker
-        // The hirsel binary is mounted from the host, so we only need to install the agent (claude)
+        // Downloads hirsel worker binary from GitHub releases and installs claude CLI
         // Note: Container runs as non-root user, so we install to /tmp and update PATH
         // Note: $HOME/.claude is mounted from host for session persistence
         let init_script = format!(
@@ -304,9 +289,17 @@ if [ -n "$CLAUDE_CREDENTIALS_JSON" ]; then
     echo "Claude credentials configured"
 fi
 
+# Install hirsel worker binary from GitHub releases (matching coordinator version)
+mkdir -p /tmp/bin
+echo "Installing hirsel worker binary v{version}..."
+export HIRSEL_TAG="v{version}"
+export HIRSEL_BINARY_TYPE="worker"
+export HIRSEL_INSTALL_DIR="/tmp/bin"
+curl -fsSL https://raw.githubusercontent.com/SamGalanakis/hirsel/main/scripts/install-hirsel-worker.sh | bash
+export PATH="/tmp/bin:$PATH"
+
 # Install Claude CLI to /tmp/bin (user-writable) if not already available
 # Note: Must use /tmp/bin not /tmp/claude because Claude uses /tmp/claude as a work directory
-mkdir -p /tmp/bin
 # Clean up any stale /tmp/claude file (Claude needs this as a directory for Task tool)
 [ -f /tmp/claude ] && rm -f /tmp/claude
 if ! command -v claude >/dev/null 2>&1; then
@@ -320,7 +313,6 @@ if ! command -v claude >/dev/null 2>&1; then
     esac
     curl -fsSL "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/$CLAUDE_VERSION/$PLATFORM/claude" \
         -o /tmp/bin/claude && chmod +x /tmp/bin/claude
-    export PATH="/tmp/bin:$PATH"
 fi
 
 # Verify tools are available
@@ -339,6 +331,7 @@ fi
 export PATH="/tmp/bin:$PATH"
 exec {worker_cmd}
 "#,
+            version = version,
             worker_cmd = worker_cmd
         );
 
@@ -361,8 +354,6 @@ exec {worker_cmd}
             format!("{}:/work", work_dir_str),
             "-v".to_string(),
             format!("{}:/hirsel", run_dir_str),
-            "-v".to_string(),
-            format!("{}:/usr/local/bin/hirsel:ro", hirsel_exe_str),
             // Mount session directory as HOME for Claude session persistence across container restarts
             // This allows pause/resume to work by preserving Claude's session state
             // Note: Mount to /tmp/home (not /tmp/home/.claude) so both .claude/ and .claude.json are writable
