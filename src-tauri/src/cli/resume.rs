@@ -1,8 +1,11 @@
 //! Implementation of the `hirsel resume` command.
 //!
 //! Resumes a paused, runaway, or timed-out run by respawning workers.
+//!
+//! Uses the Orchestrator trait to support both local and remote modes.
 
-use crate::core::{Config, SQLiteState, Status, WorkerStatus, WorkerUpdate};
+use crate::cli::helpers::{block_on, get_orchestrator};
+use crate::core::orchestrator::OrchestratorError;
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -16,67 +19,20 @@ static TIME_HOUR_MIN_RE: LazyLock<Regex> =
 
 /// Run the resume command
 pub fn run_resume(run_name: &str, time_limit: Option<&str>, json: bool) -> anyhow::Result<()> {
-    let (config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
-    let run_dir = config.runs_dir().join(run_name);
+    run_resume_with_profile(run_name, time_limit, None, json)
+}
 
-    if !run_dir.exists() {
-        if json {
-            println!(
-                r#"{{"success": false, "error": "Run '{}' not found"}}"#,
-                run_name
-            );
-        } else {
-            eprintln!("Run '{}' not found", run_name);
-        }
-        return Ok(());
-    }
-
-    let db_path = run_dir.join("hirsel.db");
-    let state = SQLiteState::new(db_path)?;
-
-    let current_status = state.status()?;
-
-    // Check if run is in a resumable state
-    if !matches!(current_status, Status::Paused | Status::Failed) {
-        if json {
-            println!(
-                r#"{{"success": false, "error": "Run is not paused (status: {})"}}"#,
-                current_status
-            );
-        } else {
-            eprintln!("Run is not paused (status: {})", current_status);
-        }
-        return Ok(());
-    }
-
-    // Get paused workers
-    let workers = state.get_workers()?;
-    let paused_workers: Vec<_> = workers
-        .iter()
-        .filter(|w| w.status == WorkerStatus::Paused)
-        .collect();
-
-    if paused_workers.is_empty() {
-        if json {
-            println!(r#"{{"success": false, "error": "No paused workers to resume"}}"#);
-        } else {
-            eprintln!("No paused workers to resume");
-        }
-        return Ok(());
-    }
-
-    // Handle time limit
-    state.clear_time_tracking()?;
-
-    if let Some(limit_str) = time_limit {
+/// Run the resume command with a specific profile
+pub fn run_resume_with_profile(
+    run_name: &str,
+    time_limit: Option<&str>,
+    profile: Option<&str>,
+    json: bool,
+) -> anyhow::Result<()> {
+    // Parse time limit if provided
+    let time_limit_minutes = if let Some(limit_str) = time_limit {
         match parse_time_limit(limit_str) {
-            Ok(minutes) => {
-                state.set_time_limit_minutes(Some(minutes))?;
-                state.set_started_at(None)?;
-                if !json {
-                    println!("Time limit set: {} minutes", minutes);
-                }
-            }
+            Ok(minutes) => Some(minutes as u32),
             Err(e) => {
                 if json {
                     println!(r#"{{"success": false, "error": "{}"}}"#, e);
@@ -87,52 +43,59 @@ pub fn run_resume(run_name: &str, time_limit: Option<&str>, json: bool) -> anyho
             }
         }
     } else {
-        // Clear any previous time limit
-        state.set_time_limit_minutes(None)?;
-    }
+        None
+    };
 
-    // Set status to working
-    state.set_status(Status::Working)?;
+    let orch = get_orchestrator(profile)?;
 
-    // Update workers to working status (actual respawning would be done by worker system)
-    let mut resumed_count = 0;
-    let mut resumed_names = Vec::new();
-
-    for worker in &paused_workers {
-        state.update_worker(
-            &worker.name,
-            WorkerUpdate {
-                status: Some(WorkerStatus::Working),
-                needs_restart: Some(true), // Signal that worker needs respawning
-                ..Default::default()
-            },
-        )?;
-        resumed_count += 1;
-        resumed_names.push(worker.name.clone());
-
-        if !json {
-            println!("● Resuming {}", worker.name);
+    match block_on(orch.resume_run(run_name, time_limit_minutes)) {
+        Ok(()) => {
+            if json {
+                let time_limit_msg = time_limit
+                    .map(|t| format!(r#", "time_limit": "{}""#, t))
+                    .unwrap_or_default();
+                println!(
+                    r#"{{"success": true, "message": "Run '{}' resumed"{}}}"#,
+                    run_name, time_limit_msg
+                );
+            } else {
+                if let Some(limit) = time_limit_minutes {
+                    println!("Time limit set: {} minutes", limit);
+                }
+                println!("Resumed run '{}'", run_name);
+                println!();
+                println!("Use 'hirsel attach {}' to watch progress.", run_name);
+            }
+            Ok(())
+        }
+        Err(OrchestratorError::RunNotFound(name)) => {
+            if json {
+                println!(
+                    r#"{{"success": false, "error": "Run '{}' not found"}}"#,
+                    name
+                );
+            } else {
+                eprintln!("Run '{}' not found", name);
+            }
+            Ok(())
+        }
+        Err(OrchestratorError::InvalidOperation(msg)) => {
+            if json {
+                println!(r#"{{"success": false, "error": "{}"}}"#, msg);
+            } else {
+                eprintln!("{}", msg);
+            }
+            Ok(())
+        }
+        Err(e) => {
+            if json {
+                println!(r#"{{"success": false, "error": "{}"}}"#, e);
+                Ok(())
+            } else {
+                Err(e.into())
+            }
         }
     }
-
-    if json {
-        let time_limit_msg = time_limit
-            .map(|t| format!(r#", "time_limit": "{}""#, t))
-            .unwrap_or_default();
-        println!(
-            r#"{{"success": true, "resumed_workers": {}, "resumed_names": {:?}{}}}"#,
-            resumed_count, resumed_names, time_limit_msg
-        );
-    } else {
-        println!("Resumed {} worker(s)", resumed_count);
-        println!();
-        println!(
-            "Workers marked for restart. Use 'hirsel attach {}' to watch progress.",
-            run_name
-        );
-    }
-
-    Ok(())
 }
 
 /// Parse time limit string into minutes

@@ -11,9 +11,14 @@ import type {
   NavigationState,
   OrchestratorProfile,
   RunnerConfig,
+  S3Config,
   Settings,
+  SnapshotConfig,
+  SnapshotStrategyType,
   SpriteHostConfig,
   SshHostConfig,
+  StorageConfig,
+  StorageProvider,
 } from './types';
 
 /**
@@ -112,6 +117,27 @@ export const defaultGitConfig = (): GitConfig => ({
 });
 
 /**
+ * Default S3 config for a given provider
+ */
+export const defaultS3Config = (provider: StorageProvider = 's3'): S3Config => ({
+  provider,
+  endpoint: provider === 'tigris' ? 'https://fly.storage.tigris.dev' : undefined,
+  bucket: '',
+  region: provider === 'tigris' ? 'auto' : 'us-east-1',
+  accessKeyId: undefined,
+  secretAccessKey: undefined,
+});
+
+/**
+ * Default storage configuration
+ */
+export const defaultStorageConfig = (): StorageConfig => ({
+  files: 'local',
+  storages: {},
+  defaultStorage: undefined,
+});
+
+/**
  * Default navigation state - starts with default profile selected
  */
 export const defaultNavigationState = (): NavigationState => ({
@@ -152,6 +178,7 @@ export const defaultSettings = (): Settings => ({
   },
   defaultProfile: 'local',
   git: defaultGitConfig(),
+  storage: defaultStorageConfig(),
 });
 
 /**
@@ -235,5 +262,144 @@ export function getAccessTypeLabel(type: string): string {
       return 'Tailscale';
     default:
       return type;
+  }
+}
+
+/**
+ * Get default snapshot strategy for a host type
+ */
+export function getDefaultSnapshotStrategy(hostType: HostType): SnapshotStrategyType {
+  switch (hostType) {
+    case 'local':
+    case 'ssh':
+    case 'client':
+      return 'persistent_disk';
+    case 'sprite':
+      return 'sprite_checkpoint';
+    default:
+      return 'persistent_disk';
+  }
+}
+
+/**
+ * Get snapshot strategy label
+ */
+export function getSnapshotStrategyLabel(strategy: SnapshotStrategyType): string {
+  switch (strategy) {
+    case 'persistent_disk':
+      return 'Persistent Disk';
+    case 's3':
+      return 'S3 Storage';
+    case 'sprite_checkpoint':
+      return 'Sprite Checkpoint';
+    default:
+      return strategy;
+  }
+}
+
+/**
+ * Get snapshot strategy description
+ */
+export function getSnapshotStrategyDescription(strategy: SnapshotStrategyType): string {
+  switch (strategy) {
+    case 'persistent_disk':
+      return 'Files remain on disk (no transfer needed)';
+    case 's3':
+      return 'Archive and upload to S3-compatible storage';
+    case 'sprite_checkpoint':
+      return 'Native Sprites VM checkpoint (recommended)';
+    default:
+      return '';
+  }
+}
+
+/**
+ * Get available snapshot strategies for a host type
+ */
+export function getAvailableSnapshotStrategies(hostType: HostType): SnapshotStrategyType[] {
+  switch (hostType) {
+    case 'local':
+    case 'ssh':
+    case 'client':
+      return ['persistent_disk', 's3'];
+    case 'sprite':
+      return ['sprite_checkpoint', 's3'];
+    default:
+      return ['persistent_disk'];
+  }
+}
+
+/**
+ * Create default snapshot config for strategy type
+ */
+export function createSnapshotConfig(strategy: SnapshotStrategyType): SnapshotConfig {
+  switch (strategy) {
+    case 'persistent_disk':
+      return { type: 'persistent_disk' };
+    case 's3':
+      return { type: 's3' };
+    case 'sprite_checkpoint':
+      return { type: 'sprite_checkpoint' };
+    default:
+      return { type: 'persistent_disk' };
+  }
+}
+
+/**
+ * Get storage provider label
+ */
+export function getStorageProviderLabel(provider: StorageProvider): string {
+  switch (provider) {
+    case 's3':
+      return 'AWS S3';
+    case 'tigris':
+      return 'Tigris (Fly.io)';
+    default:
+      return provider;
+  }
+}
+
+/**
+ * Get storage provider description
+ */
+export function getStorageProviderDescription(provider: StorageProvider): string {
+  switch (provider) {
+    case 's3':
+      return 'Amazon Web Services S3 object storage';
+    case 'tigris':
+      return 'S3-compatible storage from Fly.io';
+    default:
+      return '';
+  }
+}
+
+/**
+ * Get all available storage providers
+ */
+export function getAvailableStorageProviders(): StorageProvider[] {
+  return ['s3', 'tigris'];
+}
+
+/**
+ * Get default endpoint for a storage provider
+ */
+export function getDefaultEndpoint(provider: StorageProvider): string | undefined {
+  switch (provider) {
+    case 'tigris':
+      return 'https://fly.storage.tigris.dev';
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Get default region for a storage provider
+ */
+export function getDefaultRegion(provider: StorageProvider): string {
+  switch (provider) {
+    case 'tigris':
+      return 'auto';
+    default:
+      return 'us-east-1';
   }
 }

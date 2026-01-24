@@ -225,6 +225,12 @@ jobs:
           name: binaries-${{ steps.info.outputs.suffix }}
           path: docker/
 
+      - name: Rename binary for Dockerfile
+        run: |
+          SUFFIX=${{ steps.info.outputs.suffix }}
+          mv docker/hirsel-cli-${SUFFIX}-linux-amd64 docker/hirsel-linux-amd64
+          chmod +x docker/hirsel-linux-amd64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 

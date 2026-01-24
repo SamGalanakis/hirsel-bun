@@ -15,34 +15,46 @@ pub mod api_types;
 pub mod chat_orchestrator;
 pub mod chat_session;
 pub mod chats;
-#[cfg(feature = "claude")]
 pub mod claude_cli;
 pub mod compaction;
 pub mod config;
 #[cfg(feature = "server")]
 pub mod coordinator_api;
 pub mod credentials;
+pub mod draft;
+pub mod error;
 pub mod eval;
+#[cfg(feature = "server")]
+pub mod eval_routes;
 pub mod files;
 pub mod git;
 #[cfg(feature = "server")]
 pub mod git_http;
 pub mod gyp_chat;
+pub mod gyp_context;
 pub mod lifecycle;
+#[cfg(feature = "server")]
+pub mod message_routes;
 pub mod metrics;
 pub mod names;
 pub mod ops;
 pub mod orchestrator;
 pub mod process;
+pub mod run_manager;
 pub mod runner;
 #[cfg(feature = "server")]
 pub mod server;
+pub mod snapshot;
 pub mod state;
 pub mod state_access;
 pub mod storage;
 pub mod tailscale;
 #[cfg(feature = "server")]
+pub mod task_routes;
+#[cfg(feature = "server")]
 pub mod tunnel;
+#[cfg(feature = "server")]
+pub mod worker_routes;
 pub mod workers;
 
 // Re-export commonly used types
@@ -59,7 +71,6 @@ pub use chat_session::{
     PermissionOption, PermissionResponse, UIContext,
 };
 pub use chats::{ChatHeader, ChatMode};
-#[cfg(feature = "claude")]
 pub use claude_cli::{
     execute_claude_worker, run_claude_worker, BridgeEvent, ClaudeCliBridge, ClaudeCliConfig,
     ClaudeCliError, ClaudeWorkerConfig, WorkerResult as ClaudeWorkerResult,
@@ -69,6 +80,7 @@ pub use credentials::{
     get_local_oauth_credentials, CredentialError, CredentialResult, CredentialStore,
     ForwardedCredentials,
 };
+pub use error::{ErrorKind, HirselError, HirselResult};
 pub use eval::{
     run_eval_acp, run_eval_from_args, EvalAcpConfig, EvalAcpResult, EvalConfig, EvalError,
     EvalResult,
@@ -88,10 +100,21 @@ pub use orchestrator::{
     create_local_orchestrator, create_orchestrator, LocalOrchestrator, Orchestrator,
     OrchestratorError, OrchestratorResult, RemoteOrchestrator,
 };
+pub use run_manager::{
+    create_local_run_manager, create_run_manager, LocalRunManager, RemoteRunManager, RunManager,
+    RunManagerError, RunManagerResult,
+};
 pub use runner::{
     create_runner, parse_remote_spec, parse_remote_specs, LocalRunner, Runner, RunnerConfig,
-    RunnerError, RunnerResult, SpawnResult as RunnerSpawnResult, SpriteRunner, SpriteRunnerConfig,
-    SshRunner, SshRunnerConfig, WorkerHandle, WorkerSpawnConfig as RunnerSpawnConfig,
+    RunnerError, RunnerResult, SpawnResult as RunnerSpawnResult, SpriteHostConfig, SpriteRunner,
+    SshHostConfig, SshRunner, WorkerHandle, WorkerSpawnConfig as RunnerSpawnConfig,
+};
+#[cfg(feature = "s3-storage")]
+pub use snapshot::S3ArchiveStrategy;
+pub use snapshot::{
+    create_archive_strategy, AgentSnapshot, ArchiveHandle, ArchiveResult, ArchiveStrategy,
+    NoOpArchiveStrategy, SnapshotError, SnapshotResult, SpriteCheckpointStrategy, WorkDirSnapshot,
+    WorkerStateHandle,
 };
 pub use state::*;
 pub use state_access::{StateAccess, StateAccessError, StateAccessResult};
@@ -106,3 +129,14 @@ pub use workers::{
     spawn_worker, update_worker_heartbeat, SpawnResult, WorkerError, WorkerResult, WorkerScale,
     WorkerSpawnConfig,
 };
+
+// Draft workspace management
+#[cfg(feature = "s3-storage")]
+pub use draft::S3WorkspaceProvider;
+pub use draft::{
+    create_local_workspace_provider, create_workspace_provider, FileEntry, LocalWorkspaceProvider,
+    StartingPoint, WorkspaceInfo, WorkspaceProvider,
+};
+
+// Gyp context
+pub use gyp_context::GypContext;

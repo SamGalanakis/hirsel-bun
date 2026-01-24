@@ -157,6 +157,7 @@ pub async fn run_remote_worker_with_config(
         leader_name: config.leader_name.map(String::from),
         teammates: config.teammates,
         resume_session_id: None,
+        api_url: Some(config.api_url.to_string()),
     };
 
     tracing::info!(

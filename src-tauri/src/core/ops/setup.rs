@@ -5,8 +5,7 @@
 use std::path::PathBuf;
 
 use crate::core::chats::{
-    create_default_group_chat, create_default_user_chat, create_learnings_thread,
-    create_worker_chat, ChatError,
+    create_default_group_chat, create_learnings_thread, create_worker_chat, ChatError,
 };
 use crate::core::git::{create_worker_clone, create_workspace, GitError};
 use crate::core::state::SQLiteState;
@@ -156,9 +155,6 @@ pub fn setup_run_workspace(config: &RunSetupConfig) -> Result<RunSetupResult, Op
     // Combine all workers for chat creation (local + additional)
     let mut all_workers: Vec<String> = config.worker_names.clone();
     all_workers.extend(config.additional_chat_workers.clone());
-
-    // Create user chat
-    create_default_user_chat(&chats_dir)?;
 
     // Create group chat if multi-worker
     if config.is_multi_worker {

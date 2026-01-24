@@ -4,14 +4,9 @@
 //! in S3-compatible object storage (AWS S3, MinIO, Tigris, etc.).
 
 use async_trait::async_trait;
-use aws_config::BehaviorVersion;
-use aws_sdk_s3::{
-    config::{Credentials, Region},
-    error::SdkError,
-    primitives::ByteStream,
-    Client,
-};
+use aws_sdk_s3::{error::SdkError, primitives::ByteStream, Client};
 
+use super::s3_client::S3ClientFactory;
 use super::{FileStorage, StorageError, StorageResult};
 use crate::core::config::S3Config;
 
@@ -27,46 +22,10 @@ pub struct S3FileStorage {
 impl S3FileStorage {
     /// Create a new S3 storage instance from configuration.
     pub async fn new(config: &S3Config) -> StorageResult<Self> {
-        if config.bucket.is_empty() {
-            return Err(StorageError::Config("S3 bucket name is required".into()));
-        }
+        let client = S3ClientFactory::create(config).await?;
+        let bucket = S3ClientFactory::bucket(config)?;
 
-        // Build AWS config
-        let mut aws_config_builder = aws_config::defaults(BehaviorVersion::latest());
-
-        // Set region
-        if let Some(ref region) = config.region {
-            aws_config_builder = aws_config_builder.region(Region::new(region.clone()));
-        } else {
-            // Default to us-east-1 for compatibility
-            aws_config_builder = aws_config_builder.region(Region::new("us-east-1"));
-        }
-
-        // Set credentials if provided
-        if let (Some(ref access_key), Some(ref secret_key)) =
-            (&config.access_key_id, &config.secret_access_key)
-        {
-            let credentials = Credentials::new(access_key, secret_key, None, None, "hirsel-config");
-            aws_config_builder = aws_config_builder.credentials_provider(credentials);
-        }
-
-        let aws_config = aws_config_builder.load().await;
-
-        // Build S3 client with custom endpoint if provided
-        let mut s3_config_builder = aws_sdk_s3::config::Builder::from(&aws_config);
-
-        if let Some(ref endpoint) = config.endpoint {
-            s3_config_builder = s3_config_builder
-                .endpoint_url(endpoint)
-                .force_path_style(true); // Required for MinIO and most S3-compatible services
-        }
-
-        let client = Client::from_conf(s3_config_builder.build());
-
-        Ok(Self {
-            client,
-            bucket: config.bucket.clone(),
-        })
+        Ok(Self { client, bucket })
     }
 
     /// Convert S3 SDK errors to StorageError

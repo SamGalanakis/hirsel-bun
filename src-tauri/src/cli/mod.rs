@@ -7,10 +7,9 @@
 //!
 //! When invoked without arguments, `hirsel` launches the native GUI.
 
-#[cfg(feature = "claude")]
 pub mod acp_bridge;
 pub mod asset;
-#[cfg(feature = "tui")]
+#[cfg(feature = "cli")]
 pub mod attach;
 pub mod compact;
 pub mod completions;
@@ -18,8 +17,9 @@ pub mod config;
 pub mod delete;
 pub mod deliver;
 pub mod diff;
-#[cfg(feature = "full-cli")]
+#[cfg(feature = "cli")]
 pub mod go;
+pub mod helpers;
 pub mod improve;
 pub mod log;
 pub mod man;
@@ -33,9 +33,9 @@ pub mod spec;
 pub mod summary;
 pub mod tasks;
 pub mod templates;
-#[cfg(feature = "full-cli")]
+#[cfg(feature = "cli")]
 pub mod test;
-#[cfg(feature = "tui")]
+#[cfg(feature = "cli")]
 pub mod tui;
 pub mod view;
 
@@ -44,14 +44,14 @@ use clap::{Args, Parser, Subcommand};
 // Re-export command implementations
 pub use self::diff::{print_diff, run_diff, DiffError, DiffResult};
 pub use asset::run_asset;
-#[cfg(feature = "tui")]
+#[cfg(feature = "cli")]
 pub use attach::{list_targets, run_attach};
 pub use completions::{generate_completions, print_completions, run_completions};
 pub use config::{
     agent_presets, get_agent_command, get_current_agent, run_config, set_agent, AgentPreset,
 };
 pub use delete::execute as run_delete;
-#[cfg(feature = "full-cli")]
+#[cfg(feature = "cli")]
 pub use go::{run as run_go, GoError, GoOutput, GoResult};
 pub use log::{run_log, LogResult, OutputFormat};
 pub use man::run_man;
@@ -94,7 +94,7 @@ pub struct Cli {
 pub enum Commands {
     // ========== Run Management ==========
     /// Start a new run
-    #[cfg(feature = "full-cli")]
+    #[cfg(feature = "cli")]
     Go(GoArgs),
 
     /// View run status
@@ -104,7 +104,7 @@ pub enum Commands {
     Log(LogArgs),
 
     /// Watch worker live output (TUI)
-    #[cfg(feature = "tui")]
+    #[cfg(feature = "cli")]
     Attach(AttachArgs),
 
     /// Send message to run
@@ -193,7 +193,7 @@ pub enum Commands {
     Reset(ResetArgs),
 
     /// Run e2e test scenarios
-    #[cfg(feature = "full-cli")]
+    #[cfg(feature = "cli")]
     Test(TestArgs),
 
     /// Run as HTTP server (headless mode for remote orchestration)
@@ -226,7 +226,6 @@ pub enum Commands {
     RemoteWorker(RemoteWorkerArgs),
 
     /// Run ACP bridge server for Claude CLI (internal, used as agent command)
-    #[cfg(feature = "claude")]
     #[command(name = "__acp-bridge", hide = true)]
     AcpBridge,
 
@@ -296,6 +295,10 @@ pub struct InternalWorkerRunArgs {
     /// Resume session ID
     #[arg(long)]
     pub resume_session_id: Option<String>,
+
+    /// Coordinator API URL (for remote/Docker workers to report status)
+    #[arg(long)]
+    pub api_url: Option<String>,
 }
 
 /// Arguments for internal eval run command
@@ -809,15 +812,11 @@ pub struct WorkerTaskDoneArgs {
 /// Arguments for worker msg send
 #[derive(Args, Debug)]
 pub struct WorkerMsgSendArgs {
-    /// Thread name (e.g., "user", "group")
+    /// Thread name: "user" for DM to human, "group" for team chat, "learnings" for shared notes
     pub thread: String,
 
     /// Message content
     pub message: String,
-
-    /// Wait for reply before continuing
-    #[arg(long)]
-    pub wait: bool,
 }
 
 /// Arguments for worker msg read
@@ -858,7 +857,7 @@ pub fn run_cli() -> anyhow::Result<bool> {
 
     match command {
         // Run Management
-        #[cfg(feature = "full-cli")]
+        #[cfg(feature = "cli")]
         Commands::Go(args) => {
             match go::run(&args) {
                 Ok(output) => {
@@ -906,7 +905,7 @@ pub fn run_cli() -> anyhow::Result<bool> {
                 }
             }
         }
-        #[cfg(feature = "tui")]
+        #[cfg(feature = "cli")]
         Commands::Attach(args) => {
             if let Err(e) = attach::run_attach(&args.run_name, args.target.as_deref(), json) {
                 eprintln!("Error: {}", e);
@@ -1270,7 +1269,7 @@ pub fn run_cli() -> anyhow::Result<bool> {
                 }
             }
         }
-        #[cfg(feature = "full-cli")]
+        #[cfg(feature = "cli")]
         Commands::Test(args) => {
             if let Err(e) = test::execute(
                 args.scenario.as_deref(),
@@ -1321,7 +1320,6 @@ pub fn run_cli() -> anyhow::Result<bool> {
             eprintln!("Remote worker command should be called via hirsel binary directly");
             std::process::exit(1);
         }
-        #[cfg(feature = "claude")]
         Commands::AcpBridge => {
             // This is handled by lib.rs run_cli() for compatibility
             // Should not reach here in normal CLI flow
@@ -1491,20 +1489,13 @@ mod tests {
 
     #[test]
     fn test_worker_cli_msg_send() {
-        let cli = WorkerCli::try_parse_from([
-            "hirsel-worker",
-            "msg",
-            "send",
-            "group",
-            "Hello team!",
-            "--wait",
-        ])
-        .unwrap();
+        let cli =
+            WorkerCli::try_parse_from(["hirsel-worker", "msg", "send", "group", "Hello team!"])
+                .unwrap();
 
         if let WorkerCommands::Msg(MsgSubcommands::Send(args)) = cli.command {
             assert_eq!(args.thread, "group");
             assert_eq!(args.message, "Hello team!");
-            assert!(args.wait);
         } else {
             panic!("Expected Msg Send command");
         }

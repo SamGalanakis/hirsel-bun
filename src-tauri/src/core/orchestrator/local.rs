@@ -5,10 +5,11 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
+use std::collections::HashMap;
 
 use super::{
     CreateRunRequest, CreateRunResponse, HealthResponse, Orchestrator, OrchestratorError,
-    OrchestratorResult, SpawnWorkersResponse, TailscaleOAuth,
+    OrchestratorResult, SpawnWorkersResponse, StartRunRequest, TailscaleOAuth, WorkerStateHandle,
 };
 use crate::core::api_types::{
     calculate_duration_minutes, convert_status, is_completed_status, parse_elapsed_minutes,
@@ -17,8 +18,13 @@ use crate::core::api_types::{
     WorkerLocation, WorkerStatus,
 };
 use crate::core::config::{self, Config};
-use crate::core::names::slugify;
-use crate::core::state::SQLiteState;
+use crate::core::draft::create_workspace_provider;
+use crate::core::names::{get_available_names, slugify};
+use crate::core::ops::{
+    compute_multi_worker_config, register_workers, setup_run_workspace, RunSetupConfig,
+};
+use crate::core::runner::{create_runner, Runner, WorkerSpawnConfig as RunnerSpawnConfig};
+use crate::core::state::{SQLiteState, Status, WorkerUpdate};
 use crate::core::Files;
 
 /// Local orchestrator that operates directly on the local filesystem
@@ -263,7 +269,11 @@ impl Orchestrator for LocalOrchestrator {
             .iter()
             .filter(|w| w.status == crate::core::state::WorkerStatus::Working)
             .count() as u32;
-        let workers_total = workers.len() as u32;
+        // workers_total is the max scale (for autoscaling display like "1/2"), fallback to actual count
+        let workers_total = worker_scale
+            .as_ref()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(workers.len() as u32);
 
         // Calculate elapsed minutes
         let elapsed_minutes = if let Ok(Some(time_info)) = state.get_time_info() {
@@ -322,7 +332,9 @@ impl Orchestrator for LocalOrchestrator {
         use crate::core::ops::{delete_run as ops_delete_run, DeleteRunConfig};
 
         let config = DeleteRunConfig::for_gui(name);
-        ops_delete_run(config).map_err(|e| OrchestratorError::Other(e.to_string()))?;
+        ops_delete_run(config)
+            .await
+            .map_err(|e| OrchestratorError::Other(e.to_string()))?;
         Ok(())
     }
 
@@ -350,18 +362,69 @@ impl Orchestrator for LocalOrchestrator {
         _time_limit_minutes: Option<u32>,
     ) -> OrchestratorResult<()> {
         use crate::cli::config::get_agent_command;
-        use crate::core::lifecycle::{LifecycleManager, LocalLifecycleManager};
+        use crate::core::lifecycle::{LifecycleAction, LifecycleManager, LocalLifecycleManager};
 
         let run_dir = config::run_dir(name);
         let agent_command = get_agent_command();
 
         // Create lifecycle manager and delegate
-        let lifecycle = LocalLifecycleManager::new(name, run_dir, agent_command)
+        let lifecycle = LocalLifecycleManager::new(name, run_dir.clone(), agent_command)
             .map_err(|e| OrchestratorError::Other(e.to_string()))?;
 
-        lifecycle
+        let actions = lifecycle
             .resume_run()
             .map_err(|e| OrchestratorError::Other(e.to_string()))?;
+
+        // Process the returned actions to actually resume workers
+        for action in actions {
+            match action {
+                LifecycleAction::ResumeWorker {
+                    worker_name,
+                    work_dir,
+                    resume_session_id,
+                    state_handle,
+                } => {
+                    tracing::info!("Resuming worker '{}' for run '{}'", worker_name, name);
+
+                    if let Err(e) = self
+                        .resume_worker(
+                            name,
+                            &worker_name,
+                            &work_dir,
+                            resume_session_id.as_deref(),
+                            state_handle.as_ref(),
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            "Failed to resume worker '{}' for run '{}': {}",
+                            worker_name,
+                            name,
+                            e
+                        );
+                    }
+                }
+                LifecycleAction::SpawnWorker {
+                    worker_name,
+                    work_dir,
+                } => {
+                    tracing::info!("Spawning worker '{}' for run '{}'", worker_name, name);
+
+                    if let Err(e) = self
+                        .spawn_single_worker(name, &worker_name, &work_dir, None)
+                        .await
+                    {
+                        tracing::warn!(
+                            "Failed to spawn worker '{}' for run '{}': {}",
+                            worker_name,
+                            name,
+                            e
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
 
         Ok(())
     }
@@ -854,6 +917,7 @@ impl Orchestrator for LocalOrchestrator {
                     configured_providers: configured,
                 }
             },
+            storage: (&self.config.storage).into(),
         })
     }
 
@@ -870,8 +934,7 @@ impl Orchestrator for LocalOrchestrator {
 
     async fn create_run(&self, request: CreateRunRequest) -> OrchestratorResult<CreateRunResponse> {
         use crate::core::chats::{
-            create_default_group_chat, create_default_user_chat, create_learnings_thread,
-            create_worker_chat,
+            create_default_group_chat, create_learnings_thread, create_worker_chat,
         };
         use crate::core::files::Files;
         use crate::core::names;
@@ -940,13 +1003,40 @@ impl Orchestrator for LocalOrchestrator {
         std::fs::write(tasks_dir.join("scope.md"), "")
             .map_err(|e| OrchestratorError::Other(format!("Failed to write scope.md: {}", e)))?;
 
+        // Initialize workspace from starting_point if provided
+        let project_path = if let Some(ref starting_point) = request.starting_point {
+            let workspace = create_workspace_provider(None);
+            let workspace_info = workspace
+                .init(&run_name, starting_point)
+                .await
+                .map_err(|e| {
+                    OrchestratorError::Other(format!("Failed to initialize workspace: {}", e))
+                })?;
+            Some(workspace_info.path)
+        } else {
+            // No starting_point - expect files via upload_files()
+            None
+        };
+
         // Initialize SQLite state
         let db_path = run_dir.join("hirsel.db");
         let sqlite_state = SQLiteState::new(db_path)
             .map_err(|e| OrchestratorError::Other(format!("Failed to create state: {}", e)))?;
         sqlite_state
-            .init_state(None)
+            .init_state(project_path.as_ref().and_then(|p| p.to_str()))
             .map_err(|e| OrchestratorError::Other(format!("Failed to init state: {}", e)))?;
+
+        // Store starting_point in database for cloning
+        if let Some(ref sp) = request.starting_point {
+            let sp_json = serde_json::to_string(sp).map_err(|e| {
+                OrchestratorError::Other(format!("Failed to serialize starting_point: {}", e))
+            })?;
+            sqlite_state
+                .set_starting_point(Some(&sp_json))
+                .map_err(|e| {
+                    OrchestratorError::Other(format!("Failed to set starting_point: {}", e))
+                })?;
+        }
 
         // Set run properties
         sqlite_state
@@ -1001,9 +1091,6 @@ impl Orchestrator for LocalOrchestrator {
 
         // Create chat files
         let chats_dir = files.chats_dir();
-        create_default_user_chat(&chats_dir)
-            .map_err(|e| OrchestratorError::Other(format!("Failed to create user chat: {}", e)))?;
-
         if is_multi_worker {
             create_default_group_chat(
                 &chats_dir,
@@ -1077,6 +1164,75 @@ impl Orchestrator for LocalOrchestrator {
         Ok(())
     }
 
+    async fn init_workspace(
+        &self,
+        run_name: &str,
+        request: super::InitWorkspaceRequest,
+    ) -> super::OrchestratorResult<super::InitWorkspaceResponse> {
+        use crate::core::state::SQLiteState;
+
+        let run_dir = config::run_dir(run_name);
+        if !run_dir.exists() {
+            return Err(OrchestratorError::RunNotFound(run_name.to_string()));
+        }
+
+        // Open state to check status and update starting_point
+        let db_path = run_dir.join("hirsel.db");
+        let state = SQLiteState::new(db_path)
+            .map_err(|e| OrchestratorError::Other(format!("Failed to open state: {}", e)))?;
+
+        // Check that no workers are active
+        let workers = state
+            .get_workers()
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let has_active = workers.iter().any(|w| !w.status.is_inactive());
+        if has_active {
+            return Err(OrchestratorError::InvalidOperation(
+                "Cannot reinitialize workspace while workers are active".into(),
+            ));
+        }
+
+        // Initialize workspace
+        let workspace = create_workspace_provider(None);
+        let workspace_info = workspace
+            .init(run_name, &request.starting_point)
+            .await
+            .map_err(|e| {
+                OrchestratorError::Other(format!("Failed to initialize workspace: {}", e))
+            })?;
+
+        // Store starting_point in database
+        let sp_json = serde_json::to_string(&request.starting_point).map_err(|e| {
+            OrchestratorError::Other(format!("Failed to serialize starting_point: {}", e))
+        })?;
+        state.set_starting_point(Some(&sp_json)).map_err(|e| {
+            OrchestratorError::Other(format!("Failed to set starting_point: {}", e))
+        })?;
+
+        // Update project path
+        state
+            .set_project_path(workspace_info.path.to_str().unwrap_or("."))
+            .map_err(|e| OrchestratorError::Other(format!("Failed to set project path: {}", e)))?;
+
+        // Update branch if available
+        if let Some(ref branch) = workspace_info.default_branch {
+            state
+                .set_branch(Some(branch))
+                .map_err(|e| OrchestratorError::Other(format!("Failed to set branch: {}", e)))?;
+        }
+
+        tracing::info!(
+            "Initialized workspace for run '{}' from {:?}",
+            run_name,
+            request.starting_point
+        );
+
+        Ok(super::InitWorkspaceResponse {
+            workspace_path: workspace_info.path.to_string_lossy().to_string(),
+            default_branch: workspace_info.default_branch,
+        })
+    }
+
     async fn spawn_workers(
         &self,
         run_name: &str,
@@ -1086,9 +1242,7 @@ impl Orchestrator for LocalOrchestrator {
         use crate::core::chats::{create_default_group_chat, create_worker_chat};
         use crate::core::files::Files;
         use crate::core::names;
-        use crate::core::runner::{
-            create_runner, Runner, RunnerConfig, WorkerSpawnConfig as RunnerSpawnConfig,
-        };
+        use crate::core::runner::{create_runner, Runner, WorkerSpawnConfig as RunnerSpawnConfig};
         use crate::core::state::{SQLiteState, Status, WorkerUpdate};
 
         let run_dir = config::run_dir(run_name);
@@ -1158,13 +1312,6 @@ impl Orchestrator for LocalOrchestrator {
             .cloned()
             .collect();
 
-        // Get runner config
-        let runner_name = self.config.default_runner.clone().unwrap_or_default();
-        let runner_config = self
-            .config
-            .get_runner(&runner_name)
-            .unwrap_or_else(RunnerConfig::local);
-
         // Get agent command
         let agent_command = get_agent_command();
         let files = Files::new(run_dir.clone());
@@ -1185,9 +1332,6 @@ impl Orchestrator for LocalOrchestrator {
                 oauth.tag.clone(),
             )
         });
-
-        // Create runner using factory function
-        let runner: Box<dyn Runner> = create_runner(&runner_config);
 
         // Ensure group chat exists for multi-worker
         if is_multi_worker && !chats_dir.join("group.md").exists() {
@@ -1238,6 +1382,12 @@ impl Orchestrator for LocalOrchestrator {
             } else {
                 None
             };
+
+            // Get runner config for this worker (from stored configs or fallback to global)
+            let runner_config = sqlite_state
+                .get_runner_config_for_worker(worker_name, &self.config)
+                .unwrap_or_default();
+            let runner: Box<dyn Runner> = create_runner(&runner_config);
 
             let spawn_config = RunnerSpawnConfig {
                 run_name: run_name.to_string(),
@@ -1297,5 +1447,708 @@ impl Orchestrator for LocalOrchestrator {
         Ok(SpawnWorkersResponse {
             workers: spawned_workers,
         })
+    }
+
+    async fn start_run(&self, request: StartRunRequest) -> OrchestratorResult<RunDetail> {
+        use crate::cli::config::get_agent_command;
+
+        // 1. Slugify and validate run name
+        let run_name = slugify(&request.name);
+        if run_name.len() > 50 {
+            return Err(OrchestratorError::InvalidOperation(format!(
+                "Run name too long (max 50 chars): {}...",
+                &run_name[..50]
+            )));
+        }
+
+        // 2. Get run directory and check for conflicts
+        let run_dir = config::run_dir(&run_name);
+        if run_dir.exists() {
+            let db_path = run_dir.join("hirsel.db");
+            if db_path.exists() {
+                if let Ok(existing_state) = SQLiteState::new(db_path) {
+                    if let Ok(status) = existing_state.status() {
+                        if status == Status::Working || status == Status::Eval {
+                            return Err(OrchestratorError::InvalidOperation(format!(
+                                "Run '{}' already exists and is active",
+                                run_name
+                            )));
+                        }
+                    }
+                }
+            }
+            // Clean up old run
+            let _ = std::fs::remove_dir_all(&run_dir);
+        }
+
+        // 3. Create run directory and initialize files
+        std::fs::create_dir_all(&run_dir).map_err(|e| {
+            OrchestratorError::Other(format!("Failed to create run directory: {}", e))
+        })?;
+
+        let files = Files::new(run_dir.clone());
+        files
+            .init_dirs()
+            .map_err(|e| OrchestratorError::Other(format!("Failed to init dirs: {}", e)))?;
+
+        // Write spec file
+        std::fs::write(files.spec(), &request.spec)
+            .map_err(|e| OrchestratorError::Other(format!("Failed to write spec: {}", e)))?;
+
+        // Write eval file if provided
+        if let Some(ref eval_content) = request.eval {
+            std::fs::write(run_dir.join("eval.md"), eval_content)
+                .map_err(|e| OrchestratorError::Other(format!("Failed to write eval: {}", e)))?;
+        }
+
+        // Initialize bootstrap tasks.md
+        std::fs::write(
+            run_dir.join("tasks.md"),
+            "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n| scope | TODO | | Read spec, create exploration tasks |\n",
+        ).map_err(|e| OrchestratorError::Other(format!("Failed to write tasks.md: {}", e)))?;
+
+        // Create tasks detail folder
+        let tasks_dir = run_dir.join("tasks");
+        std::fs::create_dir_all(&tasks_dir)
+            .map_err(|e| OrchestratorError::Other(format!("Failed to create tasks dir: {}", e)))?;
+        std::fs::write(tasks_dir.join("scope.md"), "")
+            .map_err(|e| OrchestratorError::Other(format!("Failed to write scope.md: {}", e)))?;
+
+        // 4. Initialize workspace from starting point
+        let workspace = create_workspace_provider(None);
+        let workspace_info = workspace
+            .init(&run_name, &request.starting_point)
+            .await
+            .map_err(|e| {
+                OrchestratorError::Other(format!("Failed to initialize workspace: {}", e))
+            })?;
+
+        let project_path = workspace_info.path;
+
+        // 5. Initialize SQLite state
+        let db_path = run_dir.join("hirsel.db");
+        let state = SQLiteState::new(db_path.clone())
+            .map_err(|e| OrchestratorError::Other(format!("Failed to create state: {}", e)))?;
+        state
+            .init_state(Some(project_path.to_str().unwrap_or(".")))
+            .map_err(|e| OrchestratorError::Other(format!("Failed to init state: {}", e)))?;
+
+        // Store starting_point in database for cloning
+        let sp_json = serde_json::to_string(&request.starting_point).map_err(|e| {
+            OrchestratorError::Other(format!("Failed to serialize starting_point: {}", e))
+        })?;
+        state.set_starting_point(Some(&sp_json)).map_err(|e| {
+            OrchestratorError::Other(format!("Failed to set starting_point: {}", e))
+        })?;
+
+        // Set run properties
+        state
+            .set_request(Some(&request.spec))
+            .map_err(|e| OrchestratorError::Other(format!("Failed to set request: {}", e)))?;
+
+        // Set default branch if available from workspace init
+        if let Some(ref branch) = workspace_info.default_branch {
+            state
+                .set_branch(Some(branch))
+                .map_err(|e| OrchestratorError::Other(format!("Failed to set branch: {}", e)))?;
+        }
+
+        let scale_max = request.worker_scale.unwrap_or(1);
+        state
+            .set_worker_scale(&scale_max.to_string())
+            .map_err(|e| OrchestratorError::Other(format!("Failed to set worker scale: {}", e)))?;
+
+        if let Some(limit) = request.time_limit_minutes {
+            state.set_time_limit_minutes(Some(limit)).map_err(|e| {
+                OrchestratorError::Other(format!("Failed to set time limit: {}", e))
+            })?;
+        }
+
+        if let Some(max_iter) = request.max_iterations {
+            state.set_max_iterations(Some(max_iter)).map_err(|e| {
+                OrchestratorError::Other(format!("Failed to set max iterations: {}", e))
+            })?;
+        }
+
+        let hitl = request.human_in_the_loop.unwrap_or(true);
+        state
+            .set_human_in_the_loop(hitl)
+            .map_err(|e| OrchestratorError::Other(format!("Failed to set HITL: {}", e)))?;
+
+        // Set default runner if specified
+        if let Some(ref runner) = request.runner {
+            state.set_default_runner(Some(runner)).map_err(|e| {
+                OrchestratorError::Other(format!("Failed to set default runner: {}", e))
+            })?;
+        }
+
+        // Set per-worker runner assignments if specified
+        if let Some(ref worker_runners) = request.worker_runners {
+            state
+                .set_worker_runners(Some(worker_runners))
+                .map_err(|e| {
+                    OrchestratorError::Other(format!("Failed to set worker runners: {}", e))
+                })?;
+        }
+
+        // Store full runner configs (capture at run creation time)
+        // This ensures config changes don't affect in-progress runs
+        {
+            let mut runner_configs = HashMap::new();
+
+            // Add default runner config
+            let default_runner_name = request.runner.as_deref().unwrap_or("local");
+            if let Some(config) = self.config.get_runner(default_runner_name) {
+                runner_configs.insert(default_runner_name.to_string(), config);
+            }
+
+            // Add per-worker runner configs
+            if let Some(ref worker_runners) = request.worker_runners {
+                for runner_name in worker_runners.values() {
+                    if !runner_configs.contains_key(runner_name) {
+                        if let Some(config) = self.config.get_runner(runner_name) {
+                            runner_configs.insert(runner_name.clone(), config);
+                        }
+                    }
+                }
+            }
+
+            // Store configs if we have any
+            if !runner_configs.is_empty() {
+                state
+                    .set_runner_configs(Some(&runner_configs))
+                    .map_err(|e| {
+                        OrchestratorError::Other(format!("Failed to set runner configs: {}", e))
+                    })?;
+            }
+        }
+
+        // Add initial scope task
+        let _ = state.add_task("scope", "Read spec, create exploration tasks", None, None);
+
+        // 6. Parse worker scale and generate worker names
+        // Always start with 1, autoscaling will add more based on scale_max
+        let initial_count = 1u32;
+        let worker_names = get_available_names(initial_count, &[]);
+
+        // Determine if multi-worker mode (current or potential via autoscale)
+        let (is_multi_worker, leader_name) = compute_multi_worker_config(&worker_names, scale_max);
+
+        // Pre-claim scope for first worker
+        let first_worker = &worker_names[0];
+        let _ = state.claim_task("scope", first_worker);
+
+        // 7. Set up workspace clones and chats using shared ops
+        let setup_config = RunSetupConfig {
+            run_name: run_name.clone(),
+            project_path: project_path.clone(),
+            run_dir: run_dir.clone(),
+            worker_names: worker_names.clone(),
+            additional_chat_workers: Vec::new(),
+            is_multi_worker,
+            leader_name: leader_name.clone(),
+        };
+
+        let setup_result = setup_run_workspace(&setup_config)
+            .map_err(|e| OrchestratorError::Other(format!("Failed to setup workspace: {}", e)))?;
+
+        // 8. Register workers in state
+        register_workers(&state, &setup_result.worker_dirs, "local")
+            .map_err(|e| OrchestratorError::Other(format!("Failed to register workers: {}", e)))?;
+
+        // 9. Handle draft mode vs normal mode
+        if request.draft {
+            // Draft mode: set status to Draft, don't spawn workers
+            state
+                .set_status(Status::Draft)
+                .map_err(|e| OrchestratorError::State(e.to_string()))?;
+            tracing::info!("Created draft run '{}' (workers not spawned)", run_name);
+        } else {
+            // Normal mode: spawn workers and set to Working
+            let agent_command = get_agent_command();
+            let spec_path = files.spec();
+
+            // Collect API keys from environment for Docker/remote runners
+            let env_vars: HashMap<String, String> = std::env::vars()
+                .filter(|(k, _)| {
+                    k.starts_with("ANTHROPIC_")
+                        || k.starts_with("OPENAI_")
+                        || k.starts_with("CLAUDE_")
+                })
+                .collect();
+
+            for (i, (worker_name, work_dir)) in setup_result.worker_dirs.iter().enumerate() {
+                let is_leader = i == 0 && is_multi_worker;
+
+                // Build teammates list (all workers except self)
+                let teammates = if is_multi_worker {
+                    Some(
+                        worker_names
+                            .iter()
+                            .filter(|t| *t != worker_name)
+                            .cloned()
+                            .collect(),
+                    )
+                } else {
+                    None
+                };
+
+                // Get runner config for this worker (from stored configs or fallback to global)
+                let runner_config = state
+                    .get_runner_config_for_worker(worker_name, &self.config)
+                    .unwrap_or_default();
+                let runner: Box<dyn Runner> = create_runner(&runner_config);
+
+                let spawn_config = RunnerSpawnConfig {
+                    run_name: run_name.clone(),
+                    worker_name: worker_name.clone(),
+                    work_dir: work_dir.clone(),
+                    run_dir: run_dir.clone(),
+                    spec_path: spec_path.clone(),
+                    agent_command: agent_command.clone(),
+                    is_leader,
+                    leader_name: leader_name.clone(),
+                    teammates,
+                    resume_session_id: None,
+                    env_vars: Some(env_vars.clone()),
+                    coordinator_url: None,
+                    tailscale_authkey: None,
+                    credentials: None,
+                };
+
+                match runner.spawn(&spawn_config).await {
+                    Ok(result) => {
+                        // Update worker with PID and runner info
+                        let pid = result.pid.map(|p| p as i64);
+                        let _ = state.update_worker(
+                            worker_name,
+                            WorkerUpdate {
+                                pid,
+                                runner_id: Some(result.handle.runner_id.clone()),
+                                runner_type: Some(result.handle.runner_type.clone()),
+                                status: Some(crate::core::state::WorkerStatus::Working),
+                                ..Default::default()
+                            },
+                        );
+                        tracing::info!(
+                            "Spawned worker '{}' (runner_id: {}, runner_type: {})",
+                            worker_name,
+                            result.handle.runner_id,
+                            result.handle.runner_type
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to spawn worker '{}': {}", worker_name, e);
+                    }
+                }
+            }
+
+            // Set status to Working and start time tracking
+            state
+                .set_status(Status::Working)
+                .map_err(|e| OrchestratorError::State(e.to_string()))?;
+            state
+                .set_started_at(None)
+                .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+            // Ensure daemon is running for lifecycle management (eval triggering, time limits)
+            #[cfg(feature = "server")]
+            if let Ok(_) = crate::daemon::DaemonClient::connect_or_start() {
+                tracing::debug!("Daemon is running for lifecycle management");
+            }
+        }
+
+        // 10. Return run detail
+        self.get_run(&run_name).await
+    }
+
+    async fn spawn_single_worker(
+        &self,
+        run_name: &str,
+        worker_name: &str,
+        work_dir: &std::path::Path,
+        resume_session_id: Option<&str>,
+    ) -> OrchestratorResult<()> {
+        use crate::cli::config::get_agent_command;
+
+        let run_dir = config::run_dir(run_name);
+        let state = self.get_state(run_name)?;
+
+        // Check if run is paused
+        let status = state
+            .status()
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        if status == Status::Paused {
+            return Err(OrchestratorError::InvalidOperation(
+                "Cannot spawn worker: run is paused".into(),
+            ));
+        }
+
+        // Get all workers for leader/teammates info
+        let workers = state
+            .get_workers()
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+        // Determine if multi-worker mode
+        let is_multi_worker = workers.len() > 1
+            || state
+                .get_worker_scale()
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse::<usize>().ok())
+                .map(|max| max > 1)
+                .unwrap_or(false);
+
+        let leader_name = workers.first().map(|w| w.name.clone());
+
+        // Build teammates list (all workers except this one)
+        let teammates: Option<Vec<String>> = if is_multi_worker {
+            Some(
+                workers
+                    .iter()
+                    .filter(|w| w.name != worker_name)
+                    .map(|w| w.name.clone())
+                    .collect(),
+            )
+        } else {
+            None
+        };
+
+        // Get runner config for this worker (from stored configs or fallback to global)
+        let runner_config = state
+            .get_runner_config_for_worker(worker_name, &self.config)
+            .unwrap_or_default();
+        let runner: Box<dyn Runner> = create_runner(&runner_config);
+
+        // Build spawn config
+        let agent_command = get_agent_command();
+        let files = Files::new(&run_dir);
+
+        // Collect API keys from environment for Docker/remote runners
+        let env_vars: HashMap<String, String> = std::env::vars()
+            .filter(|(k, _)| {
+                k.starts_with("ANTHROPIC_") || k.starts_with("OPENAI_") || k.starts_with("CLAUDE_")
+            })
+            .collect();
+
+        let spawn_config = RunnerSpawnConfig {
+            run_name: run_name.to_string(),
+            worker_name: worker_name.to_string(),
+            work_dir: work_dir.to_path_buf(),
+            run_dir: run_dir.clone(),
+            spec_path: files.spec(),
+            agent_command,
+            is_leader: false, // Scaled/resumed workers are never leader
+            leader_name,
+            teammates,
+            resume_session_id: resume_session_id.map(String::from),
+            env_vars: Some(env_vars),
+            coordinator_url: None,
+            tailscale_authkey: None,
+            credentials: None,
+        };
+
+        // Spawn via runner (handles local/docker/fly/sprite correctly)
+        match runner.spawn(&spawn_config).await {
+            Ok(result) => {
+                // Update worker with PID and runner info
+                let pid = result.pid.map(|p| p as i64);
+                state
+                    .update_worker(
+                        worker_name,
+                        WorkerUpdate {
+                            pid,
+                            runner_id: Some(result.handle.runner_id.clone()),
+                            runner_type: Some(result.handle.runner_type.clone()),
+                            status: Some(crate::core::state::WorkerStatus::Working),
+                            ..Default::default()
+                        },
+                    )
+                    .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+                tracing::info!(
+                    "spawn_single_worker: spawned '{}' (runner_id: {}, runner_type: {})",
+                    worker_name,
+                    result.handle.runner_id,
+                    result.handle.runner_type
+                );
+
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "spawn_single_worker: failed to spawn '{}': {}",
+                    worker_name,
+                    e
+                );
+                Err(OrchestratorError::Other(format!(
+                    "Failed to spawn worker '{}': {}",
+                    worker_name, e
+                )))
+            }
+        }
+    }
+
+    async fn resume_worker(
+        &self,
+        run_name: &str,
+        worker_name: &str,
+        work_dir: &std::path::Path,
+        resume_session_id: Option<&str>,
+        state_handle: Option<&WorkerStateHandle>,
+    ) -> OrchestratorResult<()> {
+        use crate::cli::config::get_agent_command;
+        use crate::core::runner::WorkerHandle;
+        use crate::core::snapshot::{create_archive_strategy, host_session_path, ArchiveHandle};
+
+        let run_dir = config::run_dir(run_name);
+        let state = self.get_state(run_name)?;
+
+        // Check if run is paused
+        let status = state
+            .status()
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        if status == Status::Paused {
+            return Err(OrchestratorError::InvalidOperation(
+                "Cannot resume worker: run is paused".into(),
+            ));
+        }
+
+        // Get worker info
+        let worker = state
+            .get_worker(worker_name)
+            .map_err(|e| OrchestratorError::State(e.to_string()))?
+            .ok_or_else(|| OrchestratorError::WorkerNotFound(worker_name.to_string()))?;
+
+        // Get runner config for this worker (from stored configs or fallback to global)
+        let runner_config = state
+            .get_runner_config_for_worker(worker_name, &self.config)
+            .unwrap_or_default();
+        let runner: Box<dyn Runner> = create_runner(&runner_config);
+
+        // 1. Check if already running
+        if let (Some(ref runner_id), Some(ref runner_type)) =
+            (&worker.runner_id, &worker.runner_type)
+        {
+            let handle = WorkerHandle {
+                worker_name: worker_name.to_string(),
+                runner_id: runner_id.clone(),
+                runner_type: runner_type.clone(),
+            };
+            if runner.is_alive(&handle).await {
+                tracing::info!(
+                    "resume_worker: worker '{}' is already running, skipping spawn",
+                    worker_name
+                );
+                return Ok(());
+            }
+        }
+
+        // 2. Restore archives using unified archive strategy (for ephemeral runners)
+        if runner.is_ephemeral() {
+            match create_archive_strategy(&runner_config, &self.config.storage).await {
+                Ok(strategy) => {
+                    // Skip if no-op strategy (files persist on disk)
+                    if !strategy.is_noop() {
+                        // Restore work directory snapshot
+                        if let Some(work_dir_snapshot) =
+                            state_handle.and_then(|h| h.work_dir.as_ref())
+                        {
+                            tracing::info!(
+                                "resume_worker: restoring work dir for ephemeral worker '{}'",
+                                worker_name
+                            );
+
+                            let archive_handle = ArchiveHandle {
+                                strategy_type: work_dir_snapshot.strategy_type.clone(),
+                                storage_id: work_dir_snapshot.storage_id.clone(),
+                                size_bytes: work_dir_snapshot.size_bytes,
+                            };
+
+                            if let Err(e) = strategy.restore(&archive_handle, work_dir).await {
+                                tracing::warn!(
+                                    "resume_worker: failed to restore work dir for '{}': {}",
+                                    worker_name,
+                                    e
+                                );
+                            } else {
+                                tracing::info!(
+                                    "resume_worker: restored {} work dir for '{}': {}",
+                                    strategy.strategy_type(),
+                                    worker_name,
+                                    work_dir_snapshot.storage_id
+                                );
+
+                                // Delete the archive after successful restore
+                                if let Err(e) = strategy.delete(&archive_handle).await {
+                                    tracing::warn!(
+                                        "resume_worker: failed to delete archive {} after restore: {}",
+                                        work_dir_snapshot.storage_id,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+
+                        // Restore agent session
+                        if let Some(agent_snapshot) =
+                            state_handle.and_then(|h| h.agent_session.as_ref())
+                        {
+                            // Only restore if there's actual archived data
+                            if !agent_snapshot.storage_id.is_empty() {
+                                tracing::info!(
+                                    "resume_worker: restoring agent session for '{}' (session_id: {})",
+                                    worker_name,
+                                    agent_snapshot.session_id
+                                );
+
+                                let target_session_dir = host_session_path(&run_dir, worker_name);
+                                let archive_handle = ArchiveHandle {
+                                    strategy_type: strategy.strategy_type().to_string(),
+                                    storage_id: agent_snapshot.storage_id.clone(),
+                                    size_bytes: None,
+                                };
+
+                                if let Err(e) =
+                                    strategy.restore(&archive_handle, &target_session_dir).await
+                                {
+                                    tracing::warn!(
+                                        "resume_worker: failed to restore agent session for '{}': {}",
+                                        worker_name,
+                                        e
+                                    );
+                                } else {
+                                    tracing::info!(
+                                        "resume_worker: restored {} agent session for '{}'",
+                                        strategy.strategy_type(),
+                                        worker_name
+                                    );
+
+                                    // Delete the archive after successful restore
+                                    if let Err(e) = strategy.delete(&archive_handle).await {
+                                        tracing::warn!(
+                                            "resume_worker: failed to delete session archive after restore: {}",
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "resume_worker: no archive strategy for '{}' (expected for local): {}",
+                        worker_name,
+                        e
+                    );
+                }
+            }
+        }
+
+        // 4. Clear state handle from DB after restoration
+        if state_handle.is_some() {
+            let _ = state.update_worker(
+                worker_name,
+                WorkerUpdate {
+                    state_handle: Some(None),
+                    ..Default::default()
+                },
+            );
+        }
+
+        // 5. Get all workers for leader/teammates info
+        let workers = state
+            .get_workers()
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+        // Determine if multi-worker mode
+        let is_multi_worker = workers.len() > 1
+            || state
+                .get_worker_scale()
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse::<usize>().ok())
+                .map(|max| max > 1)
+                .unwrap_or(false);
+
+        let leader_name = workers.first().map(|w| w.name.clone());
+
+        // Build teammates list (all workers except this one)
+        let teammates: Option<Vec<String>> = if is_multi_worker {
+            Some(
+                workers
+                    .iter()
+                    .filter(|w| w.name != worker_name)
+                    .map(|w| w.name.clone())
+                    .collect(),
+            )
+        } else {
+            None
+        };
+
+        // 6. Spawn worker
+        let agent_command = get_agent_command();
+        let files = Files::new(&run_dir);
+
+        // Collect API keys from environment for Docker/remote runners
+        let env_vars: HashMap<String, String> = std::env::vars()
+            .filter(|(k, _)| {
+                k.starts_with("ANTHROPIC_") || k.starts_with("OPENAI_") || k.starts_with("CLAUDE_")
+            })
+            .collect();
+
+        let spawn_config = RunnerSpawnConfig {
+            run_name: run_name.to_string(),
+            worker_name: worker_name.to_string(),
+            work_dir: work_dir.to_path_buf(),
+            run_dir: run_dir.clone(),
+            spec_path: files.spec(),
+            agent_command,
+            is_leader: false, // Resumed workers are never leader
+            leader_name,
+            teammates,
+            resume_session_id: resume_session_id.map(String::from),
+            env_vars: Some(env_vars),
+            coordinator_url: None,
+            tailscale_authkey: None,
+            credentials: None,
+        };
+
+        // Spawn via runner
+        match runner.spawn(&spawn_config).await {
+            Ok(result) => {
+                // Update worker with PID and runner info
+                let pid = result.pid.map(|p| p as i64);
+                state
+                    .update_worker(
+                        worker_name,
+                        WorkerUpdate {
+                            pid,
+                            runner_id: Some(result.handle.runner_id.clone()),
+                            runner_type: Some(result.handle.runner_type.clone()),
+                            status: Some(crate::core::state::WorkerStatus::Working),
+                            ..Default::default()
+                        },
+                    )
+                    .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+                tracing::info!(
+                    "resume_worker: spawned '{}' (runner_id: {}, runner_type: {})",
+                    worker_name,
+                    result.handle.runner_id,
+                    result.handle.runner_type
+                );
+
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!("resume_worker: failed to spawn '{}': {}", worker_name, e);
+                Err(OrchestratorError::Other(format!(
+                    "Failed to resume worker '{}': {}",
+                    worker_name, e
+                )))
+            }
+        }
     }
 }

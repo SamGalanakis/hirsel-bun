@@ -3,6 +3,7 @@
 //! These commands are used by AI agents running inside worker tmux sessions
 //! to communicate with the user and other workers via message threads.
 
+use crate::core::state::{WorkerStatus, WorkerUpdate};
 use crate::core::{Files, SQLiteState};
 use serde_json::json;
 use std::path::PathBuf;
@@ -46,25 +47,73 @@ fn get_worker_name() -> MsgResult<String> {
 
 /// Send a message to a thread
 ///
-/// If `wait` is true, the message is marked as waiting for a reply and
-/// the function polls until a response is received.
-pub fn send(thread: &str, message: &str, wait: bool) -> MsgResult<serde_json::Value> {
+/// When sending to the "user" thread with HITL mode enabled:
+/// - The worker is marked as waiting for user input
+/// - Based on pause_mode, either just this worker or all workers are paused
+/// - The function blocks until the user resumes the worker(s)
+///
+/// When sending to "user" with HITL disabled (YOLO mode):
+/// - The function polls for a reply and returns immediately when one arrives
+///
+/// For other threads (group, learnings), messages are sent without waiting.
+pub fn send(thread: &str, message: &str) -> MsgResult<serde_json::Value> {
     let run_dir = get_run_dir()?;
     let worker_name = get_worker_name()?;
     let files = Files::new(&run_dir);
     let state = SQLiteState::new(files.db_path())?;
 
-    // Add the message
-    let msg_id = state.add_message(thread, &worker_name, message, wait)?;
+    let is_user_dm = thread == "user";
 
-    if wait {
-        // Poll for reply
-        let reply = poll_for_reply(&state, thread, &worker_name, msg_id)?;
-        Ok(json!({
-            "success": true,
-            "message_id": msg_id,
-            "reply": reply
-        }))
+    // Translate "user" thread to worker's own DM thread
+    let actual_thread = if is_user_dm {
+        worker_name.as_str()
+    } else {
+        thread
+    };
+
+    // Add the message (waiting flag set for user DMs)
+    let msg_id = state.add_message(actual_thread, &worker_name, message, is_user_dm)?;
+
+    // Only wait for reply when messaging the user
+    if is_user_dm {
+        let hitl_enabled = state.get_human_in_the_loop().unwrap_or(true);
+
+        if hitl_enabled {
+            // HITL mode: Set worker as waiting and optionally pause others
+            state.update_worker(
+                &worker_name,
+                WorkerUpdate {
+                    status: Some(WorkerStatus::Awaiting),
+                    hitl_waiting: Some(true),
+                    waiting_thread: Some(actual_thread.to_string()),
+                    ..Default::default()
+                },
+            )?;
+
+            // Check pause_mode to determine if we should pause all workers
+            let pause_mode = state
+                .get_pause_mode()
+                .unwrap_or_else(|_| "sender".to_string());
+            if pause_mode == "all" {
+                state.pause_all_workers("Worker requested human input")?;
+            }
+
+            // Poll until hitl_waiting is cleared (by user resume action)
+            let reply = poll_for_hitl_resume(&state, actual_thread, &worker_name, msg_id)?;
+            Ok(json!({
+                "success": true,
+                "message_id": msg_id,
+                "reply": reply
+            }))
+        } else {
+            // YOLO mode: Just poll for reply without pausing
+            let reply = poll_for_reply(&state, actual_thread, &worker_name, msg_id)?;
+            Ok(json!({
+                "success": true,
+                "message_id": msg_id,
+                "reply": reply
+            }))
+        }
     } else {
         Ok(json!({
             "success": true,
@@ -73,7 +122,7 @@ pub fn send(thread: &str, message: &str, wait: bool) -> MsgResult<serde_json::Va
     }
 }
 
-/// Poll for a reply to a waiting message
+/// Poll for a reply to a waiting message (YOLO mode - no HITL)
 fn poll_for_reply(
     state: &SQLiteState,
     thread: &str,
@@ -106,6 +155,50 @@ fn poll_for_reply(
 
     // Timeout - no reply received
     Ok(None)
+}
+
+/// Poll until HITL waiting flag is cleared by user resume action
+///
+/// In HITL mode, workers don't automatically wake up when a reply arrives.
+/// Instead, they wait until the user explicitly resumes them (clearing hitl_waiting).
+/// Once resumed, this function returns any reply that was received.
+fn poll_for_hitl_resume(
+    state: &SQLiteState,
+    thread: &str,
+    worker_name: &str,
+    sent_msg_id: i64,
+) -> MsgResult<Option<serde_json::Value>> {
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    let poll_interval = Duration::from_secs(2);
+    // No timeout for HITL - wait indefinitely until resumed
+    // (In practice, the run may be cancelled or timed out externally)
+
+    loop {
+        // Check if hitl_waiting has been cleared (by user resume action)
+        if let Ok(Some(worker)) = state.get_worker(worker_name) {
+            if !worker.hitl_waiting {
+                // Worker has been resumed - check for any reply
+                let messages = state.get_messages(thread, 100)?;
+                for msg in messages {
+                    if msg.id > sent_msg_id && msg.sender != worker_name {
+                        // Found a reply
+                        return Ok(Some(json!({
+                            "id": msg.id,
+                            "sender": msg.sender,
+                            "content": msg.content,
+                            "timestamp": msg.timestamp
+                        })));
+                    }
+                }
+                // Resumed but no reply yet - return None
+                return Ok(None);
+            }
+        }
+
+        sleep(poll_interval);
+    }
 }
 
 /// Read messages from a thread (or all threads if none specified)
@@ -237,8 +330,8 @@ pub fn inbox() -> MsgResult<serde_json::Value> {
 }
 
 /// Execute a worker message command and print JSON output
-pub fn execute_send(thread: &str, message: &str, wait: bool) {
-    match send(thread, message, wait) {
+pub fn execute_send(thread: &str, message: &str) {
+    match send(thread, message) {
         Ok(result) => println!("{}", serde_json::to_string_pretty(&result).unwrap()),
         Err(e) => {
             let error = json!({

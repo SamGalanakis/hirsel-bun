@@ -12,7 +12,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -20,8 +19,12 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 
-use super::lifecycle::{LifecycleEvent, LifecycleManager, LocalLifecycleManager};
-use super::state::{SQLiteState, Status, WorkerStatus, WorkerUpdate};
+use super::lifecycle::{LifecycleManager, LocalLifecycleManager};
+use super::state::{SQLiteState, Status};
+use super::{
+    eval_routes, message_routes, task_routes,
+    worker_routes::{self, ReasonRequest, SuccessResponse},
+};
 
 // =============================================================================
 // Shared State
@@ -79,17 +82,6 @@ fn default_location() -> String {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct WorkerUpdateRequest {
-    pub pid: Option<i64>,
-    pub session_id: Option<String>,
-    pub status: Option<String>,
-    pub waiting_thread: Option<String>,
-    pub needs_restart: Option<bool>,
-    pub location: Option<String>,
-    pub last_heartbeat: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct MessageCreateRequest {
     pub thread: String,
     pub sender: String,
@@ -120,34 +112,6 @@ pub struct EvalCompleteRequest {
 #[derive(Debug, Deserialize)]
 pub struct TokensRequest {
     pub tokens: i64,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ReasonRequest {
-    pub reason: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SuccessResponse {
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-impl SuccessResponse {
-    pub fn ok() -> Self {
-        Self {
-            success: true,
-            error: None,
-        }
-    }
-
-    pub fn err(msg: impl Into<String>) -> Self {
-        Self {
-            success: false,
-            error: Some(msg.into()),
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -327,12 +291,12 @@ async fn set_status(
 }
 
 // =============================================================================
-// Task Handlers
+// Task Handlers - using shared logic from task_routes
 // =============================================================================
 
 async fn list_tasks(State(api): State<Arc<ApiState>>) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let tasks = state.get_tasks().map_err(|e| anyhow::anyhow!("{}", e))?;
+    let tasks = task_routes::list_tasks(&state).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "tasks": tasks })))
 }
 
@@ -341,20 +305,19 @@ async fn create_task(
     Json(req): Json<TaskCreateRequest>,
 ) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    // Convert Vec<String> to Vec<&str> for the add_task call
     let blocked_by_refs: Option<Vec<&str>> = req
         .blocked_by
         .as_ref()
         .map(|v| v.iter().map(|s| s.as_str()).collect());
     let blocked_by_slice: Option<&[&str]> = blocked_by_refs.as_deref();
-    state
-        .add_task(
-            &req.task_id,
-            &req.name,
-            req.parent_id.as_deref(),
-            blocked_by_slice,
-        )
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    task_routes::create_task(
+        &state,
+        &req.task_id,
+        &req.name,
+        req.parent_id.as_deref(),
+        blocked_by_slice,
+    )
+    .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }
 
@@ -362,9 +325,7 @@ async fn get_claimable_tasks(
     State(api): State<Arc<ApiState>>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let tasks = state
-        .get_claimable_tasks()
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let tasks = task_routes::get_claimable_tasks(&state).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "tasks": tasks })))
 }
 
@@ -373,9 +334,7 @@ async fn get_task(
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let task = state
-        .get_task(&task_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let task = task_routes::get_task(&state, &task_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     match task {
         Some(t) => Ok(Json(serde_json::json!({ "task": t }))),
         None => Err(anyhow::anyhow!("Task '{}' not found", task_id).into()),
@@ -387,9 +346,7 @@ async fn delete_task(
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    state
-        .delete_task(&task_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    task_routes::delete_task(&state, &task_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }
 
@@ -399,8 +356,7 @@ async fn claim_task(
     Json(req): Json<WorkerNameRequest>,
 ) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    state
-        .claim_task(&task_id, &req.worker_name)
+    task_routes::claim_task(&state, &task_id, &req.worker_name)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }
@@ -411,8 +367,7 @@ async fn complete_task(
     Json(req): Json<WorkerNameRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    state
-        .complete_task(&task_id, &req.worker_name)
+    task_routes::complete_task(&state, &task_id, &req.worker_name)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "success": () })))
 }
@@ -423,8 +378,7 @@ async fn unclaim_task(
     Json(req): Json<WorkerNameRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    state
-        .unclaim_task(&task_id, &req.worker_name)
+    task_routes::unclaim_task(&state, &task_id, &req.worker_name)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "success": () })))
 }
@@ -434,9 +388,8 @@ async fn is_task_blocked(
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let blocked = state
-        .is_task_blocked(&task_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let blocked =
+        task_routes::is_task_blocked(&state, &task_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "blocked": blocked })))
 }
 
@@ -445,9 +398,8 @@ async fn get_blockers(
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let blockers = state
-        .get_blockers(&task_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let blockers =
+        task_routes::get_blockers(&state, &task_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "blockers": blockers })))
 }
 
@@ -456,9 +408,7 @@ async fn has_children(
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let has = state
-        .has_children(&task_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let has = task_routes::has_children(&state, &task_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "has_children": has })))
 }
 
@@ -467,9 +417,8 @@ async fn get_children(
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let children = state
-        .get_children(&task_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let children =
+        task_routes::get_children(&state, &task_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "children": children })))
 }
 
@@ -478,9 +427,7 @@ async fn set_pending_done(
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    state
-        .set_task_pending_done(&task_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    task_routes::set_pending_done(&state, &task_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }
 
@@ -489,9 +436,7 @@ async fn clear_pending_done(
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    state
-        .clear_task_pending_done(&task_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    task_routes::clear_pending_done(&state, &task_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }
 
@@ -500,9 +445,7 @@ async fn reopen_task(
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    state
-        .reopen_task(&task_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    task_routes::reopen_task(&state, &task_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "success": () })))
 }
 
@@ -512,19 +455,18 @@ async fn set_task_tokens(
     Json(req): Json<TokensRequest>,
 ) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    state
-        .set_task_tokens(&task_id, req.tokens)
+    task_routes::set_task_tokens(&state, &task_id, req.tokens)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }
 
 // =============================================================================
-// Worker Handlers
+// Worker Handlers - using shared logic from worker_routes
 // =============================================================================
 
 async fn list_workers(State(api): State<Arc<ApiState>>) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let workers = state.get_workers().map_err(|e| anyhow::anyhow!("{}", e))?;
+    let workers = worker_routes::list_workers(&state).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "workers": workers })))
 }
 
@@ -533,8 +475,7 @@ async fn create_worker(
     Json(req): Json<WorkerCreateRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let worker = state
-        .add_worker(&req.name, &req.work_dir, &req.location)
+    let worker = worker_routes::create_worker(&state, &req.name, &req.work_dir, &req.location)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "worker": worker })))
 }
@@ -543,17 +484,14 @@ async fn get_active_workers(
     State(api): State<Arc<ApiState>>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let workers = state
-        .get_active_workers()
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let workers =
+        worker_routes::list_active_workers(&state).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "workers": workers })))
 }
 
 async fn all_workers_done(State(api): State<Arc<ApiState>>) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    // Check if all workers are in "awaiting" status (equivalent to done in Python)
-    let workers = state.get_workers().map_err(|e| anyhow::anyhow!("{}", e))?;
-    let all_done = workers.iter().all(|w| w.status == WorkerStatus::Awaiting);
+    let all_done = worker_routes::all_workers_done(&state).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "all_done": all_done })))
 }
 
@@ -562,17 +500,13 @@ async fn pause_all_workers(
     Json(req): Json<ReasonRequest>,
 ) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    state
-        .pause_all_workers(&req.reason)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    worker_routes::pause_all_workers(&state, &req.reason).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }
 
 async fn resume_all_workers(State(api): State<Arc<ApiState>>) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    state
-        .resume_all_workers()
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    worker_routes::resume_all_workers(&state).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }
 
@@ -581,9 +515,7 @@ async fn get_worker(
     Path(name): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let worker = state
-        .get_worker(&name)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let worker = worker_routes::get_worker(&state, &name).map_err(|e| anyhow::anyhow!("{}", e))?;
     match worker {
         Some(w) => Ok(Json(serde_json::json!({ "worker": w }))),
         None => Err(anyhow::anyhow!("Worker '{}' not found", name).into()),
@@ -593,55 +525,21 @@ async fn get_worker(
 async fn update_worker(
     State(api): State<Arc<ApiState>>,
     Path(name): Path<String>,
-    Json(req): Json<WorkerUpdateRequest>,
+    Json(req): Json<worker_routes::UpdateWorkerRequest>,
 ) -> ApiResult<Json<SuccessResponse>> {
-    // Check if status is being set to Awaiting
-    let old_status = {
-        let state = api.state.lock().await;
-        state.get_worker(&name).ok().flatten().map(|w| w.status)
-    };
+    // Create lifecycle manager for handling status transitions
+    let agent_command = crate::cli::config::get_agent_command();
+    let lifecycle =
+        LocalLifecycleManager::new(&api.run_name, api.run_dir.clone(), agent_command).ok();
 
-    let new_status = req.status.as_ref().and_then(|s| WorkerStatus::from_str(s));
-
-    {
-        let state = api.state.lock().await;
-
-        // Build WorkerUpdate from request
-        let updates = WorkerUpdate {
-            pid: req.pid,
-            runner_id: None,
-            runner_type: None,
-            session_id: req.session_id,
-            status: new_status,
-            waiting_thread: req.waiting_thread,
-            needs_restart: req.needs_restart,
-            last_heartbeat: req.last_heartbeat,
-            hitl_waiting: None,
-        };
-
-        state
-            .update_worker(&name, updates)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
-    }
-    // Lock released here
-
-    // If worker status changed to Awaiting, use LifecycleManager to handle it
-    if let (Some(old), Some(new)) = (old_status, new_status) {
-        if old != new && new == WorkerStatus::Awaiting {
-            // Get agent command from config
-            let agent_command = crate::cli::config::get_agent_command();
-
-            if let Ok(lifecycle) =
-                LocalLifecycleManager::new(&api.run_name, api.run_dir.clone(), agent_command)
-            {
-                let _ = lifecycle.process_event(LifecycleEvent::WorkerStatusChanged {
-                    worker_name: name.clone(),
-                    old,
-                    new,
-                });
-            }
-        }
-    }
+    let state = api.state.lock().await;
+    worker_routes::update_worker(
+        &state,
+        &name,
+        &req,
+        lifecycle.as_ref().map(|l| l as &dyn LifecycleManager),
+    )
+    .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     Ok(Json(SuccessResponse::ok()))
 }
@@ -651,9 +549,8 @@ async fn get_claimed_task(
     Path(name): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let task = state
-        .get_claimed_task(&name)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let task =
+        worker_routes::get_claimed_task(&state, &name).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "task": task })))
 }
 
@@ -662,34 +559,20 @@ async fn worker_heartbeat(
     Path(name): Path<String>,
 ) -> ApiResult<Json<StatusResponse>> {
     let state = api.state.lock().await;
-    let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%S%.6f").to_string();
-    let updates = WorkerUpdate {
-        pid: None,
-        runner_id: None,
-        runner_type: None,
-        session_id: None,
-        status: None,
-        waiting_thread: None,
-        needs_restart: None,
-        last_heartbeat: Some(timestamp),
-        hitl_waiting: None,
-    };
-    state
-        .update_worker(&name, updates)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
-    let status = state.status().map_err(|e| anyhow::anyhow!("{}", e))?;
+    let status =
+        worker_routes::worker_heartbeat(&state, &name).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(StatusResponse {
         status: status.to_string(),
     }))
 }
 
 // =============================================================================
-// Message Handlers
+// Message Handlers - using shared logic from message_routes
 // =============================================================================
 
 async fn list_threads(State(api): State<Arc<ApiState>>) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let threads = state.get_threads().map_err(|e| anyhow::anyhow!("{}", e))?;
+    let threads = message_routes::list_threads(&state).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "threads": threads })))
 }
 
@@ -698,9 +581,9 @@ async fn create_message(
     Json(req): Json<MessageCreateRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let id = state
-        .add_message(&req.thread, &req.sender, &req.content, req.waiting)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let id =
+        message_routes::create_message(&state, &req.thread, &req.sender, &req.content, req.waiting)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "id": id })))
 }
 
@@ -710,8 +593,7 @@ async fn get_messages(
     Query(query): Query<LimitQuery>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let messages = state
-        .get_messages(&thread, query.limit)
+    let messages = message_routes::get_messages(&state, &thread, query.limit)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "messages": messages })))
 }
@@ -721,8 +603,7 @@ async fn get_unread_messages(
     Path((thread, reader)): Path<(String, String)>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let messages = state
-        .get_unread_messages(&thread, &reader)
+    let messages = message_routes::get_unread_messages(&state, &thread, &reader)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "messages": messages })))
 }
@@ -732,9 +613,8 @@ async fn get_all_unread(
     Path(reader): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let messages = state
-        .get_all_unread_messages(&reader)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let messages =
+        message_routes::get_all_unread(&state, &reader).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "messages": messages })))
 }
 
@@ -744,14 +624,13 @@ async fn mark_messages_read(
     Json(req): Json<MessageMarkReadRequest>,
 ) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    state
-        .mark_messages_read(&thread, &req.reader, req.up_to_id)
+    message_routes::mark_messages_read(&state, &thread, &req.reader, req.up_to_id)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }
 
 // =============================================================================
-// Eval Handlers
+// Eval Handlers - using shared logic from eval_routes
 // =============================================================================
 
 async fn list_evals(
@@ -759,9 +638,8 @@ async fn list_evals(
     Query(query): Query<LimitQuery>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let evals = state
-        .get_evals(query.limit)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let evals =
+        eval_routes::list_evals(&state, query.limit).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "evals": evals })))
 }
 
@@ -770,21 +648,19 @@ async fn create_eval(
     Json(req): Json<EvalCreateRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let id = state
-        .start_eval(
-            &req.branch,
-            req.eval_name.as_deref(),
-            req.log_file.as_deref(),
-        )
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let id = eval_routes::start_eval(
+        &state,
+        &req.branch,
+        req.eval_name.as_deref(),
+        req.log_file.as_deref(),
+    )
+    .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "id": id })))
 }
 
 async fn get_running_eval(State(api): State<Arc<ApiState>>) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let eval = state
-        .get_running_eval()
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let eval = eval_routes::get_running_eval(&state).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "eval": eval })))
 }
 
@@ -793,8 +669,7 @@ async fn cancel_running_evals(
     Json(req): Json<ReasonRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let count = state
-        .cancel_running_evals(&req.reason)
+    let count = eval_routes::cancel_running_evals(&state, &req.reason)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "count": count })))
 }
@@ -804,9 +679,7 @@ async fn get_eval(
     Path(eval_id): Path<i64>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let state = api.state.lock().await;
-    let eval = state
-        .get_eval(eval_id)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let eval = eval_routes::get_eval(&state, eval_id).map_err(|e| anyhow::anyhow!("{}", e))?;
     match eval {
         Some(e) => Ok(Json(serde_json::json!({ "eval": e }))),
         None => Err(anyhow::anyhow!("Eval {} not found", eval_id).into()),
@@ -819,8 +692,7 @@ async fn complete_eval(
     Json(req): Json<EvalCompleteRequest>,
 ) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
-    state
-        .complete_eval(eval_id, req.success, &req.feedback)
+    eval_routes::complete_eval(&state, eval_id, req.success, &req.feedback)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }

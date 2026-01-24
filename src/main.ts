@@ -50,12 +50,7 @@ import {
 } from './lib/icons';
 
 // Import sheep avatar utilities
-import {
-  generateAgentSheepSvg,
-  generateSheepSvg,
-  getHatName,
-  getWorkerSheepSvg,
-} from './lib/sheep-avatar';
+import { generateSheepSvg, getHatName, getWorkerSheepSvg } from './lib/sheep-avatar';
 
 // Import keyboard shortcuts utilities
 import { formatBinding, getShortcuts } from './lib/shortcuts';
@@ -80,7 +75,6 @@ window.getWorkerStatusIcon = getWorkerStatusIcon;
 window.generateSheepSvg = generateSheepSvg;
 window.getWorkerSheepSvg = getWorkerSheepSvg;
 window.getHatName = getHatName;
-window.generateAgentSheepSvg = generateAgentSheepSvg;
 
 // Export keyboard shortcuts utilities globally for Alpine templates
 window.getShortcuts = getShortcuts;
@@ -205,7 +199,7 @@ listen('got-dom-content', async () => {
 
 // Handle get-element-position requests
 interface ElementPositionRequest {
-  selectorType: 'id' | 'class' | 'tag' | 'text';
+  selectorType: 'id' | 'class' | 'tag' | 'text' | 'data-test';
   selectorValue: string;
   shouldClick?: boolean;
   rawCoordinates?: boolean;
@@ -241,6 +235,9 @@ listen<ElementPositionRequest>('get-element-position', async (event) => {
         }
         break;
       }
+      case 'data-test':
+        element = document.querySelector(`[data-test="${selectorValue}"]`);
+        break;
     }
 
     if (!element) {
@@ -293,7 +290,7 @@ listen<ElementPositionRequest>('get-element-position', async (event) => {
 
 // Handle send-text-to-element requests
 interface SendTextRequest {
-  selectorType: 'id' | 'class' | 'tag' | 'text';
+  selectorType: 'id' | 'class' | 'tag' | 'text' | 'data-test';
   selectorValue: string;
   text: string;
   delayMs?: number;
@@ -329,6 +326,9 @@ listen<SendTextRequest>('send-text-to-element', async (event) => {
         }
         break;
       }
+      case 'data-test':
+        element = document.querySelector(`[data-test="${selectorValue}"]`);
+        break;
     }
 
     if (!element) {

@@ -7,8 +7,12 @@ import { generateSheepSvg } from '../sheep-avatar';
 import type { Message, SheepConfig, ThreadSummary, WorkerDisplay } from '../types';
 import { formatDate, formatTimeHHMM } from '../utils/formatters';
 
-// Known group chat thread names (user is the channel for workers to message the human)
-const GROUP_CHAT_NAMES = ['user', 'group', 'learnings'];
+// Known group chat thread names (shown under "Group Chats" section)
+const GROUP_CHAT_NAMES = ['group', 'learnings'];
+
+// Hidden thread names (should not appear in UI)
+// "user" thread is hidden - workers send to their own DM thread instead
+const HIDDEN_THREAD_NAMES = ['user'];
 
 // Memoization cache for sender color hashing
 const senderColorCache = new Map<string, string>();
@@ -106,17 +110,22 @@ export function chatPanel() {
       this._eventCleanups = [];
     },
 
-    // Get group chat threads (learning, group)
-    get groupChats(): ThreadSummary[] {
-      return this.threads.filter((t) => GROUP_CHAT_NAMES.includes(t.name));
+    // Get group chat threads (group, learnings) - always shows both even if empty
+    get groupChats(): Array<{ name: string; thread: ThreadSummary | null }> {
+      return GROUP_CHAT_NAMES.map((name) => ({
+        name,
+        thread: this.threads.find((t) => t.name === name) || null,
+      }));
     },
 
     // Get DM threads (worker names) - includes workers without threads yet
     get dmThreads(): Array<{ name: string; thread: ThreadSummary | null }> {
       const dms: Array<{ name: string; thread: ThreadSummary | null }> = [];
 
-      // Add workers that have threads
-      const workerThreads = this.threads.filter((t) => !GROUP_CHAT_NAMES.includes(t.name));
+      // Add workers that have threads (exclude group chats and hidden threads like "user")
+      const workerThreads = this.threads.filter(
+        (t) => !GROUP_CHAT_NAMES.includes(t.name) && !HIDDEN_THREAD_NAMES.includes(t.name),
+      );
       for (const thread of workerThreads) {
         dms.push({ name: thread.name, thread });
       }

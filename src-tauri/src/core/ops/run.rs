@@ -5,9 +5,10 @@
 use std::fs;
 use std::path::PathBuf;
 
-use crate::core::config;
+use crate::core::config::{self, Config};
 use crate::core::gyp_chat::GypChatStore;
 use crate::core::lifecycle::LocalLifecycleManager;
+use crate::core::snapshot::{create_archive_strategy, ArchiveHandle, WorkerStateHandle};
 use crate::core::state::SQLiteState;
 use crate::core::Files;
 
@@ -30,7 +31,7 @@ use super::OpsError;
 ///
 /// * `Ok(DeleteRunResult)` - Details about what was deleted
 /// * `Err(OpsError)` - If the operation failed
-pub fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsError> {
+pub async fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsError> {
     let run_dir = config::run_dir(&config.run_name);
 
     // Check run exists
@@ -41,16 +42,55 @@ pub fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsError> 
     let mut result = DeleteRunResult {
         run_name: config.run_name.clone(),
         workers_killed: 0,
-        gyp_chat_deleted: false,
-        project_remote_removed: false,
     };
 
-    // Try to get project path and kill workers
+    // Try to get project path, kill workers, and clean up snapshots
     let project_path = if let Ok(lifecycle) = LocalLifecycleManager::new(
         &config.run_name,
         run_dir.clone(),
         vec![], // Agent command not needed for kill
     ) {
+        // Clean up any snapshots before killing workers
+        if let Ok(workers) = lifecycle.state().get_workers() {
+            let (app_config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
+
+            for worker in workers {
+                if let Some(ref state_handle_json) = worker.state_handle {
+                    if let Ok(state_handle) =
+                        serde_json::from_str::<WorkerStateHandle>(state_handle_json)
+                    {
+                        // Delete archived work directory if present
+                        if let Some(ref work_dir_snapshot) = state_handle.work_dir {
+                            let runner_config = app_config.get_runner_for_worker(&worker.name);
+                            if let Ok(strategy) =
+                                create_archive_strategy(&runner_config, &app_config.storage).await
+                            {
+                                let handle = ArchiveHandle {
+                                    strategy_type: work_dir_snapshot.strategy_type.clone(),
+                                    storage_id: work_dir_snapshot.storage_id.clone(),
+                                    size_bytes: work_dir_snapshot.size_bytes,
+                                };
+                                if let Err(e) = strategy.delete(&handle).await {
+                                    tracing::warn!(
+                                        "Failed to delete archive {} for worker {}: {}",
+                                        work_dir_snapshot.storage_id,
+                                        worker.name,
+                                        e
+                                    );
+                                } else {
+                                    tracing::debug!(
+                                        "Deleted archive {} for worker {}",
+                                        work_dir_snapshot.storage_id,
+                                        worker.name
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Kill any running worker processes using lifecycle manager
         if let Ok(killed) = lifecycle.kill_all_workers() {
             result.workers_killed = killed.len();
@@ -69,31 +109,25 @@ pub fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsError> 
         None
     };
 
-    // Remove hirsel_work remote from project repo if requested
-    if config.remove_project_remote {
-        if let Some(project_path_str) = &project_path {
-            let project_path = PathBuf::from(project_path_str);
-            if project_path.exists() {
-                if let Ok(repo) = git2::Repository::open(&project_path) {
-                    if repo.remote_delete("hirsel_work").is_ok() {
-                        result.project_remote_removed = true;
-                        tracing::debug!(
-                            "Removed hirsel_work remote from project for run '{}'",
-                            config.run_name
-                        );
-                    }
+    // Remove hirsel_work remote from project repo
+    if let Some(project_path_str) = &project_path {
+        let project_path = PathBuf::from(project_path_str);
+        if project_path.exists() {
+            if let Ok(repo) = git2::Repository::open(&project_path) {
+                if repo.remote_delete("hirsel_work").is_ok() {
+                    tracing::debug!(
+                        "Removed hirsel_work remote from project for run '{}'",
+                        config.run_name
+                    );
                 }
             }
         }
     }
 
-    // Delete Gyp chat history if requested
-    if config.delete_gyp_chat {
-        if let Ok(store) = GypChatStore::open() {
-            if store.delete_run_messages(&config.run_name).is_ok() {
-                result.gyp_chat_deleted = true;
-                tracing::debug!("Deleted GypChat messages for run '{}'", config.run_name);
-            }
+    // Delete Gyp chat history
+    if let Ok(store) = GypChatStore::open() {
+        if store.delete_run_messages(&config.run_name).is_ok() {
+            tracing::debug!("Deleted GypChat messages for run '{}'", config.run_name);
         }
     }
 
@@ -146,8 +180,52 @@ pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
     // Open source database to read settings
     let source_state = SQLiteState::new(source_db_path)?;
 
+    // Read starting_point from source (if stored)
+    let starting_point_json = source_state.get_starting_point().ok().flatten();
+
     // Read settings from source
-    let project_path = source_state.get_project_path().ok().flatten();
+    // For greenfield/gitrepo starting points, don't copy project_path - the cloned draft
+    // will create its own workspace when started. For LocalFolder, keep the external path.
+    let project_path = source_state
+        .get_project_path()
+        .ok()
+        .flatten()
+        .and_then(|p| {
+            // Check if we have starting_point info
+            if let Some(ref sp_json) = starting_point_json {
+                if let Ok(sp) = serde_json::from_str::<crate::core::draft::StartingPoint>(sp_json) {
+                    match sp {
+                        crate::core::draft::StartingPoint::LocalFolder { .. } => {
+                            // External folder - keep the reference
+                            return Some(p);
+                        }
+                        _ => {
+                            // Greenfield or GitRepo - don't copy (internal workspace)
+                            tracing::debug!(
+                                "Skipping project_path for clone - starting_point is {:?}",
+                                sp
+                            );
+                            return None;
+                        }
+                    }
+                }
+            }
+
+            // Fallback: check if project_path is inside source run directory
+            let path = PathBuf::from(&p);
+            let source_dir_canonical = source_dir.canonicalize().ok()?;
+            let path_canonical = path.canonicalize().ok()?;
+
+            if path_canonical.starts_with(&source_dir_canonical) {
+                tracing::debug!(
+                    "Skipping project_path '{}' for clone - it's inside source run directory",
+                    p
+                );
+                None
+            } else {
+                Some(p)
+            }
+        });
     let worker_scale = source_state
         .get_worker_scale()
         .ok()
@@ -156,6 +234,7 @@ pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
     let time_limit_minutes = source_state.get_time_limit_minutes().ok().flatten();
     let human_in_the_loop = source_state.get_human_in_the_loop().unwrap_or(true);
     let max_iterations = source_state.get_max_iterations().ok().flatten();
+    let default_runner = source_state.get_default_runner().ok().flatten();
 
     // Read spec.md from source
     let source_spec_path = source_dir.join("spec.md");
@@ -234,8 +313,16 @@ pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
     if let Some(max_iter) = max_iterations {
         new_state.set_max_iterations(Some(max_iter))?;
     }
+    if let Some(ref runner) = default_runner {
+        new_state.set_default_runner(Some(runner))?;
+    }
     if !spec_content.is_empty() {
         new_state.set_request(Some(&spec_content))?;
+    }
+
+    // Copy starting_point from source (if exists)
+    if let Some(ref sp_json) = starting_point_json {
+        new_state.set_starting_point(Some(sp_json))?;
     }
 
     // Add initial scope task
@@ -251,6 +338,7 @@ pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
         time_limit_minutes,
         human_in_the_loop,
         max_iterations,
+        default_runner,
         spec_content,
         has_eval,
         assets_copied,
@@ -263,25 +351,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_delete_run_config_for_gui() {
-        let config = DeleteRunConfig::for_gui("test-run");
+    fn test_delete_run_config() {
+        let config = DeleteRunConfig::new("test-run");
         assert_eq!(config.run_name, "test-run");
-        assert!(config.delete_gyp_chat);
-        assert!(!config.remove_project_remote);
     }
 
-    #[test]
-    fn test_delete_run_config_for_cli() {
-        let config = DeleteRunConfig::for_cli("test-run");
-        assert_eq!(config.run_name, "test-run");
-        assert!(!config.delete_gyp_chat);
-        assert!(config.remove_project_remote);
-    }
-
-    #[test]
-    fn test_delete_nonexistent_run() {
-        let config = DeleteRunConfig::for_cli("nonexistent-run-12345");
-        let result = delete_run(config);
+    #[tokio::test]
+    async fn test_delete_nonexistent_run() {
+        let config = DeleteRunConfig::new("nonexistent-run-12345");
+        let result = delete_run(config).await;
         assert!(matches!(result, Err(OpsError::RunNotFound(_))));
     }
 

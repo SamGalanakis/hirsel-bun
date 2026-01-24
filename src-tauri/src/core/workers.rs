@@ -547,8 +547,21 @@ pub fn reconcile_stale_workers() -> Vec<(String, String)> {
                     }
                 }
             } else if worker.status == WorkerStatus::Working {
-                // Worker marked as working but has no PID - stale entry
-                // Mark as Paused so it can be resumed
+                // Worker marked as working but has no PID
+                // Skip Docker workers - they use container ID (runner_id) instead of PID
+                let is_docker = worker
+                    .runner_type
+                    .as_ref()
+                    .map(|t| t == "docker")
+                    .unwrap_or(false);
+
+                if is_docker {
+                    // Docker workers are managed by container runtime, not by PID
+                    // TODO: Could check if container is still running via docker ps
+                    continue;
+                }
+
+                // Local worker without PID - stale entry, mark as Paused
                 info!(
                     "[reconcile] Marking stale worker {} in run {} as Paused (no PID)",
                     worker.name, run_name

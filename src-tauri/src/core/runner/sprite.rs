@@ -15,7 +15,7 @@ use tracing::{debug, error, info, warn};
 
 use super::setup::{self, WorkerSetupConfig};
 use super::{
-    Runner, RunnerError, RunnerResult, SpawnResult, SpriteRunnerConfig, WorkerHandle,
+    Runner, RunnerError, RunnerResult, SpawnResult, SpriteHostConfig, WorkerHandle,
     WorkerSpawnConfig,
 };
 
@@ -64,19 +64,19 @@ fn create_project_tarball(project_path: &Path) -> Result<Vec<u8>, std::io::Error
         if entry.file_type().is_file() {
             builder
                 .append_path_with_name(path, relative_path)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                .map_err(std::io::Error::other)?;
         } else if entry.file_type().is_dir() {
             builder
                 .append_dir(relative_path, path)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                .map_err(std::io::Error::other)?;
         }
     }
 
     builder
         .into_inner()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
+        .map_err(std::io::Error::other)?
         .finish()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        .map_err(std::io::Error::other)?;
 
     debug!("Created tarball: {} bytes", buffer.len());
     Ok(buffer)
@@ -485,14 +485,14 @@ impl SpritesClient {
 
 /// Sprite runner - spawns workers on Sprites.dev cloud VMs
 pub struct SpriteRunner {
-    config: SpriteRunnerConfig,
+    config: SpriteHostConfig,
     client: SpritesClient,
 }
 
 impl SpriteRunner {
     /// Create a new sprite runner
-    pub fn new(config: SpriteRunnerConfig) -> Self {
-        // Get token from config, or fall back to SPRITES_TOKEN env var for backwards compatibility
+    pub fn new(config: SpriteHostConfig) -> Self {
+        // Get token from config, or fall back to SPRITES_TOKEN env var
         let token = config.api_token.clone().unwrap_or_else(|| {
             std::env::var("SPRITES_TOKEN").unwrap_or_else(|_| {
                 warn!("No Sprites API token configured and SPRITES_TOKEN env var not set");
@@ -539,7 +539,7 @@ impl Runner for SpriteRunner {
         );
 
         // Step 1: Create sprite (or from checkpoint if configured)
-        let sprite = if let Some(ref checkpoint) = self.config.base_checkpoint {
+        let sprite = if let Some(ref checkpoint) = self.config.checkpoint {
             self.client
                 .create_from_checkpoint(&sprite_name, checkpoint)
                 .await?
@@ -837,6 +837,10 @@ impl Runner for SpriteRunner {
         "sprite"
     }
 
+    fn is_ephemeral(&self) -> bool {
+        true // Sprite VMs are ephemeral
+    }
+
     async fn setup(&self) -> RunnerResult<()> {
         // Verify we have a valid token
         if self.client.token.is_empty() {
@@ -894,7 +898,7 @@ mod tests {
 
     #[test]
     fn test_sprite_runner_type() {
-        let config = SpriteRunnerConfig::default();
+        let config = SpriteHostConfig::default();
         let runner = SpriteRunner::new(config);
         assert_eq!(runner.runner_type(), "sprite");
     }

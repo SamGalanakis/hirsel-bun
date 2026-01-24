@@ -171,8 +171,10 @@ impl Default for FlyHostConfig {
 /// Host configuration - defines where compute runs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
+#[derive(Default)]
 pub enum HostConfig {
     /// Local host - run on this machine
+    #[default]
     Local,
     /// Client host - (remote mode only) SSH back to GUI/CLI machine via Tailscale
     Client,
@@ -182,12 +184,6 @@ pub enum HostConfig {
     Sprite(SpriteHostConfig),
     /// Fly host - run on Fly.io ephemeral machines
     Fly(FlyHostConfig),
-}
-
-impl Default for HostConfig {
-    fn default() -> Self {
-        HostConfig::Local
-    }
 }
 
 impl HostConfig {
@@ -260,7 +256,7 @@ impl Default for HostConfigOrShortcut {
 // =============================================================================
 
 /// Runner configuration using Host + Container model.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RunnerConfig {
     /// Host configuration (where compute runs)
     #[serde(default)]
@@ -268,15 +264,6 @@ pub struct RunnerConfig {
     /// Optional container configuration (Docker)
     #[serde(default)]
     pub container: Option<ContainerConfig>,
-}
-
-impl Default for RunnerConfig {
-    fn default() -> Self {
-        RunnerConfig {
-            host: HostConfigOrShortcut::default(),
-            container: None,
-        }
-    }
 }
 
 impl RunnerConfig {

@@ -1,32 +1,30 @@
 //! Draft-related commands
 //!
-//! Commands for managing drafts: creating, updating, validating repos, and starting runs.
+//! Commands for managing drafts: creating, updating, and starting runs.
+//! Uses the workspace abstraction for initializing draft workspaces.
 
 use super::runs::get_run_detail;
 use super::types::{DraftUpdateRequest, RepoValidation, RunDetail, RunStatus};
+use crate::core::draft::{create_workspace_provider, StartingPoint};
+use crate::core::git;
 use crate::core::names::generate_run_name;
 use crate::core::ops::{clone_run as ops_clone_run, CloneRunConfig};
 use crate::core::{config, state::SQLiteState};
 
 /// Validate a repository path or URL
 ///
-/// Checks if the path/URL is valid, extracts branch information from URLs,
-/// and lists available branches in the repository.
+/// Checks if the path/URL is a valid git repository and returns branch information.
+/// Used for git URL validation when creating a draft from a git repository.
 #[tauri::command]
 pub async fn validate_repo(path: String) -> Result<RepoValidation, String> {
-    use crate::core::git::{
-        get_current_branch, get_repo, is_remote_url, list_branches, list_remote_branches,
-        parse_github_url,
-    };
+    let path = path.trim();
 
-    let trimmed = path.trim();
-
-    if trimmed.is_empty() {
+    if path.is_empty() {
         return Ok(RepoValidation {
             valid: false,
-            error: Some("Path is empty".to_string()),
+            error: Some("Path is required".to_string()),
             is_remote: false,
-            branches: vec![],
+            branches: Vec::new(),
             current_branch: None,
             repo_url: String::new(),
             url_branch: None,
@@ -36,40 +34,22 @@ pub async fn validate_repo(path: String) -> Result<RepoValidation, String> {
         });
     }
 
-    let is_remote = is_remote_url(trimmed);
+    // Check if it's a remote URL
+    let is_remote = git::is_remote_url(path);
 
     if is_remote {
-        // Parse the URL to extract potential branch
-        let parsed = parse_github_url(trimmed);
+        // Parse URL to extract branch if present
+        let parsed = git::parse_github_url(path);
+        let repo_url = parsed.repo_url.clone();
 
-        // Try to list remote branches
-        match list_remote_branches(&parsed.repo_url) {
+        // Try to list branches
+        match git::list_remote_branches(&repo_url) {
             Ok(branches) => {
-                // Check if URL branch exists
-                let url_branch_valid = if let Some(ref branch) = parsed.branch {
-                    branches.iter().any(|b| b == branch)
-                } else {
-                    true // No branch specified is valid
-                };
-
-                // If branch was specified but doesn't exist, return error
-                if parsed.branch.is_some() && !url_branch_valid {
-                    return Ok(RepoValidation {
-                        valid: false,
-                        error: Some(format!(
-                            "Branch '{}' not found in repository",
-                            parsed.branch.as_ref().unwrap()
-                        )),
-                        is_remote: true,
-                        branches,
-                        current_branch: None,
-                        repo_url: parsed.repo_url,
-                        url_branch: parsed.branch,
-                        url_branch_valid: false,
-                        needs_dir_create: false,
-                        needs_git_init: false,
-                    });
-                }
+                let url_branch_valid = parsed
+                    .branch
+                    .as_ref()
+                    .map(|b| branches.contains(b))
+                    .unwrap_or(false);
 
                 Ok(RepoValidation {
                     valid: true,
@@ -77,7 +57,7 @@ pub async fn validate_repo(path: String) -> Result<RepoValidation, String> {
                     is_remote: true,
                     branches,
                     current_branch: None,
-                    repo_url: parsed.repo_url,
+                    repo_url,
                     url_branch: parsed.branch,
                     url_branch_valid,
                     needs_dir_create: false,
@@ -88,9 +68,9 @@ pub async fn validate_repo(path: String) -> Result<RepoValidation, String> {
                 valid: false,
                 error: Some(format!("Failed to access repository: {}", e)),
                 is_remote: true,
-                branches: vec![],
+                branches: Vec::new(),
                 current_branch: None,
-                repo_url: parsed.repo_url,
+                repo_url,
                 url_branch: parsed.branch,
                 url_branch_valid: false,
                 needs_dir_create: false,
@@ -98,111 +78,82 @@ pub async fn validate_repo(path: String) -> Result<RepoValidation, String> {
             }),
         }
     } else {
-        // Local path
-        let path = std::path::Path::new(trimmed);
+        // Local path - check if it exists and is a git repo
+        let local_path = std::path::Path::new(path);
 
-        // Check if directory needs to be created
-        let needs_dir_create = !path.exists();
-
-        // Check if git needs to be initialized (directory exists but no .git)
-        // We check for .git directly, not whether it's inside a git repo
-        let needs_git_init = !needs_dir_create && !path.join(".git").exists();
-
-        // If needs setup, return with flags but valid=false
-        if needs_dir_create || needs_git_init {
+        if !local_path.exists() {
             return Ok(RepoValidation {
                 valid: false,
-                error: None, // No error - just needs setup
+                error: None, // Not an error, just needs creation
                 is_remote: false,
-                branches: vec![],
+                branches: Vec::new(),
                 current_branch: None,
-                repo_url: trimmed.to_string(),
+                repo_url: path.to_string(),
                 url_branch: None,
                 url_branch_valid: false,
-                needs_dir_create,
-                needs_git_init,
+                needs_dir_create: true,
+                needs_git_init: true,
             });
         }
 
-        // Check if it's a git repository (should always succeed now since we checked .git exists)
-        if get_repo(Some(path)).is_err() {
+        let git_dir = local_path.join(".git");
+        if !git_dir.exists() {
             return Ok(RepoValidation {
                 valid: false,
-                error: Some("Failed to open git repository".to_string()),
+                error: None, // Not an error, just needs git init
                 is_remote: false,
-                branches: vec![],
+                branches: Vec::new(),
                 current_branch: None,
-                repo_url: trimmed.to_string(),
+                repo_url: path.to_string(),
+                url_branch: None,
+                url_branch_valid: false,
+                needs_dir_create: false,
+                needs_git_init: true,
+            });
+        }
+
+        // It's a valid local git repo - list branches
+        match git::list_branches(local_path) {
+            Ok(branches) => {
+                let current = git::get_current_branch(local_path).ok();
+                Ok(RepoValidation {
+                    valid: true,
+                    error: None,
+                    is_remote: false,
+                    branches,
+                    current_branch: current,
+                    repo_url: path.to_string(),
+                    url_branch: None,
+                    url_branch_valid: false,
+                    needs_dir_create: false,
+                    needs_git_init: false,
+                })
+            }
+            Err(e) => Ok(RepoValidation {
+                valid: false,
+                error: Some(format!("Failed to read repository: {}", e)),
+                is_remote: false,
+                branches: Vec::new(),
+                current_branch: None,
+                repo_url: path.to_string(),
                 url_branch: None,
                 url_branch_valid: false,
                 needs_dir_create: false,
                 needs_git_init: false,
-            });
+            }),
         }
-
-        // Get branches and current branch
-        let branches = list_branches(path).unwrap_or_default();
-        let current_branch = get_current_branch(path).ok();
-
-        Ok(RepoValidation {
-            valid: true,
-            error: None,
-            is_remote: false,
-            branches,
-            current_branch,
-            repo_url: trimmed.to_string(),
-            url_branch: None,
-            url_branch_valid: false,
-            needs_dir_create: false,
-            needs_git_init: false,
-        })
     }
-}
-
-/// Initialize a project directory for use with Hirsel
-///
-/// Creates the directory if it doesn't exist and initializes a git repository
-/// if needed. Returns updated validation info after setup.
-#[tauri::command]
-pub async fn init_project_repo(path: String) -> Result<RepoValidation, String> {
-    use crate::core::git::{get_current_branch, get_repo, list_branches};
-    use crate::core::ops::ensure_project_directory;
-
-    let trimmed = path.trim();
-    let path = std::path::Path::new(trimmed);
-
-    // Use the shared ops implementation to create dir and init git
-    ensure_project_directory(path).map_err(|e| e.to_string())?;
-
-    // Verify git repo is now valid
-    if get_repo(Some(path)).is_err() {
-        return Err("Failed to initialize git repository".to_string());
-    }
-
-    // Get branches and current branch
-    let branches = list_branches(path).unwrap_or_default();
-    let current_branch = get_current_branch(path).ok();
-
-    Ok(RepoValidation {
-        valid: true,
-        error: None,
-        is_remote: false,
-        branches,
-        current_branch,
-        repo_url: trimmed.to_string(),
-        url_branch: None,
-        url_branch_valid: false,
-        needs_dir_create: false,
-        needs_git_init: false,
-    })
 }
 
 /// Create a new draft run
 ///
 /// Creates a draft run with a random friendly name. The draft can be configured
 /// before being started. No workers are spawned until start_draft is called.
+///
+/// Workspace is NOT created here - it's created when start_draft is called with
+/// the user's chosen starting point.
 #[tauri::command]
-pub async fn create_draft(project_path: Option<String>) -> Result<RunDetail, String> {
+pub async fn create_draft() -> Result<RunDetail, String> {
     use crate::core::Files;
     use std::fs;
 
@@ -243,14 +194,14 @@ pub async fn create_draft(project_path: Option<String>) -> Result<RunDetail, Str
         "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n| scope | TODO | | Read spec, create exploration tasks |\n",
     ).map_err(|e| format!("Failed to create tasks file: {}", e))?;
 
-    // Initialize database
+    // Initialize database - NO workspace path yet
     let db_path = run_dir.join("hirsel.db");
     let state =
         SQLiteState::new(db_path).map_err(|e| format!("Failed to create database: {}", e))?;
 
-    // Initialize state with Draft status
+    // Initialize state without workspace path (will be set in start_draft)
     state
-        .init_state(project_path.as_deref())
+        .init_state(None)
         .map_err(|e| format!("Failed to init state: {}", e))?;
     state
         .set_status(crate::core::state::Status::Draft)
@@ -280,7 +231,7 @@ pub async fn create_draft(project_path: Option<String>) -> Result<RunDetail, Str
         name: run_name,
         status: RunStatus::Draft,
         request: None,
-        project_path,
+        project_path: None, // No workspace yet - will be created in start_draft
         remote_url: None,
         branch: None,
         worker_scale: Some("1".to_string()),
@@ -456,17 +407,83 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
     Ok(())
 }
 
+/// Change the starting point for a draft run
+///
+/// Deletes the existing workspace and re-initializes it with a new starting point.
+/// Only works for drafts (not running or completed runs).
+#[tauri::command]
+pub async fn change_starting_point(
+    run_name: String,
+    starting_point: StartingPoint,
+) -> Result<RunDetail, String> {
+    use std::fs;
+
+    let run_dir = config::run_dir(&run_name);
+    let db_path = run_dir.join("hirsel.db");
+
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+
+    let state = SQLiteState::new(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
+
+    // Verify it's a draft
+    let status = state
+        .status()
+        .map_err(|e| format!("Failed to get status: {}", e))?;
+    if status != crate::core::state::Status::Draft {
+        return Err("Can only change starting point for draft runs".to_string());
+    }
+
+    // Delete existing workspace if it exists
+    let workspace_dir = run_dir.join("workspace");
+    if workspace_dir.exists() {
+        fs::remove_dir_all(&workspace_dir)
+            .map_err(|e| format!("Failed to remove existing workspace: {}", e))?;
+    }
+
+    // Clear workspace-related state fields
+    state
+        .clear_project_path()
+        .map_err(|e| format!("Failed to clear project path: {}", e))?;
+    state
+        .set_branch(None)
+        .map_err(|e| format!("Failed to clear branch: {}", e))?;
+
+    // Initialize new workspace
+    let workspace = create_workspace_provider(None);
+    let workspace_info = workspace
+        .init(&run_name, &starting_point)
+        .await
+        .map_err(|e| format!("Failed to initialize workspace: {}", e))?;
+
+    // Update state with new workspace info
+    state
+        .set_project_path(workspace_info.path.to_str().unwrap_or("."))
+        .map_err(|e| format!("Failed to set project path: {}", e))?;
+
+    if let Some(ref branch) = workspace_info.default_branch {
+        state
+            .set_branch(Some(branch))
+            .map_err(|e| format!("Failed to set branch: {}", e))?;
+    }
+
+    // Return updated run detail
+    get_run_detail(run_name).await
+}
+
 /// Start a draft run
 ///
-/// Spawns workers and transitions the draft to a running state.
-/// The draft must have a project path set.
+/// Creates the workspace based on the starting point, spawns workers,
+/// and transitions the draft to a running state.
 #[tauri::command]
-pub async fn start_draft(run_name: String) -> Result<RunDetail, String> {
+pub async fn start_draft(
+    run_name: String,
+    starting_point: Option<StartingPoint>,
+    profile: Option<String>,
+) -> Result<RunDetail, String> {
     use crate::cli::config::get_agent_command;
     use crate::cli::go::WorkerScale;
-    use crate::core::git::{
-        checkout_branch_at_path, clone_remote_with_branch, get_repo_root, is_remote_url,
-    };
     use crate::core::names::get_available_names;
     use crate::core::ops::{compute_multi_worker_config, setup_run_workspace, RunSetupConfig};
     use crate::core::runner::{create_runner, WorkerSpawnConfig as RunnerSpawnConfig};
@@ -490,54 +507,58 @@ pub async fn start_draft(run_name: String) -> Result<RunDetail, String> {
         return Err("Can only start draft runs".to_string());
     }
 
-    // Get project path - required for starting
-    let project_path_str = state
+    // Check if workspace already exists (e.g., from clone_run)
+    let existing_workspace = state
         .get_project_path()
-        .map_err(|e| format!("Failed to get project path: {}", e))?
-        .ok_or_else(|| "Project path is required to start a run".to_string())?;
+        .map_err(|e| format!("Failed to get project path: {}", e))?;
 
-    // Get selected branch (optional - will use default if not set)
-    let selected_branch = state
-        .get_branch()
-        .map_err(|e| format!("Failed to get branch: {}", e))?;
-
-    // Handle remote URLs - clone to local directory
-    let project_path = if is_remote_url(&project_path_str) {
-        // Clone remote repo to run directory, checking out selected branch
-        let clone_dir = run_dir.join("repo");
-        let local_path =
-            clone_remote_with_branch(&project_path_str, &clone_dir, selected_branch.as_deref())
-                .map_err(|e| format!("Failed to clone remote repository: {}", e))?;
-
-        // Store the remote URL for delivery
-        state
-            .set_remote_url(Some(&project_path_str))
-            .map_err(|e| format!("Failed to store remote URL: {}", e))?;
-
-        // Update project_path to local clone
-        state
-            .set_project_path(local_path.to_str().unwrap_or(&project_path_str))
-            .map_err(|e| format!("Failed to update project path: {}", e))?;
-
-        local_path
+    let project_path = if let Some(ref path_str) = existing_workspace {
+        // Workspace already exists
+        let path = std::path::PathBuf::from(path_str);
+        if !path.exists() {
+            return Err(format!("Workspace does not exist: {}", path_str));
+        }
+        path
     } else {
-        let project_path = std::path::PathBuf::from(&project_path_str);
+        // Create workspace from starting point
+        // Priority: 1. Passed starting_point, 2. Stored in database, 3. Default to Greenfield
+        let sp = if let Some(sp) = starting_point {
+            sp
+        } else if let Ok(Some(sp_json)) = state.get_starting_point() {
+            serde_json::from_str::<StartingPoint>(&sp_json)
+                .map_err(|e| format!("Failed to parse stored starting_point: {}", e))?
+        } else {
+            StartingPoint::Greenfield
+        };
 
-        if !project_path.exists() {
-            return Err(format!("Project path does not exist: {}", project_path_str));
+        let workspace = create_workspace_provider(profile.as_deref());
+        let workspace_info = workspace
+            .init(&run_name, &sp)
+            .await
+            .map_err(|e| format!("Failed to initialize workspace: {}", e))?;
+
+        // Store workspace path in state
+        state
+            .set_project_path(workspace_info.path.to_str().unwrap_or("."))
+            .map_err(|e| format!("Failed to set project path: {}", e))?;
+
+        // Store starting_point in state (if not already stored)
+        if state.get_starting_point().ok().flatten().is_none() {
+            let sp_json = serde_json::to_string(&sp)
+                .map_err(|e| format!("Failed to serialize starting_point: {}", e))?;
+            state
+                .set_starting_point(Some(&sp_json))
+                .map_err(|e| format!("Failed to set starting_point: {}", e))?;
         }
 
-        // Verify project is a git repo
-        let repo_root = get_repo_root(Some(&project_path))
-            .map_err(|_| format!("Project path is not a git repository: {}", project_path_str))?;
-
-        // Checkout selected branch in local repo if specified
-        if let Some(ref branch) = selected_branch {
-            checkout_branch_at_path(&repo_root, branch)
-                .map_err(|e| format!("Failed to checkout branch '{}': {}", branch, e))?;
+        // Set branch if available from workspace init
+        if let Some(ref branch) = workspace_info.default_branch {
+            state
+                .set_branch(Some(branch))
+                .map_err(|e| format!("Failed to set branch: {}", e))?;
         }
 
-        repo_root
+        workspace_info.path
     };
 
     // Parse worker scale
@@ -587,12 +608,10 @@ pub async fn start_draft(run_name: String) -> Result<RunDetail, String> {
         .set_status(crate::core::state::Status::Working)
         .map_err(|e| format!("Failed to set status: {}", e))?;
 
-    // Set started_at if time limit is set
-    if state.get_time_limit_minutes().ok().flatten().is_some() {
-        state
-            .set_started_at(None)
-            .map_err(|e| format!("Failed to set started_at: {}", e))?;
-    }
+    // Always set started_at when run starts (for elapsed time calculation)
+    state
+        .set_started_at(None)
+        .map_err(|e| format!("Failed to set started_at: {}", e))?;
 
     // Save spec content to database for display in Specs tab
     let spec_path = run_dir.join("spec.md");

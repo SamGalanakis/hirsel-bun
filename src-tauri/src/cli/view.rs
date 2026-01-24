@@ -7,25 +7,36 @@
 //! - Task list with progress
 //! - Recent activity history
 //! - Summary (for completed runs)
+//!
+//! Uses the Orchestrator trait to support both local and remote modes.
 
-use crate::core::{config, state::SQLiteState, Files};
+use crate::cli::helpers::{block_on, get_orchestrator};
+use crate::core::api_types::{HistoryEntry, RunDetail, Task, TaskStatus, Worker, WorkerStatus};
 use std::io::{self, Write};
 
 /// Execute the view command for a run
 pub fn execute(run_name: &str, json: bool) -> Result<(), Box<dyn std::error::Error>> {
-    // Check run exists
-    if !config::run_exists(run_name) {
-        return Err(format!("Run '{}' not found", run_name).into());
-    }
+    execute_with_profile(run_name, None, json)
+}
 
-    let run_dir = config::run_dir(run_name);
-    let files = Files::new(&run_dir);
-    let state = SQLiteState::new(files.db_path())?;
+/// Execute the view command for a run with a specific profile
+pub fn execute_with_profile(
+    run_name: &str,
+    profile: Option<&str>,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let orch = get_orchestrator(profile)?;
+
+    // Fetch run details, tasks, workers, and history in sequence
+    let run_detail = block_on(orch.get_run(run_name))?;
+    let tasks = block_on(orch.list_tasks(run_name))?;
+    let workers = block_on(orch.list_workers(run_name))?;
+    let history = block_on(orch.get_history(run_name, Some(10)))?;
 
     if json {
-        print_json(&state, run_name, &files)?;
+        print_json(&run_detail, &tasks, &workers, &history)?;
     } else {
-        print_text(&state, &files, run_name)?;
+        print_text(&run_detail, &tasks, &workers, &history)?;
     }
 
     Ok(())
@@ -33,22 +44,11 @@ pub fn execute(run_name: &str, json: bool) -> Result<(), Box<dyn std::error::Err
 
 /// Print run status as JSON
 fn print_json(
-    state: &SQLiteState,
-    run_name: &str,
-    files: &Files,
+    run: &RunDetail,
+    tasks: &[Task],
+    workers: &[Worker],
+    history: &[HistoryEntry],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::core::state::TaskStatus;
-
-    let status = state.status()?;
-    let tasks = state.get_tasks()?;
-    let workers = state.get_workers()?;
-    let time_info = state.get_time_info()?;
-    let hitl = state.get_human_in_the_loop()?;
-    let project_path = state.get_project_path()?;
-    let request = state.get_request()?;
-    let history = state.get_history(10)?;
-    let summary = state.get_summary()?;
-
     // Build worker data with claimed tasks
     let worker_data: Vec<_> = workers
         .iter()
@@ -58,7 +58,7 @@ fn print_json(
                 .find(|t| t.claimed_by.as_ref() == Some(&w.name));
             serde_json::json!({
                 "name": w.name,
-                "status": w.status.as_str(),
+                "status": format!("{:?}", w.status).to_lowercase(),
                 "pid": w.pid,
                 "claimed_task": claimed_task.map(|t| &t.id),
             })
@@ -71,8 +71,8 @@ fn print_json(
         .map(|t| {
             serde_json::json!({
                 "id": t.id,
-                "name": t.name,
-                "status": t.status.as_str(),
+                "name": t.description,
+                "status": format!("{:?}", t.status).to_lowercase(),
                 "claimed_by": t.claimed_by,
             })
         })
@@ -100,13 +100,33 @@ fn print_json(
         .filter(|t| t.status == TaskStatus::Doing)
         .count();
 
+    let workers_active = workers
+        .iter()
+        .filter(|w| w.status == WorkerStatus::Working)
+        .count();
+
+    // Calculate time info if we have started_at and time_limit
+    let time_info = if let (Some(_started), Some(limit)) = (&run.started_at, run.time_limit_minutes)
+    {
+        let elapsed = run.elapsed_minutes;
+        let remaining = (limit as f64) - elapsed;
+        let pct = (elapsed / limit as f64) * 100.0;
+        Some(serde_json::json!({
+            "limit_minutes": limit,
+            "elapsed_minutes": elapsed.round() as i64,
+            "remaining_minutes": remaining.max(0.0).round() as i64,
+            "percent_elapsed": pct.round() as i64,
+        }))
+    } else {
+        None
+    };
+
     let output = serde_json::json!({
-        "name": run_name,
-        "status": status.as_str(),
-        "mode": if hitl { "hitl" } else { "yolo" },
-        "project_path": project_path,
-        "request": request,
-        "dir": files.run_dir().to_string_lossy(),
+        "name": run.name,
+        "status": format!("{:?}", run.status).to_lowercase(),
+        "mode": if run.human_in_the_loop { "hitl" } else { "yolo" },
+        "project_path": run.project_path,
+        "request": run.request,
         "tasks": {
             "total": tasks.len(),
             "done": tasks_done,
@@ -115,18 +135,13 @@ fn print_json(
             "list": task_data,
         },
         "workers": {
-            "total": workers.len(),
-            "active": workers.iter().filter(|w| !w.status.is_inactive()).count(),
+            "total": run.workers_total,
+            "active": workers_active,
             "list": worker_data,
         },
-        "time": time_info.map(|t| serde_json::json!({
-            "limit_minutes": t.limit_minutes,
-            "elapsed_minutes": t.elapsed_minutes.round() as i64,
-            "remaining_minutes": t.remaining_minutes.round() as i64,
-            "percent_elapsed": t.percent_elapsed.round() as i64,
-        })),
+        "time": time_info,
         "history": history_data,
-        "summary": summary,
+        "summary": run.summary,
     });
 
     println!("{}", serde_json::to_string_pretty(&output)?);
@@ -135,46 +150,45 @@ fn print_json(
 
 /// Print run status as formatted text
 fn print_text(
-    state: &SQLiteState,
-    files: &Files,
-    run_name: &str,
+    run: &RunDetail,
+    tasks: &[Task],
+    workers: &[Worker],
+    history: &[HistoryEntry],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::core::state::TaskStatus;
-
-    let status = state.status()?;
-    let tasks = state.get_tasks()?;
-    let workers = state.get_workers()?;
-    let time_info = state.get_time_info()?;
-    let hitl = state.get_human_in_the_loop()?;
-    let project_path = state.get_project_path()?;
-    let request = state.get_request()?;
-    let history = state.get_history(10)?;
-    let summary = state.get_summary()?;
-
     // Header with status
-    let status_badge = format_status_badge(&status);
+    let status_badge = format_status_badge(&run.status);
     println!();
-    println!("  {} {}", run_name, status_badge);
+    println!("  {} {}", run.name, status_badge);
     println!();
 
     // Project path
-    let path_display = project_path.as_deref().unwrap_or("-");
+    let path_display = run.project_path.as_deref().unwrap_or("-");
     println!("  project  {}", path_display);
 
     // Time info
-    if let Some(time) = &time_info {
-        let elapsed = time.elapsed_minutes as i64;
-        let limit = time.limit_minutes;
-        let remaining = time.remaining_minutes as i64;
-        let pct = time.percent_elapsed as i64;
+    if let Some(limit) = run.time_limit_minutes {
+        let elapsed = run.elapsed_minutes as i64;
+        let remaining = (limit as i64) - elapsed;
+        let pct = if limit > 0 {
+            (run.elapsed_minutes / limit as f64 * 100.0) as i64
+        } else {
+            0
+        };
         println!(
             "  time     {}/{}m ({}% elapsed, {}m remaining)",
-            elapsed, limit, pct, remaining
+            elapsed,
+            limit,
+            pct,
+            remaining.max(0)
         );
     }
 
     // Mode
-    let mode = if hitl { "hitl" } else { "yolo" };
+    let mode = if run.human_in_the_loop {
+        "hitl"
+    } else {
+        "yolo"
+    };
     println!("  mode     {}", mode);
     println!();
 
@@ -182,18 +196,15 @@ fn print_text(
     if !workers.is_empty() {
         println!("  workers");
 
-        for worker in &workers {
+        for worker in workers {
             let status_icon = format_worker_status_icon(&worker.status);
             let claimed_task = tasks
                 .iter()
                 .find(|t| t.claimed_by.as_ref() == Some(&worker.name));
             let task_str = claimed_task
                 .map(|t| {
-                    let name = if t.name.len() > 25 {
-                        &t.name[..25]
-                    } else {
-                        &t.name
-                    };
+                    let desc = &t.description;
+                    let name = if desc.len() > 25 { &desc[..25] } else { desc };
                     format!(" -> {}", name)
                 })
                 .unwrap_or_default();
@@ -213,7 +224,7 @@ fn print_text(
     }
 
     // Request
-    if let Some(req) = &request {
+    if let Some(req) = &run.request {
         println!("  request  {}", req);
         println!();
     }
@@ -235,11 +246,8 @@ fn print_text(
         let mut task_iter = tasks.iter().enumerate().peekable();
         while let Some((i, t)) = task_iter.next() {
             let icon = format_task_status_icon(&t.status);
-            let name = if t.name.len() > 20 {
-                &t.name[..20]
-            } else {
-                &t.name
-            };
+            let desc = &t.description;
+            let name = if desc.len() > 20 { &desc[..20] } else { desc };
             let task_text = format!("{} {:<20}", icon, name);
 
             if i % 2 == 0 {
@@ -267,7 +275,7 @@ fn print_text(
     }
 
     // Summary (for completed runs)
-    if let Some(sum) = &summary {
+    if let Some(sum) = &run.summary {
         println!("  {}", "-".repeat(40));
         println!("  summary");
         println!("    {}", sum);
@@ -275,18 +283,13 @@ fn print_text(
     }
 
     // Waiting reason if paused/runaway
-    if let Ok(Some(reason)) = state.get_waiting_reason() {
+    if let Some(reason) = &run.waiting_reason {
         if !reason.is_empty() {
             println!("  Waiting: {}", reason);
             println!();
         }
     }
 
-    // Spec file info
-    if files.spec().exists() {
-        println!("  Spec: {}", files.spec().display());
-    }
-    println!("  Dir:  {}", files.run_dir().display());
     println!();
 
     io::stdout().flush()?;
@@ -294,22 +297,21 @@ fn print_text(
 }
 
 /// Format a status badge
-fn format_status_badge(status: &crate::core::state::Status) -> String {
-    use crate::core::state::Status;
+fn format_status_badge(status: &crate::core::api_types::RunStatus) -> String {
+    use crate::core::api_types::RunStatus;
     match status {
-        Status::Draft => "[DRAFT]".to_string(),
-        Status::Working => "[WORKING]".to_string(),
-        Status::Paused => "[PAUSED]".to_string(),
-        Status::Failed => "[FAILED]".to_string(),
-        Status::Eval => "[eval]".to_string(),
-        Status::Done => "[DONE]".to_string(),
-        Status::Delivered => "[delivered]".to_string(),
+        RunStatus::Draft => "[DRAFT]".to_string(),
+        RunStatus::Working => "[WORKING]".to_string(),
+        RunStatus::Paused => "[PAUSED]".to_string(),
+        RunStatus::Failed => "[FAILED]".to_string(),
+        RunStatus::Eval => "[eval]".to_string(),
+        RunStatus::Done => "[DONE]".to_string(),
+        RunStatus::Delivered => "[delivered]".to_string(),
     }
 }
 
 /// Format worker status icon
-fn format_worker_status_icon(status: &crate::core::state::WorkerStatus) -> &'static str {
-    use crate::core::state::WorkerStatus;
+fn format_worker_status_icon(status: &WorkerStatus) -> &'static str {
     match status {
         WorkerStatus::Working => "●",
         WorkerStatus::Awaiting => "◌",
@@ -319,8 +321,7 @@ fn format_worker_status_icon(status: &crate::core::state::WorkerStatus) -> &'sta
 }
 
 /// Format task status icon
-fn format_task_status_icon(status: &crate::core::state::TaskStatus) -> &'static str {
-    use crate::core::state::TaskStatus;
+fn format_task_status_icon(status: &TaskStatus) -> &'static str {
     match status {
         TaskStatus::Todo => "○",
         TaskStatus::Doing => "●",
@@ -362,6 +363,7 @@ fn progress_bar(percent: f64, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::api_types::RunStatus;
 
     #[test]
     fn test_progress_bar() {
@@ -379,15 +381,13 @@ mod tests {
 
     #[test]
     fn test_format_status_badge() {
-        use crate::core::state::Status;
-        assert_eq!(format_status_badge(&Status::Working), "[WORKING]");
-        assert_eq!(format_status_badge(&Status::Done), "[DONE]");
-        assert_eq!(format_status_badge(&Status::Paused), "[PAUSED]");
+        assert_eq!(format_status_badge(&RunStatus::Working), "[WORKING]");
+        assert_eq!(format_status_badge(&RunStatus::Done), "[DONE]");
+        assert_eq!(format_status_badge(&RunStatus::Paused), "[PAUSED]");
     }
 
     #[test]
     fn test_format_task_status_icon() {
-        use crate::core::state::TaskStatus;
         assert_eq!(format_task_status_icon(&TaskStatus::Todo), "○");
         assert_eq!(format_task_status_icon(&TaskStatus::Doing), "●");
         assert_eq!(format_task_status_icon(&TaskStatus::Done), "✓");

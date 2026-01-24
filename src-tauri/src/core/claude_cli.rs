@@ -340,6 +340,8 @@ pub struct ClaudeCliConfig {
     pub claude_path: Option<PathBuf>,
     /// Additional CLI arguments.
     pub extra_args: Vec<String>,
+    /// Session ID to resume (optional, for pause/resume support).
+    pub resume_session_id: Option<String>,
 }
 
 impl ClaudeCliConfig {
@@ -355,6 +357,7 @@ impl ClaudeCliConfig {
             system_prompt: None,
             claude_path: None,
             extra_args: Vec::new(),
+            resume_session_id: None,
         }
     }
 
@@ -397,6 +400,12 @@ impl ClaudeCliConfig {
     /// Add extra CLI arguments.
     pub fn with_extra_args(mut self, args: Vec<String>) -> Self {
         self.extra_args = args;
+        self
+    }
+
+    /// Set session ID to resume.
+    pub fn with_resume_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.resume_session_id = Some(session_id.into());
         self
     }
 }
@@ -512,9 +521,12 @@ impl ClaudeCliBridge {
         cmd.arg("--output-format").arg("stream-json");
         cmd.arg("--verbose"); // Required when using --output-format=stream-json
 
-        // Use delegate permission mode - this sends control_request messages to us
-        // so we can approve/deny tools. Other modes either auto-approve or block internally.
-        cmd.arg("--permission-mode").arg("delegate");
+        // Use bypassPermissions mode for automation - auto-approves all tool uses.
+        // This is needed because:
+        // 1. When resuming sessions, Claude doesn't re-request permissions for
+        //    tools that were previously approved in the session
+        // 2. For HITL scenarios, we handle approvals at a higher level (daemon)
+        cmd.arg("--permission-mode").arg("bypassPermissions");
 
         // Set working directory
         cmd.current_dir(&config.cwd);
@@ -527,6 +539,12 @@ impl ClaudeCliBridge {
         // Add system prompt if specified
         if let Some(ref prompt) = config.system_prompt {
             cmd.arg("--system-prompt").arg(prompt);
+        }
+
+        // Add resume session ID if specified (for pause/resume support)
+        if let Some(ref session_id) = config.resume_session_id {
+            cmd.arg("--resume").arg(session_id);
+            info!("[{}] Resuming session: {}", config.context, session_id);
         }
 
         // Add MCP servers
@@ -1044,6 +1062,8 @@ pub struct ClaudeWorkerConfig {
     pub work_dir: PathBuf,
     pub run_dir: PathBuf,
     pub prompt: String,
+    /// Session ID to resume (for pause/resume support).
+    pub resume_session_id: Option<String>,
 }
 
 /// Result of a worker run.
@@ -1105,15 +1125,10 @@ async fn send_notification(
 ///
 /// 3. **Complete event coverage**: All BridgeEvent variants are handled, matching
 ///    the zed-industries message processing.
-#[cfg(feature = "claude")]
 pub async fn run_claude_worker(config: ClaudeWorkerConfig) -> Result<WorkerResult> {
     use crate::worker::acp_client::HirselClient;
     use tracing::error;
 
-    eprintln!(
-        "[DEBUG][{}] Starting Claude worker (ClaudeCliBridge) for run={}",
-        config.worker_name, config.run_name
-    );
     info!(
         "[{}] Starting Claude worker (ClaudeCliBridge) for run={}",
         config.worker_name, config.run_name
@@ -1143,6 +1158,11 @@ pub async fn run_claude_worker(config: ClaudeWorkerConfig) -> Result<WorkerResul
         cli_config = cli_config.with_mcp_servers(vec![mcp_config]);
     }
 
+    // Add resume session ID if provided (for pause/resume support)
+    if let Some(ref session_id) = config.resume_session_id {
+        cli_config = cli_config.with_resume_session_id(session_id);
+    }
+
     let (mut bridge, mut events) = ClaudeCliBridge::spawn(cli_config)?;
 
     // Send the prompt
@@ -1170,13 +1190,6 @@ pub async fn run_claude_worker(config: ClaudeWorkerConfig) -> Result<WorkerResul
                 server_name,
                 ..
             } => {
-                eprintln!(
-                    "[DEBUG][{}] PERMISSION REQUEST: {}:{} (request_id={})",
-                    config.worker_name,
-                    server_name.as_deref().unwrap_or("builtin"),
-                    tool_name,
-                    request_id
-                );
                 debug!(
                     "[{}] Auto-approving (allowAlways): {}:{}",
                     config.worker_name,
@@ -1184,18 +1197,9 @@ pub async fn run_claude_worker(config: ClaudeWorkerConfig) -> Result<WorkerResul
                     tool_name
                 );
                 if let Err(e) = bridge.respond_permission_always(request_id).await {
-                    eprintln!(
-                        "[DEBUG][{}] PERMISSION RESPONSE ERROR: {}",
-                        config.worker_name, e
-                    );
                     error!(
                         "[{}] Failed to respond to permission request: {}",
                         config.worker_name, e
-                    );
-                } else {
-                    eprintln!(
-                        "[DEBUG][{}] PERMISSION APPROVED: {}",
-                        config.worker_name, request_id
                     );
                 }
             }
@@ -1319,9 +1323,36 @@ pub async fn run_claude_worker(config: ClaudeWorkerConfig) -> Result<WorkerResul
                 error!("[{}] CLI error: {}", config.worker_name, message);
             }
 
-            // Session init
+            // Session init - save the session ID for pause/resume support
             BridgeEvent::SessionInit { session_id: sid } => {
                 debug!("[{}] Session initialized: {}", config.worker_name, sid);
+                // Save session_id to database so it can be used for resume
+                match crate::core::state::SQLiteState::new(db_path.clone()) {
+                    Ok(state) => {
+                        use crate::core::state::WorkerUpdate;
+                        let update = WorkerUpdate {
+                            session_id: Some(sid.clone()),
+                            ..Default::default()
+                        };
+                        if let Err(e) = state.update_worker(&config.worker_name, update) {
+                            warn!(
+                                "[{}] Failed to save session_id to database: {}",
+                                config.worker_name, e
+                            );
+                        } else {
+                            info!(
+                                "[{}] Saved session_id '{}' to database for pause/resume",
+                                config.worker_name, sid
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            "[{}] Failed to open database at {:?}: {}",
+                            config.worker_name, db_path, e
+                        );
+                    }
+                }
             }
 
             // Input streaming (partial JSON)
@@ -1348,21 +1379,13 @@ pub async fn run_claude_worker(config: ClaudeWorkerConfig) -> Result<WorkerResul
     Ok(result)
 }
 
-/// Fallback implementation when claude feature is not enabled.
-#[cfg(not(feature = "claude"))]
-pub async fn run_claude_worker(_config: ClaudeWorkerConfig) -> Result<WorkerResult> {
-    Err(ClaudeCliError::Protocol(
-        "Claude SDK feature not enabled. Build with --features claude".into(),
-    ))
-}
-
 /// Execute a Claude worker in a LocalSet context.
 ///
 /// This is the entry point for spawning workers - it sets up the tokio runtime
 /// and LocalSet required for the async operations.
 pub fn execute_claude_worker(config: ClaudeWorkerConfig) -> Result<WorkerResult> {
-    let rt = tokio::runtime::Runtime::new()
-        .map_err(|e| ClaudeCliError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    let rt =
+        tokio::runtime::Runtime::new().map_err(|e| ClaudeCliError::Io(std::io::Error::other(e)))?;
 
     rt.block_on(async {
         tokio::task::LocalSet::new()

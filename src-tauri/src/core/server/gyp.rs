@@ -116,7 +116,7 @@ pub async fn start_session(
     };
 
     // Validate that we have credentials
-    if credentials.as_ref().map_or(true, |c| !c.has_any()) {
+    if credentials.as_ref().is_none_or(|c| !c.has_any()) {
         return Err(GypError::Other(
             "No credentials available. Please configure OAuth token or API key.".into(),
         ));
@@ -307,40 +307,38 @@ pub async fn upload_asset(
     std::fs::create_dir_all(&assets_dir)
         .map_err(|e| GypError::Other(format!("Failed to create assets directory: {}", e)))?;
 
-    // Process the multipart form
-    while let Some(field) = multipart
+    // Process the first field from the multipart form
+    let field = multipart
         .next_field()
         .await
         .map_err(|e| GypError::Other(format!("Failed to read multipart field: {}", e)))?
-    {
-        // Get filename from the field
-        let filename = field
-            .file_name()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "upload".to_string());
+        .ok_or_else(|| GypError::Other("No file uploaded".into()))?;
 
-        // Read the file data
-        let data = field
-            .bytes()
-            .await
-            .map_err(|e| GypError::Other(format!("Failed to read file data: {}", e)))?;
+    // Get filename from the field
+    let filename = field
+        .file_name()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "upload".to_string());
 
-        // Find a unique filename
-        let dest_filename = find_unique_asset_filename(&assets_dir, &filename);
-        let dest_path = assets_dir.join(&dest_filename);
+    // Read the file data
+    let data = field
+        .bytes()
+        .await
+        .map_err(|e| GypError::Other(format!("Failed to read file data: {}", e)))?;
 
-        // Write the file
-        std::fs::write(&dest_path, &data)
-            .map_err(|e| GypError::Other(format!("Failed to write asset: {}", e)))?;
+    // Find a unique filename
+    let dest_filename = find_unique_asset_filename(&assets_dir, &filename);
+    let dest_path = assets_dir.join(&dest_filename);
 
-        info!("[gyp] Saved asset: {} -> {}", filename, dest_filename);
+    // Write the file
+    std::fs::write(&dest_path, &data)
+        .map_err(|e| GypError::Other(format!("Failed to write asset: {}", e)))?;
 
-        return Ok(Json(AssetUploadResponse {
-            filename: dest_filename,
-        }));
-    }
+    info!("[gyp] Saved asset: {} -> {}", filename, dest_filename);
 
-    Err(GypError::Other("No file uploaded".into()))
+    Ok(Json(AssetUploadResponse {
+        filename: dest_filename,
+    }))
 }
 
 /// Find a unique filename in the assets directory

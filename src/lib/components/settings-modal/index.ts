@@ -19,23 +19,35 @@ import { THEME_LIST, type ThemeId, type ThemeInfo, getTheme, setTheme } from '..
 import type { ChatEvent } from '../../types';
 
 import {
+  createSnapshotConfig,
   defaultAgentAuth,
   defaultContainerConfig,
   defaultGitConfig,
   defaultLocalRunnerConfig,
   defaultNavigationState,
   defaultRemoteProfile,
+  defaultS3Config,
   defaultSettings,
   defaultSpriteHostConfig,
   defaultSpriteRunnerConfig,
   defaultSshHostConfig,
   defaultSshRunnerConfig,
+  defaultStorageConfig,
   defaultTailscaleAccess,
   getAccessTypeLabel,
   getAuthMethodLabel,
+  getAvailableSnapshotStrategies,
+  getAvailableStorageProviders,
+  getDefaultEndpoint,
   getDefaultEnvVar,
+  getDefaultRegion,
+  getDefaultSnapshotStrategy,
   getHostIcon,
   getHostTypeLabel,
+  getSnapshotStrategyDescription,
+  getSnapshotStrategyLabel,
+  getStorageProviderDescription,
+  getStorageProviderLabel,
 } from './defaults';
 // Import from local modules
 import type {
@@ -55,9 +67,15 @@ import type {
   RemoteConfig,
   RunnerConfig,
   RunnerHealthStatus,
+  S3Config,
+  S3SnapshotConfig,
   Settings,
+  SnapshotStrategyType,
+  SpriteCheckpointSnapshotConfig,
   SpriteHostConfig,
   SshHostConfig,
+  StorageConfig,
+  StorageProvider,
   TailscaleAccess,
   TailscaleInfo,
 } from './types';
@@ -114,13 +132,22 @@ export function settingsModal() {
     _testUnlisten: null as (() => void) | null,
     settings: defaultSettings(),
 
-    // Editing state for runners (Host + Container model)
+    // Editing state for runners (Host + Container + Snapshot model)
     editingRunner: null as string | null,
     newRunnerName: '',
     newHostType: 'ssh' as HostType,
     editHostData: defaultSshHostConfig() as HostConfig,
     editContainerEnabled: false,
     editContainerImage: '',
+    editSnapshotStrategy: 'persistent_disk' as SnapshotStrategyType,
+    editSnapshotS3Prefix: '',
+    editSnapshotS3Storage: '' as string, // Named storage selection for S3 snapshot
+    editSnapshotCommentPrefix: '',
+
+    // Editing state for storage configs
+    editingStorage: null as string | null,
+    newStorageName: '',
+    editStorageData: defaultS3Config() as S3Config,
 
     // Editing state for orchestrator profiles
     editingProfile: null as string | null,
@@ -502,6 +529,15 @@ export function settingsModal() {
     getAuthMethodLabel,
     getDefaultEnvVar,
     getAccessTypeLabel,
+    getSnapshotStrategyLabel,
+    getSnapshotStrategyDescription,
+    getAvailableSnapshotStrategies,
+    getDefaultSnapshotStrategy,
+    getStorageProviderLabel,
+    getStorageProviderDescription,
+    getAvailableStorageProviders,
+    getDefaultEndpoint,
+    getDefaultRegion,
 
     // Apply theme immediately when selected
     applyTheme(themeId: ThemeId) {
@@ -569,6 +605,10 @@ export function settingsModal() {
       this.editHostData = defaultSshHostConfig();
       this.editContainerEnabled = false;
       this.editContainerImage = '';
+      this.editSnapshotStrategy = getDefaultSnapshotStrategy(this.newHostType);
+      this.editSnapshotS3Prefix = '';
+      this.editSnapshotS3Storage = '';
+      this.editSnapshotCommentPrefix = '';
     },
 
     // Change host type when adding new
@@ -585,6 +625,11 @@ export function settingsModal() {
         this.editContainerEnabled = false;
         this.editContainerImage = '';
       }
+      // Update snapshot strategy default for the new host type
+      this.editSnapshotStrategy = getDefaultSnapshotStrategy(this.newHostType);
+      this.editSnapshotS3Prefix = '';
+      this.editSnapshotS3Storage = '';
+      this.editSnapshotCommentPrefix = '';
     },
 
     // Start editing an existing runner
@@ -613,6 +658,25 @@ export function settingsModal() {
       // Load container settings
       this.editContainerEnabled = !!runner.container;
       this.editContainerImage = runner.container?.image || '';
+
+      // Load snapshot settings
+      if (runner.snapshot) {
+        this.editSnapshotStrategy = runner.snapshot.type;
+        if (runner.snapshot.type === 's3') {
+          const s3Snapshot = runner.snapshot as S3SnapshotConfig;
+          this.editSnapshotS3Prefix = s3Snapshot.prefix || '';
+          this.editSnapshotS3Storage = s3Snapshot.storage || '';
+        } else if (runner.snapshot.type === 'sprite_checkpoint') {
+          this.editSnapshotCommentPrefix =
+            (runner.snapshot as SpriteCheckpointSnapshotConfig).comment_prefix || '';
+        }
+      } else {
+        // Default based on host type
+        this.editSnapshotStrategy = getDefaultSnapshotStrategy(runner.host.type as HostType);
+        this.editSnapshotS3Prefix = '';
+        this.editSnapshotS3Storage = '';
+        this.editSnapshotCommentPrefix = '';
+      }
     },
 
     // Save runner config and persist to disk
@@ -663,10 +727,37 @@ export function settingsModal() {
         }
       }
 
-      // Build the runner config from host + optional container
+      // Build snapshot config if not using default for host type
+      let snapshotConfig = createSnapshotConfig(this.editSnapshotStrategy);
+      if (this.editSnapshotStrategy === 's3') {
+        snapshotConfig = {
+          type: 's3',
+          prefix: this.editSnapshotS3Prefix || undefined,
+          storage: this.editSnapshotS3Storage || undefined,
+        };
+      } else if (
+        this.editSnapshotStrategy === 'sprite_checkpoint' &&
+        this.editSnapshotCommentPrefix
+      ) {
+        snapshotConfig = {
+          type: 'sprite_checkpoint',
+          comment_prefix: this.editSnapshotCommentPrefix,
+        };
+      }
+
+      // Only include snapshot config if not using default for this host type
+      const defaultStrategy = getDefaultSnapshotStrategy(this.editHostData.type as HostType);
+      const isDefaultSnapshot =
+        this.editSnapshotStrategy === defaultStrategy &&
+        !this.editSnapshotS3Prefix &&
+        !this.editSnapshotS3Storage &&
+        !this.editSnapshotCommentPrefix;
+
+      // Build the runner config from host + optional container + optional snapshot
       const runnerConfig: RunnerConfig = {
         host: { ...this.editHostData },
         container: this.editContainerEnabled ? { image: this.editContainerImage } : undefined,
+        snapshot: isDefaultSnapshot ? undefined : snapshotConfig,
       };
 
       // Save the runner to current profile
@@ -819,6 +910,136 @@ export function settingsModal() {
       // If this was the selected profile, navigate to local
       if (this.selectedProfile === name) {
         this.navigateToProfile('local');
+      }
+    },
+
+    // ==================== STORAGE METHODS ====================
+
+    // Get storage names as sorted array
+    get storageNames(): string[] {
+      return Object.keys(this.settings.storage?.storages || {}).sort();
+    },
+
+    // Get a storage config by name
+    getStorage(name: string): S3Config | undefined {
+      return this.settings.storage?.storages?.[name];
+    },
+
+    // Start adding a new storage
+    startAddStorage() {
+      this.editingStorage = '__new__';
+      this.newStorageName = '';
+      this.editStorageData = defaultS3Config();
+    },
+
+    // Start editing an existing storage
+    startEditStorage(name: string) {
+      const storage = this.getStorage(name);
+      if (!storage) return;
+
+      this.editingStorage = name;
+      this.newStorageName = name;
+      this.editStorageData = { ...storage };
+    },
+
+    // Handle provider change when editing storage
+    onStorageProviderChange(provider: StorageProvider) {
+      this.editStorageData.provider = provider;
+      this.editStorageData.endpoint = getDefaultEndpoint(provider);
+      this.editStorageData.region = getDefaultRegion(provider);
+    },
+
+    // Save storage config and persist to disk
+    async saveStorage() {
+      const name =
+        this.editingStorage === '__new__' ? this.newStorageName.trim() : this.editingStorage;
+      if (!name) {
+        window.toast?.error('Storage name is required');
+        return;
+      }
+
+      // Validate required fields
+      if (!this.editStorageData.bucket?.trim()) {
+        window.toast?.error('Bucket name is required');
+        return;
+      }
+
+      // Ensure storage object exists
+      if (!this.settings.storage) {
+        this.settings.storage = defaultStorageConfig();
+      }
+      if (!this.settings.storage.storages) {
+        this.settings.storage.storages = {};
+      }
+
+      // Save the storage
+      this.settings.storage.storages[name] = { ...this.editStorageData };
+      this.editingStorage = null;
+
+      // Persist to disk immediately
+      try {
+        await this.persistSettings();
+        window.toast?.success('Storage saved');
+      } catch (err) {
+        const error = err as Error;
+        console.error('[settingsModal] Error saving storage:', error);
+        window.toast?.error(`Failed to save: ${error.message || String(error)}`);
+      }
+
+      // Re-initialize icons
+      setTimeout(() => {
+        if (window.lucide) {
+          window.lucide.createIcons({ inTemplates: true });
+        }
+      }, 50);
+    },
+
+    // Cancel editing storage
+    cancelEditStorage() {
+      this.editingStorage = null;
+    },
+
+    // Delete a storage
+    async deleteStorage(name: string) {
+      if (!this.settings.storage?.storages?.[name]) return;
+
+      const confirmed =
+        (await window.confirmDialog?.delete(name, 'storage')) ??
+        confirm(`Delete storage "${name}"?`);
+      if (!confirmed) return;
+
+      delete this.settings.storage.storages[name];
+
+      // Clear default if it was this storage
+      if (this.settings.storage.defaultStorage === name) {
+        this.settings.storage.defaultStorage = undefined;
+      }
+
+      // Persist to disk
+      try {
+        await this.persistSettings();
+        window.toast?.success('Storage deleted');
+      } catch (err) {
+        const error = err as Error;
+        window.toast?.error(`Failed to delete: ${error.message || String(error)}`);
+      }
+    },
+
+    // Set default storage
+    async setDefaultStorage(name: string | null) {
+      if (!this.settings.storage) {
+        this.settings.storage = defaultStorageConfig();
+      }
+      this.settings.storage.defaultStorage = name || undefined;
+
+      try {
+        await this.persistSettings();
+        window.toast?.success(
+          name ? `"${name}" set as default storage` : 'Default storage cleared',
+        );
+      } catch (err) {
+        const error = err as Error;
+        window.toast?.error(`Failed to save: ${error.message || String(error)}`);
       }
     },
 
@@ -1296,6 +1517,7 @@ export function settingsModal() {
             profiles: Record<string, OrchestratorProfile>;
             defaultProfile: string;
             git: GitConfig;
+            storage: StorageConfig;
           }>('get_config');
 
           this.settings = {
@@ -1320,6 +1542,7 @@ export function settingsModal() {
             },
             defaultProfile: config.defaultProfile || 'local',
             git: config.git || defaultGitConfig(),
+            storage: config.storage || defaultStorageConfig(),
           };
 
           // Load masked API keys from credential store for profiles and ensure access field
@@ -1464,6 +1687,7 @@ export function settingsModal() {
           git: {
             defaultProvider: this.settings.git?.defaultProvider || null,
           },
+          storage: this.settings.storage || defaultStorageConfig(),
         },
       });
 

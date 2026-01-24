@@ -6,9 +6,9 @@
 //! - Time limit enforcement
 //! - Compaction of learnings
 //!
-//! The daemon listens on:
-//! - Unix socket (`~/.hirsel/hirsel.sock`) - for local CLI/GUI
-//! - TCP (`localhost:19700`) - for SSH reverse tunnels
+//! The daemon listens on TCP port 19700 (configurable).
+//! Local CLI/GUI connects via localhost, remote workers via Docker
+//! host or SSH tunnels.
 
 mod client;
 mod lifecycle;
@@ -19,14 +19,6 @@ pub use server::{start_daemon, DaemonConfig, DEFAULT_TCP_PORT};
 
 use std::path::PathBuf;
 
-/// Get the path to the daemon socket
-pub fn socket_path() -> PathBuf {
-    dirs::home_dir()
-        .expect("Could not determine home directory")
-        .join(".hirsel")
-        .join("hirsel.sock")
-}
-
 /// Get the path to the daemon PID file
 pub fn pid_path() -> PathBuf {
     dirs::home_dir()
@@ -35,15 +27,12 @@ pub fn pid_path() -> PathBuf {
         .join("hirsel.pid")
 }
 
-/// Check if the daemon is running by testing socket connectivity
+/// Check if the daemon is running by testing TCP connectivity
 pub fn is_daemon_running() -> bool {
-    use std::os::unix::net::UnixStream;
+    use std::net::TcpStream;
+    use std::time::Duration;
 
-    let sock_path = socket_path();
-    if !sock_path.exists() {
-        return false;
-    }
-
-    // Try to connect to the socket
-    UnixStream::connect(&sock_path).is_ok()
+    // Try to connect to localhost on the daemon port
+    let addr = format!("127.0.0.1:{}", DEFAULT_TCP_PORT);
+    TcpStream::connect_timeout(&addr.parse().unwrap(), Duration::from_millis(100)).is_ok()
 }

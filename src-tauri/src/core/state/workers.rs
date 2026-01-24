@@ -38,6 +38,7 @@ impl SQLiteState {
                 .get::<_, Option<i64>>("hitl_waiting")?
                 .map(|v| v != 0)
                 .unwrap_or(false),
+            state_handle: row.get("state_handle")?,
         })
     }
 
@@ -66,7 +67,7 @@ impl SQLiteState {
     /// Get a worker by name
     pub fn get_worker(&self, name: &str) -> StateResult<Option<Worker>> {
         let result = self.db.query_row(
-            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting FROM workers WHERE name = ?1",
+            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle FROM workers WHERE name = ?1",
             params![name],
             Self::worker_from_row,
         );
@@ -80,7 +81,7 @@ impl SQLiteState {
     /// Get all workers
     pub fn get_workers(&self) -> StateResult<Vec<Worker>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting FROM workers ORDER BY id"
+            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle FROM workers ORDER BY id"
         )?;
         let workers = stmt
             .query_map([], Self::worker_from_row)?
@@ -91,7 +92,7 @@ impl SQLiteState {
     /// Get active workers (not awaiting or error)
     pub fn get_active_workers(&self) -> StateResult<Vec<Worker>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting FROM workers WHERE status NOT IN (?1, ?2) ORDER BY id"
+            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle FROM workers WHERE status NOT IN (?1, ?2) ORDER BY id"
         )?;
         let workers = stmt
             .query_map(
@@ -154,6 +155,10 @@ impl SQLiteState {
         if let Some(hitl_waiting) = updates.hitl_waiting {
             set_clauses.push("hitl_waiting = ?");
             params_vec.push(Box::new(if hitl_waiting { 1i64 } else { 0i64 }));
+        }
+        if let Some(ref state_handle) = updates.state_handle {
+            set_clauses.push("state_handle = ?");
+            params_vec.push(Box::new(state_handle.clone()));
         }
 
         if set_clauses.is_empty() {
@@ -247,11 +252,23 @@ impl SQLiteState {
     /// Get workers waiting for HITL input
     pub fn get_hitl_waiting_workers(&self) -> StateResult<Vec<Worker>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting FROM workers WHERE hitl_waiting = 1 ORDER BY id"
+            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle FROM workers WHERE hitl_waiting = 1 ORDER BY id"
         )?;
         let workers = stmt
             .query_map([], Self::worker_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(workers)
+    }
+
+    /// Clear HITL waiting state for all workers
+    ///
+    /// Called when the user resumes a run to allow all workers waiting
+    /// for human input to continue.
+    pub fn clear_all_hitl_waiting(&self) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE workers SET hitl_waiting = 0, waiting_thread = NULL WHERE hitl_waiting = 1",
+            [],
+        )?;
+        Ok(())
     }
 }

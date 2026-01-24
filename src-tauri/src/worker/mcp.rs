@@ -183,21 +183,17 @@ fn get_tools() -> Vec<Tool> {
         },
         Tool {
             name: "msg_send",
-            description: "Send a message to a thread. Use wait=true to pause and wait for a reply.",
+            description: "Send a message to a thread. When sending to 'user' thread with HITL enabled, automatically pauses until user replies.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "thread": {
                         "type": "string",
-                        "description": "Thread name (e.g., 'user', 'group')"
+                        "description": "Thread name: 'user' for DM to human, 'group' for team chat, 'learnings' for shared notes"
                     },
                     "message": {
                         "type": "string",
                         "description": "Message content"
-                    },
-                    "wait": {
-                        "type": "boolean",
-                        "description": "If true, pause execution until user replies"
                     }
                 },
                 "required": ["thread", "message"]
@@ -420,8 +416,7 @@ impl McpServer {
                     .get("message")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| WorkerError::Config("message is required".into()))?;
-                let wait = args.get("wait").and_then(|v| v.as_bool()).unwrap_or(false);
-                self.runner.msg_send(thread, message, wait)
+                self.runner.msg_send(thread, message)
             }
             "msg_read" => {
                 let thread = args.get("thread").and_then(|v| v.as_str());

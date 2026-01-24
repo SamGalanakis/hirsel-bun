@@ -52,7 +52,7 @@ impl CommandExecutor for LocalExecutor {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
-            .map_err(|e| RunnerError::Io(e))
+            .map_err(RunnerError::Io)
     }
 
     fn executor_type(&self) -> &'static str {
@@ -120,7 +120,7 @@ impl CommandExecutor for SshExecutor {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        ssh_cmd.output().map_err(|e| RunnerError::Io(e))
+        ssh_cmd.output().map_err(RunnerError::Io)
     }
 
     fn executor_type(&self) -> &'static str {

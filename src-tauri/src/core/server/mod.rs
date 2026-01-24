@@ -81,6 +81,7 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
             "/api/runs/{name}/files",
             get(routes::download_files).post(routes::upload_files),
         )
+        .route("/api/runs/{name}/workspace", post(routes::init_workspace))
         .route("/api/runs/{name}/spawn", post(routes::spawn_workers))
         .route("/api/runs/{name}/pause", post(routes::pause_run))
         .route("/api/runs/{name}/resume", post(routes::resume_run))
@@ -90,6 +91,14 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
         .route(
             "/api/runs/{name}/workers/{worker}/restart",
             post(routes::restart_worker),
+        )
+        .route(
+            "/api/runs/{name}/workers/{worker}/spawn",
+            post(routes::spawn_single_worker),
+        )
+        .route(
+            "/api/runs/{name}/workers/{worker}/resume",
+            post(routes::resume_worker),
         )
         .route(
             "/api/runs/{name}/workers/{worker}/events",

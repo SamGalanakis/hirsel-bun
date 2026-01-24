@@ -145,7 +145,7 @@ export function setTheme(themeId: ThemeId): void {
   // Update data-theme attribute
   document.documentElement.setAttribute('data-theme', themeId);
 
-  // Handle light class for backwards compatibility
+  // Toggle light class (CSS defaults to dark mode styling)
   if (theme.isDark) {
     document.documentElement.classList.remove('light');
     // Remember this as the preferred dark theme for this family
@@ -167,17 +167,9 @@ export function setTheme(themeId: ThemeId): void {
 export function getTheme(): ThemeId {
   const stored = localStorage.getItem(STORAGE_KEY);
 
-  // Check if it's a valid theme ID (user has explicitly chosen)
+  // Check if it's a valid theme ID
   if (stored && stored in THEMES) {
     return stored as ThemeId;
-  }
-
-  // Handle legacy 'dark'/'light' values
-  if (stored === 'dark') {
-    return 'hirsel-dark';
-  }
-  if (stored === 'light') {
-    return 'hirsel-light';
   }
 
   // No stored preference - use system preference with Hirsel theme
@@ -404,6 +396,3 @@ export const statusBadgeClasses: Record<TaskStatus, string> = {
   done: 'badge badge-success',
   blocked: 'badge',
 };
-
-// Legacy type alias for backwards compatibility
-export type ThemeMode = 'dark' | 'light';

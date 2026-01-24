@@ -202,10 +202,24 @@ pub fn create_hirsel_mcp_config(
 ) -> MCPServerConfig {
     let hirsel = hirsel_path.unwrap_or("hirsel");
 
-    MCPServerConfig::new("hirsel", hirsel, vec!["__worker-mcp".into()]).with_env(HashMap::from([
+    let mut env = HashMap::from([
         ("HIRSEL_RUN".into(), run_name.into()),
         ("HIRSEL_WORKER".into(), worker_name.into()),
-    ]))
+    ]);
+
+    // Pass HIRSEL_API_URL to MCP server so it knows to use HttpState
+    // for remote/Docker workers communicating with the daemon
+    if let Ok(api_url) = std::env::var("HIRSEL_API_URL") {
+        env.insert("HIRSEL_API_URL".into(), api_url);
+    }
+
+    // Pass HIRSEL_RUN_DIR so MCP server knows where the run directory is
+    // (important for Docker where run_dir is mounted at a custom path like /hirsel)
+    if let Ok(run_dir) = std::env::var("HIRSEL_RUN_DIR") {
+        env.insert("HIRSEL_RUN_DIR".into(), run_dir);
+    }
+
+    MCPServerConfig::new("hirsel", hirsel, vec!["__worker-mcp".into()]).with_env(env)
 }
 
 /// Environment variables that should be forwarded to agent processes.

@@ -262,6 +262,10 @@ impl Runner for FlyRunner {
         "fly"
     }
 
+    fn is_ephemeral(&self) -> bool {
+        true // Fly machines are destroyed on stop
+    }
+
     async fn setup(&self) -> RunnerResult<()> {
         // Verify we have a valid token
         let _ = self.api_token()?;

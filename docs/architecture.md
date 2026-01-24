@@ -1,18 +1,41 @@
-# Hirsel Architecture Overview
+# Hirsel Architecture Reference
 
-> **Important**: Keep this document up to date as the architecture evolves.
+> **Keep this document updated** when modifying core modules.
 
-## Overview
+## Quick Reference
 
-**Hirsel** orchestrates multiple AI coding agents working together on software projects.
+### Common Modification Points
 
-### Tech Stack
-- **Backend**: Rust + Tokio + Tauri v2
-- **Frontend**: TypeScript + Alpine.js + Tailwind CSS
-- **Database**: SQLite (source of truth)
-- **Agent Protocol**: ACP (Agent Control Protocol)
+| Task | Files to Modify |
+|------|-----------------|
+| Add CLI command | `src/cli/mod.rs:95` (Commands enum), new `src/cli/<cmd>.rs` |
+| Add GUI command | `src/gui/commands/mod.rs:36` (get_handlers), new handler in relevant submodule |
+| Add REST endpoint | `src/core/server/mod.rs:71` (router), `src/core/server/routes.rs` |
+| Modify run state | `src/core/state/mod.rs:27` (SCHEMA), `src/core/state/types.rs` |
+| Add runner type | `src/core/runner/mod.rs:57`, new `src/core/runner/<type>.rs` |
+| Modify lifecycle | `src/core/lifecycle/mod.rs`, `src/core/lifecycle/local.rs` |
+| Add archive strategy | `src/core/snapshot/mod.rs`, new strategy impl of `ArchiveStrategy` |
 
-### High-Level Architecture
+### Feature Flags
+
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `gui` | Tauri desktop app (includes `cli`) | Yes |
+| `cli` | Full CLI (includes `server` + TUI attach) | No (implied by `gui`) |
+| `server` | HTTP server, daemon | No (implied by `cli`) |
+| `worker` | Minimal remote worker binary | No |
+| `s3-storage` | S3-compatible storage backend | No |
+
+```bash
+cargo build                                     # Full GUI
+cargo build --no-default-features -F cli        # CLI only
+cargo build --no-default-features -F worker     # Remote worker
+cargo build --features s3-storage               # With S3 support
+```
+
+---
+
+## High-Level Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -25,7 +48,8 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Daemon (background process)                   │
 │   - Lifecycle polling, eval triggering, time limits             │
-│   - Worker spawning, auto-exit when idle                        │
+│   - Worker spawning via Orchestrator                            │
+│   - Auto-exit when idle                                         │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
            ┌───────────────────┼───────────────────┐
@@ -43,380 +67,444 @@
 
 ---
 
-## Core Concepts
+## Module Map
 
-### Runs
-A **run** is an orchestration instance where AI agents work on a project.
+### `src/core/` - Core Business Logic
 
-- **Status**: Draft → Working → Eval → Done/Failed/Delivered
-- **Storage**: `~/.hirsel/runs/{run_name}/`
+| Submodule | Key Files | Purpose |
+|-----------|-----------|---------|
+| `state/` | `mod.rs`, `types.rs`, `run.rs`, `workers.rs`, `tasks.rs`, `messages.rs`, `events.rs`, `evals.rs`, `history.rs` | SQLite state management |
+| `orchestrator/` | `mod.rs:229`, `local.rs`, `remote.rs`, `daemon.rs` | Run orchestration pattern |
+| `lifecycle/` | `mod.rs:181`, `local.rs`, `remote.rs`, `transitions.rs` | Event-driven state machine |
+| `runner/` | `types.rs:139`, `local.rs`, `fly.rs`, `sprite.rs`, `ssh.rs`, `composed.rs`, `config.rs`, `setup.rs` | Worker host implementations |
+| `snapshot/` | `mod.rs`, `archive.rs`, `noop.rs`, `s3.rs`, `sprite_checkpoint.rs`, `claude_session.rs` | Work/session persistence |
+| `draft/` | `mod.rs`, `types.rs:11`, `workspace.rs`, `local_workspace.rs`, `s3_workspace.rs` | StartingPoint, workspace init |
+| `config/` | `mod.rs:144`, `types.rs`, `agent.rs`, `storage.rs`, `orchestrator.rs`, `paths.rs` | Config struct, profiles, runners |
+| `ops/` | `mod.rs`, `run.rs`, `setup.rs`, `spawn.rs`, `project.rs`, `types.rs` | Shared CLI/GUI operations |
+| `server/` | `mod.rs:32`, `routes.rs`, `auth.rs`, `gyp.rs` | HTTP server for remote mode |
+| `files.rs` | - | Run directory file operations |
+| `chats.rs` | - | GypChat message storage |
+| `gyp_chat.rs` | - | Project-level chat history |
+| `acp.rs` | - | Agent Control Protocol types |
+| `api_types.rs` | - | Shared API response types |
+| `worker_routes.rs` | - | Worker HTTP handlers |
+| `credentials.rs` | - | Encrypted credential store |
+| `git.rs` | - | Git operations |
+| `compaction.rs` | - | Context compaction for long sessions |
 
-### Workers
-**Workers** are AI agent processes. Each has its own git worktree.
+### `src/worker/` - Worker Subprocess
 
-- **Leader**: First worker, coordinates shared state
-- **Teammates**: Claim tasks independently
+| File | Purpose |
+|------|---------|
+| `acp_client.rs` | ACP connection, message handling, prompt building |
+| `runner.rs` | Worker execution loop (`WorkerRunner`) |
+| `msg.rs` | Message types and serialization |
+| `mcp.rs` | MCP server for worker tools |
+| `eval_mcp.rs` | MCP server for eval tools |
+| `remote_runner.rs` | Remote worker entry point |
+| `http_state.rs` | HTTP-based state for remote workers |
+| `file_server.rs` | File upload server for remote workers |
 
-### Tasks
-Work items with status: `Todo` → `Doing` → `Done`
+### `src/gui/commands/` - Tauri IPC Commands
 
-### State: Database vs Files
-The **SQLite database is the source of truth**. Markdown files (`tasks.md`, `chats/`) are generated views for AI agents to read easily.
+| File | Commands |
+|------|----------|
+| `runs.rs` | `get_runs`, `get_run_detail`, `pause_run`, `resume_run`, `delete_run`, `deliver_run` |
+| `drafts.rs` | `validate_repo`, `create_draft`, `clone_run`, `update_draft`, `start_draft` |
+| `workers.rs` | `get_workers`, `attach_worker`, `open_worker_terminal`, `restart_worker` |
+| `tasks.rs` | `get_tasks`, `add_task`, `delete_task`, `complete_task`, `reopen_task` |
+| `messages.rs` | `get_messages`, `get_threads`, `send_message`, `mark_messages_read` |
+| `events.rs` | `get_worker_events`, `start_worker_event_stream`, `stop_worker_event_stream` |
+| `chat.rs` | `start_chat_session`, `send_chat_message`, `respond_chat_permission` |
+| `config_cmd.rs` | `get_config`, `save_config`, `get_tailscale_info` |
+| `credentials.rs` | `store_credential`, `delete_credential`, `has_credential` |
+| `files.rs` | `read_spec_file`, `write_spec_file`, `save_asset` |
+| `filesystem.rs` | `pick_folder`, `suggest_paths` |
+| `logs.rs` | `get_eval_log`, `get_history`, `get_evals` |
+
+### `src/cli/` - CLI Commands
+
+| File | Command | Feature |
+|------|---------|---------|
+| `go.rs` | `hirsel go <run> <spec>` | `cli` |
+| `runs.rs` | `hirsel runs` | - |
+| `view.rs` | `hirsel view <run>` | - |
+| `attach.rs` | `hirsel attach <run>` | `cli` |
+| `pause.rs` | `hirsel pause <run>` | - |
+| `resume.rs` | `hirsel resume <run>` | - |
+| `delete.rs` | `hirsel delete <run>` | - |
+| `deliver.rs` | `hirsel deliver <run>` | - |
+| `msg.rs` | `hirsel msg <run>` | - |
+| `tasks.rs` | `hirsel tasks <run>` | - |
+| `diff.rs` | `hirsel diff <run>` | - |
+| `summary.rs` | `hirsel summary <run>` | - |
+| `config.rs` | `hirsel config` | - |
+| `test.rs` | `hirsel test <scenario>` | `cli` |
+| `acp_bridge.rs` | `hirsel __acp-bridge` | - |
+
+### `src/daemon/` - Background Process
+
+| File | Purpose |
+|------|---------|
+| `mod.rs` | Socket/PID paths, `is_daemon_running()` |
+| `server.rs` | Daemon server, TCP + Unix socket listeners |
+| `lifecycle.rs` | Polling loop, lifecycle action handling |
+| `client.rs` | Client for daemon communication |
 
 ---
 
-## Lifecycle Management
+## Key Traits
 
-The `lifecycle` module centralizes all run lifecycle operations:
+### `Orchestrator` (`src/core/orchestrator/mod.rs:229`)
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    LifecycleManager trait                       │
-├─────────────────────────────┬───────────────────────────────────┤
-│   LocalLifecycleManager     │   RemoteLifecycleManager          │
-│   (local/daemon mode)       │   (remote workers)                │
-│   - Eval triggering         │   - Delegates to coordinator      │
-│   - Worker scaling          │   - No-op implementations         │
-│   - Time limit enforcement  │                                   │
-│   - Pause/resume            │                                   │
-└─────────────────────────────┴───────────────────────────────────┘
-```
+High-level run management interface. CLI, GUI, and server use this trait.
 
-**Events**: `TimeCheck`, `WorkerDone`, `TaskCompleted`, `RunPaused`, `RunResumed`
-
-**Actions**: `TriggerEval`, `SpawnWorker`, `PauseWorkers`, `MarkDone`, `MarkFailed`
-
-Usage:
 ```rust
-let lifecycle = LocalLifecycleManager::new(run_name, run_dir, agent_command)?;
-lifecycle.process_event(LifecycleEvent::TimeCheck)?;  // Returns Vec<LifecycleAction>
-lifecycle.kill_all_workers()?;
-lifecycle.resume_awaiting_workers()?;
+pub trait Orchestrator: Send + Sync {
+    async fn list_runs(&self) -> OrchestratorResult<Vec<RunSummary>>;
+    async fn get_run(&self, name: &str) -> OrchestratorResult<RunDetail>;
+    async fn delete_run(&self, name: &str) -> OrchestratorResult<()>;
+    async fn pause_run(&self, name: &str) -> OrchestratorResult<()>;
+    async fn resume_run(&self, name: &str, time_limit: Option<u32>) -> OrchestratorResult<()>;
+    async fn list_workers(&self, run: &str) -> OrchestratorResult<Vec<Worker>>;
+    async fn list_tasks(&self, run: &str) -> OrchestratorResult<Vec<Task>>;
+    async fn start_run(&self, request: StartRunRequest) -> OrchestratorResult<RunDetail>;
+    async fn init_workspace(&self, run: &str, request: InitWorkspaceRequest) -> OrchestratorResult<InitWorkspaceResponse>;
+    async fn spawn_single_worker(&self, run: &str, worker: &str, work_dir: &Path, session_id: Option<&str>) -> OrchestratorResult<()>;
+    async fn resume_worker(&self, run: &str, worker: &str, work_dir: &Path, session_id: Option<&str>, state: Option<&WorkerStateHandle>) -> OrchestratorResult<()>;
+    // ... more methods
+}
 ```
+
+| Implementation | Location | Use Case |
+|----------------|----------|----------|
+| `LocalOrchestrator` | `orchestrator/local.rs` | Direct SQLite access (daemon, server) |
+| `DaemonOrchestrator` | `orchestrator/daemon.rs` | Unix socket/TCP to daemon (CLI/GUI local mode) |
+| `RemoteOrchestrator` | `orchestrator/remote.rs` | HTTP API to remote server |
+
+### `LifecycleManager` (`src/core/lifecycle/mod.rs:181`)
+
+Centralized lifecycle state machine. Returns actions for daemon to execute.
+
+```rust
+pub trait LifecycleManager {
+    fn process_event(&self, event: LifecycleEvent) -> LifecycleResult<Vec<LifecycleAction>>;
+    fn pause_run(&self, reason: &str) -> LifecycleResult<Vec<String>>;
+    fn resume_run(&self) -> LifecycleResult<Vec<LifecycleAction>>;
+    fn worker_done(&self, worker_name: &str) -> LifecycleResult<Vec<LifecycleAction>>;
+    fn should_trigger_eval(&self) -> LifecycleResult<bool>;
+    fn run_status(&self) -> LifecycleResult<Status>;
+}
+```
+
+| Event | Action(s) |
+|-------|-----------|
+| `TimeCheck` | `SpawnWorker`, `ResumeWorker`, `EvalTriggered`, `RunFailed`, `TimeWarning` |
+| `WorkerDone` | `EvalTriggered`, `RunCompleted` |
+| `PauseRequested` | `WorkersPaused`, `RunStatusChanged` |
+| `ResumeRequested` | `ResumeWorker` |
+
+| Implementation | Location | Use Case |
+|----------------|----------|----------|
+| `LocalLifecycleManager` | `lifecycle/local.rs` | Local/daemon mode |
+| `RemoteLifecycleManager` | `lifecycle/remote.rs` | Remote workers (delegates to coordinator) |
+
+### `Runner` (`src/core/runner/types.rs:139`)
+
+Worker spawning interface. Host + optional Container model.
+
+```rust
+#[async_trait]
+pub trait Runner: Send + Sync {
+    async fn spawn(&self, config: &WorkerSpawnConfig) -> RunnerResult<SpawnResult>;
+    async fn stop(&self, handle: &WorkerHandle) -> RunnerResult<()>;
+    async fn is_alive(&self, handle: &WorkerHandle) -> bool;
+    fn runner_type(&self) -> &'static str;
+    fn is_ephemeral(&self) -> bool; // true for Fly, Sprite
+}
+```
+
+| Implementation | Location | Host Type | Ephemeral |
+|----------------|----------|-----------|-----------|
+| `LocalRunner` | `runner/local.rs` | Local machine | No |
+| `SshRunner` | `runner/ssh.rs` | Remote via SSH | No |
+| `SpriteRunner` | `runner/sprite.rs` | Sprites.dev VM | Yes |
+| `FlyRunner` | `runner/fly.rs` | Fly.io machine | Yes |
+| `ComposedRunner` | `runner/composed.rs` | Executor + Resource | Varies |
+
+### `ArchiveStrategy` (`src/core/snapshot/archive.rs`)
+
+Unified directory archiving for pause/resume. Replaces the separate `SnapshotStrategy` and `AgentSessionStorage` traits.
+
+```rust
+#[async_trait]
+pub trait ArchiveStrategy: Send + Sync {
+    async fn archive(&self, key: &str, source_dir: &Path) -> ArchiveResult<ArchiveHandle>;
+    async fn restore(&self, handle: &ArchiveHandle, target_dir: &Path) -> ArchiveResult<()>;
+    async fn delete(&self, handle: &ArchiveHandle) -> ArchiveResult<()>;
+    fn strategy_type(&self) -> &'static str;
+}
+```
+
+| Implementation | Location | Host Types | Requirement |
+|----------------|----------|------------|-------------|
+| `NoOpArchiveStrategy` | `snapshot/noop.rs` | Local, SSH, Client | None (files persist on disk) |
+| `S3ArchiveStrategy` | `snapshot/s3.rs` | Fly | `s3-storage` feature |
+| `SpriteCheckpointStrategy` | `snapshot/sprite_checkpoint.rs` | Sprite | Sprites API |
+
+### `WorkspaceProvider` (`src/core/draft/workspace.rs`)
+
+Workspace initialization from StartingPoint.
+
+```rust
+#[async_trait]
+pub trait WorkspaceProvider: Send + Sync {
+    async fn init(&self, run_name: &str, starting_point: &StartingPoint) -> Result<WorkspaceInfo>;
+    fn workspace_path(&self, run_name: &str) -> PathBuf;
+}
+```
+
+| Implementation | Location | Storage |
+|----------------|----------|---------|
+| `LocalWorkspaceProvider` | `draft/local_workspace.rs` | Filesystem |
+| `S3WorkspaceProvider` | `draft/s3_workspace.rs` | S3 (feature-gated) |
 
 ---
 
-## Daemon
+## State Machine
 
-Background process using `LocalLifecycleManager` (polls every 5 seconds):
-- Triggers eval when all workers idle
-- Enforces time limits
-- Auto-exits after 5 minutes of no active runs
-- Listens on both Unix socket (`~/.hirsel/hirsel.sock`) and TCP (`localhost:19700`)
-
-```bash
-hirsel daemon start|stop|status
-```
-
-Auto-starts when CLI runs `hirsel go` or GUI opens.
-
-### TCP Listener for SSH Tunneling
-
-The daemon's TCP listener on `localhost:19700` enables SSH runners to work with local orchestrator via reverse tunnel. When using an SSH runner in local mode:
-
-1. Daemon starts TCP HTTP server on `127.0.0.1:19700`
-2. SSH connection creates reverse tunnel: `-R 19700:localhost:19700`
-3. Remote worker connects to `http://localhost:19700` (tunneled back to local daemon)
-
-This allows workers on remote SSH hosts to access the local state and git repos without deploying a separate server.
-
----
-
-## Orchestrator Pattern
-
-All run creation and worker spawning goes through the `Orchestrator` trait, providing a unified interface for CLI, GUI, and server:
+### Run Status (`src/core/state/types.rs:15`)
 
 ```
-CLI ────┐                              ┌─► LocalOrchestrator ─► direct setup/spawn
-        ├─► orchestrator.create_run()  │
-GUI ────┘   orchestrator.spawn_workers()└─► RemoteOrchestrator ─► HTTP ─► Server
-```
-
-| Orchestrator | Transport | Use Case |
-|--------------|-----------|----------|
-| **Local** | Direct SQLite access | Internal (daemon, server) |
-| **Daemon** | Unix socket / TCP | CLI/GUI local mode |
-| **Remote** | HTTP API | Remote server mode |
-
-### Orchestrator Mode Compatibility
-
-| Host | Local Mode | Remote Mode | Notes |
-|------|------------|-------------|-------|
-| **Local** | ✅ | ✅ | Direct SQLite access |
-| **SSH** | ✅ | ✅ | Local: reverse tunnel to daemon TCP |
-| **Sprite** | ❌ | ✅ | Requires publicly accessible coordinator |
-| **Fly** | ❌ | ✅ | Requires publicly accessible coordinator |
-| **Client** | ❌ | ✅ | Only available in remote mode |
-
-### Orchestrator Trait Methods
-
-The trait provides these key methods for run lifecycle:
-
-| Method | Description |
-|--------|-------------|
-| `create_run(request)` | Create run directory, state, spec, initial worker |
-| `upload_files(name, tarball)` | Upload project files as gzipped tarball |
-| `spawn_workers(name, count)` | Spawn workers for a run |
-| `list_runs()` | List all runs |
-| `get_run(name)` | Get run details |
-| `pause_run(name)` | Pause a running run |
-| `resume_run(name)` | Resume a paused run |
-| `list_workers(name)` | List workers for a run |
-| `restart_worker(name, worker)` | Restart a worker |
-
-### Run Creation Flow
-
-**Remote Mode** (via RemoteOrchestrator):
-1. `create_run(request)` → `POST /api/runs` → Server creates run
-2. `upload_files(name, tarball)` → `POST /api/runs/{name}/files` → Upload project
-3. `spawn_workers(name, count)` → `POST /api/runs/{name}/spawn` → Spawn workers
-4. Workers download files, connect directly to server
-
-**Local Mode** (via LocalOrchestrator):
-1. `create_run(request)` → Create run directory, state, spec, chats
-2. `upload_files(name, tarball)` → Extract tarball to work/ directory
-3. `spawn_workers(name, count)` → Spawn workers via configured runner
-
-**CLI Local Mode** (direct, uses git worktrees):
-1. Set up git worktrees for each worker
-2. Register workers in state
-3. Spawn workers via configured runner (Local/SSH/Sprite, optionally in Docker container)
-
----
-
-## State Management
-
-**Location**: `~/.hirsel/runs/{run_name}/hirsel.db`
-
-### Key Tables
-```sql
-state           -- Run metadata (status, time_limit, worker_scale)
-workers         -- Active processes (name, pid, status, work_dir)
-tasks           -- Work breakdown (id, status, claimed_by)
-messages        -- Chat threads
-worker_events   -- Real-time output streaming
-evals           -- Evaluation runs
-```
-
----
-
-## Worker Execution
-
-### Lifecycle
-1. **Spawn**: `hirsel __worker-run --run X --worker Y` (detached, process_group(0))
-2. **Init**: Connect to state, spawn ACP agent
-3. **Loop**: Claim tasks, process tool calls, stream output, heartbeat
-4. **Complete**: Signal done, daemon triggers eval
-
-### ACP Bridge
-
-Workers communicate with AI agents via ACP (Agent Control Protocol). The built-in `hirsel __acp-bridge` command wraps the Claude CLI:
-
-```
-Worker Process
-    │
-    ▼ ACP JSON-RPC (stdin/stdout)
-┌───────────────────────────────────────┐
-│       hirsel __acp-bridge             │
-│   (ACP server → Claude CLI bridge)    │
-│                                       │
-│   ┌───────────────────────────────┐   │
-│   │      ClaudeCliBridge          │   │
-│   │   (JSON streaming protocol)   │   │
-│   └───────────────┬───────────────┘   │
-│                   │                   │
-└───────────────────│───────────────────┘
+Draft ──start──► Working ──eval──► Eval ──pass──► Done ──deliver──► Delivered
+                    │                  │
+                    │                  ▼
+                  pause            fail (max retries)
+                    │                  │
+                    ▼                  ▼
+                 Paused              Failed
+                    │
+                  resume
+                    │
                     ▼
-              claude CLI
-         (spawned subprocess)
+                 Working
 ```
 
-The bridge:
-- Accepts ACP JSON-RPC on stdin (initialize, new_session, prompt)
-- Spawns Claude CLI with `--input-format stream-json --output-format stream-json`
-- Translates Claude's JSON streaming events to ACP notifications
-- Pre-approves MCP tools with `--allowedTools mcp__<server>__*`
+| Status | Description | Terminal |
+|--------|-------------|----------|
+| `Draft` | Configured, workers not spawned | No |
+| `Working` | Workers actively running | No |
+| `Paused` | Manually paused by user | No |
+| `Eval` | Evaluation in progress | No |
+| `Done` | Completed successfully | Yes |
+| `Delivered` | Changes pushed to branch | Yes |
+| `Failed` | Run failed (see `failure_reason`) | Yes |
 
-**Important**: Claude CLI's `--permission-mode delegate` does NOT work for MCP tools. Using delegate mode, MCP tool calls return immediate "permission not granted" errors without sending control_request messages. MCP tools must be pre-approved using `--allowedTools mcp__<server>__*` patterns.
+### Worker Status (`src/core/state/types.rs:151`)
 
-### Runner Types (Host + Container Model)
+| Status | Description |
+|--------|-------------|
+| `Working` | Actively processing |
+| `Awaiting` | Idle (no work or waiting for user) |
+| `Paused` | Stopped (run is paused) |
+| `Error` | Process died unexpectedly |
 
-Runners are configured with a **host** (where compute runs) and an optional **container** (Docker isolation).
+### Task Status (`src/core/state/types.rs:201`)
 
-**Host Types:**
-
-| Host | Description |
-|------|-------------|
-| **Local** | Subprocess on local machine |
-| **Client** | (Remote mode) SSH back to GUI/CLI user's machine via Tailscale |
-| **SSH** | Remote via SSH + reverse tunnel |
-| **Sprite** | Sprites.dev cloud VMs (Firecracker) |
-| **Fly** | Fly.io ephemeral machines |
-
-**Container:**
-- Optional Docker container for any host except Sprite
-- Sprites use Firecracker VMs, cannot nest Docker
-- Fly machines ARE containers, so container.image is required
-
-**Examples:**
-- `local` - bare process on local machine
-- `local` + container `rust:latest` - local Docker container
-- `ssh` to `user@server.com` - bare process on remote host
-- `ssh` + container `ghcr.io/org/dev-env` - Docker on remote host
-
-### Git Synchronization
-
-Workers have local git repos. Coordinator runs a git HTTP server as shared remote. Workers push/pull as needed. Conflicts are resolved by the AI agent using standard git commands.
+| Status | Description |
+|--------|-------------|
+| `Todo` | Not started |
+| `Doing` | Claimed by worker |
+| `Done` | Completed |
 
 ---
 
-## File Locations
+## Data Flow
+
+### Run Creation (Local Mode)
+
+```
+CLI/GUI
+   │
+   ▼ StartRunRequest
+DaemonOrchestrator ──Unix socket──► Daemon
+                                      │
+                                      ▼ start_run_internal
+                                LocalOrchestrator
+                                      │
+   ┌──────────────────────────────────┴──────────────────────────────────┐
+   │ 1. Create run directory (~/.hirsel/runs/<name>/)                    │
+   │ 2. Initialize SQLite database (hirsel.db)                           │
+   │ 3. Write spec.md from request                                       │
+   │ 4. Set up workspace via WorkspaceProvider (git worktrees)           │
+   │ 5. Register workers in state                                        │
+   │ 6. Spawn workers via Runner (unless draft mode)                     │
+   └─────────────────────────────────────────────────────────────────────┘
+```
+
+### Worker Lifecycle
+
+```
+Daemon ──spawn──► Worker Process
+                      │
+                      ▼
+               AcpClient.connect()
+                      │
+                      ▼
+               Send initial prompt (spec + tasks)
+                      │
+                      ▼
+              ┌───────────────┐
+              │  Main Loop    │◄─────────────────┐
+              └───────┬───────┘                  │
+                      │                          │
+                      ▼                          │
+              Process agent response             │
+              (text, tool calls)                 │
+                      │                          │
+                      ▼                          │
+              Update state (events, status)      │
+                      │                          │
+                      ▼                          │
+              Check for messages ────────────────┘
+                      │
+                      ▼ (no more work)
+              worker_done()
+                      │
+                      ▼
+              Daemon lifecycle poll
+                      │
+                      ▼
+              Trigger eval (if all workers idle)
+```
+
+### Archive/Restore (Ephemeral Runners)
+
+**Pause:**
+```
+Daemon.pause_run()
+   │
+   ▼
+LocalLifecycleManager.pause_run()
+   │
+   ├─► For each worker:
+   │      1. ArchiveStrategy.archive() ──► ArchiveHandle (work dir)
+   │      2. ArchiveStrategy.archive() ──► ArchiveHandle (session)
+   │      3. Store handles in WorkerStateHandle, save to worker DB
+   │      4. Runner.stop()
+   │
+   └─► Set run status = Paused
+```
+
+**Resume:**
+```
+Daemon.resume_run()
+   │
+   ▼
+LocalLifecycleManager.resume_run()
+   │
+   └─► Returns ResumeWorker actions
+         │
+         ▼
+Daemon handles each ResumeWorker:
+   1. Check if runner is_ephemeral()
+   2. If yes: ArchiveStrategy.restore(work_dir_handle)
+   3. ArchiveStrategy.restore(session_handle)
+   4. Runner.spawn() with resume_session_id
+   5. Update worker DB (clear state handle, set status)
+```
+
+---
+
+## Database Schema (`src/core/state/mod.rs:27`)
+
+### Tables
+
+| Table | Primary Key | Purpose |
+|-------|-------------|---------|
+| `state` | `id=1` | Run metadata (singleton) |
+| `workers` | `id` | Worker processes |
+| `tasks` | `id` (text) | Work items |
+| `messages` | `id` | Chat threads |
+| `message_reads` | `(worker_name, thread)` | Read tracking |
+| `worker_events` | `id` | Real-time output streaming |
+| `evals` | `id` | Evaluation runs |
+| `history` | `id` | Activity log |
+| `amendments` | `id` | Spec amendments |
+
+### Key Columns
+
+**state:**
+- `status`, `failure_reason`, `started_at`, `time_limit_minutes`
+- `worker_scale`, `max_iterations`, `human_in_the_loop`
+- `default_runner`, `worker_runners` (JSON), `runner_configs` (JSON), `starting_point` (JSON)
+
+**workers:**
+- `name`, `pid`, `runner_id`, `runner_type`, `status`
+- `session_id`, `work_dir`, `hitl_waiting`
+- `state_handle` (JSON: WorkerStateHandle with work_dir and agent_session snapshots)
+
+**tasks:**
+- `id`, `name`, `status`, `claimed_by`, `claimed_at`
+- `parent_id`, `blocked_by`
+
+---
+
+## File Layout
 
 ```
 ~/.hirsel/
-├── config.toml           # Configuration
+├── config.toml           # Global configuration
 ├── hirsel.db             # Global DB (credentials)
-├── hirsel.sock           # Daemon Unix socket (CLI/GUI)
 ├── hirsel.pid            # Daemon PID file
 └── runs/{run_name}/
     ├── hirsel.db         # Run state (SOURCE OF TRUTH)
     ├── spec.md           # Specification (input)
     ├── eval.md           # Eval criteria (input)
     ├── tasks.md          # Generated from DB
-    ├── tasks/            # Generated from DB
-    ├── work/             # Git worktrees (leader/, worker-2/)
-    └── chats/            # Generated from DB
+    ├── tasks/            # Task detail files
+    ├── assets/           # Images, files for spec/eval
+    ├── work/             # Git worktrees
+    │   ├── leader/
+    │   └── worker-2/
+    ├── chats/            # Generated from DB
+    └── tmp/
+        └── eval_log.md
 ```
-
-Daemon also listens on `localhost:19700` (TCP) for SSH reverse tunnels.
 
 ---
 
-## Storage Abstraction
+## Configuration (`src/core/config/mod.rs:144`)
 
-The storage abstraction layer allows hirsel to run in multiple deployment scenarios with different storage backends.
+### Config Struct Fields
 
-### Storage Backends
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `root` | `PathBuf` | `~/.hirsel` | Hirsel root directory |
+| `agent` | `AgentConfig` | - | Agent command configuration |
+| `eval_timeout` | `u32` | `1800` | Eval timeout in seconds |
+| `human_in_the_loop` | `bool` | `true` | HITL mode default |
+| `compaction_enabled` | `bool` | `true` | Enable context compaction |
+| `compaction_threshold` | `Option<u32>` | `10000` | Token threshold |
+| `runners` | `HashMap<String, RunnerConfig>` | `{}` | Named runner configs |
+| `default_runner` | `Option<String>` | `None` | Default runner name |
+| `profiles` | `HashMap<String, OrchestratorProfile>` | local | Orchestrator profiles |
+| `storage` | `StorageConfig` | local | Storage backend config |
 
-| Backend | Use Case | Requirement |
-|---------|----------|-------------|
-| **Local** | Default, self-hosted | Filesystem |
-| **S3** | Cloud deployments, MinIO | `--features s3-storage` |
-
-### Configuration
+### Runner Configuration (`src/core/runner/config.rs`)
 
 ```toml
-# Local storage (default)
-[storage]
-files = "local"
-
-# S3-compatible storage (MinIO, Tigris, AWS S3)
-[storage]
-files = "s3"
-
-[storage.s3]
-endpoint = "http://localhost:9000"  # MinIO URL
-bucket = "hirsel"
-region = "us-east-1"
-access_key_id = "minioadmin"
-secret_access_key = "minioadmin"
-```
-
-### FileStorage Trait
-
-The `FileStorage` trait provides a unified interface for storage operations:
-
-```rust
-#[async_trait]
-pub trait FileStorage: Send + Sync {
-    async fn read(&self, path: &str) -> StorageResult<Vec<u8>>;
-    async fn write(&self, path: &str, data: &[u8]) -> StorageResult<()>;
-    async fn delete(&self, path: &str) -> StorageResult<()>;
-    async fn exists(&self, path: &str) -> StorageResult<bool>;
-    async fn list(&self, prefix: &str) -> StorageResult<Vec<String>>;
-    async fn create_dir(&self, path: &str) -> StorageResult<()>;
-}
-```
-
-### Usage
-
-```rust
-// Create storage from config
-let storage = create_file_storage(&config.storage).await?;
-
-// Use Files with storage abstraction
-let files = Files::new(run_dir);
-files.write_spec_async(&*storage, "# My Spec").await?;
-let content = files.read_spec_async(&*storage).await?;
-```
-
----
-
-## CLI Commands
-
-| Command | Purpose |
-|---------|---------|
-| `go <run> <spec>` | Start run |
-| `runs` | List runs |
-| `view <run>` | View status |
-| `attach <run>` | TUI output viewer |
-| `pause/resume <run>` | Control run |
-| `deliver <run>` | Create branch |
-| `tasks <run>` | List tasks |
-
----
-
-## REST API
-
-**Auth**: `Authorization: Bearer $HIRSEL_API_KEY`
-
-### Run Endpoints
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/runs` | GET | List runs |
-| `/api/runs` | POST | Create run (sets up state, spec, initial worker) |
-| `/api/runs/{name}` | GET/DELETE | Get/delete run |
-| `/api/runs/{name}/files` | GET | Download work directory as tarball |
-| `/api/runs/{name}/files` | POST | Upload project files (gzipped tarball) |
-| `/api/runs/{name}/spawn` | POST | Spawn workers (body: `{"count": N}`) |
-| `/api/runs/{name}/pause` | POST | Pause run |
-| `/api/runs/{name}/resume` | POST | Resume run |
-| `/api/runs/{name}/tasks` | GET/POST | List/add tasks |
-| `/api/runs/{name}/threads/{t}/messages` | GET/POST | Chat messages |
-
-### Config Endpoints
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/config/general` | PATCH | General settings |
-| `/api/config/agent` | PATCH | Agent command |
-| `/api/config/runners/{name}` | GET/PUT/DELETE | Runner CRUD |
-| `/api/config/profiles/{name}` | GET/PUT/DELETE | Profile CRUD |
-| `/api/credentials/{key}` | GET/POST/DELETE | Encrypted credentials |
-
----
-
-## Configuration
-
-### config.toml
-```toml
-[agent]
-command = ["hirsel", "__acp-bridge"]  # ACP bridge wrapping Claude CLI
-
-[defaults]
-workers = 1
-time_limit_minutes = 60
-
-# Local runner (bare process)
+# Local runner (default)
 [runners.local]
 host = "local"
 
-# Local runner with Docker container
+# Local with Docker
 [runners.local-docker]
 host = "local"
 [runners.local-docker.container]
 image = "rust:latest"
 
-# SSH runner (bare process on remote)
+# SSH runner
 [runners.my-server]
 [runners.my-server.host]
 type = "ssh"
@@ -424,23 +512,15 @@ address = "user@server.com"
 port = 22
 work_base = "/tmp/hirsel"
 
-# SSH runner with Docker on remote
-[runners.my-server-docker]
-[runners.my-server-docker.host]
-type = "ssh"
-address = "user@server.com"
-[runners.my-server-docker.container]
-image = "ghcr.io/org/dev-env"
-
-# Sprites runner (no container - Firecracker limitation)
-[runners.cloud]
-[runners.cloud.host]
+# Sprite runner
+[runners.sprite]
+[runners.sprite.host]
 type = "sprite"
 api_token = "..."
 checkpoint = "hirsel-v1"
 auto_destroy = true
 
-# Fly.io runner (container required)
+# Fly runner
 [runners.fly]
 [runners.fly.host]
 type = "fly"
@@ -448,141 +528,166 @@ app = "hirsel-workers"
 region = "ams"
 cpus = 2
 memory_mb = 2048
-auto_destroy = true
 [runners.fly.container]
 image = "debian:bookworm-slim"
+```
 
+### Orchestrator Profiles
+
+```toml
 [profiles.local]
 mode = "local"
 
 [profiles.remote]
 mode = "remote"
-url = "http://server:3000"
-```
-
-### Environment Variables
-| Variable | Purpose |
-|----------|---------|
-| `ANTHROPIC_API_KEY` | Claude API |
-| `HIRSEL_API_KEY` | Server auth |
-| `FLY_API_TOKEN` | Fly.io API token (for Fly runner) |
-
----
-
-## Cargo Features
-
-| Feature | Description |
-|---------|-------------|
-| `gui` | Tauri app (default) |
-| `full-cli` | All CLI commands |
-| `server` | HTTP server (`hirsel serve`) |
-| `tui` | Terminal UI (`hirsel attach`) |
-| `worker` | Minimal remote worker binary |
-| `s3-storage` | S3-compatible storage backend (MinIO, Tigris, AWS S3) |
-
-### Build Variants
-```bash
-cargo build                                    # Full GUI app
-cargo build --no-default-features -F full-cli  # CLI only
-cargo build --no-default-features -F worker    # Minimal worker
-```
-
----
-
-## CI/CD
-
-### GitHub Actions
-- **build-linux**: CLI binary for Linux amd64
-- **docker**: Image to `ghcr.io` (tags: `latest`, `staging`, `v1.2.3`, sha)
-- **release**: GitHub releases on version tags
-
-### Docker
-```bash
-# Orchestrator
-docker run -p 3000:3000 -e HIRSEL_API_KEY=... ghcr.io/OWNER/hirsel serve
-
-# Worker
-docker run -e ANTHROPIC_API_KEY=... ghcr.io/OWNER/hirsel __remote-worker ...
-```
-
----
-
-## Fly.io Deployment
-
-Deploy the coordinator to Fly.io for fully cloud-based orchestration.
-
-### Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                       Fly.io                                 │
-│                                                              │
-│   ┌───────────────────────┐    ┌────────────────────────┐   │
-│   │     Coordinator       │◄───│   Worker Machines      │   │
-│   │   (always-on + vol)   │    │   (ephemeral)          │   │
-│   │   hirsel serve        │    │   hirsel __remote-worker│   │
-│   └───────────────────────┘    └────────────────────────┘   │
-│            ▲                                                 │
-└────────────│─────────────────────────────────────────────────┘
-             │ HTTPS
-        Your laptop
-        hirsel go --profile fly
-```
-
-### Coordinator Deployment
-
-```bash
-# 1. Create app and volume
-fly apps create hirsel-coordinator
-fly volumes create hirsel_data --size 10 --region ams
-
-# 2. Set secrets
-fly secrets set HIRSEL_API_KEY=<your-secret-key>
-fly secrets set ANTHROPIC_API_KEY=<your-api-key>
-
-# 3. Build and deploy
-cargo build --release --no-default-features --features full-cli
-fly deploy
-```
-
-### Worker App Setup
-
-Workers run as ephemeral Fly Machines under a separate app:
-
-```bash
-# Create workers app (no deployment needed - machines are created on demand)
-fly apps create hirsel-workers
-```
-
-### Configuration
-
-```toml
-# config.toml on your laptop
-
-[runners.fly]
-[runners.fly.host]
-type = "fly"
-app = "hirsel-workers"
-region = "ams"
-cpus = 2
-memory_mb = 2048
-[runners.fly.container]
-image = "debian:bookworm-slim"
-
-[profiles.fly]
-mode = "remote"
 url = "https://hirsel-coordinator.fly.dev"
-api_key = "your-secret-key"
+api_key = "secret"
 default_runner = "fly"
 ```
 
-### Usage
+---
 
-```bash
-# Run with Fly workers
-hirsel go my-feature spec.md --profile fly
+## REST API (`src/core/server/mod.rs:71`)
 
-# Or set default profile
-export HIRSEL_PROFILE=fly
-hirsel go my-feature spec.md
+**Auth:** `Authorization: Bearer $HIRSEL_API_KEY`
+
+### Run Endpoints
+
+| Method | Path | Handler |
+|--------|------|---------|
+| GET | `/api/runs` | `list_runs` |
+| POST | `/api/runs` | `create_run` |
+| GET | `/api/runs/{name}` | `get_run` |
+| DELETE | `/api/runs/{name}` | `delete_run` |
+| GET | `/api/runs/{name}/files` | `download_files` |
+| POST | `/api/runs/{name}/files` | `upload_files` |
+| POST | `/api/runs/{name}/workspace` | `init_workspace` |
+| POST | `/api/runs/{name}/spawn` | `spawn_workers` |
+| POST | `/api/runs/{name}/pause` | `pause_run` |
+| POST | `/api/runs/{name}/resume` | `resume_run` |
+| POST | `/api/runs/{name}/deliver` | `deliver_run` |
+
+### Worker/Task/Message Endpoints
+
+| Method | Path | Handler |
+|--------|------|---------|
+| GET | `/api/runs/{name}/workers` | `list_workers` |
+| POST | `/api/runs/{name}/workers/{w}/restart` | `restart_worker` |
+| POST | `/api/runs/{name}/workers/{w}/spawn` | `spawn_single_worker` |
+| POST | `/api/runs/{name}/workers/{w}/resume` | `resume_worker` |
+| GET | `/api/runs/{name}/workers/{w}/events` | `get_worker_events` |
+| GET/POST | `/api/runs/{name}/tasks` | `list_tasks`, `add_task` |
+| DELETE | `/api/runs/{name}/tasks/{id}` | `delete_task` |
+| GET | `/api/runs/{name}/threads` | `list_threads` |
+| GET/POST | `/api/runs/{name}/threads/{t}/messages` | `get_messages`, `send_message` |
+
+### Config Endpoints
+
+| Method | Path | Handler |
+|--------|------|---------|
+| GET | `/api/config` | `get_config` |
+| PATCH | `/api/config/general` | `patch_general_config` |
+| PATCH | `/api/config/agent` | `patch_agent_config` |
+| GET/PUT/DELETE | `/api/config/runners/{name}` | runner CRUD |
+| GET/PUT/DELETE | `/api/config/profiles/{name}` | profile CRUD |
+| POST/GET/DELETE | `/api/credentials/{key}` | credential CRUD |
+
+---
+
+## Daemon (`src/daemon/`)
+
+Background process that owns lifecycle management.
+
+**Listeners:**
+- TCP: `0.0.0.0:19700` (CLI/GUI via localhost, Docker via host.docker.internal)
+
+**Polling Loop (every 5s):**
+```rust
+for run in active_runs {
+    let actions = lifecycle.process_event(LifecycleEvent::TimeCheck)?;
+    for action in actions {
+        match action {
+            SpawnWorker { worker_name, work_dir } => {
+                orchestrator.spawn_single_worker(...).await?;
+            }
+            ResumeWorker { worker_name, work_dir, session_id, snapshot, agent_session } => {
+                orchestrator.resume_worker(...).await?;
+            }
+            EvalTriggered => { /* eval spawned by lifecycle */ }
+            RunFailed { reason } => { /* update state */ }
+            TimeWarning { percent } => { /* send notification */ }
+            // ...
+        }
+    }
+}
 ```
+
+**Auto-start:** CLI/GUI start daemon automatically via `DaemonOrchestrator::connect_or_start()`.
+
+**Auto-exit:** Daemon exits after 5 minutes of no active runs.
+
+---
+
+## Design Notes
+
+### Orchestrator Implementations
+
+All orchestrator methods are fully implemented across Local, Daemon, and Remote:
+
+| Implementation | Transport | Use Case |
+|----------------|-----------|----------|
+| `LocalOrchestrator` | Direct SQLite | Server, daemon internals |
+| `DaemonOrchestrator` | Unix socket (HTTP) | CLI/GUI in local mode |
+| `RemoteOrchestrator` | TCP (HTTP) | CLI/GUI in remote mode |
+
+The daemon exposes the same HTTP API over Unix socket that the remote server exposes over TCP. This allows all orchestrator implementations to share the same route handlers.
+
+### RemoteLifecycleManager (Intentional No-op)
+
+`lifecycle/remote.rs` returns no-ops for all methods because remote workers delegate lifecycle management to the coordinator. The coordinator (running `LocalLifecycleManager`) handles:
+- Eval triggering when workers go idle
+- Worker scaling decisions
+- Time limit enforcement
+
+This is by design, not a stub that needs implementation.
+
+### Partial/Feature-Gated Implementations
+
+| Feature | Location | Status |
+|---------|----------|--------|
+| SSH runner | `runner/ssh.rs` | Works but less tested than Local/Fly |
+| S3WorkspaceProvider | `draft/s3_workspace.rs` | Feature-gated (`s3-storage`) |
+| S3SnapshotStrategy | `snapshot/s3.rs` | Feature-gated (`s3-storage`) |
+
+### Runner Config Storage
+
+Runner configurations are stored per-run at creation time in the `runner_configs` column (JSON). This ensures that changes to `config.toml` don't affect in-progress runs. The storage flow:
+
+1. At run creation, resolve runner names to full `RunnerConfig` objects
+2. Store the configs in the run's SQLite database
+3. When spawning workers, use stored configs with fallback to global config (for backwards compatibility)
+
+Methods in `state/run.rs`:
+- `get_runner_configs()` - Get stored configs
+- `set_runner_configs()` - Store configs at run creation
+- `get_runner_config_for_worker()` - Get config for a worker (stored → global fallback)
+
+### Remote Worker Bootstrap
+
+Ephemeral runners (Fly, Sprite) bootstrap workers via init scripts in `runner/setup.rs`:
+
+1. **Download hirsel binary** - From GitHub releases with version pinning (`HIRSEL_TAG=v{VERSION}`)
+2. **Install dependencies** - Node.js for agent tools if not in image
+3. **Fetch project files** - Tarball from coordinator's `/api/runs/{name}/files`
+4. **Initialize git** - With coordinator as remote for syncing
+5. **Start worker** - `hirsel __remote-worker` connects back to coordinator
+
+The coordinator embeds its version at compile time and passes it to workers, ensuring binary compatibility.
+
+### Known Constraints
+
+- **Sprites cannot run Docker** - Firecracker VMs don't support nested containers
+- **Fly requires container.image** - Machines ARE containers
+- **Client host only in remote mode** - Requires Tailscale for SSH-back
+- **SSH reverse tunnel required for local mode** - Workers connect to `localhost:19700`
+- **Worker binary version** - Must match coordinator version (auto-pinned via `HIRSEL_TAG`)

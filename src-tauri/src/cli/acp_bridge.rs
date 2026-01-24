@@ -269,11 +269,11 @@ impl Agent for ClaudeAcpAgent {
                 let session = state
                     .sessions
                     .get_mut(&session_id)
-                    .ok_or_else(|| agent_client_protocol::Error::internal_error())?;
+                    .ok_or_else(agent_client_protocol::Error::internal_error)?;
                 session
                     .event_rx
                     .take()
-                    .ok_or_else(|| agent_client_protocol::Error::internal_error())?
+                    .ok_or_else(agent_client_protocol::Error::internal_error)?
             };
 
             // Now we can await without holding the RefCell borrow

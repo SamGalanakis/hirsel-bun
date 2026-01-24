@@ -43,6 +43,29 @@ export interface ContainerConfig {
   image: string;
 }
 
+// Snapshot strategy types
+export type SnapshotStrategyType = 'persistent_disk' | 's3' | 'sprite_checkpoint';
+
+export interface PersistentDiskSnapshotConfig {
+  type: 'persistent_disk';
+}
+
+export interface S3SnapshotConfig {
+  type: 's3';
+  prefix?: string;
+  storage?: string; // Named storage config reference
+}
+
+export interface SpriteCheckpointSnapshotConfig {
+  type: 'sprite_checkpoint';
+  comment_prefix?: string;
+}
+
+export type SnapshotConfig =
+  | PersistentDiskSnapshotConfig
+  | S3SnapshotConfig
+  | SpriteCheckpointSnapshotConfig;
+
 // Host configs (where compute runs)
 export interface SshHostConfig {
   type: 'ssh';
@@ -65,10 +88,11 @@ export interface SpriteHostConfig {
 
 export type HostConfig = { type: 'local' } | { type: 'client' } | SshHostConfig | SpriteHostConfig;
 
-// Runner config (Host + optional Container)
+// Runner config (Host + optional Container + optional Snapshot)
 export interface RunnerConfig {
   host: HostConfig;
   container?: ContainerConfig;
+  snapshot?: SnapshotConfig;
 }
 
 // Orchestrator profile types
@@ -102,6 +126,24 @@ export interface GitConfig {
   configuredProviders: GitProvider[];
 }
 
+// Storage types
+export type StorageProvider = 's3' | 'tigris';
+
+export interface S3Config {
+  provider: StorageProvider;
+  endpoint?: string;
+  bucket: string;
+  region?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+}
+
+export interface StorageConfig {
+  files: 'local' | 's3';
+  storages: Record<string, S3Config>;
+  defaultStorage?: string;
+}
+
 export interface Settings {
   agentCommand: string;
   evalTimeout: number;
@@ -122,6 +164,7 @@ export interface Settings {
   profiles: Record<string, OrchestratorProfile>;
   defaultProfile: string;
   git: GitConfig;
+  storage: StorageConfig;
 }
 
 // Remote config response from server API
@@ -142,6 +185,7 @@ export interface RemoteConfig {
   defaultRunner: string | null;
   workerRunners: Record<string, string>;
   git: { defaultProvider: string | null; configuredProviders: string[] };
+  storage: StorageConfig;
 }
 
 // Tailscale info for "This Machine" feature

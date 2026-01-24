@@ -19,6 +19,7 @@ pub use local::LocalLifecycleManager;
 pub use remote::RemoteLifecycleManager;
 pub use transitions::{RunStateMachine, WorkerStateMachine};
 
+use crate::core::snapshot::WorkerStateHandle;
 use crate::core::state::{FailureReason, Status, WorkerStatus};
 use std::path::PathBuf;
 use thiserror::Error;
@@ -103,8 +104,35 @@ pub enum LifecycleAction {
     /// Workers were resumed.
     WorkersResumed(Vec<String>),
 
-    /// A new worker was scaled up.
+    /// A new worker was scaled up (legacy - for backwards compat, use SpawnWorker).
     WorkerScaledUp(String),
+
+    /// Request to spawn a new worker.
+    ///
+    /// The caller (daemon) should handle actual spawning via the orchestrator,
+    /// which uses the runner system to spawn workers correctly based on runner type.
+    SpawnWorker {
+        /// Name of the worker to spawn.
+        worker_name: String,
+        /// Work directory for the worker.
+        work_dir: PathBuf,
+    },
+
+    /// Request to resume a paused/awaiting worker.
+    ///
+    /// Like SpawnWorker, the caller should use the orchestrator to spawn via runner.
+    /// The orchestrator handles snapshot restoration for ephemeral runners.
+    ResumeWorker {
+        /// Name of the worker to resume.
+        worker_name: String,
+        /// Work directory for the worker.
+        work_dir: PathBuf,
+        /// Session ID to resume from (if any).
+        resume_session_id: Option<String>,
+        /// Unified state handle containing work dir snapshot and agent session.
+        /// The orchestrator will restore state as needed based on runner type.
+        state_handle: Option<WorkerStateHandle>,
+    },
 
     /// Eval was triggered.
     EvalTriggered,
@@ -160,7 +188,9 @@ pub trait LifecycleManager {
     fn pause_run(&self, reason: &str) -> LifecycleResult<Vec<String>>;
 
     /// Resume the run, respawning paused workers.
-    fn resume_run(&self) -> LifecycleResult<Vec<String>>;
+    ///
+    /// Returns a list of ResumeWorker actions for the daemon to process.
+    fn resume_run(&self) -> LifecycleResult<Vec<LifecycleAction>>;
 
     /// Handle a worker signaling it's done with work.
     ///

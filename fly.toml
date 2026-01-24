@@ -12,7 +12,7 @@
 #      fly secrets set ANTHROPIC_API_KEY=<your-api-key>
 #
 #   3. Build and deploy:
-#      cargo build --release --no-default-features --features full-cli
+#      cd src-tauri && cargo build --release --no-default-features --features cli
 #      fly deploy
 #
 # See docs/architecture.md for full deployment guide.
@@ -24,8 +24,8 @@ primary_region = "ams"
   dockerfile = "Dockerfile.coordinator"
 
 [env]
-  HIRSEL_DATA_DIR = "/litefs/data"
-  RUST_LOG = "info"
+  HIRSEL_ROOT = "/litefs/data"
+  RUST_LOG = "info,hirsel=debug"
 
 # LiteFS for distributed SQLite
 [litefs]

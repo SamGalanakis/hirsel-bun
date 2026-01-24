@@ -202,16 +202,17 @@ impl SQLiteState {
     /// Get all run summary data in an optimized single fetch
     /// This fetches state, task counts, and worker counts in 3 queries instead of ~9
     pub fn get_run_summary(&self) -> StateResult<RunStateSummary> {
-        // Query 1: Get all needed state columns in one query
-        let (status, created_at, updated_at, started_at, time_limit_minutes, unread_count): (
+        // Query 1: Get all needed state columns in one query (including worker_scale for max workers)
+        let (status, created_at, updated_at, started_at, time_limit_minutes, unread_count, worker_scale): (
             String,
             Option<String>,
             Option<String>,
             Option<String>,
             Option<i64>,
             i64,
+            Option<String>,
         ) = self.db.query_row(
-            "SELECT status, created_at, updated_at, started_at, time_limit_minutes, COALESCE(unread_count, 0) FROM state WHERE id = 1",
+            "SELECT status, created_at, updated_at, started_at, time_limit_minutes, COALESCE(unread_count, 0), worker_scale FROM state WHERE id = 1",
             [],
             |row| {
                 Ok((
@@ -221,6 +222,7 @@ impl SQLiteState {
                     row.get(3)?,
                     row.get(4)?,
                     row.get(5)?,
+                    row.get(6)?,
                 ))
             },
         )?;
@@ -236,8 +238,8 @@ impl SQLiteState {
             },
         )?;
 
-        // Query 3: Get worker counts in one aggregate query
-        let (workers_total, workers_active): (u32, u32) = self.db.query_row(
+        // Query 3: Get worker counts - active workers from workers table
+        let (workers_registered, workers_active): (u32, u32) = self.db.query_row(
             "SELECT COUNT(*), SUM(CASE WHEN status = 'working' THEN 1 ELSE 0 END) FROM workers",
             [],
             |row| {
@@ -246,6 +248,11 @@ impl SQLiteState {
                 Ok((total as u32, active.unwrap_or(0) as u32))
             },
         )?;
+
+        // workers_total is the max scale (from worker_scale), falling back to registered count
+        let workers_total = worker_scale
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(workers_registered);
 
         // Parse status
         let status = Status::from_str(&status).unwrap_or(Status::Draft);

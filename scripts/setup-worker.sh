@@ -52,19 +52,12 @@ validate_agent() {
 install_hirsel() {
     step "Installing hirsel worker binary..."
 
-    # Check if already installed with correct version
+    # Check if already installed (e.g., mounted from host in docker)
     if command -v hirsel &>/dev/null; then
         local current_version
         current_version=$(hirsel --version 2>&1 || echo "unknown")
-        info "Found existing hirsel: ${current_version}"
-
-        if [ -n "$HIRSEL_TAG" ]; then
-            local expected_version="${HIRSEL_TAG#v}"
-            if echo "$current_version" | grep -q "$expected_version"; then
-                info "Correct version already installed, skipping"
-                return 0
-            fi
-        fi
+        info "Found existing hirsel: ${current_version}, skipping download"
+        return 0
     fi
 
     # Download and run install script
@@ -93,10 +86,11 @@ install_claude() {
     info "Downloading Claude CLI installer..."
     curl -fsSL https://claude.ai/install.sh | bash
 
-    # Verify installation
+    # Verify installation - Claude may install to ~/.local/bin or ~/.claude/local/bin
     if ! command -v claude &>/dev/null; then
-        # Claude installs to ~/.claude/local/bin, may need to add to PATH
-        if [ -f "$HOME/.claude/local/bin/claude" ]; then
+        if [ -f "$HOME/.local/bin/claude" ]; then
+            warn "Claude installed but not in PATH. Add to PATH: export PATH=\"\$HOME/.local/bin:\$PATH\""
+        elif [ -f "$HOME/.claude/local/bin/claude" ]; then
             warn "Claude installed but not in PATH. Add to PATH: export PATH=\"\$HOME/.claude/local/bin:\$PATH\""
         else
             error "Claude CLI installation failed"
@@ -134,6 +128,8 @@ verify_setup() {
         claude)
             if command -v claude &>/dev/null; then
                 info "claude: $(claude --version 2>&1)"
+            elif [ -f "$HOME/.local/bin/claude" ]; then
+                info "claude: installed at ~/.local/bin/claude (add to PATH)"
             elif [ -f "$HOME/.claude/local/bin/claude" ]; then
                 info "claude: installed at ~/.claude/local/bin/claude (add to PATH)"
             else

@@ -174,6 +174,15 @@ impl SQLiteState {
         Ok(())
     }
 
+    /// Clear project path (set to NULL)
+    pub fn clear_project_path(&self) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET project_path = NULL, updated_at = ?1 WHERE id = 1",
+            params![self.now()],
+        )?;
+        Ok(())
+    }
+
     /// Get remote URL (for remote git repos)
     pub fn get_remote_url(&self) -> StateResult<Option<String>> {
         match self
@@ -695,7 +704,7 @@ impl SQLiteState {
         Ok(())
     }
 
-    /// Get the runner for a specific worker (falls back to default_runner, then "local")
+    /// Get the runner name for a specific worker (falls back to default_runner, then "local")
     pub fn get_runner_for_worker(&self, worker_name: &str) -> StateResult<String> {
         // First check per-worker assignments
         if let Some(runners) = self.get_worker_runners()? {
@@ -709,5 +718,98 @@ impl SQLiteState {
         }
         // Ultimate fallback
         Ok("local".to_string())
+    }
+
+    /// Get runner configs stored at run creation time.
+    ///
+    /// Returns a map of runner name -> RunnerConfig. This captures the full
+    /// configuration at the time the run was created, ensuring that config
+    /// changes don't affect in-progress runs.
+    pub fn get_runner_configs(
+        &self,
+    ) -> StateResult<Option<std::collections::HashMap<String, crate::core::runner::RunnerConfig>>>
+    {
+        match self
+            .db
+            .query_row("SELECT runner_configs FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
+            Ok(Some(json)) => {
+                let map: std::collections::HashMap<String, crate::core::runner::RunnerConfig> =
+                    serde_json::from_str(&json).unwrap_or_default();
+                Ok(Some(map))
+            }
+            Ok(None) => Ok(None),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set runner configs at run creation time.
+    ///
+    /// This captures the full configuration for all runners used by this run,
+    /// ensuring that config changes don't affect in-progress runs.
+    pub fn set_runner_configs(
+        &self,
+        configs: Option<&std::collections::HashMap<String, crate::core::runner::RunnerConfig>>,
+    ) -> StateResult<()> {
+        let json = configs.map(|c| serde_json::to_string(c).unwrap_or_default());
+        self.db.execute(
+            "UPDATE state SET runner_configs = ?1, updated_at = ?2 WHERE id = 1",
+            params![json, self.now()],
+        )?;
+        Ok(())
+    }
+
+    /// Get the resolved runner config for a specific worker.
+    ///
+    /// First checks stored runner_configs (captured at run creation), then falls
+    /// back to looking up by name from global config if runner_configs is empty
+    /// (for backwards compatibility with old runs).
+    pub fn get_runner_config_for_worker(
+        &self,
+        worker_name: &str,
+        global_config: &crate::core::config::Config,
+    ) -> StateResult<crate::core::runner::RunnerConfig> {
+        // Get the runner name for this worker
+        let runner_name = self.get_runner_for_worker(worker_name)?;
+
+        // Try stored configs first (new runs)
+        if let Some(configs) = self.get_runner_configs()? {
+            if let Some(config) = configs.get(&runner_name) {
+                return Ok(config.clone());
+            }
+        }
+
+        // Fall back to global config lookup (old runs without stored configs)
+        Ok(global_config
+            .get_runner(&runner_name)
+            .unwrap_or_else(crate::core::runner::RunnerConfig::local))
+    }
+
+    // =========================================================================
+    // Starting Point
+    // =========================================================================
+
+    /// Get the starting point as JSON
+    pub fn get_starting_point(&self) -> StateResult<Option<String>> {
+        match self
+            .db
+            .query_row("SELECT starting_point FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set the starting point as JSON
+    pub fn set_starting_point(&self, starting_point: Option<&str>) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET starting_point = ?1, updated_at = ?2 WHERE id = 1",
+            params![starting_point, self.now()],
+        )?;
+        Ok(())
     }
 }

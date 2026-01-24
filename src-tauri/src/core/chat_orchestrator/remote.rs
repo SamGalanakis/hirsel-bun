@@ -248,7 +248,7 @@ fn parse_sse_stream(
         // Convert response body to AsyncRead
         let byte_stream = response.bytes_stream();
         let mapped_stream = byte_stream.map(|result: Result<Bytes, reqwest::Error>| {
-            result.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            result.map_err(std::io::Error::other)
         });
         let reader = StreamReader::new(mapped_stream);
         let mut lines = tokio::io::BufReader::new(reader).lines();

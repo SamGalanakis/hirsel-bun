@@ -4,8 +4,8 @@ use std::fs;
 use std::path::Path;
 
 use super::{
-    AuthMethod, Config, ConfigError, GitProvider, OrchestratorAccess, OrchestratorMode,
-    StorageBackend,
+    AuthMethod, Config, ConfigError, GitProvider, OrchestratorAccess, OrchestratorMode, S3Config,
+    StorageBackend, StorageProvider,
 };
 use crate::core::runner::{HostConfig, HostConfigOrShortcut};
 
@@ -294,8 +294,38 @@ fn write_profiles_section(output: &mut String, config: &Config) {
     }
 }
 
+fn write_s3_config(output: &mut String, s3: &S3Config) {
+    // Write provider if not default (S3)
+    if s3.provider != StorageProvider::S3 {
+        output.push_str(&format!(
+            "provider = \"{}\"\n",
+            match s3.provider {
+                StorageProvider::S3 => "s3",
+                StorageProvider::Tigris => "tigris",
+            }
+        ));
+    }
+    if let Some(ref endpoint) = s3.endpoint {
+        output.push_str(&format!("endpoint = \"{}\"\n", endpoint));
+    }
+    output.push_str(&format!("bucket = \"{}\"\n", s3.bucket));
+    if let Some(ref region) = s3.region {
+        output.push_str(&format!("region = \"{}\"\n", region));
+    }
+    if let Some(ref key) = s3.access_key_id {
+        output.push_str(&format!("access_key_id = \"{}\"\n", key));
+    }
+    if let Some(ref secret) = s3.secret_access_key {
+        output.push_str(&format!("secret_access_key = \"{}\"\n", secret));
+    }
+}
+
 fn write_storage_section(output: &mut String, config: &Config) {
-    if config.storage.files != StorageBackend::Local || config.storage.s3.is_some() {
+    let has_content = config.storage.files != StorageBackend::Local
+        || !config.storage.storages.is_empty()
+        || config.storage.default_storage.is_some();
+
+    if has_content {
         output.push_str("[storage]\n");
         output.push_str(&format!(
             "files = \"{}\"\n",
@@ -305,22 +335,16 @@ fn write_storage_section(output: &mut String, config: &Config) {
             }
         ));
 
-        if let Some(ref s3) = config.storage.s3 {
-            output.push_str("\n[storage.s3]\n");
-            if let Some(ref endpoint) = s3.endpoint {
-                output.push_str(&format!("endpoint = \"{}\"\n", endpoint));
-            }
-            output.push_str(&format!("bucket = \"{}\"\n", s3.bucket));
-            if let Some(ref region) = s3.region {
-                output.push_str(&format!("region = \"{}\"\n", region));
-            }
-            if let Some(ref key) = s3.access_key_id {
-                output.push_str(&format!("access_key_id = \"{}\"\n", key));
-            }
-            if let Some(ref secret) = s3.secret_access_key {
-                output.push_str(&format!("secret_access_key = \"{}\"\n", secret));
-            }
+        if let Some(ref default_storage) = config.storage.default_storage {
+            output.push_str(&format!("default_storage = \"{}\"\n", default_storage));
         }
+
+        // Write named storages
+        for (name, s3) in &config.storage.storages {
+            output.push_str(&format!("\n[storage.storages.{}]\n", name));
+            write_s3_config(output, s3);
+        }
+
         output.push('\n');
     }
 }

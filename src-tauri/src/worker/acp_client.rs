@@ -10,10 +10,10 @@ use agent_client_protocol::{
     NewSessionRequest, PermissionOptionKind, PromptRequest, ProtocolVersion, ReadTextFileRequest,
     ReadTextFileResponse, ReleaseTerminalRequest, ReleaseTerminalResponse,
     RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SelectedPermissionOutcome, SessionNotification, SessionUpdate, SetSessionModeRequest,
-    TerminalExitStatus, TerminalId, TerminalOutputRequest, TerminalOutputResponse, TextContent,
-    WaitForTerminalExitRequest, WaitForTerminalExitResponse, WriteTextFileRequest,
-    WriteTextFileResponse,
+    ResumeSessionRequest, SelectedPermissionOutcome, SessionNotification, SessionUpdate,
+    SetSessionModeRequest, TerminalExitStatus, TerminalId, TerminalOutputRequest,
+    TerminalOutputResponse, TextContent, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
+    WriteTextFileRequest, WriteTextFileResponse,
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -329,6 +329,8 @@ pub struct WorkerRunConfig {
     pub leader_name: Option<String>,
     pub teammates: Option<Vec<String>>,
     pub resume_session_id: Option<String>,
+    /// Optional API URL for reporting status (used by Docker/remote workers)
+    pub api_url: Option<String>,
 }
 
 /// Run the ACP worker loop.
@@ -406,12 +408,26 @@ pub async fn run_acp_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
     }
     let mcp_server = McpServer::Stdio(mcp_stdio);
 
-    // Create new session
-    let session_request = NewSessionRequest::new(config.work_dir.to_string_lossy().to_string())
+    // Create or resume session
+    let session_id = if let Some(ref resume_id) = config.resume_session_id {
+        // Resume existing session
+        info!("[{}] Resuming session: {}", config.worker_name, resume_id);
+        let resume_request = ResumeSessionRequest::new(
+            resume_id.clone(),
+            config.work_dir.to_string_lossy().to_string(),
+        )
         .mcp_servers(vec![mcp_server]);
-    let session = conn.new_session(session_request).await?;
-    let session_id = session.session_id;
-    info!("[{}] Created session: {}", config.worker_name, session_id);
+        conn.resume_session(resume_request).await?;
+        // When resuming, the session_id is the one we're resuming
+        resume_id.clone()
+    } else {
+        // Create new session
+        let session_request = NewSessionRequest::new(config.work_dir.to_string_lossy().to_string())
+            .mcp_servers(vec![mcp_server]);
+        let session = conn.new_session(session_request).await?;
+        session.session_id.to_string()
+    };
+    info!("[{}] Session ready: {}", config.worker_name, session_id);
 
     // Set bypassPermissions mode
     let mode_request = SetSessionModeRequest::new(session_id.clone(), "bypassPermissions");
@@ -732,7 +748,6 @@ pub fn build_worker_prompt(
 ///
 /// This is an alternative to `run_acp_worker` that communicates directly with
 /// the Claude CLI using its JSON streaming protocol.
-#[cfg(feature = "claude")]
 pub async fn run_claude_cli_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
     use crate::core::claude_cli::{run_claude_worker, ClaudeWorkerConfig};
 
@@ -764,6 +779,7 @@ pub async fn run_claude_cli_worker(config: WorkerRunConfig) -> anyhow::Result<()
         work_dir: config.work_dir,
         run_dir: config.run_dir,
         prompt,
+        resume_session_id: config.resume_session_id,
     };
 
     // Run the worker
@@ -779,26 +795,23 @@ pub async fn run_claude_cli_worker(config: WorkerRunConfig) -> anyhow::Result<()
 
 /// Run a worker, automatically selecting the best backend.
 ///
-/// If the `claude` feature is enabled and the agent command indicates Claude or
-/// our built-in ACP bridge, uses the native Claude Agent SDK. Otherwise falls
-/// back to the ACP adapter for external agents.
+/// If the agent command indicates Claude or our built-in ACP bridge, uses the
+/// native Claude Agent SDK. Otherwise falls back to the ACP adapter for external
+/// agents.
 pub async fn run_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
-    #[cfg(feature = "claude")]
-    {
-        // Check if we should use the native Claude Agent SDK
-        // This includes:
-        // - Empty command (default to Claude)
-        // - "claude" or path ending in "/claude"
-        // - "hirsel __acp-bridge" (our built-in bridge, now uses SDK)
-        let use_sdk = config.agent_command.is_empty()
-            || config.agent_command.first().map_or(false, |cmd| {
-                cmd == "claude" || cmd.ends_with("/claude") || cmd.contains("claude-code")
-            })
-            || config.agent_command.iter().any(|arg| arg == "__acp-bridge");
+    // Check if we should use the native Claude Agent SDK
+    // This includes:
+    // - Empty command (default to Claude)
+    // - "claude" or path ending in "/claude"
+    // - "hirsel __acp-bridge" (our built-in bridge, now uses SDK)
+    let use_sdk = config.agent_command.is_empty()
+        || config.agent_command.first().is_some_and(|cmd| {
+            cmd == "claude" || cmd.ends_with("/claude") || cmd.contains("claude-code")
+        })
+        || config.agent_command.iter().any(|arg| arg == "__acp-bridge");
 
-        if use_sdk {
-            return run_claude_cli_worker(config).await;
-        }
+    if use_sdk {
+        return run_claude_cli_worker(config).await;
     }
 
     // Fall back to ACP adapter for external agents

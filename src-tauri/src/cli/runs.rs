@@ -1,12 +1,13 @@
 //! Implementation of the `hirsel runs` command.
 //!
 //! Lists all runs with their status, task progress, and worker counts.
+//! Uses the Orchestrator trait to support both local and remote modes.
 
-use crate::core::{Config, SQLiteState, Status, TaskStatus, WorkerStatus};
+use crate::cli::helpers::{block_on, get_orchestrator};
+use crate::core::api_types::RunSummary;
 use serde::Serialize;
-use std::fs;
 
-/// Run summary for display
+/// Run summary for display (maps from RunSummary)
 #[derive(Debug, Clone, Serialize)]
 pub struct RunInfo {
     pub name: String,
@@ -19,35 +20,35 @@ pub struct RunInfo {
     pub time_limit_minutes: Option<i64>,
 }
 
-/// List all runs
-pub fn list_runs(json: bool) -> anyhow::Result<()> {
-    let (config, _warnings) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
-    let runs_dir = config.runs_dir();
-
-    let mut runs: Vec<RunInfo> = Vec::new();
-
-    if runs_dir.exists() {
-        let mut entries: Vec<_> = fs::read_dir(&runs_dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_dir())
-            .collect();
-
-        // Sort by modification time (newest first)
-        entries.sort_by(|a, b| {
-            let a_time = a.metadata().and_then(|m| m.modified()).ok();
-            let b_time = b.metadata().and_then(|m| m.modified()).ok();
-            b_time.cmp(&a_time)
-        });
-
-        for entry in entries {
-            let run_name = entry.file_name().to_string_lossy().to_string();
-            let run_dir = entry.path();
-
-            if let Some(info) = get_run_info(&run_name, &run_dir) {
-                runs.push(info);
-            }
+impl From<RunSummary> for RunInfo {
+    fn from(s: RunSummary) -> Self {
+        Self {
+            name: s.name,
+            status: format!("{:?}", s.status).to_lowercase(),
+            tasks_done: s.tasks_done as usize,
+            tasks_total: s.tasks_total as usize,
+            workers_active: s.workers_active as usize,
+            workers_total: s.workers_total as usize,
+            elapsed_minutes: Some(s.elapsed_minutes),
+            time_limit_minutes: s.time_limit_minutes.map(|v| v as i64),
         }
     }
+}
+
+/// List all runs using the Orchestrator trait
+///
+/// This supports both local and remote modes through the profile parameter
+/// in the CLI args.
+pub fn list_runs(json: bool) -> anyhow::Result<()> {
+    list_runs_with_profile(None, json)
+}
+
+/// List all runs with a specific profile
+pub fn list_runs_with_profile(profile: Option<&str>, json: bool) -> anyhow::Result<()> {
+    let orch = get_orchestrator(profile)?;
+    let run_summaries = block_on(orch.list_runs())?;
+
+    let runs: Vec<RunInfo> = run_summaries.into_iter().map(RunInfo::from).collect();
 
     if json {
         println!("{}", serde_json::to_string_pretty(&runs)?);
@@ -61,58 +62,6 @@ pub fn list_runs(json: bool) -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-/// Get info for a single run
-fn get_run_info(name: &str, run_dir: &std::path::Path) -> Option<RunInfo> {
-    let db_path = run_dir.join("hirsel.db");
-
-    if !db_path.exists() {
-        // Run directory exists but no database - might be incomplete
-        return Some(RunInfo {
-            name: name.to_string(),
-            status: "unknown".to_string(),
-            tasks_done: 0,
-            tasks_total: 0,
-            workers_active: 0,
-            workers_total: 0,
-            elapsed_minutes: None,
-            time_limit_minutes: None,
-        });
-    }
-
-    let state = SQLiteState::new(db_path).ok()?;
-
-    let status = state.status().unwrap_or(Status::Draft);
-    let tasks = state.get_tasks().unwrap_or_default();
-    let workers = state.get_workers().unwrap_or_default();
-
-    let tasks_done = tasks
-        .iter()
-        .filter(|t| t.status == TaskStatus::Done)
-        .count();
-    let tasks_total = tasks.len();
-
-    let workers_active = workers
-        .iter()
-        .filter(|w| w.status == WorkerStatus::Working)
-        .count();
-    let workers_total = workers.len();
-
-    let time_info = state.get_time_info().ok().flatten();
-    let elapsed_minutes = time_info.as_ref().map(|t| t.elapsed_minutes);
-    let time_limit_minutes = time_info.as_ref().map(|t| t.limit_minutes);
-
-    Some(RunInfo {
-        name: name.to_string(),
-        status: status.to_string(),
-        tasks_done,
-        tasks_total,
-        workers_active,
-        workers_total,
-        elapsed_minutes,
-        time_limit_minutes,
-    })
 }
 
 /// Print runs as a formatted table
@@ -194,37 +143,6 @@ fn format_status(status: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
-
-    #[test]
-    fn test_get_run_info_no_db() {
-        let temp_dir = TempDir::new().unwrap();
-        let run_dir = temp_dir.path().to_path_buf();
-
-        let info = get_run_info("test-run", &run_dir).unwrap();
-        assert_eq!(info.name, "test-run");
-        assert_eq!(info.status, "unknown");
-    }
-
-    #[test]
-    fn test_get_run_info_with_db() {
-        let temp_dir = TempDir::new().unwrap();
-        let run_dir = temp_dir.path().to_path_buf();
-        let db_path = run_dir.join("hirsel.db");
-
-        // Create a state with some data
-        let state = SQLiteState::new(db_path).unwrap();
-        state.init_state(None).unwrap();
-        state.set_status(Status::Working).unwrap();
-        state.add_task("task1", "Task 1", None, None).unwrap();
-        state.add_task("task2", "Task 2", None, None).unwrap();
-
-        let info = get_run_info("test-run", &run_dir).unwrap();
-        assert_eq!(info.name, "test-run");
-        assert_eq!(info.status, "working");
-        assert_eq!(info.tasks_total, 2);
-        assert_eq!(info.tasks_done, 0);
-    }
 
     #[test]
     fn test_format_status() {
@@ -233,5 +151,33 @@ mod tests {
         assert!(format_status("paused").contains("⏸"));
         assert!(format_status("runaway").contains("⚠"));
         assert!(format_status("idle").contains("○"));
+    }
+
+    #[test]
+    fn test_run_info_from_summary() {
+        use crate::core::api_types::{RunStatus, RunSummary};
+
+        let summary = RunSummary {
+            name: "test-run".to_string(),
+            status: RunStatus::Working,
+            tasks_done: 2,
+            tasks_total: 5,
+            workers_active: 1,
+            workers_total: 2,
+            elapsed_minutes: 10.5,
+            time_limit_minutes: Some(60),
+            has_unread_messages: false,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+
+        let info = RunInfo::from(summary);
+        assert_eq!(info.name, "test-run");
+        assert_eq!(info.status, "working");
+        assert_eq!(info.tasks_done, 2);
+        assert_eq!(info.tasks_total, 5);
+        assert_eq!(info.workers_active, 1);
+        assert_eq!(info.workers_total, 2);
+        assert_eq!(info.elapsed_minutes, Some(10.5));
+        assert_eq!(info.time_limit_minutes, Some(60));
     }
 }

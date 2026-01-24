@@ -141,8 +141,13 @@ export function runList() {
       const runSelectedHandler = (e: Event) => {
         const customEvent = e as CustomEvent<string | null>;
         this.selectedRun = customEvent.detail;
-        const index = this.runs.findIndex((r) => r.name === customEvent.detail);
-        if (index >= 0) this.selectedIndex = index;
+        if (customEvent.detail) {
+          const index = this.runs.findIndex((r) => r.name === customEvent.detail);
+          if (index >= 0) this.selectedIndex = index;
+        } else {
+          // Selection cleared (e.g., run was deleted)
+          this.selectedIndex = -1;
+        }
       };
       window.addEventListener('run-selected', runSelectedHandler);
       this._eventCleanups.push(() =>
@@ -363,6 +368,8 @@ export function runList() {
         // Select the new draft
         this.selectRun(detail.name);
 
+        // Notify draft editor this is a newly created draft (for edit mode)
+        window.dispatchEvent(new CustomEvent('draft-created'));
         // Dispatch draft-selected event for the draft editor
         window.dispatchEvent(new CustomEvent('draft-selected', { detail: detail.name }));
       } catch (err) {

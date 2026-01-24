@@ -114,6 +114,11 @@ pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
         cfg.git = git_update.into();
     }
 
+    // Apply storage config update
+    if let Some(storage_update) = updates.storage {
+        cfg.storage = storage_update.into();
+    }
+
     // Serialize to TOML
     let toml_str =
         toml::to_string_pretty(&cfg).map_err(|e| format!("Failed to serialize config: {}", e))?;

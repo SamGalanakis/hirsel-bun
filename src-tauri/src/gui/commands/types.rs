@@ -171,6 +171,7 @@ pub struct ConfigUpdateRequest {
     pub profiles: Option<std::collections::HashMap<String, OrchestratorProfileUpdate>>,
     pub default_profile: Option<String>,
     pub git: Option<GitConfigUpdate>,
+    pub storage: Option<crate::core::api_types::StorageConfigResponse>,
 }
 
 /// Result of validating a repository path/URL

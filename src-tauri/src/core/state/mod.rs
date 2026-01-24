@@ -52,7 +52,9 @@ CREATE TABLE IF NOT EXISTS state (
     is_test INTEGER DEFAULT 0,
     failure_reason TEXT,
     default_runner TEXT,
-    worker_runners TEXT
+    worker_runners TEXT,
+    starting_point TEXT,
+    runner_configs TEXT
 );
 
 CREATE TABLE IF NOT EXISTS workers (
@@ -70,7 +72,8 @@ CREATE TABLE IF NOT EXISTS workers (
     location TEXT DEFAULT 'local',
     last_heartbeat TEXT,
     created_at TEXT NOT NULL,
-    hitl_waiting INTEGER DEFAULT 0
+    hitl_waiting INTEGER DEFAULT 0,
+    state_handle TEXT
 );
 
 CREATE TABLE IF NOT EXISTS history (

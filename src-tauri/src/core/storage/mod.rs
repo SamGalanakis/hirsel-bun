@@ -24,10 +24,14 @@
 mod local;
 #[cfg(feature = "s3-storage")]
 mod s3;
+#[cfg(feature = "s3-storage")]
+mod s3_client;
 
 pub use local::LocalFileStorage;
 #[cfg(feature = "s3-storage")]
 pub use s3::S3FileStorage;
+#[cfg(feature = "s3-storage")]
+pub use s3_client::S3ClientFactory;
 
 use async_trait::async_trait;
 use std::path::Path;
@@ -119,8 +123,22 @@ pub async fn create_file_storage(config: &StorageConfig) -> StorageResult<Box<dy
         StorageBackend::S3 => {
             #[cfg(feature = "s3-storage")]
             {
-                let s3_config = config.s3.as_ref().ok_or_else(|| {
-                    StorageError::Config("S3 storage requires [storage.s3] configuration".into())
+                // Get the storage name (default_storage or first available)
+                let storage_name = config
+                    .default_storage
+                    .as_ref()
+                    .or_else(|| config.storages.keys().next())
+                    .ok_or_else(|| {
+                        StorageError::Config(
+                            "S3 storage requires [storage.storages.<name>] configuration".into(),
+                        )
+                    })?;
+
+                let s3_config = config.storages.get(storage_name).ok_or_else(|| {
+                    StorageError::Config(format!(
+                        "Storage '{}' not found in [storage.storages]",
+                        storage_name
+                    ))
                 })?;
                 let storage = S3FileStorage::new(s3_config).await?;
                 Ok(Box::new(storage))

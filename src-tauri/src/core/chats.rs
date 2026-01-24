@@ -108,7 +108,7 @@ pub enum ChatError {
 pub type Result<T> = std::result::Result<T, ChatError>;
 
 /// Format a chat header as markdown
-pub fn format_chat_header(header: &ChatHeader) -> String {
+fn format_chat_header(header: &ChatHeader) -> String {
     let mut lines = vec![format!("# {}", header.name), String::new()];
 
     lines.push(format!("| Mode | {} |", header.mode.as_str()));
@@ -129,7 +129,7 @@ pub fn format_chat_header(header: &ChatHeader) -> String {
 }
 
 /// Format a message as markdown
-pub fn format_message(message: &Message) -> String {
+fn format_message(message: &Message) -> String {
     let time_str = message.timestamp.format("%Y-%m-%d %H:%M").to_string();
     let waiting_marker = if message.waiting { " [WAITING]" } else { "" };
 
@@ -154,24 +154,6 @@ pub fn append_message_to_file(path: &Path, message: &Message) -> Result<()> {
 
     write!(file, "{}", format_message(message))?;
     Ok(())
-}
-
-/// Create the default user chat thread
-pub fn create_default_user_chat(chats_dir: &Path) -> Result<PathBuf> {
-    fs::create_dir_all(chats_dir)?;
-    let user_chat = chats_dir.join("user.md");
-
-    if user_chat.exists() {
-        return Ok(user_chat);
-    }
-
-    let header = ChatHeader::new("user", ChatMode::TwoWay).with_description(
-        "Message the user if you are stuck, need clarification, or require human assistance.\n\
-         Do not message for trivial updates - only when genuinely blocked.",
-    );
-
-    fs::write(&user_chat, format_chat_header(&header))?;
-    Ok(user_chat)
 }
 
 /// Create the default group chat thread
@@ -267,32 +249,6 @@ pub fn get_thread_names(chats_dir: &Path) -> Result<Vec<String>> {
     Ok(names)
 }
 
-/// Rewrite a chat file with new messages while preserving the header
-pub fn rewrite_chat_file(path: &Path, messages: &[Message]) -> Result<()> {
-    if !path.exists() {
-        return Err(ChatError::FileNotFound(path.to_path_buf()));
-    }
-
-    let content = fs::read_to_string(path)?;
-
-    // Find the end of the header (after first ---)
-    let header = match content.find("---\n") {
-        Some(idx) => &content[..idx + 4],
-        None => &content[..],
-    };
-
-    // Build new content with header + messages
-    let mut new_content = String::from(header);
-    new_content.push('\n');
-
-    for msg in messages {
-        new_content.push_str(&format_message(msg));
-    }
-
-    fs::write(path, new_content)?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,20 +284,6 @@ mod tests {
     }
 
     #[test]
-    fn test_create_user_chat() {
-        let temp_dir = TempDir::new().unwrap();
-        let chats_dir = temp_dir.path().join("chats");
-
-        let path = create_default_user_chat(&chats_dir).unwrap();
-        assert!(path.exists());
-        assert_eq!(path.file_name().unwrap(), "user.md");
-
-        let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("# user"));
-        assert!(content.contains("| Mode | two-way |"));
-    }
-
-    #[test]
     fn test_create_group_chat() {
         let temp_dir = TempDir::new().unwrap();
         let chats_dir = temp_dir.path().join("chats");
@@ -361,21 +303,21 @@ mod tests {
         let chats_dir = temp_dir.path().join("chats");
         fs::create_dir_all(&chats_dir).unwrap();
 
-        fs::write(chats_dir.join("user.md"), "test").unwrap();
+        fs::write(chats_dir.join("learnings.md"), "test").unwrap();
         fs::write(chats_dir.join("group.md"), "test").unwrap();
         fs::write(chats_dir.join("other.txt"), "test").unwrap(); // Should be ignored
 
         let names = get_thread_names(&chats_dir).unwrap();
         assert_eq!(names.len(), 2);
-        assert!(names.contains(&"user".to_string()));
+        assert!(names.contains(&"learnings".to_string()));
         assert!(names.contains(&"group".to_string()));
     }
 
     #[test]
-    fn test_append_and_rewrite() {
+    fn test_append_message() {
         let temp_dir = TempDir::new().unwrap();
         let chats_dir = temp_dir.path().join("chats");
-        let path = create_default_user_chat(&chats_dir).unwrap();
+        let path = create_worker_chat(&chats_dir, "alice").unwrap();
 
         // Append a message
         let msg1 = Message::new("alice", "First message");
@@ -383,14 +325,6 @@ mod tests {
 
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("First message"));
-
-        // Rewrite with different messages
-        let msg2 = Message::new("bob", "Replacement message");
-        rewrite_chat_file(&path, &[msg2]).unwrap();
-
-        let content = fs::read_to_string(&path).unwrap();
-        assert!(!content.contains("First message"));
-        assert!(content.contains("Replacement message"));
-        assert!(content.contains("# user")); // Header preserved
+        assert!(content.contains("# alice")); // Header preserved
     }
 }

@@ -76,11 +76,19 @@ export function directChat() {
       return this.getAppState()?.selectedRun || null;
     },
 
+    /** Check if run-specific context is available (run has a workspace) */
+    canUseRunContext(): boolean {
+      const appState = this.getAppState();
+      if (!appState?.selectedRun) return false;
+      // Run needs a projectPath (workspace) to use run-specific context
+      return Boolean(appState.currentRunDetail?.projectPath);
+    },
+
     /** Get the effective run name based on toggle state */
     getEffectiveRunName(): string | null {
       const selectedRun = this.getSelectedRunName();
-      // If no run selected or toggle is off, use general chat
-      if (!selectedRun || !this.useRunContext) {
+      // If no run selected, toggle is off, or run has no workspace, use general chat
+      if (!selectedRun || !this.useRunContext || !this.canUseRunContext()) {
         return null;
       }
       return selectedRun;
@@ -226,10 +234,15 @@ export function directChat() {
         const runName = this.getEffectiveRunName();
         this._currentRunName = runName;
 
+        // Get project path from run detail for working directory context
+        const appState = this.getAppState();
+        const projectPath = appState?.currentRunDetail?.projectPath || undefined;
+
         // Start the session (pass selected run for MCP tools, regardless of chat context)
         const sessionId = await startChatSession(this.agentCommand, {
           runName: this.getSelectedRunName() || undefined,
           systemPrompt: this.getSystemPrompt(),
+          workingDir: projectPath, // Give Gyp access to the actual project
         });
         this.sessionId = sessionId;
 

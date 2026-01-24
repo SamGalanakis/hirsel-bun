@@ -10,6 +10,8 @@
 mod daemon;
 mod local;
 mod remote;
+#[cfg(test)]
+pub mod test_harness;
 
 #[cfg(feature = "server")]
 pub use daemon::DaemonOrchestrator;
@@ -20,11 +22,15 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use std::collections::HashMap;
+
 use crate::core::api_types::{
     ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, Task, ThreadSummary,
     Worker, WorkerEventsResponse,
 };
 use crate::core::config::{self, Config};
+use crate::core::draft::StartingPoint;
+use crate::core::snapshot::WorkerStateHandle;
 
 // =============================================================================
 // Error Types
@@ -132,6 +138,9 @@ pub struct CreateRunRequest {
     pub name: String,
     /// Spec content (markdown)
     pub spec: String,
+    /// Starting point for workspace (how to initialize the work directory)
+    /// If None, expects files to be uploaded via upload_files()
+    pub starting_point: Option<StartingPoint>,
     /// Optional runner name (default: from server config)
     pub runner: Option<String>,
     /// Maximum workers to autoscale to (default: 1)
@@ -171,6 +180,83 @@ pub struct SpawnWorkersRequest {
 pub struct SpawnWorkersResponse {
     /// Names of spawned workers
     pub workers: Vec<String>,
+}
+
+/// Request to spawn a single worker (used by daemon for lifecycle management)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpawnSingleWorkerRequest {
+    /// Work directory path for the worker
+    pub work_dir: String,
+    /// Optional session ID to resume from
+    pub resume_session_id: Option<String>,
+}
+
+/// Request to resume a worker (handles snapshot/session restoration)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeWorkerRequest {
+    /// Work directory path for the worker
+    pub work_dir: String,
+    /// Optional session ID to resume from
+    pub resume_session_id: Option<String>,
+    /// Unified state handle containing work dir snapshot and agent session
+    pub state_handle: Option<crate::core::snapshot::WorkerStateHandle>,
+}
+
+/// Request to initialize or reinitialize workspace for a run
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InitWorkspaceRequest {
+    /// Starting point for workspace initialization
+    pub starting_point: StartingPoint,
+}
+
+/// Response from workspace initialization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InitWorkspaceResponse {
+    /// Path to the workspace
+    pub workspace_path: String,
+    /// Default git branch (if applicable)
+    pub default_branch: Option<String>,
+}
+
+/// Request to start a run (unified entry point for CLI and GUI)
+///
+/// This combines workspace setup and worker spawning into a single operation.
+/// The orchestrator handles:
+/// 1. Workspace creation based on starting_point
+/// 2. Worker registration in state
+/// 3. Worker spawning via the appropriate Runner (unless draft mode)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartRunRequest {
+    /// Run name (will be slugified)
+    pub name: String,
+    /// Spec content (markdown)
+    pub spec: String,
+    /// Starting point for workspace (how to initialize the work directory)
+    pub starting_point: StartingPoint,
+    /// Optional eval content (markdown)
+    pub eval: Option<String>,
+    /// Worker scale (max workers for autoscaling, default: 1)
+    pub worker_scale: Option<u32>,
+    /// Time limit in minutes
+    pub time_limit_minutes: Option<i64>,
+    /// Max iterations before pausing
+    pub max_iterations: Option<i64>,
+    /// Human-in-the-loop mode (default: true)
+    pub human_in_the_loop: Option<bool>,
+    /// Runner name (default: from config or "local")
+    pub runner: Option<String>,
+    /// Per-worker runner assignments
+    pub worker_runners: Option<HashMap<String, String>>,
+    /// Tailscale OAuth credentials for worker hosts to join tailnet
+    pub tailscale_oauth: Option<TailscaleOAuth>,
+    /// Draft mode - setup run but don't spawn workers (default: false)
+    #[serde(default)]
+    pub draft: bool,
 }
 
 // =============================================================================
@@ -334,6 +420,83 @@ pub trait Orchestrator: Send + Sync {
             "spawn_workers not implemented for this orchestrator".to_string(),
         ))
     }
+
+    /// Start a run (unified entry point for CLI and GUI)
+    ///
+    /// This is the preferred method for starting runs as it combines:
+    /// 1. Run directory and database setup
+    /// 2. Workspace creation from the starting point
+    /// 3. Worker registration and spawning
+    ///
+    /// For LocalOrchestrator: Handles all operations locally
+    /// For RemoteOrchestrator: Delegates to server via HTTP
+    ///
+    /// Note: The existing `create_run` + `upload_files` + `spawn_workers` flow
+    /// is kept for backward compatibility with remote workers that need
+    /// fine-grained control over the process.
+    async fn start_run(&self, request: StartRunRequest) -> OrchestratorResult<RunDetail> {
+        let _ = request;
+        Err(OrchestratorError::Other(
+            "start_run not implemented for this orchestrator".to_string(),
+        ))
+    }
+
+    /// Initialize or reinitialize workspace for a run
+    ///
+    /// This method allows workspace setup to be done separately from run creation.
+    /// It can be used to:
+    /// 1. Initialize workspace for a run created without a starting_point
+    /// 2. Reinitialize workspace (e.g., to switch to a different branch)
+    ///
+    /// The run must already exist and not have active workers.
+    async fn init_workspace(
+        &self,
+        run_name: &str,
+        request: InitWorkspaceRequest,
+    ) -> OrchestratorResult<InitWorkspaceResponse> {
+        let _ = (run_name, request);
+        Err(OrchestratorError::Other(
+            "init_workspace not implemented for this orchestrator".to_string(),
+        ))
+    }
+
+    /// Spawn a single worker for an existing run.
+    ///
+    /// This is used by the daemon to spawn additional workers during autoscaling
+    /// or to resume paused/awaiting workers. Unlike `spawn_workers` which is for
+    /// initial run creation, this handles spawning in the context of an already
+    /// running run.
+    ///
+    /// The runner system is used to ensure workers spawn correctly based on
+    /// the runner configuration (local, docker, fly, sprite, etc.).
+    async fn spawn_single_worker(
+        &self,
+        run_name: &str,
+        worker_name: &str,
+        work_dir: &std::path::Path,
+        resume_session_id: Option<&str>,
+    ) -> OrchestratorResult<()>;
+
+    /// Resume a paused/stopped worker.
+    ///
+    /// This handles the full resume flow:
+    /// 1. Checks if worker is already running (skips if yes)
+    /// 2. Restores snapshot if runner is ephemeral and snapshot exists
+    /// 3. Restores agent session if handle exists
+    /// 4. Spawns worker via runner
+    /// 5. Updates worker state (pid, runner_id, status)
+    ///
+    /// Unlike `spawn_single_worker`, this method handles snapshot restoration
+    /// for ephemeral runners (Fly, Sprite) and checks if the worker is already
+    /// running to avoid duplicate container errors.
+    async fn resume_worker(
+        &self,
+        run_name: &str,
+        worker_name: &str,
+        work_dir: &std::path::Path,
+        resume_session_id: Option<&str>,
+        state_handle: Option<&WorkerStateHandle>,
+    ) -> OrchestratorResult<()>;
 }
 
 // =============================================================================
