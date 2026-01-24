@@ -1,7 +1,8 @@
 name: Release
 
-# Only triggers on version tags (v*) pushed to main
-# Tags should only be created from the main branch
+# Triggers on version tags (v*)
+# Production tags (v1.2.3) must be on main branch
+# Pre-release tags (v1.2.3-rc.1, v1.2.3-staging.1) can be on any branch
 on:
   push:
     tags:
@@ -13,7 +14,41 @@ permissions:
   contents: write
 
 jobs:
+  # Verify tag is on main branch (for production releases)
+  verify-branch:
+    runs-on: ubuntu-latest
+    outputs:
+      is_prerelease: ${{ steps.check.outputs.is_prerelease }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check tag and branch
+        id: check
+        run: |
+          TAG="${{ github.ref_name }}"
+
+          # Check if this is a pre-release tag (contains hyphen after version)
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-.+ ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            echo "Pre-release tag detected: $TAG"
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            echo "Production tag detected: $TAG"
+
+            # Production tags must be on main
+            if ! git branch -r --contains "${{ github.sha }}" | grep -q 'origin/main'; then
+              echo "::error::Production release tags (v*.*.* without suffix) must be on main branch"
+              echo "::error::Use pre-release tags (e.g., v0.3.0-rc.1, v0.3.0-staging.1) for non-main branches"
+              exit 1
+            fi
+            echo "Tag is on main branch ✓"
+          fi
+
   publish-tauri:
+    needs: verify-branch
     strategy:
       fail-fast: false
       matrix:
@@ -85,7 +120,7 @@ jobs:
           releaseName: 'Hirsel ${{ github.ref_name }}'
           releaseBody: 'See the assets below to download and install.'
           releaseDraft: true
-          prerelease: false
+          prerelease: ${{ needs.verify-branch.outputs.is_prerelease == 'true' }}
           args: ${{ matrix.args }}
 
       - name: Create Linux tarball
@@ -104,6 +139,7 @@ jobs:
 
   # Build headless binaries for remote workers and CLI
   build-headless:
+    needs: verify-branch
     runs-on: ubuntu-22.04
     strategy:
       matrix:
