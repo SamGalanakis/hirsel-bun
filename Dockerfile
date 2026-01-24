@@ -2,7 +2,7 @@
 #
 # Pre-built binary from CI: docker/hirsel-linux-amd64
 #
-# Build locally (after cargo build --release --no-default-features --features full-cli):
+# Build locally (after cargo build --release --no-default-features --features cli):
 #   cp target/release/hirsel docker/hirsel-linux-amd64
 #   docker build -t hirsel .
 #
