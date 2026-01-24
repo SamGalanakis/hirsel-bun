@@ -177,15 +177,32 @@ hirsel go my-feature spec.md --profile fly
 
 See `docs/architecture.md` for full deployment guide.
 
+## Git Workflow
+
+**Always work on `staging`, then merge to `main` for releases.**
+
+```bash
+git checkout staging           # All work happens here
+# ... make changes, commit ...
+git push origin staging        # Push to staging
+
+# When ready to release:
+git checkout main
+git merge staging -m "Merge staging for v0.X.X release"
+git push origin main           # Triggers auto-tag → release workflow
+git checkout staging           # Return to staging
+```
+
 ## Releases
 
 Version is defined in `src-tauri/Cargo.toml`. Keep `src-tauri/tauri.conf.json` version in sync.
 
 **Release flow:**
 1. Update version in `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`
-2. Merge to `main` branch
+2. Commit to `staging`, then merge `staging` → `main`
 3. Auto-tag workflow (`.github/workflows/auto-tag.yml`) creates `v{version}` tag
 4. Release workflow (`.github/workflows/release.yml`) builds and publishes
+5. Manual trigger needed: `gh workflow run release.yml --ref v{version}` (GITHUB_TOKEN can't trigger workflows)
 
 **What gets built:**
 - `hirsel-cli-{version}-linux-amd64` - CLI + server (no GUI)
