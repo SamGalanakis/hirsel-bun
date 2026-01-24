@@ -41,8 +41,26 @@ impl DaemonClient {
     }
 
     /// Connect to daemon, starting it if needed
+    ///
+    /// Also checks for binary mismatch - if the running daemon was started from
+    /// a different binary (e.g., debug vs release), it will be restarted.
     pub fn connect_or_start() -> Result<Self> {
         let port = get_daemon_port();
+
+        // Check if daemon is running but from a different binary
+        if super::is_daemon_running_on_port(port) && !super::is_daemon_binary_current() {
+            tracing::info!(
+                "Daemon binary mismatch detected, restarting daemon with current binary"
+            );
+            super::kill_daemon();
+            // Wait for old daemon to exit
+            for _ in 0..20 {
+                std::thread::sleep(Duration::from_millis(100));
+                if !super::is_daemon_running_on_port(port) {
+                    break;
+                }
+            }
+        }
 
         match Self::connect() {
             Ok(client) => Ok(client),

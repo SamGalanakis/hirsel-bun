@@ -75,9 +75,12 @@ pub async fn start_daemon(config: DaemonConfig) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
 
-    // Write PID file
+    // Write PID file with binary path for mismatch detection
     let pid = std::process::id();
-    std::fs::write(&pid_path, pid.to_string())?;
+    let exe_path = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    std::fs::write(&pid_path, format!("{}\n{}", pid, exe_path))?;
 
     // Create cleanup handler for graceful shutdown
     let pid_path_clone = pid_path.clone();
