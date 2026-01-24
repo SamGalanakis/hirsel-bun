@@ -101,3 +101,47 @@ jobs:
         with:
           files: hirsel-linux-x86_64.tar.gz
           tag_name: ${{ github.ref_name }}
+
+  # Build headless binaries for remote workers and CLI
+  build-headless:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        include:
+          - feature: worker
+            name: worker
+          - feature: cli
+            name: cli
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+          key: headless-${{ matrix.feature }}
+
+      - name: Build ${{ matrix.name }} binary
+        run: |
+          cd src-tauri
+          cargo build --release --no-default-features --features ${{ matrix.feature }}
+
+      - name: Get version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Package binary
+        run: |
+          cd src-tauri/target/release
+          cp hirsel hirsel-${{ matrix.name }}-${{ steps.version.outputs.version }}-linux-amd64
+          chmod +x hirsel-${{ matrix.name }}-${{ steps.version.outputs.version }}-linux-amd64
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: src-tauri/target/release/hirsel-${{ matrix.name }}-${{ steps.version.outputs.version }}-linux-amd64
+          tag_name: ${{ github.ref_name }}
