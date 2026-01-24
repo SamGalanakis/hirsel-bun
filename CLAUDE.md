@@ -163,6 +163,25 @@ hirsel go my-feature spec.md --profile fly
 
 See `docs/architecture.md` for full deployment guide.
 
+## Releases
+
+Version is defined in `src-tauri/Cargo.toml`. Keep `src-tauri/tauri.conf.json` version in sync.
+
+**Release flow:**
+1. Update version in `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`
+2. Merge to `main` branch
+3. Auto-tag workflow (`.github/workflows/auto-tag.yml`) creates `v{version}` tag
+4. Release workflow (`.github/workflows/release.yml`) builds and publishes
+
+**What gets built:**
+- `hirsel-cli-{version}-linux-amd64` - CLI + server (no GUI)
+- `hirsel-worker-{version}-linux-amd64` - Minimal worker binary
+- Tauri desktop apps: macOS (aarch64, x86_64), Linux (deb, AppImage, rpm)
+
+**Pre-release tags:** Use `v{version}-rc.1` or `v{version}-staging.1` for non-main branches.
+
+**Manual release:** Push tag directly: `git tag v0.4.0 && git push origin v0.4.0`
+
 ## Storage
 
 File storage abstraction for local/cloud deployments. Default is local filesystem.
