@@ -843,6 +843,9 @@ declare global {
     sortToggle: () => any;
     sortButton: () => any;
     debugPanel: () => any;
+    specflowBoard: () => any;
+    projectSetup: () => any;
+    projectSettings: () => any;
 
     // UI utilities
     toast: ToastAPI;

@@ -1,5 +1,7 @@
     <!-- Left Panel: Run List (Collapsible) -->
+    <!-- Show when: (no project selected AND not in setup) OR (project selected AND viewing runs) -->
     <aside
+      x-show="(!selectedProjectId && !showProjectSetup) || (selectedProjectId && activeProjectView === 'runs')"
       class="run-list-panel flex-shrink-0 border-r border-pasture-600 flex flex-col transition-all duration-200"
       :class="sidebarCollapsed ? 'w-10 collapsed' : 'w-56'"
     >
@@ -38,6 +40,99 @@
 
       <!-- Expanded state: full run list -->
       <div x-show="!sidebarCollapsed" class="flex flex-col h-full">
+        <!-- Project Board Section (only when no project selected) -->
+        <div x-show="!selectedProjectId" class="p-3 border-b border-pasture-600">
+          <div class="flex items-center justify-between mb-2">
+            <h2 class="text-sm font-medium text-wool-300 uppercase tracking-wide">Project</h2>
+          </div>
+
+          <!-- Project Selector Combobox -->
+          <div class="relative">
+            <button
+              @click="projectSelectorOpen = !projectSelectorOpen"
+              type="button"
+              class="w-full px-2 py-1.5 text-left text-sm rounded bg-pasture-700/50 hover:bg-pasture-700 text-wool-200 flex items-center justify-between gap-2 border border-pasture-600"
+              :class="{ 'border-amber-500/50': projectSelectorOpen }"
+            >
+              <span class="flex items-center gap-2 min-w-0">
+                <i data-lucide="layout-grid" class="w-4 h-4 text-amber-500 shrink-0"></i>
+                <span class="truncate" x-text="selectedProject?.name || 'Select project...'"></span>
+              </span>
+              <i data-lucide="chevrons-up-down" class="w-3.5 h-3.5 text-wool-500 shrink-0"></i>
+            </button>
+
+            <!-- Dropdown -->
+            <div
+              x-show="projectSelectorOpen"
+              x-transition:enter="transition ease-out duration-100"
+              x-transition:enter-start="opacity-0 scale-95"
+              x-transition:enter-end="opacity-100 scale-100"
+              x-transition:leave="transition ease-in duration-75"
+              x-transition:leave-start="opacity-100 scale-100"
+              x-transition:leave-end="opacity-0 scale-95"
+              @click.away="projectSelectorOpen = false"
+              @keydown.escape.window="projectSelectorOpen = false"
+              class="absolute z-50 mt-1 w-full bg-pasture-700 border border-pasture-600 rounded-md shadow-lg"
+            >
+              <!-- Search -->
+              <div class="p-2 border-b border-pasture-600">
+                <div class="flex items-center gap-2 px-2 py-1 bg-pasture-800 rounded">
+                  <i data-lucide="search" class="w-3.5 h-3.5 text-wool-500"></i>
+                  <input
+                    type="text"
+                    x-model="projectSearchQuery"
+                    placeholder="Search projects..."
+                    class="flex-1 bg-transparent text-sm text-wool-200 placeholder-wool-500 border-none outline-none"
+                    @click.stop
+                    x-ref="projectSearchInput"
+                  />
+                </div>
+              </div>
+
+              <!-- Project List -->
+              <div class="max-h-48 overflow-y-auto py-1">
+                <template x-if="filteredProjects.length === 0 && projects.length > 0">
+                  <div class="px-3 py-2 text-sm text-wool-500">No projects found</div>
+                </template>
+                <template x-if="projects.length === 0">
+                  <div class="px-3 py-2 text-sm text-wool-500">No projects yet</div>
+                </template>
+                <template x-for="project in filteredProjects" :key="project.id">
+                  <button
+                    @click="selectProject(project)"
+                    class="w-full px-3 py-1.5 text-left text-sm hover:bg-pasture-600 flex items-center justify-between gap-2 group"
+                    :class="{ 'bg-pasture-600/50': selectedProjectId === project.id }"
+                  >
+                    <span class="flex items-center gap-2 min-w-0">
+                      <i data-lucide="folder" class="w-3.5 h-3.5 text-wool-400 shrink-0"></i>
+                      <span class="truncate text-wool-200" x-text="project.name"></span>
+                    </span>
+                    <span
+                      x-show="selectedProjectId === project.id"
+                      class="text-amber-500"
+                    >
+                      <i data-lucide="check" class="w-3.5 h-3.5"></i>
+                    </span>
+                  </button>
+                </template>
+              </div>
+
+              <!-- Add Project -->
+              <div class="border-t border-pasture-600 p-1">
+                <button
+                  @click="openProjectSetup()"
+                  class="w-full px-3 py-1.5 text-left text-sm text-wool-300 hover:bg-pasture-600 flex items-center gap-2"
+                >
+                  <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                  <span>Add project...</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Runs Section Header -->
         <div class="p-3 border-b border-pasture-600 flex items-center justify-between">
           <h2 class="text-sm font-medium text-wool-300 uppercase tracking-wide">Runs</h2>
           <div class="flex items-center gap-1">

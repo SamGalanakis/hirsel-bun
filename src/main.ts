@@ -15,12 +15,15 @@ import {
   draftEditor,
   notifications,
   permissionModal,
+  projectSettings,
+  projectSetup,
   runDetail,
   runList,
   settingsModal,
   sheepClickerGame,
   sortButton,
   sortToggle,
+  specflowBoard,
   taskPanel,
   tasksTab,
   workerOutputViewer,
@@ -100,6 +103,9 @@ window.workerOutputViewer = workerOutputViewer;
 window.sortToggle = sortToggle;
 window.sortButton = sortButton;
 window.debugPanel = debugPanel;
+window.specflowBoard = specflowBoard;
+window.projectSetup = projectSetup;
+window.projectSettings = projectSettings;
 
 // Initialize Lucide icons
 initLucideIcons();

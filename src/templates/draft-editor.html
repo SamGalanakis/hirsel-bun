@@ -182,7 +182,7 @@
                   <div x-show="gitError" class="text-xs text-terra mt-2" x-text="gitError"></div>
                 </div>
                 <div x-show="availableBranches.length > 0">
-                  <div class="select min-w-32 max-w-48" x-data="{ open: false }">
+                  <div class="dropdown min-w-32 max-w-48" x-data="{ open: false }">
                     <button type="button" class="btn-outline w-full font-mono text-sm" @click.stop="open = !open" @click.away="open = false"
                       aria-haspopup="listbox" :aria-expanded="open">
                       <span class="truncate flex-1 text-left" x-text="gitBranch || 'Select a branch...'"></span>

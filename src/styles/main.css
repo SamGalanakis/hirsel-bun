@@ -1893,3 +1893,52 @@ section.flex-1.flex.flex-col {
     transform: scale(1);
   }
 }
+
+/* ============================================================================
+   Breadcrumb Navigation
+   ============================================================================ */
+
+.breadcrumb ol {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.breadcrumb li {
+  display: flex;
+  align-items: center;
+}
+
+.breadcrumb-separator {
+  color: var(--wool-600);
+  margin: 0 0.5rem;
+}
+
+.breadcrumb-link {
+  color: var(--wool-500);
+  text-decoration: none;
+  font-size: 0.875rem;
+  padding: 0.25rem 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: color 150ms ease-out;
+}
+
+.breadcrumb-link:hover {
+  color: var(--wool-200);
+}
+
+.breadcrumb-page {
+  color: var(--wool-100);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* Navigation Rail */
+.nav-rail {
+  transition: width 200ms ease-out;
+}

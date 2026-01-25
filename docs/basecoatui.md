@@ -139,12 +139,12 @@ The `form` class auto-styles all child inputs.
 
 ---
 
-## Custom Select (Styled Dropdown)
+## Custom Dropdown (Styled Select)
 
 Native `<select>` can't be fully styled. Use this pattern for custom dropdowns:
 
 ```html
-<div class="select" x-data="{ open: false, value: '' }">
+<div class="dropdown" x-data="{ open: false, value: '' }">
   <button type="button" class="btn-outline w-full"
           @click="open = !open" @click.away="open = false"
           aria-haspopup="listbox" :aria-expanded="open">
@@ -161,6 +161,8 @@ Native `<select>` can't be fully styled. Use this pattern for custom dropdowns:
   </div>
 </div>
 ```
+
+**Important:** Use `class="dropdown"` NOT `class="select"` - Basecoat's JS tries to auto-init elements with `.select` class and will fail without an `<input>` element.
 
 **Note:** Basecoat adds checkmarks via CSS based on `aria-selected` - don't add manual icons.
 

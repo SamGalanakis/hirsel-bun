@@ -16,7 +16,9 @@ mod filesystem;
 pub mod helpers;
 mod logs;
 mod messages;
+mod projects;
 mod runs;
+mod specflow;
 mod tasks;
 pub mod types;
 mod workers;
@@ -122,5 +124,34 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         // Filesystem commands
         filesystem::pick_folder,
         filesystem::suggest_paths,
+        // Project management commands
+        projects::list_projects,
+        projects::get_project,
+        projects::create_project,
+        projects::create_project_from_path,
+        projects::delete_project,
+        // SpecFlow board commands
+        specflow::get_project_islands,
+        specflow::create_island,
+        specflow::update_island,
+        specflow::delete_island,
+        specflow::create_row,
+        specflow::update_row,
+        specflow::delete_row,
+        specflow::reorder_rows,
+        specflow::get_wires,
+        specflow::create_wire,
+        specflow::delete_wire,
+        specflow::get_bookmarks,
+        specflow::save_bookmark,
+        specflow::delete_bookmark,
+        specflow::dispatch_rows,
+        specflow::dispatch_rows_confirm,
+        specflow::sync_run_status,
+        specflow::set_task_blocked_by,
+        // Board sync commands
+        specflow::export_board_for_agent,
+        specflow::import_board_from_agent,
+        specflow::get_board_directory,
     ]
 }

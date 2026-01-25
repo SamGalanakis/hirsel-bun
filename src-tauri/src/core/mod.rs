@@ -12,6 +12,7 @@
 
 pub mod acp;
 pub mod api_types;
+pub mod board;
 pub mod chat_orchestrator;
 pub mod chat_session;
 pub mod chats;
@@ -45,6 +46,7 @@ pub mod scribe;
 pub mod server;
 pub mod service_worker;
 pub mod snapshot;
+pub mod specflow;
 pub mod state;
 pub mod state_access;
 pub mod storage;
@@ -143,3 +145,17 @@ pub use draft::{
 
 // Gyp context
 pub use gyp_context::GypContext;
+
+// SpecFlow
+pub use specflow::{
+    Bookmark as SpecFlowBookmark, CreateIslandRequest, CreateRowRequest, DispatchResult,
+    InitialTask, Island, Row as SpecFlowRow, RowEvalStatus, SpecFlowError, SpecFlowResult,
+    SpecFlowState, SpecStatus, TaskStatus as SpecFlowTaskStatus, UpdateIslandRequest,
+    UpdateRowRequest, Wire,
+};
+
+// Board service (agent file sync)
+pub use board::{
+    AgentEvalView, AgentIslandView, AgentRowView, AgentTaskView, BoardError, BoardResult,
+    BoardService, SyncResult as BoardSyncResult,
+};

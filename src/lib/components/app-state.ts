@@ -26,6 +26,8 @@ import { getStatusBadgeClass, getStatusDotClass } from '../utils/status';
 export function appState() {
   return {
     // State
+    selectedProjectId: null as number | null,
+    selectedProject: null as { id: number; name: string; path?: string } | null,
     selectedRun: null as string | null,
     currentRunDetail: null as RunDetail | null,
     versionInfo: null as VersionInfo | null,
@@ -43,11 +45,118 @@ export function appState() {
     _eventCleanups: [] as (() => void)[],
     _shortcuts: [] as ShortcutConfig[],
 
+    // Projects list
+    projects: [] as Array<{
+      id: number;
+      name: string;
+      startingPoint?: { type: string; path?: string };
+    }>,
+    projectSelectorOpen: false,
+    projectSearchQuery: '',
+
+    // Project view state
+    showProjectSetup: false,
+    showProjectSettings: false,
+    activeProjectView: 'board' as 'board' | 'runs',
+
     // Attach picker state
     attachPickerOpen: false,
     attachPickerWorkers: [] as Array<{ name: string; status: string }>,
     attachPickerEvals: [] as Array<{ id: number; evalName: string; status: string }>,
     attachPickerLoading: false,
+
+    // Project management
+    async loadProjects() {
+      try {
+        const projects = await window.tauriInvoke<
+          Array<{
+            id: number;
+            name: string;
+            startingPoint: { type: string; path?: string };
+          }>
+        >('list_projects', {});
+        this.projects = projects || [];
+      } catch (e) {
+        console.error('Failed to load projects:', e);
+        this.projects = [];
+      }
+    },
+
+    restoreProjectSelection() {
+      if (this.projects.length === 0) return;
+
+      // Try to restore saved selection
+      const savedId = localStorage.getItem('hirsel:selectedProjectId');
+      if (savedId) {
+        const projectId = Number.parseInt(savedId, 10);
+        const project = this.projects.find((p) => p.id === projectId);
+        if (project) {
+          this.selectProject({ id: project.id, name: project.name });
+          return;
+        }
+      }
+
+      // No saved selection or project no longer exists - select most recent
+      // Projects are sorted by most recently created, so first one is latest
+      const latest = this.projects[0];
+      if (latest) {
+        this.selectProject({ id: latest.id, name: latest.name });
+      }
+    },
+
+    selectProject(project: { id: number; name: string; path?: string } | null) {
+      this.selectedProject = project;
+      this.selectedProjectId = project?.id ?? null;
+      this.projectSelectorOpen = false;
+      this.projectSearchQuery = '';
+      if (project) {
+        this.selectedRun = null;
+        this.currentRunDetail = null;
+        // Persist selection
+        localStorage.setItem('hirsel:selectedProjectId', String(project.id));
+        window.dispatchEvent(new CustomEvent('project-selected', { detail: project.id }));
+      } else {
+        localStorage.removeItem('hirsel:selectedProjectId');
+      }
+    },
+
+    deselectProject() {
+      this.selectedProject = null;
+      this.selectedProjectId = null;
+      this.showProjectSetup = false;
+      this.showProjectSettings = false;
+      this.activeProjectView = 'board';
+      localStorage.removeItem('hirsel:selectedProjectId');
+      window.dispatchEvent(new CustomEvent('project-deselected'));
+    },
+
+    openProjectSetup() {
+      this.showProjectSetup = true;
+      this.projectSelectorOpen = false;
+    },
+
+    cancelProjectSetup() {
+      this.showProjectSetup = false;
+    },
+
+    async removeProject(projectId: number) {
+      try {
+        await window.tauriInvoke('delete_project', { projectId });
+        await this.loadProjects();
+        if (this.selectedProjectId === projectId) {
+          this.deselectProject();
+        }
+      } catch (e) {
+        console.error('Failed to remove project:', e);
+        window.toast?.error('Failed to remove project');
+      }
+    },
+
+    get filteredProjects() {
+      if (!this.projectSearchQuery) return this.projects;
+      const query = this.projectSearchQuery.toLowerCase();
+      return this.projects.filter((p) => p.name.toLowerCase().includes(query));
+    },
 
     // UI toggles
     toggleSidebar() {
@@ -337,12 +446,73 @@ export function appState() {
         console.error('Failed to load version info:', err);
       }
 
+      // Load projects and restore selection
+      await this.loadProjects();
+      this.restoreProjectSelection();
+
+      // Listen for project selection (from other components)
+      const projectSelectedHandler = (e: Event) => {
+        const customEvent = e as CustomEvent<number | null>;
+        const projectId = customEvent.detail;
+        if (projectId) {
+          const project = this.projects.find((p) => p.id === projectId);
+          if (project) {
+            this.selectedProject = { id: project.id, name: project.name };
+            this.selectedProjectId = project.id;
+          }
+          // When selecting a project, clear run selection
+          this.selectedRun = null;
+          this.currentRunDetail = null;
+        }
+      };
+      window.addEventListener('project-selected', projectSelectedHandler);
+      this._eventCleanups.push(() =>
+        window.removeEventListener('project-selected', projectSelectedHandler),
+      );
+
+      // Listen for project created (from project setup form)
+      const projectCreatedHandler = async (e: Event) => {
+        const customEvent = e as CustomEvent<{ id: number; name: string }>;
+        const project = customEvent.detail;
+        if (project) {
+          await this.loadProjects();
+          this.selectProject(project);
+          this.showProjectSetup = false;
+          this.activeProjectView = 'board';
+        }
+      };
+      window.addEventListener('project-created', projectCreatedHandler);
+      this._eventCleanups.push(() =>
+        window.removeEventListener('project-created', projectCreatedHandler),
+      );
+
+      // Listen for cancel project setup
+      const cancelProjectSetupHandler = () => {
+        this.showProjectSetup = false;
+      };
+      window.addEventListener('cancel-project-setup', cancelProjectSetupHandler);
+      this._eventCleanups.push(() =>
+        window.removeEventListener('cancel-project-setup', cancelProjectSetupHandler),
+      );
+
+      // Listen for project deleted
+      const projectDeletedHandler = async () => {
+        await this.loadProjects();
+        this.deselectProject();
+        this.showProjectSettings = false;
+      };
+      window.addEventListener('project-deleted', projectDeletedHandler);
+      this._eventCleanups.push(() =>
+        window.removeEventListener('project-deleted', projectDeletedHandler),
+      );
+
       // Listen for run selection
       const runSelectedHandler = async (e: Event) => {
         const customEvent = e as CustomEvent<string | null>;
         const runName = customEvent.detail;
         if (runName) {
           this.selectedRun = runName;
+          // When selecting a run, keep the project context
           try {
             const detail = await window.tauriInvoke<RunDetail>('get_run_detail', { runName });
             this.currentRunDetail = detail;

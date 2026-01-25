@@ -1,0 +1,150 @@
+    <!-- Center Panel: Project Info (shown when info view active) -->
+    <section
+      class="project-settings flex-1 flex flex-col overflow-hidden bg-pasture-900"
+      x-show="showProjectSettings && selectedProjectId"
+      x-cloak
+      x-data="projectSettings()"
+      x-effect="if (showProjectSettings && selectedProjectId) loadProject(selectedProjectId)"
+      @close-project-settings.window="showProjectSettings = false"
+      @keydown.escape.window="if (showProjectSettings && !showDeleteConfirm) showProjectSettings = false"
+    >
+      <!-- Header -->
+      <div class="px-6 py-4 border-b border-pasture-600 bg-pasture-800/30">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <h2 class="text-xl font-semibold text-wool-100">Project Info</h2>
+          </div>
+          <button
+            @click="showProjectSettings = false"
+            class="btn btn-ghost"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+
+      <!-- Loading state -->
+      <div x-show="loading" class="flex-1 flex items-center justify-center">
+        <div class="spinner w-6 h-6"></div>
+      </div>
+
+      <!-- Content -->
+      <div x-show="!loading && project" class="flex-1 flex flex-col items-center overflow-y-auto p-8">
+        <div class="w-full max-w-lg space-y-6">
+          <!-- Project info -->
+          <div class="space-y-4">
+            <!-- Name -->
+            <div>
+              <label class="block text-sm font-medium text-wool-400 mb-1">Name</label>
+              <p class="text-lg text-wool-100" x-text="project?.name"></p>
+            </div>
+
+            <!-- Starting Point -->
+            <div>
+              <label class="block text-sm font-medium text-wool-400 mb-1">Starting Point</label>
+              <div class="flex items-center gap-2 text-wool-200">
+                <i :data-lucide="getStartingPointIcon()" class="w-4 h-4 text-wool-500"></i>
+                <span class="truncate" x-text="getStartingPointDisplay()"></span>
+              </div>
+            </div>
+
+            <!-- Created -->
+            <div>
+              <label class="block text-sm font-medium text-wool-400 mb-1">Created</label>
+              <p class="text-wool-300" x-text="formatDate(project?.createdAt)"></p>
+            </div>
+
+            <!-- Description -->
+            <div x-show="project?.description">
+              <label class="block text-sm font-medium text-wool-400 mb-1">Description</label>
+              <p class="text-wool-300" x-text="project?.description"></p>
+            </div>
+          </div>
+
+          <!-- Divider -->
+          <div class="border-t border-pasture-600"></div>
+
+          <!-- Run defaults -->
+          <div class="space-y-3">
+            <h3 class="text-sm font-medium text-wool-400 uppercase tracking-wide">Run Defaults</h3>
+
+            <div class="grid gap-3 bg-pasture-800/50 rounded-lg p-4">
+              <div class="flex justify-between">
+                <span class="text-wool-400">Worker Scale</span>
+                <span class="text-wool-200" x-text="project?.workerScale || 'Default'"></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-wool-400">Time Limit</span>
+                <span class="text-wool-200" x-text="project?.timeLimitMinutes ? project.timeLimitMinutes + ' min' : 'Default'"></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-wool-400">Max Iterations</span>
+                <span class="text-wool-200" x-text="project?.maxIterations || 'Default'"></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-wool-400">Human in the Loop</span>
+                <span class="text-wool-200" x-text="project?.humanInTheLoop ? 'Yes' : 'No'"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Divider -->
+          <div class="border-t border-pasture-600"></div>
+
+          <!-- Docs settings -->
+          <div class="space-y-3">
+            <h3 class="text-sm font-medium text-wool-400 uppercase tracking-wide">Documentation</h3>
+
+            <div class="grid gap-3 bg-pasture-800/50 rounded-lg p-4">
+              <div class="flex justify-between">
+                <span class="text-wool-400">Docs Path</span>
+                <span class="text-wool-200 font-mono text-sm" x-text="project?.docsPath || 'docs'"></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-wool-400">Persist Changes</span>
+                <span class="text-wool-200" x-text="project?.persistDocsChanges ? 'Yes' : 'No'"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Danger zone -->
+          <div class="border-t border-pasture-600 pt-6">
+            <!-- Delete confirmation -->
+            <div x-show="showDeleteConfirm" class="mb-4 p-4 bg-terra/10 border border-terra/30 rounded-lg">
+              <p class="text-sm text-wool-300 mb-3">
+                Delete <strong x-text="project?.name"></strong>? This cannot be undone.
+              </p>
+              <div class="flex gap-2">
+                <button
+                  @click="showDeleteConfirm = false"
+                  class="btn-outline flex-1"
+                  :disabled="deleting"
+                >
+                  Cancel
+                </button>
+                <button
+                  @click="deleteProject()"
+                  class="btn btn-destructive flex-1"
+                  :disabled="deleting"
+                >
+                  <template x-if="deleting">
+                    <div class="spinner w-4 h-4 mr-2"></div>
+                  </template>
+                  <span x-text="deleting ? 'Deleting...' : 'Delete'"></span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Delete button -->
+            <button
+              x-show="!showDeleteConfirm"
+              @click="showDeleteConfirm = true"
+              class="btn btn-ghost w-full text-terra hover:bg-terra/10"
+            >
+              <i data-lucide="trash-2" class="w-4 h-4 mr-2"></i>
+              Delete Project
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>

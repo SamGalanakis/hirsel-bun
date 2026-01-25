@@ -271,8 +271,23 @@ impl ProjectStore {
         // Check if project exists
         let _ = self.get_project(id)?;
 
+        // Delete from database
         self.db
             .execute("DELETE FROM projects WHERE id = ?1", params![id])?;
+
+        // Delete project data directory (board, etc.)
+        let project_dir = crate::core::config::hirsel_dir()
+            .join("projects")
+            .join(id.to_string());
+        if project_dir.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&project_dir) {
+                tracing::warn!(
+                    "Failed to delete project directory {:?}: {}",
+                    project_dir,
+                    e
+                );
+            }
+        }
 
         Ok(())
     }

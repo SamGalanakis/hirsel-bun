@@ -54,9 +54,23 @@ Key patterns:
 cargo build             # Build to src-tauri/target/debug/hirsel
 ```
 
-**Logs:** `tail -f ~/.local/share/app.hirsel/logs/Hirsel.log`
-
 **CLI commands:** `runs`, `view <run>`, `attach <run>`, `go <run> <spec>`, `test <scenario> --yolo`
+
+## Debugging
+
+See [`docs/debugging.md`](docs/debugging.md) for comprehensive debugging guide.
+
+**Quick reference:**
+```bash
+# View logs in real-time
+tail -f ~/.local/share/app.hirsel/logs/Hirsel.log
+
+# Frontend errors (in dev mode, console.error goes to this log)
+grep "\[Frontend\]" ~/.local/share/app.hirsel/logs/Hirsel.log | tail -20
+
+# Reset everything
+rm -rf ~/.hirsel ~/.local/share/app.hirsel
+```
 
 ## Dev Tools
 

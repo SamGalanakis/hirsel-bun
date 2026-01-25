@@ -16,6 +16,9 @@
 | Modify lifecycle | `src-tauri/src/core/lifecycle/mod.rs`, `src-tauri/src/core/lifecycle/local.rs` |
 | Add archive strategy | `src-tauri/src/core/snapshot/mod.rs`, new strategy impl of `ArchiveStrategy` |
 | Add service worker | `src-tauri/src/core/service_worker/scribe.rs`, `src-tauri/src/cli/service_worker.rs` |
+| Add SpecFlow island | `src-tauri/src/core/specflow/state.rs`, `src-tauri/src/gui/commands/specflow.rs` |
+| Modify board UI | `src/lib/components/specflow-board/index.ts`, `src/templates/specflow-board.html` |
+| Change canvas rendering | `src/lib/components/specflow-board/canvas-renderer.ts` |
 
 ### Feature Flags
 
@@ -75,6 +78,9 @@ cargo build --features s3-storage               # With S3 support
 | Submodule | Key Files | Purpose |
 |-----------|-----------|---------|
 | `state/` | `mod.rs`, `types.rs`, `run.rs`, `workers.rs`, `tasks.rs`, `messages.rs`, `events.rs`, `evals.rs`, `history.rs` | SQLite state management |
+| `project/` | `mod.rs`, `types.rs`, `store.rs` | Project database (global), SpecFlow per-project configuration |
+| `specflow/` | `mod.rs`, `types.rs`, `state.rs` | SpecFlow board data (islands, rows, wires, bookmarks) |
+| `board/` | `mod.rs`, `types.rs` | Board file sync service (local/remote transparent routing) |
 | `orchestrator/` | `mod.rs` → `Orchestrator` trait, `local.rs`, `remote.rs`, `daemon.rs` | Run orchestration pattern |
 | `lifecycle/` | `mod.rs` → `LifecycleManager` trait, `local.rs`, `remote.rs`, `transitions.rs` | Event-driven state machine |
 | `runner/` | `types.rs` → `Runner` trait, `local.rs`, `fly.rs`, `ssh.rs`, `composed.rs`, `config.rs`, `setup.rs` | Worker host implementations |
@@ -84,7 +90,7 @@ cargo build --features s3-storage               # With S3 support
 | `draft/` | `mod.rs`, `types.rs` → `StartingPoint`, `workspace.rs`, `local_workspace.rs`, `s3_workspace.rs` | StartingPoint, workspace init |
 | `config/` | `mod.rs`, `store.rs`, `loader.rs`, `saver.rs`, `types.rs`, `agent.rs`, `storage.rs`, `orchestrator.rs`, `paths.rs` | Config struct, DB storage, profiles, runners |
 | `ops/` | `mod.rs`, `run.rs`, `setup.rs`, `spawn.rs`, `project.rs`, `docs.rs`, `types.rs` | Shared CLI/GUI operations |
-| `server/` | `mod.rs` → `start_server()`, `routes.rs`, `auth.rs`, `gyp.rs` | HTTP server for remote mode |
+| `server/` | `mod.rs` → `start_server()`, `routes.rs`, `auth.rs`, `gyp.rs`, `board.rs` | HTTP server for remote mode |
 | `eval/` | `mod.rs` | Eval runner and management |
 | `storage/` | `mod.rs` | File storage abstraction (local/S3) |
 | `service_worker/` | `mod.rs`, `scribe.rs`, `types.rs` | ScribeService for documentation batches |
@@ -139,6 +145,8 @@ cargo build --features s3-storage               # With S3 support
 | `logs.rs` | `get_eval_log`, `get_eval_log_by_path`, `get_history`, `get_eval_spec`, `get_evals` |
 | `filesystem.rs` | `pick_folder`, `suggest_paths` |
 | `debug.rs` | `log_frontend`, `get_version`, `get_process_counts`, `kill_orphaned_acp_processes`, `get_gyp_chat_history`, `save_gyp_message`, `clear_gyp_chat_history` |
+| `projects.rs` | `list_projects`, `get_project`, `create_project_from_path`, `delete_project` |
+| `specflow.rs` | `get_project_islands`, `create_island`, `update_island`, `delete_island`, `create_row`, `update_row`, `delete_row`, `reorder_rows`, `get_wires`, `create_wire`, `delete_wire`, `get_bookmarks`, `save_bookmark`, `delete_bookmark`, `dispatch_rows`, `dispatch_rows_confirm`, `sync_run_status`, `set_task_blocked_by`, `export_board_for_agent`, `import_board_from_agent`, `get_board_directory` |
 
 ### `src-tauri/src/cli/` - CLI Commands
 
@@ -347,6 +355,27 @@ pub trait StateAccess: Send {
 - Enables same worker binary for local and remote deployment
 - `SQLiteState` for local, `HttpState` for remote
 
+### Board Service (`src-tauri/src/core/board/mod.rs`)
+
+Transparent local/remote routing for board file sync with AI agents.
+
+```rust
+pub struct BoardService {
+    project_id: i64,
+}
+
+impl BoardService {
+    pub fn export_local_sync(&self) -> Result<PathBuf>; // Export board to JSON files
+    pub fn import_local_sync(&self) -> Result<SyncResult>; // Import changes from JSON
+    pub fn board_dir(&self) -> PathBuf; // Get board directory path
+}
+```
+
+- Exports islands as individual JSON files in `~/.hirsel/projects/{id}/board/islands/`
+- Enables AI agents to read/modify board state via file system
+- Import syncs JSON changes back to SQLite database
+- Used by Gyp AI context integration (deferred)
+
 ---
 
 ## Real-Time Events
@@ -432,6 +461,37 @@ Draft ──start──► Working ──eval──► Eval ──pass──► 
 ---
 
 ## Data Flow
+
+### SpecFlow Board Dispatch
+
+```
+SpecFlow Board (GUI)
+   │
+   ▼ User selects rows → Enter dispatch mode
+Toggle row selection
+   │
+   ▼ dispatch_rows(projectId, rowIds)
+specflow.rs command
+   │
+   ├─► Expand selection with blocked_by dependencies (ripple)
+   ├─► Check for already-dispatched rows → Warning if found
+   ├─► Sort rows by island Y position, then row position
+   │
+   ▼ Generate run inputs
+┌─────────────────────────────────────────────────────────┐
+│ 1. Generate spec.md from row spec_content (by island)   │
+│ 2. Generate eval.md from row eval_criterion (by island) │
+│ 3. Extract initial tasks from row task_title/desc       │
+│ 4. Create draft run via create_draft()                  │
+│ 5. Mark rows as dispatched, store run_name              │
+└─────────────────────────────────────────────────────────┘
+   │
+   ▼ User edits draft, starts run
+Standard run lifecycle
+   │
+   ▼ sync_run_status(projectId, runName)
+Update board rows from run task statuses
+```
 
 ### Run Creation (Local Mode)
 
@@ -537,6 +597,7 @@ Daemon handles each ResumeWorker:
 | `config` | `key` | Configuration key-value store |
 | `credentials` | `key_type` | Encrypted credential storage |
 | `gyp_chat_messages` | `id` | GYP chat history |
+| `projects` | `id` | Project registry |
 
 **config:**
 - `key` - Configuration key (e.g., "runners", "auth", "eval_timeout")
@@ -573,6 +634,29 @@ Daemon handles each ResumeWorker:
 - `id`, `name`, `status`, `claimed_by`, `claimed_at`
 - `parent_id`, `blocked_by`
 
+### Project Database (`~/.hirsel/projects/{id}/specflow.db`)
+
+| Table | Primary Key | Purpose |
+|-------|-------------|---------|
+| `islands` | `id` | Feature containers on the canvas |
+| `rows` | `id` | Trifecta Grid rows (Spec | Task | Eval) |
+| `wires` | `id` | Dependency arrows between islands |
+| `bookmarks` | `id` | Saved viewport positions |
+| `action_history` | `id` | Undo/redo history |
+
+**islands:**
+- `id`, `name`, `x`, `y`, `width`, `collapsed`
+- `status` - Computed from row statuses (draft, partial, dispatched, done)
+- `run_name` - Associated run (if dispatched)
+- `summary` - AI-generated summary for LOAD
+
+**rows:**
+- `id`, `island_id`, `position`
+- `spec_content`, `spec_status` (draft, approved)
+- `task_title`, `task_description`, `task_status` (todo, doing, done, blocked, deleted), `task_worker`, `task_blocked_by`
+- `eval_criterion`, `eval_status` (pending, pass, fail), `eval_result`
+- `dispatched`, `run_name` - Dispatch tracking (row-level)
+
 ---
 
 ## File Layout
@@ -580,9 +664,14 @@ Daemon handles each ResumeWorker:
 ```
 ~/.hirsel/
 ├── config.toml           # Initial config / one-time override (optional)
-├── hirsel.db             # Global DB (config, credentials, gyp_chat)
+├── hirsel.db             # Global DB (config, credentials, gyp_chat, projects)
 ├── key                   # Encryption key for credentials
 ├── hirsel.pid            # Daemon PID file
+├── projects/{id}/        # Project-specific data
+│   ├── specflow.db       # SpecFlow board state
+│   └── board/            # Agent file sync directory
+│       ├── islands/      # JSON files for each island
+│       └── board.json    # Board metadata
 └── runs/{run_name}/
     ├── hirsel.db         # Run state (SOURCE OF TRUTH)
     ├── spec.md           # Specification (input)
@@ -785,6 +874,14 @@ idle_timeout_seconds = 300        # 5 min default
 | GET/PUT/DELETE | `/api/config/runners/{name}` | runner CRUD |
 | GET/PUT/DELETE | `/api/config/profiles/{name}` | profile CRUD |
 | POST/GET/DELETE | `/api/credentials/{key}` | credential CRUD |
+
+### Board Endpoints
+
+| Method | Path | Handler |
+|--------|------|---------|
+| POST | `/api/board/{project_id}/export` | `export_board` - Export board to agent JSON files |
+| POST | `/api/board/{project_id}/import` | `import_board` - Import board changes from agent JSON files |
+| GET | `/api/board/{project_id}/directory` | `get_board_directory` - Get board directory path |
 
 ### Gyp Chat Endpoints
 

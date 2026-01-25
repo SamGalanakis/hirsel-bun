@@ -41,6 +41,13 @@ export { tasksTab } from './tabs';
 // Extras
 export { sheepClickerGame } from './sheep-clicker';
 
+// SpecFlow board
+export { specflowBoard } from './specflow-board';
+
+// Project setup
+export { projectSetup } from './project-setup';
+export { projectSettings } from './project-settings';
+
 // Modals
 export { settingsModal } from './settings-modal';
 

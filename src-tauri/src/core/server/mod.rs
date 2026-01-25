@@ -10,6 +10,7 @@
 //! - `worker_routes` - Worker API endpoints
 
 mod auth;
+pub mod board;
 pub mod eval_routes;
 pub mod gyp;
 pub mod message_routes;
@@ -188,6 +189,13 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
             post(routes::store_credential)
                 .get(routes::get_credential)
                 .delete(routes::delete_credential),
+        )
+        // Board sync routes
+        .route("/api/board/{project_id}/export", post(board::export_board))
+        .route("/api/board/{project_id}/import", post(board::import_board))
+        .route(
+            "/api/board/{project_id}/directory",
+            get(board::get_board_directory),
         )
         // Merge Gyp routes
         .merge(gyp_routes)
