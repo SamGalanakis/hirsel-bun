@@ -73,6 +73,18 @@ impl RemoteOrchestrator {
         self.client.delete(path).await.map_err(Self::convert_error)
     }
 
+    /// Make a PATCH request to the server
+    async fn patch<T: DeserializeOwned, B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> OrchestratorResult<T> {
+        self.client
+            .patch(path, body)
+            .await
+            .map_err(Self::convert_error)
+    }
+
     // =========================================================================
     // Server-Side Run Creation (not part of Orchestrator trait)
     // =========================================================================
@@ -367,7 +379,7 @@ impl Orchestrator for RemoteOrchestrator {
     async fn start_run(&self, request: StartRunRequest) -> OrchestratorResult<RunDetail> {
         // 1. Create tarball if starting from local folder
         let tarball = match &request.starting_point {
-            StartingPoint::LocalFolder { path } => {
+            Some(StartingPoint::LocalFolder { path }) => {
                 let project_path = std::path::Path::new(path);
                 Some(create_project_tarball(project_path).map_err(|e| {
                     OrchestratorError::Other(format!("Failed to create tarball: {}", e))
@@ -379,8 +391,8 @@ impl Orchestrator for RemoteOrchestrator {
         // 2. Convert to CreateRunRequest
         // For LocalFolder, we upload files separately, so don't include the local path
         let starting_point_for_server = match &request.starting_point {
-            StartingPoint::LocalFolder { .. } => None, // Files uploaded via tarball
-            sp => Some(sp.clone()),
+            Some(StartingPoint::LocalFolder { .. }) => None, // Files uploaded via tarball
+            sp => sp.clone(),
         };
 
         let create_request = CreateRunRequest {
@@ -459,6 +471,45 @@ impl Orchestrator for RemoteOrchestrator {
             )
             .await?;
         Ok(())
+    }
+
+    async fn create_project(
+        &self,
+        req: crate::core::project::CreateProjectRequest,
+    ) -> OrchestratorResult<crate::core::project::Project> {
+        self.post("/api/projects", &req).await
+    }
+
+    async fn get_project(&self, id: i64) -> OrchestratorResult<crate::core::project::Project> {
+        self.get(&format!("/api/projects/{}", id)).await
+    }
+
+    async fn get_project_by_name(
+        &self,
+        name: &str,
+    ) -> OrchestratorResult<Option<crate::core::project::Project>> {
+        self.get(&format!("/api/projects/by-name/{}", name)).await
+    }
+
+    async fn list_projects(&self) -> OrchestratorResult<Vec<crate::core::project::Project>> {
+        self.get("/api/projects").await
+    }
+
+    async fn update_project(
+        &self,
+        id: i64,
+        req: crate::core::project::UpdateProjectRequest,
+    ) -> OrchestratorResult<crate::core::project::Project> {
+        self.patch(&format!("/api/projects/{}", id), &req).await
+    }
+
+    async fn delete_project(&self, id: i64) -> OrchestratorResult<()> {
+        self.delete(&format!("/api/projects/{}", id)).await
+    }
+
+    async fn list_project_runs(&self, project_id: i64) -> OrchestratorResult<Vec<RunSummary>> {
+        self.get(&format!("/api/projects/{}/runs", project_id))
+            .await
     }
 }
 

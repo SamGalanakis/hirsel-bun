@@ -374,4 +374,63 @@ impl Orchestrator for DaemonOrchestrator {
             .map_err(|e| OrchestratorError::Other(e.to_string()))?;
         Ok(())
     }
+
+    async fn create_project(
+        &self,
+        req: crate::core::project::CreateProjectRequest,
+    ) -> OrchestratorResult<crate::core::project::Project> {
+        self.client
+            .post("/api/projects", req)
+            .await
+            .map_err(|e| OrchestratorError::Other(e.to_string()))
+    }
+
+    async fn get_project(&self, id: i64) -> OrchestratorResult<crate::core::project::Project> {
+        self.client
+            .get(&format!("/api/projects/{}", id))
+            .await
+            .map_err(|e| OrchestratorError::Other(e.to_string()))
+    }
+
+    async fn get_project_by_name(
+        &self,
+        name: &str,
+    ) -> OrchestratorResult<Option<crate::core::project::Project>> {
+        self.client
+            .get(&format!("/api/projects/by-name/{}", name))
+            .await
+            .map_err(|e| OrchestratorError::Other(e.to_string()))
+    }
+
+    async fn list_projects(&self) -> OrchestratorResult<Vec<crate::core::project::Project>> {
+        self.client
+            .get("/api/projects")
+            .await
+            .map_err(|e| OrchestratorError::Other(e.to_string()))
+    }
+
+    async fn update_project(
+        &self,
+        id: i64,
+        req: crate::core::project::UpdateProjectRequest,
+    ) -> OrchestratorResult<crate::core::project::Project> {
+        self.client
+            .patch(&format!("/api/projects/{}", id), req)
+            .await
+            .map_err(|e| OrchestratorError::Other(e.to_string()))
+    }
+
+    async fn delete_project(&self, id: i64) -> OrchestratorResult<()> {
+        self.client
+            .delete(&format!("/api/projects/{}", id))
+            .await
+            .map_err(|e| OrchestratorError::Other(e.to_string()))
+    }
+
+    async fn list_project_runs(&self, project_id: i64) -> OrchestratorResult<Vec<RunSummary>> {
+        self.client
+            .get(&format!("/api/projects/{}/runs", project_id))
+            .await
+            .map_err(|e| OrchestratorError::Other(e.to_string()))
+    }
 }

@@ -160,6 +160,23 @@ impl DaemonClient {
             .map_err(|e| anyhow!("Failed to parse response: {}", e))
     }
 
+    /// PATCH request with JSON body
+    pub async fn patch<T: DeserializeOwned, B: Serialize>(&self, path: &str, body: B) -> Result<T> {
+        let url = format!("{}{}", self.base_url, path);
+        let response = self.client.patch(&url).json(&body).send().await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!("HTTP {}: {}", status, body));
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| anyhow!("Failed to parse response: {}", e))
+    }
+
     /// DELETE request
     pub async fn delete<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);

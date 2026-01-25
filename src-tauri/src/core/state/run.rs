@@ -227,6 +227,50 @@ impl SQLiteState {
         Ok(())
     }
 
+    /// Get project ID
+    pub fn get_project_id(&self) -> StateResult<Option<i64>> {
+        match self
+            .db
+            .query_row("SELECT project_id FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<i64>>(0)
+            }) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set project ID
+    pub fn set_project_id(&self, project_id: i64) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET project_id = ?1, updated_at = ?2 WHERE id = 1",
+            params![project_id, self.now()],
+        )?;
+        Ok(())
+    }
+
+    /// Get project name
+    pub fn get_project_name(&self) -> StateResult<Option<String>> {
+        match self
+            .db
+            .query_row("SELECT project_name FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set project name
+    pub fn set_project_name(&self, project_name: &str) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET project_name = ?1, updated_at = ?2 WHERE id = 1",
+            params![project_name, self.now()],
+        )?;
+        Ok(())
+    }
+
     /// Get created_at timestamp
     pub fn get_created_at(&self) -> StateResult<Option<String>> {
         match self

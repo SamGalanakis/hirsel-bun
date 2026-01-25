@@ -59,7 +59,9 @@ CREATE TABLE IF NOT EXISTS state (
     scribe_batch_started_at TEXT,
     docs_version INTEGER DEFAULT 0,
     docs_path TEXT,
-    persist_docs_changes INTEGER DEFAULT 1
+    persist_docs_changes INTEGER DEFAULT 1,
+    project_id INTEGER,
+    project_name TEXT
 );
 
 CREATE TABLE IF NOT EXISTS workers (
@@ -223,6 +225,20 @@ impl SQLiteState {
     /// Run database migrations for schema changes
     /// Note: In development mode, we don't need migrations - just delete ~/.hirsel/runs
     fn run_migrations(&mut self) -> StateResult<()> {
+        // Check if project_id and project_name columns exist
+        let has_project_id: bool = self
+            .db
+            .prepare("SELECT COUNT(*) FROM pragma_table_info('state') WHERE name='project_id'")?
+            .query_row([], |row| row.get::<_, i64>(0).map(|c| c > 0))?;
+
+        if !has_project_id {
+            // Add project columns
+            self.db
+                .execute("ALTER TABLE state ADD COLUMN project_id INTEGER", [])?;
+            self.db
+                .execute("ALTER TABLE state ADD COLUMN project_name TEXT", [])?;
+        }
+
         Ok(())
     }
 

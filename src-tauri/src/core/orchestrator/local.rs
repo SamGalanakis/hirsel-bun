@@ -23,6 +23,7 @@ use crate::core::names::{get_available_names, slugify};
 use crate::core::ops::{
     compute_multi_worker_config, register_workers, setup_run_workspace, RunSetupConfig,
 };
+use crate::core::project::ProjectStore;
 use crate::core::runner::{create_runner, Runner, WorkerSpawnConfig as RunnerSpawnConfig};
 use crate::core::state::{SQLiteState, Status, WorkerUpdate};
 use crate::core::Files;
@@ -238,6 +239,8 @@ impl Orchestrator for LocalOrchestrator {
                 time_limit_minutes: summary.time_limit_minutes.map(|m| m as u32),
                 has_unread_messages: summary.unread_count > 0,
                 created_at,
+                project_id: state.get_project_id().ok().flatten(),
+                project_name: state.get_project_name().ok().flatten(),
             });
         }
 
@@ -339,6 +342,8 @@ impl Orchestrator for LocalOrchestrator {
             metrics_available,
             runner,
             worker_runners,
+            project_id: state.get_project_id().ok().flatten(),
+            project_name: state.get_project_name().ok().flatten(),
         })
     }
 
@@ -1583,10 +1588,21 @@ impl Orchestrator for LocalOrchestrator {
         std::fs::write(tasks_dir.join("scope.md"), "")
             .map_err(|e| OrchestratorError::Other(format!("Failed to write scope.md: {}", e)))?;
 
+        // 3.5. Load project and resolve starting_point
+        let store = ProjectStore::open().map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let project = store
+            .get_project(request.project_id)
+            .map_err(|e| OrchestratorError::State(format!("Project not found: {}", e)))?;
+
+        // Resolve starting_point (request overrides project)
+        let starting_point = request
+            .starting_point
+            .unwrap_or_else(|| project.starting_point.clone());
+
         // 4. Initialize workspace from starting point
         let workspace = create_workspace_provider(None);
         let workspace_info = workspace
-            .init(&run_name, &request.starting_point)
+            .init(&run_name, &starting_point)
             .await
             .map_err(|e| {
                 OrchestratorError::Other(format!("Failed to initialize workspace: {}", e))
@@ -1602,8 +1618,16 @@ impl Orchestrator for LocalOrchestrator {
             .init_state(Some(project_path.to_str().unwrap_or(".")))
             .map_err(|e| OrchestratorError::Other(format!("Failed to init state: {}", e)))?;
 
+        // Store project association
+        state
+            .set_project_id(project.id)
+            .map_err(|e| OrchestratorError::Other(format!("Failed to set project_id: {}", e)))?;
+        state
+            .set_project_name(&project.name)
+            .map_err(|e| OrchestratorError::Other(format!("Failed to set project_name: {}", e)))?;
+
         // Store starting_point in database for cloning
-        let sp_json = serde_json::to_string(&request.starting_point).map_err(|e| {
+        let sp_json = serde_json::to_string(&starting_point).map_err(|e| {
             OrchestratorError::Other(format!("Failed to serialize starting_point: {}", e))
         })?;
         state.set_starting_point(Some(&sp_json)).map_err(|e| {
@@ -2391,5 +2415,100 @@ impl Orchestrator for LocalOrchestrator {
                 )))
             }
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Project Management
+    // -------------------------------------------------------------------------
+
+    async fn create_project(
+        &self,
+        req: crate::core::project::CreateProjectRequest,
+    ) -> OrchestratorResult<crate::core::project::Project> {
+        let store = crate::core::project::ProjectStore::open()
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        store
+            .create_project(&req)
+            .map_err(|e| OrchestratorError::State(e.to_string()))
+    }
+
+    async fn get_project(&self, id: i64) -> OrchestratorResult<crate::core::project::Project> {
+        let store = crate::core::project::ProjectStore::open()
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        store.get_project(id).map_err(|e| match e {
+            crate::core::project::ProjectError::NotFound(_) => {
+                OrchestratorError::RunNotFound(format!("Project {} not found", id))
+            }
+            _ => OrchestratorError::State(e.to_string()),
+        })
+    }
+
+    async fn get_project_by_name(
+        &self,
+        name: &str,
+    ) -> OrchestratorResult<Option<crate::core::project::Project>> {
+        let store = crate::core::project::ProjectStore::open()
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        store
+            .get_project_by_name(name)
+            .map_err(|e| OrchestratorError::State(e.to_string()))
+    }
+
+    async fn list_projects(&self) -> OrchestratorResult<Vec<crate::core::project::Project>> {
+        let store = crate::core::project::ProjectStore::open()
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        store
+            .list_projects()
+            .map_err(|e| OrchestratorError::State(e.to_string()))
+    }
+
+    async fn update_project(
+        &self,
+        id: i64,
+        req: crate::core::project::UpdateProjectRequest,
+    ) -> OrchestratorResult<crate::core::project::Project> {
+        let store = crate::core::project::ProjectStore::open()
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        store
+            .update_project(id, &req)
+            .map_err(|e| OrchestratorError::State(e.to_string()))
+    }
+
+    async fn delete_project(&self, id: i64) -> OrchestratorResult<()> {
+        // Get all runs for this project
+        let runs = self.list_runs().await?;
+        let project_runs: Vec<_> = runs
+            .into_iter()
+            .filter(|r| r.project_id == Some(id))
+            .collect();
+
+        // Delete all runs
+        for run in project_runs {
+            self.delete_run(&run.name).await?;
+        }
+
+        // Delete project from DB
+        let store = crate::core::project::ProjectStore::open()
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        store
+            .delete_project(id)
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+        // Clear gyp chat messages for this project
+        let gyp_store = crate::core::gyp_chat::GypChatStore::open()
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        gyp_store
+            .clear_project_messages(id)
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn list_project_runs(&self, project_id: i64) -> OrchestratorResult<Vec<RunSummary>> {
+        let all_runs = self.list_runs().await?;
+        Ok(all_runs
+            .into_iter()
+            .filter(|r| r.project_id == Some(project_id))
+            .collect())
     }
 }

@@ -37,6 +37,7 @@ pub mod names;
 pub mod ops;
 pub mod orchestrator;
 pub mod process;
+pub mod project;
 pub mod run_manager;
 pub mod runner;
 pub mod scribe;
@@ -94,6 +95,9 @@ pub use names::{
 pub use orchestrator::{
     create_local_orchestrator, create_orchestrator, LocalOrchestrator, Orchestrator,
     OrchestratorError, OrchestratorResult, RemoteOrchestrator,
+};
+pub use project::{
+    CreateProjectRequest, Project, ProjectError, ProjectResult, ProjectStore, UpdateProjectRequest,
 };
 pub use run_manager::{
     create_local_run_manager, create_run_manager, LocalRunManager, RemoteRunManager, RunManager,

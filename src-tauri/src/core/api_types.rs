@@ -78,6 +78,8 @@ pub struct RunSummary {
     pub time_limit_minutes: Option<u32>,
     pub has_unread_messages: bool,
     pub created_at: String,
+    pub project_id: Option<i64>,
+    pub project_name: Option<String>,
 }
 
 /// Full run details for the detail view
@@ -110,6 +112,8 @@ pub struct RunDetail {
     pub metrics_available: bool,
     pub runner: Option<String>,
     pub worker_runners: Option<std::collections::HashMap<String, String>>,
+    pub project_id: Option<i64>,
+    pub project_name: Option<String>,
 }
 
 /// Task from the database

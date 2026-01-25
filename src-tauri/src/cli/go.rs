@@ -10,12 +10,14 @@ use std::path::{Path, PathBuf};
 use crate::cli::GoArgs;
 use crate::core::chats::ChatError;
 use crate::core::config::Config;
+use crate::core::draft::StartingPoint;
 use crate::core::git::{get_repo_root, GitError};
 #[cfg(test)]
 use crate::core::names::get_available_name;
 #[cfg(test)]
 use crate::core::names::get_available_names;
 use crate::core::names::slugify;
+use crate::core::project::{CreateProjectRequest, ProjectStore};
 use crate::core::runner::RunnerError;
 use crate::core::state::StateError;
 #[cfg(feature = "server")]
@@ -164,6 +166,40 @@ impl WorkerScale {
     /// Initial worker count - always 1, we autoscale from there
     pub fn initial_count(&self) -> u32 {
         1
+    }
+}
+
+// =============================================================================
+// Project Helpers
+// =============================================================================
+
+/// Get or create the "default" project
+fn get_or_create_default_project() -> GoResult<i64> {
+    let store = ProjectStore::open()
+        .map_err(|e| GoError::InvalidProject(format!("Failed to open project store: {}", e)))?;
+
+    if let Some(project) = store
+        .get_project_by_name("default")
+        .map_err(|e| GoError::InvalidProject(format!("Failed to query projects: {}", e)))?
+    {
+        Ok(project.id)
+    } else {
+        let project = store
+            .create_project(&CreateProjectRequest {
+                name: "default".to_string(),
+                starting_point: StartingPoint::Greenfield,
+                worker_scale: None,
+                time_limit_minutes: None,
+                max_iterations: None,
+                human_in_the_loop: None,
+                docs_path: None,
+                persist_docs_changes: None,
+                description: Some("Auto-created default project".to_string()),
+            })
+            .map_err(|e| {
+                GoError::InvalidProject(format!("Failed to create default project: {}", e))
+            })?;
+        Ok(project.id)
     }
 }
 
@@ -450,13 +486,17 @@ fn run_remote(
             tag: tag.map(String::from),
         });
 
+    // Get or create default project
+    let project_id = get_or_create_default_project()?;
+
     // Build StartRunRequest
     let request = StartRunRequest {
         name: run_name.to_string(),
+        project_id,
         spec: spec_content.to_string(),
-        starting_point: StartingPoint::LocalFolder {
+        starting_point: Some(StartingPoint::LocalFolder {
             path: project_path.to_string_lossy().to_string(),
-        },
+        }),
         eval: eval_content,
         worker_scale: Some(scale.max),
         time_limit_minutes,
@@ -577,16 +617,20 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
         get_repo_root(Some(Path::new("."))).map_err(|_| GoError::NoGitRepo)?
     };
 
+    // Get or create default project
+    let project_id = get_or_create_default_project()?;
+
     // Build StartRunRequest and use orchestrator
     let orchestrator =
         create_local_orchestrator().map_err(|e| GoError::Orchestrator(e.to_string()))?;
 
     let request = StartRunRequest {
         name: run_name.clone(),
+        project_id,
         spec: spec_content,
-        starting_point: StartingPoint::LocalFolder {
+        starting_point: Some(StartingPoint::LocalFolder {
             path: project_path.to_string_lossy().to_string(),
-        },
+        }),
         eval: eval_content,
         worker_scale: Some(scale.max),
         time_limit_minutes,

@@ -162,6 +162,25 @@ impl AuthenticatedClient {
         self.handle_empty_response(resp, &url).await
     }
 
+    /// Make a PATCH request with a JSON body and deserialize the response
+    pub async fn patch<T: DeserializeOwned, B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> HttpResult<T> {
+        let url = self.url(path);
+
+        let resp = self
+            .client
+            .patch(&url)
+            .bearer_auth(&self.api_key)
+            .json(body)
+            .send()
+            .await?;
+
+        self.handle_response(resp, &url).await
+    }
+
     /// Make a POST request with raw bytes body
     pub async fn post_bytes(
         &self,

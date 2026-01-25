@@ -258,19 +258,21 @@ pub struct InitWorkspaceResponse {
 pub struct StartRunRequest {
     /// Run name (will be slugified)
     pub name: String,
+    /// Project ID (required - all runs belong to a project)
+    pub project_id: i64,
     /// Spec content (markdown)
     pub spec: String,
-    /// Starting point for workspace (how to initialize the work directory)
-    pub starting_point: StartingPoint,
+    /// Starting point for workspace (optional override, inherits from project if None)
+    pub starting_point: Option<StartingPoint>,
     /// Optional eval content (markdown)
     pub eval: Option<String>,
-    /// Worker scale (max workers for autoscaling, default: 1)
+    /// Worker scale (max workers for autoscaling, optional override)
     pub worker_scale: Option<u32>,
-    /// Time limit in minutes
+    /// Time limit in minutes (optional override)
     pub time_limit_minutes: Option<i64>,
-    /// Max iterations before pausing
+    /// Max iterations before pausing (optional override)
     pub max_iterations: Option<i64>,
-    /// Human-in-the-loop mode (default: true)
+    /// Human-in-the-loop mode (optional override)
     pub human_in_the_loop: Option<bool>,
     /// Runner name (default: from config or "local")
     pub runner: Option<String>,
@@ -402,6 +404,41 @@ pub trait Orchestrator: Send + Sync {
 
     /// Check server health (for remote orchestrator)
     async fn health(&self) -> OrchestratorResult<HealthResponse>;
+
+    // -------------------------------------------------------------------------
+    // Project Management
+    // -------------------------------------------------------------------------
+
+    /// Create a new project
+    async fn create_project(
+        &self,
+        req: crate::core::project::CreateProjectRequest,
+    ) -> OrchestratorResult<crate::core::project::Project>;
+
+    /// Get a project by ID
+    async fn get_project(&self, id: i64) -> OrchestratorResult<crate::core::project::Project>;
+
+    /// Get a project by name
+    async fn get_project_by_name(
+        &self,
+        name: &str,
+    ) -> OrchestratorResult<Option<crate::core::project::Project>>;
+
+    /// List all projects
+    async fn list_projects(&self) -> OrchestratorResult<Vec<crate::core::project::Project>>;
+
+    /// Update a project
+    async fn update_project(
+        &self,
+        id: i64,
+        req: crate::core::project::UpdateProjectRequest,
+    ) -> OrchestratorResult<crate::core::project::Project>;
+
+    /// Delete a project and all its runs
+    async fn delete_project(&self, id: i64) -> OrchestratorResult<()>;
+
+    /// List runs for a project
+    async fn list_project_runs(&self, project_id: i64) -> OrchestratorResult<Vec<RunSummary>>;
 
     // -------------------------------------------------------------------------
     // Run Creation (for CLI/GUI use)

@@ -254,6 +254,8 @@ pub async fn create_draft() -> Result<RunDetail, String> {
         metrics_available,
         runner: None,
         worker_runners: None,
+        project_id: None,
+        project_name: None,
     })
 }
 
@@ -302,6 +304,8 @@ pub async fn clone_run(source_run: String, new_name: String) -> Result<RunDetail
         metrics_available,
         runner: None,
         worker_runners: None,
+        project_id: None,
+        project_name: None,
     })
 }
 
