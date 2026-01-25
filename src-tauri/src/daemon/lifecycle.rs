@@ -150,6 +150,55 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
                     );
                 }
             }
+
+            // Check if eval process crashed (PID no longer alive)
+            if let Ok(Some(eval)) = lifecycle.state().get_running_eval() {
+                if let Some(pid) = eval.pid {
+                    if !crate::core::runner::local::LocalRunner::is_pid_alive(pid) {
+                        tracing::warn!(
+                            "[Daemon] Eval process (pid={}) for run '{}' is no longer alive - marking as failed",
+                            pid, run_name
+                        );
+                        if let Err(e) = lifecycle.state().complete_eval(
+                            eval.id,
+                            false,
+                            "Eval process crashed or exited unexpectedly",
+                        ) {
+                            tracing::error!(
+                                "[Daemon] Failed to mark crashed eval as failed for '{}': {}",
+                                run_name,
+                                e
+                            );
+                        }
+
+                        // Re-trigger eval
+                        let agent_command = crate::cli::config::get_agent_command();
+                        if let Ok(lm) =
+                            LocalLifecycleManager::new(run_name, run_dir.clone(), agent_command)
+                        {
+                            // Set back to Working so maybe_trigger_eval can fire
+                            if let Err(e) = lm.state().set_status(Status::Working) {
+                                tracing::error!(
+                                    "[Daemon] Failed to reset status for eval re-trigger on '{}': {}",
+                                    run_name, e
+                                );
+                            }
+                            match lm.process_event(LifecycleEvent::TimeCheck) {
+                                Ok(actions) => {
+                                    handle_lifecycle_actions(run_name, &run_dir, actions).await;
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "[Daemon] Failed to re-trigger eval for '{}': {}",
+                                        run_name,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         _ => {}
     }
@@ -161,7 +210,13 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
 ///
 /// Uses ScribeService which handles local vs remote execution internally.
 fn maybe_process_scribe(run_name: &str, files: &Files) -> anyhow::Result<()> {
-    let config = Config::load().map(|(c, _)| c).unwrap_or_default();
+    let config = Config::load().map(|(c, _)| c).unwrap_or_else(|e| {
+        tracing::warn!(
+            "[Daemon] Failed to load config for scribe, using defaults: {}",
+            e
+        );
+        Config::default()
+    });
 
     if !config.scribe_enabled {
         return Ok(());
@@ -188,7 +243,11 @@ fn maybe_process_scribe(run_name: &str, files: &Files) -> anyhow::Result<()> {
                     );
                 }
                 Err(e) => {
-                    tracing::debug!("[Daemon] Scribe processing for '{}': {}", run_name, e);
+                    tracing::warn!(
+                        "[Daemon] Scribe processing failed for '{}': {}",
+                        run_name,
+                        e
+                    );
                 }
             }
         });

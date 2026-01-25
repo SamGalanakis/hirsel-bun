@@ -191,14 +191,19 @@ impl LocalLifecycleManager {
 
             // Clear PID and runner info from database
             if worker.pid.is_some() || worker.runner_id.is_some() {
-                let _ = self.state.update_worker(
+                if let Err(e) = self.state.update_worker(
                     &worker.name,
                     WorkerUpdate {
                         pid: None,
                         runner_id: None,
                         ..Default::default()
                     },
-                );
+                ) {
+                    warn!(
+                        "Failed to clear worker {} state after kill: {}",
+                        worker.name, e
+                    );
+                }
             }
         }
 
@@ -623,13 +628,25 @@ impl LocalLifecycleManager {
             std::env::current_exe().map_err(|e| LifecycleError::Io(std::io::Error::other(e)))?;
 
         // Get agent command from config
-        let (config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
+        let (config, _) = Config::load().unwrap_or_else(|e| {
+            warn!(
+                "Failed to load config for eval spawn, using defaults: {}",
+                e
+            );
+            (Config::default(), vec![])
+        });
         let agent_command = config.agent.command.clone();
 
         // Spawn the eval subprocess
         // Capture stderr to a log file for debugging
         let eval_log_path = self.context.run_dir.join("eval_spawn.log");
-        let log_file = std::fs::File::create(&eval_log_path).ok();
+        let log_file = match std::fs::File::create(&eval_log_path) {
+            Ok(f) => Some(f),
+            Err(e) => {
+                warn!("Failed to create eval log file {:?}: {}", eval_log_path, e);
+                None
+            }
+        };
 
         let mut cmd = Command::new(&hirsel_exe);
         cmd.arg("__eval-run")
@@ -925,7 +942,9 @@ impl LifecycleManager for LocalLifecycleManager {
         }
 
         // Cancel any running evals
-        let _ = self.state.cancel_running_evals("Run paused");
+        if let Err(e) = self.state.cancel_running_evals("Run paused") {
+            warn!("Failed to cancel running evals during pause: {}", e);
+        }
 
         // Pause all workers
         let paused = self.pause_all_workers_internal()?;
@@ -959,7 +978,9 @@ impl LifecycleManager for LocalLifecycleManager {
             .map_err(|e| LifecycleError::State(e.to_string()))?;
 
         if was_in_eval {
-            let _ = self.state.clear_paused_evals();
+            if let Err(e) = self.state.clear_paused_evals() {
+                warn!("Failed to clear paused evals on resume: {}", e);
+            }
             self.state
                 .set_status(Status::Working)
                 .map_err(|e| LifecycleError::State(e.to_string()))?;
@@ -987,7 +1008,9 @@ impl LifecycleManager for LocalLifecycleManager {
         // The daemon will process actions and spawn workers via the orchestrator.
 
         // Check if eval should be triggered
-        let _ = self.maybe_trigger_eval();
+        if let Err(e) = self.maybe_trigger_eval() {
+            warn!("Failed to check eval trigger on resume: {}", e);
+        }
 
         Ok(resume_actions)
     }
@@ -1079,9 +1102,12 @@ impl LifecycleManager for LocalLifecycleManager {
         info!("Run status set to Failed (time_limit)");
 
         // Write timeout event to database
-        let _ = self
+        if let Err(e) = self
             .state
-            .insert_text_event("system", "\n[time limit reached - run timed out]");
+            .insert_text_event("system", "\n[time limit reached - run timed out]")
+        {
+            warn!("Failed to write timeout event to database: {}", e);
+        }
 
         // Trigger summary generation in background
         self.spawn_background_summary();

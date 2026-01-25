@@ -326,7 +326,9 @@ pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
     }
 
     // Add initial scope task
-    let _ = new_state.add_task("scope", "Read spec, create exploration tasks", None, None);
+    if let Err(e) = new_state.add_task("scope", "Read spec, create exploration tasks", None, None) {
+        tracing::warn!("Failed to create scope task for cloned run: {}", e);
+    }
 
     tracing::info!("Cloned '{}' to '{}' (draft)", config.source_run, new_name);
 

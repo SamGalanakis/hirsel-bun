@@ -302,15 +302,24 @@ pub fn check_worker_heartbeats(
 
         // Check heartbeat timestamp
         if let Some(ref heartbeat) = worker.last_heartbeat {
-            if let Ok(heartbeat_time) = chrono::DateTime::parse_from_rfc3339(heartbeat) {
-                let elapsed = now.signed_duration_since(heartbeat_time.with_timezone(&chrono::Utc));
-                if elapsed.num_seconds() > timeout_seconds {
+            match chrono::DateTime::parse_from_rfc3339(heartbeat) {
+                Ok(heartbeat_time) => {
+                    let elapsed =
+                        now.signed_duration_since(heartbeat_time.with_timezone(&chrono::Utc));
+                    if elapsed.num_seconds() > timeout_seconds {
+                        warn!(
+                            "Worker {} heartbeat stale ({}s ago)",
+                            worker.name,
+                            elapsed.num_seconds()
+                        );
+                        stale.push(worker.name.clone());
+                    }
+                }
+                Err(e) => {
                     warn!(
-                        "Worker {} heartbeat stale ({}s ago)",
-                        worker.name,
-                        elapsed.num_seconds()
+                        "Worker {} has unparsable heartbeat '{}': {}",
+                        worker.name, heartbeat, e
                     );
-                    stale.push(worker.name.clone());
                 }
             }
         }

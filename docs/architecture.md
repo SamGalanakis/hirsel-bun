@@ -815,23 +815,22 @@ Background process that owns lifecycle management.
 **Polling Loop (every 5s):**
 ```rust
 for run in active_runs {
-    let actions = lifecycle.process_event(LifecycleEvent::TimeCheck)?;
-    for action in actions {
-        match action {
-            SpawnWorker { worker_name, work_dir } => {
-                orchestrator.spawn_single_worker(...).await?;
-            }
-            ResumeWorker { worker_name, work_dir, session_id, snapshot, agent_session } => {
-                orchestrator.resume_worker(...).await?;
-            }
-            EvalTriggered => { /* eval spawned by lifecycle */ }
-            RunFailed { reason } => { /* update state */ }
-            TimeWarning { percent } => { /* send notification */ }
-            // ...
+    match status {
+        Status::Working => {
+            let actions = lifecycle.process_event(LifecycleEvent::TimeCheck)?;
+            // Handle: SpawnWorker, ResumeWorker, EvalTriggered, RunFailed, TimeWarning
+            handle_lifecycle_actions(actions).await;
+            maybe_process_scribe(run);
+        }
+        Status::Eval => {
+            // Check time limit
+            // Detect eval process crash (PID no longer alive) → re-trigger eval
         }
     }
 }
 ```
+
+**Eval Crash Detection:** When a run is in `Eval` state, the daemon checks if the eval process PID is still alive. If the process crashed, the daemon marks the eval as failed and re-triggers it by resetting the run to `Working` and processing a `TimeCheck` event.
 
 **Auto-start:** CLI/GUI start daemon automatically via `DaemonOrchestrator::connect_or_start()`.
 

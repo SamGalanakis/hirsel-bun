@@ -19,7 +19,10 @@ pub fn run_eval(
     eval_name: Option<&str>,
     config: &EvalConfig,
 ) -> Result<EvalResult, EvalError> {
-    let (global_config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
+    let (global_config, _) = Config::load().unwrap_or_else(|e| {
+        tracing::warn!("Failed to load config for eval, using defaults: {}", e);
+        (Config::default(), vec![])
+    });
     let run_dir = global_config.runs_dir().join(run_name);
 
     if !run_dir.exists() {
@@ -71,7 +74,9 @@ pub fn run_eval(
 
     if result.passed {
         // Kill any remaining worker processes before marking as Done
-        let _ = lifecycle.kill_all_workers();
+        if let Err(e) = lifecycle.kill_all_workers() {
+            tracing::warn!("Failed to kill workers after eval passed: {}", e);
+        }
 
         state.set_status(Status::Done)?;
     } else {
@@ -85,7 +90,9 @@ pub fn run_eval(
         // After 3 failed evals, mark as Failed with EvalFailed reason
         if failed_count >= 3 {
             // Kill any remaining worker processes before marking as Failed
-            let _ = lifecycle.kill_all_workers();
+            if let Err(e) = lifecycle.kill_all_workers() {
+                tracing::warn!("Failed to kill workers after eval failures: {}", e);
+            }
 
             state.set_failed(crate::core::state::FailureReason::EvalFailed)?;
         } else {
@@ -230,7 +237,9 @@ pub fn execute_eval_script(config: &EvalConfig, log_file: &Path) -> Result<EvalR
             None => {
                 // Still running, check timeout
                 if start.elapsed() > timeout {
-                    let _ = child.kill();
+                    if let Err(e) = child.kill() {
+                        tracing::error!("Failed to kill timed-out eval process: {}", e);
+                    }
                     return Err(EvalError::Timeout(config.timeout_secs));
                 }
                 thread::sleep(Duration::from_millis(100));

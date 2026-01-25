@@ -1103,7 +1103,14 @@ impl Orchestrator for LocalOrchestrator {
         }
 
         // Add initial scope task
-        let _ = sqlite_state.add_task("scope", "Read spec, create exploration tasks", None, None);
+        if let Err(e) =
+            sqlite_state.add_task("scope", "Read spec, create exploration tasks", None, None)
+        {
+            return Err(OrchestratorError::Other(format!(
+                "Failed to create scope task: {}",
+                e
+            )));
+        }
 
         // Set status to Draft (not spawning workers yet)
         sqlite_state
@@ -1112,7 +1119,13 @@ impl Orchestrator for LocalOrchestrator {
 
         // Create initial worker name (for pre-claiming scope task)
         let first_worker_name = names::generate_worker_name();
-        let _ = sqlite_state.claim_task("scope", &first_worker_name);
+        if let Err(e) = sqlite_state.claim_task("scope", &first_worker_name) {
+            tracing::warn!(
+                "Failed to pre-claim scope task for {}: {}",
+                first_worker_name,
+                e
+            );
+        }
 
         // Determine multi-worker mode from scale
         let max_scale = request.worker_scale.unwrap_or(1);
@@ -1680,7 +1693,12 @@ impl Orchestrator for LocalOrchestrator {
         }
 
         // Add initial scope task
-        let _ = state.add_task("scope", "Read spec, create exploration tasks", None, None);
+        if let Err(e) = state.add_task("scope", "Read spec, create exploration tasks", None, None) {
+            return Err(OrchestratorError::Other(format!(
+                "Failed to create scope task: {}",
+                e
+            )));
+        }
 
         // 6. Parse worker scale and generate worker names
         // Always start with 1, autoscaling will add more based on scale_max
@@ -1692,7 +1710,9 @@ impl Orchestrator for LocalOrchestrator {
 
         // Pre-claim scope for first worker
         let first_worker = &worker_names[0];
-        let _ = state.claim_task("scope", first_worker);
+        if let Err(e) = state.claim_task("scope", first_worker) {
+            tracing::warn!("Failed to pre-claim scope task for {}: {}", first_worker, e);
+        }
 
         // Store docs config from global settings
         state

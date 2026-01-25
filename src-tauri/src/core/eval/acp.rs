@@ -82,10 +82,24 @@ pub async fn run_eval_from_args(
     copy_dir_all(&staging_dir, &eval_work_dir)?;
 
     // Remove git remote so eval cannot push changes (but can still view history and run hooks)
-    let _ = std::process::Command::new("git")
+    match std::process::Command::new("git")
         .args(["remote", "remove", "origin"])
         .current_dir(&eval_work_dir)
-        .output();
+        .output()
+    {
+        Ok(output) if !output.status.success() => {
+            tracing::warn!(
+                "[{}] Failed to remove git remote (exit {}): {}",
+                eval_name,
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        Err(e) => {
+            tracing::warn!("[{}] Failed to run git remote remove: {}", eval_name, e);
+        }
+        _ => {}
+    }
 
     info!(
         "[{}] Created isolated eval worktree at {:?}",
@@ -134,8 +148,14 @@ pub async fn run_eval_from_args(
     state.complete_eval(eval_id, result.success, &result.feedback)?;
 
     // Create lifecycle manager for worker operations
-    let (cfg, _) =
-        crate::core::Config::load().unwrap_or_else(|_| (crate::core::Config::default(), vec![]));
+    let (cfg, _) = crate::core::Config::load().unwrap_or_else(|e| {
+        tracing::warn!(
+            "[{}] Failed to load config, using defaults: {}",
+            eval_name,
+            e
+        );
+        (crate::core::Config::default(), vec![])
+    });
     let agent_cmd = cfg.agent.command.clone();
     let lifecycle =
         LocalLifecycleManager::new(run_name, run_dir.clone(), agent_cmd).map_err(|e| {
@@ -218,7 +238,13 @@ pub async fn run_eval_from_args(
             state.set_status(Status::Working)?;
 
             // Resume awaiting workers
-            let _ = lifecycle.resume_awaiting_workers();
+            if let Err(e) = lifecycle.resume_awaiting_workers() {
+                tracing::error!(
+                    "[{}] Failed to resume workers after eval failure: {}",
+                    eval_name,
+                    e
+                );
+            }
         }
     }
 
@@ -376,12 +402,24 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
         match tokio::time::timeout(timeout, conn.prompt(prompt_request)).await {
             Ok(Ok(_)) => {}
             Ok(Err(e)) => {
-                let _ = acp_child.kill().await;
+                if let Err(kill_err) = acp_child.kill().await {
+                    tracing::warn!(
+                        "[{}] Failed to kill eval agent: {}",
+                        config.eval_name,
+                        kill_err
+                    );
+                }
                 io_handle.abort();
                 return Err(EvalError::ProcessFailed(format!("Prompt failed: {}", e)));
             }
             Err(_) => {
-                let _ = acp_child.kill().await;
+                if let Err(kill_err) = acp_child.kill().await {
+                    tracing::warn!(
+                        "[{}] Failed to kill eval agent on timeout: {}",
+                        config.eval_name,
+                        kill_err
+                    );
+                }
                 io_handle.abort();
                 let timeout_mins = config.timeout_secs / 60;
                 return Ok(EvalAcpResult {
@@ -401,7 +439,13 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
         // Retry logic
         attempt += 1;
         if attempt > MAX_VERDICT_RETRIES {
-            let _ = acp_child.kill().await;
+            if let Err(kill_err) = acp_child.kill().await {
+                tracing::warn!(
+                    "[{}] Failed to kill eval agent after max retries: {}",
+                    config.eval_name,
+                    kill_err
+                );
+            }
             io_handle.abort();
             return Ok(EvalAcpResult {
                 success: false,
@@ -427,7 +471,13 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
         .map_err(|e| EvalError::ProcessFailed(format!("Invalid result file: {}", e)))?;
 
     // Kill agent process and cleanup
-    let _ = acp_child.kill().await;
+    if let Err(kill_err) = acp_child.kill().await {
+        tracing::warn!(
+            "[{}] Failed to kill eval agent on completion: {}",
+            config.eval_name,
+            kill_err
+        );
+    }
     io_handle.abort();
 
     info!(
