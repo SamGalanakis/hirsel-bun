@@ -28,22 +28,18 @@ Development project - no database migrations needed. Modify schema directly in `
 
 ## UI Stack
 
-See [`docs/basecoatui.md`](docs/basecoatui.md) for full component reference.
-
-- **Basecoat UI** - https://basecoatui.com/components/
+- **SolidJS** - Reactive UI framework (`src/components/`, `src/stores/`, `src/hooks/`)
+- **Basecoat UI** - shadcn/ui patterns for vanilla HTML (https://basecoatui.com)
 - **Lucide Icons** - https://lucide.dev/icons/
-- **Alpine.js** for reactivity
 - **Tailwind CSS v4** with custom theme
 
-Key patterns:
-```html
-<button class="btn">Primary</button>
-<button class="btn-outline">Outline</button>
-<div class="grid gap-2"><label>X</label><input /><p class="text-muted-foreground text-sm">Help</p></div>
-<i data-lucide="icon-name" class="w-4 h-4"></i>
+```tsx
+// Components: src/components/**/*.tsx
+// Stores: src/stores/ (AppProvider, ProjectProvider, RunsProvider, SelectionProvider)
+// Hooks: src/hooks/ (usePolling, useDebounce, useTauriEvent)
 ```
 
-**Lucide caveat:** Wrap in `<span>` for Alpine directives; call `lucide.createIcons({ inTemplates: true })` after dynamic updates.
+**Lucide:** Call `initLucideIcons()` after dynamic DOM updates.
 
 **Toast:** `window.toast.success('msg')` / `window.toast.error('msg')`
 

@@ -1,7 +1,9 @@
 # Basecoat UI Component Reference
 
-> Basecoat: "All of the shadcn/ui magic, none of the React."
+> CSS utility classes for shadcn/ui-style components.
 > https://basecoatui.com/components/
+>
+> Used with SolidJS in `src/components/`. Examples below show HTML patterns; adapt for JSX.
 
 ## Quick Reference
 
@@ -141,30 +143,29 @@ The `form` class auto-styles all child inputs.
 
 ## Custom Dropdown (Styled Select)
 
-Native `<select>` can't be fully styled. Use this pattern for custom dropdowns:
+Native `<select>` can't be fully styled. Use `dropdown` class with ARIA attributes:
 
-```html
-<div class="dropdown" x-data="{ open: false, value: '' }">
+```tsx
+const [open, setOpen] = createSignal(false);
+const [value, setValue] = createSignal('');
+
+<div class="dropdown">
   <button type="button" class="btn-outline w-full"
-          @click="open = !open" @click.away="open = false"
-          aria-haspopup="listbox" :aria-expanded="open">
-    <span class="truncate" x-text="value || 'Select...'"></span>
-    <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0"></i>
+          onClick={() => setOpen(!open())}
+          aria-haspopup="listbox" aria-expanded={open()}>
+    <span class="truncate">{value() || 'Select...'}</span>
+    <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0" />
   </button>
-  <div data-popover :aria-hidden="!open" x-show="open" x-transition>
-    <div role="listbox">
-      <div role="option" @click="value = 'Option A'; open = false"
-           :aria-selected="value === 'Option A'">Option A</div>
-      <div role="option" @click="value = 'Option B'; open = false"
-           :aria-selected="value === 'Option B'">Option B</div>
+  <Show when={open()}>
+    <div data-popover role="listbox">
+      <div role="option" onClick={() => { setValue('Option A'); setOpen(false); }}
+           aria-selected={value() === 'Option A'}>Option A</div>
     </div>
-  </div>
+  </Show>
 </div>
 ```
 
-**Important:** Use `class="dropdown"` NOT `class="select"` - Basecoat's JS tries to auto-init elements with `.select` class and will fail without an `<input>` element.
-
-**Note:** Basecoat adds checkmarks via CSS based on `aria-selected` - don't add manual icons.
+**Note:** Use `class="dropdown"` NOT `class="select"`. Basecoat adds checkmarks via CSS based on `aria-selected`.
 
 ---
 
@@ -415,8 +416,7 @@ Uses native `<details>` element:
 - Add `role="status"` to spinners
 
 ### 4. Icons (Lucide)
-- Wrap in `<span>` when using Alpine directives
-- Call `lucide.createIcons({ inTemplates: true })` after dynamic updates
+- Call `initLucideIcons()` after dynamic DOM updates
 - Standard sizes: `w-4 h-4` (16px), `w-5 h-5` (20px)
 
 ### 5. Colors (Hirsel theme)

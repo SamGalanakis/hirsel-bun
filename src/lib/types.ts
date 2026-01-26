@@ -763,8 +763,6 @@ export interface VersionInfo {
 // Global Window Extensions
 // =============================================================================
 
-import type Alpine from 'alpinejs';
-
 /** Toast API */
 export interface ToastAPI {
   success: (message: string, icon?: string) => void;
@@ -785,68 +783,9 @@ export interface ConfirmDialogAPI {
   delete: (itemName: string, itemType?: string) => Promise<boolean>;
 }
 
-// Shortcut types for global functions
-import type { ShortcutBinding, ShortcutConfig } from './shortcuts';
-
 /** Extend the global Window interface */
 declare global {
   interface Window {
-    // Alpine.js
-    Alpine: typeof Alpine;
-
-    // Tauri APIs
-    tauriInvoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-    tauriGetCurrentWindow: () => ReturnType<
-      typeof import('@tauri-apps/api/window').getCurrentWindow
-    >;
-
-    // Icon utilities
-    getIcon: (name: string) => string;
-    getActionIcon: (action: string) => string;
-    getTaskStatusIcon: (status: string) => string;
-    getWorkerStatusIcon: (status: string) => string;
-
-    // Sheep avatar utilities
-    generateSheepSvg: (
-      config: SheepConfig,
-      size?: number,
-      statusOrOptions?: WorkerStatus | { woolColor?: string; status?: WorkerStatus },
-    ) => string;
-    getWorkerSheepSvg: (
-      worker: { sheepConfig: SheepConfig; status?: WorkerStatus },
-      size?: number,
-    ) => string;
-    getHatName: (hatIndex: number) => string;
-
-    // Keyboard shortcuts utilities
-    getShortcuts: () => ShortcutConfig[];
-    formatBinding: (binding: ShortcutBinding) => string;
-
-    // Alpine components (functions that return component data)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    appState: () => any;
-    runList: () => any;
-    runDetail: () => any;
-    draftEditor: () => any;
-    workerPanel: () => any;
-    taskPanel: () => any;
-    activityLog: () => any;
-    chatPanel: () => any;
-    directChat: () => any;
-    permissionModal: () => any;
-    notifications: () => any;
-    tasksTab: () => any;
-    sheepClickerGame: () => any;
-    settingsModal: () => any;
-    aiMessageStream: () => any;
-    workerOutputViewer: () => any;
-    sortToggle: () => any;
-    sortButton: () => any;
-    debugPanel: () => any;
-    specflowBoard: () => any;
-    projectSetup: () => any;
-    projectSettings: () => any;
-
     // UI utilities
     toast: ToastAPI;
     confirmDialog: ConfirmDialogAPI;
@@ -857,3 +796,109 @@ declare global {
     };
   }
 }
+
+// =============================================================================
+// SpecFlow Board Types (Tasks + Evals Model)
+// =============================================================================
+
+/** Task status values */
+export type BoardTaskStatus = 'todo' | 'doing' | 'done' | 'blocked';
+
+/** Eval status values */
+export type BoardEvalStatus = 'blocked' | 'queued' | 'in_progress' | 'passed' | 'failed';
+
+/**
+ * A task in the board (flat, from DB)
+ */
+export interface BoardTask {
+  id: string; // Slug ID (e.g., "build-api")
+  parentId: string | null;
+  position: number;
+  name: string;
+  status: BoardTaskStatus;
+  content: string;
+  x: number | null;
+  y: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Task tree (nested, for rendering)
+ *
+ * Validation Rules:
+ * - A task is "validated" if it has a passing eval OR all children are validated
+ * - Validation propagates up the tree
+ */
+export interface TaskTree {
+  id: string;
+  name: string;
+  status: BoardTaskStatus;
+  content: string;
+  children: TaskTree[];
+  x: number | null;
+  y: number | null;
+  validated?: boolean; // Computed field
+}
+
+/**
+ * An eval (verification) in the board
+ *
+ * Evals are flat (not nested) and reference tasks via validates[]
+ */
+export interface BoardEval {
+  id: string; // Slug ID (e.g., "api-test")
+  name: string;
+  status: BoardEvalStatus;
+  content: string;
+  validates: string[]; // Task IDs this eval validates
+  x: number | null;
+  y: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Bookmark for saved viewport positions */
+export interface Bookmark {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  zoom: number;
+  createdAt: string;
+}
+
+/** Result of a board sync operation */
+export interface BoardSyncResult {
+  /** Number of changes applied */
+  changes: number;
+  /** Tasks that were added */
+  tasksAdded: string[];
+  /** Tasks that were updated */
+  tasksUpdated: string[];
+  /** Tasks that were deleted */
+  tasksDeleted: string[];
+  /** Evals that were added */
+  evalsAdded: string[];
+  /** Evals that were updated */
+  evalsUpdated: string[];
+  /** Evals that were deleted */
+  evalsDeleted: string[];
+}
+
+/** Status color mapping for tasks */
+export const BOARD_TASK_COLORS: Record<BoardTaskStatus, string> = {
+  todo: 'wool-500',
+  doing: 'amber-500',
+  done: 'sage',
+  blocked: 'terra',
+};
+
+/** Status color mapping for evals */
+export const BOARD_EVAL_COLORS: Record<BoardEvalStatus, string> = {
+  blocked: 'wool-600',
+  queued: 'sky-500',
+  in_progress: 'amber-500',
+  passed: 'sage',
+  failed: 'terra',
+};

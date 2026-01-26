@@ -83,30 +83,6 @@ impl GypChatStore {
 
     fn init_db(&self) -> GypChatResult<()> {
         self.db.execute_batch(SCHEMA)?;
-        self.run_migrations()?;
-        Ok(())
-    }
-
-    /// Run migrations to add project_id column if it doesn't exist
-    fn run_migrations(&self) -> GypChatResult<()> {
-        // Check if project_id column exists
-        let has_project_id: bool = self
-            .db
-            .prepare("SELECT COUNT(*) FROM pragma_table_info('gyp_chat_messages') WHERE name='project_id'")?
-            .query_row([], |row| row.get::<_, i64>(0).map(|c| c > 0))?;
-
-        if !has_project_id {
-            // Add project_id column
-            self.db.execute(
-                "ALTER TABLE gyp_chat_messages ADD COLUMN project_id INTEGER",
-                [],
-            )?;
-            self.db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_gyp_chat_project ON gyp_chat_messages(project_id)",
-                [],
-            )?;
-        }
-
         Ok(())
     }
 
@@ -243,6 +219,60 @@ impl GypChatStore {
         self.db.execute(
             "DELETE FROM gyp_chat_messages WHERE run_name = ?1",
             params![run_name],
+        )?;
+        Ok(())
+    }
+
+    // ========== BOARD CHAT METHODS ==========
+    // Board chat uses a special run_name sentinel: "__board__"
+    // This allows board chat history to be stored separately from run-specific chats.
+
+    /// Save a board chat message for a project
+    pub fn save_board_message(
+        &self,
+        project_id: i64,
+        role: &str,
+        chunks_json: &str,
+    ) -> GypChatResult<i64> {
+        self.save_message_with_project(Some(project_id), Some("__board__"), role, chunks_json)
+    }
+
+    /// Get board chat messages for a project (most recent first)
+    pub fn get_board_messages(
+        &self,
+        project_id: i64,
+        limit: usize,
+    ) -> GypChatResult<Vec<GypChatMessage>> {
+        let mut stmt = self.db.prepare(
+            "SELECT id, project_id, run_name, role, timestamp, chunks_json
+             FROM gyp_chat_messages
+             WHERE project_id = ?1 AND run_name = '__board__'
+             ORDER BY timestamp DESC
+             LIMIT ?2",
+        )?;
+
+        let messages: Vec<GypChatMessage> = stmt
+            .query_map(params![project_id, limit as i64], |row| {
+                Ok(GypChatMessage {
+                    id: row.get("id")?,
+                    project_id: row.get("project_id")?,
+                    run_name: row.get("run_name")?,
+                    role: row.get("role")?,
+                    timestamp: row.get("timestamp")?,
+                    chunks_json: row.get("chunks_json")?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Reverse to get chronological order (oldest first)
+        Ok(messages.into_iter().rev().collect())
+    }
+
+    /// Clear all board chat messages for a project
+    pub fn clear_board_messages(&self, project_id: i64) -> GypChatResult<()> {
+        self.db.execute(
+            "DELETE FROM gyp_chat_messages WHERE project_id = ?1 AND run_name = '__board__'",
+            params![project_id],
         )?;
         Ok(())
     }

@@ -1,19 +1,14 @@
 # SpecFlow Implementation Plan
 
-> Project board for managing specs, tasks, and evals as a spatial canvas
+> **HISTORICAL:** This planning doc references the old Alpine.js/TypeScript frontend.
+> The implementation has been migrated to SolidJS in `src/components/specflow/`.
 
-**Status: Core implementation complete (Phases 1-6)** - Jan 2026
+**Status: Complete** - Jan 2026
 
-Implemented files:
+Current implementation:
 - Backend: `src-tauri/src/core/specflow/` (types.rs, state.rs, mod.rs)
 - Commands: `src-tauri/src/gui/commands/specflow.rs`
-- Frontend: `src/lib/components/specflow-board/` (index.ts, types.ts, canvas-renderer.ts)
-- Template: `src/templates/specflow-board.html`
-- UI updates: `src/lib/components/app-state.ts`, `src/templates/run-list-panel.html`
-
-Deferred items:
-- AI summary generation for LOAD mode
-- Gyp AI context integration
+- Frontend: `src/components/specflow/` (SpecflowBoard.tsx, NodeRenderer.tsx, etc.)
 
 ## Overview
 

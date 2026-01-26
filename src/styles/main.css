@@ -2,6 +2,51 @@
 @import "basecoat-css";
 @plugin "@tailwindcss/typography";
 
+/* ============================================
+   ET Book Font - Edward Tufte's Bembo-style serif
+   ============================================ */
+
+@font-face {
+  font-family: 'ET Book';
+  src: url('/fonts/et-book-roman-line-figures.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'ET Book';
+  src: url('/fonts/et-book-bold-line-figures.woff') format('woff');
+  font-weight: bold;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'ET Book';
+  src: url('/fonts/et-book-display-italic-old-style-figures.woff') format('woff');
+  font-weight: normal;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'ET Book';
+  src: url('/fonts/et-book-semi-bold-old-style-figures.woff') format('woff');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Oldstyle figures variant for prose/descriptions */
+@font-face {
+  font-family: 'ET Book Oldstyle';
+  src: url('/fonts/et-book-roman-old-style-figures.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* Fix tooltip truncation - allow wrapping, wider, and prevent clipping */
 [data-tooltip]::before {
   white-space: normal !important;
@@ -353,7 +398,9 @@ input[type="number"] {
 body {
   background-color: var(--pasture-900);
   color: var(--wool-100);
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'ET Book', 'Palatino', 'Palatino Linotype', Georgia, serif;
+  font-size: 15px;
+  line-height: 1.6;
   transition: var(--theme-transition);
 }
 
@@ -1941,4 +1988,54 @@ section.flex-1.flex.flex-col {
 /* Navigation Rail */
 .nav-rail {
   transition: width 200ms ease-out;
+}
+
+/* ============================================
+   Typography Utilities - Highland Craft Design
+   ============================================ */
+
+/* Display text - for hero/page titles */
+.font-display {
+  font-family: 'ET Book', 'Palatino', Georgia, serif;
+  font-weight: bold;
+  font-size: 1.75rem;
+  line-height: 1.2;
+}
+
+/* Oldstyle figures for prose text */
+.font-oldstyle {
+  font-family: 'ET Book Oldstyle', 'ET Book', serif;
+  font-variant-numeric: oldstyle-nums;
+}
+
+/* Semi-bold for card titles/nav (explicit utility) */
+.font-semibold-600 {
+  font-weight: 600;
+}
+
+/* ============================================
+   Card Interactive Hover Effects
+   ============================================ */
+
+.card-interactive {
+  transition: transform 150ms ease-out, box-shadow 200ms ease-out, background-color 150ms ease-out;
+}
+
+.card-interactive:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.card-interactive:active {
+  transform: translateY(0);
+  transition-duration: 50ms;
+}
+
+/* Subtle hover for activity entries */
+.activity-entry-hover {
+  transition: background-color 100ms ease-out;
+}
+
+.activity-entry-hover:hover {
+  background-color: var(--pasture-700);
 }

@@ -1,0 +1,1298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hirsel Design Language Preview</title>
+
+  <!-- Fonts: JetBrains Mono (Google) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <style>
+    /* ET Book - Local fonts */
+    @font-face {
+      font-family: 'ET Book';
+      src: url('../public/fonts/et-book-roman-line-figures.woff') format('woff');
+      font-weight: normal;
+      font-style: normal;
+      font-display: swap;
+    }
+
+    @font-face {
+      font-family: 'ET Book';
+      src: url('../public/fonts/et-book-bold-line-figures.woff') format('woff');
+      font-weight: bold;
+      font-style: normal;
+      font-display: swap;
+    }
+
+    @font-face {
+      font-family: 'ET Book';
+      src: url('../public/fonts/et-book-display-italic-old-style-figures.woff') format('woff');
+      font-weight: normal;
+      font-style: italic;
+      font-display: swap;
+    }
+
+    @font-face {
+      font-family: 'ET Book Oldstyle';
+      src: url('../public/fonts/et-book-roman-old-style-figures.woff') format('woff');
+      font-weight: normal;
+      font-style: normal;
+      font-display: swap;
+    }
+    :root {
+      /* Backgrounds - Pasture at Dusk */
+      --pasture-900: #1a1a1a;
+      --pasture-800: #242424;
+      --pasture-700: #2d2d2d;
+      --pasture-600: #333333;
+      --pasture-500: #404040;
+      --pasture-400: #525252;
+
+      /* Text - Wool */
+      --wool-100: #e8e4df;
+      --wool-200: #d4cfc7;
+      --wool-300: #b5b0a8;
+      --wool-400: #9d9890;
+      --wool-500: #8a8580;
+      --wool-600: #706b66;
+      --wool-700: #5a5550;
+
+      /* Primary Accent - Amber */
+      --amber-300: #f0d4ac;
+      --amber-400: #e8c19a;
+      --amber-500: #d4a574;
+      --amber-600: #b8895c;
+      --amber-700: #9a7048;
+      --amber-800: #7a5838;
+
+      /* Status */
+      --sage: #7d9970;
+      --sage-light: #9ab88c;
+      --golden: #c9a227;
+      --golden-light: #dbb94a;
+      --terra: #c45c4a;
+      --terra-light: #d4786a;
+
+      /* Fonts - ET Book throughout */
+      --font-primary: 'ET Book', 'Palatino', 'Palatino Linotype', Georgia, serif;
+      --font-mono: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+
+      /* Transitions */
+      --transition-fast: 150ms ease-out;
+      --transition-normal: 200ms ease-out;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font-primary);
+      background-color: var(--pasture-900);
+      color: var(--wool-100);
+      line-height: 1.6;
+      padding: 2rem;
+      font-size: 15px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    /* Header */
+    .hero {
+      text-align: center;
+      padding: 4rem 2rem;
+      margin-bottom: 3rem;
+      background: linear-gradient(180deg, var(--pasture-800) 0%, var(--pasture-900) 100%);
+      border-radius: 12px;
+      border: 1px solid var(--pasture-600);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+      opacity: 0.02;
+      pointer-events: none;
+    }
+
+    .hero h1 {
+      font-family: var(--font-primary);
+      font-size: 3.5rem;
+      font-weight: bold;
+      color: var(--wool-100);
+      letter-spacing: -0.01em;
+      margin-bottom: 0.5rem;
+    }
+
+    .hero h1 span {
+      color: var(--amber-500);
+    }
+
+    .hero .subtitle {
+      font-family: var(--font-primary);
+      font-size: 1.25rem;
+      color: var(--wool-400);
+      font-style: italic;
+    }
+
+    /* Sections */
+    section {
+      margin-bottom: 4rem;
+    }
+
+    h2 {
+      font-family: var(--font-primary);
+      font-size: 1.75rem;
+      font-weight: bold;
+      color: var(--wool-100);
+      margin-bottom: 1.5rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--pasture-600);
+    }
+
+    h3 {
+      font-family: var(--font-primary);
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--wool-200);
+      margin-bottom: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    /* Color swatches */
+    .color-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .color-group {
+      background: var(--pasture-800);
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--pasture-600);
+    }
+
+    .color-group-title {
+      padding: 0.75rem 1rem;
+      font-weight: 600;
+      font-size: 0.875rem;
+      color: var(--wool-300);
+      border-bottom: 1px solid var(--pasture-600);
+    }
+
+    .swatch {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.5rem 1rem;
+    }
+
+    .swatch-color {
+      width: 2.5rem;
+      height: 2.5rem;
+      border-radius: 6px;
+      flex-shrink: 0;
+    }
+
+    .swatch-info {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .swatch-name {
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--wool-300);
+    }
+
+    .swatch-value {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: var(--wool-500);
+    }
+
+    /* Typography showcase */
+    .type-specimen {
+      background: var(--pasture-800);
+      border-radius: 8px;
+      padding: 2rem;
+      margin-bottom: 1.5rem;
+      border: 1px solid var(--pasture-600);
+    }
+
+    .type-label {
+      font-family: var(--font-primary);
+      font-size: 0.8125rem;
+      color: var(--amber-500);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 0.5rem;
+    }
+
+    .type-display {
+      font-family: var(--font-primary);
+      font-size: 2.5rem;
+      font-weight: bold;
+      color: var(--wool-100);
+      line-height: 1.2;
+      margin-bottom: 0.75rem;
+    }
+
+    .type-body {
+      font-family: var(--font-primary);
+      font-size: 1rem;
+      color: var(--wool-200);
+      line-height: 1.7;
+    }
+
+    .type-mono {
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      color: var(--amber-400);
+      background: var(--pasture-700);
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      display: inline-block;
+      margin-top: 0.75rem;
+    }
+
+    /* Type scale */
+    .type-scale {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .type-scale-item {
+      display: flex;
+      align-items: baseline;
+      gap: 1rem;
+      padding: 0.75rem 0;
+      border-bottom: 1px solid var(--pasture-700);
+    }
+
+    .type-scale-label {
+      width: 100px;
+      flex-shrink: 0;
+      font-size: 0.75rem;
+      color: var(--wool-500);
+    }
+
+    .type-scale-sample {
+      color: var(--wool-100);
+    }
+
+    /* Buttons */
+    .button-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      font-family: var(--font-primary);
+      font-size: 0.9375rem;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: var(--transition-fast);
+    }
+
+    .btn-primary {
+      background: var(--amber-500);
+      color: var(--pasture-900);
+    }
+    .btn-primary:hover { background: var(--amber-400); }
+
+    .btn-outline {
+      background: transparent;
+      border: 1px solid var(--pasture-500);
+      color: var(--wool-200);
+    }
+    .btn-outline:hover { background: var(--pasture-700); border-color: var(--pasture-400); }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--wool-300);
+    }
+    .btn-ghost:hover { background: var(--pasture-700); color: var(--wool-100); }
+
+    .btn-success {
+      background: var(--sage);
+      color: var(--pasture-900);
+    }
+    .btn-success:hover { background: var(--sage-light); }
+
+    .btn-warning {
+      background: var(--golden);
+      color: var(--pasture-900);
+    }
+    .btn-warning:hover { background: var(--golden-light); }
+
+    .btn-danger {
+      background: var(--terra);
+      color: var(--wool-100);
+    }
+    .btn-danger:hover { background: var(--terra-light); }
+
+    /* Status indicators */
+    .status-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+
+    .status-working {
+      background: var(--amber-500);
+      box-shadow: 0 0 8px var(--amber-500);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .status-waiting { background: var(--golden); }
+    .status-done { background: var(--sage); }
+    .status-idle { background: var(--wool-600); }
+    .status-error {
+      background: var(--terra);
+      animation: pulse-error 1.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--amber-500); }
+      50% { opacity: 0.7; box-shadow: 0 0 14px var(--amber-500); }
+    }
+
+    @keyframes pulse-error {
+      0%, 100% { box-shadow: 0 0 4px var(--terra); }
+      50% { box-shadow: 0 0 12px var(--terra); }
+    }
+
+    .status-label {
+      font-size: 0.875rem;
+      color: var(--wool-300);
+    }
+
+    /* Cards */
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .card {
+      background: var(--pasture-800);
+      border: 1px solid var(--pasture-600);
+      border-radius: 8px;
+      padding: 1.25rem;
+      transition: var(--transition-normal);
+    }
+
+    .card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.75rem;
+    }
+
+    .card-title {
+      font-weight: 600;
+      color: var(--wool-100);
+    }
+
+    .card-body {
+      font-size: 0.875rem;
+      color: var(--wool-400);
+      margin-bottom: 1rem;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.25rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+
+    .badge-default { background: var(--pasture-600); color: var(--wool-300); }
+    .badge-success { background: rgba(125, 153, 112, 0.2); color: var(--sage-light); }
+    .badge-warning { background: rgba(201, 162, 39, 0.2); color: var(--golden-light); }
+    .badge-error { background: rgba(196, 92, 74, 0.2); color: var(--terra-light); }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center;
+      padding: 4rem 2rem;
+      background: var(--pasture-800);
+      border-radius: 8px;
+      border: 1px solid var(--pasture-600);
+    }
+
+    .empty-state svg {
+      width: 120px;
+      height: 64px;
+      margin: 0 auto 1rem;
+      color: var(--wool-600);
+    }
+
+    .empty-state p {
+      color: var(--wool-400);
+      font-size: 0.9375rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .empty-state code {
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      color: var(--amber-500);
+      background: var(--pasture-700);
+      padding: 0.125rem 0.375rem;
+      border-radius: 4px;
+    }
+
+    /* Animation demo */
+    .animation-demo {
+      display: flex;
+      align-items: center;
+      gap: 2rem;
+      flex-wrap: wrap;
+    }
+
+    .anim-box {
+      width: 80px;
+      height: 80px;
+      background: var(--pasture-700);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      color: var(--wool-400);
+      text-align: center;
+    }
+
+    .anim-hover:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+      transition: var(--transition-normal);
+    }
+
+    .anim-stagger {
+      animation: slide-up 0.3s ease-out backwards;
+    }
+    .anim-stagger:nth-child(2) { animation-delay: 0.05s; }
+    .anim-stagger:nth-child(3) { animation-delay: 0.1s; }
+    .anim-stagger:nth-child(4) { animation-delay: 0.15s; }
+
+    @keyframes slide-up {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Sheep SVG */
+    .sheep-demo {
+      display: flex;
+      align-items: center;
+      gap: 3rem;
+      flex-wrap: wrap;
+      justify-content: center;
+      padding: 2rem;
+      background: var(--pasture-800);
+      border-radius: 8px;
+      border: 1px solid var(--pasture-600);
+    }
+
+    .sheep-item {
+      text-align: center;
+    }
+
+    .sheep-item svg {
+      width: 96px;
+      height: 64px;
+      color: var(--wool-500);
+    }
+
+    .sheep-item p {
+      margin-top: 0.5rem;
+      font-size: 0.75rem;
+      color: var(--wool-500);
+    }
+
+    .sheep-walking {
+      animation: sheep-bounce 1.2s ease-in-out infinite;
+    }
+
+    @keyframes sheep-bounce {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-4px); }
+    }
+
+    /* Footer */
+    footer {
+      text-align: center;
+      padding: 3rem 2rem;
+      color: var(--wool-500);
+      font-size: 1rem;
+      font-style: italic;
+    }
+
+    footer p:first-child {
+      color: var(--wool-400);
+      margin-bottom: 0.5rem;
+    }
+
+    footer p:last-child {
+      font-size: 0.875rem;
+      color: var(--wool-600);
+      font-style: normal;
+    }
+
+    /* Avatar Grid */
+    .avatar-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    .avatar-item {
+      text-align: center;
+    }
+
+    .avatar-item p {
+      margin-top: 0.5rem;
+      font-size: 0.8125rem;
+      color: var(--wool-500);
+    }
+
+    .avatar-wrapper {
+      width: 80px;
+      height: 80px;
+      background: var(--pasture-800);
+      border: 2px solid var(--pasture-600);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: var(--transition-fast);
+    }
+
+    .avatar-wrapper:hover {
+      border-color: var(--wool-600);
+      transform: translateY(-2px);
+    }
+
+    .gyp-current {
+      background: var(--pasture-700);
+    }
+
+    /* Worker Card Demo */
+    .worker-card-demo {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .worker-card {
+      position: relative;
+      padding: 0.75rem;
+      background: var(--pasture-800);
+      border: 2px solid var(--pasture-600);
+      border-radius: 8px;
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      min-width: 220px;
+      transition: var(--transition-fast);
+    }
+
+    .worker-card:hover {
+      background: var(--pasture-700);
+    }
+
+    .worker-card.working {
+      border-color: var(--amber-500);
+    }
+
+    .worker-card.idle {
+      border-color: var(--wool-600);
+    }
+
+    .worker-status-dot {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .worker-card.working .worker-status-dot {
+      background: var(--amber-500);
+      box-shadow: 0 0 8px var(--amber-500);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .worker-card.idle .worker-status-dot {
+      background: var(--wool-600);
+    }
+
+    .worker-avatar {
+      flex-shrink: 0;
+    }
+
+    .worker-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .worker-name {
+      font-weight: 600;
+      color: var(--wool-200);
+      font-size: 0.9375rem;
+    }
+
+    .worker-time {
+      font-size: 0.8125rem;
+      color: var(--wool-500);
+    }
+
+    .worker-task {
+      font-size: 0.8125rem;
+      color: var(--wool-400);
+      margin-top: 0.25rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Hero -->
+    <div class="hero">
+      <h1><span>Hirsel</span> Design Language</h1>
+      <p class="subtitle">Highland Craft - Warm, grounded, purposeful</p>
+    </div>
+
+    <!-- Colors -->
+    <section>
+      <h2>Color System</h2>
+
+      <div class="color-grid">
+        <!-- Pasture -->
+        <div class="color-group">
+          <div class="color-group-title">Pasture (Backgrounds)</div>
+          <div class="swatch">
+            <div class="swatch-color" style="background: #1a1a1a; border: 1px solid #333;"></div>
+            <div class="swatch-info">
+              <span class="swatch-name">pasture-900</span>
+              <span class="swatch-value">#1a1a1a</span>
+            </div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-color" style="background: #242424;"></div>
+            <div class="swatch-info">
+              <span class="swatch-name">pasture-800</span>
+              <span class="swatch-value">#242424</span>
+            </div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-color" style="background: #2d2d2d;"></div>
+            <div class="swatch-info">
+              <span class="swatch-name">pasture-700</span>
+              <span class="swatch-value">#2d2d2d</span>
+            </div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-color" style="background: #333333;"></div>
+            <div class="swatch-info">
+              <span class="swatch-name">pasture-600</span>
+              <span class="swatch-value">#333333</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Wool -->
+        <div class="color-group">
+          <div class="color-group-title">Wool (Text)</div>
+          <div class="swatch">
+            <div class="swatch-color" style="background: #e8e4df;"></div>
+            <div class="swatch-info">
+              <span class="swatch-name">wool-100</span>
+              <span class="swatch-value">#e8e4df</span>
+            </div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-color" style="background: #b5b0a8;"></div>
+            <div class="swatch-info">
+              <span class="swatch-name">wool-300</span>
+              <span class="swatch-value">#b5b0a8</span>
+            </div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-color" style="background: #8a8580;"></div>
+            <div class="swatch-info">
+              <span class="swatch-name">wool-500</span>
+              <span class="swatch-value">#8a8580</span>
+            </div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-color" style="background: #5a5550;"></div>
+            <div class="swatch-info">
+              <span class="swatch-name">wool-700</span>
+              <span class="swatch-value">#5a5550</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Amber -->
+        <div class="color-group">
+          <div class="color-group-title">Amber (Accent)</div>
+          <div class="swatch">
+            <div class="swatch-color" style="background: #f0d4ac;"></div>
+            <div class="swatch-info">
+              <span class="swatch-name">amber-300</span>
+              <span class="swatch-value">#f0d4ac</span>
+            </div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-color" style="background: #d4a574;"></div>
+            <div class="swatch-info">
+              <span class="swatch-name">amber-500</span>
+              <span class="swatch-value">#d4a574</span>
+            </div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-color" style="background: #b8895c;"></div>
+            <div class="swatch-info">
+              <span class="swatch-name">amber-600</span>
+              <span class="swatch-value">#b8895c</span>
+            </div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-color" style="background: #7a5838;"></div>
+            <div class="swatch-info">
+              <span class="swatch-name">amber-800</span>
+              <span class="swatch-value">#7a5838</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Status -->
+        <div class="color-group">
+          <div class="color-group-title">Status</div>
+          <div class="swatch">
+            <div class="swatch-color" style="background: #7d9970;"></div>
+            <div class="swatch-info">
+              <span class="swatch-name">sage (success)</span>
+              <span class="swatch-value">#7d9970</span>
+            </div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-color" style="background: #c9a227;"></div>
+            <div class="swatch-info">
+              <span class="swatch-name">golden (warning)</span>
+              <span class="swatch-value">#c9a227</span>
+            </div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-color" style="background: #c45c4a;"></div>
+            <div class="swatch-info">
+              <span class="swatch-name">terra (error)</span>
+              <span class="swatch-value">#c45c4a</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Typography -->
+    <section>
+      <h2>Typography</h2>
+
+      <div class="type-specimen">
+        <div class="type-label">ET Book - Tufte's Bembo</div>
+        <div class="type-display">Highland Craft</div>
+        <div class="type-body">ET Book brings scholarly gravitas to Hirsel - a Bembo-style serif designed by Edward Tufte for his books on data visualization. Optimized for clarity in dense information, it features beautiful oldstyle figures (1234567890) that blend naturally with text. The font stands apart from typical app interfaces while remaining supremely readable.</div>
+        <span class="type-mono">const hirsel = "herd your agents";</span>
+      </div>
+
+      <h3>Type Scale</h3>
+      <div class="type-scale">
+        <div class="type-scale-item">
+          <span class="type-scale-label">Display (28px)</span>
+          <span class="type-scale-sample" style="font-size: 1.75rem; font-weight: bold;">Pasture at Dusk</span>
+        </div>
+        <div class="type-scale-item">
+          <span class="type-scale-label">Heading (20px)</span>
+          <span class="type-scale-sample" style="font-size: 1.25rem; font-weight: bold;">Run Configuration</span>
+        </div>
+        <div class="type-scale-item">
+          <span class="type-scale-label">Title (16px)</span>
+          <span class="type-scale-sample" style="font-size: 1rem; font-weight: 600;">Worker Status</span>
+        </div>
+        <div class="type-scale-item">
+          <span class="type-scale-label">Body (15px)</span>
+          <span class="type-scale-sample" style="font-size: 0.9375rem;">The worker is processing tasks from the queue.</span>
+        </div>
+        <div class="type-scale-item">
+          <span class="type-scale-label">Small (14px)</span>
+          <span class="type-scale-sample" style="font-size: 0.875rem;">3 workers active, 12 tasks remaining</span>
+        </div>
+        <div class="type-scale-item">
+          <span class="type-scale-label">Caption (13px)</span>
+          <span class="type-scale-sample" style="font-size: 0.8125rem; color: var(--wool-500);">Last updated 2 minutes ago</span>
+        </div>
+        <div class="type-scale-item">
+          <span class="type-scale-label">Code (13px)</span>
+          <span class="type-scale-sample" style="font-family: var(--font-mono); font-size: 0.8125rem; color: var(--amber-400);">hirsel go feature-auth spec.md</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Components -->
+    <section>
+      <h2>Components</h2>
+
+      <h3>Buttons</h3>
+      <div class="button-grid">
+        <button class="btn btn-primary">Primary Action</button>
+        <button class="btn btn-outline">Outline</button>
+        <button class="btn btn-ghost">Ghost</button>
+        <button class="btn btn-success">Success</button>
+        <button class="btn btn-warning">Warning</button>
+        <button class="btn btn-danger">Danger</button>
+      </div>
+
+      <h3>Status Indicators</h3>
+      <div class="status-grid">
+        <div class="status-item">
+          <div class="status-dot status-working"></div>
+          <span class="status-label">Working</span>
+        </div>
+        <div class="status-item">
+          <div class="status-dot status-waiting"></div>
+          <span class="status-label">Waiting</span>
+        </div>
+        <div class="status-item">
+          <div class="status-dot status-done"></div>
+          <span class="status-label">Done</span>
+        </div>
+        <div class="status-item">
+          <div class="status-dot status-idle"></div>
+          <span class="status-label">Idle</span>
+        </div>
+        <div class="status-item">
+          <div class="status-dot status-error"></div>
+          <span class="status-label">Error</span>
+        </div>
+      </div>
+
+      <h3>Cards</h3>
+      <div class="card-grid">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">feature-auth</span>
+            <span class="badge badge-success">Done</span>
+          </div>
+          <div class="card-body">Add user authentication with JWT tokens and session management.</div>
+          <div style="display: flex; gap: 0.5rem;">
+            <button class="btn btn-outline" style="padding: 0.375rem 0.75rem; font-size: 0.8125rem;">View</button>
+            <button class="btn btn-ghost" style="padding: 0.375rem 0.75rem; font-size: 0.8125rem;">Logs</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">fix-pagination</span>
+            <span class="badge badge-warning">Working</span>
+          </div>
+          <div class="card-body">Fix the pagination bug on the dashboard when filtering by date range.</div>
+          <div style="display: flex; gap: 0.5rem;">
+            <button class="btn btn-outline" style="padding: 0.375rem 0.75rem; font-size: 0.8125rem;">Attach</button>
+            <button class="btn btn-ghost" style="padding: 0.375rem 0.75rem; font-size: 0.8125rem;">Pause</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">api-refactor</span>
+            <span class="badge badge-error">Failed</span>
+          </div>
+          <div class="card-body">Refactor API endpoints to use new validation middleware.</div>
+          <div style="display: flex; gap: 0.5rem;">
+            <button class="btn btn-outline" style="padding: 0.375rem 0.75rem; font-size: 0.8125rem;">View</button>
+            <button class="btn btn-primary" style="padding: 0.375rem 0.75rem; font-size: 0.8125rem;">Retry</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Sheep -->
+    <section>
+      <h2>Sheep Illustrations</h2>
+      <p style="color: var(--wool-500); margin-bottom: 1rem; font-size: 0.875rem; font-style: italic;">Placeholder sketches - actual implementation uses Noto-style avatars shown below.</p>
+
+      <div class="sheep-demo">
+        <div class="sheep-item">
+          <svg viewBox="0 0 64 64">
+            <!-- Sleeping sheep -->
+            <ellipse cx="32" cy="40" rx="20" ry="12" fill="currentColor" opacity="0.3" />
+            <ellipse cx="30" cy="38" rx="18" ry="10" fill="currentColor" opacity="0.5" />
+            <ellipse cx="32" cy="36" rx="16" ry="8" fill="currentColor" opacity="0.8" />
+            <ellipse cx="46" cy="34" rx="7" ry="5" fill="currentColor" />
+            <ellipse cx="50" cy="30" rx="2" ry="3" fill="currentColor" opacity="0.8" />
+            <path d="M47 33 L49 33" stroke="#1a1a1a" stroke-width="2" stroke-linecap="round" />
+            <text x="52" y="20" font-size="8" fill="currentColor" opacity="0.6" font-weight="bold">z</text>
+            <text x="55" y="14" font-size="6" fill="currentColor" opacity="0.4" font-weight="bold">z</text>
+            <rect x="20" y="44" width="3" height="6" rx="1" fill="currentColor" opacity="0.7" />
+            <rect x="26" y="44" width="3" height="6" rx="1" fill="currentColor" opacity="0.7" />
+            <rect x="38" y="44" width="3" height="6" rx="1" fill="currentColor" opacity="0.7" />
+            <rect x="44" y="44" width="3" height="6" rx="1" fill="currentColor" opacity="0.7" />
+          </svg>
+          <p>Sleeping (Idle)</p>
+        </div>
+
+        <div class="sheep-item">
+          <svg viewBox="0 0 64 64" class="sheep-walking">
+            <!-- Walking sheep -->
+            <ellipse cx="32" cy="36" rx="18" ry="12" fill="currentColor" opacity="0.3" />
+            <ellipse cx="30" cy="34" rx="16" ry="10" fill="currentColor" opacity="0.5" />
+            <ellipse cx="32" cy="32" rx="14" ry="8" fill="currentColor" opacity="0.8" />
+            <ellipse cx="46" cy="26" rx="7" ry="5" fill="currentColor" />
+            <ellipse cx="50" cy="21" rx="2" ry="3" fill="currentColor" opacity="0.8" />
+            <circle cx="48" cy="25" r="1.5" fill="#1a1a1a" />
+            <rect x="20" y="40" width="3" height="12" rx="1" fill="currentColor" opacity="0.7" />
+            <rect x="26" y="40" width="3" height="12" rx="1" fill="currentColor" opacity="0.7" />
+            <rect x="36" y="40" width="3" height="12" rx="1" fill="currentColor" opacity="0.7" />
+            <rect x="42" y="40" width="3" height="12" rx="1" fill="currentColor" opacity="0.7" />
+          </svg>
+          <p>Walking (Loading)</p>
+        </div>
+
+        <div class="sheep-item">
+          <svg viewBox="0 0 64 64">
+            <!-- Alert sheep -->
+            <ellipse cx="32" cy="38" rx="18" ry="12" fill="currentColor" opacity="0.3" />
+            <ellipse cx="30" cy="36" rx="16" ry="10" fill="currentColor" opacity="0.5" />
+            <ellipse cx="32" cy="34" rx="14" ry="8" fill="currentColor" opacity="0.8" />
+            <ellipse cx="46" cy="24" rx="7" ry="5" fill="currentColor" />
+            <ellipse cx="49" cy="17" rx="2" ry="4" fill="currentColor" opacity="0.8" />
+            <ellipse cx="44" cy="18" rx="2" ry="3" fill="currentColor" opacity="0.8" />
+            <circle cx="48" cy="23" r="2" fill="#1a1a1a" />
+            <circle cx="48.5" cy="22.5" r="0.5" fill="#fff" />
+            <text x="54" y="14" font-size="10" fill="#c45c4a" font-weight="bold">!</text>
+            <rect x="22" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7" />
+            <rect x="28" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7" />
+            <rect x="36" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7" />
+            <rect x="42" y="44" width="3" height="10" rx="1" fill="currentColor" opacity="0.7" />
+          </svg>
+          <p>Alert (Error)</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Worker Avatars -->
+    <section>
+      <h2>Worker Avatars</h2>
+      <p style="color: var(--wool-400); margin-bottom: 1.5rem;">Noto emoji-style sheep with accessories for worker identification. Each worker gets a unique combination.</p>
+
+      <h3>Hats</h3>
+      <div class="avatar-grid" id="hats-grid"></div>
+
+      <h3>Accessories</h3>
+      <div class="avatar-grid" id="accessories-grid"></div>
+
+      <h3>Gyp (AI Assistant)</h3>
+      <p style="color: var(--wool-400); margin-bottom: 1rem; font-size: 0.875rem;">Border collie assistant - Noto-style vectorized with transparent background.</p>
+      <div class="avatar-grid" id="gyp-grid"></div>
+
+      <h3 style="margin-top: 2rem;">In Context: Worker Cards</h3>
+      <div class="worker-card-demo" id="worker-cards-demo"></div>
+    </section>
+
+    <script>
+    // Sheep avatar generator - copied from src/lib/sheep-avatar.ts
+    const HATS = {
+      0: { svg: '', y: 0 },
+      1: { svg: '<path d="M-6 0 L-4 -6 L-2 -2 L0 -8 L2 -2 L4 -6 L6 0 Z" fill="#FFD700" stroke="#DAA520" stroke-width="0.4"/><circle cx="-2" cy="-1.5" r="0.8" fill="#E53935"/><circle cx="0" cy="-3" r="0.8" fill="#4CAF50"/><circle cx="2" cy="-1.5" r="0.8" fill="#2196F3"/>', y: -1 },
+      2: { svg: '<ellipse cx="0" cy="0" rx="8" ry="1.5" fill="#8B4513"/><path d="M-5 0 Q0 -7 5 0" fill="#A0522D"/>', y: 0 },
+      3: { svg: '<ellipse cx="0" cy="0" rx="5" ry="1.2" fill="#1a1a1a"/><rect x="-3" y="-9" width="6" height="9" fill="#1a1a1a"/><rect x="-3" y="-2" width="6" height="1.2" fill="#8B0000"/>', y: 0 },
+      4: { svg: '<path d="M-5 0 Q-5 -6 0 -7 Q5 -6 5 0" fill="#E91E63"/><circle cx="0" cy="-8" r="2" fill="#E91E63"/>', y: 0 },
+      5: { svg: '<path d="M0 -14 L-5 0 L5 0 Z" fill="#4A148C"/><circle cx="0" cy="-6" r="0.7" fill="#FFD700"/>', y: 0 },
+      6: { svg: '<ellipse cx="0" cy="-5" rx="5" ry="4" fill="#FAFAFA"/><ellipse cx="-3" cy="-6" rx="3" ry="3" fill="#FAFAFA"/><ellipse cx="3" cy="-6" rx="3" ry="3" fill="#FAFAFA"/><rect x="-4" y="-1" width="8" height="2.5" fill="#FAFAFA"/>', y: 0 },
+      7: { svg: '<path d="M-5 0 Q0 -7 5 0" fill="#FFC107"/><rect x="-5" y="-1.5" width="10" height="2" fill="#FFC107"/>', y: 0 },
+      8: { svg: '<ellipse cx="0" cy="0" rx="7" ry="1.8" fill="#4A4A4A"/><path d="M-4.5 0 Q-4.5 -5 0 -6 Q4.5 -5 4.5 0" fill="#5D5D5D"/><rect x="-5" y="-1" width="10" height="1.5" fill="#3D3D3D"/>', y: 0 }
+    };
+
+    const GLASSES = {
+      0: '',
+      1: '<g><circle cx="27" cy="43" r="7" fill="none" stroke="#1a1a1a" stroke-width="1.8"/><circle cx="50" cy="47" r="7" fill="none" stroke="#1a1a1a" stroke-width="1.8"/><path d="M34 44 Q38 42 43 46" stroke="#1a1a1a" stroke-width="1.8" fill="none"/><path d="M20 42 L14 38" stroke="#1a1a1a" stroke-width="1.8"/></g>',
+      2: '<g><rect x="21" y="37" width="12" height="12" fill="none" stroke="#1a1a1a" stroke-width="1.8" rx="2"/><rect x="44" y="41" width="12" height="12" fill="none" stroke="#1a1a1a" stroke-width="1.8" rx="2"/><path d="M33 43 Q38 40 44 47" stroke="#1a1a1a" stroke-width="1.8" fill="none"/><path d="M21 42 L15 38" stroke="#1a1a1a" stroke-width="1.8"/></g>',
+      3: '<g><ellipse cx="27" cy="44" rx="10" ry="7" fill="#1a1a1a"/><ellipse cx="50" cy="48" rx="10" ry="7" fill="#1a1a1a"/><path d="M37 44 Q40 42 42 46" stroke="#1a1a1a" stroke-width="3" fill="none"/><path d="M17 42 L10 37" stroke="#1a1a1a" stroke-width="2.5"/><ellipse cx="27" cy="44" rx="7" ry="4" fill="#3a3a5a" opacity="0.5"/><ellipse cx="50" cy="48" rx="7" ry="4" fill="#3a3a5a" opacity="0.5"/></g>',
+      4: '<g><ellipse cx="50" cy="47" rx="8" ry="6" fill="#1a1a1a"/><path d="M42 45 Q20 30 25 15" stroke="#1a1a1a" stroke-width="2" fill="none"/></g>'
+    };
+
+    const BOWTIES = {
+      0: '',
+      1: '<g transform="translate(35, 78)"><path d="M0 0 L-8 -5 L-8 5 Z" fill="#D32F2F"/><path d="M0 0 L8 -5 L8 5 Z" fill="#D32F2F"/><circle cx="0" cy="0" r="3" fill="#B71C1C"/></g>',
+      2: '<g transform="translate(35, 78)"><path d="M0 0 L-8 -5 L-8 5 Z" fill="#1976D2"/><path d="M0 0 L8 -5 L8 5 Z" fill="#1976D2"/><circle cx="0" cy="0" r="3" fill="#0D47A1"/></g>',
+      3: '<g transform="translate(35, 78)"><path d="M0 0 L-8 -5 L-8 5 Z" fill="#FFD700"/><path d="M0 0 L8 -5 L8 5 Z" fill="#FFD700"/><circle cx="0" cy="0" r="3" fill="#FFA000"/></g>',
+      4: '<g transform="translate(35, 78)"><path d="M0 0 L-8 -5 L-8 5 Z" fill="#E91E63"/><path d="M0 0 L8 -5 L8 5 Z" fill="#E91E63"/><circle cx="0" cy="0" r="3" fill="#AD1457"/></g>'
+    };
+
+    const LEGS_PATH = 'M39.64 89.66l-12.58.56s1.88 20.65 2.16 22.71s1.03 6.1 6.66 6.01s5.44-5.73 5.35-7.04c-.09-1.31-.56-9.95-.56-9.95l8.82 2.16s.09 12.58.19 14.36s1.31 5.54 6.57 5.35s5.73-4.32 5.73-5.35c0-1.03.66-14.45.66-14.45l10.89-.94s-.15 3.94 0 6.66c.09 1.69 2.72 4.5 7.41 4.22c4.69-.28 6.38-2.53 6.29-3.85c-.09-1.31.38-11.92.38-11.92l5.07.56s-.38 11.64-.28 12.58c.09.94 2.16 4.32 7.32 4.22c5.16-.09 6.46-2.45 6.57-3.57c.19-1.97.94-13.23 1.22-16.05c.28-2.82.38-13.7.38-13.7l-68.25 7.43z';
+    const BACK_EAR_PATH = 'M106.65 42.45s1.27-.28 3.1.42s5.63 6.9 7.46 7.88c1.83.99 4.65 1.69 5.35 2.25c1.74 1.39 1.41 8.87-2.25 11.26c-3.66 2.39-8.17 3.1-8.17 3.1l-9.43-17.03l3.94-7.88z';
+    const FACE_PATH = 'M47.52 4.58C31.12 1.27 25 15.85 25 15.85s-11.83-4.5-15.77 9.01c-3.2 10.98 9.01 17.18 9.01 17.18S4.58 43.25 5.01 57.75c.27 9.15 6.48 11.45 6.48 11.45s-5.72 7.44-.84 17.6c5.07 10.56 16.61 10 16.61 10s1.42 9.49 14.5 13.23c11.83 3.38 17.74-1.55 17.74-1.55s4.93 4.36 13.51 1.97c7.08-1.97 8.17-8.02 8.17-8.02s8.16 3.93 17.03-.28c8.31-3.94 9.29-12.39 9.29-12.39s11.54-3.66 11.83-18.72c.26-13.79-8.31-19.01-8.31-19.01s4.36-10.7-5.49-18.72c-8.08-6.58-15.2-3.52-15.2-3.52s-.99-5.49-7.18-6.9s-9.43 1.97-9.43 1.97s-.59-3.68-4.08-6.05c-3.94-2.67-7.6-1.13-7.6-1.13s.12-10.14-14.52-13.1z';
+    const WOOL_PATH = 'M48.37 7.68c-15.86-2.96-21.12 11.28-22.24 11.4c-1.27.14-9.24-6.08-13.94 5.91c-4.09 10.43 10.56 16.2 10.13 17.89c-.37 1.47-14.79 1.05-14.41 14.31c.24 8.37 6.86 10.45 7.04 11.73c.14.99-6.3 7.02-1.69 16.24c4.41 8.82 14.99 8.02 16.61 9.1c1.63 1.09-.19 7.41 10.32 11.83c12.83 5.38 17.62-1.26 19.05-1.5c1.84-.31 2.63 5.07 12.2 3.38c7.86-1.39 7.1-8.04 8.54-8.73c1.44-.69 6.1 5 16.14.94c7.88-3.19 7.98-10.23 8.82-11.4c1.1-1.52 10.62-4.39 11.12-18.16c.52-14.27-7.83-17.25-8.02-18.4c-.19-1.13 3.38-9.57-4.5-16.14c-7.32-6.1-12.95-1.88-14.08-2.63c-.5-.33-.19-6.1-7.04-7.6c-5.68-1.24-9.39 3-10 2.67c-1.36-.73-1.06-4.09-4.26-6.26c-3.61-2.45-6.87-.5-7.85-1.06c-.84-.5 1.73-10.97-11.94-13.52z';
+    const EAR_DETAIL_PATH = 'M28.47 33.82s-4.94 3.24-10.14 4.04c-5.54.84-13.89-1.6-14.45.38s2.82 7.13 8.26 8.92c5.04 1.65 7.13.09 7.13.09s1.08 1.92.42 4.74s-2.72 7.17-2.3 11.5c.47 4.79 4.34 11.72 13.42 13.61c11.26 2.35 19.37-3.51 21.68-8.73c2.86-6.48.99-11.03 4.46-14.12c3.47-3.1 7.93-3.43 11.78-3.24c3.85.19 7.6-1.92 8.73-2.96c1.13-1.03 1.69-3.05 1.41-3.43c-.28-.38-2.91-.19-5.63-1.5c-2.72-1.31-7.32-3.94-7.32-3.94s-3.24 3.33-8.02 2.67c-4.79-.66-6.34-5.77-6.34-5.77s-4.97 7.6-13.7 5.63c-7.44-1.69-9.39-7.89-9.39-7.89z';
+    const EYE_R_PATH = 'M53.28 48.73c-.63 2.6-3.22 3.5-5.31 2.49c-1.89-.91-2.81-3.18-1.94-5.36s3.16-3.31 5.1-2.53c1.94.78 2.7 3.12 2.15 5.4z';
+    const EYE_L_PATH = 'M29.66 44.47c-.62 2.48-2.9 3.91-4.79 2.99c-1.69-.82-2.49-2.96-1.65-5.04c.84-2.08 2.83-2.94 4.58-2.24s2.41 2.12 1.86 4.29z';
+    const NOSE_PATH = 'M31.85 61.37s6.34-3.1 7.04-1.22c.7 1.88-1.88 3.33-2.91 3.99c-1.03.66-3.38 1.22-3.38 1.22s.19 3.66 2.06 3.75c1.88.09 3.24-2.49 4.46-1.17c1.22 1.31-.47 4.04-3.38 4.04s-4.5-2.06-4.5-2.06s-1.91 1.13-3.57.7c-2.58-.66-3-3.57-2.16-4.22s1.45 1.41 2.91 1.31c1.45-.09 1.88-2.67 1.88-2.67s-1.69-.8-3.1-2.49c-.81-.97-2.61-3.36-1.69-4.32c1.51-1.56 6.34 3.14 6.34 3.14z';
+
+    function generateSheepSvg(config, size = 64, statusOrOptions) {
+      const options = typeof statusOrOptions === 'string' ? { status: statusOrOptions } : statusOrOptions || {};
+      const wool = options.woolColor || '#FEFEFE';
+      const skin = '#3D3D3D';
+      const dark = '#2b2b2b';
+      const legColor = '#b1b1b1';
+
+      const bodyScale = 1 + config.bodyWidth * 0.03;
+      const woolScale = 1 + config.fluffiness * 0.02;
+      const earShift = config.earPosition * 2;
+      const legStretch = 1 + config.legLength * 0.05;
+      const rotation = config.bodyWidth * 1.5;
+
+      const hueFilter = config.hueShift > 0 ? `filter="url(#hue${config.hueShift})"` : '';
+      const hueFilterDef = config.hueShift > 0
+        ? `<defs><filter id="hue${config.hueShift}"><feColorMatrix type="hueRotate" values="${config.hueShift}"/></filter></defs>`
+        : '';
+
+      const hat = HATS[config.hat] || HATS[0];
+      const hatRotation = -5 + config.bodyWidth * 4 + config.earPosition * 3;
+      const hatSvg = hat.svg
+        ? `<g transform="translate(46, ${16 + hat.y}) scale(3.2) rotate(${hatRotation})">${hat.svg}</g>`
+        : '';
+
+      const glassesSvg = GLASSES[config.glasses] || '';
+      const bowtieSvg = BOWTIES[config.bowtie] || '';
+
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="${size}" height="${size}">
+        ${hueFilterDef}
+        <g transform="translate(128, 0) scale(-1, 1)">
+          <g transform="rotate(${rotation}, 64, 64)">
+            <g transform="translate(0, ${(legStretch - 1) * -10}) scale(1, ${legStretch})">
+              <path fill="${legColor}" d="${LEGS_PATH}"/>
+            </g>
+            <g transform="translate(${earShift}, 0)">
+              <path fill="${legColor}" d="${BACK_EAR_PATH}"/>
+            </g>
+            <g transform="scale(${bodyScale})" transform-origin="64 64" ${hueFilter}>
+              <path fill="${skin}" d="${FACE_PATH}"/>
+            </g>
+            <g transform="scale(${woolScale})" transform-origin="64 50">
+              <path fill="${wool}" d="${WOOL_PATH}"/>
+            </g>
+            <path fill="${legColor}" d="${EAR_DETAIL_PATH}"/>
+            ${bowtieSvg}
+            <path fill="${dark}" d="${EYE_R_PATH}"/>
+            <path fill="${dark}" d="${EYE_L_PATH}"/>
+            ${glassesSvg}
+            <path fill="${dark}" d="${NOSE_PATH}"/>
+            ${hatSvg}
+          </g>
+        </g>
+      </svg>`;
+    }
+
+    // Default config for demos
+    const defaultConfig = { bodyWidth: 0, fluffiness: 0, earPosition: 0, legLength: 0, hueShift: 0, hat: 0, glasses: 0, bowtie: 0 };
+
+    // Render avatar item
+    function renderAvatarItem(config, label, borderColor = null) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'avatar-item';
+      const avatarWrapper = document.createElement('div');
+      avatarWrapper.className = 'avatar-wrapper';
+      if (borderColor) avatarWrapper.style.borderColor = borderColor;
+      avatarWrapper.innerHTML = generateSheepSvg(config, 64);
+      wrapper.appendChild(avatarWrapper);
+      const p = document.createElement('p');
+      p.textContent = label;
+      wrapper.appendChild(p);
+      return wrapper;
+    }
+
+    // Render hats grid
+    const hatsGrid = document.getElementById('hats-grid');
+    const hatNames = ['Plain', 'Crown (Leader)', 'Cowboy', 'Top Hat', 'Beanie', 'Wizard', 'Chef', 'Hard Hat', 'Detective'];
+    hatNames.forEach((name, i) => {
+      const config = { ...defaultConfig, hat: i };
+      const borderColor = i === 1 ? 'var(--golden)' : null;
+      hatsGrid.appendChild(renderAvatarItem(config, name, borderColor));
+    });
+
+    // Render accessories grid
+    const accessoriesGrid = document.getElementById('accessories-grid');
+    const accessories = [
+      { config: { ...defaultConfig, glasses: 1 }, label: 'Round Glasses' },
+      { config: { ...defaultConfig, glasses: 2 }, label: 'Square Glasses' },
+      { config: { ...defaultConfig, glasses: 3 }, label: 'Sunglasses' },
+      { config: { ...defaultConfig, glasses: 4 }, label: 'Eyepatch' },
+      { config: { ...defaultConfig, bowtie: 1 }, label: 'Red Bowtie' },
+      { config: { ...defaultConfig, bowtie: 2 }, label: 'Blue Bowtie' },
+      { config: { ...defaultConfig, bowtie: 3 }, label: 'Gold Bowtie' },
+    ];
+    accessories.forEach(({ config, label }) => {
+      accessoriesGrid.appendChild(renderAvatarItem(config, label));
+    });
+
+    // Render Gyp grid
+    const gypGrid = document.getElementById('gyp-grid');
+
+    // Gyp - Border Collie
+    const gypItem = document.createElement('div');
+    gypItem.className = 'avatar-item';
+    gypItem.innerHTML = `
+      <div class="avatar-wrapper gyp-current" style="border-color: var(--amber-500);">
+        <img src="../public/gyp.svg" width="64" height="64" alt="Gyp" style="object-fit: contain;" />
+      </div>
+      <p>Gyp</p>
+    `;
+    gypGrid.appendChild(gypItem);
+
+    // Render worker cards demo
+    const workerCardsDemo = document.getElementById('worker-cards-demo');
+
+    const worker1Config = { ...defaultConfig, hat: 2 }; // Cowboy hat
+    const worker1Card = document.createElement('div');
+    worker1Card.className = 'worker-card working';
+    worker1Card.innerHTML = `
+      <div class="worker-status-dot"></div>
+      ${generateSheepSvg(worker1Config, 40)}
+      <div class="worker-info">
+        <div class="worker-name">worker-1</div>
+        <div class="worker-time">2m 34s</div>
+        <div class="worker-task">Implementing auth flow...</div>
+      </div>
+    `;
+    workerCardsDemo.appendChild(worker1Card);
+
+    const worker2Config = { ...defaultConfig, glasses: 1 }; // Round glasses
+    const worker2Card = document.createElement('div');
+    worker2Card.className = 'worker-card idle';
+    worker2Card.innerHTML = `
+      <div class="worker-status-dot"></div>
+      ${generateSheepSvg(worker2Config, 40)}
+      <div class="worker-info">
+        <div class="worker-name">worker-2</div>
+        <div class="worker-time">idle</div>
+      </div>
+    `;
+    workerCardsDemo.appendChild(worker2Card);
+
+    const worker3Config = { ...defaultConfig, hat: 1 }; // Crown (leader)
+    const worker3Card = document.createElement('div');
+    worker3Card.className = 'worker-card working';
+    worker3Card.innerHTML = `
+      <div class="worker-status-dot"></div>
+      ${generateSheepSvg(worker3Config, 40)}
+      <div class="worker-info">
+        <div class="worker-name">leader</div>
+        <div class="worker-time">5m 12s</div>
+        <div class="worker-task">Coordinating tasks...</div>
+      </div>
+    `;
+    workerCardsDemo.appendChild(worker3Card);
+    </script>
+
+    <!-- Empty State -->
+    <section>
+      <h2>Empty State</h2>
+
+      <div class="empty-state">
+        <svg viewBox="0 0 128 64">
+          <!-- Flock -->
+          <g transform="translate(10, 8) scale(0.6)" opacity="0.4">
+            <ellipse cx="32" cy="40" rx="20" ry="12" fill="currentColor" opacity="0.3" />
+            <ellipse cx="30" cy="38" rx="18" ry="10" fill="currentColor" opacity="0.5" />
+            <ellipse cx="32" cy="36" rx="16" ry="8" fill="currentColor" opacity="0.8" />
+            <ellipse cx="46" cy="34" rx="7" ry="5" fill="currentColor" />
+          </g>
+          <g transform="translate(60, 4) scale(0.5)" opacity="0.3">
+            <ellipse cx="32" cy="40" rx="20" ry="12" fill="currentColor" opacity="0.3" />
+            <ellipse cx="30" cy="38" rx="18" ry="10" fill="currentColor" opacity="0.5" />
+            <ellipse cx="32" cy="36" rx="16" ry="8" fill="currentColor" opacity="0.8" />
+            <ellipse cx="46" cy="34" rx="7" ry="5" fill="currentColor" />
+          </g>
+          <g transform="translate(30, 10) scale(0.8)">
+            <ellipse cx="32" cy="40" rx="20" ry="12" fill="currentColor" opacity="0.3" />
+            <ellipse cx="30" cy="38" rx="18" ry="10" fill="currentColor" opacity="0.5" />
+            <ellipse cx="32" cy="36" rx="16" ry="8" fill="currentColor" opacity="0.8" />
+            <ellipse cx="46" cy="34" rx="7" ry="5" fill="currentColor" />
+            <path d="M47 33 L49 33" stroke="#1a1a1a" stroke-width="2" stroke-linecap="round" />
+            <text x="52" y="20" font-size="8" fill="currentColor" opacity="0.6" font-weight="bold">z</text>
+          </g>
+        </svg>
+        <p>No runs yet</p>
+        <p style="font-size: 0.8125rem;">Use <code>hirsel go</code> to start</p>
+      </div>
+    </section>
+
+    <!-- Motion -->
+    <section>
+      <h2>Motion</h2>
+
+      <h3>Interaction Animations</h3>
+      <div class="animation-demo">
+        <div class="anim-box anim-hover">Hover<br>lift</div>
+        <div class="anim-box anim-stagger">Stagger 1</div>
+        <div class="anim-box anim-stagger">Stagger 2</div>
+        <div class="anim-box anim-stagger">Stagger 3</div>
+        <div class="anim-box anim-stagger">Stagger 4</div>
+      </div>
+    </section>
+
+    <footer>
+      <p>"A hirsel is more than a flock - it's the shepherd's entire domain."</p>
+      <p>Typography: ET Book by Edward Tufte</p>
+    </footer>
+  </div>
+</body>
+</html>

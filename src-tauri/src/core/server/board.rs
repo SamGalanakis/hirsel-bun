@@ -54,7 +54,7 @@ pub async fn export_board(
     State(_state): State<Arc<AppState>>,
     Path(project_id): Path<i64>,
 ) -> Result<Json<String>> {
-    let service = BoardService::new(project_id);
+    let mut service = BoardService::new(project_id);
 
     // Use tokio::task::spawn_blocking for sync operations
     let board_dir = tokio::task::spawn_blocking(move || service.export_local_sync())
@@ -74,7 +74,7 @@ pub async fn import_board(
     State(_state): State<Arc<AppState>>,
     Path(project_id): Path<i64>,
 ) -> Result<Json<SyncResult>> {
-    let service = BoardService::new(project_id);
+    let mut service = BoardService::new(project_id);
 
     let result = tokio::task::spawn_blocking(move || service.import_local_sync())
         .await

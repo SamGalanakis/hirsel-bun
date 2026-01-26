@@ -138,17 +138,18 @@ cargo clippy
 
 ```
 hirsel/
-├── src/                 # Frontend (TypeScript, Alpine.js)
-│   ├── lib/
-│   │   └── components/  # UI components
+├── src/                 # Frontend (SolidJS + TypeScript)
+│   ├── components/      # UI components (.tsx)
+│   ├── stores/          # State management
+│   ├── hooks/           # Custom hooks
 │   └── styles/          # Tailwind CSS
-├── src-tauri/          # Backend (Rust, Tauri)
+├── src-tauri/           # Backend (Rust, Tauri)
 │   └── src/
-│       ├── cli/        # CLI commands
-│       ├── core/       # Core logic
-│       ├── gui/        # Tauri commands
-│       └── worker/     # Agent worker management
-└── tauri-plugin-mcp/   # MCP plugin for debugging
+│       ├── cli/         # CLI commands
+│       ├── core/        # Core logic
+│       ├── gui/         # Tauri commands
+│       └── worker/      # Agent worker management
+└── docs/                # Architecture and debugging docs
 ```
 
 ## License

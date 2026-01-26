@@ -1,91 +1,261 @@
-//! Agent-facing types for board JSON files
+//! SpecFlow Board Types
 //!
-//! These types represent the projection of board data that agents can read/write.
-//! They exclude UI-specific fields like timestamps but include optional positioning.
+//! The board has two types of entities:
+//! - **Tasks**: Nested tree of work items (post-it style)
+//! - **Evals**: Flat list of verifications that validate tasks
+//!
+//! ## Validation Rules
+//! A task is "validated" if:
+//! 1. It has at least one eval with status=passed that references it, OR
+//! 2. All of its children are validated
+//!
+//! Validation propagates up the tree automatically.
 
 use serde::{Deserialize, Serialize};
 
-/// Agent view of a task (minimal projection of DB task)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentTaskView {
-    pub id: String,
-    pub subject: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub status: String,
-    /// Task IDs this task is blocked by
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub blocked_by: Vec<String>,
-    /// Nested subtasks
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub subtasks: Vec<AgentTaskView>,
+// =============================================================================
+// Task Types
+// =============================================================================
+
+/// Task status for board tasks
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    #[default]
+    Todo,
+    Doing,
+    Done,
+    Blocked,
 }
 
-/// Agent view of a row's eval section
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentEvalView {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub criteria: Option<String>,
-    #[serde(default)]
-    pub status: String,
+impl TaskStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Todo => "todo",
+            Self::Doing => "doing",
+            Self::Done => "done",
+            Self::Blocked => "blocked",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "doing" => Self::Doing,
+            "done" => Self::Done,
+            "blocked" => Self::Blocked,
+            _ => Self::Todo,
+        }
+    }
 }
 
-/// Agent view of a row (trifecta: spec | tasks | eval)
+/// A task in the board (flat, for DB storage)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentRowView {
-    pub id: String,
-    /// The spec content (markdown)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub spec: Option<String>,
-    /// Tasks for this row
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tasks: Vec<AgentTaskView>,
-    /// Eval section
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub eval: Option<AgentEvalView>,
-}
-
-/// Agent view of an island (feature container)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentIslandView {
-    pub id: String,
-    pub title: String,
-    /// Optional X position (agent can suggest, bounded on import)
-    #[serde(skip_serializing_if = "Option::is_none")]
+pub struct Task {
+    pub id: String, // Slug ID (e.g., "build-api")
+    pub parent_id: Option<String>,
+    pub position: i32,
+    pub name: String,
+    pub status: TaskStatus,
+    pub content: String,
     pub x: Option<f64>,
-    /// Optional Y position (agent can suggest, bounded on import)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub y: Option<f64>,
-    /// Rows within the island (ordered by position)
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Task tree (nested, for JSON/frontend)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskTree {
+    pub id: String,
+    pub name: String,
+    pub status: TaskStatus,
+    pub content: String,
+    pub children: Vec<TaskTree>,
+    pub x: Option<f64>,
+    pub y: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validated: Option<bool>, // Computed field
+}
+
+impl From<Task> for TaskTree {
+    fn from(task: Task) -> Self {
+        Self {
+            id: task.id,
+            name: task.name,
+            status: task.status,
+            content: task.content,
+            children: vec![],
+            x: task.x,
+            y: task.y,
+            validated: None,
+        }
+    }
+}
+
+// =============================================================================
+// Eval Types
+// =============================================================================
+
+/// Eval status values
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalStatus {
+    #[default]
+    Blocked, // Cannot run yet (dependencies not ready)
+    Queued,     // Ready to run
+    InProgress, // Currently running
+    Passed,     // Verification succeeded
+    Failed,     // Verification failed
+}
+
+impl EvalStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Blocked => "blocked",
+            Self::Queued => "queued",
+            Self::InProgress => "in_progress",
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "queued" => Self::Queued,
+            "in_progress" => Self::InProgress,
+            "passed" => Self::Passed,
+            "failed" => Self::Failed,
+            _ => Self::Blocked,
+        }
+    }
+}
+
+/// An eval (verification) in the board
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Eval {
+    pub id: String, // Slug ID (e.g., "api-test")
+    pub name: String,
+    pub status: EvalStatus,
+    pub content: String,
+    pub validates: Vec<String>, // Task IDs this eval validates
+    pub x: Option<f64>,
+    pub y: Option<f64>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+// =============================================================================
+// Request Types
+// =============================================================================
+
+/// Request to create a new task
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateTaskRequest {
+    pub parent_id: Option<String>,
+    pub name: String,
     #[serde(default)]
-    pub rows: Vec<AgentRowView>,
+    pub content: String,
+}
+
+/// Request to update a task
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTaskRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub status: Option<TaskStatus>,
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub x: Option<f64>,
+    #[serde(default)]
+    pub y: Option<f64>,
+}
+
+/// Request to create a new eval
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateEvalRequest {
+    pub name: String,
+    #[serde(default)]
+    pub content: String,
+    #[serde(default)]
+    pub validates: Vec<String>,
+}
+
+/// Request to update an eval
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateEvalRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub status: Option<EvalStatus>,
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub validates: Option<Vec<String>>,
+    #[serde(default)]
+    pub x: Option<f64>,
+    #[serde(default)]
+    pub y: Option<f64>,
+}
+
+// =============================================================================
+// JSON Export/Import Types
+// =============================================================================
+
+/// Board JSON format for agents (version 2)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoardJson {
+    pub version: u32,
+    pub tasks: Vec<TaskTree>,
+    pub evals: Vec<Eval>,
+}
+
+impl Default for BoardJson {
+    fn default() -> Self {
+        Self {
+            version: 2,
+            tasks: vec![],
+            evals: vec![],
+        }
+    }
 }
 
 /// Result of a sync operation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SyncResult {
     /// Number of changes applied
     pub changes: usize,
-    /// Islands that were added
-    pub added: Vec<String>,
-    /// Islands that were updated
-    pub updated: Vec<String>,
-    /// Islands that were deleted
-    pub deleted: Vec<String>,
+    /// Tasks that were added
+    pub tasks_added: Vec<String>,
+    /// Tasks that were updated
+    pub tasks_updated: Vec<String>,
+    /// Tasks that were deleted
+    pub tasks_deleted: Vec<String>,
+    /// Evals that were added
+    pub evals_added: Vec<String>,
+    /// Evals that were updated
+    pub evals_updated: Vec<String>,
+    /// Evals that were deleted
+    pub evals_deleted: Vec<String>,
 }
 
-impl Default for SyncResult {
-    fn default() -> Self {
-        Self {
-            changes: 0,
-            added: vec![],
-            updated: vec![],
-            deleted: vec![],
-        }
-    }
+/// A saved viewport position (bookmark)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Bookmark {
+    pub id: String,
+    pub name: String,
+    pub x: f64,
+    pub y: f64,
+    pub zoom: f64,
+    pub created_at: String,
 }

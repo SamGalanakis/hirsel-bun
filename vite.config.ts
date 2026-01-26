@@ -1,6 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
-import { htmlIncludes } from './vite-html-includes';
+import solid from 'vite-plugin-solid';
 
 /**
  * Strip data-test attributes from HTML in production builds.
@@ -18,7 +18,7 @@ function stripDataTestAttrs(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [htmlIncludes(), tailwindcss(), stripDataTestAttrs()],
+  plugins: [solid(), tailwindcss(), stripDataTestAttrs()],
   root: 'src',
   publicDir: '../public',
   build: {

@@ -1,5 +1,9 @@
 # Eval Specification
 
+> **HISTORICAL:** This evaluation spec was for the original Rust/Tauri rewrite.
+> The frontend has since migrated from Alpine.js to SolidJS.
+> See `docs/architecture.md` for current architecture.
+
 Comprehensive verification of the Tauri + Rust hirsel rewrite.
 
 ## Reference Implementation

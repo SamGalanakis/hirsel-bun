@@ -13,6 +13,7 @@
 pub mod acp;
 pub mod api_types;
 pub mod board;
+pub mod board_gyp_context;
 pub mod chat_orchestrator;
 pub mod chat_session;
 pub mod chats;
@@ -146,6 +147,9 @@ pub use draft::{
 // Gyp context
 pub use gyp_context::GypContext;
 
+// Board Gyp context (slugify already exported from names module)
+pub use board_gyp_context::BoardGypContext;
+
 // SpecFlow
 pub use specflow::{
     Bookmark as SpecFlowBookmark, CreateIslandRequest, CreateRowRequest, DispatchResult,
@@ -154,8 +158,10 @@ pub use specflow::{
     UpdateRowRequest, Wire,
 };
 
-// Board service (agent file sync)
+// Board service (tree operations and agent file sync)
 pub use board::{
-    AgentEvalView, AgentIslandView, AgentRowView, AgentTaskView, BoardError, BoardResult,
-    BoardService, SyncResult as BoardSyncResult,
+    BoardError, BoardJson, BoardResult, BoardService, Bookmark as BoardBookmark, CreateEvalRequest,
+    CreateTaskRequest, Eval as BoardEval, EvalStatus as BoardEvalStatus,
+    SyncResult as BoardSyncResult, Task as BoardTask, TaskStatus as BoardTaskStatus, TaskTree,
+    UpdateEvalRequest, UpdateTaskRequest,
 };

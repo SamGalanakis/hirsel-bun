@@ -17,8 +17,7 @@
 | Add archive strategy | `src-tauri/src/core/snapshot/mod.rs`, new strategy impl of `ArchiveStrategy` |
 | Add service worker | `src-tauri/src/core/service_worker/scribe.rs`, `src-tauri/src/cli/service_worker.rs` |
 | Add SpecFlow island | `src-tauri/src/core/specflow/state.rs`, `src-tauri/src/gui/commands/specflow.rs` |
-| Modify board UI | `src/lib/components/specflow-board/index.ts`, `src/templates/specflow-board.html` |
-| Change canvas rendering | `src/lib/components/specflow-board/canvas-renderer.ts` |
+| Modify board UI | `src/components/specflow/SpecflowBoard.tsx`, `src/components/specflow/NodeRenderer.tsx` |
 
 ### Feature Flags
 
@@ -189,6 +188,19 @@ cargo build --features s3-storage               # With S3 support
 | `server.rs` | Daemon server, TCP listener |
 | `lifecycle.rs` | Polling loop, lifecycle action handling |
 | `client.rs` | Client for daemon communication |
+
+### `src/` - Frontend (SolidJS)
+
+| Directory | Purpose |
+|-----------|---------|
+| `components/layout/` | Layout, TitleBar, StatusBar, ProjectNav |
+| `components/runs/` | RunListPanel, RunDetail, DraftEditor, WorkerCard |
+| `components/specflow/` | SpecflowBoard, NodeRenderer, GypChatDrawer |
+| `components/modals/` | SettingsModal, HelpModal, ConfirmDialog |
+| `components/chat/` | DirectChat |
+| `stores/` | AppProvider, ProjectProvider, RunsProvider, SelectionProvider |
+| `hooks/` | usePolling, useDebounce, useTauriEvent |
+| `lib/` | Icons, theme, toast, dev-logger, utils |
 
 ---
 
@@ -1070,6 +1082,30 @@ scribe_persist_docs_changes = true  # Commit changes on delivery
 - **Client host only in remote mode** - Requires Tailscale for SSH-back
 - **SSH reverse tunnel required for local mode** - Workers connect to `localhost:19700`
 - **Worker binary version** - Must match coordinator version (auto-pinned via `HIRSEL_TAG`)
+
+### Gotchas
+
+#### Tauri Commands Use snake_case Parameters
+
+Tauri IPC commands use **snake_case** for parameter names, not camelCase. The Rust function signature determines the expected names:
+
+```rust
+// Backend (Rust)
+#[tauri::command]
+pub async fn delete_board_node(project_id: i64, node_id: String) -> Result<(), String> {
+    // ...
+}
+```
+
+```typescript
+// Frontend (TypeScript) - CORRECT
+await invoke('delete_board_node', { project_id: projectId, node_id: nodeId });
+
+// Frontend (TypeScript) - WRONG (will silently fail or error)
+await invoke('delete_board_node', { projectId, nodeId });
+```
+
+This applies to all Tauri commands. If a command seems to do nothing, check that parameter names match the Rust function signature exactly.
 
 ---
 

@@ -1,5 +1,9 @@
 # Hirsel Rewrite Specification
 
+> **HISTORICAL:** This specification was for the original Rust/Tauri rewrite.
+> The frontend has since migrated from Alpine.js to SolidJS.
+> See `docs/architecture.md` for current architecture.
+
 ## Overview
 
 Full rewrite of hirsel in Rust using [Tauri](https://tauri.app/) for the desktop app. The project has two deliverables:

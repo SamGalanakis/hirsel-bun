@@ -20,23 +20,25 @@
     "@tailwindcss/vite": "^4.1.18",
     "@tauri-apps/api": "^2",
     "@tauri-apps/cli": "^2",
-    "@types/alpinejs": "^3.13.11",
     "@types/d3-selection": "^3.0.11",
     "@types/d3-zoom": "^3.0.8",
     "@types/node": "^22",
-    "alpinejs": "^3",
     "basecoat-css": "^0.3",
     "tailwindcss": "^4.1.18",
     "tsx": "^4",
     "typescript": "^5",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "vite-plugin-solid": "^2.11.6"
   },
   "dependencies": {
     "@tailwindcss/typography": "^0.5.19",
+    "@types/d3-hierarchy": "^3.1.7",
+    "d3-hierarchy": "^3.1.2",
     "d3-selection": "^3.0.0",
     "d3-zoom": "^3.0.0",
     "dompurify": "^3.3.1",
     "lucide": "^0.562.0",
-    "marked": "^17.0.1"
+    "marked": "^17.0.1",
+    "solid-js": "^1.9.5"
   }
 }

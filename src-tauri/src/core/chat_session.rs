@@ -381,14 +381,18 @@ impl Client for ChatClient {
         &self,
         args: SessionNotification,
     ) -> std::result::Result<(), agent_client_protocol::Error> {
-        eprintln!(
-            "[CHAT] session_notification called for {}: {:?}",
+        info!(
+            "[chat:{}] session_notification: {:?}",
             self.session_id, args.update
         );
         match &args.update {
             SessionUpdate::AgentMessageChunk(chunk) => {
                 if let ContentBlock::Text(text) = &chunk.content {
-                    eprintln!("[CHAT] TextDelta: '{}'", text.text);
+                    info!(
+                        "[chat:{}] TextDelta: '{}'",
+                        self.session_id,
+                        &text.text[..text.text.len().min(50)]
+                    );
                     let _ = self.event_tx.send(ChatEvent::TextDelta {
                         session_id: self.session_id.clone(),
                         text: text.text.clone(),
@@ -397,6 +401,11 @@ impl Client for ChatClient {
             }
             SessionUpdate::AgentThoughtChunk(chunk) => {
                 if let ContentBlock::Text(text) = &chunk.content {
+                    info!(
+                        "[chat:{}] ThinkingDelta: '{}'",
+                        self.session_id,
+                        &text.text[..text.text.len().min(50)]
+                    );
                     let _ = self.event_tx.send(ChatEvent::ThinkingDelta {
                         session_id: self.session_id.clone(),
                         text: text.text.clone(),
@@ -861,9 +870,11 @@ async fn run_chat_session_loop(
         });
 
     // Spawn IO task
+    info!("[chat:{}] Spawning ACP IO task...", session_id);
     let session_id_clone = session_id.clone();
     let event_tx_clone = event_tx.clone();
     tokio::task::spawn_local(async move {
+        info!("[chat:{}] ACP IO task started", session_id_clone);
         if let Err(e) = io_task.await {
             error!("[chat:{}] ACP IO error: {:?}", session_id_clone, e);
             let _ = event_tx_clone.send(ChatEvent::Error {
@@ -871,6 +882,7 @@ async fn run_chat_session_loop(
                 message: format!("ACP IO error: {:?}", e),
             });
         }
+        info!("[chat:{}] ACP IO task ended", session_id_clone);
     });
 
     // Initialize ACP
@@ -932,7 +944,20 @@ async fn run_chat_session_loop(
     let mut first_message = true;
 
     // Process commands
+    info!(
+        "[chat:{}] Entering command loop, waiting for messages...",
+        session_id
+    );
     while let Some(cmd) = cmd_rx.recv().await {
+        info!(
+            "[chat:{}] Received command: {:?}",
+            session_id,
+            match &cmd {
+                SessionCommand::SendMessage { .. } => "SendMessage",
+                SessionCommand::RespondPermission(_) => "RespondPermission",
+                SessionCommand::Stop => "Stop",
+            }
+        );
         match cmd {
             SessionCommand::SendMessage { content, context } => {
                 // Build the full message with context prefix
@@ -951,7 +976,7 @@ async fn run_chat_session_loop(
                 }
 
                 info!(
-                    "[chat:{}] Sending message: {} chars",
+                    "[chat:{}] Sending prompt to ACP ({} chars)",
                     session_id,
                     full_content.len()
                 );
@@ -960,15 +985,16 @@ async fn run_chat_session_loop(
                     agent_session_id.clone(),
                     vec![ContentBlock::Text(TextContent::new(full_content))],
                 );
+                info!("[chat:{}] Calling conn.prompt()...", session_id);
                 match conn.prompt(prompt_request).await {
                     Ok(response) => {
                         info!(
-                            "[chat:{}] Message response: {:?}",
+                            "[chat:{}] ACP prompt completed: stop_reason={:?}",
                             session_id, response.stop_reason
                         );
                     }
                     Err(e) => {
-                        error!("[chat:{}] Failed to send message: {:?}", session_id, e);
+                        error!("[chat:{}] ACP prompt failed: {:?}", session_id, e);
                         let _ = event_tx.send(ChatEvent::Error {
                             session_id: session_id.clone(),
                             message: format!("Failed to send message: {:?}", e),

@@ -76,39 +76,9 @@ Open browser developer tools in the Tauri webview:
 Useful DevTools tabs:
 - **Console:** JavaScript errors, frontend logs
 - **Network:** API calls, WebSocket connections
-- **Elements:** Inspect Alpine.js state via `$el.__x`
 - **Application > Local Storage:** Persisted state
 
-## Alpine.js Debugging
-
-Inspect Alpine component state in browser console:
-
-```javascript
-// Get component data from an element
-document.querySelector('.specflow-board').__x.$data
-
-// Watch for state changes
-Alpine.effect(() => console.log('State:', Alpine.store('app')))
-```
-
-## Common Debug Scenarios
-
-### Context Menu Issues
-Check menu state in specflow-board component:
-```javascript
-// In browser console
-document.querySelector('.specflow-board').__x.$data.rowMenuVisible
-document.querySelector('.specflow-board').__x.$data.menuRow
-```
-
-### Project Selection Issues
-Check app state:
-```javascript
-document.body.__x.$data.selectedProjectId
-document.body.__x.$data.activeProjectView
-```
-
-### Tauri Command Errors
+## Tauri Command Errors
 Look for `[ERROR]` in backend log:
 ```bash
 grep "\[ERROR\]" ~/.local/share/app.hirsel/logs/Hirsel.log | tail -20

@@ -95,6 +95,7 @@ export const DEFAULT_THEME: ThemeId = 'hirsel-dark';
 
 const STORAGE_KEY = 'hirsel-theme';
 const DARK_PREFERENCE_KEY = 'hirsel-theme-dark-preference';
+const SYSTEM_THEME_KEY = 'hirsel-use-system-theme';
 
 // =============================================================================
 // Theme Families for UI
@@ -263,6 +264,54 @@ export function toggleTheme(): ThemeId {
   return next;
 }
 
+// =============================================================================
+// System Theme (Auto) Support
+// =============================================================================
+
+/**
+ * Check if using system theme preference
+ */
+export function isSystemTheme(): boolean {
+  return localStorage.getItem(SYSTEM_THEME_KEY) === 'true';
+}
+
+/**
+ * Enable system theme (auto-switches based on OS preference)
+ */
+export function setSystemTheme(): void {
+  localStorage.setItem(SYSTEM_THEME_KEY, 'true');
+  localStorage.removeItem(STORAGE_KEY);
+  applySystemTheme();
+}
+
+/**
+ * Apply theme based on system preference
+ */
+export function applySystemTheme(): ThemeId {
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const themeId = prefersDark ? 'hirsel-dark' : 'hirsel-light';
+
+  // Apply without saving to storage (so it remains in system mode)
+  const theme = THEMES[themeId];
+  document.documentElement.setAttribute('data-theme', themeId);
+  if (theme.isDark) {
+    document.documentElement.classList.remove('light');
+  } else {
+    document.documentElement.classList.add('light');
+  }
+
+  window.dispatchEvent(new CustomEvent('theme-changed', { detail: { themeId, theme } }));
+  return themeId;
+}
+
+/**
+ * Set a specific theme (disables system theme)
+ */
+export function setExplicitTheme(themeId: ThemeId): void {
+  localStorage.setItem(SYSTEM_THEME_KEY, 'false');
+  setTheme(themeId);
+}
+
 /**
  * Switch to a different theme family, preserving light/dark mode
  */
@@ -345,8 +394,8 @@ export const status = {
 } as const;
 
 export const fonts = {
-  sans: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
-  mono: "'JetBrains Mono', 'Fira Code', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Menlo, monospace",
+  primary: "'ET Book', 'Palatino', 'Palatino Linotype', Georgia, serif",
+  mono: "'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace",
 } as const;
 
 export const radius = {
