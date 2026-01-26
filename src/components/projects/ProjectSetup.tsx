@@ -1,5 +1,7 @@
 /**
- * Project setup form with path validation, autocomplete, and branch selection
+ * Project setup modal with path validation, autocomplete, and branch selection
+ *
+ * Displays as a centered modal dialog over the OneBoard canvas.
  */
 import { invoke } from '@tauri-apps/api/core';
 import {
@@ -9,9 +11,11 @@ import {
   createEffect,
   createSignal,
   onCleanup,
+  onMount,
 } from 'solid-js';
 import type { RepoValidation, StartingPoint } from '../../lib/types';
 import { useProject } from '../../stores';
+import { initLucideIcons } from '../../lib/icons';
 
 type StartingPointType = 'greenfield' | 'localFolder' | 'gitRepo';
 
@@ -33,12 +37,26 @@ export const ProjectSetup: Component = () => {
 
   let validateTimeout: ReturnType<typeof setTimeout> | undefined;
   let pathInputRef: HTMLInputElement | undefined;
+  let nameInputRef: HTMLInputElement | undefined;
+
+  // Focus name input on mount
+  onMount(() => {
+    nameInputRef?.focus();
+    initLucideIcons();
+  });
 
   // Load path suggestions on mount
   createEffect(() => {
     invoke<string[]>('suggest_paths')
       .then((paths) => setSuggestions(paths || []))
       .catch(() => setSuggestions([]));
+  });
+
+  // Re-init icons when content changes
+  createEffect(() => {
+    void startingPointType();
+    void validation();
+    queueMicrotask(initLucideIcons);
   });
 
   // Debounced path validation
@@ -56,7 +74,6 @@ export const ProjectSetup: Component = () => {
         setValidation(result);
         if (result.valid && result.branches.length > 0) {
           setBranches(result.branches);
-          // Auto-select current branch or first branch
           if (result.currentBranch) {
             setGitBranch(result.currentBranch);
           } else if (result.urlBranch && result.urlBranchValid) {
@@ -89,7 +106,6 @@ export const ProjectSetup: Component = () => {
         setValidation(result);
         if (result.valid && result.branches.length > 0) {
           setBranches(result.branches);
-          // Auto-select branch from URL or default
           if (result.urlBranch && result.urlBranchValid) {
             setGitBranch(result.urlBranch);
           } else {
@@ -229,18 +245,85 @@ export const ProjectSetup: Component = () => {
     }
   };
 
+  // Handle escape key to close
+  const handleEscape = (e: KeyboardEvent) => {
+    if (e.key === 'Escape' && !creating()) {
+      project.cancelProjectSetup();
+    }
+  };
+
+  createEffect(() => {
+    document.addEventListener('keydown', handleEscape);
+    onCleanup(() => document.removeEventListener('keydown', handleEscape));
+  });
+
   // Cleanup timeout on unmount
   onCleanup(() => {
     if (validateTimeout) clearTimeout(validateTimeout);
   });
 
   return (
-    <div class="flex-1 flex items-center justify-center p-8">
-      <div class="max-w-lg w-full">
-        <h2 class="text-xl font-medium text-wool-100 mb-6">Create Project</h2>
+    <div
+      class="absolute inset-0 flex items-center justify-center z-50"
+      style={{
+        background: 'rgba(15, 15, 15, 0.8)',
+        'backdrop-filter': 'blur(8px)',
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !creating()) {
+          project.cancelProjectSetup();
+        }
+      }}
+    >
+      {/* Modal Card */}
+      <div
+        class="w-full max-w-xl mx-4 rounded-xl overflow-hidden shadow-2xl"
+        style={{
+          background: 'linear-gradient(180deg, rgba(36, 36, 36, 0.98) 0%, rgba(26, 26, 26, 0.98) 100%)',
+          border: '1px solid rgba(63, 63, 70, 0.6)',
+          'box-shadow': '0 24px 64px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255,255,255,0.03) inset',
+        }}
+      >
+        {/* Header */}
+        <div
+          class="px-6 py-5 flex items-center justify-between"
+          style={{
+            'border-bottom': '1px solid rgba(63, 63, 70, 0.4)',
+            background: 'linear-gradient(180deg, rgba(255,255,255,0.02) 0%, transparent 100%)',
+          }}
+        >
+          <div class="flex items-center gap-3">
+            <div
+              class="w-10 h-10 rounded-lg flex items-center justify-center"
+              style={{
+                background: 'linear-gradient(145deg, rgba(212,165,116,0.2) 0%, rgba(212,165,116,0.1) 100%)',
+                border: '1px solid rgba(212,165,116,0.3)',
+              }}
+            >
+              <svg class="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+            </div>
+            <div>
+              <h2 class="text-lg font-semibold text-wool-100">Create Project</h2>
+              <p class="text-sm text-wool-500">Set up a new workspace</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            class="p-2 rounded-lg text-wool-500 hover:text-wool-300 hover:bg-pasture-700 transition-all"
+            onClick={() => project.cancelProjectSetup()}
+            disabled={creating()}
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
 
+        {/* Content */}
         <form
-          class="form grid gap-6"
+          class="p-6 grid gap-5"
           onSubmit={(e) => {
             e.preventDefault();
             handleCreate();
@@ -248,8 +331,11 @@ export const ProjectSetup: Component = () => {
         >
           {/* Project Name */}
           <div class="grid gap-2">
-            <label for="project-name">Project Name</label>
+            <label for="project-name" class="text-sm font-medium text-wool-300">
+              Project Name
+            </label>
             <input
+              ref={nameInputRef}
               id="project-name"
               type="text"
               placeholder="my-project"
@@ -257,55 +343,131 @@ export const ProjectSetup: Component = () => {
               value={name()}
               onInput={(e) => setName(e.currentTarget.value)}
             />
-            <p class="text-muted-foreground text-sm">
-              A unique name for your project
-            </p>
           </div>
 
-          {/* Starting Point Type */}
+          {/* Starting Point Type - Card Selection */}
           <div class="grid gap-3">
-            <label>Starting Point</label>
-            <div class="flex gap-4">
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="startingPointType"
-                  value="greenfield"
-                  checked={startingPointType() === 'greenfield'}
-                  onChange={() => setStartingPointType('greenfield')}
-                  class="radio"
+            <label class="text-sm font-medium text-wool-300">Starting Point</label>
+            <div class="grid grid-cols-3 gap-3">
+              {/* Local Folder */}
+              <button
+                type="button"
+                class="p-4 rounded-lg text-left transition-all group"
+                classList={{
+                  'ring-2 ring-amber-500/50': startingPointType() === 'localFolder',
+                }}
+                style={{
+                  background: startingPointType() === 'localFolder'
+                    ? 'linear-gradient(180deg, rgba(212,165,116,0.15) 0%, rgba(212,165,116,0.05) 100%)'
+                    : 'rgba(26, 26, 26, 0.5)',
+                  border: startingPointType() === 'localFolder'
+                    ? '1px solid rgba(212,165,116,0.3)'
+                    : '1px solid rgba(63, 63, 70, 0.5)',
+                }}
+                onClick={() => setStartingPointType('localFolder')}
+              >
+                <i
+                  data-lucide="folder"
+                  class="w-5 h-5 mb-2"
+                  classList={{
+                    'text-amber-400': startingPointType() === 'localFolder',
+                    'text-wool-500 group-hover:text-wool-400': startingPointType() !== 'localFolder',
+                  }}
                 />
-                <span class="text-sm">Greenfield</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="startingPointType"
-                  value="localFolder"
-                  checked={startingPointType() === 'localFolder'}
-                  onChange={() => setStartingPointType('localFolder')}
-                  class="radio"
+                <div
+                  class="text-sm font-medium"
+                  classList={{
+                    'text-amber-200': startingPointType() === 'localFolder',
+                    'text-wool-300': startingPointType() !== 'localFolder',
+                  }}
+                >
+                  Local Folder
+                </div>
+                <div class="text-xs text-wool-600 mt-0.5">Existing code</div>
+              </button>
+
+              {/* Git Repository */}
+              <button
+                type="button"
+                class="p-4 rounded-lg text-left transition-all group"
+                classList={{
+                  'ring-2 ring-amber-500/50': startingPointType() === 'gitRepo',
+                }}
+                style={{
+                  background: startingPointType() === 'gitRepo'
+                    ? 'linear-gradient(180deg, rgba(212,165,116,0.15) 0%, rgba(212,165,116,0.05) 100%)'
+                    : 'rgba(26, 26, 26, 0.5)',
+                  border: startingPointType() === 'gitRepo'
+                    ? '1px solid rgba(212,165,116,0.3)'
+                    : '1px solid rgba(63, 63, 70, 0.5)',
+                }}
+                onClick={() => setStartingPointType('gitRepo')}
+              >
+                <i
+                  data-lucide="git-branch"
+                  class="w-5 h-5 mb-2"
+                  classList={{
+                    'text-amber-400': startingPointType() === 'gitRepo',
+                    'text-wool-500 group-hover:text-wool-400': startingPointType() !== 'gitRepo',
+                  }}
                 />
-                <span class="text-sm">Local Folder</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="startingPointType"
-                  value="gitRepo"
-                  checked={startingPointType() === 'gitRepo'}
-                  onChange={() => setStartingPointType('gitRepo')}
-                  class="radio"
+                <div
+                  class="text-sm font-medium"
+                  classList={{
+                    'text-amber-200': startingPointType() === 'gitRepo',
+                    'text-wool-300': startingPointType() !== 'gitRepo',
+                  }}
+                >
+                  Git Repo
+                </div>
+                <div class="text-xs text-wool-600 mt-0.5">Clone remote</div>
+              </button>
+
+              {/* Greenfield */}
+              <button
+                type="button"
+                class="p-4 rounded-lg text-left transition-all group"
+                classList={{
+                  'ring-2 ring-amber-500/50': startingPointType() === 'greenfield',
+                }}
+                style={{
+                  background: startingPointType() === 'greenfield'
+                    ? 'linear-gradient(180deg, rgba(212,165,116,0.15) 0%, rgba(212,165,116,0.05) 100%)'
+                    : 'rgba(26, 26, 26, 0.5)',
+                  border: startingPointType() === 'greenfield'
+                    ? '1px solid rgba(212,165,116,0.3)'
+                    : '1px solid rgba(63, 63, 70, 0.5)',
+                }}
+                onClick={() => setStartingPointType('greenfield')}
+              >
+                <i
+                  data-lucide="sparkles"
+                  class="w-5 h-5 mb-2"
+                  classList={{
+                    'text-amber-400': startingPointType() === 'greenfield',
+                    'text-wool-500 group-hover:text-wool-400': startingPointType() !== 'greenfield',
+                  }}
                 />
-                <span class="text-sm">Git Repository</span>
-              </label>
+                <div
+                  class="text-sm font-medium"
+                  classList={{
+                    'text-amber-200': startingPointType() === 'greenfield',
+                    'text-wool-300': startingPointType() !== 'greenfield',
+                  }}
+                >
+                  Greenfield
+                </div>
+                <div class="text-xs text-wool-600 mt-0.5">Start fresh</div>
+              </button>
             </div>
           </div>
 
           {/* Local Folder Path */}
           <Show when={startingPointType() === 'localFolder'}>
             <div class="grid gap-2">
-              <label for="local-path">Folder Path</label>
+              <label for="local-path" class="text-sm font-medium text-wool-300">
+                Folder Path
+              </label>
               <div class="relative">
                 <div class="flex gap-2">
                   <div class="relative flex-1">
@@ -323,15 +485,21 @@ export const ProjectSetup: Component = () => {
                     />
                     {/* Autocomplete dropdown */}
                     <Show when={showSuggestions() && filteredSuggestions().length > 0}>
-                      <div class="absolute z-10 w-full mt-1 bg-pasture-800 border border-pasture-600 rounded-lg shadow-lg max-h-48 overflow-auto">
+                      <div
+                        class="absolute z-10 w-full mt-1 rounded-lg shadow-lg max-h-48 overflow-auto"
+                        style={{
+                          background: 'rgba(36, 36, 36, 0.98)',
+                          border: '1px solid rgba(63, 63, 70, 0.6)',
+                        }}
+                      >
                         <For each={filteredSuggestions()}>
                           {(suggestion, index) => (
                             <button
                               type="button"
-                              class={`w-full px-3 py-2 text-left text-sm hover:bg-pasture-700 ${
+                              class={`w-full px-3 py-2 text-left text-sm transition-colors ${
                                 index() === highlightedIndex()
-                                  ? 'bg-pasture-700'
-                                  : ''
+                                  ? 'bg-amber-500/10 text-amber-200'
+                                  : 'text-wool-300 hover:bg-pasture-700'
                               }`}
                               onMouseDown={() => selectSuggestion(suggestion)}
                             >
@@ -347,6 +515,7 @@ export const ProjectSetup: Component = () => {
                     type="button"
                     class="btn-outline px-3"
                     onClick={handleBrowse}
+                    title="Browse folders"
                   >
                     <i data-lucide="folder-open" class="w-4 h-4" />
                   </button>
@@ -354,14 +523,14 @@ export const ProjectSetup: Component = () => {
               </div>
               {/* Validation feedback */}
               <Show when={validating()}>
-                <p class="text-sm text-wool-500 flex items-center gap-2">
+                <p class="text-xs text-wool-500 flex items-center gap-2">
                   <span class="spinner w-3 h-3" />
                   Validating...
                 </p>
               </Show>
               <Show when={!validating() && validation()}>
                 <Show when={validation()?.valid}>
-                  <p class="text-sm text-sage flex items-center gap-2">
+                  <p class="text-xs text-sage flex items-center gap-2">
                     <i data-lucide="check" class="w-3.5 h-3.5" />
                     {validation()?.needsGitInit
                       ? 'Folder exists (Git will be initialized)'
@@ -371,22 +540,21 @@ export const ProjectSetup: Component = () => {
                   </p>
                 </Show>
                 <Show when={!validation()?.valid && validation()?.error}>
-                  <p class="text-sm text-terra flex items-center gap-2">
+                  <p class="text-xs text-terra flex items-center gap-2">
                     <i data-lucide="alert-circle" class="w-3.5 h-3.5" />
                     {validation()?.error}
                   </p>
                 </Show>
               </Show>
-              <p class="text-muted-foreground text-sm">
-                Local folder for your project workspace
-              </p>
             </div>
           </Show>
 
           {/* Git Repository URL */}
           <Show when={startingPointType() === 'gitRepo'}>
             <div class="grid gap-2">
-              <label for="git-url">Repository URL</label>
+              <label for="git-url" class="text-sm font-medium text-wool-300">
+                Repository URL
+              </label>
               <input
                 id="git-url"
                 type="text"
@@ -397,34 +565,33 @@ export const ProjectSetup: Component = () => {
               />
               {/* Validation feedback */}
               <Show when={validating()}>
-                <p class="text-sm text-wool-500 flex items-center gap-2">
+                <p class="text-xs text-wool-500 flex items-center gap-2">
                   <span class="spinner w-3 h-3" />
                   Validating...
                 </p>
               </Show>
               <Show when={!validating() && validation()}>
                 <Show when={validation()?.valid}>
-                  <p class="text-sm text-sage flex items-center gap-2">
+                  <p class="text-xs text-sage flex items-center gap-2">
                     <i data-lucide="check" class="w-3.5 h-3.5" />
                     Valid repository
                   </p>
                 </Show>
                 <Show when={!validation()?.valid && validation()?.error}>
-                  <p class="text-sm text-terra flex items-center gap-2">
+                  <p class="text-xs text-terra flex items-center gap-2">
                     <i data-lucide="alert-circle" class="w-3.5 h-3.5" />
                     {validation()?.error}
                   </p>
                 </Show>
               </Show>
-              <p class="text-muted-foreground text-sm">
-                Git repository URL (HTTPS or SSH)
-              </p>
             </div>
 
             {/* Branch Selection */}
             <Show when={branches().length > 0}>
               <div class="grid gap-2">
-                <label for="git-branch">Branch</label>
+                <label for="git-branch" class="text-sm font-medium text-wool-300">
+                  Branch
+                </label>
                 <select
                   id="git-branch"
                   class="select"
@@ -435,56 +602,70 @@ export const ProjectSetup: Component = () => {
                     {(branch) => <option value={branch}>{branch}</option>}
                   </For>
                 </select>
-                <p class="text-muted-foreground text-sm">
-                  Branch to check out
-                </p>
               </div>
             </Show>
           </Show>
 
           {/* Greenfield info */}
           <Show when={startingPointType() === 'greenfield'}>
-            <div class="p-4 bg-pasture-900 rounded-lg border border-pasture-600">
+            <div
+              class="p-4 rounded-lg"
+              style={{
+                background: 'rgba(212, 165, 116, 0.05)',
+                border: '1px solid rgba(212, 165, 116, 0.15)',
+              }}
+            >
               <div class="flex items-start gap-3">
-                <i data-lucide="sparkles" class="w-5 h-5 text-amber-500 mt-0.5" />
-                <div>
-                  <p class="text-sm text-wool-300 font-medium">Start from scratch</p>
-                  <p class="text-sm text-wool-500 mt-1">
-                    A new empty workspace will be created for your project.
-                    Perfect for brand new projects.
-                  </p>
-                </div>
+                <i data-lucide="info" class="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                <p class="text-sm text-wool-400">
+                  A new empty workspace will be created for your project.
+                  Perfect for brand new projects without existing code.
+                </p>
               </div>
             </div>
           </Show>
-
-          {/* Action buttons */}
-          <div class="flex gap-4">
-            <button
-              type="submit"
-              class="btn"
-              disabled={!isValid() || creating()}
-            >
-              <Show when={creating()}>
-                <span class="spinner w-4 h-4" />
-              </Show>
-              <Show when={!creating()}>
-                <i data-lucide="plus" class="w-4 h-4" />
-              </Show>
-              Create Project
-            </button>
-            <Show when={project.projects().length > 0}>
-              <button
-                type="button"
-                class="btn-ghost"
-                onClick={() => project.cancelProjectSetup()}
-                disabled={creating()}
-              >
-                Cancel
-              </button>
-            </Show>
-          </div>
         </form>
+
+        {/* Footer */}
+        <div
+          class="px-6 py-4 flex items-center justify-end gap-3"
+          style={{
+            'border-top': '1px solid rgba(63, 63, 70, 0.4)',
+            background: 'rgba(0, 0, 0, 0.2)',
+          }}
+        >
+          <button
+            type="button"
+            class="px-4 py-2 rounded-lg text-sm font-medium text-wool-400 hover:text-wool-200 hover:bg-pasture-700 transition-all"
+            onClick={() => project.cancelProjectSetup()}
+            disabled={creating()}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="px-5 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2"
+            style={{
+              background: isValid()
+                ? 'linear-gradient(180deg, rgba(212,165,116,0.9) 0%, rgba(180,140,100,0.9) 100%)'
+                : 'rgba(63, 63, 70, 0.5)',
+              color: isValid() ? 'rgb(26, 26, 26)' : 'rgb(138, 133, 128)',
+              cursor: isValid() && !creating() ? 'pointer' : 'not-allowed',
+            }}
+            disabled={!isValid() || creating()}
+            onClick={handleCreate}
+          >
+            <Show when={creating()}>
+              <span class="spinner w-4 h-4" />
+            </Show>
+            <Show when={!creating()}>
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+            </Show>
+            Create Project
+          </button>
+        </div>
       </div>
     </div>
   );

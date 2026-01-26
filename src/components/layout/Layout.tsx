@@ -58,10 +58,7 @@ export const Layout: Component = () => {
     });
   });
 
-  // Determine what modal content to show
-  const showProjectSetup = () => project.showProjectSetup();
-  const showProjectSettings = () => project.showProjectSettings();
-
+  // Determine what content to show
   const showDraftEditor = () => {
     const detail = runs.runDetail();
     return runs.selectedRun() && detail?.status === 'draft';
@@ -72,10 +69,9 @@ export const Layout: Component = () => {
     return runs.selectedRun() && detail?.status !== 'draft';
   };
 
-  // Show OneBoard when no modals/overlays are active
+  // Show OneBoard as base when not viewing run details
   const showOneBoard = () =>
-    !showProjectSetup() &&
-    !showProjectSettings() &&
+    !project.showProjectSettings() &&
     !showDraftEditor() &&
     !showRunDetail();
 
@@ -86,18 +82,14 @@ export const Layout: Component = () => {
       <TitleBar />
 
       {/* Main Content Area */}
-      <main class="flex-1 flex overflow-hidden bg-pasture-900">
-        {/* OneBoard - Primary canvas view */}
+      <main class="flex-1 flex overflow-hidden bg-pasture-900 relative">
+        {/* OneBoard - Primary canvas view (always rendered as base layer) */}
         <Show when={showOneBoard()}>
           <OneBoard />
         </Show>
 
-        {/* Modal-style overlays */}
-        <Show when={showProjectSetup()}>
-          <ProjectSetup />
-        </Show>
-
-        <Show when={showProjectSettings()}>
+        {/* Full-screen overlays (replace OneBoard) */}
+        <Show when={project.showProjectSettings()}>
           <ProjectSettings />
         </Show>
 
@@ -107,6 +99,11 @@ export const Layout: Component = () => {
 
         <Show when={showRunDetail()}>
           <RunDetail />
+        </Show>
+
+        {/* Modal overlays (float above OneBoard) */}
+        <Show when={project.showProjectSetup()}>
+          <ProjectSetup />
         </Show>
       </main>
 

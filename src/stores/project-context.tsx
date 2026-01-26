@@ -94,9 +94,8 @@ export const ProjectProvider: ParentComponent = (props) => {
   const restoreProjectSelection = () => {
     const projectList = projects();
 
-    // No projects - show project setup for first-time users
+    // No projects - let OneBoard show its empty state (user can trigger setup from there)
     if (projectList.length === 0) {
-      setShowProjectSetup(true);
       return;
     }
 
@@ -146,10 +145,6 @@ export const ProjectProvider: ParentComponent = (props) => {
   };
 
   const cancelProjectSetup = () => {
-    // Don't allow canceling if there are no projects - user must create one
-    if (projects().length === 0) {
-      return;
-    }
     setShowProjectSetup(false);
   };
 
@@ -209,8 +204,6 @@ export const ProjectProvider: ParentComponent = (props) => {
   // Listen for cancel project setup
   createEffect(() => {
     const handler = () => {
-      // Don't allow canceling if there are no projects
-      if (projects().length === 0) return;
       setShowProjectSetup(false);
     };
     window.addEventListener('cancel-project-setup', handler);
