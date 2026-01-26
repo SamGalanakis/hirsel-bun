@@ -23,6 +23,8 @@ pub mod config;
 #[cfg(feature = "server")]
 pub mod coordinator_api;
 pub mod credentials;
+pub mod delivery;
+pub mod dispatch;
 pub mod draft;
 pub mod error;
 pub mod eval;
@@ -30,6 +32,7 @@ pub mod files;
 pub mod git;
 #[cfg(feature = "server")]
 pub mod git_http;
+pub mod github;
 pub mod gyp_chat;
 pub mod gyp_context;
 pub mod http_client;
@@ -148,7 +151,19 @@ pub use draft::{
 pub use gyp_context::GypContext;
 
 // Board Gyp context (slugify already exported from names module)
-pub use board_gyp_context::BoardGypContext;
+pub use board_gyp_context::{BoardContextScope, BoardGypContext};
+
+// GitHub client
+pub use github::{GitHubClient, GitHubError, GitHubResult, MergeInfo, PrInfo};
+
+// Dispatch service
+pub use dispatch::{
+    DispatchConfig, DispatchError, DispatchInfo, DispatchResult as DispatchServiceResult,
+    DispatchService,
+};
+
+// Delivery service
+pub use delivery::{DeliveryError, DeliveryResult, DeliveryService, DeliveryState, PushResult};
 
 // SpecFlow
 pub use specflow::{
@@ -160,8 +175,10 @@ pub use specflow::{
 
 // Board service (tree operations and agent file sync)
 pub use board::{
-    BoardError, BoardJson, BoardResult, BoardService, Bookmark as BoardBookmark, CreateEvalRequest,
-    CreateTaskRequest, Eval as BoardEval, EvalStatus as BoardEvalStatus,
-    SyncResult as BoardSyncResult, Task as BoardTask, TaskStatus as BoardTaskStatus, TaskTree,
-    UpdateEvalRequest, UpdateTaskRequest,
+    BoardError, BoardJson, BoardResult, BoardService, BoardSnapshot, BoardStorage,
+    Bookmark as BoardBookmark, CreateEvalRequest, CreateTaskRequest, DispatchPreview,
+    Eval as BoardEval, EvalStatus as BoardEvalStatus, ExportScope, LocalBoardStorage,
+    RemoteBoardStorage, SyncResult as BoardSyncResult, Task as BoardTask, TaskFile,
+    TaskRun as BoardTaskRun, TaskStatus as BoardTaskStatus, TaskTree, UpdateEvalRequest,
+    UpdateTaskRequest,
 };

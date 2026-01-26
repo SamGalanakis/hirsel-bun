@@ -883,4 +883,291 @@ impl SQLiteState {
         )?;
         Ok(())
     }
+
+    // =========================================================================
+    // Dispatch Tracking
+    // =========================================================================
+
+    /// Get the source task IDs (JSON array of task IDs from board dispatch)
+    pub fn get_source_task_ids(&self) -> StateResult<Option<Vec<String>>> {
+        match self.db.query_row(
+            "SELECT source_task_ids FROM state WHERE id = 1",
+            [],
+            |row| row.get::<_, Option<String>>(0),
+        ) {
+            Ok(Some(json)) => {
+                let ids: Vec<String> = serde_json::from_str(&json).unwrap_or_default();
+                Ok(Some(ids))
+            }
+            Ok(None) => Ok(None),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set the source task IDs
+    pub fn set_source_task_ids(&self, task_ids: Option<&[String]>) -> StateResult<()> {
+        let json = task_ids.map(|ids| serde_json::to_string(ids).unwrap_or_default());
+        self.db.execute(
+            "UPDATE state SET source_task_ids = ?1, updated_at = ?2 WHERE id = 1",
+            params![json, self.now()],
+        )?;
+        Ok(())
+    }
+
+    /// Get the board snapshot (JSON snapshot of board state at dispatch)
+    pub fn get_board_snapshot(&self) -> StateResult<Option<String>> {
+        match self
+            .db
+            .query_row("SELECT board_snapshot FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set the board snapshot
+    pub fn set_board_snapshot(&self, snapshot: Option<&str>) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET board_snapshot = ?1, updated_at = ?2 WHERE id = 1",
+            params![snapshot, self.now()],
+        )?;
+        Ok(())
+    }
+
+    /// Get the branch-off commit SHA
+    pub fn get_branch_off_commit(&self) -> StateResult<Option<String>> {
+        match self.db.query_row(
+            "SELECT branch_off_commit FROM state WHERE id = 1",
+            [],
+            |row| row.get::<_, Option<String>>(0),
+        ) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set the branch-off commit SHA
+    pub fn set_branch_off_commit(&self, commit: Option<&str>) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET branch_off_commit = ?1, updated_at = ?2 WHERE id = 1",
+            params![commit, self.now()],
+        )?;
+        Ok(())
+    }
+
+    // =========================================================================
+    // Delivery Tracking
+    // =========================================================================
+
+    /// Get the delivery status
+    pub fn get_delivery_status(&self) -> StateResult<super::types::DeliveryStatus> {
+        match self.db.query_row(
+            "SELECT delivery_status FROM state WHERE id = 1",
+            [],
+            |row| row.get::<_, Option<String>>(0),
+        ) {
+            Ok(Some(val)) => Ok(super::types::DeliveryStatus::from_str(&val)
+                .unwrap_or(super::types::DeliveryStatus::Pending)),
+            Ok(None) => Ok(super::types::DeliveryStatus::Pending),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(super::types::DeliveryStatus::Pending),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set the delivery status
+    pub fn set_delivery_status(&self, status: super::types::DeliveryStatus) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET delivery_status = ?1, updated_at = ?2 WHERE id = 1",
+            params![status.as_str(), self.now()],
+        )?;
+        Ok(())
+    }
+
+    /// Get the delivery branch name
+    pub fn get_delivery_branch(&self) -> StateResult<Option<String>> {
+        match self.db.query_row(
+            "SELECT delivery_branch FROM state WHERE id = 1",
+            [],
+            |row| row.get::<_, Option<String>>(0),
+        ) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set the delivery branch name
+    pub fn set_delivery_branch(&self, branch: Option<&str>) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET delivery_branch = ?1, updated_at = ?2 WHERE id = 1",
+            params![branch, self.now()],
+        )?;
+        Ok(())
+    }
+
+    /// Get the PR URL
+    pub fn get_pr_url(&self) -> StateResult<Option<String>> {
+        match self
+            .db
+            .query_row("SELECT pr_url FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set the PR URL
+    pub fn set_pr_url(&self, url: Option<&str>) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET pr_url = ?1, updated_at = ?2 WHERE id = 1",
+            params![url, self.now()],
+        )?;
+        Ok(())
+    }
+
+    /// Get the PR number
+    pub fn get_pr_number(&self) -> StateResult<Option<i64>> {
+        match self
+            .db
+            .query_row("SELECT pr_number FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<i64>>(0)
+            }) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set the PR number
+    pub fn set_pr_number(&self, number: Option<i64>) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET pr_number = ?1, updated_at = ?2 WHERE id = 1",
+            params![number, self.now()],
+        )?;
+        Ok(())
+    }
+
+    /// Get the merged_at timestamp
+    pub fn get_merged_at(&self) -> StateResult<Option<String>> {
+        match self
+            .db
+            .query_row("SELECT merged_at FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set the merged_at timestamp
+    pub fn set_merged_at(&self, timestamp: Option<&str>) -> StateResult<()> {
+        let ts = timestamp
+            .map(|s| s.to_string())
+            .or_else(|| Some(self.now()));
+        self.db.execute(
+            "UPDATE state SET merged_at = ?1, updated_at = ?2 WHERE id = 1",
+            params![ts, self.now()],
+        )?;
+        Ok(())
+    }
+
+    /// Get the abandoned_at timestamp
+    pub fn get_abandoned_at(&self) -> StateResult<Option<String>> {
+        match self
+            .db
+            .query_row("SELECT abandoned_at FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set the abandoned_at timestamp
+    pub fn set_abandoned_at(&self, timestamp: Option<&str>) -> StateResult<()> {
+        let ts = timestamp
+            .map(|s| s.to_string())
+            .or_else(|| Some(self.now()));
+        self.db.execute(
+            "UPDATE state SET abandoned_at = ?1, updated_at = ?2 WHERE id = 1",
+            params![ts, self.now()],
+        )?;
+        Ok(())
+    }
+
+    // =========================================================================
+    // Merge State
+    // =========================================================================
+
+    /// Get the staleness commits count
+    pub fn get_staleness_commits(&self) -> StateResult<u32> {
+        match self.db.query_row(
+            "SELECT staleness_commits FROM state WHERE id = 1",
+            [],
+            |row| row.get::<_, Option<i64>>(0),
+        ) {
+            Ok(Some(val)) => Ok(val as u32),
+            Ok(None) => Ok(0),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set the staleness commits count
+    pub fn set_staleness_commits(&self, count: u32) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET staleness_commits = ?1, updated_at = ?2 WHERE id = 1",
+            params![count as i64, self.now()],
+        )?;
+        Ok(())
+    }
+
+    /// Get the merge state
+    pub fn get_merge_state(&self) -> StateResult<super::types::MergeState> {
+        match self
+            .db
+            .query_row("SELECT merge_state FROM state WHERE id = 1", [], |row| {
+                row.get::<_, Option<String>>(0)
+            }) {
+            Ok(Some(val)) => Ok(super::types::MergeState::from_str(&val)
+                .unwrap_or(super::types::MergeState::Unknown)),
+            Ok(None) => Ok(super::types::MergeState::Unknown),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(super::types::MergeState::Unknown),
+            Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Set the merge state
+    pub fn set_merge_state(&self, state: super::types::MergeState) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET merge_state = ?1, updated_at = ?2 WHERE id = 1",
+            params![state.as_str(), self.now()],
+        )?;
+        Ok(())
+    }
+
+    /// Mark run as delivered (set delivery_status and merged_at)
+    pub fn mark_delivered(&self) -> StateResult<()> {
+        self.set_delivery_status(super::types::DeliveryStatus::Merged)?;
+        self.set_merged_at(None)?;
+        self.set_status(Status::Delivered)?;
+        self.log_history("delivered", None)?;
+        Ok(())
+    }
+
+    /// Mark run as abandoned
+    pub fn mark_abandoned(&self) -> StateResult<()> {
+        self.set_delivery_status(super::types::DeliveryStatus::Abandoned)?;
+        self.set_abandoned_at(None)?;
+        self.log_history("abandoned", None)?;
+        Ok(())
+    }
 }

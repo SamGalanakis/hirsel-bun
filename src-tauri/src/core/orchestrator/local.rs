@@ -135,6 +135,9 @@ impl LocalOrchestrator {
             crate::core::state::TaskStatus::Todo => TaskStatus::Todo,
             crate::core::state::TaskStatus::Doing => TaskStatus::Doing,
             crate::core::state::TaskStatus::Done => TaskStatus::Done,
+            crate::core::state::TaskStatus::AwaitingEval => TaskStatus::AwaitingEval,
+            crate::core::state::TaskStatus::Validated => TaskStatus::Validated,
+            crate::core::state::TaskStatus::NeedsRepair => TaskStatus::NeedsRepair,
         };
 
         // Parse blocked_by string into Vec<String>

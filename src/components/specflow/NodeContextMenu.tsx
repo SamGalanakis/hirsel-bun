@@ -27,6 +27,10 @@ interface ContextMenuProps {
   onAskGyp: () => void;
   onSetTaskStatus: (status: BoardTaskStatus) => void;
   onDelete: () => void;
+  // Dispatch actions
+  onDispatch?: () => void;
+  onViewRuns?: () => void;
+  hasRuns?: boolean;
   // Canvas actions (when node is null)
   onAddRootNode: () => void;
   onFitAll: () => void;
@@ -42,6 +46,7 @@ interface MenuItem {
 
 interface MenuSeparator {
   separator: true;
+  showStatus?: boolean; // Marker to show status submenu here
 }
 
 type MenuItemOrSeparator = MenuItem | MenuSeparator;
@@ -80,18 +85,38 @@ export const NodeContextMenu: Component<ContextMenuProps> = (props) => {
     }
 
     // Task context menu
-    return [
+    const items: MenuItemOrSeparator[] = [
       { label: 'Add Child', icon: 'corner-down-right', action: props.onAddChild },
       { label: 'Add Sibling', icon: 'plus-circle', action: props.onAddSibling },
       { label: 'Add Eval', icon: 'check-circle', action: props.onAddEval },
       { separator: true },
       { label: 'Edit', icon: 'pencil', action: props.onEdit },
       { label: 'Ask Gyp', icon: 'sparkles', action: props.onAskGyp },
-      { separator: true },
-      // Status changes are rendered specially below
-      { separator: true },
-      { label: 'Delete', icon: 'trash-2', action: props.onDelete, danger: true },
     ];
+
+    // Add dispatch actions if handler is provided
+    if (props.onDispatch) {
+      items.push({ separator: true });
+      items.push({
+        label: 'Dispatch this branch',
+        icon: 'rocket',
+        action: props.onDispatch,
+      });
+      if (props.hasRuns && props.onViewRuns) {
+        items.push({
+          label: 'View dispatched runs',
+          icon: 'list',
+          action: props.onViewRuns,
+        });
+      }
+    }
+
+    // Status separator with marker for status submenu
+    items.push({ separator: true, showStatus: true });
+    items.push({ separator: true });
+    items.push({ label: 'Delete', icon: 'trash-2', action: props.onDelete, danger: true });
+
+    return items;
   };
 
   return (
@@ -113,7 +138,7 @@ export const NodeContextMenu: Component<ContextMenuProps> = (props) => {
         {(item, index) => {
           if (isSeparator(item)) {
             // Check if we need to render status submenu
-            if (props.node && index() === 6) {
+            if (props.node && item.showStatus) {
               return (
                 <>
                   <div

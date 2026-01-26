@@ -14,7 +14,7 @@ import { ProjectNav } from '../projects/ProjectNav';
 import { ProjectSetup } from '../projects/ProjectSetup';
 import { ProjectSettings } from '../projects/ProjectSettings';
 import { SpecflowBoard } from '../specflow/SpecflowBoard';
-import { DirectChat } from '../chat/DirectChat';
+import { GypMessenger } from '../chat/GypMessenger';
 import { WorkerOutputViewer } from '../workers/WorkerOutputViewer';
 import { AttachPicker } from '../modals/AttachPicker';
 import { HelpModal } from '../modals/HelpModal';
@@ -57,8 +57,8 @@ export const Layout: Component = () => {
 
   // Determine what main content to show
   const showRunList = () =>
-    ((!project.selectedProjectId() && !project.showProjectSetup()) ||
-    (project.selectedProjectId() && project.activeProjectView() === 'runs')) &&
+    project.selectedProjectId() &&
+    project.activeProjectView() === 'runs' &&
     !project.showProjectSettings();
 
   const showProjectSetup = () => project.showProjectSetup() && !project.showProjectSettings();
@@ -121,13 +121,12 @@ export const Layout: Component = () => {
           </div>
         </div>
 
-        {/* Right Panel: AI Chat (slide-out drawer) */}
-        <Show when={app.aiChatOpen()}>
-          <DirectChat />
-        </Show>
       </main>
 
       <StatusBar />
+
+      {/* Gyp Messenger (floats above status bar) */}
+      <GypMessenger />
 
       {/* Modals and overlays */}
       <WorkerOutputViewer />

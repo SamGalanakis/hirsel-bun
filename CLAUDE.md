@@ -7,13 +7,22 @@
 - **NEVER** duplicate logic across CLI/GUI - use shared abstractions
 - If you're refactoring, FINISH the refactor completely - no half measures
 
-## Architecture
-See [`docs/architecture.md`](docs/architecture.md) for system architecture.
+## Documentation
 
-**CRITICAL:** Before implementing any feature or fix:
-1. **READ** `docs/architecture.md` to understand the module structure and traits
+**Before starting work:** Run `ls docs/` and read relevant sections based on your task:
+
+| Doc | When to Read |
+|-----|--------------|
+| `architecture.md` | **Always** - module map, traits, data flow, where to add code |
+| `debugging.md` | Troubleshooting issues, understanding logs |
+| `fly-deployment.md` | Remote/Fly.io runner work |
+| `basecoatui.md` | Building UI components |
+| `design-language.md` | Visual styling, colors, typography |
+| `specflow-plan.md` | SpecFlow board features |
+
+**CRITICAL:**
+1. **READ** `docs/architecture.md` before implementing - use Quick Reference to find files
 2. **UPDATE** `docs/architecture.md` when you add/modify modules, traits, or APIs
-3. Use the Quick Reference table to find the right files to modify
 
 ## No Backwards Compatibility
 Development project - no database migrations needed. Modify schema directly in `src-tauri/src/core/state/mod.rs`.
@@ -137,55 +146,21 @@ cargo build --features s3-storage              # With S3 storage support
 
 ## Fly.io
 
-Deploy coordinator and workers on [Fly.io](https://fly.io).
+See [`docs/fly-deployment.md`](docs/fly-deployment.md) for full Fly.io deployment guide.
 
-### Coordinator Deployment
-
+**Quick start:**
 ```bash
-# One-time setup
+# Coordinator
 fly apps create hirsel-coordinator
-fly volumes create hirsel_data --size 10 --region ams
 fly secrets set HIRSEL_API_KEY=<secret> ANTHROPIC_API_KEY=<key>
-
-# Build and deploy
-cargo build --release --no-default-features --features cli
 fly deploy
-```
 
-### Worker App
-
-```bash
-# Create workers app (machines created on-demand)
+# Workers app (machines created on-demand)
 fly apps create hirsel-workers
-```
 
-### Config
-
-```toml
-[runners.fly]
-[runners.fly.host]
-type = "fly"
-app = "hirsel-workers"
-region = "ams"
-cpus = 2
-memory_mb = 2048
-[runners.fly.container]
-image = "debian:bookworm-slim"
-
-[profiles.fly]
-mode = "remote"
-url = "https://hirsel-coordinator.fly.dev"
-api_key = "your-secret-key"
-default_runner = "fly"
-```
-
-### Usage
-
-```bash
+# Usage
 hirsel go my-feature spec.md --profile fly
 ```
-
-See `docs/architecture.md` for full deployment guide.
 
 ## Git Workflow
 

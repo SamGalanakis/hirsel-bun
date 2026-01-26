@@ -31,25 +31,9 @@ impl LocalRunner {
         Self { container: None }
     }
 
-    /// Check if a process is still alive
+    /// Check if a process is still alive (delegates to workers module)
     pub fn is_pid_alive(pid: u32) -> bool {
-        // PID 0 is the kernel scheduler, never a valid user process
-        // Also, kill(0, sig) sends to the process group, not PID 0
-        if pid == 0 {
-            return false;
-        }
-
-        #[cfg(unix)]
-        {
-            // Send signal 0 to check if process exists
-            unsafe { libc::kill(pid as i32, 0) == 0 }
-        }
-
-        #[cfg(not(unix))]
-        {
-            // On non-Unix platforms, try to read /proc/{pid}
-            std::path::Path::new(&format!("/proc/{}", pid)).exists()
-        }
+        crate::core::workers::is_pid_alive(pid)
     }
 
     /// Kill a process group

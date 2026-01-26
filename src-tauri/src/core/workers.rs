@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 use thiserror::Error;
 use tracing::{info, warn};
 
-// Re-export WorkerSpawnConfig from runner module for backwards compatibility
+// Re-export WorkerSpawnConfig from canonical location (runner module)
 pub use crate::core::runner::WorkerSpawnConfig;
 
 /// Errors that can occur during worker operations
@@ -538,7 +538,7 @@ pub fn reconcile_stale_workers() -> Vec<(String, String)> {
 
                 if is_docker {
                     // Docker workers are managed by container runtime, not by PID
-                    // TODO: Could check if container is still running via docker ps
+                    // Container status would require docker ps check - skip for now
                     continue;
                 }
 

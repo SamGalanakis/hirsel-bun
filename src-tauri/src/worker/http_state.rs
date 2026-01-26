@@ -731,6 +731,49 @@ impl HttpState {
         Ok(())
     }
 
+    pub async fn eval_pass(&self, eval_task_id: &str, worker_name: &str) -> HttpStateResult<()> {
+        #[derive(Serialize)]
+        struct EvalPassRequest {
+            worker_name: String,
+        }
+        let _: SuccessResponse = self
+            .post(
+                &format!("/tasks/{}/eval_pass", eval_task_id),
+                &EvalPassRequest {
+                    worker_name: worker_name.to_string(),
+                },
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn eval_fail(
+        &self,
+        eval_task_id: &str,
+        worker_name: &str,
+        feedback: &str,
+    ) -> HttpStateResult<String> {
+        #[derive(Serialize)]
+        struct EvalFailRequest {
+            worker_name: String,
+            feedback: String,
+        }
+        #[derive(Deserialize)]
+        struct EvalFailResponse {
+            repair_task_id: String,
+        }
+        let result: EvalFailResponse = self
+            .post(
+                &format!("/tasks/{}/eval_fail", eval_task_id),
+                &EvalFailRequest {
+                    worker_name: worker_name.to_string(),
+                    feedback: feedback.to_string(),
+                },
+            )
+            .await?;
+        Ok(result.repair_task_id)
+    }
+
     pub async fn get_active_workers(&self) -> HttpStateResult<Vec<Worker>> {
         #[derive(Deserialize)]
         struct WorkersResponse {
@@ -882,6 +925,19 @@ impl StateAccess for HttpState {
 
     async fn set_task_tokens(&self, task_id: &str, tokens: i64) -> StateAccessResult<()> {
         Ok(HttpState::set_task_tokens(self, task_id, tokens).await?)
+    }
+
+    async fn eval_pass(&self, eval_task_id: &str, worker_name: &str) -> StateAccessResult<()> {
+        Ok(HttpState::eval_pass(self, eval_task_id, worker_name).await?)
+    }
+
+    async fn eval_fail(
+        &self,
+        eval_task_id: &str,
+        worker_name: &str,
+        feedback: &str,
+    ) -> StateAccessResult<String> {
+        Ok(HttpState::eval_fail(self, eval_task_id, worker_name, feedback).await?)
     }
 
     async fn add_worker(

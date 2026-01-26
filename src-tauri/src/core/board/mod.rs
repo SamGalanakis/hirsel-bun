@@ -12,14 +12,19 @@
 //!
 //! ## Agent Access
 //!
-//! Gyp reads/writes a single JSON file at:
-//! `~/.hirsel/projects/{project_id}/board/board.json`
+//! Each top-level task is stored as a separate JSON file:
+//! `~/.hirsel/projects/{project_id}/board/{task-slug}.json`
+//!
+//! The agent can list files in the directory to see all tasks.
 
+pub mod storage;
 mod types;
 
+pub use storage::{create_board_storage, BoardStorage, LocalBoardStorage, RemoteBoardStorage};
 pub use types::{
-    BoardJson, Bookmark, CreateEvalRequest, CreateTaskRequest, Eval, EvalStatus, SyncResult, Task,
-    TaskStatus, TaskTree, UpdateEvalRequest, UpdateTaskRequest,
+    BoardJson, BoardSnapshot, Bookmark, CreateEvalRequest, CreateTaskRequest, DispatchPreview,
+    Eval, EvalStatus, ExportScope, SyncResult, Task, TaskFile, TaskRun, TaskStatus, TaskTree,
+    UpdateEvalRequest, UpdateTaskRequest,
 };
 
 use std::collections::{HashMap, HashSet};
@@ -75,10 +80,32 @@ CREATE TABLE IF NOT EXISTS board_bookmarks (
     created_at TEXT NOT NULL
 );
 
+-- Task-Run junction table (tracks which runs were dispatched from which tasks)
+CREATE TABLE IF NOT EXISTS task_runs (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL,
+    task_id TEXT NOT NULL,
+    run_name TEXT NOT NULL,
+    dispatched_at TEXT NOT NULL,
+    UNIQUE(project_id, task_id, run_name)
+);
+
+-- File baselines for change detection (hash of last exported content)
+CREATE TABLE IF NOT EXISTS board_file_baselines (
+    project_id INTEGER NOT NULL,
+    task_slug TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, task_slug)
+);
+
 CREATE INDEX IF NOT EXISTS idx_board_tasks_project ON board_tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_board_tasks_parent ON board_tasks(parent_id);
 CREATE INDEX IF NOT EXISTS idx_board_evals_project ON board_evals(project_id);
 CREATE INDEX IF NOT EXISTS idx_board_bookmarks_project ON board_bookmarks(project_id);
+CREATE INDEX IF NOT EXISTS idx_task_runs_project ON task_runs(project_id);
+CREATE INDEX IF NOT EXISTS idx_task_runs_task ON task_runs(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_runs_run ON task_runs(run_name);
 "#;
 
 /// Error type for board operations
@@ -111,7 +138,6 @@ pub struct BoardService {
     project_id: i64,
     profile: Option<OrchestratorProfile>,
     last_sync_time: Option<SystemTime>,
-    baseline_hash: Option<String>,
 }
 
 impl BoardService {
@@ -121,7 +147,6 @@ impl BoardService {
             project_id,
             profile: None,
             last_sync_time: None,
-            baseline_hash: None,
         }
     }
 
@@ -131,7 +156,6 @@ impl BoardService {
             project_id,
             profile: Some(profile),
             last_sync_time: None,
-            baseline_hash: None,
         }
     }
 
@@ -141,11 +165,6 @@ impl BoardService {
             .join("projects")
             .join(self.project_id.to_string())
             .join("board")
-    }
-
-    /// Get the path to board.json
-    fn board_json_path(&self) -> PathBuf {
-        self.board_dir().join("board.json")
     }
 
     /// Ensure the board directory exists
@@ -769,40 +788,148 @@ impl BoardService {
         Ok(())
     }
 
-    // ========== JSON EXPORT/IMPORT FOR GYP ==========
+    // ========== BASELINE TRACKING (DB) ==========
 
-    /// Export board to board.json and establish baseline
-    pub async fn export_for_agent(&mut self) -> BoardResult<PathBuf> {
-        if self.should_use_remote() {
-            return self.export_remote().await;
-        }
-        self.export_local()
+    /// Get the baseline hash for a task file from DB
+    fn get_baseline_hash(&self, slug: &str) -> BoardResult<Option<String>> {
+        let db = self.open_db()?;
+        let hash: Option<String> = db
+            .query_row(
+                "SELECT content_hash FROM board_file_baselines WHERE project_id = ?1 AND task_slug = ?2",
+                params![self.project_id, slug],
+                |row| row.get(0),
+            )
+            .ok();
+        Ok(hash)
     }
 
-    fn export_local(&mut self) -> BoardResult<PathBuf> {
+    /// Set the baseline hash for a task file in DB
+    fn set_baseline_hash(&self, slug: &str, hash: &str) -> BoardResult<()> {
+        let db = self.open_db()?;
+        let now = self.now();
+        db.execute(
+            "INSERT INTO board_file_baselines (project_id, task_slug, content_hash, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(project_id, task_slug) DO UPDATE SET content_hash = ?3, updated_at = ?4",
+            params![self.project_id, slug, hash, now],
+        )?;
+        Ok(())
+    }
+
+    /// Delete a baseline entry
+    fn delete_baseline(&self, slug: &str) -> BoardResult<()> {
+        let db = self.open_db()?;
+        db.execute(
+            "DELETE FROM board_file_baselines WHERE project_id = ?1 AND task_slug = ?2",
+            params![self.project_id, slug],
+        )?;
+        Ok(())
+    }
+
+    /// Get all baseline slugs for this project
+    fn get_all_baseline_slugs(&self) -> BoardResult<HashSet<String>> {
+        let db = self.open_db()?;
+        let mut stmt =
+            db.prepare("SELECT task_slug FROM board_file_baselines WHERE project_id = ?1")?;
+        let rows = stmt.query_map([self.project_id], |row| row.get(0))?;
+        rows.collect::<Result<HashSet<_>, _>>().map_err(Into::into)
+    }
+
+    // ========== JSON EXPORT/IMPORT FOR GYP ==========
+
+    /// Export board to per-task JSON files and establish baseline
+    ///
+    /// Each top-level task gets its own file: `{task-slug}.json`
+    /// Evals are included in each file if they validate any task in that subtree.
+    pub async fn export_for_agent(&mut self, scope: &ExportScope) -> BoardResult<PathBuf> {
+        if self.should_use_remote() {
+            return self.export_remote(scope).await;
+        }
+        self.export_local(scope)
+    }
+
+    fn export_local(&mut self, scope: &ExportScope) -> BoardResult<PathBuf> {
         let board_dir = self.ensure_board_dir()?;
         let task_tree = self.get_task_tree()?;
         let evals = self.get_evals()?;
 
-        let board_json = BoardJson {
-            version: 2,
-            tasks: task_tree,
-            evals,
+        // Clean up legacy board.json on first export
+        let legacy_path = board_dir.join("board.json");
+        if legacy_path.exists() {
+            info!("Removing legacy board.json, migrating to per-task files");
+            std::fs::remove_file(&legacy_path)?;
+        }
+
+        // Determine which tasks to export based on scope
+        let tasks_to_export: Vec<&TaskTree> = match scope {
+            ExportScope::WholeBoard => task_tree.iter().collect(),
+            ExportScope::FocusedTask { task_id, .. } => {
+                task_tree.iter().filter(|t| &t.id == task_id).collect()
+            }
         };
 
-        let json = serde_json::to_string_pretty(&board_json)?;
-        let path = self.board_json_path();
-        std::fs::write(&path, json.as_bytes())?;
+        let mut exported_slugs: HashSet<String> = HashSet::new();
 
-        // Store baseline hash
-        self.baseline_hash = Some(self.hash_content(&json));
+        for task in &tasks_to_export {
+            // Collect all task IDs in this subtree
+            let subtree_ids = Self::collect_subtree_ids(task);
+
+            // Find evals that validate any task in this subtree
+            let related_evals: Vec<Eval> = evals
+                .iter()
+                .filter(|eval| eval.validates.iter().any(|t| subtree_ids.contains(t)))
+                .cloned()
+                .collect();
+
+            // Build task file (minimal - just task + evals)
+            let task_file = TaskFile {
+                task: (*task).clone(),
+                evals: related_evals,
+            };
+
+            // Compute hash and write file
+            let json = serde_json::to_string_pretty(&task_file)?;
+            let content_hash = self.hash_content(&json);
+            let path = board_dir.join(format!("{}.json", task.id));
+            std::fs::write(&path, json.as_bytes())?;
+
+            // Save baseline to DB
+            self.set_baseline_hash(&task.id, &content_hash)?;
+            exported_slugs.insert(task.id.clone());
+            debug!("Exported task file: {:?}", path);
+        }
+
+        // For whole board export, delete stale files and baselines
+        if matches!(scope, ExportScope::WholeBoard) {
+            let baseline_slugs = self.get_all_baseline_slugs()?;
+            for slug in baseline_slugs {
+                if !exported_slugs.contains(&slug) {
+                    let path = board_dir.join(format!("{}.json", slug));
+                    if path.exists() {
+                        std::fs::remove_file(&path)?;
+                        debug!("Deleted stale task file: {:?}", path);
+                    }
+                    self.delete_baseline(&slug)?;
+                }
+            }
+        }
+
         self.last_sync_time = Some(SystemTime::now());
-
-        info!("Exported board to {:?}", path);
+        info!("Exported board to {:?}", board_dir);
         Ok(board_dir)
     }
 
-    /// Import changes from board.json (baseline-diff sync)
+    /// Collect all task IDs in a subtree
+    fn collect_subtree_ids(task: &TaskTree) -> HashSet<String> {
+        let mut ids = HashSet::new();
+        ids.insert(task.id.clone());
+        for child in &task.children {
+            ids.extend(Self::collect_subtree_ids(child));
+        }
+        ids
+    }
+
+    /// Import changes from per-task JSON files (baseline-diff sync)
     pub async fn import_from_agent(&mut self) -> BoardResult<SyncResult> {
         if self.should_use_remote() {
             return self.import_remote().await;
@@ -811,173 +938,188 @@ impl BoardService {
     }
 
     fn import_local(&mut self) -> BoardResult<SyncResult> {
-        let path = self.board_json_path();
-        if !path.exists() {
+        let board_dir = self.board_dir();
+        if !board_dir.exists() {
             return Ok(SyncResult::default());
         }
 
-        let content = std::fs::read_to_string(&path)?;
-        let current_hash = self.hash_content(&content);
+        let mut result = SyncResult::default();
+        let mut seen_slugs: HashSet<String> = HashSet::new();
+        let mut all_evals: HashMap<String, Eval> = HashMap::new();
 
-        // Check if file changed from baseline
-        if let Some(ref baseline) = self.baseline_hash {
-            if baseline == &current_hash {
-                debug!("Board file unchanged from baseline, skipping import");
-                return Ok(SyncResult::default());
+        // Read all task files
+        for entry in std::fs::read_dir(&board_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            // Skip non-json files and legacy board.json
+            if path.extension().map(|e| e != "json").unwrap_or(true) {
+                continue;
             }
+            let slug = match path.file_stem() {
+                Some(s) => s.to_string_lossy().to_string(),
+                None => continue,
+            };
+            if slug == "board" {
+                continue; // Skip legacy file
+            }
+
+            seen_slugs.insert(slug.clone());
+
+            // Read and parse file
+            let content = std::fs::read_to_string(&path)?;
+            let task_file: TaskFile = serde_json::from_str(&content)?;
+
+            // Compute current hash
+            let current_hash = self.hash_content(&content);
+
+            // Check if changed from baseline (in DB)
+            if let Some(baseline_hash) = self.get_baseline_hash(&slug)? {
+                if baseline_hash == current_hash {
+                    debug!("Task file {} unchanged from baseline, skipping", slug);
+                    continue;
+                }
+            }
+
+            debug!("Importing changed task file: {}", slug);
+
+            // Import task tree
+            self.import_task_tree(&task_file.task, None, 0, &mut result)?;
+
+            // Collect evals (will be deduplicated by ID)
+            for eval in task_file.evals {
+                all_evals.insert(eval.id.clone(), eval);
+            }
+
+            // Update baseline in DB
+            self.set_baseline_hash(&slug, &current_hash)?;
         }
 
-        let board_json: BoardJson = serde_json::from_str(&content)?;
-        let result = self.import_board_json(&board_json)?;
+        // Import all collected evals
+        self.import_evals(&all_evals.into_values().collect::<Vec<_>>(), &mut result)?;
 
-        // Update baseline
-        self.baseline_hash = Some(current_hash);
+        // Handle deletions: baselines in DB but file not in directory
+        let baseline_slugs = self.get_all_baseline_slugs()?;
+        let stale_slugs: Vec<String> = baseline_slugs
+            .into_iter()
+            .filter(|s| !seen_slugs.contains(s))
+            .collect();
+
+        for slug in stale_slugs {
+            // Delete this task tree from DB
+            self.delete_task_cascade(&slug)?;
+            result.tasks_deleted.push(slug.clone());
+            self.delete_baseline(&slug)?;
+        }
+
+        result.changes = result.tasks_added.len()
+            + result.tasks_updated.len()
+            + result.tasks_deleted.len()
+            + result.evals_added.len()
+            + result.evals_updated.len()
+            + result.evals_deleted.len();
+
         self.last_sync_time = Some(SystemTime::now());
 
-        info!(
-            "Imported board: tasks added={}, updated={}, deleted={}; evals added={}, updated={}, deleted={}",
-            result.tasks_added.len(),
-            result.tasks_updated.len(),
-            result.tasks_deleted.len(),
-            result.evals_added.len(),
-            result.evals_updated.len(),
-            result.evals_deleted.len()
-        );
+        if result.changes > 0 {
+            info!(
+                "Imported board: tasks added={}, updated={}, deleted={}; evals added={}, updated={}, deleted={}",
+                result.tasks_added.len(),
+                result.tasks_updated.len(),
+                result.tasks_deleted.len(),
+                result.evals_added.len(),
+                result.evals_updated.len(),
+                result.evals_deleted.len()
+            );
+        }
 
         Ok(result)
     }
 
-    /// Import board JSON data
-    fn import_board_json(&self, board_json: &BoardJson) -> BoardResult<SyncResult> {
+    /// Import a task tree recursively
+    fn import_task_tree(
+        &self,
+        task: &TaskTree,
+        parent_id: Option<&str>,
+        position: i32,
+        result: &mut SyncResult,
+    ) -> BoardResult<()> {
         let db = self.open_db()?;
         let now = self.now();
-        let mut result = SyncResult::default();
 
-        // === Import Tasks ===
-        let existing_task_ids: HashSet<String> = {
-            let mut stmt = db.prepare("SELECT id FROM board_tasks WHERE project_id = ?1")?;
-            let rows = stmt.query_map([self.project_id], |row| row.get(0))?;
-            rows.collect::<Result<HashSet<_>, _>>()?
-        };
+        // Check if task exists
+        let exists: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM board_tasks WHERE id = ?1 AND project_id = ?2)",
+            params![&task.id, self.project_id],
+            |row| row.get(0),
+        )?;
 
-        let mut seen_task_ids: HashSet<String> = HashSet::new();
-
-        // Process tasks recursively
-        fn process_task(
-            db: &Connection,
-            project_id: i64,
-            task: &TaskTree,
-            parent_id: Option<&str>,
-            position: i32,
-            now: &str,
-            existing: &HashSet<String>,
-            seen: &mut HashSet<String>,
-            result: &mut SyncResult,
-        ) -> rusqlite::Result<()> {
-            seen.insert(task.id.clone());
-
-            if existing.contains(&task.id) {
-                // Update existing task
-                db.execute(
-                    "UPDATE board_tasks SET parent_id = ?1, position = ?2, name = ?3, status = ?4,
-                     content = ?5, x = ?6, y = ?7, updated_at = ?8 WHERE id = ?9 AND project_id = ?10",
-                    params![
-                        parent_id,
-                        position,
-                        &task.name,
-                        task.status.as_str(),
-                        &task.content,
-                        task.x,
-                        task.y,
-                        now,
-                        &task.id,
-                        project_id
-                    ],
-                )?;
-                result.tasks_updated.push(task.id.clone());
-            } else {
-                // Insert new task
-                db.execute(
-                    "INSERT INTO board_tasks (id, project_id, parent_id, position, name, status,
-                     content, x, y, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                    params![
-                        &task.id,
-                        project_id,
-                        parent_id,
-                        position,
-                        &task.name,
-                        task.status.as_str(),
-                        &task.content,
-                        task.x,
-                        task.y,
-                        now,
-                        now
-                    ],
-                )?;
-                result.tasks_added.push(task.id.clone());
-            }
-
-            // Process children
-            for (i, child) in task.children.iter().enumerate() {
-                process_task(
-                    db,
-                    project_id,
-                    child,
-                    Some(&task.id),
-                    i as i32,
-                    now,
-                    existing,
-                    seen,
-                    result,
-                )?;
-            }
-
-            Ok(())
-        }
-
-        // Process root tasks
-        for (i, task) in board_json.tasks.iter().enumerate() {
-            process_task(
-                &db,
-                self.project_id,
-                task,
-                None,
-                i as i32,
-                &now,
-                &existing_task_ids,
-                &mut seen_task_ids,
-                &mut result,
+        if exists {
+            // Update existing task
+            db.execute(
+                "UPDATE board_tasks SET parent_id = ?1, position = ?2, name = ?3, status = ?4,
+                 content = ?5, x = ?6, y = ?7, updated_at = ?8 WHERE id = ?9 AND project_id = ?10",
+                params![
+                    parent_id,
+                    position,
+                    &task.name,
+                    task.status.as_str(),
+                    &task.content,
+                    task.x,
+                    task.y,
+                    &now,
+                    &task.id,
+                    self.project_id
+                ],
             )?;
+            result.tasks_updated.push(task.id.clone());
+        } else {
+            // Insert new task
+            db.execute(
+                "INSERT INTO board_tasks (id, project_id, parent_id, position, name, status,
+                 content, x, y, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    &task.id,
+                    self.project_id,
+                    parent_id,
+                    position,
+                    &task.name,
+                    task.status.as_str(),
+                    &task.content,
+                    task.x,
+                    task.y,
+                    &now,
+                    &now
+                ],
+            )?;
+            result.tasks_added.push(task.id.clone());
         }
 
-        // Delete tasks not in the file
-        for id in &existing_task_ids {
-            if !seen_task_ids.contains(id) {
-                db.execute(
-                    "DELETE FROM board_tasks WHERE id = ?1 AND project_id = ?2",
-                    params![id, self.project_id],
-                )?;
-                result.tasks_deleted.push(id.clone());
-            }
+        // Process children
+        for (i, child) in task.children.iter().enumerate() {
+            self.import_task_tree(child, Some(&task.id), i as i32, result)?;
         }
 
-        // === Import Evals ===
-        let existing_eval_ids: HashSet<String> = {
-            let mut stmt = db.prepare("SELECT id FROM board_evals WHERE project_id = ?1")?;
-            let rows = stmt.query_map([self.project_id], |row| row.get(0))?;
-            rows.collect::<Result<HashSet<_>, _>>()?
-        };
+        Ok(())
+    }
 
-        let mut seen_eval_ids: HashSet<String> = HashSet::new();
+    /// Import evals (upsert, deduped by ID)
+    fn import_evals(&self, evals: &[Eval], result: &mut SyncResult) -> BoardResult<()> {
+        let db = self.open_db()?;
+        let now = self.now();
 
-        for eval in &board_json.evals {
-            seen_eval_ids.insert(eval.id.clone());
+        for eval in evals {
             let validates_json =
                 serde_json::to_string(&eval.validates).unwrap_or_else(|_| "[]".to_string());
 
-            if existing_eval_ids.contains(&eval.id) {
-                // Update existing eval
+            let exists: bool = db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM board_evals WHERE id = ?1 AND project_id = ?2)",
+                params![&eval.id, self.project_id],
+                |row| row.get(0),
+            )?;
+
+            if exists {
                 db.execute(
                     "UPDATE board_evals SET name = ?1, status = ?2, content = ?3, validates = ?4,
                      x = ?5, y = ?6, updated_at = ?7 WHERE id = ?8 AND project_id = ?9",
@@ -995,7 +1137,6 @@ impl BoardService {
                 )?;
                 result.evals_updated.push(eval.id.clone());
             } else {
-                // Insert new eval
                 db.execute(
                     "INSERT INTO board_evals (id, project_id, name, status, content, validates, x, y, created_at, updated_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
@@ -1016,25 +1157,18 @@ impl BoardService {
             }
         }
 
-        // Delete evals not in the file
-        for id in &existing_eval_ids {
-            if !seen_eval_ids.contains(id) {
-                db.execute(
-                    "DELETE FROM board_evals WHERE id = ?1 AND project_id = ?2",
-                    params![id, self.project_id],
-                )?;
-                result.evals_deleted.push(id.clone());
-            }
-        }
+        Ok(())
+    }
 
-        result.changes = result.tasks_added.len()
-            + result.tasks_updated.len()
-            + result.tasks_deleted.len()
-            + result.evals_added.len()
-            + result.evals_updated.len()
-            + result.evals_deleted.len();
-
-        Ok(result)
+    /// Delete a task and all its descendants (cascade delete)
+    fn delete_task_cascade(&self, task_id: &str) -> BoardResult<()> {
+        let db = self.open_db()?;
+        // CASCADE will handle children
+        db.execute(
+            "DELETE FROM board_tasks WHERE id = ?1 AND project_id = ?2",
+            params![task_id, self.project_id],
+        )?;
+        Ok(())
     }
 
     /// Sync file changes to database (detect changes and import)
@@ -1043,17 +1177,34 @@ impl BoardService {
             return self.import_remote().await;
         }
 
-        let path = self.board_json_path();
-        if !path.exists() {
+        let board_dir = self.board_dir();
+        if !board_dir.exists() {
             return Ok(SyncResult::default());
         }
 
-        // Check mtime
-        let mtime = std::fs::metadata(&path)?.modified()?;
+        // Check if any file was modified since last sync
+        let mut any_changed = false;
         if let Some(last) = self.last_sync_time {
-            if mtime <= last {
-                return Ok(SyncResult::default());
+            for entry in std::fs::read_dir(&board_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.extension().map(|e| e == "json").unwrap_or(false) {
+                    if let Ok(meta) = std::fs::metadata(&path) {
+                        if let Ok(mtime) = meta.modified() {
+                            if mtime > last {
+                                any_changed = true;
+                                break;
+                            }
+                        }
+                    }
+                }
             }
+        } else {
+            any_changed = true;
+        }
+
+        if !any_changed {
+            return Ok(SyncResult::default());
         }
 
         self.import_local()
@@ -1066,12 +1217,12 @@ impl BoardService {
 
     // ========== REMOTE MODE ==========
 
-    async fn export_remote(&self) -> BoardResult<PathBuf> {
+    async fn export_remote(&self, scope: &ExportScope) -> BoardResult<PathBuf> {
         let client = self.remote_client()?;
         let path: String = client
             .post(
                 &format!("/api/board/{}/export", self.project_id),
-                &serde_json::json!({}),
+                &serde_json::json!({ "scope": scope }),
             )
             .await?;
         Ok(PathBuf::from(path))
@@ -1090,12 +1241,166 @@ impl BoardService {
 
     // ========== SYNC VARIANTS (for blocking contexts) ==========
 
-    pub fn export_local_sync(&mut self) -> BoardResult<PathBuf> {
-        self.export_local()
+    pub fn export_local_sync(&mut self, scope: &ExportScope) -> BoardResult<PathBuf> {
+        self.export_local(scope)
     }
 
     pub fn import_local_sync(&mut self) -> BoardResult<SyncResult> {
         self.import_local()
+    }
+
+    // ========== TASK-RUN TRACKING ==========
+
+    /// Record that a run was dispatched from a task
+    pub fn record_task_run(&self, task_id: &str, run_name: &str) -> BoardResult<TaskRun> {
+        let db = self.open_db()?;
+        let now = self.now();
+
+        db.execute(
+            "INSERT INTO task_runs (project_id, task_id, run_name, dispatched_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![self.project_id, task_id, run_name, &now],
+        )?;
+
+        let id = db.last_insert_rowid();
+        Ok(TaskRun {
+            id,
+            project_id: self.project_id,
+            task_id: task_id.to_string(),
+            run_name: run_name.to_string(),
+            dispatched_at: now,
+        })
+    }
+
+    /// Get all runs dispatched from a specific task
+    pub fn get_runs_for_task(&self, task_id: &str) -> BoardResult<Vec<TaskRun>> {
+        let db = self.open_db()?;
+        let mut stmt = db.prepare(
+            "SELECT id, project_id, task_id, run_name, dispatched_at
+             FROM task_runs
+             WHERE project_id = ?1 AND task_id = ?2
+             ORDER BY dispatched_at DESC",
+        )?;
+
+        let runs = stmt
+            .query_map(params![self.project_id, task_id], |row| {
+                Ok(TaskRun {
+                    id: row.get("id")?,
+                    project_id: row.get("project_id")?,
+                    task_id: row.get("task_id")?,
+                    run_name: row.get("run_name")?,
+                    dispatched_at: row.get("dispatched_at")?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(runs)
+    }
+
+    /// Get all task_runs for this project (for showing satellites)
+    pub fn get_all_task_runs(&self) -> BoardResult<Vec<TaskRun>> {
+        let db = self.open_db()?;
+        let mut stmt = db.prepare(
+            "SELECT id, project_id, task_id, run_name, dispatched_at
+             FROM task_runs
+             WHERE project_id = ?1
+             ORDER BY dispatched_at DESC",
+        )?;
+
+        let runs = stmt
+            .query_map([self.project_id], |row| {
+                Ok(TaskRun {
+                    id: row.get("id")?,
+                    project_id: row.get("project_id")?,
+                    task_id: row.get("task_id")?,
+                    run_name: row.get("run_name")?,
+                    dispatched_at: row.get("dispatched_at")?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(runs)
+    }
+
+    /// Delete a task_run record (e.g., when run is abandoned)
+    pub fn delete_task_run(&self, run_name: &str) -> BoardResult<()> {
+        let db = self.open_db()?;
+        db.execute(
+            "DELETE FROM task_runs WHERE project_id = ?1 AND run_name = ?2",
+            params![self.project_id, run_name],
+        )?;
+        Ok(())
+    }
+
+    // ========== DISPATCH HELPERS ==========
+
+    /// Get all task IDs in a subtree (task + all descendants)
+    pub fn get_subtree_task_ids(&self, root_task_id: &str) -> BoardResult<Vec<String>> {
+        let tasks = self.get_tasks()?;
+        let mut result = vec![root_task_id.to_string()];
+
+        fn collect_descendants(parent_id: &str, tasks: &[Task], result: &mut Vec<String>) {
+            for task in tasks {
+                if task.parent_id.as_deref() == Some(parent_id) {
+                    result.push(task.id.clone());
+                    collect_descendants(&task.id, tasks, result);
+                }
+            }
+        }
+
+        collect_descendants(root_task_id, &tasks, &mut result);
+        Ok(result)
+    }
+
+    /// Get evals that validate any of the given tasks
+    pub fn get_evals_for_tasks(&self, task_ids: &[String]) -> BoardResult<Vec<Eval>> {
+        let evals = self.get_evals()?;
+        let task_id_set: HashSet<&String> = task_ids.iter().collect();
+
+        let matching_evals = evals
+            .into_iter()
+            .filter(|eval| eval.validates.iter().any(|t| task_id_set.contains(t)))
+            .collect();
+
+        Ok(matching_evals)
+    }
+
+    /// Create a dispatch preview for a task subtree
+    pub fn preview_dispatch(&self, root_task_id: &str) -> BoardResult<DispatchPreview> {
+        let task_ids = self.get_subtree_task_ids(root_task_id)?;
+        let evals = self.get_evals_for_tasks(&task_ids)?;
+        let eval_ids: Vec<String> = evals.iter().map(|e| e.id.clone()).collect();
+
+        Ok(DispatchPreview {
+            task_count: task_ids.len(),
+            eval_count: eval_ids.len(),
+            task_ids,
+            eval_ids,
+        })
+    }
+
+    /// Create a board snapshot for a dispatch
+    pub fn create_dispatch_snapshot(&self, task_ids: &[String]) -> BoardResult<BoardSnapshot> {
+        let tasks = self.get_tasks()?;
+        let task_id_set: HashSet<&String> = task_ids.iter().collect();
+
+        // Filter tasks to only include those in the dispatch scope
+        let filtered_tasks: Vec<Task> = tasks
+            .into_iter()
+            .filter(|t| task_id_set.contains(&t.id))
+            .collect();
+
+        // Build tree from filtered tasks
+        let tree = self.build_task_tree(&filtered_tasks);
+
+        // Get evals for these tasks
+        let evals = self.get_evals_for_tasks(task_ids)?;
+
+        Ok(BoardSnapshot {
+            tasks: tree,
+            evals,
+            dispatched_at: self.now(),
+        })
     }
 }
 

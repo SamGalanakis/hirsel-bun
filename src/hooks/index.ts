@@ -5,4 +5,4 @@ export {
   createDebouncedSignal,
   useDebouncedEffect,
 } from './use-debounce';
-export { useBoardChat } from './use-board-chat';
+export { useGypChat, type GypChatContext } from './use-gyp-chat';

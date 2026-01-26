@@ -83,7 +83,12 @@ export const ProjectProvider: ParentComponent = (props) => {
 
   const restoreProjectSelection = () => {
     const projectList = projects();
-    if (projectList.length === 0) return;
+
+    // No projects - show project setup for first-time users
+    if (projectList.length === 0) {
+      setShowProjectSetup(true);
+      return;
+    }
 
     // Try to restore saved selection
     const savedId = localStorage.getItem(STORAGE_KEY);
@@ -131,6 +136,10 @@ export const ProjectProvider: ParentComponent = (props) => {
   };
 
   const cancelProjectSetup = () => {
+    // Don't allow canceling if there are no projects - user must create one
+    if (projects().length === 0) {
+      return;
+    }
     setShowProjectSetup(false);
   };
 
@@ -177,7 +186,11 @@ export const ProjectProvider: ParentComponent = (props) => {
 
   // Listen for cancel project setup
   createEffect(() => {
-    const handler = () => setShowProjectSetup(false);
+    const handler = () => {
+      // Don't allow canceling if there are no projects
+      if (projects().length === 0) return;
+      setShowProjectSetup(false);
+    };
     window.addEventListener('cancel-project-setup', handler);
     onCleanup(() => window.removeEventListener('cancel-project-setup', handler));
   });

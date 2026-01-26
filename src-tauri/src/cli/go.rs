@@ -195,6 +195,7 @@ fn get_or_create_default_project() -> GoResult<i64> {
                 docs_path: None,
                 persist_docs_changes: None,
                 description: Some("Auto-created default project".to_string()),
+                target_branch: None,
             })
             .map_err(|e| {
                 GoError::InvalidProject(format!("Failed to create default project: {}", e))

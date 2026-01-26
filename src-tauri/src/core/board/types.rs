@@ -267,3 +267,70 @@ pub struct Bookmark {
     pub zoom: f64,
     pub created_at: String,
 }
+
+// =============================================================================
+// Dispatch Types
+// =============================================================================
+
+/// A record of a run dispatched from a task
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskRun {
+    pub id: i64,
+    pub project_id: i64,
+    pub task_id: String,
+    pub run_name: String,
+    pub dispatched_at: String,
+}
+
+/// Preview of what will be dispatched from a task
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchPreview {
+    pub task_ids: Vec<String>,
+    pub eval_ids: Vec<String>,
+    pub task_count: usize,
+    pub eval_count: usize,
+}
+
+/// Board snapshot taken at dispatch time
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoardSnapshot {
+    pub tasks: Vec<TaskTree>,
+    pub evals: Vec<Eval>,
+    pub dispatched_at: String,
+}
+
+// =============================================================================
+// Per-Task File Storage Types
+// =============================================================================
+
+/// A task file containing a top-level task tree and related evals
+///
+/// This is the minimal format Gyp sees - just the task and evals, nothing else.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskFile {
+    /// The top-level task and its subtree
+    pub task: TaskTree,
+    /// Evals that validate any task in this subtree
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evals: Vec<Eval>,
+}
+
+/// Scope for board export/context operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ExportScope {
+    /// Whole board - all tasks exported as separate files
+    WholeBoard,
+    /// Focused on a specific task tree
+    FocusedTask { task_id: String, task_name: String },
+}
+
+impl Default for ExportScope {
+    fn default() -> Self {
+        Self::WholeBoard
+    }
+}

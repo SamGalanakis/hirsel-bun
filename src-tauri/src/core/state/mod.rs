@@ -61,7 +61,24 @@ CREATE TABLE IF NOT EXISTS state (
     docs_path TEXT,
     persist_docs_changes INTEGER DEFAULT 1,
     project_id INTEGER,
-    project_name TEXT
+    project_name TEXT,
+
+    -- Dispatch tracking
+    source_task_ids TEXT,      -- JSON array of task IDs from board
+    board_snapshot TEXT,       -- JSON snapshot of board state at dispatch
+    branch_off_commit TEXT,    -- Target branch commit SHA at dispatch
+
+    -- Delivery tracking
+    delivery_status TEXT DEFAULT 'pending',  -- pending/pushed/pr_open/merged/abandoned
+    delivery_branch TEXT,      -- e.g., "hirsel/run-name"
+    pr_url TEXT,               -- GitHub/GitLab PR URL
+    pr_number INTEGER,
+    merged_at TEXT,
+    abandoned_at TEXT,
+
+    -- Merge state
+    staleness_commits INTEGER DEFAULT 0,  -- Commits on target since branch-off
+    merge_state TEXT DEFAULT 'unknown'    -- unknown/clean/conflicts
 );
 
 CREATE TABLE IF NOT EXISTS workers (
@@ -101,7 +118,13 @@ CREATE TABLE IF NOT EXISTS tasks (
     pending_done_at TEXT,
     tokens_used INTEGER,
     parent_id TEXT,
-    blocked_by TEXT
+    blocked_by TEXT,
+    -- Eval system columns
+    task_type TEXT DEFAULT 'work',      -- 'work' | 'eval'
+    validates TEXT,                      -- JSON array of task IDs (eval tasks only)
+    eval_result TEXT,                    -- 'pass' | 'fail' | null
+    eval_feedback TEXT,                  -- Feedback if eval failed
+    board_task_id TEXT                   -- Original board task ID for tracking
 );
 
 CREATE TABLE IF NOT EXISTS evals (

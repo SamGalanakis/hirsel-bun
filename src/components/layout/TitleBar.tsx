@@ -202,15 +202,6 @@ export const TitleBar: Component = () => {
       </Show>
 
       <div class="flex items-center gap-1">
-        {/* Gyp Button */}
-        <button
-          onClick={() => app.toggleAiChat()}
-          class="p-1 rounded hover:bg-pasture-700 text-wool-300 relative"
-          classList={{ 'bg-pasture-700': app.aiChatOpen() }}
-        >
-          <i data-lucide="sparkles" class="w-4 h-4" />
-        </button>
-
         {/* Notifications */}
         <Notifications />
 

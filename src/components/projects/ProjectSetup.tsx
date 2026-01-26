@@ -473,14 +473,16 @@ export const ProjectSetup: Component = () => {
               </Show>
               Create Project
             </button>
-            <button
-              type="button"
-              class="btn-ghost"
-              onClick={() => project.cancelProjectSetup()}
-              disabled={creating()}
-            >
-              Cancel
-            </button>
+            <Show when={project.projects().length > 0}>
+              <button
+                type="button"
+                class="btn-ghost"
+                onClick={() => project.cancelProjectSetup()}
+                disabled={creating()}
+              >
+                Cancel
+              </button>
+            </Show>
           </div>
         </form>
       </div>

@@ -195,6 +195,68 @@ impl std::fmt::Display for WorkerStatus {
     }
 }
 
+/// Task type - work (implementation) or eval (validation)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskType {
+    #[default]
+    Work,
+    Eval,
+}
+
+impl TaskType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TaskType::Work => "work",
+            TaskType::Eval => "eval",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "eval" => TaskType::Eval,
+            _ => TaskType::Work,
+        }
+    }
+}
+
+impl std::fmt::Display for TaskType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Eval result - pass or fail
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalResult {
+    Pass,
+    Fail,
+}
+
+impl EvalResult {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EvalResult::Pass => "pass",
+            EvalResult::Fail => "fail",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "pass" => Some(EvalResult::Pass),
+            "fail" => Some(EvalResult::Fail),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for EvalResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
 /// Task status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -202,6 +264,9 @@ pub enum TaskStatus {
     Todo,
     Doing,
     Done,
+    AwaitingEval, // Work task done, waiting for eval
+    Validated,    // Work task done + eval passed
+    NeedsRepair,  // Eval failed, repair task created
 }
 
 impl TaskStatus {
@@ -210,6 +275,9 @@ impl TaskStatus {
             TaskStatus::Todo => "todo",
             TaskStatus::Doing => "doing",
             TaskStatus::Done => "done",
+            TaskStatus::AwaitingEval => "awaiting_eval",
+            TaskStatus::Validated => "validated",
+            TaskStatus::NeedsRepair => "needs_repair",
         }
     }
 
@@ -218,12 +286,116 @@ impl TaskStatus {
             "todo" => Some(TaskStatus::Todo),
             "doing" => Some(TaskStatus::Doing),
             "done" => Some(TaskStatus::Done),
+            "awaiting_eval" => Some(TaskStatus::AwaitingEval),
+            "validated" => Some(TaskStatus::Validated),
+            "needs_repair" => Some(TaskStatus::NeedsRepair),
+            _ => None,
+        }
+    }
+
+    /// Check if this status represents a completed state (for blocking purposes)
+    pub fn is_complete(&self) -> bool {
+        matches!(self, TaskStatus::Done | TaskStatus::Validated)
+    }
+
+    /// Check if this status represents a validated state
+    pub fn is_validated(&self) -> bool {
+        matches!(self, TaskStatus::Validated)
+    }
+}
+
+impl std::fmt::Display for TaskStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Delivery status - tracks the publication state of a run's changes
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryStatus {
+    Pending,   // Not yet delivered
+    Pushed,    // Branch on remote, no PR
+    PrOpen,    // PR created
+    Merged,    // Merged to target
+    Abandoned, // Discarded
+}
+
+impl DeliveryStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DeliveryStatus::Pending => "pending",
+            DeliveryStatus::Pushed => "pushed",
+            DeliveryStatus::PrOpen => "pr_open",
+            DeliveryStatus::Merged => "merged",
+            DeliveryStatus::Abandoned => "abandoned",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "pending" => Some(DeliveryStatus::Pending),
+            "pushed" => Some(DeliveryStatus::Pushed),
+            "pr_open" => Some(DeliveryStatus::PrOpen),
+            "merged" => Some(DeliveryStatus::Merged),
+            "abandoned" => Some(DeliveryStatus::Abandoned),
+            _ => None,
+        }
+    }
+
+    /// Check if delivery is terminal (no further actions possible)
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, DeliveryStatus::Merged | DeliveryStatus::Abandoned)
+    }
+}
+
+impl Default for DeliveryStatus {
+    fn default() -> Self {
+        DeliveryStatus::Pending
+    }
+}
+
+impl std::fmt::Display for DeliveryStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Merge state - tracks whether a run can be cleanly merged
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeState {
+    Unknown,   // Not yet checked
+    Clean,     // Auto-merge possible
+    Conflicts, // Needs resolution
+}
+
+impl MergeState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MergeState::Unknown => "unknown",
+            MergeState::Clean => "clean",
+            MergeState::Conflicts => "conflicts",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "unknown" => Some(MergeState::Unknown),
+            "clean" => Some(MergeState::Clean),
+            "conflicts" => Some(MergeState::Conflicts),
             _ => None,
         }
     }
 }
 
-impl std::fmt::Display for TaskStatus {
+impl Default for MergeState {
+    fn default() -> Self {
+        MergeState::Unknown
+    }
+}
+
+impl std::fmt::Display for MergeState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_str())
     }
@@ -312,6 +484,12 @@ pub struct Task {
     pub tokens_used: Option<i64>,
     pub parent_id: Option<String>,
     pub blocked_by: Option<String>,
+    // Eval system fields
+    pub task_type: TaskType,
+    pub validates: Option<String>, // JSON array of task IDs (eval tasks only)
+    pub eval_result: Option<EvalResult>,
+    pub eval_feedback: Option<String>,
+    pub board_task_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

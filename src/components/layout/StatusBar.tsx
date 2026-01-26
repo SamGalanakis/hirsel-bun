@@ -3,6 +3,7 @@
  */
 import { type Component, Show } from 'solid-js';
 import { useApp, useRuns } from '../../stores';
+import { GypMessengerBar } from '../chat/GypMessenger';
 
 export const StatusBar: Component = () => {
   const app = useApp();
@@ -72,6 +73,12 @@ export const StatusBar: Component = () => {
           </span>
         </Show>
       </div>
+
+      {/* Spacer */}
+      <div class="flex-1" />
+
+      {/* Gyp Messenger Bar */}
+      <GypMessengerBar />
     </footer>
   );
 };

@@ -9,6 +9,8 @@ mod chat;
 mod config_cmd;
 mod credentials;
 mod debug;
+mod delivery;
+mod dispatch;
 mod drafts;
 mod events;
 mod files;
@@ -157,5 +159,23 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         specflow::get_board_chat_history,
         specflow::save_board_chat_message,
         specflow::clear_board_chat_history,
+        // Dispatch commands
+        dispatch::preview_dispatch,
+        dispatch::prepare_dispatch,
+        dispatch::record_dispatch,
+        dispatch::get_task_runs,
+        dispatch::get_all_task_runs,
+        dispatch::create_dispatch_snapshot,
+        // Delivery commands
+        delivery::get_delivery_state,
+        delivery::check_merge_state,
+        delivery::get_conflicting_files,
+        delivery::check_staleness,
+        delivery::push_run_branch,
+        delivery::create_run_pr,
+        delivery::auto_merge_run,
+        delivery::generate_pr_title,
+        delivery::generate_pr_body,
+        delivery::delivery_branch_name,
     ]
 }

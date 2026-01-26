@@ -112,6 +112,18 @@ pub trait StateAccess: Send {
 
     async fn set_task_tokens(&self, task_id: &str, tokens: i64) -> StateAccessResult<()>;
 
+    /// Handle eval pass - validates all tasks in the validates list
+    async fn eval_pass(&self, eval_task_id: &str, worker_name: &str) -> StateAccessResult<()>;
+
+    /// Handle eval fail - creates a repair task as child of the eval
+    /// Returns the repair task ID
+    async fn eval_fail(
+        &self,
+        eval_task_id: &str,
+        worker_name: &str,
+        feedback: &str,
+    ) -> StateAccessResult<String>;
+
     // =========================================================================
     // Worker operations
     // =========================================================================
@@ -398,6 +410,24 @@ impl StateAccess for SQLiteState {
 
     async fn set_task_tokens(&self, task_id: &str, tokens: i64) -> StateAccessResult<()> {
         Ok(SQLiteState::set_task_tokens(self, task_id, tokens)?)
+    }
+
+    async fn eval_pass(&self, eval_task_id: &str, worker_name: &str) -> StateAccessResult<()> {
+        Ok(SQLiteState::eval_pass(self, eval_task_id, worker_name)?)
+    }
+
+    async fn eval_fail(
+        &self,
+        eval_task_id: &str,
+        worker_name: &str,
+        feedback: &str,
+    ) -> StateAccessResult<String> {
+        Ok(SQLiteState::eval_fail(
+            self,
+            eval_task_id,
+            worker_name,
+            feedback,
+        )?)
     }
 
     async fn add_worker(

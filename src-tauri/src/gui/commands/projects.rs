@@ -60,6 +60,7 @@ pub async fn create_project_from_path(
             docs_path: None,
             persist_docs_changes: None,
             description: None,
+            target_branch: None,
         };
         return store.create_project(&req).map_err(|e| e.to_string());
     }
@@ -74,6 +75,7 @@ pub async fn create_project_from_path(
         docs_path: None,
         persist_docs_changes: None,
         description: None,
+        target_branch: None,
     };
 
     store.create_project(&req).map_err(|e| e.to_string())
@@ -113,6 +115,7 @@ pub async fn create_project(
         docs_path: None,
         persist_docs_changes: None,
         description: None,
+        target_branch: None,
     };
 
     store.create_project(&req).map_err(|e| e.to_string())

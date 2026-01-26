@@ -119,6 +119,9 @@ pub fn run_tasks(run_name: &str, json_output: bool) -> Result<String, TaskError>
                 TaskStatus::Todo => "○",
                 TaskStatus::Doing => "◐",
                 TaskStatus::Done => "●",
+                TaskStatus::AwaitingEval => "◔",
+                TaskStatus::Validated => "✔",
+                TaskStatus::NeedsRepair => "⚒",
             };
 
             let claimed = task

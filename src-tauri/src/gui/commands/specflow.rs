@@ -8,8 +8,8 @@ use std::sync::Arc;
 use futures::StreamExt;
 
 use crate::core::board::{
-    BoardService, Bookmark, CreateEvalRequest, CreateTaskRequest, Eval, EvalStatus, SyncResult,
-    Task, TaskStatus, TaskTree, UpdateEvalRequest, UpdateTaskRequest,
+    BoardService, Bookmark, CreateEvalRequest, CreateTaskRequest, Eval, EvalStatus, ExportScope,
+    SyncResult, Task, TaskStatus, TaskTree, UpdateEvalRequest, UpdateTaskRequest,
 };
 use crate::core::{BoardGypContext, ChatContext, GypChatMessage, GypChatStore, ProjectStore};
 use crate::gui::commands::chat::ChatOrchestratorManager;
@@ -201,23 +201,33 @@ pub async fn delete_bookmark(project_id: i64, bookmark_id: String) -> Result<(),
 
 // ========== BOARD SYNC COMMANDS ==========
 
-/// Export board to agent JSON file
+/// Export board to agent JSON files
 ///
-/// Creates/updates board.json at `~/.hirsel/projects/{project_id}/board/board.json`
+/// Creates/updates per-task JSON files at `~/.hirsel/projects/{project_id}/board/`
+/// If focus_task_id/focus_task_name are provided, only exports that task.
 /// Returns the path to the board directory.
 #[tauri::command]
-pub async fn export_board_for_agent(project_id: i64) -> Result<String, String> {
+pub async fn export_board_for_agent(
+    project_id: i64,
+    focus_task_id: Option<String>,
+    focus_task_name: Option<String>,
+) -> Result<String, String> {
+    let scope = match (focus_task_id, focus_task_name) {
+        (Some(task_id), Some(task_name)) => ExportScope::FocusedTask { task_id, task_name },
+        _ => ExportScope::WholeBoard,
+    };
+
     let mut service = BoardService::new(project_id);
     let board_dir = service
-        .export_for_agent()
+        .export_for_agent(&scope)
         .await
         .map_err(|e| e.to_string())?;
     Ok(board_dir.to_string_lossy().to_string())
 }
 
-/// Import board from agent JSON file
+/// Import board from agent JSON files
 ///
-/// Reads board.json from the board directory and syncs to the database.
+/// Reads per-task JSON files from the board directory and syncs to the database.
 /// Returns a summary of changes made.
 #[tauri::command]
 pub async fn import_board_from_agent(project_id: i64) -> Result<SyncResult, String> {
@@ -246,12 +256,16 @@ pub async fn poll_board_changes(project_id: i64) -> Result<SyncResult, String> {
 
 /// Start a board chat session with Gyp
 ///
+/// If focus_task_id/focus_task_name are provided, the session is scoped to that task.
+/// Otherwise, the session covers the whole board.
 /// Returns the session ID. Events will be emitted via Tauri events.
 #[tauri::command]
 pub async fn start_board_chat_session(
     app: tauri::AppHandle,
     orchestrator_manager: tauri::State<'_, Arc<ChatOrchestratorManager>>,
     project_id: i64,
+    focus_task_id: Option<String>,
+    focus_task_name: Option<String>,
 ) -> Result<String, String> {
     use crate::core::ChatEvent;
     use tauri::Emitter;
@@ -260,14 +274,24 @@ pub async fn start_board_chat_session(
     let store = ProjectStore::open().map_err(|e| e.to_string())?;
     let _project = store.get_project(project_id).map_err(|e| e.to_string())?;
 
-    // Build the board-specific system prompt
-    let gyp_context = BoardGypContext::new(project_id);
+    // Build scope for export and context
+    let (scope, gyp_context) = match (&focus_task_id, &focus_task_name) {
+        (Some(task_id), Some(task_name)) => (
+            ExportScope::FocusedTask {
+                task_id: task_id.clone(),
+                task_name: task_name.clone(),
+            },
+            BoardGypContext::with_focus(project_id, task_id.clone(), task_name.clone()),
+        ),
+        _ => (ExportScope::WholeBoard, BoardGypContext::new(project_id)),
+    };
+
     let system_prompt = gyp_context.build_system_prompt();
 
     // Export board to files so Gyp can read them (establishes baseline)
     let mut service = BoardService::new(project_id);
     let board_dir = service
-        .export_for_agent()
+        .export_for_agent(&scope)
         .await
         .map_err(|e| format!("Failed to export board: {}", e))?;
 
@@ -342,11 +366,17 @@ pub async fn send_board_chat_message(
         session_id,
         &content[..content.len().min(50)]
     );
-    // Build invocation context if we have task focus
-    let gyp_context = BoardGypContext::new(project_id);
-    let message = match (focus_task_id, focus_task_name) {
-        (Some(id), Some(name)) => gyp_context.build_invocation_context(&id, &name, &content),
-        _ => gyp_context.build_general_context(&content),
+
+    // Build invocation context based on focus
+    let message = match (&focus_task_id, &focus_task_name) {
+        (Some(id), Some(name)) => {
+            let gyp_context = BoardGypContext::with_focus(project_id, id.clone(), name.clone());
+            gyp_context.build_invocation_context(id, name, &content)
+        }
+        _ => {
+            let gyp_context = BoardGypContext::new(project_id);
+            gyp_context.build_general_context(&content)
+        }
     };
 
     // Save user message to history

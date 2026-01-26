@@ -22,6 +22,9 @@ pub struct Project {
     pub docs_path: String,
     pub persist_docs_changes: bool,
     pub description: Option<String>,
+
+    // Delivery configuration
+    pub target_branch: Option<String>, // e.g., "staging", "main" - branch for PR/merge delivery
 }
 
 /// Request to create a new project
@@ -44,6 +47,8 @@ pub struct CreateProjectRequest {
     pub persist_docs_changes: Option<bool>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub target_branch: Option<String>,
 }
 
 /// Request to update a project
@@ -66,4 +71,6 @@ pub struct UpdateProjectRequest {
     pub persist_docs_changes: Option<bool>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub target_branch: Option<String>,
 }

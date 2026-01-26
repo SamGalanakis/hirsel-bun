@@ -1,10 +1,23 @@
 //! Task methods
 //!
 //! Methods for managing tasks: adding, claiming, completing, deleting.
+//!
+//! ## Task Types
+//! - **Work tasks**: Implementation tasks that produce code changes
+//! - **Eval tasks**: Validation tasks that verify work tasks
+//!
+//! ## Task Lifecycle
+//! Work:  todo → doing → done → awaiting_eval → validated
+//!                                ↓ (eval fails)
+//!                           needs_repair → (repair done) → awaiting_eval
+//!
+//! Eval:  todo → doing → done (pass/fail)
+//!                          ↓ (if failed)
+//!                       blocked by repair task
 
 use rusqlite::{params, Row};
 
-use super::types::{StateError, StateResult, Task, TaskStatus};
+use super::types::{EvalResult, StateError, StateResult, Task, TaskStatus, TaskType};
 use super::SQLiteState;
 
 impl SQLiteState {
@@ -26,6 +39,16 @@ impl SQLiteState {
             tokens_used: row.get("tokens_used")?,
             parent_id: row.get("parent_id")?,
             blocked_by: row.get("blocked_by")?,
+            task_type: row
+                .get::<_, Option<String>>("task_type")?
+                .map(|s| TaskType::from_str(&s))
+                .unwrap_or(TaskType::Work),
+            validates: row.get("validates")?,
+            eval_result: row
+                .get::<_, Option<String>>("eval_result")?
+                .and_then(|s| EvalResult::from_str(&s)),
+            eval_feedback: row.get("eval_feedback")?,
+            board_task_id: row.get("board_task_id")?,
         })
     }
 
@@ -48,7 +71,7 @@ impl SQLiteState {
     /// Get children of a task
     pub fn get_children(&self, task_id: &str) -> StateResult<Vec<Task>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by FROM tasks WHERE parent_id = ?1 ORDER BY created_at"
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by, task_type, validates, eval_result, eval_feedback, board_task_id FROM tasks WHERE parent_id = ?1 ORDER BY created_at"
         )?;
         let tasks = stmt
             .query_map(params![task_id], Self::task_from_row)?
@@ -74,6 +97,28 @@ impl SQLiteState {
         parent_id: Option<&str>,
         blocked_by: Option<&[&str]>,
     ) -> StateResult<()> {
+        self.add_task_with_type(
+            task_id,
+            name,
+            parent_id,
+            blocked_by,
+            TaskType::Work,
+            None,
+            None,
+        )
+    }
+
+    /// Add a new task with explicit type and validates
+    pub fn add_task_with_type(
+        &self,
+        task_id: &str,
+        name: &str,
+        parent_id: Option<&str>,
+        blocked_by: Option<&[&str]>,
+        task_type: TaskType,
+        validates: Option<&[&str]>,
+        board_task_id: Option<&str>,
+    ) -> StateResult<()> {
         // Check hierarchy depth limit (max 3 levels)
         if let Some(pid) = parent_id {
             let parent_depth = self.get_task_depth(pid)?;
@@ -92,18 +137,22 @@ impl SQLiteState {
         }
 
         let blocked_by_str = blocked_by.map(|b| b.join(","));
+        let validates_json = validates.map(|v| serde_json::to_string(&v).unwrap_or_default());
 
         match self.db.execute(
-            "INSERT INTO tasks (id, name, status, created_at, parent_id, blocked_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![task_id, name, TaskStatus::Todo.as_str(), self.now(), parent_id, blocked_by_str],
+            "INSERT INTO tasks (id, name, status, created_at, parent_id, blocked_by, task_type, validates, board_task_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![task_id, name, TaskStatus::Todo.as_str(), self.now(), parent_id, blocked_by_str, task_type.as_str(), validates_json, board_task_id],
         ) {
             Ok(_) => {
-                let mut detail = format!("{}: {}", task_id, name);
+                let mut detail = format!("{}: {} ({})", task_id, name, task_type.as_str());
                 if let Some(pid) = parent_id {
                     detail.push_str(&format!(" (parent: {})", pid));
                 }
                 if let Some(b) = blocked_by {
                     detail.push_str(&format!(" (blocked by: {})", b.join(", ")));
+                }
+                if let Some(v) = validates {
+                    detail.push_str(&format!(" (validates: {})", v.join(", ")));
                 }
                 self.log_history("task_add", Some(&detail))?;
                 Ok(())
@@ -118,7 +167,7 @@ impl SQLiteState {
     /// Get all tasks
     pub fn get_tasks(&self) -> StateResult<Vec<Task>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by FROM tasks ORDER BY created_at"
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by, task_type, validates, eval_result, eval_feedback, board_task_id FROM tasks ORDER BY created_at"
         )?;
         let tasks = stmt
             .query_map([], Self::task_from_row)?
@@ -129,7 +178,7 @@ impl SQLiteState {
     /// Get a specific task
     pub fn get_task(&self, task_id: &str) -> StateResult<Option<Task>> {
         let result = self.db.query_row(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by FROM tasks WHERE id = ?1",
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by, task_type, validates, eval_result, eval_feedback, board_task_id FROM tasks WHERE id = ?1",
             params![task_id],
             Self::task_from_row,
         );
@@ -141,6 +190,8 @@ impl SQLiteState {
     }
 
     /// Check if a task is blocked
+    /// For work tasks: blockers must be Validated (or Done if no validating eval)
+    /// For eval tasks: standard blocking on done status
     pub fn is_task_blocked(&self, task_id: &str) -> StateResult<bool> {
         let task = match self.get_task(task_id)? {
             Some(t) => t,
@@ -158,7 +209,21 @@ impl SQLiteState {
             .filter(|s| !s.is_empty())
         {
             if let Some(blocker) = self.get_task(blocker_id)? {
-                if blocker.status != TaskStatus::Done {
+                let is_blocking = match task.task_type {
+                    TaskType::Work => {
+                        // Work tasks require validation (or done if no eval)
+                        if self.has_validating_eval(blocker_id)? {
+                            blocker.status != TaskStatus::Validated
+                        } else {
+                            !blocker.status.is_complete()
+                        }
+                    }
+                    TaskType::Eval => {
+                        // Eval tasks just need completion
+                        !blocker.status.is_complete()
+                    }
+                };
+                if is_blocking {
                     return Ok(true);
                 }
             }
@@ -194,15 +259,42 @@ impl SQLiteState {
     }
 
     /// Get tasks that can be claimed
-    /// Optimized to avoid N+1 queries by building a status lookup map
+    /// Optimized to avoid N+1 queries by building status/type lookup maps
+    ///
+    /// Priority order:
+    /// 1. Eval tasks whose validated tasks are all done/awaiting_eval
+    /// 2. Work tasks that are unblocked
+    ///
+    /// Blocking rules:
+    /// - Work tasks blocked_by other tasks require those tasks to be Validated
+    ///   (or Done if they have no validating eval)
+    /// - Eval tasks are unblocked when all tasks in validates[] are done/awaiting_eval
     pub fn get_claimable_tasks(&self) -> StateResult<Vec<Task>> {
         let tasks = self.get_tasks()?;
 
-        // Build a map of task_id -> status for O(1) blocking checks
+        // Build maps for O(1) lookups
         let status_map: std::collections::HashMap<String, TaskStatus> =
             tasks.iter().map(|t| (t.id.clone(), t.status)).collect();
+        let _type_map: std::collections::HashMap<String, TaskType> =
+            tasks.iter().map(|t| (t.id.clone(), t.task_type)).collect();
 
-        let mut claimable = vec![];
+        // Check if a task has a validating eval (any eval that references it)
+        let mut has_validating_eval: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        for task in &tasks {
+            if task.task_type == TaskType::Eval {
+                if let Some(validates_json) = &task.validates {
+                    if let Ok(validates) = serde_json::from_str::<Vec<String>>(validates_json) {
+                        for tid in validates {
+                            has_validating_eval.insert(tid);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut eval_tasks = vec![];
+        let mut work_tasks = vec![];
 
         for task in tasks {
             if task.status != TaskStatus::Todo {
@@ -214,27 +306,85 @@ impl SQLiteState {
             if task.id == "scope" {
                 continue;
             }
-            // Check blocking using the pre-built map instead of separate queries
-            if let Some(blocked_by) = &task.blocked_by {
-                if !blocked_by.is_empty() {
-                    let is_blocked = blocked_by
-                        .split(',')
-                        .map(|s| s.trim())
-                        .filter(|s| !s.is_empty())
-                        .any(|blocker_id| {
-                            status_map
-                                .get(blocker_id)
-                                .map(|status| *status != TaskStatus::Done)
-                                .unwrap_or(false)
-                        });
-                    if is_blocked {
-                        continue;
+
+            match task.task_type {
+                TaskType::Eval => {
+                    // Eval task: unblocked when all tasks in validates[] are done/awaiting_eval
+                    let is_ready = if let Some(validates_json) = &task.validates {
+                        if let Ok(validates) = serde_json::from_str::<Vec<String>>(validates_json) {
+                            validates.iter().all(|tid| {
+                                status_map
+                                    .get(tid)
+                                    .map(|s| {
+                                        matches!(
+                                            s,
+                                            TaskStatus::Done
+                                                | TaskStatus::AwaitingEval
+                                                | TaskStatus::Validated
+                                        )
+                                    })
+                                    .unwrap_or(false)
+                            })
+                        } else {
+                            false
+                        }
+                    } else {
+                        false // Eval with no validates is not ready
+                    };
+
+                    // Also check blocked_by (for repair flow)
+                    let is_blocked = if let Some(blocked_by) = &task.blocked_by {
+                        !blocked_by.is_empty()
+                            && blocked_by
+                                .split(',')
+                                .map(|s| s.trim())
+                                .filter(|s| !s.is_empty())
+                                .any(|blocker_id| {
+                                    status_map
+                                        .get(blocker_id)
+                                        .map(|status| !status.is_complete())
+                                        .unwrap_or(false)
+                                })
+                    } else {
+                        false
+                    };
+
+                    if is_ready && !is_blocked {
+                        eval_tasks.push(task);
+                    }
+                }
+                TaskType::Work => {
+                    // Work task: blocked_by tasks must be Validated (or Done if no eval)
+                    let is_blocked = if let Some(blocked_by) = &task.blocked_by {
+                        !blocked_by.is_empty()
+                            && blocked_by
+                                .split(',')
+                                .map(|s| s.trim())
+                                .filter(|s| !s.is_empty())
+                                .any(|blocker_id| {
+                                    let blocker_status = status_map.get(blocker_id);
+                                    let blocker_has_eval = has_validating_eval.contains(blocker_id);
+
+                                    match blocker_status {
+                                        Some(TaskStatus::Validated) => false, // Not blocked
+                                        Some(TaskStatus::Done) if !blocker_has_eval => false, // No eval required, done is enough
+                                        _ => true, // Blocked
+                                    }
+                                })
+                    } else {
+                        false
+                    };
+
+                    if !is_blocked {
+                        work_tasks.push(task);
                     }
                 }
             }
-            claimable.push(task);
         }
-        Ok(claimable)
+
+        // Return eval tasks first (higher priority), then work tasks
+        eval_tasks.extend(work_tasks);
+        Ok(eval_tasks)
     }
 
     /// Claim a task for a worker
@@ -340,6 +490,8 @@ impl SQLiteState {
     }
 
     /// Complete a task
+    /// For work tasks: sets status to done (or awaiting_eval if it has a validating eval)
+    /// For eval tasks: use eval_pass or eval_fail instead
     pub fn complete_task(&self, task_id: &str, worker_name: &str) -> StateResult<()> {
         let task = match self.get_task(task_id)? {
             Some(t) => t,
@@ -358,14 +510,31 @@ impl SQLiteState {
             )));
         }
 
+        // For work tasks, check if there's a validating eval
+        let new_status = if task.task_type == TaskType::Work {
+            if self.has_validating_eval(task_id)? {
+                TaskStatus::AwaitingEval
+            } else {
+                TaskStatus::Done
+            }
+        } else {
+            // Eval tasks just go to done (eval_pass/eval_fail handle the result)
+            TaskStatus::Done
+        };
+
         self.db.execute(
             "UPDATE tasks SET status = ?1, completed_at = ?2 WHERE id = ?3",
-            params![TaskStatus::Done.as_str(), self.now(), task_id],
+            params![new_status.as_str(), self.now(), task_id],
         )?;
 
         self.log_history(
             "task_done",
-            Some(&format!("{} by {}", task_id, worker_name)),
+            Some(&format!(
+                "{} by {} ({})",
+                task_id,
+                worker_name,
+                new_status.as_str()
+            )),
         )?;
 
         // Auto-complete parent if all siblings are done
@@ -374,6 +543,170 @@ impl SQLiteState {
         }
 
         Ok(())
+    }
+
+    /// Check if a task has a validating eval
+    pub fn has_validating_eval(&self, task_id: &str) -> StateResult<bool> {
+        let count: i64 = self.db.query_row(
+            "SELECT COUNT(*) FROM tasks WHERE task_type = 'eval' AND validates LIKE ?1",
+            params![format!("%\"{}%", task_id)],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    /// Handle eval pass - validates all tasks in the validates list
+    pub fn eval_pass(&self, eval_task_id: &str, worker_name: &str) -> StateResult<()> {
+        let task = match self.get_task(eval_task_id)? {
+            Some(t) => t,
+            None => {
+                return Err(StateError::NotFound(format!(
+                    "Task '{}' not found",
+                    eval_task_id
+                )))
+            }
+        };
+
+        if task.task_type != TaskType::Eval {
+            return Err(StateError::InvalidState(format!(
+                "Task '{}' is not an eval task",
+                eval_task_id
+            )));
+        }
+
+        if task.status != TaskStatus::Doing || task.claimed_by.as_deref() != Some(worker_name) {
+            return Err(StateError::InvalidState(format!(
+                "Eval task '{}' is not claimed by {}",
+                eval_task_id, worker_name
+            )));
+        }
+
+        // Mark eval as done with pass result
+        self.db.execute(
+            "UPDATE tasks SET status = ?1, completed_at = ?2, eval_result = ?3 WHERE id = ?4",
+            params![
+                TaskStatus::Done.as_str(),
+                self.now(),
+                EvalResult::Pass.as_str(),
+                eval_task_id
+            ],
+        )?;
+
+        // Validate all tasks in the validates list
+        if let Some(validates_json) = &task.validates {
+            if let Ok(validates) = serde_json::from_str::<Vec<String>>(validates_json) {
+                for tid in validates {
+                    self.db.execute(
+                        "UPDATE tasks SET status = ?1 WHERE id = ?2 AND status IN (?3, ?4)",
+                        params![
+                            TaskStatus::Validated.as_str(),
+                            tid,
+                            TaskStatus::Done.as_str(),
+                            TaskStatus::AwaitingEval.as_str()
+                        ],
+                    )?;
+                }
+            }
+        }
+
+        self.log_history(
+            "eval_pass",
+            Some(&format!("{} by {}", eval_task_id, worker_name)),
+        )?;
+
+        Ok(())
+    }
+
+    /// Handle eval fail - creates a repair task as child of the eval
+    pub fn eval_fail(
+        &self,
+        eval_task_id: &str,
+        worker_name: &str,
+        feedback: &str,
+    ) -> StateResult<String> {
+        let task = match self.get_task(eval_task_id)? {
+            Some(t) => t,
+            None => {
+                return Err(StateError::NotFound(format!(
+                    "Task '{}' not found",
+                    eval_task_id
+                )))
+            }
+        };
+
+        if task.task_type != TaskType::Eval {
+            return Err(StateError::InvalidState(format!(
+                "Task '{}' is not an eval task",
+                eval_task_id
+            )));
+        }
+
+        if task.status != TaskStatus::Doing || task.claimed_by.as_deref() != Some(worker_name) {
+            return Err(StateError::InvalidState(format!(
+                "Eval task '{}' is not claimed by {}",
+                eval_task_id, worker_name
+            )));
+        }
+
+        // Create repair task as child of eval
+        let repair_id = format!(
+            "{}-repair-{}",
+            eval_task_id,
+            self.now().replace([':', '-', '.'], "")
+        );
+        let repair_name = format!("Repair: {}", feedback.chars().take(50).collect::<String>());
+
+        self.db.execute(
+            "INSERT INTO tasks (id, name, status, created_at, parent_id, task_type, board_task_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                repair_id,
+                repair_name,
+                TaskStatus::Todo.as_str(),
+                self.now(),
+                eval_task_id,
+                TaskType::Work.as_str(),
+                task.board_task_id
+            ],
+        )?;
+
+        // Mark eval as pending (blocked by repair), set feedback
+        self.db.execute(
+            "UPDATE tasks SET status = ?1, eval_result = ?2, eval_feedback = ?3, blocked_by = ?4, claimed_by = NULL, claimed_at = NULL WHERE id = ?5",
+            params![
+                TaskStatus::Todo.as_str(),
+                EvalResult::Fail.as_str(),
+                feedback,
+                repair_id,
+                eval_task_id
+            ],
+        )?;
+
+        // Mark validated tasks as needs_repair
+        if let Some(validates_json) = &task.validates {
+            if let Ok(validates) = serde_json::from_str::<Vec<String>>(validates_json) {
+                for tid in validates {
+                    self.db.execute(
+                        "UPDATE tasks SET status = ?1 WHERE id = ?2 AND status IN (?3, ?4)",
+                        params![
+                            TaskStatus::NeedsRepair.as_str(),
+                            tid,
+                            TaskStatus::Done.as_str(),
+                            TaskStatus::AwaitingEval.as_str()
+                        ],
+                    )?;
+                }
+            }
+        }
+
+        self.log_history(
+            "eval_fail",
+            Some(&format!(
+                "{} by {} - {}",
+                eval_task_id, worker_name, feedback
+            )),
+        )?;
+
+        Ok(repair_id)
     }
 
     fn maybe_complete_parent(&self, parent_id: &str) -> StateResult<()> {
@@ -551,7 +884,7 @@ impl SQLiteState {
     /// Get claimed task for a worker
     pub fn get_claimed_task(&self, worker_name: &str) -> StateResult<Option<Task>> {
         let result = self.db.query_row(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by FROM tasks WHERE claimed_by = ?1 AND status = ?2",
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by, task_type, validates, eval_result, eval_feedback, board_task_id FROM tasks WHERE claimed_by = ?1 AND status = ?2",
             params![worker_name, TaskStatus::Doing.as_str()],
             Self::task_from_row,
         );

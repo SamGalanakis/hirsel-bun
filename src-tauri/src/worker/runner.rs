@@ -12,7 +12,7 @@
 //! environment variable determines which backend is used.
 
 use crate::cli::{MsgSubcommands, TaskSubcommands, WorkerCommands};
-use crate::core::state::{SQLiteState, StateError, WorkerStatus, WorkerUpdate};
+use crate::core::state::{SQLiteState, StateError, TaskType, WorkerStatus, WorkerUpdate};
 use crate::core::state_access::{StateAccess, StateAccessError};
 use crate::core::Files;
 use crate::worker::http_state::HttpState;
@@ -631,6 +631,82 @@ impl WorkerRunner {
         let docs = files.read_docs(file).map_err(|e| WorkerError::Io(e))?;
 
         Ok(serde_json::to_string(&docs).unwrap_or_else(|_| "{}".to_string()))
+    }
+
+    // =========================================================================
+    // Eval Operations
+    // =========================================================================
+
+    /// Handle eval pass - validates all tasks in the validates list.
+    /// Only available for eval task types.
+    pub fn eval_pass(&self) -> WorkerResult<String> {
+        let worker_name = self.config.worker_name.clone();
+
+        // Get current task and verify it's an eval
+        let task = self
+            .run_async(self.state().get_claimed_task(&worker_name))?
+            .ok_or(WorkerError::NoTaskClaimed)?;
+
+        if task.task_type != TaskType::Eval {
+            return Err(WorkerError::Config(
+                "eval_pass is only available for eval tasks".into(),
+            ));
+        }
+
+        // Call eval_pass on state
+        self.run_async(self.state().eval_pass(&task.id, &worker_name))?;
+
+        // Signal exit after response
+        tracing::info!(
+            "[{}] eval_pass: marking eval {} as passed",
+            self.config.worker_name,
+            task.id
+        );
+
+        Ok(serde_json::json!({
+            "success": true,
+            "task_id": task.id,
+            "result": "pass",
+            "message": "Eval passed. Validated tasks are now marked as validated.",
+        })
+        .to_string())
+    }
+
+    /// Handle eval fail - creates a repair task as child of the eval.
+    /// Only available for eval task types.
+    pub fn eval_fail(&self, feedback: &str) -> WorkerResult<String> {
+        let worker_name = self.config.worker_name.clone();
+
+        // Get current task and verify it's an eval
+        let task = self
+            .run_async(self.state().get_claimed_task(&worker_name))?
+            .ok_or(WorkerError::NoTaskClaimed)?;
+
+        if task.task_type != TaskType::Eval {
+            return Err(WorkerError::Config(
+                "eval_fail is only available for eval tasks".into(),
+            ));
+        }
+
+        // Call eval_fail on state
+        let repair_id = self.run_async(self.state().eval_fail(&task.id, &worker_name, feedback))?;
+
+        tracing::info!(
+            "[{}] eval_fail: eval {} failed, created repair task {}",
+            self.config.worker_name,
+            task.id,
+            repair_id
+        );
+
+        Ok(serde_json::json!({
+            "success": true,
+            "task_id": task.id,
+            "result": "fail",
+            "repair_task_id": repair_id,
+            "feedback": feedback,
+            "message": "Eval failed. A repair task has been created.",
+        })
+        .to_string())
     }
 
     // =========================================================================

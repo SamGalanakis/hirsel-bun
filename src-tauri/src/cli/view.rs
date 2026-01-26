@@ -326,6 +326,9 @@ fn format_task_status_icon(status: &TaskStatus) -> &'static str {
         TaskStatus::Todo => "○",
         TaskStatus::Doing => "●",
         TaskStatus::Done => "✓",
+        TaskStatus::AwaitingEval => "◔",
+        TaskStatus::Validated => "✔",
+        TaskStatus::NeedsRepair => "⚒",
     }
 }
 

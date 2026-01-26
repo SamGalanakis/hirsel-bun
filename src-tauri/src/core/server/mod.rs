@@ -197,6 +197,14 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
             "/api/board/{project_id}/directory",
             get(board::get_board_directory),
         )
+        // Per-task file routes
+        .route("/api/board/{project_id}/tasks", get(board::list_task_files))
+        .route(
+            "/api/board/{project_id}/tasks/{slug}",
+            get(board::get_task_file)
+                .post(board::write_task_file)
+                .delete(board::delete_task_file),
+        )
         // Merge Gyp routes
         .merge(gyp_routes)
         // Apply auth middleware and state

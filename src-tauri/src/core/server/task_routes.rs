@@ -179,7 +179,12 @@ pub fn mark_task_done(state: &SQLiteState, task_id: &str) -> StateResult<()> {
         .ok_or_else(|| crate::core::state::StateError::NotFound(format!("Task '{}'", task_id)))?;
 
     match task.status {
-        TaskStatus::Done => Ok(()), // Already done
+        TaskStatus::Done | TaskStatus::AwaitingEval | TaskStatus::Validated => Ok(()), // Already done or validated
+        TaskStatus::NeedsRepair => {
+            // Needs repair - can be marked done (for abandoning repairs)
+            state.claim_task(task_id, "admin")?;
+            state.complete_task(task_id, "admin")
+        }
         TaskStatus::Doing => {
             // If being worked on, complete it with a placeholder worker name
             state.complete_task(task_id, "admin")

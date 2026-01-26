@@ -28,9 +28,7 @@ import type {
   BoardEvalStatus,
 } from '../../lib/types';
 import { flattenTree, findNodeById } from '../../lib/utils/tree';
-import { useProject } from '../../stores';
-import { useBoardChat } from '../../hooks';
-import { GypChatDrawer } from './GypChatDrawer';
+import { useProject, useApp } from '../../stores';
 import { TaskCard, EvalCard } from './NodeRenderer';
 import { NodeContextMenu } from './NodeContextMenu';
 import {
@@ -269,16 +267,26 @@ export const SpecflowBoard: Component = () => {
   const [newItemName, setNewItemName] = createSignal('');
   let newItemInputRef: HTMLInputElement | undefined;
 
-  // Gyp chat focus
-  const [gypFocusTaskId, setGypFocusTaskId] = createSignal<string | null>(null);
-  const [gypFocusTaskName, setGypFocusTaskName] = createSignal<string | null>(null);
+  // Gyp editing islands (tracked via events from GypMessenger)
+  const [gypEditingIslands, setGypEditingIslands] = createSignal<Set<string>>(new Set());
+  const app = useApp();
 
-  // Board chat hook
-  const boardChat = useBoardChat(() => project.selectedProjectId(), {
-    historyDepth: 10,
-    onEditComplete: async () => {
-      const pid = project.selectedProjectId();
-      if (pid) {
+  // Listen for gyp-editing-islands events from GypMessenger
+  createEffect(() => {
+    const handler = (e: Event) => {
+      const customEvent = e as CustomEvent<Set<string>>;
+      setGypEditingIslands(customEvent.detail);
+    };
+    window.addEventListener('gyp-editing-islands', handler);
+    onCleanup(() => window.removeEventListener('gyp-editing-islands', handler));
+  });
+
+  // Listen for board-refresh events (triggered when Gyp finishes editing)
+  createEffect(() => {
+    const handler = async (e: Event) => {
+      const customEvent = e as CustomEvent<number>;
+      const pid = customEvent.detail;
+      if (pid && pid === project.selectedProjectId()) {
         try {
           await invoke('import_board_from_agent', { projectId: pid });
         } catch (e) {
@@ -286,7 +294,9 @@ export const SpecflowBoard: Component = () => {
         }
         loadData(pid);
       }
-    },
+    };
+    window.addEventListener('board-refresh', handler);
+    onCleanup(() => window.removeEventListener('board-refresh', handler));
   });
 
   // ==========================================================================
@@ -881,9 +891,6 @@ export const SpecflowBoard: Component = () => {
           setNewItemPrompt(null);
         } else if (contextMenu()) {
           setContextMenu(null);
-        } else if (gypFocusTaskId()) {
-          setGypFocusTaskId(null);
-          setGypFocusTaskName(null);
         }
       }
     };
@@ -952,7 +959,7 @@ export const SpecflowBoard: Component = () => {
                     position={pos()!}
                     load={load()}
                     selected={selectedTaskId() === task.id}
-                    editing={boardChat.editingIslands().has(task.name.toLowerCase())}
+                    editing={gypEditingIslands().has(task.name.toLowerCase())}
                     onClick={() => {
                       setSelectedTaskId(task.id);
                       setSelectedEvalId(null);
@@ -961,8 +968,10 @@ export const SpecflowBoard: Component = () => {
                     onContextMenu={(e) => handleContextMenu(e, task.id, null)}
                     onAskGyp={(e) => {
                       e.stopPropagation();
-                      setGypFocusTaskId(task.id);
-                      setGypFocusTaskName(task.name);
+                      window.dispatchEvent(new CustomEvent('gyp-focus-node', {
+                        detail: { id: task.id, name: task.name },
+                      }));
+                      app.setAiChatOpen(true);
                     }}
                     onDragStart={handleTaskDragStart}
                   />
@@ -1080,8 +1089,10 @@ export const SpecflowBoard: Component = () => {
             const cm = contextMenu()!;
             const task = findNodeById(taskTree(), cm.taskId!);
             if (task) {
-              setGypFocusTaskId(task.id);
-              setGypFocusTaskName(task.name);
+              window.dispatchEvent(new CustomEvent('gyp-focus-node', {
+                detail: { id: task.id, name: task.name },
+              }));
+              app.setAiChatOpen(true);
             }
             hideContextMenu();
           }}
@@ -1460,24 +1471,6 @@ export const SpecflowBoard: Component = () => {
           </div>
         </div>
       </Show>
-
-      {/* Gyp Chat Drawer */}
-      <GypChatDrawer
-        projectId={project.selectedProjectId()!}
-        focusNodeId={gypFocusTaskId()}
-        focusNodeName={gypFocusTaskName()}
-        messages={boardChat.messages}
-        currentMessage={boardChat.currentMessage}
-        connected={boardChat.connected}
-        connecting={boardChat.connecting}
-        gypEditing={boardChat.gypEditing}
-        onSend={boardChat.sendMessage}
-        onConnect={boardChat.connect}
-        onFocusNode={(nodeId, nodeName) => {
-          setGypFocusTaskId(nodeId);
-          setGypFocusTaskName(nodeName);
-        }}
-      />
 
       {/* Shimmer CSS */}
       <style>{`

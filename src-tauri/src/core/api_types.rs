@@ -31,6 +31,9 @@ pub enum TaskStatus {
     Todo,
     Doing,
     Done,
+    AwaitingEval,
+    Validated,
+    NeedsRepair,
 }
 
 /// Worker status values

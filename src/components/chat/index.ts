@@ -1,1 +1,1 @@
-export { DirectChat } from './DirectChat';
+export { GypMessenger, GypMessengerBar } from './GypMessenger';

@@ -80,6 +80,9 @@ cargo build --features s3-storage               # With S3 support
 | `project/` | `mod.rs`, `types.rs`, `store.rs` | Project database (global), SpecFlow per-project configuration |
 | `specflow/` | `mod.rs`, `types.rs`, `state.rs` | SpecFlow board data (islands, rows, wires, bookmarks) |
 | `board/` | `mod.rs`, `types.rs` | Board file sync service (local/remote transparent routing) |
+| `github/` | `mod.rs` | GitHub API client (octocrab) with auth fallback (env → gh config → hirsel config) |
+| `dispatch/` | `mod.rs` | Dispatch service: creates runs from board tasks, generates spec/eval, creates work+eval tasks with validates relationship |
+| `delivery/` | `mod.rs` | Delivery service: three-tier delivery (push/PR/merge), conflict detection, staleness checking |
 | `orchestrator/` | `mod.rs` → `Orchestrator` trait, `local.rs`, `remote.rs`, `daemon.rs` | Run orchestration pattern |
 | `lifecycle/` | `mod.rs` → `LifecycleManager` trait, `local.rs`, `remote.rs`, `transitions.rs` | Event-driven state machine |
 | `runner/` | `types.rs` → `Runner` trait, `local.rs`, `fly.rs`, `ssh.rs`, `composed.rs`, `config.rs`, `setup.rs` | Worker host implementations |
@@ -119,13 +122,17 @@ cargo build --features s3-storage               # With S3 support
 | File | Purpose |
 |------|---------|
 | `acp_client.rs` | ACP connection, message handling, prompt building |
-| `runner.rs` | Worker execution loop (`WorkerRunner`) |
+| `runner.rs` | Worker execution loop (`WorkerRunner`), eval_pass/eval_fail handlers |
 | `msg.rs` | Message types and serialization |
-| `mcp.rs` | MCP server for worker tools |
-| `eval_mcp.rs` | MCP server for eval tools |
+| `mcp.rs` | MCP server for worker tools (including eval_pass, eval_fail) |
+| `eval_mcp.rs` | MCP server for legacy eval tools |
 | `remote_runner.rs` | Remote worker entry point |
 | `http_state.rs` | HTTP-based state for remote workers |
 | `file_server.rs` | File upload server for remote workers |
+
+**MCP Eval Tools** (available to eval tasks):
+- `eval_pass` - Mark eval as passed, validate all tasks in `validates[]`
+- `eval_fail(feedback)` - Mark eval as failed, create repair task as child of eval
 
 ### `src-tauri/src/gui/commands/` - Tauri IPC Commands
 
@@ -146,6 +153,8 @@ cargo build --features s3-storage               # With S3 support
 | `debug.rs` | `log_frontend`, `get_version`, `get_process_counts`, `kill_orphaned_acp_processes`, `get_gyp_chat_history`, `save_gyp_message`, `clear_gyp_chat_history` |
 | `projects.rs` | `list_projects`, `get_project`, `create_project_from_path`, `delete_project` |
 | `specflow.rs` | `get_project_islands`, `create_island`, `update_island`, `delete_island`, `create_row`, `update_row`, `delete_row`, `reorder_rows`, `get_wires`, `create_wire`, `delete_wire`, `get_bookmarks`, `save_bookmark`, `delete_bookmark`, `dispatch_rows`, `dispatch_rows_confirm`, `sync_run_status`, `set_task_blocked_by`, `export_board_for_agent`, `import_board_from_agent`, `get_board_directory` |
+| `dispatch.rs` | `preview_dispatch`, `prepare_dispatch`, `record_dispatch`, `get_task_runs`, `get_all_task_runs` |
+| `delivery.rs` | `get_delivery_state`, `push_run_branch`, `create_run_pr`, `auto_merge_run`, `generate_pr_body` |
 
 ### `src-tauri/src/cli/` - CLI Commands
 
@@ -169,12 +178,14 @@ cargo build --features s3-storage               # With S3 support
 | `config.rs` | `hirsel config` | - |
 | `prune.rs` | `hirsel prune` | - |
 | `reset.rs` | `hirsel reset` | - |
-| `improve.rs` | `hirsel improve` | - |
 | `templates.rs` | `hirsel templates` | - |
 | `man.rs` | `hirsel man` | - |
 | `completions.rs` | `hirsel completions` | - |
-| `compact.rs` | `hirsel compact` | - |
 | `test.rs` | `hirsel test <scenario>` | `cli` |
+| `scribe.rs` | `hirsel scribe <run>` | - |
+| `helpers.rs` | Shared helper functions | - |
+| `tui.rs` | Terminal UI for `attach` command | `cli` |
+| `mod.rs` | `hirsel mode <run>`, `hirsel amend <run>` (inline) | - |
 | `acp_bridge.rs` | `hirsel __acp-bridge` | - |
 | `service_worker.rs` | `hirsel __service-worker --type scribe` | `cli` |
 | `mod.rs` | `hirsel clone <run>` (inline) | - |
@@ -359,6 +370,8 @@ pub trait StateAccess: Send {
     async fn set_status(&self, status: Status) -> StateAccessResult<()>;
     async fn add_task(&self, ...) -> StateAccessResult<()>;
     async fn claim_task(&self, ...) -> StateAccessResult<bool>;
+    async fn eval_pass(&self, eval_task_id: &str, worker_name: &str) -> StateAccessResult<()>;
+    async fn eval_fail(&self, eval_task_id: &str, worker_name: &str, feedback: &str) -> StateAccessResult<String>;
     // ... task, message, worker operations
 }
 ```
@@ -366,6 +379,7 @@ pub trait StateAccess: Send {
 - Workers use `HIRSEL_API_URL` environment variable to determine mode
 - Enables same worker binary for local and remote deployment
 - `SQLiteState` for local, `HttpState` for remote
+- `eval_pass`/`eval_fail` handle unified eval workflow for both local and remote workers
 
 ### Board Service (`src-tauri/src/core/board/mod.rs`)
 
@@ -429,13 +443,13 @@ pub trait ChatOrchestrator: Send + Sync {
 ### Run Status (`src-tauri/src/core/state/types.rs`)
 
 ```
-Draft ──start──► Working ──eval──► Eval ──pass──► Done ──deliver──► Delivered
-                    │                  │
-                    │                  ▼
-                  pause            fail (max retries)
-                    │                  │
-                    ▼                  ▼
-                 Paused              Failed
+Draft ──start──► Working ───────────────────────► Done ──deliver──► Delivered
+                    │                                │
+                    │ (all work+eval tasks done)     │
+                  pause                              │
+                    │                                │
+                    ▼                                ▼
+                 Paused              Failed (time limit, manual, etc.)
                     │
                   resume
                     │
@@ -443,13 +457,15 @@ Draft ──start──► Working ──eval──► Eval ──pass──► 
                  Working
 ```
 
+**Note:** Run stays in `Working` throughout both work and eval task execution. Eval tasks are regular tasks in the same worker pool - there is no separate "Eval" run status in the unified model.
+
 | Status | Description | Terminal |
 |--------|-------------|----------|
 | `Draft` | Configured, workers not spawned | No |
-| `Working` | Workers actively running | No |
+| `Working` | Workers actively running (both work and eval tasks) | No |
 | `Paused` | Manually paused by user | No |
-| `Eval` | Evaluation in progress | No |
-| `Done` | Completed successfully | Yes |
+| `Eval` | Legacy: Evaluation in progress (deprecated in unified model) | No |
+| `Done` | Completed successfully (all work tasks validated) | Yes |
 | `Delivered` | Changes pushed to branch | Yes |
 | `Failed` | Run failed (see `failure_reason`) | Yes |
 
@@ -469,6 +485,30 @@ Draft ──start──► Working ──eval──► Eval ──pass──► 
 | `Todo` | Not started |
 | `Doing` | Claimed by worker |
 | `Done` | Completed |
+| `AwaitingEval` | Work task done, waiting for eval |
+| `Validated` | Work task done + eval passed |
+| `NeedsRepair` | Eval failed, repair task created |
+
+### Task Type (`src-tauri/src/core/state/types.rs`)
+
+| Type | Description |
+|------|-------------|
+| `Work` | Implementation task that produces code changes |
+| `Eval` | Validation task that verifies work tasks |
+
+### Task Lifecycle (Unified Eval Model)
+
+```
+WORK:  Todo → Doing → Done → AwaitingEval → Validated
+                               ↓ (eval fails)
+                          NeedsRepair → (repair done) → AwaitingEval
+
+EVAL:  Todo → Doing → Done (pass/fail)
+                          ↓ (if failed)
+                       blocked by repair task
+```
+
+Eval tasks are regular tasks in the same worker pool with `task_type = 'eval'`. When an eval passes, its `validates` tasks are marked `Validated`. When an eval fails, a repair work task is created as a child of the eval.
 
 ---
 
@@ -622,7 +662,7 @@ Daemon handles each ResumeWorker:
 |-------|-------------|---------|
 | `state` | `id=1` | Run metadata (singleton) |
 | `workers` | `id` | Worker processes |
-| `tasks` | `id` (text) | Work items |
+| `tasks` | `id` (text) | Work and eval items (unified task model) |
 | `messages` | `id` | Chat threads |
 | `message_reads` | `(worker_name, thread)` | Read tracking |
 | `worker_events` | `id` | Real-time output streaming |
@@ -645,6 +685,11 @@ Daemon handles each ResumeWorker:
 **tasks:**
 - `id`, `name`, `status`, `claimed_by`, `claimed_at`
 - `parent_id`, `blocked_by`
+- `task_type` - 'work' or 'eval'
+- `validates` - JSON array of task IDs (eval tasks only)
+- `eval_result` - 'pass' or 'fail'
+- `eval_feedback` - Feedback if eval failed
+- `board_task_id` - Original board task ID for tracking
 
 ### Project Database (`~/.hirsel/projects/{id}/specflow.db`)
 

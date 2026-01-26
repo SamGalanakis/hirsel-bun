@@ -191,8 +191,20 @@ export interface RunState {
 // Task Types
 // =============================================================================
 
+/** Task type - work (implementation) or eval (validation) */
+export type TaskType = 'work' | 'eval';
+
+/** Eval result values */
+export type EvalResult = 'pass' | 'fail';
+
 /** Task status values */
-export type TaskStatus = 'todo' | 'doing' | 'done';
+export type TaskStatus =
+  | 'todo'
+  | 'doing'
+  | 'done'
+  | 'awaiting_eval' // Work task done, waiting for eval
+  | 'validated' // Work task done + eval passed
+  | 'needs_repair'; // Eval failed, repair task created
 
 /** Task from the database */
 export interface Task {
@@ -206,6 +218,12 @@ export interface Task {
   blockedBy: string[] | null;
   tokensUsed: number | null;
   createdAt: string;
+  // Eval system fields
+  taskType: TaskType;
+  validates: string[] | null; // Task IDs this eval validates (eval tasks only)
+  evalResult: EvalResult | null;
+  evalFeedback: string | null;
+  boardTaskId: string | null; // Original board task ID for tracking
 }
 
 /** Task with computed display properties */
@@ -520,6 +538,9 @@ export const TASK_ICONS: Record<TaskStatus, string> = {
   todo: '\u25cb', // ○
   doing: '\u25cf', // ●
   done: '\u2713', // ✓
+  awaiting_eval: '\u25d4', // ◔ (half circle - waiting)
+  validated: '\u2714', // ✔ (heavy check - validated)
+  needs_repair: '\u2692', // ⚒ (hammer and pick - repair needed)
 };
 
 /** Worker status icons */
@@ -901,4 +922,138 @@ export const BOARD_EVAL_COLORS: Record<BoardEvalStatus, string> = {
   in_progress: 'amber-500',
   passed: 'sage',
   failed: 'terra',
+};
+
+// =============================================================================
+// Dispatch & Delivery Types
+// =============================================================================
+
+/** Delivery status - tracks the publication state of a run's changes */
+export type DeliveryStatus = 'pending' | 'pushed' | 'pr_open' | 'merged' | 'abandoned';
+
+/** Merge state - tracks whether a run can be cleanly merged */
+export type MergeState = 'unknown' | 'clean' | 'conflicts';
+
+/** A record of a run dispatched from a task */
+export interface TaskRun {
+  id: number;
+  projectId: number;
+  taskId: string;
+  runName: string;
+  dispatchedAt: string;
+}
+
+/** Preview of what will be dispatched from a task */
+export interface DispatchPreview {
+  taskIds: string[];
+  evalIds: string[];
+  taskCount: number;
+  evalCount: number;
+}
+
+/** Board snapshot taken at dispatch time */
+export interface BoardSnapshot {
+  tasks: TaskTree[];
+  evals: BoardEval[];
+  dispatchedAt: string;
+}
+
+/** Configuration for dispatching a run */
+export interface DispatchConfig {
+  runName?: string;
+  targetBranch?: string;
+  workerScale?: string;
+  timeLimitMinutes?: number;
+}
+
+/** Result of a dispatch preparation */
+export interface DispatchInfo {
+  runName: string;
+  runPath: string;
+  taskIds: string[];
+  evalIds: string[];
+  specContent: string;
+  evalContent?: string;
+  targetBranch?: string;
+  branchOffCommit?: string;
+}
+
+/** Current delivery state of a run */
+export interface DeliveryState {
+  status: DeliveryStatus;
+  mergeState: MergeState;
+  stalenessCommits: number;
+  deliveryBranch?: string;
+  prUrl?: string;
+  prNumber?: number;
+  conflictingFiles: string[];
+}
+
+/** Result of a push operation */
+export interface PushResult {
+  branch: string;
+  remote: string;
+  url?: string;
+}
+
+/** Information about a pull request */
+export interface PrInfo {
+  number: number;
+  url: string;
+  title: string;
+  state: string;
+  headBranch: string;
+  baseBranch: string;
+  mergeable?: boolean;
+  merged: boolean;
+}
+
+/** Result of a merge operation */
+export interface MergeInfo {
+  merged: boolean;
+  sha?: string;
+  message: string;
+}
+
+/** Run with dispatch/delivery info for display */
+export interface DispatchedRun {
+  runName: string;
+  status: RunStatus;
+  deliveryStatus: DeliveryStatus;
+  dispatchedAt: string;
+  stalenessCommits: number;
+  mergeState: MergeState;
+  prUrl?: string;
+}
+
+/** Status color mapping for delivery status */
+export const DELIVERY_STATUS_COLORS: Record<DeliveryStatus, string> = {
+  pending: 'wool-500',
+  pushed: 'sky-500',
+  pr_open: 'amber-500',
+  merged: 'sage',
+  abandoned: 'wool-600',
+};
+
+/** Status color mapping for merge state */
+export const MERGE_STATE_COLORS: Record<MergeState, string> = {
+  unknown: 'wool-500',
+  clean: 'sage',
+  conflicts: 'terra',
+};
+
+/** Icons for delivery status */
+export const DELIVERY_STATUS_ICONS: Record<DeliveryStatus, string> = {
+  pending: '\u25cb', // ○
+  pushed: '\u2191', // ↑
+  pr_open: '\u21bb', // ↻
+  merged: '\u2713', // ✓
+  abandoned: '\u2717', // ✗
+};
+
+/** Icons for merge state */
+export const MERGE_STATE_ICONS: Record<MergeState, string> = {
+  unknown: '\u003f', // ?
+  clean: '\u2713', // ✓
+  conflicts: '\u26a0', // ⚠
 };

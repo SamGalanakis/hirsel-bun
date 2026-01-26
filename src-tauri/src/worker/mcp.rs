@@ -284,6 +284,56 @@ fn get_tools() -> Vec<Tool> {
                 }
             }),
         },
+        Tool {
+            name: "eval_pass",
+            description: "Call this when all evaluation criteria pass. Only available for eval tasks. Marks validated tasks as validated.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        Tool {
+            name: "eval_fail",
+            description: "Call this when evaluation fails. Only available for eval tasks. Provide feedback explaining what failed and how to fix it. Creates a repair task.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "feedback": {
+                        "type": "string",
+                        "description": "What failed and how to fix it"
+                    }
+                },
+                "required": ["feedback"]
+            }),
+        },
+    ]
+}
+
+/// Get eval-only tools (for eval task types)
+fn get_eval_tools() -> Vec<Tool> {
+    vec![
+        Tool {
+            name: "eval_pass",
+            description: "Call this when all evaluation criteria pass. Marks validated tasks as validated.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        Tool {
+            name: "eval_fail",
+            description: "Call this when evaluation fails. Provide feedback explaining what failed and how to fix it. Creates a repair task.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "feedback": {
+                        "type": "string",
+                        "description": "What failed and how to fix it"
+                    }
+                },
+                "required": ["feedback"]
+            }),
+        },
     ]
 }
 
@@ -467,6 +517,14 @@ impl McpServer {
             "read_docs" => {
                 let file = args.get("file").and_then(|v| v.as_str());
                 self.runner.read_docs(file)
+            }
+            "eval_pass" => self.runner.eval_pass(),
+            "eval_fail" => {
+                let feedback = args
+                    .get("feedback")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("feedback is required".into()))?;
+                self.runner.eval_fail(feedback)
             }
             _ => Err(WorkerError::Config(format!("Unknown tool: {}", name))),
         }
