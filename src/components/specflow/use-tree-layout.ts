@@ -1,23 +1,12 @@
 /**
  * Tree layout hook using d3-hierarchy
  *
- * Computes node positions for a tree of BoardNodes using
- * d3-hierarchy's tree layout algorithm.
+ * Layout uses fixed dimensions so positions never change when zooming.
+ * Visual rendering uses LOAD (Level of Detail) based on zoom level.
  */
 
 import { hierarchy, tree } from 'd3-hierarchy';
 import type { BoardEval, TaskTree } from '../../lib/types';
-
-export interface LayoutConfig {
-  /** Width of a node (varies by LOAD) */
-  nodeWidth: number;
-  /** Height of a node (varies by LOAD) */
-  nodeHeight: number;
-  /** Horizontal gap between nodes */
-  horizontalGap: number;
-  /** Vertical gap between levels */
-  verticalGap: number;
-}
 
 export interface NodePosition {
   x: number;
@@ -38,25 +27,33 @@ export interface TreeLayoutResult {
   };
 }
 
-/** Default layout configs for different LOAD levels */
-export const LOAD_CONFIGS = {
+/**
+ * Fixed layout dimensions - used for positioning only.
+ * This ensures positions never change when zooming.
+ */
+export const LAYOUT_CONFIG = {
+  nodeWidth: 280,
+  nodeHeight: 180,
+  horizontalGap: 40,
+  verticalGap: 64,
+} as const;
+
+/**
+ * Render configs for different LOAD levels.
+ * These control visual size, not layout position.
+ */
+export const RENDER_CONFIGS = {
   dot: {
     nodeWidth: 24,
     nodeHeight: 24,
-    horizontalGap: 16,
-    verticalGap: 32,
   },
   compact: {
     nodeWidth: 140,
     nodeHeight: 48,
-    horizontalGap: 24,
-    verticalGap: 48,
   },
   full: {
     nodeWidth: 280,
     nodeHeight: 180,
-    horizontalGap: 40,
-    verticalGap: 64,
   },
 } as const;
 
@@ -70,24 +67,20 @@ export function getLOADLevel(zoom: number): LOADLevel {
   return 'full';
 }
 
-/** Get layout config for a zoom level */
-export function getLayoutConfigForZoom(zoom: number): LayoutConfig {
-  return LOAD_CONFIGS[getLOADLevel(zoom)];
+/** Get render config for current LOAD */
+export function getRenderConfig(load: LOADLevel) {
+  return RENDER_CONFIGS[load];
 }
 
 /**
  * Compute tree layout for a list of root nodes and evals
  *
  * Uses d3-hierarchy's tree layout algorithm to position nodes.
- * Multiple root trees are laid out horizontally.
- * Evals are positioned in a row below the tree, aligned with the tasks they validate.
+ * Always uses fixed LAYOUT_CONFIG so positions are stable across zoom levels.
  */
-export function computeTreeLayout(
-  roots: TaskTree[],
-  config: LayoutConfig,
-  evalList: BoardEval[] = [],
-): TreeLayoutResult {
+export function computeTreeLayout(roots: TaskTree[], evalList: BoardEval[] = []): TreeLayoutResult {
   const positions = new Map<string, NodePosition>();
+  const config = LAYOUT_CONFIG;
 
   if (roots.length === 0 && evalList.length === 0) {
     return {
@@ -196,12 +189,11 @@ export function computeTreeLayout(
  * Generate SVG path for an edge from parent to child
  *
  * Uses a curved bezier path for smooth connections.
+ * Always uses LAYOUT_CONFIG dimensions for consistent edge positioning.
  */
-export function generateEdgePath(
-  parentPos: NodePosition,
-  childPos: NodePosition,
-  nodeHeight: number,
-): string {
+export function generateEdgePath(parentPos: NodePosition, childPos: NodePosition): string {
+  const nodeHeight = LAYOUT_CONFIG.nodeHeight;
+
   // Start from bottom center of parent
   const x1 = parentPos.x;
   const y1 = parentPos.y + nodeHeight / 2;
@@ -221,11 +213,11 @@ export function generateEdgePath(
  */
 export function isNodeVisible(
   pos: NodePosition,
-  nodeWidth: number,
-  nodeHeight: number,
-  viewport: { x: number; y: number; width: number; height: number },
+  viewport: { width: number; height: number },
   transform: { x: number; y: number; k: number },
 ): boolean {
+  const { nodeWidth, nodeHeight } = LAYOUT_CONFIG;
+
   // Transform node position to screen coordinates
   const screenX = pos.x * transform.k + transform.x;
   const screenY = pos.y * transform.k + transform.y;

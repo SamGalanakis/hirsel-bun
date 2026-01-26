@@ -4,7 +4,7 @@
  * Renders tasks and evals at different levels of detail based on zoom:
  * - dot: Status dot only (24x24)
  * - compact: Name + status badges (140x48)
- * - full: Complete card with content (280x varies)
+ * - full: Complete card with content (280x180)
  */
 
 import type { Component } from 'solid-js';

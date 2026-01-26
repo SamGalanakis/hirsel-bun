@@ -37,7 +37,7 @@ import {
   computeTreeLayout,
   generateEdgePath,
   getLOADLevel,
-  getLayoutConfigForZoom,
+  LAYOUT_CONFIG,
   type LOADLevel,
   type NodePosition,
 } from './use-tree-layout';
@@ -74,7 +74,6 @@ class CanvasRenderer {
     positions: Map<string, NodePosition>,
     tree: TaskTree[],
     evalList: BoardEval[],
-    nodeHeight: number,
     viewportWidth: number,
     viewportHeight: number
   ) {
@@ -86,8 +85,8 @@ class CanvasRenderer {
     ctx.setTransform(dpr * k, 0, 0, dpr * k, dpr * x, dpr * y);
 
     this.drawGrid(transform, viewportWidth, viewportHeight);
-    this.drawEdges(positions, tree, nodeHeight);
-    this.drawEvalConnections(positions, evalList, nodeHeight);
+    this.drawEdges(positions, tree);
+    this.drawEvalConnections(positions, evalList);
   }
 
   private drawGrid(transform: Transform, vw: number, vh: number) {
@@ -126,7 +125,7 @@ class CanvasRenderer {
     }
   }
 
-  private drawEdges(positions: Map<string, NodePosition>, tree: TaskTree[], nodeHeight: number) {
+  private drawEdges(positions: Map<string, NodePosition>, tree: TaskTree[]) {
     const { ctx } = this;
 
     const drawNodeEdges = (node: TaskTree) => {
@@ -137,7 +136,7 @@ class CanvasRenderer {
         const childPos = positions.get(child.id);
         if (!childPos) continue;
 
-        const path = generateEdgePath(parentPos, childPos, nodeHeight);
+        const path = generateEdgePath(parentPos, childPos);
 
         // Edge glow
         ctx.strokeStyle = 'rgba(212, 165, 116, 0.15)';
@@ -158,7 +157,7 @@ class CanvasRenderer {
     tree.forEach(drawNodeEdges);
   }
 
-  private drawEvalConnections(positions: Map<string, NodePosition>, evalList: BoardEval[], nodeHeight: number) {
+  private drawEvalConnections(positions: Map<string, NodePosition>, evalList: BoardEval[]) {
     const { ctx } = this;
 
     for (const ev of evalList) {
@@ -170,7 +169,7 @@ class CanvasRenderer {
         if (!taskPos) continue;
 
         // Draw dashed line from task to eval
-        const path = generateEdgePath(taskPos, evalPos, nodeHeight);
+        const path = generateEdgePath(taskPos, evalPos);
 
         // Connection glow
         ctx.strokeStyle = 'rgba(16, 185, 129, 0.1)';
@@ -211,10 +210,9 @@ export const SpecflowBoard: Component = () => {
   const [bookmarks, setBookmarks] = createSignal<Bookmark[]>([]);
   const [initialLoading, setInitialLoading] = createSignal(true);
 
-  // Layout
+  // Layout (fixed positions) and LOAD (visual detail level)
   const load = createMemo<LOADLevel>(() => getLOADLevel(transform().k));
-  const layoutConfig = createMemo(() => getLayoutConfigForZoom(transform().k));
-  const layout = createMemo(() => computeTreeLayout(taskTree(), layoutConfig(), evals()));
+  const layout = createMemo(() => computeTreeLayout(taskTree(), evals()));
 
   // Selection - can select either a task or an eval
   const [selectedTaskId, setSelectedTaskId] = createSignal<string | null>(null);
@@ -375,7 +373,6 @@ export const SpecflowBoard: Component = () => {
       getEffectivePositions(),
       taskTree(),
       evals(),
-      layoutConfig().nodeHeight,
       viewportRef.clientWidth,
       viewportRef.clientHeight
     );
