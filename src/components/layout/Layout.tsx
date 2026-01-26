@@ -1,5 +1,9 @@
 /**
  * Main layout component that composes the application structure
+ *
+ * Uses OneBoard as the primary view - a semantic zoom canvas where:
+ * - Zoomed out: See all projects as draggable cards
+ * - Zoomed in: See that project's task/eval board
  */
 import { type Component, Show, createEffect, onCleanup, onMount } from 'solid-js';
 import { useApp, useProject, useRuns, useSelection } from '../../stores';
@@ -10,10 +14,9 @@ import { SvgDefinitions } from './SvgDefinitions';
 import { RunListPanel } from '../runs/RunListPanel';
 import { RunDetail } from '../runs/RunDetail';
 import { DraftEditor } from '../runs/DraftEditor';
-import { ProjectNav } from '../projects/ProjectNav';
 import { ProjectSetup } from '../projects/ProjectSetup';
 import { ProjectSettings } from '../projects/ProjectSettings';
-import { SpecflowBoard } from '../specflow/SpecflowBoard';
+import { OneBoard } from '../specflow/OneBoard';
 import { GypMessenger } from '../chat/GypMessenger';
 import { WorkerOutputViewer } from '../workers/WorkerOutputViewer';
 import { AttachPicker } from '../modals/AttachPicker';
@@ -55,13 +58,8 @@ export const Layout: Component = () => {
     });
   });
 
-  // Determine what main content to show
-  const showRunList = () =>
-    project.selectedProjectId() &&
-    project.activeProjectView() === 'runs' &&
-    !project.showProjectSettings();
-
-  const showProjectSetup = () => project.showProjectSetup() && !project.showProjectSettings();
+  // Determine what modal content to show
+  const showProjectSetup = () => project.showProjectSetup();
   const showProjectSettings = () => project.showProjectSettings();
 
   const showDraftEditor = () => {
@@ -74,12 +72,12 @@ export const Layout: Component = () => {
     return runs.selectedRun() && detail?.status !== 'draft';
   };
 
-  const showSpecflowBoard = () =>
-    project.selectedProjectId() &&
-    project.activeProjectView() === 'board' &&
-    !runs.selectedRun() &&
-    !project.showProjectSetup() &&
-    !project.showProjectSettings();
+  // Show OneBoard when no modals/overlays are active
+  const showOneBoard = () =>
+    !showProjectSetup() &&
+    !showProjectSettings() &&
+    !showDraftEditor() &&
+    !showRunDetail();
 
   return (
     <>
@@ -89,38 +87,27 @@ export const Layout: Component = () => {
 
       {/* Main Content Area */}
       <main class="flex-1 flex overflow-hidden bg-pasture-900">
-        <ProjectNav />
+        {/* OneBoard - Primary canvas view */}
+        <Show when={showOneBoard()}>
+          <OneBoard />
+        </Show>
 
-        {/* Main Content (changes based on nav selection) */}
-        <div class="flex-1 flex flex-col overflow-hidden">
-          {/* Inner content container */}
-          <div class="flex-1 flex overflow-hidden">
-            <Show when={showRunList()}>
-              <RunListPanel />
-            </Show>
+        {/* Modal-style overlays */}
+        <Show when={showProjectSetup()}>
+          <ProjectSetup />
+        </Show>
 
-            <Show when={showProjectSetup()}>
-              <ProjectSetup />
-            </Show>
+        <Show when={showProjectSettings()}>
+          <ProjectSettings />
+        </Show>
 
-            <Show when={showProjectSettings()}>
-              <ProjectSettings />
-            </Show>
+        <Show when={showDraftEditor()}>
+          <DraftEditor />
+        </Show>
 
-            <Show when={showDraftEditor()}>
-              <DraftEditor />
-            </Show>
-
-            <Show when={showSpecflowBoard()}>
-              <SpecflowBoard />
-            </Show>
-
-            <Show when={showRunDetail()}>
-              <RunDetail />
-            </Show>
-          </div>
-        </div>
-
+        <Show when={showRunDetail()}>
+          <RunDetail />
+        </Show>
       </main>
 
       <StatusBar />

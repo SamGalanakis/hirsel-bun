@@ -15,6 +15,10 @@ export interface Project {
   id: number;
   name: string;
   startingPoint?: { type: string; path?: string };
+  description?: string;
+  // Canvas position (for OneBoard portfolio view)
+  x?: number | null;
+  y?: number | null;
 }
 
 interface ProjectContextValue {
@@ -28,6 +32,10 @@ interface ProjectContextValue {
   selectedProjectId: () => number | null;
   selectProject: (project: Project | null) => void;
   deselectProject: () => void;
+
+  // OneBoard focus (which project is zoomed into)
+  focusedProjectId: () => number | null;
+  setFocusedProjectId: (id: number | null) => void;
 
   // Project setup/settings
   showProjectSetup: () => boolean;
@@ -51,6 +59,7 @@ interface ProjectContextValue {
 
   // Actions
   removeProject: (projectId: number) => Promise<void>;
+  updateProjectPosition: (projectId: number, x: number, y: number) => Promise<void>;
 }
 
 const ProjectContext = createContext<ProjectContextValue>();
@@ -61,6 +70,7 @@ export const ProjectProvider: ParentComponent = (props) => {
   const [projects, setProjects] = createSignal<Project[]>([]);
   const [loading, setLoading] = createSignal(true);
   const [selectedProject, setSelectedProject] = createSignal<Project | null>(null);
+  const [focusedProjectId, setFocusedProjectId] = createSignal<number | null>(null);
   const [showProjectSetup, setShowProjectSetup] = createSignal(false);
   const [showProjectSettings, setShowProjectSettings] = createSignal(false);
   const [activeProjectView, setActiveProjectView] = createSignal<'board' | 'runs'>('board');
@@ -156,6 +166,18 @@ export const ProjectProvider: ParentComponent = (props) => {
     }
   };
 
+  const updateProjectPosition = async (projectId: number, x: number, y: number) => {
+    try {
+      await invoke('update_project', { projectId, x, y });
+      // Update local state
+      setProjects((prev) =>
+        prev.map((p) => (p.id === projectId ? { ...p, x, y } : p))
+      );
+    } catch (e) {
+      console.error('Failed to update project position:', e);
+    }
+  };
+
   const filteredProjects = () => {
     const query = projectSearchQuery().toLowerCase();
     if (!query) return projects();
@@ -215,6 +237,8 @@ export const ProjectProvider: ParentComponent = (props) => {
     selectedProjectId,
     selectProject,
     deselectProject,
+    focusedProjectId,
+    setFocusedProjectId,
     showProjectSetup,
     setShowProjectSetup,
     openProjectSetup,
@@ -229,6 +253,7 @@ export const ProjectProvider: ParentComponent = (props) => {
     setProjectSearchQuery,
     filteredProjects,
     removeProject,
+    updateProjectPosition,
   };
 
   return <ProjectContext.Provider value={value}>{props.children}</ProjectContext.Provider>;

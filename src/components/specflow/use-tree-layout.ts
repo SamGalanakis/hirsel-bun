@@ -43,6 +43,11 @@ export const LAYOUT_CONFIG = {
  * These control visual size, not layout position.
  */
 export const RENDER_CONFIGS = {
+  portfolio: {
+    // Projects at portfolio level
+    nodeWidth: 200,
+    nodeHeight: 120,
+  },
   dot: {
     nodeWidth: 24,
     nodeHeight: 24,
@@ -58,12 +63,31 @@ export const RENDER_CONFIGS = {
 } as const;
 
 /** Level of detail based on zoom level */
-export type LOADLevel = 'dot' | 'compact' | 'full';
+export type LOADLevel = 'portfolio' | 'dot' | 'compact' | 'full';
 
-/** Get LOAD level based on zoom factor */
+/**
+ * Get LOAD level based on zoom factor
+ *
+ * Levels:
+ * - portfolio: k < 0.08 - Project cards at portfolio view
+ * - dot: k < 0.3 - Status dots only
+ * - compact: k < 0.7 - Compact cards
+ * - full: k >= 0.7 - Full detail cards
+ */
 export function getLOADLevel(zoom: number): LOADLevel {
+  if (zoom < 0.08) return 'portfolio';
   if (zoom < 0.3) return 'dot';
   if (zoom < 0.7) return 'compact';
+  return 'full';
+}
+
+/**
+ * Get LOAD level for projects specifically (different thresholds)
+ * Used in portfolio view when zoomed out
+ */
+export function getProjectLOADLevel(zoom: number): 'dot' | 'compact' | 'full' {
+  if (zoom < 0.15) return 'dot';
+  if (zoom < 0.4) return 'compact';
   return 'full';
 }
 

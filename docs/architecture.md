@@ -204,14 +204,21 @@ cargo build --features s3-storage               # With S3 support
 
 | Directory | Purpose |
 |-----------|---------|
-| `components/layout/` | Layout, TitleBar, StatusBar, ProjectNav |
+| `components/layout/` | Layout, TitleBar, StatusBar |
 | `components/runs/` | RunListPanel, RunDetail, DraftEditor, WorkerCard |
-| `components/specflow/` | SpecflowBoard, NodeRenderer, GypChatDrawer |
+| `components/specflow/` | OneBoard (main canvas), SpecflowBoard, ProjectCard, NodeRenderer |
 | `components/modals/` | SettingsModal, HelpModal, ConfirmDialog |
-| `components/chat/` | DirectChat |
+| `components/chat/` | GypMessenger |
 | `stores/` | AppProvider, ProjectProvider, RunsProvider, SelectionProvider |
 | `hooks/` | usePolling, useDebounce, useTauriEvent |
 | `lib/` | Icons, theme, toast, dev-logger, utils |
+
+**OneBoard Architecture:**
+- `OneBoard.tsx` - Main semantic zoom canvas
+  - Portfolio level (zoomed out): Shows all projects as draggable cards
+  - Project level (zoomed in): Renders SpecflowBoard for that project
+- `ProjectCard.tsx` - LOAD-aware project node (dot/compact/full variants)
+- `SpecflowBoard.tsx` - Task/eval board with tree layout
 
 ---
 

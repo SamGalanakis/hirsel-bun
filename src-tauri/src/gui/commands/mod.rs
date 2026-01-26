@@ -131,6 +131,7 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         projects::get_project,
         projects::create_project,
         projects::create_project_from_path,
+        projects::update_project,
         projects::delete_project,
         // SpecFlow board task commands
         specflow::get_board_tasks,

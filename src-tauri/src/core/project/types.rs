@@ -25,6 +25,10 @@ pub struct Project {
 
     // Delivery configuration
     pub target_branch: Option<String>, // e.g., "staging", "main" - branch for PR/merge delivery
+
+    // Canvas position (for OneBoard portfolio view)
+    pub x: Option<f64>,
+    pub y: Option<f64>,
 }
 
 /// Request to create a new project
@@ -49,6 +53,10 @@ pub struct CreateProjectRequest {
     pub description: Option<String>,
     #[serde(default)]
     pub target_branch: Option<String>,
+    #[serde(default)]
+    pub x: Option<f64>,
+    #[serde(default)]
+    pub y: Option<f64>,
 }
 
 /// Request to update a project
@@ -73,4 +81,8 @@ pub struct UpdateProjectRequest {
     pub description: Option<String>,
     #[serde(default)]
     pub target_branch: Option<String>,
+    #[serde(default)]
+    pub x: Option<f64>,
+    #[serde(default)]
+    pub y: Option<f64>,
 }

@@ -3,7 +3,7 @@
 //! Commands for listing, creating, and managing projects for SpecFlow boards.
 
 use crate::core::draft::StartingPoint;
-use crate::core::project::{CreateProjectRequest, Project, ProjectStore};
+use crate::core::project::{CreateProjectRequest, Project, ProjectStore, UpdateProjectRequest};
 
 /// List all projects, sorted by most recently created
 #[tauri::command]
@@ -61,6 +61,8 @@ pub async fn create_project_from_path(
             persist_docs_changes: None,
             description: None,
             target_branch: None,
+            x: None,
+            y: None,
         };
         return store.create_project(&req).map_err(|e| e.to_string());
     }
@@ -76,6 +78,8 @@ pub async fn create_project_from_path(
         persist_docs_changes: None,
         description: None,
         target_branch: None,
+        x: None,
+        y: None,
     };
 
     store.create_project(&req).map_err(|e| e.to_string())
@@ -116,9 +120,41 @@ pub async fn create_project(
         persist_docs_changes: None,
         description: None,
         target_branch: None,
+        x: None,
+        y: None,
     };
 
     store.create_project(&req).map_err(|e| e.to_string())
+}
+
+/// Update a project's fields (e.g., canvas position)
+#[tauri::command]
+pub async fn update_project(
+    project_id: i64,
+    x: Option<f64>,
+    y: Option<f64>,
+    description: Option<String>,
+    target_branch: Option<String>,
+) -> Result<Project, String> {
+    let store = ProjectStore::open().map_err(|e| e.to_string())?;
+
+    let req = UpdateProjectRequest {
+        starting_point: None,
+        worker_scale: None,
+        time_limit_minutes: None,
+        max_iterations: None,
+        human_in_the_loop: None,
+        docs_path: None,
+        persist_docs_changes: None,
+        description,
+        target_branch,
+        x,
+        y,
+    };
+
+    store
+        .update_project(project_id, &req)
+        .map_err(|e| e.to_string())
 }
 
 /// Delete a project (removes from list, doesn't delete files)

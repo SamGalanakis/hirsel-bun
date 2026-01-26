@@ -35,7 +35,11 @@ CREATE TABLE IF NOT EXISTS projects (
     description TEXT,
 
     -- Delivery configuration
-    target_branch TEXT  -- Branch for PR/merge delivery (e.g., "staging", "main")
+    target_branch TEXT,  -- Branch for PR/merge delivery (e.g., "staging", "main")
+
+    -- Canvas position (for OneBoard portfolio view)
+    x REAL,
+    y REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name);
@@ -121,8 +125,8 @@ impl ProjectStore {
                 name, created_at, updated_at,
                 starting_point_type, starting_point_path, starting_point_url, starting_point_branch,
                 worker_scale, time_limit_minutes, max_iterations, human_in_the_loop,
-                docs_path, persist_docs_changes, description, target_branch
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                docs_path, persist_docs_changes, description, target_branch, x, y
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 &req.name,
                 &now,
@@ -139,6 +143,8 @@ impl ProjectStore {
                 persist_docs_changes as i64,
                 req.description,
                 req.target_branch,
+                req.x,
+                req.y,
             ],
         )?;
 
@@ -152,7 +158,7 @@ impl ProjectStore {
             "SELECT id, name, created_at, updated_at,
                     starting_point_type, starting_point_path, starting_point_url, starting_point_branch,
                     worker_scale, time_limit_minutes, max_iterations, human_in_the_loop,
-                    docs_path, persist_docs_changes, description, target_branch
+                    docs_path, persist_docs_changes, description, target_branch, x, y
              FROM projects
              WHERE id = ?1",
         )?;
@@ -170,7 +176,7 @@ impl ProjectStore {
             "SELECT id, name, created_at, updated_at,
                     starting_point_type, starting_point_path, starting_point_url, starting_point_branch,
                     worker_scale, time_limit_minutes, max_iterations, human_in_the_loop,
-                    docs_path, persist_docs_changes, description, target_branch
+                    docs_path, persist_docs_changes, description, target_branch, x, y
              FROM projects
              WHERE name = ?1",
         )?;
@@ -188,7 +194,7 @@ impl ProjectStore {
             "SELECT id, name, created_at, updated_at,
                     starting_point_type, starting_point_path, starting_point_url, starting_point_branch,
                     worker_scale, time_limit_minutes, max_iterations, human_in_the_loop,
-                    docs_path, persist_docs_changes, description, target_branch
+                    docs_path, persist_docs_changes, description, target_branch, x, y
              FROM projects
              ORDER BY created_at DESC",
         )?;
@@ -261,6 +267,16 @@ impl ProjectStore {
         if let Some(ref tb) = req.target_branch {
             updates.push("target_branch = ?");
             values.push(Box::new(tb.clone()));
+        }
+
+        if let Some(x) = req.x {
+            updates.push("x = ?");
+            values.push(Box::new(x));
+        }
+
+        if let Some(y) = req.y {
+            updates.push("y = ?");
+            values.push(Box::new(y));
         }
 
         values.push(Box::new(id));
@@ -354,6 +370,8 @@ impl ProjectStore {
             persist_docs_changes: row.get::<_, i64>("persist_docs_changes")? != 0,
             description: row.get("description")?,
             target_branch: row.get("target_branch")?,
+            x: row.get("x")?,
+            y: row.get("y")?,
         })
     }
 }
@@ -380,6 +398,8 @@ mod tests {
             persist_docs_changes: Some(true),
             description: Some("Test project".to_string()),
             target_branch: None,
+            x: None,
+            y: None,
         };
 
         let project = store.create_project(&req).unwrap();
@@ -415,6 +435,8 @@ mod tests {
                 persist_docs_changes: None,
                 description: None,
                 target_branch: None,
+                x: None,
+                y: None,
             })
             .unwrap();
 
@@ -433,6 +455,8 @@ mod tests {
                 persist_docs_changes: None,
                 description: None,
                 target_branch: None,
+                x: None,
+                y: None,
             })
             .unwrap();
 
@@ -458,6 +482,8 @@ mod tests {
                 persist_docs_changes: None,
                 description: None,
                 target_branch: None,
+                x: None,
+                y: None,
             })
             .unwrap();
 
@@ -474,6 +500,8 @@ mod tests {
                     persist_docs_changes: None,
                     description: Some("Updated".to_string()),
                     target_branch: None,
+                    x: None,
+                    y: None,
                 },
             )
             .unwrap();
@@ -501,6 +529,8 @@ mod tests {
                 persist_docs_changes: None,
                 description: None,
                 target_branch: None,
+                x: None,
+                y: None,
             })
             .unwrap();
 
@@ -528,6 +558,8 @@ mod tests {
                 persist_docs_changes: None,
                 description: None,
                 target_branch: None,
+                x: None,
+                y: None,
             })
             .unwrap();
         assert!(matches!(p1.starting_point, StartingPoint::Greenfield));
@@ -547,6 +579,8 @@ mod tests {
                 persist_docs_changes: None,
                 description: None,
                 target_branch: None,
+                x: None,
+                y: None,
             })
             .unwrap();
         if let StartingPoint::LocalFolder { path } = p2.starting_point {
@@ -571,6 +605,8 @@ mod tests {
                 persist_docs_changes: None,
                 description: None,
                 target_branch: None,
+                x: None,
+                y: None,
             })
             .unwrap();
         if let StartingPoint::GitRepo { url, branch } = p3.starting_point {
