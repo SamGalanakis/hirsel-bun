@@ -73,6 +73,7 @@ class CanvasRenderer {
     transform: Transform,
     positions: Map<string, NodePosition>,
     tree: TaskTree[],
+    evalList: BoardEval[],
     nodeHeight: number,
     viewportWidth: number,
     viewportHeight: number
@@ -86,6 +87,7 @@ class CanvasRenderer {
 
     this.drawGrid(transform, viewportWidth, viewportHeight);
     this.drawEdges(positions, tree, nodeHeight);
+    this.drawEvalConnections(positions, evalList, nodeHeight);
   }
 
   private drawGrid(transform: Transform, vw: number, vh: number) {
@@ -155,6 +157,40 @@ class CanvasRenderer {
 
     tree.forEach(drawNodeEdges);
   }
+
+  private drawEvalConnections(positions: Map<string, NodePosition>, evalList: BoardEval[], nodeHeight: number) {
+    const { ctx } = this;
+
+    for (const ev of evalList) {
+      const evalPos = positions.get(ev.id);
+      if (!evalPos) continue;
+
+      for (const taskId of ev.validates) {
+        const taskPos = positions.get(taskId);
+        if (!taskPos) continue;
+
+        // Draw dashed line from task to eval
+        const path = generateEdgePath(taskPos, evalPos, nodeHeight);
+
+        // Connection glow
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.1)';
+        ctx.lineWidth = 4;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        const path2d = new Path2D(path);
+        ctx.stroke(path2d);
+
+        // Connection line (dashed)
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.4)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        ctx.stroke(path2d);
+      }
+    }
+
+    // Reset line dash
+    ctx.setLineDash([]);
+  }
 }
 
 export const SpecflowBoard: Component = () => {
@@ -173,12 +209,12 @@ export const SpecflowBoard: Component = () => {
   const [taskTree, setTaskTree] = createSignal<TaskTree[]>([]);
   const [evals, setEvals] = createSignal<BoardEval[]>([]);
   const [bookmarks, setBookmarks] = createSignal<Bookmark[]>([]);
-  const [loading, setLoading] = createSignal(true);
+  const [initialLoading, setInitialLoading] = createSignal(true);
 
   // Layout
   const load = createMemo<LOADLevel>(() => getLOADLevel(transform().k));
   const layoutConfig = createMemo(() => getLayoutConfigForZoom(transform().k));
-  const layout = createMemo(() => computeTreeLayout(taskTree(), layoutConfig()));
+  const layout = createMemo(() => computeTreeLayout(taskTree(), layoutConfig(), evals()));
 
   // Selection - can select either a task or an eval
   const [selectedTaskId, setSelectedTaskId] = createSignal<string | null>(null);
@@ -246,7 +282,7 @@ export const SpecflowBoard: Component = () => {
       const pid = project.selectedProjectId();
       if (pid) {
         try {
-          await invoke('import_board_from_agent', { project_id: pid });
+          await invoke('import_board_from_agent', { projectId: pid });
         } catch (e) {
           console.error('Failed to import board changes:', e);
         }
@@ -259,34 +295,35 @@ export const SpecflowBoard: Component = () => {
   // Data Loading
   // ==========================================================================
 
-  const loadData = async (projectId: number) => {
-    setLoading(true);
+  const loadData = async (projectId: number, isInitial = false) => {
     try {
       const [treeData, evalData, bookmarkData] = await Promise.all([
-        invoke<TaskTree[]>('get_board_task_tree', { project_id: projectId }),
-        invoke<BoardEval[]>('get_board_evals', { project_id: projectId }),
-        invoke<Bookmark[]>('get_bookmarks', { project_id: projectId }),
+        invoke<TaskTree[]>('get_board_task_tree', { projectId }),
+        invoke<BoardEval[]>('get_board_evals', { projectId }),
+        invoke<Bookmark[]>('get_bookmarks', { projectId }),
       ]);
       batch(() => {
         setTaskTree(treeData || []);
         setEvals(evalData || []);
         setBookmarks(bookmarkData || []);
+        if (isInitial) setInitialLoading(false);
       });
     } catch (e) {
       console.error('Failed to load board data:', e);
-    } finally {
-      setLoading(false);
+      if (isInitial) setInitialLoading(false);
     }
   };
 
   createEffect(() => {
     const projectId = project.selectedProjectId();
     if (projectId) {
-      loadData(projectId);
+      setInitialLoading(true);
+      loadData(projectId, true);
     } else {
       setTaskTree([]);
       setEvals([]);
       setBookmarks([]);
+      setInitialLoading(false);
     }
   });
 
@@ -297,7 +334,7 @@ export const SpecflowBoard: Component = () => {
 
     const interval = setInterval(async () => {
       try {
-        const result = await invoke<BoardSyncResult>('poll_board_changes', { project_id: pid });
+        const result = await invoke<BoardSyncResult>('poll_board_changes', { projectId: pid });
         if (result.changes > 0) {
           await loadData(pid);
         }
@@ -318,26 +355,9 @@ export const SpecflowBoard: Component = () => {
     const layoutPositions = layout().positions;
     const dragPos = dragPositions();
 
-    // Start with layout positions for tasks
+    // Start with layout positions (includes both tasks and evals)
     for (const [id, pos] of layoutPositions) {
       positions.set(id, pos);
-    }
-
-    // Add eval positions (use stored x,y or auto-position)
-    const evalList = evals();
-    const treeNodes = flattenTree(taskTree());
-    for (let i = 0; i < evalList.length; i++) {
-      const ev = evalList[i];
-      if (ev.x != null && ev.y != null) {
-        positions.set(ev.id, { x: ev.x, y: ev.y });
-      } else {
-        // Auto-position: to the right of the board
-        const bounds = layout().bounds;
-        positions.set(ev.id, {
-          x: bounds.maxX + 200,
-          y: bounds.minY + i * 120,
-        });
-      }
     }
 
     // Override with drag positions
@@ -354,6 +374,7 @@ export const SpecflowBoard: Component = () => {
       transform(),
       getEffectivePositions(),
       taskTree(),
+      evals(),
       layoutConfig().nodeHeight,
       viewportRef.clientWidth,
       viewportRef.clientHeight
@@ -454,15 +475,15 @@ export const SpecflowBoard: Component = () => {
         const updates = Array.from(positions.entries()).map(([id, pos]) => {
           if (drag.isEval) {
             return invoke('update_board_eval', {
-              project_id: projectId,
-              eval_id: id,
+              projectId,
+              evalId: id,
               x: pos.x,
               y: pos.y,
             });
           }
           return invoke('update_board_task', {
-            project_id: projectId,
-            task_id: id,
+            projectId,
+            taskId: id,
             x: pos.x,
             y: pos.y,
           });
@@ -621,8 +642,8 @@ export const SpecflowBoard: Component = () => {
 
     try {
       const task = await invoke<any>('create_board_task', {
-        project_id: projectId,
-        parent_id: parentId,
+        projectId,
+        parentId,
         name: name.trim(),
       });
       await loadData(projectId);
@@ -643,8 +664,8 @@ export const SpecflowBoard: Component = () => {
 
     try {
       await invoke('update_board_task', {
-        project_id: projectId,
-        task_id: taskId,
+        projectId,
+        taskId,
         ...updates,
       });
       await loadData(projectId);
@@ -662,7 +683,7 @@ export const SpecflowBoard: Component = () => {
     if (!confirmed) return;
 
     try {
-      await invoke('delete_board_task', { project_id: projectId, task_id: taskId });
+      await invoke('delete_board_task', { projectId, taskId });
       await loadData(projectId);
       if (selectedTaskId() === taskId) setSelectedTaskId(null);
       window.toast?.success('Task deleted');
@@ -682,7 +703,7 @@ export const SpecflowBoard: Component = () => {
 
     try {
       const ev = await invoke<BoardEval>('create_board_eval', {
-        project_id: projectId,
+        projectId,
         name: name.trim(),
       });
       await loadData(projectId);
@@ -703,8 +724,8 @@ export const SpecflowBoard: Component = () => {
 
     try {
       await invoke('update_board_eval', {
-        project_id: projectId,
-        eval_id: evalId,
+        projectId,
+        evalId,
         ...updates,
       });
       await loadData(projectId);
@@ -722,7 +743,7 @@ export const SpecflowBoard: Component = () => {
     if (!confirmed) return;
 
     try {
-      await invoke('delete_board_eval', { project_id: projectId, eval_id: evalId });
+      await invoke('delete_board_eval', { projectId, evalId });
       await loadData(projectId);
       if (selectedEvalId() === evalId) setSelectedEvalId(null);
       window.toast?.success('Eval deleted');
@@ -1483,7 +1504,7 @@ export const SpecflowBoard: Component = () => {
       `}</style>
 
       {/* Empty state */}
-      <Show when={!loading() && taskTree().length === 0 && evals().length === 0}>
+      <Show when={!initialLoading() && taskTree().length === 0 && evals().length === 0}>
         <div
           class="absolute inset-0 flex items-center justify-center pointer-events-none"
           style={{ 'z-index': 5 }}
@@ -1515,8 +1536,8 @@ export const SpecflowBoard: Component = () => {
         </div>
       </Show>
 
-      {/* Loading */}
-      <Show when={loading()}>
+      {/* Loading (only shown on initial load, not refreshes) */}
+      <Show when={initialLoading()}>
         <div
           class="absolute inset-0 flex items-center justify-center"
           style={{ 'z-index': 100, background: 'rgba(15,15,15,0.9)' }}

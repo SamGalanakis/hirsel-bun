@@ -6,7 +6,7 @@
  */
 
 import { hierarchy, tree } from 'd3-hierarchy';
-import type { TaskTree } from '../../lib/types';
+import type { BoardEval, TaskTree } from '../../lib/types';
 
 export interface LayoutConfig {
   /** Width of a node (varies by LOAD) */
@@ -76,15 +76,20 @@ export function getLayoutConfigForZoom(zoom: number): LayoutConfig {
 }
 
 /**
- * Compute tree layout for a list of root nodes
+ * Compute tree layout for a list of root nodes and evals
  *
  * Uses d3-hierarchy's tree layout algorithm to position nodes.
  * Multiple root trees are laid out horizontally.
+ * Evals are positioned in a row below the tree, aligned with the tasks they validate.
  */
-export function computeTreeLayout(roots: TaskTree[], config: LayoutConfig): TreeLayoutResult {
+export function computeTreeLayout(
+  roots: TaskTree[],
+  config: LayoutConfig,
+  evalList: BoardEval[] = [],
+): TreeLayoutResult {
   const positions = new Map<string, NodePosition>();
 
-  if (roots.length === 0) {
+  if (roots.length === 0 && evalList.length === 0) {
     return {
       positions,
       bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0, width: 0, height: 0 },
@@ -97,25 +102,20 @@ export function computeTreeLayout(roots: TaskTree[], config: LayoutConfig): Tree
   let globalMinY = Number.POSITIVE_INFINITY;
   let globalMaxY = Number.NEGATIVE_INFINITY;
 
+  // Layout task trees
   for (const root of roots) {
-    // Build d3 hierarchy
     const h = hierarchy(root, (d) => d.children);
 
-    // Configure tree layout
     const treeLayout = tree<TaskTree>()
       .nodeSize([config.nodeWidth + config.horizontalGap, config.nodeHeight + config.verticalGap])
       .separation(() => 1);
 
-    // Compute layout
     treeLayout(h);
 
-    // Get bounds for this tree
     let minX = Number.POSITIVE_INFINITY;
     let maxX = Number.NEGATIVE_INFINITY;
 
     h.each((node) => {
-      // d3 tree layout puts x on horizontal axis, y on vertical
-      // We want root at top, so swap and adjust
       const x = node.x! + offsetX;
       const y = node.y!;
 
@@ -130,8 +130,53 @@ export function computeTreeLayout(roots: TaskTree[], config: LayoutConfig): Tree
     globalMinX = Math.min(globalMinX, minX);
     globalMaxX = Math.max(globalMaxX, maxX);
 
-    // Offset for next tree (with gap between trees)
     offsetX = maxX + config.horizontalGap * 2;
+  }
+
+  // Layout evals in a row below the tree
+  if (evalList.length > 0) {
+    const evalRowY = globalMaxY + config.verticalGap * 1.5;
+
+    // Sort evals by the x-position of their first validated task
+    const evalsWithX = evalList.map((ev) => {
+      // Use stored position if available
+      if (ev.x != null && ev.y != null) {
+        return { ev, x: ev.x, y: ev.y, hasPosition: true };
+      }
+      // Otherwise, compute position based on validated tasks
+      const validatedXs = ev.validates
+        .map((taskId) => positions.get(taskId)?.x)
+        .filter((x): x is number => x != null);
+      const avgX =
+        validatedXs.length > 0
+          ? validatedXs.reduce((sum, x) => sum + x, 0) / validatedXs.length
+          : 0;
+      return { ev, x: avgX, y: evalRowY, hasPosition: false };
+    });
+
+    // Sort by x position
+    evalsWithX.sort((a, b) => a.x - b.x);
+
+    // Place evals with minimum spacing to avoid overlap
+    const minSpacing = config.nodeWidth + config.horizontalGap;
+    let lastX = Number.NEGATIVE_INFINITY;
+
+    for (const item of evalsWithX) {
+      if (item.hasPosition) {
+        positions.set(item.ev.id, { x: item.x, y: item.y });
+      } else {
+        // Ensure minimum spacing from previous eval
+        const x = Math.max(item.x, lastX + minSpacing);
+        positions.set(item.ev.id, { x, y: evalRowY });
+        lastX = x;
+
+        // Update bounds
+        globalMinX = Math.min(globalMinX, x - config.nodeWidth / 2);
+        globalMaxX = Math.max(globalMaxX, x + config.nodeWidth / 2);
+      }
+    }
+
+    globalMaxY = evalRowY + config.nodeHeight;
   }
 
   return {

@@ -76,7 +76,9 @@ A task is considered "validated" when:
 1. It has at least one eval with status="passed" that lists it in validates[], OR
 2. ALL of its children are validated (recursive)
 
-Validation propagates up the tree automatically.
+Validation propagates up the tree automatically. When specifying validates[], only list the
+direct leaf tasks being verified - do NOT include parent tasks. Parents are validated
+automatically when all their children are validated.
 
 ## File Format (Version 2)
 

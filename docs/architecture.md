@@ -1085,27 +1085,27 @@ scribe_persist_docs_changes = true  # Commit changes on delivery
 
 ### Gotchas
 
-#### Tauri Commands Use snake_case Parameters
+#### Tauri Commands Use camelCase Parameters
 
-Tauri IPC commands use **snake_case** for parameter names, not camelCase. The Rust function signature determines the expected names:
+Tauri automatically converts Rust snake_case parameters to JavaScript camelCase. Use camelCase in the frontend:
 
 ```rust
-// Backend (Rust)
+// Backend (Rust) - uses snake_case
 #[tauri::command]
-pub async fn delete_board_node(project_id: i64, node_id: String) -> Result<(), String> {
+pub async fn delete_board_task(project_id: i64, task_id: String) -> Result<(), String> {
     // ...
 }
 ```
 
 ```typescript
-// Frontend (TypeScript) - CORRECT
-await invoke('delete_board_node', { project_id: projectId, node_id: nodeId });
+// Frontend (TypeScript) - CORRECT: use camelCase
+await invoke('delete_board_task', { projectId, taskId });
 
-// Frontend (TypeScript) - WRONG (will silently fail or error)
-await invoke('delete_board_node', { projectId, nodeId });
+// Frontend (TypeScript) - WRONG: snake_case won't match
+await invoke('delete_board_task', { project_id: projectId, task_id: taskId });
 ```
 
-This applies to all Tauri commands. If a command seems to do nothing, check that parameter names match the Rust function signature exactly.
+If a command errors with "missing required key", check that you're using camelCase parameter names.
 
 ---
 

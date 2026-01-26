@@ -70,12 +70,15 @@ pub struct Task {
 pub struct TaskTree {
     pub id: String,
     pub name: String,
+    #[serde(default)]
     pub status: TaskStatus,
+    #[serde(default)]
     pub content: String,
+    #[serde(default)]
     pub children: Vec<TaskTree>,
     pub x: Option<f64>,
     pub y: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validated: Option<bool>, // Computed field
 }
 
@@ -138,12 +141,17 @@ impl EvalStatus {
 pub struct Eval {
     pub id: String, // Slug ID (e.g., "api-test")
     pub name: String,
+    #[serde(default)]
     pub status: EvalStatus,
+    #[serde(default)]
     pub content: String,
+    #[serde(default)]
     pub validates: Vec<String>, // Task IDs this eval validates
     pub x: Option<f64>,
     pub y: Option<f64>,
+    #[serde(skip)] // Internal metadata, not for Gyp
     pub created_at: String,
+    #[serde(skip)]
     pub updated_at: String,
 }
 
