@@ -229,10 +229,14 @@ export const ProjectSetup: Component = () => {
 
     setCreating(true);
     try {
+      const position = project.pendingProjectPosition();
       const result = await invoke<{ id: number; name: string }>('create_project', {
         name: name(),
         startingPoint: buildStartingPoint(),
+        x: position?.x ?? null,
+        y: position?.y ?? null,
       });
+      project.setPendingProjectPosition(null);
       window.dispatchEvent(
         new CustomEvent('project-created', { detail: result })
       );
@@ -441,7 +445,7 @@ export const ProjectSetup: Component = () => {
                 onClick={() => setStartingPointType('greenfield')}
               >
                 <i
-                  data-lucide="sparkles"
+                  data-lucide="sprout"
                   class="w-5 h-5 mb-2"
                   classList={{
                     'text-amber-400': startingPointType() === 'greenfield',

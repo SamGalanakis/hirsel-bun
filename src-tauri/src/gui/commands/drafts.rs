@@ -4,7 +4,8 @@
 //! Uses the workspace abstraction for initializing draft workspaces.
 
 use super::runs::get_run_detail;
-use super::types::{DraftUpdateRequest, RepoValidation, RunDetail, RunStatus};
+use super::types::{DraftUpdateRequest, RepoValidation};
+use crate::core::api_types::{RunDetail, RunStatus};
 use crate::core::draft::{create_workspace_provider, StartingPoint};
 use crate::core::git;
 use crate::core::names::generate_run_name;

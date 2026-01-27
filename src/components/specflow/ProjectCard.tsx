@@ -1,128 +1,38 @@
 /**
- * ProjectCard - LOAD-aware rendering for project nodes
+ * ProjectCard - Renders project nodes with counter-scaling
  *
- * Renders projects at different levels of detail based on zoom:
- * - dot: Status dot only (24x24)
- * - compact: Name + status (140x60)
- * - full: Complete card with description (200x120)
+ * Always renders the full card view, using counter-scaling to maintain
+ * readability at any zoom level.
+ *
+ * Follows Highland Craft design language - warm, crafted, functional.
  */
 
 import type { Component } from 'solid-js';
-import { Match, Show, Switch } from 'solid-js';
+import { Show } from 'solid-js';
 import type { Project } from '../../stores/project-context';
-
-type ProjectLOADLevel = 'dot' | 'compact' | 'full';
+import { getCounterScale, MIN_SCREEN_SIZE, BASE_WORLD_SIZE } from './use-tree-layout';
 
 interface ProjectCardProps {
   project: Project;
   position: { x: number; y: number };
-  load: ProjectLOADLevel;
   selected: boolean;
   focused: boolean;
   runCount?: number;
   activeRunCount?: number;
+  zoom: number;
   onClick: () => void;
   onDoubleClick: () => void;
   onContextMenu: (e: MouseEvent) => void;
+  onSettings?: () => void;
   onDragStart?: (e: MouseEvent, projectId: number) => void;
+  style?: Record<string, string | number>;
 }
 
-/** Get project status color based on activity */
+/** Get project status color - follows Highland Craft status indicators */
 function getStatusColor(activeRunCount: number): string {
-  if (activeRunCount > 0) return 'bg-amber-500';
-  return 'bg-wool-700';
+  if (activeRunCount > 0) return 'bg-amber-500'; // Working - shepherd's lantern
+  return 'bg-wool-600'; // Idle
 }
-
-/** Dot view - just a status circle */
-const ProjectDot: Component<{
-  project: Project;
-  selected: boolean;
-  activeRunCount: number;
-  onDragStart?: (e: MouseEvent, projectId: number) => void;
-}> = (props) => {
-  const statusColor = () => getStatusColor(props.activeRunCount);
-  const isWorking = () => props.activeRunCount > 0;
-
-  return (
-    <div
-      class="w-6 h-6 rounded-full flex items-center justify-center transition-all"
-      classList={{
-        'ring-2 ring-amber-500': props.selected,
-        'pulse-glow': isWorking(),
-      }}
-      style={{
-        background: 'rgba(36, 36, 36, 0.9)',
-        border: '2px solid rgba(51, 51, 51, 1)',
-        cursor: 'grab',
-      }}
-      onMouseDown={(e) => {
-        if (e.button === 0 && props.onDragStart) {
-          e.stopPropagation();
-          props.onDragStart(e, props.project.id);
-        }
-      }}
-    >
-      <div
-        class={`w-3 h-3 rounded-full ${statusColor()}`}
-        style={{
-          'box-shadow': isWorking() ? '0 0 8px rgba(212, 165, 116, 0.5)' : 'none',
-        }}
-      />
-    </div>
-  );
-};
-
-/** Compact view - name + status */
-const ProjectCompact: Component<{
-  project: Project;
-  selected: boolean;
-  runCount: number;
-  activeRunCount: number;
-  onClick: () => void;
-  onContextMenu: (e: MouseEvent) => void;
-  onDragStart?: (e: MouseEvent, projectId: number) => void;
-}> = (props) => {
-  return (
-    <div
-      class="w-[140px] p-2 rounded-lg transition-all select-none"
-      classList={{
-        'ring-2 ring-amber-500/60 shadow-[0_0_20px_rgba(212,165,116,0.15)]': props.selected,
-      }}
-      style={{
-        background: 'linear-gradient(180deg, rgba(36, 36, 36, 0.98) 0%, rgba(26, 26, 26, 0.98) 100%)',
-        border: props.selected
-          ? '1px solid rgba(212, 165, 116, 0.4)'
-          : '1px solid rgba(51, 51, 51, 0.8)',
-        cursor: 'grab',
-      }}
-      onClick={props.onClick}
-      onContextMenu={props.onContextMenu}
-      onMouseDown={(e) => {
-        if (e.button === 0 && props.onDragStart) {
-          e.stopPropagation();
-          props.onDragStart(e, props.project.id);
-        }
-      }}
-    >
-      <div class="flex items-center gap-2 mb-1">
-        <span
-          class={`w-2 h-2 rounded-full ${getStatusColor(props.activeRunCount)}`}
-          classList={{
-            'pulse-glow': props.activeRunCount > 0,
-          }}
-        />
-        <span class="text-xs text-wool-100 truncate font-semibold">
-          {props.project.name}
-        </span>
-      </div>
-      <Show when={props.runCount > 0}>
-        <div class="text-[11px] text-wool-400 pl-4">
-          {props.runCount} run{props.runCount !== 1 ? 's' : ''}
-        </div>
-      </Show>
-    </div>
-  );
-};
 
 /** Full view - complete project card */
 const ProjectFull: Component<{
@@ -133,20 +43,26 @@ const ProjectFull: Component<{
   onClick: () => void;
   onDoubleClick: () => void;
   onContextMenu: (e: MouseEvent) => void;
+  onSettings: () => void;
   onDragStart?: (e: MouseEvent, projectId: number) => void;
 }> = (props) => {
+  const isWorking = () => props.activeRunCount > 0;
+
   return (
     <div
-      class="w-[200px] rounded-lg cursor-pointer transition-all select-none group hover:-translate-y-0.5"
+      class="w-[200px] rounded-lg select-none group"
       classList={{
-        'ring-2 ring-amber-500/60 shadow-[0_0_30px_rgba(212,165,116,0.2)]': props.selected,
+        'ring-2 ring-amber-500/50': props.selected,
       }}
       style={{
-        background: 'linear-gradient(180deg, rgba(36, 36, 36, 0.98) 0%, rgba(26, 26, 26, 0.98) 100%)',
+        background: 'linear-gradient(180deg, #2a2825 0%, #1f1d1a 100%)',
         border: props.selected
           ? '1px solid rgba(212, 165, 116, 0.4)'
-          : '1px solid rgba(51, 51, 51, 0.8)',
-        'box-shadow': '0 4px 16px rgba(0, 0, 0, 0.4)',
+          : '1px solid #3d3a36',
+        'box-shadow': props.selected
+          ? '0 8px 32px rgba(0, 0, 0, 0.5), 0 0 24px rgba(212, 165, 116, 0.12)'
+          : '0 4px 16px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.02)',
+        cursor: 'pointer',
       }}
       onClick={props.onClick}
       onDblClick={props.onDoubleClick}
@@ -156,7 +72,9 @@ const ProjectFull: Component<{
       <div
         class="flex items-center justify-between px-3 py-2.5"
         style={{
-          'border-bottom': '1px solid rgba(51, 51, 51, 0.5)',
+          'border-bottom': '1px solid rgba(61, 58, 54, 0.6)',
+          background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, transparent 100%)',
+          'border-radius': '8px 8px 0 0',
           cursor: 'grab',
         }}
         onMouseDown={(e) => {
@@ -166,23 +84,24 @@ const ProjectFull: Component<{
           }
         }}
       >
-        <div class="flex items-center gap-2 min-w-0">
+        <div class="flex items-center gap-2.5 min-w-0">
           <span
             class={`w-2.5 h-2.5 rounded-full shrink-0 ${getStatusColor(props.activeRunCount)}`}
             classList={{
-              'pulse-glow': props.activeRunCount > 0,
+              'pulse-glow': isWorking(),
             }}
           />
-          <span class="text-sm font-semibold text-wool-100 truncate">
+          <span class="text-[15px] font-semibold text-wool-100 truncate leading-snug">
             {props.project.name}
           </span>
         </div>
         <button
           onClick={(e) => {
             e.stopPropagation();
-            // Open settings
+            props.onSettings();
           }}
-          class="p-1 rounded opacity-0 group-hover:opacity-100 text-wool-400 hover:text-wool-200 hover:bg-pasture-700 transition-all"
+          class="p-1 rounded-md text-wool-500 hover:text-wool-300 hover:bg-pasture-700 opacity-0 group-hover:opacity-100 transition-all"
+          title="Project settings"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
@@ -192,10 +111,10 @@ const ProjectFull: Component<{
       </div>
 
       {/* Description */}
-      <div class="px-3 py-2">
-        <div class="text-xs text-wool-300 line-clamp-2 leading-relaxed min-h-[32px]">
+      <div class="px-3 py-2.5">
+        <div class="text-[13px] text-wool-300 line-clamp-2 leading-relaxed min-h-[40px]">
           {props.project.description || (
-            <span class="text-wool-500 italic">No description</span>
+            <span class="text-wool-600 italic">No description yet</span>
           )}
         </div>
       </div>
@@ -204,82 +123,82 @@ const ProjectFull: Component<{
       <div
         class="px-3 py-2 flex items-center justify-between"
         style={{
-          'border-top': '1px solid rgba(51, 51, 51, 0.4)',
+          'border-top': '1px solid rgba(61, 58, 54, 0.4)',
           background: 'rgba(0, 0, 0, 0.15)',
           'border-radius': '0 0 8px 8px',
         }}
       >
-        <Show when={props.runCount > 0}>
-          <div class="flex items-center gap-2">
-            <div class="w-16 h-1.5 rounded-full bg-pasture-600 overflow-hidden">
+        <Show
+          when={props.runCount > 0}
+          fallback={
+            <span class="text-[11px] text-wool-600 italic">No runs yet</span>
+          }
+        >
+          <div class="flex items-center gap-2.5 w-full">
+            {/* Progress bar */}
+            <div class="flex-1 h-1.5 rounded-full bg-pasture-700 overflow-hidden">
               <div
-                class="h-full bg-amber-500 rounded-full transition-all"
-                style={{ width: `${Math.min(100, (props.activeRunCount / props.runCount) * 100)}%` }}
+                class="h-full rounded-full transition-all"
+                classList={{
+                  'bg-amber-500': props.activeRunCount > 0,
+                  'bg-wool-600': props.activeRunCount === 0,
+                }}
+                style={{
+                  width: `${Math.min(100, (props.activeRunCount / props.runCount) * 100)}%`,
+                }}
               />
             </div>
-            <span class="text-[11px] text-wool-400">
-              {props.activeRunCount} active
+            {/* Run count */}
+            <span class="text-[11px] text-wool-400 tabular-nums shrink-0">
+              <Show
+                when={props.activeRunCount > 0}
+                fallback={
+                  <span class="text-wool-500">{props.runCount} run{props.runCount !== 1 ? 's' : ''}</span>
+                }
+              >
+                <span class="text-amber-400">{props.activeRunCount}</span>
+                <span class="text-wool-600"> / {props.runCount}</span>
+              </Show>
             </span>
           </div>
-        </Show>
-        <Show when={props.runCount === 0}>
-          <span class="text-[11px] text-wool-500">No runs</span>
         </Show>
       </div>
     </div>
   );
 };
 
-/** Main project card renderer with LOAD switching */
+/** Main project card renderer with counter-scaling */
 export const ProjectCard: Component<ProjectCardProps> = (props) => {
+  const counterScale = () => getCounterScale(
+    BASE_WORLD_SIZE.project,
+    MIN_SCREEN_SIZE.project,
+    props.zoom
+  );
+
   return (
     <div
-      class="absolute transition-opacity duration-200"
-      classList={{
-        'opacity-30': props.focused && !props.selected,
-      }}
+      class="absolute"
       style={{
         left: `${props.position.x}px`,
         top: `${props.position.y}px`,
-        transform: 'translate(-50%, -50%)',
+        transform: `translate(-50%, -50%) scale(${counterScale()})`,
+        'transform-origin': 'center center',
         'z-index': props.selected ? 10 : 1,
+        transition: 'opacity 0.3s ease-out',
+        ...props.style,
       }}
     >
-      <Switch>
-        <Match when={props.load === 'dot'}>
-          <div onClick={props.onClick} onContextMenu={props.onContextMenu}>
-            <ProjectDot
-              project={props.project}
-              selected={props.selected}
-              activeRunCount={props.activeRunCount || 0}
-              onDragStart={props.onDragStart}
-            />
-          </div>
-        </Match>
-        <Match when={props.load === 'compact'}>
-          <ProjectCompact
-            project={props.project}
-            selected={props.selected}
-            runCount={props.runCount || 0}
-            activeRunCount={props.activeRunCount || 0}
-            onClick={props.onClick}
-            onContextMenu={props.onContextMenu}
-            onDragStart={props.onDragStart}
-          />
-        </Match>
-        <Match when={props.load === 'full'}>
-          <ProjectFull
-            project={props.project}
-            selected={props.selected}
-            runCount={props.runCount || 0}
-            activeRunCount={props.activeRunCount || 0}
-            onClick={props.onClick}
-            onDoubleClick={props.onDoubleClick}
-            onContextMenu={props.onContextMenu}
-            onDragStart={props.onDragStart}
-          />
-        </Match>
-      </Switch>
+      <ProjectFull
+        project={props.project}
+        selected={props.selected}
+        runCount={props.runCount || 0}
+        activeRunCount={props.activeRunCount || 0}
+        onClick={props.onClick}
+        onDoubleClick={props.onDoubleClick}
+        onContextMenu={props.onContextMenu}
+        onSettings={props.onSettings || (() => {})}
+        onDragStart={props.onDragStart}
+      />
     </div>
   );
 };

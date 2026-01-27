@@ -2,7 +2,7 @@
 //!
 //! Commands for managing runs: listing, viewing details, pausing, resuming, deleting, and delivering.
 
-use super::types::{RunDetail, RunSummary};
+use crate::core::api_types::{RunDetail, RunSummary};
 use crate::core::orchestrator::create_orchestrator;
 
 /// Ensure the daemon is running for lifecycle management

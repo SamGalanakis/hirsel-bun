@@ -1,10 +1,8 @@
 /**
- * OneBoard - Unified semantic zoom canvas
+ * OneBoard - Task/Eval canvas for the selected project
  *
- * At portfolio level (zoomed out): Shows all projects as draggable cards
- * At project level (zoomed in): Shows that project's task/eval board (SpecflowBoard)
- *
- * Navigation happens through zoom, not sidebar clicks.
+ * Shows tasks and evals on an infinite canvas with pan/zoom.
+ * Project selection is handled via the breadcrumbs ProjectSelector.
  */
 
 import { invoke } from '@tauri-apps/api/core';
@@ -19,11 +17,28 @@ import {
   onCleanup,
   onMount,
 } from 'solid-js';
-import { useProject, type Project } from '../../stores';
-import { ProjectCard } from './ProjectCard';
-import { SpecflowBoard } from './SpecflowBoard';
-import { getProjectLOADLevel, RENDER_CONFIGS } from './use-tree-layout';
-import type { RunSummary } from '../../lib/types';
+import { useProject, useApp } from '../../stores';
+import { TaskCard, EvalCard } from './NodeRenderer';
+import { NodeContextMenu } from './NodeContextMenu';
+import { DispatchModal } from './DispatchModal';
+import {
+  computeTreeLayout,
+  generateEdgePath,
+  getLOADLevel,
+  LAYOUT_CONFIG,
+  RENDER_CONFIGS,
+  type LOADLevel,
+  type NodePosition,
+} from './use-tree-layout';
+import { flattenTree, findNodeById, getDescendantIds } from '../../lib/utils/tree';
+import type {
+  TaskTree,
+  BoardEval,
+  Bookmark,
+  BoardSyncResult,
+  BoardTaskStatus,
+  BoardEvalStatus,
+} from '../../lib/types';
 
 interface Transform {
   x: number;
@@ -31,115 +46,342 @@ interface Transform {
   k: number;
 }
 
-interface ContextMenuState {
-  x: number;
-  y: number;
-  worldX: number;
-  worldY: number;
-  projectId: number | null;
-}
-
-// Default grid layout for projects without positions
-const GRID_SPACING = 300;
+// Zoom limits
+const MIN_ZOOM = 0.3;
+const MAX_ZOOM = 3.0;
+const DEFAULT_ZOOM = 1.0;
 
 export const OneBoard: Component = () => {
   const project = useProject();
+  const app = useApp();
 
   let viewportRef: HTMLDivElement | undefined;
   let canvasRef: HTMLCanvasElement | undefined;
 
   // Transform state
-  const [transform, setTransform] = createSignal<Transform>({ x: 100, y: 100, k: 0.5 });
-
-  // Run counts per project (for status display)
-  const [runCounts, setRunCounts] = createSignal<Map<number, { total: number; active: number }>>(
-    new Map()
-  );
+  const [transform, setTransform] = createSignal<Transform>({ x: 0, y: 0, k: DEFAULT_ZOOM });
 
   // Interaction states
   const [panning, setPanning] = createSignal(false);
   const [panStart, setPanStart] = createSignal({ x: 0, y: 0 });
-  const [dragging, setDragging] = createSignal<{
-    projectId: number;
+
+  // Task/Eval dragging state
+  const [taskDragging, setTaskDragging] = createSignal<{
+    nodeId: string;
+    isEval: boolean;
     startX: number;
     startY: number;
-    initialX: number;
-    initialY: number;
+    initialPositions: Map<string, { x: number; y: number }>;
   } | null>(null);
-  const [dragPosition, setDragPosition] = createSignal<{ x: number; y: number } | null>(null);
+  const [taskDragPositions, setTaskDragPositions] = createSignal<Map<string, NodePosition>>(
+    new Map()
+  );
+
+  // Task/Eval data
+  const [taskTree, setTaskTree] = createSignal<TaskTree[]>([]);
+  const [evals, setEvals] = createSignal<BoardEval[]>([]);
+  const [bookmarks, setBookmarks] = createSignal<Bookmark[]>([]);
+  const [loading, setLoading] = createSignal(false);
+
+  // Task/Eval selection
+  const [selectedTaskId, setSelectedTaskId] = createSignal<string | null>(null);
+  const [selectedEvalId, setSelectedEvalId] = createSignal<string | null>(null);
+
+  // Dispatch scope (shift+click selection for runs)
+  // Contains task IDs that are directly selected (their subtrees + evals are computed)
+  const [dispatchRoots, setDispatchRoots] = createSignal<Set<string>>(new Set());
+
+  // Dispatch modal
+  const [showDispatchModal, setShowDispatchModal] = createSignal(false);
 
   // Context menu
-  const [contextMenu, setContextMenu] = createSignal<ContextMenuState | null>(null);
+  const [contextMenu, setContextMenu] = createSignal<{
+    x: number;
+    y: number;
+    worldX: number;
+    worldY: number;
+    taskId: string | null;
+    evalId: string | null;
+  } | null>(null);
 
-  // Computed: current LOAD level for projects
-  const projectLoad = createMemo(() => getProjectLOADLevel(transform().k));
+  // New item prompt
+  const [newItemPrompt, setNewItemPrompt] = createSignal<{
+    x: number;
+    y: number;
+    parentId: string | null;
+    type: 'task' | 'eval';
+  } | null>(null);
+  const [newItemName, setNewItemName] = createSignal('');
+  let newItemInputRef: HTMLInputElement | undefined;
 
-  // Computed: whether we're at portfolio level (zoomed out)
-  const isPortfolioView = createMemo(() => transform().k < 0.15);
-
-  // Computed: focused project (zoomed into)
-  const focusedProject = createMemo(() => {
-    const id = project.focusedProjectId();
-    return id ? project.projects().find((p) => p.id === id) : null;
+  // Edit modal
+  const [editingTask, setEditingTask] = createSignal<TaskTree | null>(null);
+  const [editingEval, setEditingEval] = createSignal<BoardEval | null>(null);
+  const [editForm, setEditForm] = createSignal({
+    name: '',
+    content: '',
+    validates: [] as string[],
   });
 
-  // Get project position (from DB or default grid layout)
-  const getProjectPosition = (p: Project, index: number) => {
-    if (p.x != null && p.y != null) {
-      return { x: p.x, y: p.y };
-    }
-    // Default grid layout
-    const cols = Math.ceil(Math.sqrt(project.projects().length));
-    const row = Math.floor(index / cols);
-    const col = index % cols;
-    return {
-      x: col * GRID_SPACING + 150,
-      y: row * GRID_SPACING + 150,
-    };
-  };
+  // Gyp editing indicators
+  const [gypEditingIslands, setGypEditingIslands] = createSignal<Set<string>>(new Set());
 
-  // Load run counts for all projects
-  const loadRunCounts = async () => {
-    try {
-      const runs = await invoke<RunSummary[]>('get_runs', {});
-      const counts = new Map<number, { total: number; active: number }>();
+  // Computed: LOAD level for tasks
+  const taskLoad = createMemo<LOADLevel>(() => getLOADLevel(transform().k));
 
-      for (const p of project.projects()) {
-        // Count runs for this project (based on project ID in run name pattern)
-        const projectRuns = runs.filter((r) => r.name.startsWith(`${p.name}-`));
-        const activeRuns = projectRuns.filter((r) =>
-          ['working', 'eval', 'waiting'].includes(r.status)
-        );
-        counts.set(p.id, {
-          total: projectRuns.length,
-          active: activeRuns.length,
-        });
+  // Computed: task layout
+  const taskLayout = createMemo(() => computeTreeLayout(taskTree(), evals()));
+
+  // Computed: task positions (centered in canvas)
+  const taskPositions = createMemo(() => {
+    const layout = taskLayout();
+    const dragPos = taskDragPositions();
+
+    const positions = new Map<string, NodePosition>();
+    for (const [id, pos] of layout.positions) {
+      const dragOverride = dragPos.get(id);
+      if (dragOverride) {
+        positions.set(id, dragOverride);
+      } else {
+        positions.set(id, pos);
       }
+    }
+    return positions;
+  });
 
-      setRunCounts(counts);
+  // Get local position for drag calculations
+  const getTaskLocalPosition = (id: string): NodePosition | undefined => {
+    const dragPos = taskDragPositions().get(id);
+    if (dragPos) return dragPos;
+    return taskLayout().positions.get(id);
+  };
+
+  // Computed: full dispatch scope (all tasks including descendants)
+  const dispatchTaskIds = createMemo(() => {
+    const roots = dispatchRoots();
+    if (roots.size === 0) return new Set<string>();
+
+    const allIds = new Set<string>();
+    for (const rootId of roots) {
+      const descendants = getDescendantIds(taskTree(), rootId);
+      for (const id of descendants) {
+        allIds.add(id);
+      }
+    }
+    return allIds;
+  });
+
+  // Computed: evals that validate tasks in dispatch scope
+  const dispatchEvalIds = createMemo(() => {
+    const taskIds = dispatchTaskIds();
+    if (taskIds.size === 0) return new Set<string>();
+
+    const evalIds = new Set<string>();
+    for (const ev of evals()) {
+      // Include eval if any of its validated tasks are in scope
+      const validatesInScope = ev.validates.some(tid => taskIds.has(tid));
+      if (validatesInScope) {
+        evalIds.add(ev.id);
+      }
+    }
+    return evalIds;
+  });
+
+  // Toggle a task in dispatch scope (shift+click)
+  const toggleDispatchScope = (taskId: string) => {
+    setDispatchRoots(prev => {
+      const next = new Set(prev);
+      if (next.has(taskId)) {
+        next.delete(taskId);
+      } else {
+        // Remove any descendants that are already roots (they'll be covered by this parent)
+        const descendants = getDescendantIds(taskTree(), taskId);
+        for (const descId of descendants) {
+          if (descId !== taskId) next.delete(descId);
+        }
+        next.add(taskId);
+      }
+      return next;
+    });
+  };
+
+  // Clear dispatch scope
+  const clearDispatchScope = () => {
+    setDispatchRoots(new Set<string>());
+  };
+
+  // ==========================================================================
+  // Data Loading
+  // ==========================================================================
+
+  const loadTaskData = async (projectId: number) => {
+    try {
+      setLoading(true);
+      const [treeData, evalData, bookmarkData] = await Promise.all([
+        invoke<TaskTree[]>('get_board_task_tree', { projectId }),
+        invoke<BoardEval[]>('get_board_evals', { projectId }),
+        invoke<Bookmark[]>('get_bookmarks', { projectId }),
+      ]);
+      batch(() => {
+        setTaskTree(treeData || []);
+        setEvals(evalData || []);
+        setBookmarks(bookmarkData || []);
+        setLoading(false);
+      });
     } catch (e) {
-      console.error('Failed to load run counts:', e);
+      console.error('Failed to load task data:', e);
+      setLoading(false);
     }
   };
 
-  // Load run counts when projects change
+  // Load data when selected project changes
   createEffect(() => {
-    if (project.projects().length > 0) {
-      loadRunCounts();
+    const selectedId = project.selectedProjectId();
+
+    if (selectedId) {
+      loadTaskData(selectedId);
+      // Also set focused for consistency
+      project.setFocusedProjectId(selectedId);
+    } else {
+      batch(() => {
+        setTaskTree([]);
+        setEvals([]);
+        setBookmarks([]);
+        setSelectedTaskId(null);
+        setSelectedEvalId(null);
+      });
+      project.setFocusedProjectId(null);
     }
   });
 
-  // Poll run counts periodically
+  // Poll for task changes
   createEffect(() => {
-    const interval = setInterval(loadRunCounts, 5000);
+    const selectedId = project.selectedProjectId();
+    if (!selectedId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const result = await invoke<BoardSyncResult>('poll_board_changes', {
+          projectId: selectedId,
+        });
+        if (result.changes > 0) {
+          await loadTaskData(selectedId);
+        }
+      } catch (e) {
+        console.error('Failed to poll task changes:', e);
+      }
+    }, 2500);
+
     onCleanup(() => clearInterval(interval));
   });
 
+  // Listen for gyp-editing-islands events
+  createEffect(() => {
+    const handler = (e: Event) => {
+      const customEvent = e as CustomEvent<Set<string>>;
+      setGypEditingIslands(customEvent.detail);
+    };
+    window.addEventListener('gyp-editing-islands', handler);
+    onCleanup(() => window.removeEventListener('gyp-editing-islands', handler));
+  });
+
+  // Listen for board-refresh events
+  createEffect(() => {
+    const handler = async (e: Event) => {
+      const customEvent = e as CustomEvent<number>;
+      const pid = customEvent.detail;
+      if (pid && pid === project.selectedProjectId()) {
+        try {
+          await invoke('import_board_from_agent', { projectId: pid });
+        } catch (e) {
+          console.error('Failed to import board changes:', e);
+        }
+        loadTaskData(pid);
+      }
+    };
+    window.addEventListener('board-refresh', handler);
+    onCleanup(() => window.removeEventListener('board-refresh', handler));
+  });
+
   // ==========================================================================
-  // Canvas Rendering (Grid)
+  // Canvas Rendering
   // ==========================================================================
 
-  const renderGrid = () => {
+  const drawTaskEdges = (
+    ctx: CanvasRenderingContext2D,
+    positions: Map<string, NodePosition>,
+    tree: TaskTree[],
+    load: LOADLevel
+  ) => {
+    const nodeHeight = RENDER_CONFIGS[load].nodeHeight;
+
+    const drawNodeEdges = (node: TaskTree) => {
+      const parentPos = positions.get(node.id);
+      if (!parentPos) return;
+
+      for (const child of node.children) {
+        const childPos = positions.get(child.id);
+        if (!childPos) continue;
+
+        const path = generateEdgePath(parentPos, childPos, nodeHeight);
+
+        // Edge glow
+        ctx.strokeStyle = 'rgba(212, 165, 116, 0.15)';
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        const path2d = new Path2D(path);
+        ctx.stroke(path2d);
+
+        // Edge core
+        ctx.strokeStyle = 'rgba(212, 165, 116, 0.5)';
+        ctx.lineWidth = 2;
+        ctx.stroke(path2d);
+
+        drawNodeEdges(child);
+      }
+    };
+
+    tree.forEach(drawNodeEdges);
+  };
+
+  const drawEvalConnections = (
+    ctx: CanvasRenderingContext2D,
+    positions: Map<string, NodePosition>,
+    evalList: BoardEval[],
+    load: LOADLevel
+  ) => {
+    const nodeHeight = RENDER_CONFIGS[load].nodeHeight;
+
+    for (const ev of evalList) {
+      const evalPos = positions.get(ev.id);
+      if (!evalPos) continue;
+
+      for (const taskId of ev.validates) {
+        const taskPos = positions.get(taskId);
+        if (!taskPos) continue;
+
+        const path = generateEdgePath(taskPos, evalPos, nodeHeight);
+
+        // Connection glow
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.1)';
+        ctx.lineWidth = 4;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        const path2d = new Path2D(path);
+        ctx.stroke(path2d);
+
+        // Connection line (dashed)
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.4)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        ctx.stroke(path2d);
+      }
+    }
+
+    ctx.setLineDash([]);
+  };
+
+  const render = () => {
     if (!canvasRef || !viewportRef) return;
 
     const ctx = canvasRef.getContext('2d');
@@ -154,9 +396,10 @@ export const OneBoard: Component = () => {
     ctx.clearRect(0, 0, vw * dpr, vh * dpr);
     ctx.setTransform(dpr * k, 0, 0, dpr * k, dpr * x, dpr * y);
 
+    // Draw grid
     const majorSpacing = 100;
     const minorSpacing = 20;
-    const showMinor = k >= 0.4;
+    const showMinor = k >= 0.5;
 
     const worldLeft = Math.floor(-x / k / majorSpacing) * majorSpacing - majorSpacing;
     const worldTop = Math.floor(-y / k / majorSpacing) * majorSpacing - majorSpacing;
@@ -184,6 +427,12 @@ export const OneBoard: Component = () => {
         ctx.fill();
       }
     }
+
+    // Draw task edges
+    const positions = taskPositions();
+    const load = taskLoad();
+    drawTaskEdges(ctx, positions, taskTree(), load);
+    drawEvalConnections(ctx, positions, evals(), load);
   };
 
   const handleResize = () => {
@@ -193,7 +442,7 @@ export const OneBoard: Component = () => {
     canvasRef.height = viewportRef.clientHeight * dpr;
     canvasRef.style.width = `${viewportRef.clientWidth}px`;
     canvasRef.style.height = `${viewportRef.clientHeight}px`;
-    renderGrid();
+    render();
   };
 
   onMount(() => {
@@ -203,11 +452,25 @@ export const OneBoard: Component = () => {
       if (viewportRef) resizeObserver.observe(viewportRef);
       onCleanup(() => resizeObserver.disconnect());
     }
+    // Center transform
+    if (viewportRef) {
+      const vw = viewportRef.clientWidth;
+      const vh = viewportRef.clientHeight;
+      setTransform({
+        x: vw / 2,
+        y: vh / 2,
+        k: DEFAULT_ZOOM,
+      });
+    }
   });
 
+  // Re-render when transform or data changes
   createEffect(() => {
     transform();
-    renderGrid();
+    taskTree();
+    evals();
+    taskDragPositions();
+    render();
   });
 
   // ==========================================================================
@@ -224,17 +487,12 @@ export const OneBoard: Component = () => {
     const mouseY = e.clientY - rect.top;
 
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    const newK = Math.max(0.05, Math.min(3, t.k * delta));
+    const newK = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, t.k * delta));
 
     const newX = mouseX - (mouseX - t.x) * (newK / t.k);
     const newY = mouseY - (mouseY - t.y) * (newK / t.k);
 
     setTransform({ x: newX, y: newY, k: newK });
-
-    // Auto-unfocus when zooming out past threshold
-    if (newK < 0.1 && project.focusedProjectId()) {
-      project.setFocusedProjectId(null);
-    }
   };
 
   const handleMouseDown = (e: MouseEvent) => {
@@ -246,15 +504,18 @@ export const OneBoard: Component = () => {
   };
 
   const handleMouseMove = (e: MouseEvent) => {
-    const drag = dragging();
-    if (drag) {
+    // Handle task/eval dragging
+    const taskDrag = taskDragging();
+    if (taskDrag) {
       const t = transform();
-      const dx = (e.clientX - drag.startX) / t.k;
-      const dy = (e.clientY - drag.startY) / t.k;
-      setDragPosition({
-        x: drag.initialX + dx,
-        y: drag.initialY + dy,
-      });
+      const dx = (e.clientX - taskDrag.startX) / t.k;
+      const dy = (e.clientY - taskDrag.startY) / t.k;
+
+      const newPositions = new Map<string, NodePosition>();
+      for (const [id, initial] of taskDrag.initialPositions) {
+        newPositions.set(id, { x: initial.x + dx, y: initial.y + dy });
+      }
+      setTaskDragPositions(newPositions);
       return;
     }
 
@@ -267,14 +528,31 @@ export const OneBoard: Component = () => {
   };
 
   const handleMouseUp = async () => {
-    const drag = dragging();
-    if (drag) {
-      const pos = dragPosition();
-      if (pos) {
-        await project.updateProjectPosition(drag.projectId, pos.x, pos.y);
+    // Handle task/eval drag end
+    const taskDrag = taskDragging();
+    if (taskDrag) {
+      const projectId = project.selectedProjectId();
+      if (projectId) {
+        const positions = taskDragPositions();
+        const updates = Array.from(positions.entries()).map(([id, pos]) => {
+          const isEval = evals().some((e) => e.id === id);
+          if (isEval) {
+            return invoke('update_board_eval', { projectId, evalId: id, x: pos.x, y: pos.y });
+          }
+          return invoke('update_board_task', { projectId, taskId: id, x: pos.x, y: pos.y });
+        });
+
+        try {
+          await Promise.all(updates);
+          await loadTaskData(projectId);
+        } catch (e) {
+          console.error('Failed to save positions:', e);
+          window.toast?.error('Failed to save positions');
+        }
       }
-      setDragging(null);
-      setDragPosition(null);
+
+      setTaskDragging(null);
+      setTaskDragPositions(new Map());
       return;
     }
 
@@ -282,52 +560,77 @@ export const OneBoard: Component = () => {
   };
 
   // ==========================================================================
-  // Project Interactions
+  // Task/Eval Interactions
   // ==========================================================================
 
-  const handleProjectDragStart = (e: MouseEvent, projectId: number) => {
-    e.preventDefault();
-    const p = project.projects().find((pr) => pr.id === projectId);
-    if (!p) return;
+  const collectDescendantIds = (nodeId: string): string[] => {
+    const taskIds: string[] = [nodeId];
 
-    const pos = getProjectPosition(p, project.projects().indexOf(p));
-    setDragging({
-      projectId,
+    const collectChildren = (node: TaskTree) => {
+      for (const child of node.children) {
+        taskIds.push(child.id);
+        collectChildren(child);
+      }
+    };
+    const node = findNodeById(taskTree(), nodeId);
+    if (node) collectChildren(node);
+
+    const evalIds: string[] = [];
+    for (const ev of evals()) {
+      if (ev.validates.some((taskId) => taskIds.includes(taskId))) {
+        evalIds.push(ev.id);
+      }
+    }
+
+    return [...taskIds, ...evalIds];
+  };
+
+  const handleTaskDragStart = (e: MouseEvent, taskId: string) => {
+    e.preventDefault();
+    const idsToMove = collectDescendantIds(taskId);
+    const initialPositions = new Map<string, { x: number; y: number }>();
+    for (const id of idsToMove) {
+      const pos = getTaskLocalPosition(id);
+      if (pos) initialPositions.set(id, { x: pos.x, y: pos.y });
+    }
+
+    setTaskDragging({
+      nodeId: taskId,
+      isEval: false,
       startX: e.clientX,
       startY: e.clientY,
-      initialX: pos.x,
-      initialY: pos.y,
+      initialPositions,
     });
+    setSelectedTaskId(taskId);
+    setSelectedEvalId(null);
   };
 
-  const handleProjectClick = (p: Project) => {
-    project.selectProject(p);
-  };
+  const handleEvalDragStart = (e: MouseEvent, evalId: string) => {
+    e.preventDefault();
+    const pos = getTaskLocalPosition(evalId);
+    const initialPositions = new Map<string, { x: number; y: number }>();
+    if (pos) initialPositions.set(evalId, { x: pos.x, y: pos.y });
 
-  const handleProjectDoubleClick = (p: Project) => {
-    // Zoom into project
-    project.selectProject(p);
-    project.setFocusedProjectId(p.id);
-
-    if (viewportRef) {
-      const pos = getProjectPosition(p, project.projects().indexOf(p));
-      const vw = viewportRef.clientWidth;
-      const vh = viewportRef.clientHeight;
-
-      // Animate zoom to project
-      setTransform({
-        x: vw / 2 - pos.x * 0.8,
-        y: vh / 2 - pos.y * 0.8,
-        k: 0.8,
-      });
-    }
+    setTaskDragging({
+      nodeId: evalId,
+      isEval: true,
+      startX: e.clientX,
+      startY: e.clientY,
+      initialPositions,
+    });
+    setSelectedEvalId(evalId);
+    setSelectedTaskId(null);
   };
 
   // ==========================================================================
   // Context Menu
   // ==========================================================================
 
-  const handleContextMenu = (e: MouseEvent, projectId: number | null = null) => {
+  const handleContextMenu = (
+    e: MouseEvent,
+    taskId: string | null = null,
+    evalId: string | null = null
+  ) => {
     e.preventDefault();
     e.stopPropagation();
     if (!viewportRef) return;
@@ -337,62 +640,182 @@ export const OneBoard: Component = () => {
     const worldX = (e.clientX - rect.left - t.x) / t.k;
     const worldY = (e.clientY - rect.top - t.y) / t.k;
 
-    setContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-      worldX,
-      worldY,
-      projectId,
-    });
+    setContextMenu({ x: e.clientX, y: e.clientY, worldX, worldY, taskId, evalId });
   };
 
   const hideContextMenu = () => setContextMenu(null);
 
-  // Close context menu on click outside
-  createEffect(() => {
-    const handler = () => setContextMenu(null);
-    document.addEventListener('click', handler);
-    onCleanup(() => document.removeEventListener('click', handler));
-  });
-
   // ==========================================================================
-  // Zoom Controls
+  // Task CRUD
   // ==========================================================================
 
-  const fitAll = () => {
-    const projects = project.projects();
-    if (projects.length === 0 || !viewportRef) return;
+  const createTask = async (parentId: string | null, name: string) => {
+    const projectId = project.selectedProjectId();
+    if (!projectId || !name.trim()) return;
 
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
+    try {
+      const task = await invoke<TaskTree>('create_board_task', {
+        projectId,
+        parentId,
+        name: name.trim(),
+      });
+      await loadTaskData(projectId);
+      setSelectedTaskId(task.id);
+      setSelectedEvalId(null);
+    } catch (e) {
+      console.error('Failed to create task:', e);
+      window.toast?.error('Failed to create task');
+    }
+  };
 
-    projects.forEach((p, i) => {
-      const pos = getProjectPosition(p, i);
-      minX = Math.min(minX, pos.x - 100);
-      maxX = Math.max(maxX, pos.x + 100);
-      minY = Math.min(minY, pos.y - 60);
-      maxY = Math.max(maxY, pos.y + 60);
-    });
+  const updateTask = async (
+    taskId: string,
+    updates: { name?: string; status?: BoardTaskStatus; content?: string; x?: number; y?: number }
+  ) => {
+    const projectId = project.selectedProjectId();
+    if (!projectId) return;
 
-    const padding = 80;
-    const vw = viewportRef.clientWidth;
-    const vh = viewportRef.clientHeight;
-    const scaleX = (vw - padding * 2) / (maxX - minX);
-    const scaleY = (vh - padding * 2) / (maxY - minY);
-    const scale = Math.min(scaleX, scaleY, 1);
+    try {
+      await invoke('update_board_task', { projectId, taskId, ...updates });
+      await loadTaskData(projectId);
+    } catch (e) {
+      console.error('Failed to update task:', e);
+      window.toast?.error('Failed to update task');
+    }
+  };
 
-    const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
+  const deleteTask = async (taskId: string) => {
+    const projectId = project.selectedProjectId();
+    if (!projectId) return;
 
-    setTransform({
-      x: vw / 2 - centerX * scale,
-      y: vh / 2 - centerY * scale,
-      k: scale,
-    });
+    const confirmed = await window.confirmDialog?.delete('this task and all children', 'task');
+    if (!confirmed) return;
 
-    project.setFocusedProjectId(null);
+    try {
+      await invoke('delete_board_task', { projectId, taskId });
+      await loadTaskData(projectId);
+      if (selectedTaskId() === taskId) setSelectedTaskId(null);
+      window.toast?.success('Task deleted');
+    } catch (e) {
+      console.error('Failed to delete task:', e);
+      window.toast?.error(`Failed to delete task: ${e}`);
+    }
+  };
+
+  // ==========================================================================
+  // Eval CRUD
+  // ==========================================================================
+
+  const createEval = async (name: string) => {
+    const projectId = project.selectedProjectId();
+    if (!projectId || !name.trim()) return;
+
+    try {
+      const ev = await invoke<BoardEval>('create_board_eval', {
+        projectId,
+        name: name.trim(),
+      });
+      await loadTaskData(projectId);
+      setSelectedEvalId(ev.id);
+      setSelectedTaskId(null);
+    } catch (e) {
+      console.error('Failed to create eval:', e);
+      window.toast?.error('Failed to create eval');
+    }
+  };
+
+  const updateEval = async (
+    evalId: string,
+    updates: { name?: string; status?: BoardEvalStatus; content?: string; validates?: string[]; x?: number; y?: number }
+  ) => {
+    const projectId = project.selectedProjectId();
+    if (!projectId) return;
+
+    try {
+      await invoke('update_board_eval', { projectId, evalId, ...updates });
+      await loadTaskData(projectId);
+    } catch (e) {
+      console.error('Failed to update eval:', e);
+      window.toast?.error('Failed to update eval');
+    }
+  };
+
+  const deleteEval = async (evalId: string) => {
+    const projectId = project.selectedProjectId();
+    if (!projectId) return;
+
+    const confirmed = await window.confirmDialog?.delete('this eval', 'eval');
+    if (!confirmed) return;
+
+    try {
+      await invoke('delete_board_eval', { projectId, evalId });
+      await loadTaskData(projectId);
+      if (selectedEvalId() === evalId) setSelectedEvalId(null);
+      window.toast?.success('Eval deleted');
+    } catch (e) {
+      console.error('Failed to delete eval:', e);
+      window.toast?.error(`Failed to delete eval: ${e}`);
+    }
+  };
+
+  // ==========================================================================
+  // Edit Modal
+  // ==========================================================================
+
+  const openTaskEdit = (task: TaskTree) => {
+    setEditForm({ name: task.name, content: task.content, validates: [] });
+    setEditingTask(task);
+    setEditingEval(null);
+  };
+
+  const openEvalEdit = (ev: BoardEval) => {
+    setEditForm({ name: ev.name, content: ev.content, validates: [...ev.validates] });
+    setEditingTask(null);
+    setEditingEval(ev);
+  };
+
+  const saveEdit = async () => {
+    const task = editingTask();
+    const ev = editingEval();
+
+    if (task) {
+      await updateTask(task.id, { name: editForm().name, content: editForm().content });
+      setEditingTask(null);
+    } else if (ev) {
+      await updateEval(ev.id, {
+        name: editForm().name,
+        content: editForm().content,
+        validates: editForm().validates,
+      });
+      setEditingEval(null);
+    }
+  };
+
+  // New item prompt
+  const showNewItemPrompt = (
+    x: number,
+    y: number,
+    parentId: string | null,
+    type: 'task' | 'eval'
+  ) => {
+    setNewItemPrompt({ x, y, parentId, type });
+    setNewItemName('');
+    setTimeout(() => newItemInputRef?.focus(), 50);
+  };
+
+  const submitNewItem = () => {
+    const prompt = newItemPrompt();
+    const name = newItemName().trim();
+    if (!prompt || !name) {
+      setNewItemPrompt(null);
+      return;
+    }
+    if (prompt.type === 'task') {
+      createTask(prompt.parentId, name);
+    } else {
+      createEval(name);
+    }
+    setNewItemPrompt(null);
   };
 
   // ==========================================================================
@@ -405,12 +828,15 @@ export const OneBoard: Component = () => {
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
       if (e.key === 'Escape') {
-        if (contextMenu()) {
+        if (editingTask() || editingEval()) {
+          setEditingTask(null);
+          setEditingEval(null);
+        } else if (newItemPrompt()) {
+          setNewItemPrompt(null);
+        } else if (contextMenu()) {
           setContextMenu(null);
-        } else if (project.focusedProjectId()) {
-          // Zoom out from focused project
-          project.setFocusedProjectId(null);
-          fitAll();
+        } else if (dispatchRoots().size > 0) {
+          clearDispatchScope();
         }
       }
     };
@@ -418,6 +844,38 @@ export const OneBoard: Component = () => {
     document.addEventListener('keydown', handler);
     onCleanup(() => document.removeEventListener('keydown', handler));
   });
+
+  // Fit all tasks in view
+  const fitAll = () => {
+    const positions = taskPositions();
+    if (positions.size === 0 || !viewportRef) return;
+
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+
+    for (const pos of positions.values()) {
+      minX = Math.min(minX, pos.x - 150);
+      maxX = Math.max(maxX, pos.x + 150);
+      minY = Math.min(minY, pos.y - 100);
+      maxY = Math.max(maxY, pos.y + 100);
+    }
+
+    const padding = 60;
+    const vw = viewportRef.clientWidth;
+    const vh = viewportRef.clientHeight;
+    const scaleX = (vw - padding * 2) / (maxX - minX);
+    const scaleY = (vh - padding * 2) / (maxY - minY);
+    const scale = Math.max(MIN_ZOOM, Math.min(scaleX, scaleY, MAX_ZOOM));
+
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+
+    setTransform({
+      x: vw / 2 - centerX * scale,
+      y: vh / 2 - centerY * scale,
+      k: scale,
+    });
+  };
 
   // ==========================================================================
   // Render
@@ -430,105 +888,110 @@ export const OneBoard: Component = () => {
         background: 'linear-gradient(145deg, #0f0f0f 0%, #1a1815 50%, #0f0f0f 100%)',
       }}
     >
-      {/* Canvas layer for grid */}
+      {/* Canvas layer for grid and edges */}
       <canvas
         ref={canvasRef}
         class="absolute inset-0 w-full h-full pointer-events-none"
         style={{ 'z-index': 0 }}
       />
 
-      {/* Portfolio view - show when not focused on a project */}
-      <Show when={!focusedProject()}>
+      {/* Viewport */}
+      <div
+        ref={viewportRef}
+        class="absolute inset-0 overflow-hidden"
+        style={{
+          'z-index': 1,
+          cursor: taskDragging() ? 'grabbing' : panning() ? 'grabbing' : 'grab',
+        }}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onWheel={handleWheel}
+        onContextMenu={(e) => handleContextMenu(e, null, null)}
+      >
+        {/* Transformed container */}
         <div
-          ref={viewportRef}
-          class="absolute inset-0 overflow-hidden"
+          class="absolute origin-top-left will-change-transform"
           style={{
-            'z-index': 1,
-            cursor: dragging() ? 'grabbing' : panning() ? 'grabbing' : 'grab',
+            transform: `translate(${transform().x}px, ${transform().y}px) scale(${transform().k})`,
           }}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-          onWheel={handleWheel}
-          onContextMenu={(e) => handleContextMenu(e, null)}
         >
-          {/* Transformed container */}
-          <div
-            class="absolute origin-top-left will-change-transform"
-            style={{
-              transform: `translate(${transform().x}px, ${transform().y}px) scale(${transform().k})`,
-            }}
-          >
-            {/* Render Project Cards */}
-            <For each={project.projects()}>
-              {(p, i) => {
-                const pos = () => {
-                  const drag = dragging();
-                  if (drag?.projectId === p.id && dragPosition()) {
-                    return dragPosition()!;
-                  }
-                  return getProjectPosition(p, i());
-                };
-
-                const counts = () => runCounts().get(p.id) || { total: 0, active: 0 };
-
-                return (
-                  <ProjectCard
-                    project={p}
-                    position={pos()}
-                    load={projectLoad()}
-                    selected={project.selectedProjectId() === p.id}
-                    focused={!!project.focusedProjectId() && project.focusedProjectId() !== p.id}
-                    runCount={counts().total}
-                    activeRunCount={counts().active}
-                    onClick={() => handleProjectClick(p)}
-                    onDoubleClick={() => handleProjectDoubleClick(p)}
-                    onContextMenu={(e) => handleContextMenu(e, p.id)}
-                    onDragStart={handleProjectDragStart}
+          {/* Tasks */}
+          <For each={flattenTree(taskTree())}>
+            {(task) => {
+              const pos = () => taskPositions().get(task.id);
+              return (
+                <Show when={pos()}>
+                  <TaskCard
+                    task={task}
+                    position={pos()!}
+                    load={taskLoad()}
+                    selected={selectedTaskId() === task.id}
+                    editing={gypEditingIslands().has(task.name.toLowerCase())}
+                    zoom={transform().k}
+                    inDispatchScope={dispatchTaskIds().has(task.id)}
+                    isDispatchRoot={dispatchRoots().has(task.id)}
+                    onClick={(e) => {
+                      if (e.shiftKey) {
+                        toggleDispatchScope(task.id);
+                      } else {
+                        setSelectedTaskId(task.id);
+                        setSelectedEvalId(null);
+                      }
+                    }}
+                    onDoubleClick={() => openTaskEdit(task)}
+                    onContextMenu={(e) => handleContextMenu(e, task.id, null)}
+                    onAskGyp={(e) => {
+                      e.stopPropagation();
+                      window.dispatchEvent(
+                        new CustomEvent('gyp-focus-node', {
+                          detail: { id: task.id, name: task.name },
+                        })
+                      );
+                      app.setAiChatOpen(true);
+                    }}
+                    onDragStart={handleTaskDragStart}
                   />
-                );
-              }}
-            </For>
-          </div>
-        </div>
-      </Show>
+                </Show>
+              );
+            }}
+          </For>
 
-      {/* Project view - show when focused on a project */}
-      <Show when={focusedProject()}>
-        <SpecflowBoard />
-      </Show>
+          {/* Evals */}
+          <For each={evals()}>
+            {(ev) => {
+              const pos = () => taskPositions().get(ev.id);
+              return (
+                <Show when={pos()}>
+                  <EvalCard
+                    eval={ev}
+                    position={pos()!}
+                    load={taskLoad()}
+                    selected={selectedEvalId() === ev.id}
+                    zoom={transform().k}
+                    inDispatchScope={dispatchEvalIds().has(ev.id)}
+                    onClick={(e) => {
+                      // Evals can't be dispatch roots, just show selection
+                      setSelectedEvalId(ev.id);
+                      setSelectedTaskId(null);
+                    }}
+                    onDoubleClick={() => openEvalEdit(ev)}
+                    onContextMenu={(e) => handleContextMenu(e, null, ev.id)}
+                    onDragStart={handleEvalDragStart}
+                  />
+                </Show>
+              );
+            }}
+          </For>
+        </div>
+      </div>
 
       {/* HUD Toolbar */}
       <div
         class="absolute top-4 right-4 flex items-center gap-2"
         style={{ 'z-index': 50, 'pointer-events': 'auto' }}
       >
-        <Show when={project.focusedProjectId()}>
-          <button
-            onClick={() => {
-              project.setFocusedProjectId(null);
-              fitAll();
-            }}
-            class="px-3 py-1.5 rounded-lg text-xs font-medium text-wool-300 hover:text-wool-100 transition-all flex items-center gap-1.5"
-            style={{
-              background: 'rgba(39,39,42,0.9)',
-              border: '1px solid rgba(63,63,70,0.5)',
-            }}
-            title="Back to portfolio (Escape)"
-          >
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M10 19l-7-7m0 0l7-7m-7 7h18"
-              />
-            </svg>
-            Portfolio
-          </button>
-        </Show>
-
         <button
           onClick={fitAll}
           class="p-2 rounded-lg text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-all"
@@ -546,108 +1009,355 @@ export const OneBoard: Component = () => {
         </button>
       </div>
 
-      {/* Context Menu */}
-      <Show when={contextMenu()}>
+      {/* Dispatch Scope Summary Pill */}
+      <Show when={dispatchRoots().size > 0}>
         <div
-          class="fixed rounded-lg overflow-hidden shadow-xl"
+          class="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-2.5 rounded-xl"
           style={{
-            'z-index': 100,
-            left: `${contextMenu()!.x}px`,
-            top: `${contextMenu()!.y}px`,
-            background: 'rgba(26,26,26,0.98)',
-            border: '1px solid rgba(63,63,70,0.8)',
-            'min-width': '160px',
+            'z-index': 50,
+            'pointer-events': 'auto',
+            background: 'linear-gradient(180deg, rgba(245, 158, 11, 0.15) 0%, rgba(30, 27, 24, 0.95) 100%)',
+            border: '1px solid rgba(245, 158, 11, 0.4)',
+            'box-shadow': '0 8px 32px rgba(0, 0, 0, 0.5), 0 0 24px rgba(245, 158, 11, 0.15)',
+            'backdrop-filter': 'blur(12px)',
           }}
-          onClick={(e) => e.stopPropagation()}
         >
-          <Show when={!contextMenu()!.projectId}>
-            {/* Canvas context menu */}
-            <button
-              class="w-full px-3 py-2 text-left text-sm text-wool-200 hover:bg-pasture-700 flex items-center gap-2"
-              onClick={() => {
-                project.openProjectSetup();
-                hideContextMenu();
-              }}
-            >
-              <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-              </svg>
-              Add Project
-            </button>
-            <button
-              class="w-full px-3 py-2 text-left text-sm text-wool-200 hover:bg-pasture-700 flex items-center gap-2"
-              onClick={() => {
-                fitAll();
-                hideContextMenu();
-              }}
-            >
-              <svg class="w-4 h-4 text-wool-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-              </svg>
-              Fit All Projects
-            </button>
-          </Show>
+          {/* Scope icon */}
+          <div class="flex items-center gap-2">
+            <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+            <span class="text-sm font-semibold text-amber-200">Dispatch scope</span>
+          </div>
 
-          <Show when={contextMenu()!.projectId}>
-            {/* Project context menu */}
+          {/* Stats */}
+          <div class="flex items-center gap-3 text-xs tabular-nums">
+            <span class="text-wool-300">
+              <span class="text-amber-400 font-semibold">{dispatchRoots().size}</span> root{dispatchRoots().size === 1 ? '' : 's'}
+            </span>
+            <span class="text-wool-600">•</span>
+            <span class="text-wool-300">
+              <span class="text-amber-400/80 font-medium">{dispatchTaskIds().size}</span> tasks
+            </span>
+            <Show when={dispatchEvalIds().size > 0}>
+              <span class="text-wool-600">•</span>
+              <span class="text-sage/80">
+                <span class="font-medium">{dispatchEvalIds().size}</span> evals
+              </span>
+            </Show>
+          </div>
+
+          {/* Actions */}
+          <div class="flex items-center gap-1.5 ml-2 pl-3 border-l border-amber-500/20">
             <button
-              class="w-full px-3 py-2 text-left text-sm text-wool-200 hover:bg-pasture-700 flex items-center gap-2"
-              onClick={() => {
-                const p = project.projects().find((pr) => pr.id === contextMenu()!.projectId);
-                if (p) handleProjectDoubleClick(p);
-                hideContextMenu();
-              }}
-            >
-              <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
-              </svg>
-              Open Project
-            </button>
-            <button
-              class="w-full px-3 py-2 text-left text-sm text-wool-200 hover:bg-pasture-700 flex items-center gap-2"
-              onClick={() => {
-                const p = project.projects().find((pr) => pr.id === contextMenu()!.projectId);
-                if (p) {
-                  project.selectProject(p);
-                  project.setShowProjectSettings(true);
-                }
-                hideContextMenu();
-              }}
-            >
-              <svg class="w-4 h-4 text-wool-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              Settings
-            </button>
-            <div style={{ 'border-top': '1px solid rgba(63,63,70,0.5)', margin: '4px 0' }} />
-            <button
-              class="w-full px-3 py-2 text-left text-sm text-terra hover:bg-terra/10 flex items-center gap-2"
-              onClick={async () => {
-                const pid = contextMenu()!.projectId;
-                if (pid) {
-                  const confirmed = await window.confirmDialog?.delete(
-                    project.projects().find((p) => p.id === pid)?.name || 'this project',
-                    'project'
-                  );
-                  if (confirmed) {
-                    await project.removeProject(pid);
-                  }
-                }
-                hideContextMenu();
-              }}
+              onClick={clearDispatchScope}
+              class="p-1.5 rounded-md text-wool-500 hover:text-wool-200 hover:bg-white/5 transition-all"
+              title="Clear selection (Esc)"
             >
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
               </svg>
-              Delete Project
             </button>
-          </Show>
+            <button
+              onClick={() => setShowDispatchModal(true)}
+              class="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:scale-105"
+              style={{
+                background: 'linear-gradient(180deg, rgba(245, 158, 11, 0.3) 0%, rgba(245, 158, 11, 0.2) 100%)',
+                border: '1px solid rgba(245, 158, 11, 0.5)',
+                color: 'rgb(253, 230, 138)',
+              }}
+              title="Start run with selected scope"
+            >
+              Dispatch
+            </button>
+          </div>
         </div>
       </Show>
 
-      {/* Empty state */}
-      <Show when={project.projects().length === 0 && !project.loading()}>
+      {/* Context Menu */}
+      <Show when={contextMenu()}>
+        <div
+          class="fixed inset-0"
+          style={{ 'z-index': 99 }}
+          onClick={hideContextMenu}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            hideContextMenu();
+          }}
+        />
+        <NodeContextMenu
+          x={contextMenu()!.x}
+          y={contextMenu()!.y}
+          node={
+            contextMenu()!.taskId
+              ? findNodeById(taskTree(), contextMenu()!.taskId!) ?? null
+              : null
+          }
+          onClose={hideContextMenu}
+          onAddChild={() => {
+            const cm = contextMenu()!;
+            showNewItemPrompt(cm.x, cm.y, cm.taskId, 'task');
+            hideContextMenu();
+          }}
+          onAddSibling={() => {
+            const cm = contextMenu()!;
+            const allTasks = flattenTree(taskTree());
+            const parentTask = allTasks.find((t) => t.children.some((c) => c.id === cm.taskId));
+            showNewItemPrompt(cm.x, cm.y, parentTask?.id ?? null, 'task');
+            hideContextMenu();
+          }}
+          onEdit={() => {
+            const cm = contextMenu()!;
+            if (cm.taskId) {
+              const task = findNodeById(taskTree(), cm.taskId);
+              if (task) openTaskEdit(task);
+            } else if (cm.evalId) {
+              const ev = evals().find((e) => e.id === cm.evalId);
+              if (ev) openEvalEdit(ev);
+            }
+            hideContextMenu();
+          }}
+          onAskGyp={() => {
+            const cm = contextMenu()!;
+            const task = findNodeById(taskTree(), cm.taskId!);
+            if (task) {
+              window.dispatchEvent(
+                new CustomEvent('gyp-focus-node', { detail: { id: task.id, name: task.name } })
+              );
+              app.setAiChatOpen(true);
+            }
+            hideContextMenu();
+          }}
+          onSetTaskStatus={(status) => {
+            const cm = contextMenu()!;
+            if (cm.taskId) updateTask(cm.taskId, { status });
+            hideContextMenu();
+          }}
+          onDelete={() => {
+            const cm = contextMenu()!;
+            if (cm.taskId) deleteTask(cm.taskId);
+            else if (cm.evalId) deleteEval(cm.evalId);
+            hideContextMenu();
+          }}
+          onAddRootNode={() => {
+            const cm = contextMenu()!;
+            showNewItemPrompt(cm.x, cm.y, null, 'task');
+            hideContextMenu();
+          }}
+          onAddEval={() => {
+            const cm = contextMenu()!;
+            showNewItemPrompt(cm.x, cm.y, null, 'eval');
+            hideContextMenu();
+          }}
+          onFitAll={() => {
+            fitAll();
+            hideContextMenu();
+          }}
+        />
+      </Show>
+
+      {/* New Item Prompt */}
+      <Show when={newItemPrompt()}>
+        <div
+          class="fixed w-72 rounded-xl overflow-hidden"
+          style={{
+            'z-index': 100,
+            left: `${newItemPrompt()!.x}px`,
+            top: `${newItemPrompt()!.y}px`,
+            transform: 'translate(-50%, -50%)',
+            background: 'rgba(24,24,27,0.98)',
+            border: `1px solid ${newItemPrompt()!.type === 'eval' ? 'rgba(16,185,129,0.4)' : 'rgba(63,63,70,0.8)'}`,
+            'box-shadow': '0 20px 60px rgba(0,0,0,0.6)',
+          }}
+        >
+          <div
+            class="px-4 py-3 flex items-center gap-3"
+            style={{
+              background:
+                newItemPrompt()!.type === 'eval'
+                  ? 'linear-gradient(180deg, rgba(16,185,129,0.12) 0%, transparent 100%)'
+                  : 'linear-gradient(180deg, rgba(212,165,116,0.08) 0%, transparent 100%)',
+              'border-bottom': '1px solid rgba(63,63,70,0.5)',
+            }}
+          >
+            <div
+              class="w-8 h-8 rounded-lg flex items-center justify-center"
+              style={{
+                background:
+                  newItemPrompt()!.type === 'eval'
+                    ? 'rgba(16,185,129,0.15)'
+                    : 'rgba(212,165,116,0.15)',
+                border: `1px solid ${newItemPrompt()!.type === 'eval' ? 'rgba(16,185,129,0.25)' : 'rgba(212,165,116,0.25)'}`,
+              }}
+            >
+              <svg
+                class={`w-4 h-4 ${newItemPrompt()!.type === 'eval' ? 'text-emerald-400' : 'text-amber-400'}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+            </div>
+            <div>
+              <div class="text-sm font-medium text-zinc-200">
+                {newItemPrompt()!.type === 'eval'
+                  ? 'New Eval'
+                  : newItemPrompt()!.parentId
+                    ? 'New Child Task'
+                    : 'New Root Task'}
+              </div>
+              <div class="text-[11px] text-zinc-500">
+                {newItemPrompt()!.type === 'eval' ? 'Verification for tasks' : 'A work item'}
+              </div>
+            </div>
+          </div>
+          <div class="p-4">
+            <input
+              ref={newItemInputRef}
+              type="text"
+              value={newItemName()}
+              onInput={(e) => setNewItemName(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  submitNewItem();
+                }
+                if (e.key === 'Escape') setNewItemPrompt(null);
+              }}
+              placeholder={`${newItemPrompt()!.type === 'eval' ? 'Eval' : 'Task'} name...`}
+              class="w-full text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none px-3 py-2.5 rounded-lg transition-all focus:ring-2 focus:ring-amber-500/30"
+              style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(63,63,70,0.6)' }}
+            />
+            <div class="flex items-center justify-between mt-4">
+              <span class="text-[11px] text-zinc-600">Enter to create</span>
+              <div class="flex gap-2">
+                <button
+                  onClick={() => setNewItemPrompt(null)}
+                  class="px-3 py-1.5 text-xs rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={submitNewItem}
+                  disabled={!newItemName().trim()}
+                  class="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-md transition-all disabled:opacity-40"
+                  style={{
+                    background:
+                      newItemPrompt()!.type === 'eval'
+                        ? 'linear-gradient(180deg, rgba(16,185,129,0.3) 0%, rgba(16,185,129,0.2) 100%)'
+                        : 'linear-gradient(180deg, rgba(212,165,116,0.3) 0%, rgba(212,165,116,0.2) 100%)',
+                    border: `1px solid ${newItemPrompt()!.type === 'eval' ? 'rgba(16,185,129,0.5)' : 'rgba(212,165,116,0.5)'}`,
+                    color: newItemPrompt()!.type === 'eval' ? 'rgb(134,239,172)' : 'rgb(232,193,154)',
+                  }}
+                >
+                  Create
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      {/* Edit Modal */}
+      <Show when={editingTask() || editingEval()}>
+        <div
+          class="fixed inset-0 flex items-center justify-center"
+          style={{ 'z-index': 100, background: 'rgba(0,0,0,0.6)', 'backdrop-filter': 'blur(4px)' }}
+          onClick={() => {
+            setEditingTask(null);
+            setEditingEval(null);
+          }}
+        >
+          <div
+            class="w-full max-w-md rounded-xl overflow-hidden"
+            style={{
+              background: 'rgba(26,26,26,0.98)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              'box-shadow': '0 24px 64px rgba(0,0,0,0.5)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div class="px-4 py-3" style={{ 'border-bottom': '1px solid rgba(255,255,255,0.06)' }}>
+              <h3 class="text-sm font-semibold text-wool-200">
+                Edit {editingTask() ? 'Task' : 'Eval'}
+              </h3>
+            </div>
+            <div class="p-4 space-y-4">
+              <div>
+                <label class="block text-xs font-medium text-wool-400 mb-1">Name</label>
+                <input
+                  type="text"
+                  value={editForm().name}
+                  onInput={(e) => setEditForm((f) => ({ ...f, name: e.currentTarget.value }))}
+                  class="w-full px-3 py-2 text-sm rounded-lg bg-black/30 border border-wool-800 text-wool-200 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+                />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-wool-400 mb-1">Content</label>
+                <textarea
+                  value={editForm().content}
+                  onInput={(e) => setEditForm((f) => ({ ...f, content: e.currentTarget.value }))}
+                  rows={4}
+                  class="w-full px-3 py-2 text-sm rounded-lg bg-black/30 border border-wool-800 text-wool-200 focus:outline-none focus:ring-2 focus:ring-amber-500/30 resize-none"
+                  placeholder={editingTask() ? 'Task details...' : 'What to verify...'}
+                />
+              </div>
+              <Show when={editingEval()}>
+                <div>
+                  <label class="block text-xs font-medium text-emerald-400/70 mb-1">
+                    Validates (task IDs)
+                  </label>
+                  <input
+                    type="text"
+                    value={editForm().validates.join(', ')}
+                    onInput={(e) =>
+                      setEditForm((f) => ({
+                        ...f,
+                        validates: e.currentTarget.value
+                          .split(',')
+                          .map((s) => s.trim())
+                          .filter(Boolean),
+                      }))
+                    }
+                    class="w-full px-3 py-2 text-sm rounded-lg bg-black/30 border border-emerald-800/50 text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                    placeholder="task-1, task-2"
+                  />
+                </div>
+              </Show>
+            </div>
+            <div
+              class="px-4 py-3 flex justify-end gap-2"
+              style={{ 'border-top': '1px solid rgba(255,255,255,0.06)' }}
+            >
+              <button
+                onClick={() => {
+                  setEditingTask(null);
+                  setEditingEval(null);
+                }}
+                class="px-4 py-2 text-xs rounded-lg text-wool-400 hover:text-wool-200 hover:bg-white/5 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveEdit}
+                class="px-4 py-2 text-xs font-medium rounded-lg transition-all"
+                style={{
+                  background:
+                    'linear-gradient(180deg, rgba(212,165,116,0.3) 0%, rgba(212,165,116,0.2) 100%)',
+                  border: '1px solid rgba(212,165,116,0.5)',
+                  color: 'rgb(232,193,154)',
+                }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      {/* Empty state - no project selected */}
+      <Show when={!project.selectedProject() && !project.loading()}>
         <div
           class="absolute inset-0 flex items-center justify-center pointer-events-none"
           style={{ 'z-index': 5 }}
@@ -669,10 +1379,8 @@ export const OneBoard: Component = () => {
                 />
               </svg>
             </div>
-            <h2 class="text-lg font-medium text-wool-300 mb-1">No Projects Yet</h2>
-            <p class="text-sm text-wool-600 mb-4">
-              Right-click to add your first project
-            </p>
+            <h2 class="text-lg font-medium text-wool-300 mb-1">No Project Selected</h2>
+            <p class="text-sm text-wool-600 mb-4">Select a project from the dropdown above</p>
             <button
               onClick={() => project.openProjectSetup()}
               class="pointer-events-auto px-4 py-2 rounded-lg text-sm font-medium transition-all"
@@ -682,13 +1390,57 @@ export const OneBoard: Component = () => {
                 color: 'rgb(232,193,154)',
               }}
             >
-              Add Project
+              New Project
             </button>
           </div>
         </div>
       </Show>
 
-      {/* Pulse glow animation */}
+      {/* Empty task state - project selected but no tasks */}
+      <Show when={project.selectedProject() && !loading() && taskTree().length === 0 && evals().length === 0}>
+        <div
+          class="absolute inset-0 flex items-center justify-center pointer-events-none"
+          style={{ 'z-index': 5 }}
+        >
+          <div class="text-center">
+            <div
+              class="w-20 h-20 mx-auto mb-4 rounded-2xl flex items-center justify-center"
+              style={{
+                background: 'linear-gradient(145deg, rgba(212,165,116,0.1) 0%, rgba(212,165,116,0.05) 100%)',
+                border: '1px solid rgba(212,165,116,0.2)',
+              }}
+            >
+              <svg class="w-10 h-10 text-amber-500/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+                />
+              </svg>
+            </div>
+            <h2 class="text-lg font-medium text-wool-300 mb-1">No Tasks Yet</h2>
+            <p class="text-sm text-wool-600">Right-click to add a task or eval</p>
+          </div>
+        </div>
+      </Show>
+
+      {/* Dispatch Modal */}
+      <Show when={showDispatchModal()}>
+        <DispatchModal
+          rootTaskIds={[...dispatchRoots()]}
+          taskCount={dispatchTaskIds().size}
+          evalCount={dispatchEvalIds().size}
+          onClose={() => setShowDispatchModal(false)}
+          onDispatch={(runName) => {
+            setShowDispatchModal(false);
+            clearDispatchScope();
+            window.toast?.success(`Dispatched run: ${runName}`);
+          }}
+        />
+      </Show>
+
+      {/* Animations */}
       <style>{`
         .pulse-glow {
           animation: pulse-glow 2s ease-in-out infinite;
@@ -696,6 +1448,30 @@ export const OneBoard: Component = () => {
         @keyframes pulse-glow {
           0%, 100% { box-shadow: 0 0 8px rgba(212, 165, 116, 0.5); }
           50% { box-shadow: 0 0 16px rgba(212, 165, 116, 0.8); }
+        }
+        .pulse-glow-sage {
+          animation: pulse-glow-sage 2s ease-in-out infinite;
+        }
+        @keyframes pulse-glow-sage {
+          0%, 100% { box-shadow: 0 0 8px rgba(125, 153, 112, 0.5); }
+          50% { box-shadow: 0 0 16px rgba(125, 153, 112, 0.8); }
+        }
+        .gyp-editing-shimmer {
+          position: relative;
+          overflow: hidden;
+        }
+        .gyp-editing-shimmer::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          background: linear-gradient(90deg, transparent, rgba(212,165,116,0.15), transparent);
+          animation: gyp-shimmer 1.5s infinite;
+          pointer-events: none;
+          border-radius: inherit;
+        }
+        @keyframes gyp-shimmer {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(100%); }
         }
       `}</style>
     </div>

@@ -764,9 +764,23 @@ impl LocalLifecycleManager {
                 .get_tasks()
                 .map_err(|e| LifecycleError::State(e.to_string()))?;
 
+            // Tasks are complete if:
+            // - Work tasks: Done or Validated
+            // - Eval tasks: Done
             let incomplete_tasks: Vec<_> = tasks
                 .iter()
-                .filter(|t| t.status != crate::core::state::TaskStatus::Done)
+                .filter(|t| {
+                    let status = t.status;
+                    match t.task_type {
+                        crate::core::state::TaskType::Work => {
+                            status != crate::core::state::TaskStatus::Done
+                                && status != crate::core::state::TaskStatus::Validated
+                        }
+                        crate::core::state::TaskType::Eval => {
+                            status != crate::core::state::TaskStatus::Done
+                        }
+                    }
+                })
                 .collect();
 
             if !incomplete_tasks.is_empty() {

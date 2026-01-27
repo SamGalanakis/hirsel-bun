@@ -273,12 +273,49 @@ impl HttpState {
         }
         let _: SuccessResponse = self
             .post(
-                "/tasks",
+                &self.run_endpoint("/tasks"),
                 &TaskRequest {
                     task_id: task_id.to_string(),
                     name: name.to_string(),
                     parent_id: parent_id.map(|s| s.to_string()),
+                    blocked_by: blocked_by.map(|b| b.iter().map(|s| s.to_string()).collect()),
+                },
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn add_task_with_type(
+        &self,
+        task_id: &str,
+        name: &str,
+        parent_id: Option<&str>,
+        blocked_by: Option<Vec<&str>>,
+        task_type: &str,
+        validates: Option<Vec<&str>>,
+        board_task_id: Option<&str>,
+    ) -> HttpStateResult<()> {
+        #[derive(Serialize)]
+        struct TaskWithTypeRequest {
+            task_id: String,
+            name: String,
+            parent_id: Option<String>,
+            blocked_by: Option<Vec<String>>,
+            task_type: String,
+            validates: Option<Vec<String>>,
+            board_task_id: Option<String>,
+        }
+        let _: SuccessResponse = self
+            .post(
+                &self.run_endpoint("/tasks"),
+                &TaskWithTypeRequest {
+                    task_id: task_id.to_string(),
+                    name: name.to_string(),
+                    parent_id: parent_id.map(|s| s.to_string()),
                     blocked_by: blocked_by.map(|v| v.iter().map(|s| s.to_string()).collect()),
+                    task_type: task_type.to_string(),
+                    validates: validates.map(|v| v.iter().map(|s| s.to_string()).collect()),
+                    board_task_id: board_task_id.map(|s| s.to_string()),
                 },
             )
             .await?;
@@ -774,6 +811,16 @@ impl HttpState {
         Ok(result.repair_task_id)
     }
 
+    pub async fn get_validated_tasks(&self, eval_id: &str) -> HttpStateResult<Vec<String>> {
+        #[derive(Deserialize)]
+        struct ValidatedTasksResponse {
+            task_ids: Vec<String>,
+        }
+        let result: ValidatedTasksResponse =
+            self.get(&format!("/tasks/{}/validated", eval_id)).await?;
+        Ok(result.task_ids)
+    }
+
     pub async fn get_active_workers(&self) -> HttpStateResult<Vec<Worker>> {
         #[derive(Deserialize)]
         struct WorkersResponse {
@@ -863,6 +910,31 @@ impl StateAccess for HttpState {
         Ok(HttpState::add_task(self, task_id, name, parent_id, blocked_by_vec).await?)
     }
 
+    async fn add_task_with_type(
+        &self,
+        task_id: &str,
+        name: &str,
+        parent_id: Option<&str>,
+        blocked_by: Option<&[&str]>,
+        task_type: crate::core::state::TaskType,
+        validates: Option<&[&str]>,
+        board_task_id: Option<&str>,
+    ) -> StateAccessResult<()> {
+        let blocked_by_vec = blocked_by.map(|b| b.to_vec());
+        let validates_vec = validates.map(|v| v.to_vec());
+        Ok(HttpState::add_task_with_type(
+            self,
+            task_id,
+            name,
+            parent_id,
+            blocked_by_vec,
+            task_type.as_str(),
+            validates_vec,
+            board_task_id,
+        )
+        .await?)
+    }
+
     async fn get_tasks(&self) -> StateAccessResult<Vec<Task>> {
         Ok(HttpState::get_tasks(self).await?)
     }
@@ -938,6 +1010,10 @@ impl StateAccess for HttpState {
         feedback: &str,
     ) -> StateAccessResult<String> {
         Ok(HttpState::eval_fail(self, eval_task_id, worker_name, feedback).await?)
+    }
+
+    async fn get_validated_tasks(&self, eval_id: &str) -> StateAccessResult<Vec<String>> {
+        Ok(HttpState::get_validated_tasks(self, eval_id).await?)
     }
 
     async fn add_worker(

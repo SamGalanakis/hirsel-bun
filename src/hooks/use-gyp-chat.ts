@@ -61,6 +61,9 @@ interface UseGypChatReturn {
 
   // History
   clearHistory: () => Promise<void>;
+
+  // Reset (disconnect, clear history, reconnect)
+  reset: () => Promise<void>;
 }
 
 const WELCOME_MESSAGE = `Hello! I'm Gyp, your AI assistant for Hirsel. I can help you manage runs, tasks, and workers.
@@ -559,6 +562,15 @@ export function useGypChat(
     }
   };
 
+  // Reset: disconnect, clear history, and reconnect for a fresh session
+  const reset = async () => {
+    await disconnect();
+    await clearHistory();
+    // Small delay to ensure clean state
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await connect();
+  };
+
   // Cleanup on unmount
   createEffect(() => {
     onCleanup(() => {
@@ -582,6 +594,7 @@ export function useGypChat(
     pendingPermission,
     respondToPermission,
     clearHistory,
+    reset,
   };
 }
 

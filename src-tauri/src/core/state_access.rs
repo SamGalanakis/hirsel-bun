@@ -80,6 +80,17 @@ pub trait StateAccess: Send {
         blocked_by: Option<&[&str]>,
     ) -> StateAccessResult<()>;
 
+    async fn add_task_with_type(
+        &self,
+        task_id: &str,
+        name: &str,
+        parent_id: Option<&str>,
+        blocked_by: Option<&[&str]>,
+        task_type: crate::core::state::TaskType,
+        validates: Option<&[&str]>,
+        board_task_id: Option<&str>,
+    ) -> StateAccessResult<()>;
+
     async fn get_tasks(&self) -> StateAccessResult<Vec<Task>>;
 
     async fn get_task(&self, task_id: &str) -> StateAccessResult<Option<Task>>;
@@ -123,6 +134,9 @@ pub trait StateAccess: Send {
         worker_name: &str,
         feedback: &str,
     ) -> StateAccessResult<String>;
+
+    /// Get all task IDs validated by an eval task
+    async fn get_validated_tasks(&self, eval_id: &str) -> StateAccessResult<Vec<String>>;
 
     // =========================================================================
     // Worker operations
@@ -336,6 +350,29 @@ impl StateAccess for SQLiteState {
         Ok(())
     }
 
+    async fn add_task_with_type(
+        &self,
+        task_id: &str,
+        name: &str,
+        parent_id: Option<&str>,
+        blocked_by: Option<&[&str]>,
+        task_type: crate::core::state::TaskType,
+        validates: Option<&[&str]>,
+        board_task_id: Option<&str>,
+    ) -> StateAccessResult<()> {
+        SQLiteState::add_task_with_type(
+            self,
+            task_id,
+            name,
+            parent_id,
+            blocked_by,
+            task_type,
+            validates,
+            board_task_id,
+        )?;
+        Ok(())
+    }
+
     async fn get_tasks(&self) -> StateAccessResult<Vec<Task>> {
         Ok(SQLiteState::get_tasks(self)?)
     }
@@ -428,6 +465,10 @@ impl StateAccess for SQLiteState {
             worker_name,
             feedback,
         )?)
+    }
+
+    async fn get_validated_tasks(&self, eval_id: &str) -> StateAccessResult<Vec<String>> {
+        Ok(SQLiteState::get_validated_tasks(self, eval_id)?)
     }
 
     async fn add_worker(

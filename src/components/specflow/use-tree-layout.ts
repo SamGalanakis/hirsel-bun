@@ -40,21 +40,13 @@ export const LAYOUT_CONFIG = {
 
 /**
  * Render configs for different LOAD levels.
- * These control visual size, not layout position.
+ * Compact and full are now similar size - compact just shows less detail.
+ * This enables Google Maps-style semantic zoom where cards stay readable.
  */
 export const RENDER_CONFIGS = {
-  portfolio: {
-    // Projects at portfolio level
-    nodeWidth: 200,
-    nodeHeight: 120,
-  },
-  dot: {
-    nodeWidth: 24,
-    nodeHeight: 24,
-  },
   compact: {
-    nodeWidth: 140,
-    nodeHeight: 48,
+    nodeWidth: 280,
+    nodeHeight: 120,
   },
   full: {
     nodeWidth: 280,
@@ -63,31 +55,19 @@ export const RENDER_CONFIGS = {
 } as const;
 
 /** Level of detail based on zoom level */
-export type LOADLevel = 'portfolio' | 'dot' | 'compact' | 'full';
+export type LOADLevel = 'compact' | 'full';
 
 /**
- * Get LOAD level based on zoom factor
+ * Get LOAD level for tasks based on zoom factor
  *
- * Levels:
- * - portfolio: k < 0.08 - Project cards at portfolio view
- * - dot: k < 0.3 - Status dots only
- * - compact: k < 0.7 - Compact cards
- * - full: k >= 0.7 - Full detail cards
+ * Tasks are only visible when focused on a project (k >= FOCUS_THRESHOLD = 0.8)
+ * Stay in full view as long as content is readable, switch to compact only
+ * when zoomed out far enough that details become hard to read.
+ * - full:    k >= 0.9 - Full detail cards (readable content)
+ * - compact: k < 0.9  - Title-only cards (zoomed out)
  */
 export function getLOADLevel(zoom: number): LOADLevel {
-  if (zoom < 0.08) return 'portfolio';
-  if (zoom < 0.3) return 'dot';
-  if (zoom < 0.7) return 'compact';
-  return 'full';
-}
-
-/**
- * Get LOAD level for projects specifically (different thresholds)
- * Used in portfolio view when zoomed out
- */
-export function getProjectLOADLevel(zoom: number): 'dot' | 'compact' | 'full' {
-  if (zoom < 0.15) return 'dot';
-  if (zoom < 0.4) return 'compact';
+  if (zoom < 0.9) return 'compact';
   return 'full';
 }
 
@@ -99,8 +79,9 @@ export function getRenderConfig(load: LOADLevel) {
 /**
  * Compute tree layout for a list of root nodes and evals
  *
- * Uses d3-hierarchy's tree layout algorithm to position nodes.
- * Always uses fixed LAYOUT_CONFIG so positions are stable across zoom levels.
+ * Uses d3-hierarchy's tree layout algorithm for initial positioning.
+ * Both tasks and evals use stored x/y positions if available, otherwise computed.
+ * Tasks and evals are treated identically for consistency.
  */
 export function computeTreeLayout(roots: TaskTree[], evalList: BoardEval[] = []): TreeLayoutResult {
   const positions = new Map<string, NodePosition>();
@@ -119,7 +100,8 @@ export function computeTreeLayout(roots: TaskTree[], evalList: BoardEval[] = [])
   let globalMinY = Number.POSITIVE_INFINITY;
   let globalMaxY = Number.NEGATIVE_INFINITY;
 
-  // Layout task trees
+  // Layout task trees using d3 hierarchy (for default positions)
+  // Then override with stored positions if available
   for (const root of roots) {
     const h = hierarchy(root, (d) => d.children);
 
@@ -133,8 +115,9 @@ export function computeTreeLayout(roots: TaskTree[], evalList: BoardEval[] = [])
     let maxX = Number.NEGATIVE_INFINITY;
 
     h.each((node) => {
-      const x = node.x! + offsetX;
-      const y = node.y!;
+      // Use stored position if available, otherwise use computed
+      const x = node.data.x ?? node.x! + offsetX;
+      const y = node.data.y ?? node.y!;
 
       positions.set(node.data.id, { x, y });
 
@@ -150,17 +133,17 @@ export function computeTreeLayout(roots: TaskTree[], evalList: BoardEval[] = [])
     offsetX = maxX + config.horizontalGap * 2;
   }
 
-  // Layout evals in a row below the tree
+  // Layout evals - use stored positions if available, otherwise compute
   if (evalList.length > 0) {
-    const evalRowY = globalMaxY + config.verticalGap * 1.5;
+    const defaultEvalRowY = globalMaxY + config.verticalGap * 1.5;
 
-    // Sort evals by the x-position of their first validated task
+    // Sort evals by the x-position of their validated tasks (for default positioning)
     const evalsWithX = evalList.map((ev) => {
       // Use stored position if available
       if (ev.x != null && ev.y != null) {
-        return { ev, x: ev.x, y: ev.y, hasPosition: true };
+        return { ev, x: ev.x, y: ev.y, hasStoredPos: true };
       }
-      // Otherwise, compute position based on validated tasks
+      // Otherwise compute default position
       const validatedXs = ev.validates
         .map((taskId) => positions.get(taskId)?.x)
         .filter((x): x is number => x != null);
@@ -168,32 +151,38 @@ export function computeTreeLayout(roots: TaskTree[], evalList: BoardEval[] = [])
         validatedXs.length > 0
           ? validatedXs.reduce((sum, x) => sum + x, 0) / validatedXs.length
           : 0;
-      return { ev, x: avgX, y: evalRowY, hasPosition: false };
+      return { ev, x: avgX, y: defaultEvalRowY, hasStoredPos: false };
     });
 
-    // Sort by x position
+    // Sort by x position (only affects default positioning order)
     evalsWithX.sort((a, b) => a.x - b.x);
 
-    // Place evals with minimum spacing to avoid overlap
+    // Place evals
     const minSpacing = config.nodeWidth + config.horizontalGap;
     let lastX = Number.NEGATIVE_INFINITY;
 
     for (const item of evalsWithX) {
-      if (item.hasPosition) {
-        positions.set(item.ev.id, { x: item.x, y: item.y });
+      let x: number;
+      let y: number;
+
+      if (item.hasStoredPos) {
+        // Use stored position exactly
+        x = item.x;
+        y = item.y;
       } else {
-        // Ensure minimum spacing from previous eval
-        const x = Math.max(item.x, lastX + minSpacing);
-        positions.set(item.ev.id, { x, y: evalRowY });
+        // Compute with minimum spacing
+        x = Math.max(item.x, lastX + minSpacing);
+        y = item.y;
         lastX = x;
-
-        // Update bounds
-        globalMinX = Math.min(globalMinX, x - config.nodeWidth / 2);
-        globalMaxX = Math.max(globalMaxX, x + config.nodeWidth / 2);
       }
-    }
 
-    globalMaxY = evalRowY + config.nodeHeight;
+      positions.set(item.ev.id, { x, y });
+
+      // Update bounds
+      globalMinX = Math.min(globalMinX, x - config.nodeWidth / 2);
+      globalMaxX = Math.max(globalMaxX, x + config.nodeWidth / 2);
+      globalMaxY = Math.max(globalMaxY, y + config.nodeHeight);
+    }
   }
 
   return {
@@ -213,23 +202,85 @@ export function computeTreeLayout(roots: TaskTree[], evalList: BoardEval[] = [])
  * Generate SVG path for an edge from parent to child
  *
  * Uses a curved bezier path for smooth connections.
- * Always uses LAYOUT_CONFIG dimensions for consistent edge positioning.
+ * At lower LODs (smaller nodes), uses smaller offsets for tighter connections.
  */
-export function generateEdgePath(parentPos: NodePosition, childPos: NodePosition): string {
-  const nodeHeight = LAYOUT_CONFIG.nodeHeight;
+export function generateEdgePath(
+  parentPos: NodePosition,
+  childPos: NodePosition,
+  nodeHeight: number = LAYOUT_CONFIG.nodeHeight,
+): string {
+  // Use smaller offset for small nodes (dot/compact) for tighter connections
+  // For larger nodes, use half height for edge-to-edge
+  const offset = Math.min(nodeHeight / 2, 30);
 
   // Start from bottom center of parent
   const x1 = parentPos.x;
-  const y1 = parentPos.y + nodeHeight / 2;
+  const y1 = parentPos.y + offset;
 
   // End at top center of child
   const x2 = childPos.x;
-  const y2 = childPos.y - nodeHeight / 2;
+  const y2 = childPos.y - offset;
 
-  // Control points for smooth curve
-  const midY = (y1 + y2) / 2;
+  // Control points for smooth curve - adjust control point spread based on distance
+  const verticalDist = y2 - y1;
+  const controlSpread = Math.min(verticalDist * 0.4, 80);
 
-  return `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
+  return `M ${x1} ${y1} C ${x1} ${y1 + controlSpread}, ${x2} ${y2 - controlSpread}, ${x2} ${y2}`;
+}
+
+// =============================================================================
+// Counter-Scale Utilities for Semantic Zoom
+// =============================================================================
+
+/** Minimum screen size (px) for readability at any zoom level */
+export const MIN_SCREEN_SIZE = {
+  project: 60, // Project cards stay ~60px minimum
+  task: 48, // Task/eval cards stay ~48px minimum
+};
+
+/** Base world dimensions for cards */
+export const BASE_WORLD_SIZE = {
+  project: 200, // ProjectCard full width
+  task: 280, // TaskCard full width
+};
+
+/**
+ * Calculate counter-scale to maintain minimum screen size
+ *
+ * When zoom makes a card smaller than min screen size, we scale it back up.
+ * This ensures cards remain readable at any zoom level.
+ */
+export function getCounterScale(worldSize: number, minScreenSize: number, zoom: number): number {
+  const screenSize = worldSize * zoom;
+  if (screenSize >= minScreenSize) return 1;
+  return minScreenSize / screenSize;
+}
+
+/**
+ * Calculate bounding box for a set of positioned items
+ */
+export function getContentBounds<T>(
+  items: T[],
+  getPosition: (item: T, index: number) => { x: number; y: number },
+  padding: { x: number; y: number } = { x: 100, y: 60 },
+): { minX: number; minY: number; maxX: number; maxY: number; width: number; height: number } {
+  if (items.length === 0) {
+    return { minX: -100, minY: -100, maxX: 100, maxY: 100, width: 200, height: 200 };
+  }
+
+  let minX = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  items.forEach((item, i) => {
+    const pos = getPosition(item, i);
+    minX = Math.min(minX, pos.x - padding.x);
+    maxX = Math.max(maxX, pos.x + padding.x);
+    minY = Math.min(minY, pos.y - padding.y);
+    maxY = Math.max(maxY, pos.y + padding.y);
+  });
+
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
 }
 
 /**

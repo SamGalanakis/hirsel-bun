@@ -2,8 +2,8 @@
 //!
 //! Commands for managing messages: getting messages, threads, sending, and marking as read.
 
-use super::helpers::parse_timestamp;
-use super::types::{Message, ThreadSummary, UnreadNotification, UnreadNotificationsResponse};
+use super::types::{UnreadNotification, UnreadNotificationsResponse};
+use crate::core::api_types::{parse_timestamp, Message, ThreadSummary};
 use crate::core::orchestrator::create_orchestrator;
 use crate::core::{config, state::SQLiteState};
 

@@ -18,10 +18,14 @@ pub mod worker;
 #[cfg(feature = "dev")]
 fn init_tracing() {
     use tracing_subscriber::EnvFilter;
+    // Build filter from RUST_LOG env, but suppress noisy library spam
+    let filter = EnvFilter::from_default_env()
+        .add_directive("rustls=warn".parse().unwrap())
+        .add_directive("rustls_platform_verifier=warn".parse().unwrap())
+        .add_directive("hyper=warn".parse().unwrap())
+        .add_directive("reqwest=warn".parse().unwrap());
     // Only initialize once, ignore errors from multiple calls
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .try_init();
+    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 }
 
 /// No-op tracing init when dev feature is not enabled.

@@ -6,7 +6,6 @@ import { emit, listen } from '@tauri-apps/api/event';
 
 import { Layout } from './components/layout/Layout';
 import { initLucideIcons } from './lib/icons';
-import { initConfirmDialog } from './lib/confirm-dialog';
 import './lib/toast';
 import { initDevLogger } from './lib/dev-logger';
 import { initTheme } from './lib/theme';
@@ -29,8 +28,6 @@ const App: Component = () => {
     // Initialize Lucide icons
     initLucideIcons();
 
-    // Initialize confirm dialog
-    initConfirmDialog();
 
     // Right-click to dismiss toasts
     const contextMenuHandler = (e: MouseEvent) => {

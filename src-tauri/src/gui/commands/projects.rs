@@ -90,6 +90,8 @@ pub async fn create_project_from_path(
 pub async fn create_project(
     name: String,
     starting_point: StartingPoint,
+    x: Option<f64>,
+    y: Option<f64>,
 ) -> Result<Project, String> {
     let store = ProjectStore::open().map_err(|e| e.to_string())?;
 
@@ -120,8 +122,8 @@ pub async fn create_project(
         persist_docs_changes: None,
         description: None,
         target_branch: None,
-        x: None,
-        y: None,
+        x,
+        y,
     };
 
     store.create_project(&req).map_err(|e| e.to_string())
@@ -139,6 +141,7 @@ pub async fn update_project(
     let store = ProjectStore::open().map_err(|e| e.to_string())?;
 
     let req = UpdateProjectRequest {
+        name: None,
         starting_point: None,
         worker_scale: None,
         time_limit_minutes: None,
@@ -150,6 +153,31 @@ pub async fn update_project(
         target_branch,
         x,
         y,
+    };
+
+    store
+        .update_project(project_id, &req)
+        .map_err(|e| e.to_string())
+}
+
+/// Update a project's name
+#[tauri::command]
+pub async fn update_project_name(project_id: i64, name: String) -> Result<Project, String> {
+    let store = ProjectStore::open().map_err(|e| e.to_string())?;
+
+    let req = UpdateProjectRequest {
+        name: Some(name),
+        starting_point: None,
+        worker_scale: None,
+        time_limit_minutes: None,
+        max_iterations: None,
+        human_in_the_loop: None,
+        docs_path: None,
+        persist_docs_changes: None,
+        description: None,
+        target_branch: None,
+        x: None,
+        y: None,
     };
 
     store

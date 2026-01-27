@@ -31,9 +31,6 @@ pub trait BoardStorage: Send + Sync {
 
     /// List all task file slugs
     async fn list_task_files(&self) -> StorageResult<Vec<String>>;
-
-    /// Delete legacy board.json if present
-    async fn cleanup_legacy_file(&self) -> StorageResult<()>;
 }
 
 /// Local filesystem storage for board files
@@ -62,11 +59,6 @@ impl LocalBoardStorage {
     /// Get path for a task file
     fn task_file_path(&self, slug: &str) -> PathBuf {
         self.board_dir.join(format!("{}.json", slug))
-    }
-
-    /// Get path to legacy board.json
-    fn legacy_board_path(&self) -> PathBuf {
-        self.board_dir.join("board.json")
     }
 }
 
@@ -121,15 +113,6 @@ impl BoardStorage for LocalBoardStorage {
             }
         }
         Ok(slugs)
-    }
-
-    async fn cleanup_legacy_file(&self) -> StorageResult<()> {
-        let legacy_path = self.legacy_board_path();
-        if legacy_path.exists() {
-            tracing::info!("Removing legacy board.json file");
-            std::fs::remove_file(&legacy_path)?;
-        }
-        Ok(())
     }
 }
 
@@ -203,11 +186,6 @@ impl BoardStorage for RemoteBoardStorage {
             .get(&format!("/api/board/{}/tasks", self.project_id))
             .await?;
         Ok(slugs)
-    }
-
-    async fn cleanup_legacy_file(&self) -> StorageResult<()> {
-        // Remote server handles its own migration
-        Ok(())
     }
 }
 

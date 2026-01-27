@@ -17,7 +17,7 @@
 | Add archive strategy | `src-tauri/src/core/snapshot/mod.rs`, new strategy impl of `ArchiveStrategy` |
 | Add service worker | `src-tauri/src/core/service_worker/scribe.rs`, `src-tauri/src/cli/service_worker.rs` |
 | Add SpecFlow island | `src-tauri/src/core/specflow/state.rs`, `src-tauri/src/gui/commands/specflow.rs` |
-| Modify board UI | `src/components/specflow/SpecflowBoard.tsx`, `src/components/specflow/NodeRenderer.tsx` |
+| Modify board UI | `src/components/specflow/OneBoard.tsx`, `src/components/specflow/NodeRenderer.tsx` |
 
 ### Feature Flags
 
@@ -206,7 +206,7 @@ cargo build --features s3-storage               # With S3 support
 |-----------|---------|
 | `components/layout/` | Layout, TitleBar, StatusBar |
 | `components/runs/` | RunListPanel, RunDetail, DraftEditor, WorkerCard |
-| `components/specflow/` | OneBoard (main canvas), SpecflowBoard, ProjectCard, NodeRenderer |
+| `components/specflow/` | OneBoard (main canvas), ProjectCard, NodeRenderer, NodeContextMenu |
 | `components/modals/` | SettingsModal, HelpModal, ConfirmDialog |
 | `components/chat/` | GypMessenger |
 | `stores/` | AppProvider, ProjectProvider, RunsProvider, SelectionProvider |
@@ -214,11 +214,11 @@ cargo build --features s3-storage               # With S3 support
 | `lib/` | Icons, theme, toast, dev-logger, utils |
 
 **OneBoard Architecture:**
-- `OneBoard.tsx` - Main semantic zoom canvas
+- `OneBoard.tsx` - Main semantic zoom canvas with two levels:
   - Portfolio level (zoomed out): Shows all projects as draggable cards
-  - Project level (zoomed in): Renders SpecflowBoard for that project
-- `ProjectCard.tsx` - LOAD-aware project node (dot/compact/full variants)
-- `SpecflowBoard.tsx` - Task/eval board with tree layout
+  - Project level (zoomed in): Shows task/eval tree for focused project
+- `ProjectCard.tsx` - Counter-scaled project cards (stay readable at any zoom)
+- `NodeRenderer.tsx` - LOAD-aware task/eval cards (compact/full variants)
 
 ---
 

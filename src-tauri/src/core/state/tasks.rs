@@ -43,7 +43,6 @@ impl SQLiteState {
                 .get::<_, Option<String>>("task_type")?
                 .map(|s| TaskType::from_str(&s))
                 .unwrap_or(TaskType::Work),
-            validates: row.get("validates")?,
             eval_result: row
                 .get::<_, Option<String>>("eval_result")?
                 .and_then(|s| EvalResult::from_str(&s)),
@@ -71,7 +70,7 @@ impl SQLiteState {
     /// Get children of a task
     pub fn get_children(&self, task_id: &str) -> StateResult<Vec<Task>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by, task_type, validates, eval_result, eval_feedback, board_task_id FROM tasks WHERE parent_id = ?1 ORDER BY created_at"
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by, task_type, eval_result, eval_feedback, board_task_id FROM tasks WHERE parent_id = ?1 ORDER BY created_at"
         )?;
         let tasks = stmt
             .query_map(params![task_id], Self::task_from_row)?
@@ -137,13 +136,22 @@ impl SQLiteState {
         }
 
         let blocked_by_str = blocked_by.map(|b| b.join(","));
-        let validates_json = validates.map(|v| serde_json::to_string(&v).unwrap_or_default());
 
         match self.db.execute(
-            "INSERT INTO tasks (id, name, status, created_at, parent_id, blocked_by, task_type, validates, board_task_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![task_id, name, TaskStatus::Todo.as_str(), self.now(), parent_id, blocked_by_str, task_type.as_str(), validates_json, board_task_id],
+            "INSERT INTO tasks (id, name, status, created_at, parent_id, blocked_by, task_type, board_task_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![task_id, name, TaskStatus::Todo.as_str(), self.now(), parent_id, blocked_by_str, task_type.as_str(), board_task_id],
         ) {
             Ok(_) => {
+                // Insert eval_validates relationships for eval tasks (prepared statement for efficiency)
+                if let Some(v) = validates {
+                    let mut stmt = self
+                        .db
+                        .prepare_cached("INSERT INTO eval_validates (eval_id, task_id) VALUES (?1, ?2)")?;
+                    for validated_task_id in v {
+                        stmt.execute(params![task_id, validated_task_id])?;
+                    }
+                }
+
                 let mut detail = format!("{}: {} ({})", task_id, name, task_type.as_str());
                 if let Some(pid) = parent_id {
                     detail.push_str(&format!(" (parent: {})", pid));
@@ -167,7 +175,7 @@ impl SQLiteState {
     /// Get all tasks
     pub fn get_tasks(&self) -> StateResult<Vec<Task>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by, task_type, validates, eval_result, eval_feedback, board_task_id FROM tasks ORDER BY created_at"
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by, task_type, eval_result, eval_feedback, board_task_id FROM tasks ORDER BY created_at"
         )?;
         let tasks = stmt
             .query_map([], Self::task_from_row)?
@@ -178,7 +186,7 @@ impl SQLiteState {
     /// Get a specific task
     pub fn get_task(&self, task_id: &str) -> StateResult<Option<Task>> {
         let result = self.db.query_row(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by, task_type, validates, eval_result, eval_feedback, board_task_id FROM tasks WHERE id = ?1",
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by, task_type, eval_result, eval_feedback, board_task_id FROM tasks WHERE id = ?1",
             params![task_id],
             Self::task_from_row,
         );
@@ -268,29 +276,37 @@ impl SQLiteState {
     /// Blocking rules:
     /// - Work tasks blocked_by other tasks require those tasks to be Validated
     ///   (or Done if they have no validating eval)
-    /// - Eval tasks are unblocked when all tasks in validates[] are done/awaiting_eval
+    /// - Eval tasks are unblocked when all tasks in validates are done/awaiting_eval
     pub fn get_claimable_tasks(&self) -> StateResult<Vec<Task>> {
         let tasks = self.get_tasks()?;
 
         // Build maps for O(1) lookups
         let status_map: std::collections::HashMap<String, TaskStatus> =
             tasks.iter().map(|t| (t.id.clone(), t.status)).collect();
-        let _type_map: std::collections::HashMap<String, TaskType> =
-            tasks.iter().map(|t| (t.id.clone(), t.task_type)).collect();
 
-        // Check if a task has a validating eval (any eval that references it)
+        // Build set of tasks that have validating evals (from eval_validates table)
         let mut has_validating_eval: std::collections::HashSet<String> =
             std::collections::HashSet::new();
-        for task in &tasks {
-            if task.task_type == TaskType::Eval {
-                if let Some(validates_json) = &task.validates {
-                    if let Ok(validates) = serde_json::from_str::<Vec<String>>(validates_json) {
-                        for tid in validates {
-                            has_validating_eval.insert(tid);
-                        }
-                    }
-                }
-            }
+        let mut stmt = self
+            .db
+            .prepare("SELECT DISTINCT task_id FROM eval_validates")?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let task_id: String = row.get(0)?;
+            has_validating_eval.insert(task_id);
+        }
+
+        // Build map of eval_id -> validated task IDs
+        let mut eval_validates_map: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        let mut stmt = self
+            .db
+            .prepare("SELECT eval_id, task_id FROM eval_validates")?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let eval_id: String = row.get(0)?;
+            let task_id: String = row.get(1)?;
+            eval_validates_map.entry(eval_id).or_default().push(task_id);
         }
 
         let mut eval_tasks = vec![];
@@ -309,28 +325,26 @@ impl SQLiteState {
 
             match task.task_type {
                 TaskType::Eval => {
-                    // Eval task: unblocked when all tasks in validates[] are done/awaiting_eval
-                    let is_ready = if let Some(validates_json) = &task.validates {
-                        if let Ok(validates) = serde_json::from_str::<Vec<String>>(validates_json) {
-                            validates.iter().all(|tid| {
-                                status_map
-                                    .get(tid)
-                                    .map(|s| {
-                                        matches!(
-                                            s,
-                                            TaskStatus::Done
-                                                | TaskStatus::AwaitingEval
-                                                | TaskStatus::Validated
-                                        )
-                                    })
-                                    .unwrap_or(false)
-                            })
-                        } else {
-                            false
-                        }
-                    } else {
-                        false // Eval with no validates is not ready
-                    };
+                    // Eval task: unblocked when all tasks in validates are done/awaiting_eval
+                    let validates = eval_validates_map.get(&task.id);
+                    let is_ready = validates
+                        .map(|v| {
+                            !v.is_empty()
+                                && v.iter().all(|tid| {
+                                    status_map
+                                        .get(tid)
+                                        .map(|s| {
+                                            matches!(
+                                                s,
+                                                TaskStatus::Done
+                                                    | TaskStatus::AwaitingEval
+                                                    | TaskStatus::Validated
+                                            )
+                                        })
+                                        .unwrap_or(false)
+                                })
+                        })
+                        .unwrap_or(false);
 
                     // Also check blocked_by (for repair flow)
                     let is_blocked = if let Some(blocked_by) = &task.blocked_by {
@@ -548,11 +562,22 @@ impl SQLiteState {
     /// Check if a task has a validating eval
     pub fn has_validating_eval(&self, task_id: &str) -> StateResult<bool> {
         let count: i64 = self.db.query_row(
-            "SELECT COUNT(*) FROM tasks WHERE task_type = 'eval' AND validates LIKE ?1",
-            params![format!("%\"{}%", task_id)],
+            "SELECT COUNT(*) FROM eval_validates WHERE task_id = ?1",
+            params![task_id],
             |row| row.get(0),
         )?;
         Ok(count > 0)
+    }
+
+    /// Get all task IDs validated by an eval
+    pub fn get_validated_tasks(&self, eval_id: &str) -> StateResult<Vec<String>> {
+        let mut stmt = self
+            .db
+            .prepare("SELECT task_id FROM eval_validates WHERE eval_id = ?1")?;
+        let task_ids = stmt
+            .query_map(params![eval_id], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(task_ids)
     }
 
     /// Handle eval pass - validates all tasks in the validates list
@@ -581,6 +606,9 @@ impl SQLiteState {
             )));
         }
 
+        // Get validated tasks before updating eval status
+        let validated_task_ids = self.get_validated_tasks(eval_task_id)?;
+
         // Mark eval as done with pass result
         self.db.execute(
             "UPDATE tasks SET status = ?1, completed_at = ?2, eval_result = ?3 WHERE id = ?4",
@@ -593,20 +621,27 @@ impl SQLiteState {
         )?;
 
         // Validate all tasks in the validates list
-        if let Some(validates_json) = &task.validates {
-            if let Ok(validates) = serde_json::from_str::<Vec<String>>(validates_json) {
-                for tid in validates {
-                    self.db.execute(
-                        "UPDATE tasks SET status = ?1 WHERE id = ?2 AND status IN (?3, ?4)",
-                        params![
-                            TaskStatus::Validated.as_str(),
-                            tid,
-                            TaskStatus::Done.as_str(),
-                            TaskStatus::AwaitingEval.as_str()
-                        ],
-                    )?;
-                }
+        if !validated_task_ids.is_empty() {
+            let placeholders = validated_task_ids
+                .iter()
+                .map(|_| "?")
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "UPDATE tasks SET status = ?1 WHERE id IN ({}) AND status IN (?2, ?3)",
+                placeholders
+            );
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> =
+                vec![Box::new(TaskStatus::Validated.as_str())];
+            for tid in &validated_task_ids {
+                params.push(Box::new(tid.clone()));
             }
+            params.push(Box::new(TaskStatus::Done.as_str()));
+            params.push(Box::new(TaskStatus::AwaitingEval.as_str()));
+            self.db.execute(
+                &sql,
+                rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+            )?;
         }
 
         self.log_history(
@@ -648,6 +683,9 @@ impl SQLiteState {
             )));
         }
 
+        // Get validated tasks before creating repair
+        let validated_task_ids = self.get_validated_tasks(eval_task_id)?;
+
         // Create repair task as child of eval
         let repair_id = format!(
             "{}-repair-{}",
@@ -681,21 +719,28 @@ impl SQLiteState {
             ],
         )?;
 
-        // Mark validated tasks as needs_repair
-        if let Some(validates_json) = &task.validates {
-            if let Ok(validates) = serde_json::from_str::<Vec<String>>(validates_json) {
-                for tid in validates {
-                    self.db.execute(
-                        "UPDATE tasks SET status = ?1 WHERE id = ?2 AND status IN (?3, ?4)",
-                        params![
-                            TaskStatus::NeedsRepair.as_str(),
-                            tid,
-                            TaskStatus::Done.as_str(),
-                            TaskStatus::AwaitingEval.as_str()
-                        ],
-                    )?;
-                }
+        // Mark validated tasks as needs_repair (batch update)
+        if !validated_task_ids.is_empty() {
+            let placeholders = validated_task_ids
+                .iter()
+                .map(|_| "?")
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "UPDATE tasks SET status = ?1 WHERE id IN ({}) AND status IN (?2, ?3)",
+                placeholders
+            );
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> =
+                vec![Box::new(TaskStatus::NeedsRepair.as_str())];
+            for tid in &validated_task_ids {
+                params.push(Box::new(tid.clone()));
             }
+            params.push(Box::new(TaskStatus::Done.as_str()));
+            params.push(Box::new(TaskStatus::AwaitingEval.as_str()));
+            self.db.execute(
+                &sql,
+                rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+            )?;
         }
 
         self.log_history(
@@ -884,7 +929,7 @@ impl SQLiteState {
     /// Get claimed task for a worker
     pub fn get_claimed_task(&self, worker_name: &str) -> StateResult<Option<Task>> {
         let result = self.db.query_row(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by, task_type, validates, eval_result, eval_feedback, board_task_id FROM tasks WHERE claimed_by = ?1 AND status = ?2",
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by, task_type, eval_result, eval_feedback, board_task_id FROM tasks WHERE claimed_by = ?1 AND status = ?2",
             params![worker_name, TaskStatus::Doing.as_str()],
             Self::task_from_row,
         );

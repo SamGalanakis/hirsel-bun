@@ -64,6 +64,8 @@ pub struct CreateProjectRequest {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateProjectRequest {
     #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
     pub starting_point: Option<StartingPoint>,
     #[serde(default)]
     pub worker_scale: Option<String>,

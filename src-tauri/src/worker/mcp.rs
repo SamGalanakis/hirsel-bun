@@ -88,17 +88,77 @@ struct Tool {
 /// Get the list of available MCP tools.
 fn get_tools() -> Vec<Tool> {
     vec![
+        // ==========================================================================
+        // Task Management
+        // ==========================================================================
         Tool {
-            name: "task_list",
-            description: "List all tasks for the current run",
+            name: "get_task_tree",
+            description: "Get the full task hierarchy with status and dependencies. Returns all tasks and evals in the run.",
             input_schema: json!({
                 "type": "object",
                 "properties": {}
             }),
         },
         Tool {
-            name: "task_add",
-            description: "Add a new task. Task ID must be lowercase, start with letter, use underscores. Will warn if similar tasks exist.",
+            name: "get_available_tasks",
+            description: "Get tasks that are ready to claim: status=todo, not claimed, not blocked. Use this to find work.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        Tool {
+            name: "get_my_tasks",
+            description: "Get tasks claimed by you. Use this to see what you're currently working on.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        Tool {
+            name: "get_task_details",
+            description: "Get full details for a specific task including content and dependencies.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "Task ID to get details for"
+                    }
+                },
+                "required": ["task_id"]
+            }),
+        },
+        Tool {
+            name: "claim_task",
+            description: "Claim a task to work on. Only one task can be claimed at a time.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "Task ID to claim"
+                    }
+                },
+                "required": ["task_id"]
+            }),
+        },
+        Tool {
+            name: "complete_task",
+            description: "Mark a task as complete. This unblocks dependent tasks.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "Task ID (optional, uses claimed task if omitted)"
+                    }
+                }
+            }),
+        },
+        Tool {
+            name: "add_task",
+            description: "Add a new task. Task ID must be lowercase, start with letter, use underscores.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -118,145 +178,96 @@ fn get_tools() -> Vec<Tool> {
                         "type": "array",
                         "items": { "type": "string" },
                         "description": "List of task IDs that must complete before this task can start"
-                    },
-                    "confirm": {
-                        "type": "boolean",
-                        "description": "Set to true to bypass similar task warning and force creation"
                     }
                 },
                 "required": ["task_id", "name"]
             }),
         },
         Tool {
-            name: "task_claim",
-            description: "Claim a task to work on. Only one task can be claimed at a time.",
+            name: "add_eval",
+            description: "Create an eval task that validates other tasks. Eval becomes ready when all validated tasks complete.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "task_id": {
+                    "eval_id": {
                         "type": "string",
-                        "description": "Task ID to claim"
+                        "description": "Eval identifier (e.g., 'verify_auth')"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Human-readable eval name"
+                    },
+                    "validates": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "List of task IDs this eval validates"
                     }
                 },
-                "required": ["task_id"]
+                "required": ["eval_id", "name", "validates"]
+            }),
+        },
+        // ==========================================================================
+        // Communication
+        // ==========================================================================
+        Tool {
+            name: "list_contacts",
+            description: "List available chat contacts: user (human), group (team), other workers, scribe.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
             }),
         },
         Tool {
-            name: "task_done",
-            description: "Mark the currently claimed task as complete. Optionally specify task_id.",
+            name: "chat_history",
+            description: "Read chat message history. Filter by contact or get all.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "task_id": {
+                    "with": {
                         "type": "string",
-                        "description": "Task ID (optional, uses claimed task if omitted)"
+                        "description": "Contact name to filter: 'user', 'group', 'worker-N', 'scribe'. Omit for all."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum messages to return (default 50)"
                     }
                 }
             }),
         },
         Tool {
-            name: "task_unclaim",
-            description: "Release a claimed task without completing it.",
+            name: "chat_send",
+            description: "Send a message. Messages to 'user' pause until they reply (if HITL enabled).",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "task_id": {
+                    "to": {
                         "type": "string",
-                        "description": "Task ID (optional, uses claimed task if omitted)"
-                    }
-                }
-            }),
-        },
-        Tool {
-            name: "task_delete",
-            description: "Delete a task and all its children. Use this to remove duplicate tasks, tasks that no longer make sense, or to restructure your plan. Cannot delete tasks that are currently claimed.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "task_id": {
-                        "type": "string",
-                        "description": "Task ID to delete"
-                    }
-                },
-                "required": ["task_id"]
-            }),
-        },
-        Tool {
-            name: "msg_send",
-            description: "Send a message to a thread. When sending to 'user' thread with HITL enabled, automatically pauses until user replies.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "thread": {
-                        "type": "string",
-                        "description": "Thread name: 'user' for DM to human, 'group' for team chat"
+                        "description": "Recipient: 'user', 'group', 'worker-N', or 'scribe'"
                     },
                     "message": {
                         "type": "string",
                         "description": "Message content"
                     }
                 },
-                "required": ["thread", "message"]
+                "required": ["to", "message"]
             }),
         },
         Tool {
-            name: "msg_read",
-            description: "Read new messages from a thread (or all threads if none specified).",
+            name: "chat_unread",
+            description: "Check for new unread messages since session started.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "thread": {
+                    "with": {
                         "type": "string",
-                        "description": "Thread name (optional, reads all if omitted)"
+                        "description": "Contact to check, or omit for all contacts"
                     }
                 }
             }),
         },
-        Tool {
-            name: "msg_list",
-            description: "List available message threads.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
-            }),
-        },
-        Tool {
-            name: "msg_inbox",
-            description: "Check inbox for new messages since session started.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
-            }),
-        },
-        Tool {
-            name: "task_await",
-            description: "Wait for tasks to become available. Use this if you're a worker waiting for the leader to assign tasks.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
-            }),
-        },
-        Tool {
-            name: "work_done",
-            description: "Signal that all assigned work is complete. Only call this when you have no more tasks to do.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "force": {
-                        "type": "boolean",
-                        "description": "Skip checks for unclaimed tasks and unmerged branches"
-                    }
-                }
-            }),
-        },
-        Tool {
-            name: "time_status",
-            description: "Get current time limit status for this run. Shows elapsed time, remaining time, percentage progress, and time spent on your current task.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
-            }),
-        },
+        // ==========================================================================
+        // Documentation
+        // ==========================================================================
         Tool {
             name: "scribe",
             description: "Record a learning or discovery about the codebase. Use for patterns, gotchas, architecture decisions, or anything future workers should know. Learnings are batched and integrated into docs/ by a Scribe agent.",
@@ -284,6 +295,28 @@ fn get_tools() -> Vec<Tool> {
                 }
             }),
         },
+        // ==========================================================================
+        // Work Management
+        // ==========================================================================
+        Tool {
+            name: "work_done",
+            description: "Signal that all assigned work is complete. Only call this when you have no more tasks to do.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        Tool {
+            name: "time_status",
+            description: "Get current time limit status for this run. Shows elapsed time, remaining time, percentage progress.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        // ==========================================================================
+        // Eval Operations
+        // ==========================================================================
         Tool {
             name: "eval_pass",
             description: "Call this when all evaluation criteria pass. Only available for eval tasks. Marks validated tasks as validated.",
@@ -295,34 +328,6 @@ fn get_tools() -> Vec<Tool> {
         Tool {
             name: "eval_fail",
             description: "Call this when evaluation fails. Only available for eval tasks. Provide feedback explaining what failed and how to fix it. Creates a repair task.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "feedback": {
-                        "type": "string",
-                        "description": "What failed and how to fix it"
-                    }
-                },
-                "required": ["feedback"]
-            }),
-        },
-    ]
-}
-
-/// Get eval-only tools (for eval task types)
-fn get_eval_tools() -> Vec<Tool> {
-    vec![
-        Tool {
-            name: "eval_pass",
-            description: "Call this when all evaluation criteria pass. Marks validated tasks as validated.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
-            }),
-        },
-        Tool {
-            name: "eval_fail",
-            description: "Call this when evaluation fails. Provide feedback explaining what failed and how to fix it. Creates a repair task.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -433,8 +438,29 @@ impl McpServer {
 
     fn execute_tool(&mut self, name: &str, args: Value) -> Result<String, WorkerError> {
         match name {
-            "task_list" => self.runner.task_list(),
-            "task_add" => {
+            // Task Management
+            "get_task_tree" => self.runner.get_task_tree(),
+            "get_available_tasks" => self.runner.get_available_tasks(),
+            "get_my_tasks" => self.runner.get_my_tasks(),
+            "get_task_details" => {
+                let task_id = args
+                    .get("task_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("task_id is required".into()))?;
+                self.runner.get_task_details(task_id)
+            }
+            "claim_task" => {
+                let task_id = args
+                    .get("task_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("task_id is required".into()))?;
+                self.runner.task_claim(task_id)
+            }
+            "complete_task" => {
+                let task_id = args.get("task_id").and_then(|v| v.as_str());
+                self.runner.task_done(task_id)
+            }
+            "add_task" => {
                 let task_id = args
                     .get("task_id")
                     .and_then(|v| v.as_str())
@@ -457,6 +483,87 @@ impl McpServer {
                 self.runner
                     .task_add(task_id, task_name, parent, &blocked_by)
             }
+            "add_eval" => {
+                let eval_id = args
+                    .get("eval_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("eval_id is required".into()))?;
+                let eval_name = args
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("name is required".into()))?;
+                let validates: Vec<String> = args
+                    .get("validates")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .ok_or_else(|| WorkerError::Config("validates is required".into()))?;
+
+                self.runner.add_eval(eval_id, eval_name, &validates)
+            }
+
+            // Communication
+            "list_contacts" => self.runner.list_contacts(),
+            "chat_history" => {
+                let with = args.get("with").and_then(|v| v.as_str());
+                let limit = args
+                    .get("limit")
+                    .and_then(|v| v.as_i64())
+                    .map(|l| l as usize);
+                self.runner.chat_history(with, limit)
+            }
+            "chat_send" => {
+                let to = args
+                    .get("to")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("to is required".into()))?;
+                let message = args
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("message is required".into()))?;
+                self.runner.chat_send(to, message)
+            }
+            "chat_unread" => {
+                let with = args.get("with").and_then(|v| v.as_str());
+                self.runner.chat_unread(with)
+            }
+
+            // Documentation
+            "scribe" => {
+                let content = args
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("content is required".into()))?;
+                self.runner.scribe(content)
+            }
+            "read_docs" => {
+                let file = args.get("file").and_then(|v| v.as_str());
+                self.runner.read_docs(file)
+            }
+
+            // Work Management
+            "work_done" => {
+                // Signal to exit after response - worker is done
+                self.exit_after_response = true;
+                self.runner.work_done()
+            }
+            "time_status" => self.time_status(),
+
+            // Eval Operations
+            "eval_pass" => self.runner.eval_pass(),
+            "eval_fail" => {
+                let feedback = args
+                    .get("feedback")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("feedback is required".into()))?;
+                self.runner.eval_fail(feedback)
+            }
+
+            // Legacy tool names (for backwards compatibility during transition)
+            "task_list" => self.runner.get_task_tree(),
             "task_claim" => {
                 let task_id = args
                     .get("task_id")
@@ -468,21 +575,27 @@ impl McpServer {
                 let task_id = args.get("task_id").and_then(|v| v.as_str());
                 self.runner.task_done(task_id)
             }
-            "task_unclaim" => {
-                let task_id = args.get("task_id").and_then(|v| v.as_str());
-                self.runner.task_unclaim(task_id)
-            }
-            "task_delete" => {
+            "task_add" => {
                 let task_id = args
                     .get("task_id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| WorkerError::Config("task_id is required".into()))?;
-                self.runner.task_delete(task_id)
-            }
-            "task_await" => {
-                // Signal to exit after response - worker is awaiting tasks
-                self.exit_after_response = true;
-                self.runner.task_await()
+                let task_name = args
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("name is required".into()))?;
+                let parent = args.get("parent").and_then(|v| v.as_str());
+                let blocked_by: Vec<String> = args
+                    .get("blocked_by")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                self.runner
+                    .task_add(task_id, task_name, parent, &blocked_by)
             }
             "msg_send" => {
                 let thread = args
@@ -501,31 +614,7 @@ impl McpServer {
             }
             "msg_list" => self.runner.msg_list(),
             "msg_inbox" => self.runner.msg_inbox(),
-            "work_done" => {
-                // Signal to exit after response - worker is done
-                self.exit_after_response = true;
-                self.runner.work_done()
-            }
-            "time_status" => self.time_status(),
-            "scribe" => {
-                let content = args
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("content is required".into()))?;
-                self.runner.scribe(content)
-            }
-            "read_docs" => {
-                let file = args.get("file").and_then(|v| v.as_str());
-                self.runner.read_docs(file)
-            }
-            "eval_pass" => self.runner.eval_pass(),
-            "eval_fail" => {
-                let feedback = args
-                    .get("feedback")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("feedback is required".into()))?;
-                self.runner.eval_fail(feedback)
-            }
+
             _ => Err(WorkerError::Config(format!("Unknown tool: {}", name))),
         }
     }
@@ -598,7 +687,7 @@ impl McpServer {
                 }
             }
 
-            // Exit after work_done or task_await to signal agent to stop
+            // Exit after work_done to signal agent to stop
             if self.exit_after_response {
                 // Give Claude CLI time to read the response before we exit
                 std::thread::sleep(std::time::Duration::from_millis(500));
@@ -627,19 +716,25 @@ mod tests {
         let tools = get_tools();
         let names: Vec<&str> = tools.iter().map(|t| t.name).collect();
 
-        assert!(names.contains(&"task_list"));
-        assert!(names.contains(&"task_add"));
-        assert!(names.contains(&"task_claim"));
-        assert!(names.contains(&"task_done"));
-        assert!(names.contains(&"task_unclaim"));
-        assert!(names.contains(&"task_delete"));
-        assert!(names.contains(&"task_await"));
-        assert!(names.contains(&"msg_send"));
-        assert!(names.contains(&"msg_read"));
-        assert!(names.contains(&"msg_list"));
-        assert!(names.contains(&"msg_inbox"));
+        // New tool names
+        assert!(names.contains(&"get_task_tree"));
+        assert!(names.contains(&"get_available_tasks"));
+        assert!(names.contains(&"get_my_tasks"));
+        assert!(names.contains(&"get_task_details"));
+        assert!(names.contains(&"claim_task"));
+        assert!(names.contains(&"complete_task"));
+        assert!(names.contains(&"add_task"));
+        assert!(names.contains(&"add_eval"));
+        assert!(names.contains(&"list_contacts"));
+        assert!(names.contains(&"chat_history"));
+        assert!(names.contains(&"chat_send"));
+        assert!(names.contains(&"chat_unread"));
+        assert!(names.contains(&"scribe"));
+        assert!(names.contains(&"read_docs"));
         assert!(names.contains(&"work_done"));
         assert!(names.contains(&"time_status"));
+        assert!(names.contains(&"eval_pass"));
+        assert!(names.contains(&"eval_fail"));
     }
 
     #[test]

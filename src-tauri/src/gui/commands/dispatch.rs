@@ -82,3 +82,41 @@ pub async fn create_dispatch_snapshot(
         .create_snapshot(&task_ids)
         .map_err(|e| e.to_string())
 }
+
+/// Get the dispatch scope for multiple root tasks
+#[tauri::command]
+pub async fn get_multi_dispatch_scope(
+    project_id: i64,
+    root_task_ids: Vec<String>,
+) -> Result<crate::core::dispatch::DispatchScope, String> {
+    let service = DispatchService::new(project_id);
+    service
+        .get_multi_dispatch_scope(&root_task_ids)
+        .map_err(|e| e.to_string())
+}
+
+/// Prepare a multi-root dispatch
+#[tauri::command]
+pub async fn prepare_multi_dispatch(
+    project_id: i64,
+    root_task_ids: Vec<String>,
+    run_name: Option<String>,
+    target_branch: Option<String>,
+    worker_scale: Option<String>,
+    time_limit_minutes: Option<i64>,
+) -> Result<DispatchInfo, String> {
+    let store = ProjectStore::open().map_err(|e| e.to_string())?;
+    let _ = store.get_project(project_id).map_err(|e| e.to_string())?;
+
+    let config = DispatchConfig {
+        run_name,
+        target_branch,
+        worker_scale,
+        time_limit_minutes,
+    };
+
+    let service = DispatchService::new(project_id);
+    service
+        .prepare_multi_dispatch(&root_task_ids, &config)
+        .map_err(|e| e.to_string())
+}

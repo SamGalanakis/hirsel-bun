@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use tokio::sync::oneshot;
 use tracing::info;
 
-use super::types::{WorkerEventResponse, WorkerEventsResponse};
+use crate::core::api_types::{WorkerEventResponse, WorkerEventsResponse};
 use crate::core::{config, state::SQLiteState};
 
 /// Manages active worker event streams

@@ -2,7 +2,7 @@
 //!
 //! Commands for managing tasks: listing, adding, deleting, completing, unclaiming, and reopening.
 
-use super::types::{Task, TaskStatus};
+use crate::core::api_types::{Task, TaskStatus};
 use crate::core::orchestrator::create_orchestrator;
 use crate::core::{config, state::SQLiteState};
 

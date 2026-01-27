@@ -85,6 +85,9 @@ pub enum CliInputMessage {
     User {
         message: UserMessage,
         session_id: String,
+        /// Parent tool use ID for tracking tool result associations.
+        /// Should be None for normal prompts, Some(id) when responding to a tool call.
+        parent_tool_use_id: Option<String>,
     },
     /// Response to a control request (permission check)
     /// The response field should directly contain the permission response (e.g., {behavior: "allowAlways"})
@@ -541,11 +544,24 @@ impl ClaudeCliBridge {
             cmd.arg("--system-prompt").arg(prompt);
         }
 
-        // Add resume session ID if specified (for pause/resume support)
-        if let Some(ref session_id) = config.resume_session_id {
+        // Determine the session ID - either resume an existing one or create fresh
+        // NOTE: We DON'T pass --session-id to CLI anymore because it causes issues with
+        // stream-json mode ("tool_use ids without tool_result blocks" API error).
+        // The session_id is only used in JSON messages for the protocol, not for CLI state.
+        let effective_session_id = if let Some(ref session_id) = config.resume_session_id {
             cmd.arg("--resume").arg(session_id);
             info!("[{}] Resuming session: {}", config.context, session_id);
-        }
+            session_id.clone()
+        } else {
+            // Generate a session ID for use in JSON messages
+            // Don't pass --session-id to CLI - let it manage its own internal state
+            let session_id = uuid::Uuid::new_v4().to_string();
+            info!(
+                "[{}] Starting fresh session (no CLI --session-id): {}",
+                config.context, session_id
+            );
+            session_id
+        };
 
         // Add MCP servers
         // Format: --mcp-config '{"mcpServers":{"name":{"command":"cmd","args":["a1"],"env":{"K":"V"}}}}'
@@ -613,7 +629,12 @@ impl ClaudeCliBridge {
         // permission requests ourselves via the bridge so we can auto-approve MCP tools.
         cmd.env_remove("ACP_PERMISSION_MODE");
 
-        // Debug: show command being executed
+        // Debug: show command being executed to stderr
+        eprintln!(
+            "[claude-cli] Spawning: {} {:?}",
+            claude_bin,
+            cmd.get_args().collect::<Vec<_>>()
+        );
 
         // Spawn the process using std::process (works reliably in LocalSet context)
         let mut child = cmd.spawn().map_err(|e| {
@@ -666,7 +687,8 @@ impl ClaudeCliBridge {
             context: config.context,
             pid: Some(pid),
             bypass_permissions: config.bypass_permissions,
-            session_id: "default".to_string(),
+            // Use the same session_id for JSON messages as we passed to CLI via --session-id
+            session_id: effective_session_id,
         };
 
         Ok((bridge, event_rx))
@@ -674,12 +696,16 @@ impl ClaudeCliBridge {
 
     /// Send a user message/prompt to the CLI.
     pub async fn send_prompt(&mut self, content: &str) -> Result<()> {
+        // Always use blocks format to match the reference implementation
         let msg = CliInputMessage::User {
             message: UserMessage {
                 role: "user".to_string(),
-                content: UserContent::Text(content.to_string()),
+                content: UserContent::Blocks(vec![UserContentBlock::Text {
+                    text: content.to_string(),
+                }]),
             },
             session_id: self.session_id.clone(),
+            parent_tool_use_id: None,
         };
         self.send_message(&msg).await
     }
@@ -692,6 +718,7 @@ impl ClaudeCliBridge {
                 content: UserContent::Blocks(blocks),
             },
             session_id: self.session_id.clone(),
+            parent_tool_use_id: None,
         };
         self.send_message(&msg).await
     }
@@ -744,6 +771,8 @@ impl ClaudeCliBridge {
     /// Send a raw message to the CLI.
     async fn send_message(&mut self, msg: &CliInputMessage) -> Result<()> {
         let json = serde_json::to_string(msg)?;
+        // Debug: print to stderr so we can see the actual JSON being sent
+        eprintln!("[claude-cli] Sending JSON: {}", json);
         debug!("[{}] Sending: {}", self.context, json);
         self.stdin.write_all(json.as_bytes()).await?;
         self.stdin.write_all(b"\n").await?;
@@ -1404,19 +1433,25 @@ mod tests {
 
     #[test]
     fn test_user_message_serialization() {
+        // Test with blocks format (as used by send_prompt)
         let msg = CliInputMessage::User {
             message: UserMessage {
                 role: "user".to_string(),
-                content: UserContent::Text("Hello".to_string()),
+                content: UserContent::Blocks(vec![UserContentBlock::Text {
+                    text: "Hello".to_string(),
+                }]),
             },
             session_id: "default".to_string(),
+            parent_tool_use_id: None,
         };
 
         let json = serde_json::to_string(&msg).unwrap();
+        println!("User message JSON: {}", json);
         assert!(json.contains("\"type\":\"user\""));
         assert!(json.contains("\"role\":\"user\""));
-        assert!(json.contains("\"content\":\"Hello\""));
+        assert!(json.contains("\"text\":\"Hello\""));
         assert!(json.contains("\"session_id\":\"default\""));
+        assert!(json.contains("\"parent_tool_use_id\":null"));
     }
 
     #[test]

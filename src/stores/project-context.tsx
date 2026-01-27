@@ -41,6 +41,9 @@ interface ProjectContextValue {
   showProjectSetup: () => boolean;
   setShowProjectSetup: (show: boolean) => void;
   openProjectSetup: () => void;
+  openProjectSetupAt: (x: number, y: number) => void;
+  pendingProjectPosition: () => { x: number; y: number } | null;
+  setPendingProjectPosition: (pos: { x: number; y: number } | null) => void;
   cancelProjectSetup: () => void;
 
   showProjectSettings: () => boolean;
@@ -73,6 +76,10 @@ export const ProjectProvider: ParentComponent = (props) => {
   const [focusedProjectId, setFocusedProjectId] = createSignal<number | null>(null);
   const [showProjectSetup, setShowProjectSetup] = createSignal(false);
   const [showProjectSettings, setShowProjectSettings] = createSignal(false);
+  const [pendingProjectPosition, setPendingProjectPosition] = createSignal<{
+    x: number;
+    y: number;
+  } | null>(null);
   const [activeProjectView, setActiveProjectView] = createSignal<'board' | 'runs'>('board');
   const [projectSelectorOpen, setProjectSelectorOpen] = createSignal(false);
   const [projectSearchQuery, setProjectSearchQuery] = createSignal('');
@@ -140,12 +147,20 @@ export const ProjectProvider: ParentComponent = (props) => {
   };
 
   const openProjectSetup = () => {
+    setPendingProjectPosition(null);
+    setShowProjectSetup(true);
+    setProjectSelectorOpen(false);
+  };
+
+  const openProjectSetupAt = (x: number, y: number) => {
+    setPendingProjectPosition({ x, y });
     setShowProjectSetup(true);
     setProjectSelectorOpen(false);
   };
 
   const cancelProjectSetup = () => {
     setShowProjectSetup(false);
+    setPendingProjectPosition(null);
   };
 
   const removeProject = async (projectId: number) => {
@@ -235,6 +250,9 @@ export const ProjectProvider: ParentComponent = (props) => {
     showProjectSetup,
     setShowProjectSetup,
     openProjectSetup,
+    openProjectSetupAt,
+    pendingProjectPosition,
+    setPendingProjectPosition,
     cancelProjectSetup,
     showProjectSettings,
     setShowProjectSettings,

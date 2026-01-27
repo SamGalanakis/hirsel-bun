@@ -15,7 +15,6 @@ mod drafts;
 mod events;
 mod files;
 mod filesystem;
-pub mod helpers;
 mod logs;
 mod messages;
 mod projects;
@@ -132,6 +131,7 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         projects::create_project,
         projects::create_project_from_path,
         projects::update_project,
+        projects::update_project_name,
         projects::delete_project,
         // SpecFlow board task commands
         specflow::get_board_tasks,
@@ -163,6 +163,8 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         // Dispatch commands
         dispatch::preview_dispatch,
         dispatch::prepare_dispatch,
+        dispatch::prepare_multi_dispatch,
+        dispatch::get_multi_dispatch_scope,
         dispatch::record_dispatch,
         dispatch::get_task_runs,
         dispatch::get_all_task_runs,

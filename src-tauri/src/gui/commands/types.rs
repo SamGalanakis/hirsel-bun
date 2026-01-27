@@ -1,52 +1,11 @@
-//! Shared types for GUI commands
+//! GUI-specific types for Tauri commands
 //!
-//! This module re-exports types from core::api_types and provides
-//! additional GUI-specific types.
-
-// Re-export all types from core::api_types for backward compatibility
-pub use crate::core::api_types::{
-    // Helper functions
-    calculate_duration_minutes,
-    convert_status,
-    is_completed_status,
-    parse_elapsed_minutes,
-    parse_timestamp,
-    // Auth types
-    AgentAuthResponse,
-    AuthConfigResponse,
-    AuthMethodResponse,
-    // Main types
-    ConfigResponse,
-    Eval,
-    // Status enums
-    EvalStatus,
-    // Git provider types
-    GitConfigResponse,
-    GitProviderResponse,
-    HistoryEntry,
-    Message,
-    // Orchestrator profile types
-    OrchestratorModeResponse,
-    OrchestratorProfileResponse,
-    // Runner types
-    RunDetail,
-    RunStatus,
-    RunSummary,
-    RunnerConfigResponse,
-    SheepConfig,
-    Task,
-    TaskStatus,
-    ThreadSummary,
-    Worker,
-    // Worker event types
-    WorkerEventResponse,
-    WorkerEventsResponse,
-    WorkerLocation,
-    WorkerStatus,
-};
+//! Types that are only needed by the GUI frontend, not shared with
+//! the orchestrator or server.
 
 use serde::{Deserialize, Serialize};
 
+use crate::core::api_types::{AuthMethodResponse, GitProviderResponse, RunnerConfigResponse};
 use crate::core::config;
 
 // =============================================================================

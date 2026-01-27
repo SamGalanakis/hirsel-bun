@@ -2,7 +2,8 @@
 //!
 //! Commands for reading and writing application configuration.
 
-use super::types::{ConfigResponse, ConfigUpdateRequest};
+use super::types::ConfigUpdateRequest;
+use crate::core::api_types::ConfigResponse;
 use crate::core::config;
 use crate::core::orchestrator::create_orchestrator;
 use crate::core::tailscale::{get_tailscale_status, is_tailscale_connected};

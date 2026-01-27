@@ -32,6 +32,7 @@ export const GypMessenger: Component = () => {
   const [inputText, setInputText] = createSignal('');
   const [sending, setSending] = createSignal(false);
   const [expandedTools, setExpandedTools] = createSignal<Set<string>>(new Set());
+  const [menuOpen, setMenuOpen] = createSignal(false);
 
   // Build context based on current app state
   const buildContext = (): GypChatContext => {
@@ -93,9 +94,14 @@ export const GypMessenger: Component = () => {
     }
   });
 
-  // Initialize icons when expanded
+  // Initialize icons when expanded or menu opens
   createEffect(() => {
     if (app.aiChatOpen()) {
+      queueMicrotask(() => initLucideIcons());
+    }
+  });
+  createEffect(() => {
+    if (menuOpen()) {
       queueMicrotask(() => initLucideIcons());
     }
   });
@@ -233,6 +239,41 @@ export const GypMessenger: Component = () => {
                   </button>
                 </div>
               </Show>
+
+              {/* Options menu */}
+              <div class="relative">
+                <button
+                  onClick={() => setMenuOpen(!menuOpen())}
+                  class="p-1.5 rounded hover:bg-pasture-700 text-wool-500 hover:text-wool-300"
+                  title="Options"
+                >
+                  <i data-lucide="more-vertical" class="w-4 h-4" />
+                </button>
+
+                <Show when={menuOpen()}>
+                  {/* Backdrop to close menu */}
+                  <div
+                    class="fixed inset-0 z-40"
+                    onClick={() => setMenuOpen(false)}
+                  />
+
+                  {/* Dropdown menu */}
+                  <div class="absolute right-0 top-full mt-1 w-40 bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl overflow-hidden z-50">
+                    <button
+                      onClick={async () => {
+                        setMenuOpen(false);
+                        await chat.reset();
+                        window.toast?.success('Chat reset');
+                      }}
+                      class="w-full flex items-center gap-2 px-3 py-2 text-sm text-wool-300 hover:bg-pasture-700 hover:text-wool-100 transition-colors"
+                    >
+                      <i data-lucide="refresh-cw" class="w-3.5 h-3.5" />
+                      <span>Reset chat</span>
+                    </button>
+                  </div>
+                </Show>
+              </div>
+
               <button
                 onClick={() => app.setAiChatOpen(false)}
                 class="p-1.5 rounded hover:bg-pasture-700 text-wool-500 hover:text-wool-300"

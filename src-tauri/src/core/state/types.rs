@@ -486,7 +486,6 @@ pub struct Task {
     pub blocked_by: Option<String>,
     // Eval system fields
     pub task_type: TaskType,
-    pub validates: Option<String>, // JSON array of task IDs (eval tasks only)
     pub eval_result: Option<EvalResult>,
     pub eval_feedback: Option<String>,
     pub board_task_id: Option<String>,

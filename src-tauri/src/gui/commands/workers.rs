@@ -2,7 +2,7 @@
 //!
 //! Commands for managing workers: listing, attaching, detaching, opening terminal, and restarting.
 
-use super::types::{SheepConfig, Worker, WorkerLocation, WorkerStatus};
+use crate::core::api_types::{SheepConfig, Worker, WorkerLocation, WorkerStatus};
 use crate::core::orchestrator::create_orchestrator;
 use crate::core::{config, state::SQLiteState};
 

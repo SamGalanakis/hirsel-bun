@@ -1,17 +1,12 @@
 /**
  * Node Context Menu - Right-click menu for board items
  *
- * Provides actions for tasks:
- * - Adding child/sibling tasks
- * - Adding an eval that validates this task
- * - Editing properties
- * - Changing task status
- * - Asking Gyp
- * - Deleting
+ * Highland Craft styled context menu with warm tones
+ * and clear visual hierarchy.
  */
 
 import type { Component } from 'solid-js';
-import { For } from 'solid-js';
+import { For, Show } from 'solid-js';
 import type { TaskTree, BoardTaskStatus } from '../../lib/types';
 
 interface ContextMenuProps {
@@ -42,29 +37,51 @@ interface MenuItem {
   action: () => void;
   danger?: boolean;
   disabled?: boolean;
+  accent?: boolean;
 }
 
-interface MenuSeparator {
-  separator: true;
-  showStatus?: boolean; // Marker to show status submenu here
-}
+const STATUS_CONFIG: { status: BoardTaskStatus; label: string; color: string; bg: string }[] = [
+  { status: 'todo', label: 'To Do', color: 'bg-wool-500', bg: 'hover:bg-wool-500/10' },
+  { status: 'doing', label: 'Doing', color: 'bg-amber-500', bg: 'hover:bg-amber-500/10' },
+  { status: 'done', label: 'Done', color: 'bg-sage', bg: 'hover:bg-sage/10' },
+  { status: 'blocked', label: 'Blocked', color: 'bg-terra', bg: 'hover:bg-terra/10' },
+];
 
-type MenuItemOrSeparator = MenuItem | MenuSeparator;
+const MenuButton: Component<{
+  item: MenuItem;
+  onClick: () => void;
+}> = (props) => (
+  <button
+    onClick={props.onClick}
+    disabled={props.item.disabled}
+    class="w-full px-3 py-2 text-left text-[13px] flex items-center gap-2.5 rounded-md mx-1 transition-all"
+    classList={{
+      'text-wool-200 hover:bg-pasture-700/50 hover:text-wool-100': !props.item.danger && !props.item.disabled && !props.item.accent,
+      'text-amber-400 hover:bg-amber-500/10': props.item.accent,
+      'text-terra hover:bg-terra/10': props.item.danger,
+      'text-wool-600 cursor-not-allowed opacity-50': props.item.disabled,
+    }}
+    style={{ width: 'calc(100% - 8px)' }}
+  >
+    <i data-lucide={props.item.icon} class="w-4 h-4 opacity-70" />
+    <span class="font-medium">{props.item.label}</span>
+  </button>
+);
 
-const isSeparator = (item: MenuItemOrSeparator): item is MenuSeparator => {
-  return 'separator' in item;
-};
+const MenuDivider: Component = () => (
+  <div
+    class="my-1.5 mx-3"
+    style={{ 'border-top': '1px solid rgba(61, 58, 54, 0.6)' }}
+  />
+);
 
-const TaskStatusIcon: Component<{ status: BoardTaskStatus }> = (props) => {
-  const colors: Record<BoardTaskStatus, string> = {
-    todo: 'bg-wool-500',
-    doing: 'bg-amber-500',
-    done: 'bg-sage',
-    blocked: 'bg-terra',
-  };
-
-  return <span class={`w-2 h-2 rounded-full ${colors[props.status]}`} />;
-};
+const MenuSection: Component<{ label: string }> = (props) => (
+  <div class="px-4 pt-2 pb-1">
+    <span class="text-[10px] font-semibold text-wool-600 uppercase tracking-widest">
+      {props.label}
+    </span>
+  </div>
+);
 
 export const NodeContextMenu: Component<ContextMenuProps> = (props) => {
   const handleClick = (action: () => void) => {
@@ -72,129 +89,114 @@ export const NodeContextMenu: Component<ContextMenuProps> = (props) => {
     props.onClose();
   };
 
-  // Build menu items based on context
-  const menuItems = (): MenuItemOrSeparator[] => {
-    if (!props.node) {
-      // Canvas context menu
-      return [
-        { label: 'Add Task', icon: 'plus', action: props.onAddRootNode },
-        { label: 'Add Eval', icon: 'check-circle', action: props.onAddEval },
-        { separator: true },
-        { label: 'Fit All', icon: 'maximize-2', action: props.onFitAll },
-      ];
-    }
-
-    // Task context menu
-    const items: MenuItemOrSeparator[] = [
-      { label: 'Add Child', icon: 'corner-down-right', action: props.onAddChild },
-      { label: 'Add Sibling', icon: 'plus-circle', action: props.onAddSibling },
-      { label: 'Add Eval', icon: 'check-circle', action: props.onAddEval },
-      { separator: true },
-      { label: 'Edit', icon: 'pencil', action: props.onEdit },
-      { label: 'Ask Gyp', icon: 'sparkles', action: props.onAskGyp },
-    ];
-
-    // Add dispatch actions if handler is provided
-    if (props.onDispatch) {
-      items.push({ separator: true });
-      items.push({
-        label: 'Dispatch this branch',
-        icon: 'rocket',
-        action: props.onDispatch,
-      });
-      if (props.hasRuns && props.onViewRuns) {
-        items.push({
-          label: 'View dispatched runs',
-          icon: 'list',
-          action: props.onViewRuns,
-        });
-      }
-    }
-
-    // Status separator with marker for status submenu
-    items.push({ separator: true, showStatus: true });
-    items.push({ separator: true });
-    items.push({ label: 'Delete', icon: 'trash-2', action: props.onDelete, danger: true });
-
-    return items;
-  };
-
   return (
     <div
-      class="fixed rounded-lg py-1 min-w-[180px]"
+      class="fixed rounded-xl py-2 min-w-[200px]"
       style={{
         'z-index': 1000,
         left: `${props.x}px`,
         top: `${props.y}px`,
-        background: 'rgba(26,26,26,0.98)',
-        border: '1px solid rgba(255,255,255,0.1)',
-        'box-shadow': '0 12px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(0,0,0,0.2)',
-        'backdrop-filter': 'blur(12px)',
+        background: 'linear-gradient(180deg, #2a2825 0%, #1f1d1a 100%)',
+        border: '1px solid #3d3a36',
+        'box-shadow': '0 16px 48px rgba(0,0,0,0.6), 0 4px 12px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.03)',
       }}
       onClick={(e) => e.stopPropagation()}
     >
-      {/* Regular menu items */}
-      <For each={menuItems()}>
-        {(item, index) => {
-          if (isSeparator(item)) {
-            // Check if we need to render status submenu
-            if (props.node && item.showStatus) {
-              return (
-                <>
-                  <div
-                    class="my-1"
-                    style={{ 'border-top': '1px solid rgba(255,255,255,0.08)' }}
-                  />
-                  {/* Task status submenu */}
-                  <div class="px-2 py-1 mb-1">
-                    <div class="text-[10px] font-semibold text-wool-600 uppercase tracking-wider px-1 mb-1">
-                      Status
-                    </div>
-                    <div class="flex gap-1">
-                      <For each={['todo', 'doing', 'done', 'blocked'] as BoardTaskStatus[]}>
-                        {(status) => (
-                          <button
-                            onClick={() => handleClick(() => props.onSetTaskStatus(status))}
-                            class="flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[10px] hover:bg-white/5 transition-colors"
-                            classList={{
-                              'bg-white/10': props.node?.status === status,
-                            }}
-                            title={status}
-                          >
-                            <TaskStatusIcon status={status} />
-                          </button>
-                        )}
-                      </For>
-                    </div>
-                  </div>
-                </>
-              );
-            }
-            return (
-              <div
-                class="my-1"
-                style={{ 'border-top': '1px solid rgba(255,255,255,0.08)' }}
-              />
-            );
-          }
+      <Show
+        when={props.node}
+        fallback={
+          // Canvas context menu
+          <>
+            <MenuButton
+              item={{ label: 'Add Task', icon: 'plus', action: props.onAddRootNode }}
+              onClick={() => handleClick(props.onAddRootNode)}
+            />
+            <MenuButton
+              item={{ label: 'Add Eval', icon: 'check-circle', action: props.onAddEval }}
+              onClick={() => handleClick(props.onAddEval)}
+            />
+            <MenuDivider />
+            <MenuButton
+              item={{ label: 'Fit All', icon: 'maximize-2', action: props.onFitAll }}
+              onClick={() => handleClick(props.onFitAll)}
+            />
+          </>
+        }
+      >
+        {/* Task context menu */}
+        <MenuSection label="Create" />
+        <MenuButton
+          item={{ label: 'Add Child', icon: 'corner-down-right', action: props.onAddChild }}
+          onClick={() => handleClick(props.onAddChild)}
+        />
+        <MenuButton
+          item={{ label: 'Add Sibling', icon: 'git-branch', action: props.onAddSibling }}
+          onClick={() => handleClick(props.onAddSibling)}
+        />
+        <MenuButton
+          item={{ label: 'Add Eval', icon: 'shield-check', action: props.onAddEval }}
+          onClick={() => handleClick(props.onAddEval)}
+        />
 
-          return (
-            <button
-              onClick={() => handleClick(item.action)}
-              disabled={item.disabled}
-              class="w-full px-3 py-1.5 text-left text-sm flex items-center gap-2 transition-colors"
-              classList={{
-                'text-wool-200 hover:bg-white/5': !item.danger && !item.disabled,
-                'text-terra hover:bg-terra/10': item.danger,
-                'text-wool-600 cursor-not-allowed': item.disabled,
-              }}
-            >
-              <i data-lucide={item.icon} class="w-3.5 h-3.5" />
-              {item.label}
-            </button>
-          );
-        }}
-      </For>
+        <MenuDivider />
+
+        <MenuButton
+          item={{ label: 'Edit', icon: 'pencil', action: props.onEdit }}
+          onClick={() => handleClick(props.onEdit)}
+        />
+        <MenuButton
+          item={{ label: 'Ask Gyp', icon: 'sparkles', action: props.onAskGyp, accent: true }}
+          onClick={() => handleClick(props.onAskGyp)}
+        />
+
+        {/* Dispatch section */}
+        <Show when={props.onDispatch}>
+          <MenuDivider />
+          <MenuButton
+            item={{ label: 'Dispatch Branch', icon: 'rocket', action: props.onDispatch! }}
+            onClick={() => handleClick(props.onDispatch!)}
+          />
+          <Show when={props.hasRuns && props.onViewRuns}>
+            <MenuButton
+              item={{ label: 'View Runs', icon: 'list', action: props.onViewRuns! }}
+              onClick={() => handleClick(props.onViewRuns!)}
+            />
+          </Show>
+        </Show>
+
+        <MenuDivider />
+
+        {/* Status picker - compact dots with tooltips */}
+        <div class="px-3 py-2 flex items-center gap-2">
+          <span class="text-[10px] font-semibold text-wool-600 uppercase tracking-widest mr-1">
+            Status
+          </span>
+          <div class="flex gap-2">
+            <For each={STATUS_CONFIG}>
+              {(cfg) => (
+                <button
+                  onClick={() => handleClick(() => props.onSetTaskStatus(cfg.status))}
+                  class="p-1.5 rounded-md transition-all hover:bg-pasture-700/50"
+                  classList={{
+                    'bg-pasture-600/60 ring-1 ring-wool-500/40': props.node?.status === cfg.status,
+                  }}
+                  title={cfg.label}
+                >
+                  <span class={`block w-3 h-3 rounded-full ${cfg.color}`} />
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+
+        <MenuDivider />
+
+        {/* Danger zone */}
+        <MenuButton
+          item={{ label: 'Delete', icon: 'trash-2', action: props.onDelete, danger: true }}
+          onClick={() => handleClick(props.onDelete)}
+        />
+      </Show>
     </div>
   );
 };

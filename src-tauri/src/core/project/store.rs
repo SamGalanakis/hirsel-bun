@@ -217,6 +217,11 @@ impl ProjectStore {
         let mut updates = vec!["updated_at = ?1"];
         let mut values: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.clone())];
 
+        if let Some(ref name) = req.name {
+            updates.push("name = ?");
+            values.push(Box::new(name.clone()));
+        }
+
         if let Some(ref sp) = req.starting_point {
             let (sp_type, sp_path, sp_url, sp_branch) = self.normalize_starting_point(sp);
             updates.push("starting_point_type = ?");

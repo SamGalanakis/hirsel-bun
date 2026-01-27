@@ -785,6 +785,11 @@ button {
   font-size: 0.75rem;
 }
 /* Toast Notifications - Basecoat toaster overrides */
+.toaster {
+  /* Ensure toasts appear above chat panel (z-1000) */
+  z-index: 1100;
+}
+
 .toaster .toast {
   /* Remove any inherited styling from wrapper */
   border: none;

@@ -121,11 +121,20 @@ CREATE TABLE IF NOT EXISTS tasks (
     blocked_by TEXT,
     -- Eval system columns
     task_type TEXT DEFAULT 'work',      -- 'work' | 'eval'
-    validates TEXT,                      -- JSON array of task IDs (eval tasks only)
     eval_result TEXT,                    -- 'pass' | 'fail' | null
     eval_feedback TEXT,                  -- Feedback if eval failed
     board_task_id TEXT                   -- Original board task ID for tracking
 );
+
+-- Normalized eval-validates relationship (which tasks an eval validates)
+CREATE TABLE IF NOT EXISTS eval_validates (
+    eval_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    PRIMARY KEY (eval_id, task_id),
+    FOREIGN KEY (eval_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_eval_validates_task ON eval_validates(task_id);
 
 CREATE TABLE IF NOT EXISTS evals (
     id INTEGER PRIMARY KEY,

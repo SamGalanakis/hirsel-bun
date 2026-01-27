@@ -105,7 +105,7 @@ Run `hirsel --help` for full documentation.
 
 ## Configuration
 
-Configure your AI agent in `~/.config/hirsel/config.toml`:
+Configure your AI agent in `~/.hirsel/config.toml`:
 
 ```toml
 [agent]

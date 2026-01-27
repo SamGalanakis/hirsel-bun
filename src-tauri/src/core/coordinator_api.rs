@@ -187,6 +187,9 @@ pub fn create_router(state: Arc<Mutex<SQLiteState>>, run_dir: PathBuf, run_name:
         )
         .route("/tasks/{task_id}/reopen", post(reopen_task))
         .route("/tasks/{task_id}/tokens", post(set_task_tokens))
+        .route("/tasks/{task_id}/eval_pass", post(eval_pass))
+        .route("/tasks/{task_id}/eval_fail", post(eval_fail))
+        .route("/tasks/{task_id}/validated", get(get_validated_tasks))
         // Workers
         .route("/workers", get(list_workers).post(create_worker))
         .route("/workers/active", get(get_active_workers))
@@ -458,6 +461,49 @@ async fn set_task_tokens(
     task_routes::set_task_tokens(&state, &task_id, req.tokens)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
+}
+
+async fn eval_pass(
+    State(api): State<Arc<ApiState>>,
+    Path(task_id): Path<String>,
+    Json(req): Json<WorkerNameRequest>,
+) -> ApiResult<Json<SuccessResponse>> {
+    let state = api.state.lock().await;
+    state
+        .eval_pass(&task_id, &req.worker_name)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    Ok(Json(SuccessResponse::ok()))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct EvalFailRequest {
+    worker_name: String,
+    feedback: String,
+}
+
+async fn eval_fail(
+    State(api): State<Arc<ApiState>>,
+    Path(task_id): Path<String>,
+    Json(req): Json<EvalFailRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let state = api.state.lock().await;
+    let repair_task_id = state
+        .eval_fail(&task_id, &req.worker_name, &req.feedback)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    Ok(Json(
+        serde_json::json!({ "repair_task_id": repair_task_id }),
+    ))
+}
+
+async fn get_validated_tasks(
+    State(api): State<Arc<ApiState>>,
+    Path(task_id): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let state = api.state.lock().await;
+    let task_ids = state
+        .get_validated_tasks(&task_id)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    Ok(Json(serde_json::json!({ "task_ids": task_ids })))
 }
 
 // =============================================================================

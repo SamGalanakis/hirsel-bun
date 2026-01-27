@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::types::{Eval, HistoryEntry};
+use crate::core::api_types::{Eval, HistoryEntry};
 use crate::core::config;
 use crate::core::orchestrator::create_orchestrator;
 

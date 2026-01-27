@@ -484,7 +484,7 @@ pub async fn run_acp_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
 pub fn build_worker_prompt(
     worker_name: &str,
     run_name: &str,
-    spec_content: &str,
+    _spec_content: &str, // No longer embedded - workers use MCP tools to access tasks
     is_leader: bool,
     leader_name: Option<&str>,
     teammates: Option<&[String]>,
@@ -513,10 +513,15 @@ pub fn build_worker_prompt(
         run_dir.join("assets").display()
     ));
 
-    // Spec
-    prompt.push_str("## Spec\n\n");
-    prompt.push_str(spec_content);
-    prompt.push_str("\n\n");
+    // Your Task - MCP-first approach
+    prompt.push_str("## Your Task\n\n");
+    prompt.push_str("You have a pre-defined task scope. Use MCP tools to understand the work:\n\n");
+    prompt.push_str("1. `get_task_tree()` - See all tasks and their relationships\n");
+    prompt.push_str("2. `get_task_details(id)` - Get full content for a specific task\n");
+    prompt.push_str("3. `get_available_tasks()` - See what's ready to work on\n\n");
+    prompt.push_str(
+        "Tasks were created from a planning board - use these tools to understand the scope.\n\n",
+    );
 
     // Git workflow
     prompt.push_str("## Git Workflow\n\n");
@@ -548,7 +553,7 @@ pub fn build_worker_prompt(
         // Multi-worker: must push to share changes
         prompt.push_str("**Before Completing a Task:**\n");
         prompt.push_str(
-            "You MUST push your changes to the shared staging before calling `task_done`:\n",
+            "You MUST push your changes to the shared staging before calling `complete_task`:\n",
         );
         prompt.push_str("```bash\n");
         prompt
@@ -558,7 +563,7 @@ pub fn build_worker_prompt(
         prompt.push_str("# resolve any conflicts if needed, then:\n");
         prompt.push_str("git push origin staging                            # share your work\n");
         prompt.push_str("```\n");
-        prompt.push_str("Only call `task_done` AFTER your changes are pushed.\n\n");
+        prompt.push_str("Only call `complete_task` AFTER your changes are pushed.\n\n");
 
         prompt.push_str("**Handling Merge Conflicts:**\n");
         prompt.push_str("If `git pull` shows conflicts:\n");
@@ -571,7 +576,7 @@ pub fn build_worker_prompt(
     } else {
         // Single-worker: just commit, no push needed
         prompt.push_str("**Before Completing a Task:**\n");
-        prompt.push_str("Commit any uncommitted changes before calling `task_done`:\n");
+        prompt.push_str("Commit any uncommitted changes before calling `complete_task`:\n");
         prompt.push_str("```bash\n");
         prompt.push_str("git add . && git commit -m \"feat: final changes\"\n");
         prompt.push_str("```\n");
@@ -581,33 +586,44 @@ pub fn build_worker_prompt(
     // MCP Tools - IMPORTANT: These are MCP tools, not CLI commands
     prompt.push_str("## Available MCP Tools\n\n");
     prompt.push_str("**IMPORTANT:** You have access to the `hirsel` MCP server. Use these MCP tools directly - do NOT use CLI commands or try to find hirsel binaries.\n\n");
+
     prompt.push_str("### Task Management\n");
-    prompt.push_str("- `task_list` - Show all tasks\n");
-    prompt.push_str("- `task_add(task_id, name, parent?, blocked_by?)` - Add a new task\n");
+    prompt.push_str("- `get_task_tree()` - Full task hierarchy with status and dependencies\n");
+    prompt.push_str("- `get_available_tasks()` - Unblocked, unclaimed tasks ready to work on\n");
+    prompt.push_str("- `get_my_tasks()` - Tasks you've claimed\n");
+    prompt.push_str("- `get_task_details(task_id)` - Full content for a specific task\n");
+    prompt.push_str("- `claim_task(task_id)` - Claim a task (TODO → DOING)\n");
+    prompt.push_str("- `complete_task(task_id?)` - Mark task done (auto-unblocks dependents)\n");
+    prompt.push_str("- `add_task(task_id, name, parent?, blocked_by?)` - Create a new task\n");
     prompt.push_str("  - `task_id`: lowercase with underscores (e.g., `implement_auth`)\n");
     prompt.push_str("  - `parent`: Optional parent task ID for hierarchy\n");
     prompt.push_str("  - `blocked_by`: Array of task IDs that must complete first\n");
-    prompt.push_str("- `task_claim(task_id)` - Claim a task (TODO → DOING)\n");
-    prompt.push_str("- `task_done(task_id?)` - Complete current task (DOING → DONE)\n");
-    prompt.push_str("- `task_unclaim(task_id?)` - Release without completing\n");
-    prompt.push_str("- `task_delete(task_id)` - Delete a task and its children\n");
-    prompt.push_str("- `task_await` - Wait for tasks to become available\n\n");
-    prompt.push_str("### Messaging\n");
-    prompt.push_str("- `msg_send(thread, message, wait?)` - Send a message\n");
-    prompt.push_str("  - Threads: `user` (human), `group` (team coordination)\n");
-    prompt.push_str("  - Set `wait: true` to pause until reply (auto for `user` thread)\n");
-    prompt.push_str("- `msg_read(thread?)` - Read all unread messages\n");
-    prompt.push_str("- `msg_inbox` - Quick check for new messages this session\n");
-    prompt.push_str("- `msg_list` - List available threads\n\n");
+    prompt.push_str("- `add_eval(eval_id, name, validates)` - Create verification task\n");
+    prompt.push_str("  - `validates`: Array of task IDs this eval verifies\n\n");
+
+    prompt.push_str("### Communication\n");
+    prompt
+        .push_str("- `list_contacts()` - Available chat targets (user, group, workers, scribe)\n");
+    prompt.push_str("- `chat_history(with?, limit?)` - Read message history\n");
+    prompt.push_str("  - `with`: Filter by contact ('user', 'group', 'worker-N')\n");
+    prompt.push_str("- `chat_send(to, message)` - Send a message\n");
+    prompt.push_str("  - Messages to 'user' pause until reply (if HITL enabled)\n");
+    prompt.push_str("- `chat_unread(with?)` - Check for new unread messages\n\n");
+
     prompt.push_str("### Documentation\n");
     prompt.push_str("- `scribe(content)` - Record a learning or discovery\n");
     prompt.push_str("  - Examples: patterns, gotchas, architecture decisions, conventions\n");
     prompt.push_str("  - Batched and integrated into docs/ by a Scribe agent\n");
     prompt.push_str("- `read_docs(file?)` - Read project documentation maintained by Scribe\n");
     prompt.push_str("  - Omit `file` to get all docs, or specify e.g. `patterns.md`\n\n");
+
     prompt.push_str("### Completion\n");
     prompt.push_str("- `work_done` - Signal all work is complete (triggers verification)\n");
     prompt.push_str("- `time_status` - Check time limit status\n\n");
+
+    prompt.push_str("### Eval Operations\n");
+    prompt.push_str("- `eval_pass()` - Mark eval as passed (only for eval tasks)\n");
+    prompt.push_str("- `eval_fail(feedback)` - Mark eval as failed with feedback\n\n");
 
     // Task statuses
     prompt.push_str("## Task Workflow\n\n");
@@ -622,46 +638,26 @@ pub fn build_worker_prompt(
     );
     prompt.push_str("- You can only have **one claimed task** at a time\n");
     prompt.push_str("- You can only complete tasks you have claimed\n");
-    prompt.push_str("- If you need to switch tasks, `task_unclaim` your current one first\n\n");
+    prompt.push_str("- If you need to switch tasks, release your current one first\n\n");
 
-    // The scope task and three-phase workflow
-    prompt.push_str("## The \"scope\" Task - Three-Phase Workflow\n\n");
-    prompt.push_str("Most runs start with a single task: `scope`. This is NOT where you create implementation tasks.\n\n");
+    // The scope task
+    prompt.push_str("## The \"scope\" Task\n\n");
+    prompt.push_str("You start with a \"scope\" task already claimed. Review the task tree and decide your approach:\n\n");
 
-    prompt.push_str("**For simple tasks:** If the task is straightforward (e.g., a small bug fix, adding a single function, or a minor change where you already understand the codebase), skip exploration and directly create implementation tasks during scoping.\n\n");
+    prompt.push_str("**1. Explore first** - If unfamiliar with codebase:\n");
+    prompt.push_str("   - Create exploration tasks to understand the code\n");
+    prompt.push_str("   - Use `scribe()` to record findings\n");
+    prompt.push_str("   - Create implementation tasks after exploration\n\n");
 
-    prompt.push_str("### Phase 1: Scoping (the \"scope\" task)\n\n");
-    prompt.push_str("1. Claim the `scope` task\n");
-    prompt.push_str("2. Read the spec above to understand what needs to be built\n");
-    prompt.push_str("3. **Quickly scan the codebase** - get a high-level sense of structure\n");
-    prompt.push_str("4. **Create exploration tasks** - one per area needing investigation:\n");
-    prompt.push_str("   ```\n");
-    prompt.push_str("   task_add(\"explore_existing\", \"Explore existing code structure. Use scribe() to record findings.\")\n");
-    prompt.push_str(
-        "   task_add(\"explore_tests\", \"Explore test patterns. Use scribe() to record findings.\")\n",
-    );
-    prompt.push_str("   ```\n");
-    prompt.push_str("5. **Create implementation planning task** blocked by exploration:\n");
-    prompt.push_str("   ```\n");
-    prompt.push_str("   task_add(\"create_plan\", \"Create implementation tasks from findings\", blocked_by=[\"explore_existing\", \"explore_tests\"])\n");
-    prompt.push_str("   ```\n");
-    prompt.push_str("6. Complete the `scope` task\n\n");
+    prompt.push_str("**2. Plan more** - If tasks need breakdown:\n");
+    prompt.push_str("   - Create subtasks for large tasks\n");
+    prompt.push_str("   - Add blocking relationships where needed\n\n");
 
-    prompt.push_str("### Phase 2: Exploration\n\n");
-    prompt.push_str("For each exploration task:\n");
-    prompt.push_str("1. Deep-dive into that area\n");
-    prompt.push_str("2. **Record discoveries with scribe:**\n");
-    prompt.push_str("   ```\n");
-    prompt.push_str("   scribe(\"AUTH: Uses JWT tokens in src/auth/jwt.py\")\n");
-    prompt.push_str("   scribe(\"TESTS: pytest with fixtures in conftest.py\")\n");
-    prompt.push_str("   ```\n");
-    prompt.push_str("3. Complete the task\n\n");
+    prompt.push_str("**3. Start directly** - If tasks are well-defined:\n");
+    prompt.push_str("   - Complete the scope task to unblock other tasks\n");
+    prompt.push_str("   - Begin working on available tasks\n\n");
 
-    prompt.push_str("### Phase 3: Implementation Planning\n\n");
-    prompt.push_str("1. Read all documentation: `read_docs()`\n");
-    prompt.push_str("2. Create concrete implementation tasks with full context\n");
-    prompt.push_str("3. Apply task design principles (see below)\n");
-    prompt.push_str("4. Complete the planning task\n\n");
+    prompt.push_str("When you complete the scope task, blocked tasks become available.\n\n");
 
     // Task design principles
     prompt.push_str("## Task Design Principles\n\n");
@@ -726,15 +722,15 @@ pub fn build_worker_prompt(
                 teammates_str
             ));
             prompt.push_str("**Your workflow:**\n");
-            prompt.push_str("1. Check `msg_inbox` for team updates\n");
-            prompt.push_str("2. If no tasks available, use `task_await` to wait for leader\n");
+            prompt.push_str("1. Check `chat_unread()` for team updates\n");
+            prompt.push_str("2. If no tasks available, wait for leader to complete scoping\n");
             prompt.push_str("3. **Announce intent in `group` before claiming** ambiguous tasks\n");
             prompt.push_str("4. Claim task, work on it, push, mark done\n\n");
             prompt.push_str("**Do NOT call `work_done` just because no tasks yet** - leader may still be scoping.\n\n");
         }
 
         prompt.push_str("## Group Chat Coordination\n\n");
-        prompt.push_str("Use `msg_send(\"group\", ...)` to coordinate with teammates:\n\n");
+        prompt.push_str("Use `chat_send(\"group\", ...)` to coordinate with teammates:\n\n");
         prompt.push_str("**When to message the group:**\n");
         prompt.push_str("- Before claiming ambiguous tasks (announce intent)\n");
         prompt.push_str("- When changing shared code (utils, models, configs)\n");
@@ -743,32 +739,30 @@ pub fn build_worker_prompt(
         prompt.push_str("- When finding surprises or gotchas\n\n");
         prompt.push_str("**Examples:**\n");
         prompt.push_str("```\n");
-        prompt.push_str("msg_send(\"group\", \"I'm taking auth_setup - will use JWT tokens\")\n");
-        prompt.push_str("msg_send(\"group\", \"Changed User model - added 'role' field\")\n");
-        prompt.push_str("msg_send(\"group\", \"FYI: tests require REDIS_URL env var\")\n");
+        prompt.push_str("chat_send(\"group\", \"I'm taking auth_setup - will use JWT tokens\")\n");
+        prompt.push_str("chat_send(\"group\", \"Changed User model - added 'role' field\")\n");
+        prompt.push_str("chat_send(\"group\", \"FYI: tests require REDIS_URL env var\")\n");
         prompt.push_str("```\n\n");
     }
 
     // Getting started
     prompt.push_str("## Getting Started\n\n");
-    prompt.push_str("1. Use `task_list` to see available tasks\n");
-    prompt.push_str("2. If you see a `scope` task, claim it and follow the three-phase workflow\n");
-    prompt.push_str("3. Otherwise, claim the next TODO task\n");
-    prompt.push_str("4. Work on the task, commit frequently\n");
-    prompt.push_str("5. Use `task_done` when complete\n");
+    prompt.push_str("1. Use `get_task_tree()` to see all tasks and relationships\n");
+    prompt.push_str("2. If scope task is yours (claimed), review tasks and decide approach\n");
+    prompt.push_str("3. Complete scope task to unblock other tasks\n");
+    prompt.push_str("4. Use `get_available_tasks()` to find work\n");
+    prompt.push_str("5. `claim_task(id)` → work on it → commit → `complete_task()`\n");
     prompt.push_str("6. Repeat until all tasks done\n");
-    prompt.push_str("7. Call `work_done` to finish\n\n");
+    prompt.push_str("7. Call `work_done()` to finish\n\n");
 
     // When stuck
     prompt.push_str("## When Stuck\n\n");
     prompt.push_str("Don't spin. If you can't figure something out after 2-3 attempts:\n");
     prompt.push_str("```\n");
-    prompt.push_str(
-        "msg_send(\"user\", \"Specific question about what's blocking you\", wait=true)\n",
-    );
+    prompt.push_str("chat_send(\"user\", \"Specific question about what's blocking you\")\n");
     prompt.push_str("```\n\n");
 
-    prompt.push_str("**Begin by using `task_list` to see available tasks.**\n");
+    prompt.push_str("**Begin by using `get_task_tree()` to see available tasks.**\n");
 
     prompt
 }

@@ -8,7 +8,7 @@
 Current implementation:
 - Backend: `src-tauri/src/core/specflow/` (types.rs, state.rs, mod.rs)
 - Commands: `src-tauri/src/gui/commands/specflow.rs`
-- Frontend: `src/components/specflow/` (SpecflowBoard.tsx, NodeRenderer.tsx, etc.)
+- Frontend: `src/components/specflow/` (OneBoard.tsx, NodeRenderer.tsx, ProjectCard.tsx)
 
 ## Overview
 

@@ -274,29 +274,198 @@ impl WorkerRunner {
     // Task Operations
     // =========================================================================
 
-    /// List all tasks.
-    pub fn task_list(&self) -> WorkerResult<String> {
+    /// Get the full task tree with hierarchy and status.
+    /// Returns a hierarchical structure with dependencies.
+    pub fn get_task_tree(&self) -> WorkerResult<String> {
         let tasks = self.run_async(self.state().get_tasks())?;
 
-        let mut task_outputs = Vec::new();
+        // Build a map for quick lookups
+        let task_map: std::collections::HashMap<String, &crate::core::state::Task> =
+            tasks.iter().map(|t| (t.id.clone(), t)).collect();
+
+        // Find root tasks (no parent) and build tree structure
+        let mut roots: Vec<serde_json::Value> = Vec::new();
+        let mut children_map: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+
         for t in &tasks {
-            let blocked = self
-                .run_async(self.state().is_task_blocked(&t.id))
-                .unwrap_or(false);
-            task_outputs.push(serde_json::json!({
-                "id": t.id,
-                "name": t.name,
-                "status": t.status.as_str(),
-                "claimed_by": t.claimed_by,
-                "parent": t.parent_id,
-                "blocked_by": t.blocked_by,
-                "blocked": blocked,
-            }));
+            if let Some(parent_id) = &t.parent_id {
+                children_map
+                    .entry(parent_id.clone())
+                    .or_default()
+                    .push(t.id.clone());
+            }
         }
 
-        let output = serde_json::json!({ "tasks": task_outputs });
+        fn build_node(
+            task: &crate::core::state::Task,
+            children_map: &std::collections::HashMap<String, Vec<String>>,
+            task_map: &std::collections::HashMap<String, &crate::core::state::Task>,
+            state: &dyn crate::core::state_access::StateAccess,
+            runner: &WorkerRunner,
+        ) -> serde_json::Value {
+            let blocked = runner
+                .run_async(state.is_task_blocked(&task.id))
+                .unwrap_or(false);
+
+            let children: Vec<serde_json::Value> = children_map
+                .get(&task.id)
+                .map(|child_ids| {
+                    child_ids
+                        .iter()
+                        .filter_map(|cid| task_map.get(cid))
+                        .map(|c| build_node(c, children_map, task_map, state, runner))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let mut node = serde_json::json!({
+                "id": task.id,
+                "name": task.name,
+                "type": task.task_type.as_str(),
+                "status": task.status.as_str(),
+                "claimed_by": task.claimed_by,
+                "blocked": blocked,
+            });
+
+            if let Some(blocked_by) = &task.blocked_by {
+                node["blocked_by"] =
+                    serde_json::json!(blocked_by.split(',').map(|s| s.trim()).collect::<Vec<_>>());
+            }
+
+            if task.task_type == crate::core::state::TaskType::Eval {
+                if let Ok(validates) = runner.run_async(state.get_validated_tasks(&task.id)) {
+                    if !validates.is_empty() {
+                        node["validates"] = serde_json::json!(validates);
+                    }
+                }
+                if let Some(result) = &task.eval_result {
+                    node["eval_result"] = serde_json::json!(result.as_str());
+                }
+            }
+
+            if !children.is_empty() {
+                node["children"] = serde_json::json!(children);
+            }
+
+            node
+        }
+
+        for t in &tasks {
+            if t.parent_id.is_none() {
+                roots.push(build_node(t, &children_map, &task_map, self.state(), self));
+            }
+        }
+
+        let output = serde_json::json!({
+            "tasks": roots,
+            "total_count": tasks.len(),
+        });
         serde_json::to_string_pretty(&output)
             .map_err(|e| WorkerError::Config(format!("Serialization error: {}", e)))
+    }
+
+    /// Get tasks that are ready to claim (unblocked, unclaimed, todo status).
+    pub fn get_available_tasks(&self) -> WorkerResult<String> {
+        let claimable = self.run_async(self.state().get_claimable_tasks())?;
+
+        let tasks: Vec<serde_json::Value> = claimable
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "id": t.id,
+                    "name": t.name,
+                    "type": t.task_type.as_str(),
+                    "parent": t.parent_id,
+                })
+            })
+            .collect();
+
+        let output = serde_json::json!({
+            "available_count": tasks.len(),
+            "tasks": tasks,
+        });
+        serde_json::to_string_pretty(&output)
+            .map_err(|e| WorkerError::Config(format!("Serialization error: {}", e)))
+    }
+
+    /// Get tasks claimed by this worker.
+    pub fn get_my_tasks(&self) -> WorkerResult<String> {
+        let worker_name = self.config.worker_name.clone();
+        let claimed = self.run_async(self.state().get_claimed_task(&worker_name))?;
+
+        let tasks: Vec<serde_json::Value> = claimed
+            .into_iter()
+            .map(|t| {
+                serde_json::json!({
+                    "id": t.id,
+                    "name": t.name,
+                    "type": t.task_type.as_str(),
+                    "status": t.status.as_str(),
+                    "claimed_at": t.claimed_at,
+                })
+            })
+            .collect();
+
+        let output = serde_json::json!({
+            "claimed_count": tasks.len(),
+            "tasks": tasks,
+        });
+        serde_json::to_string_pretty(&output)
+            .map_err(|e| WorkerError::Config(format!("Serialization error: {}", e)))
+    }
+
+    /// Get full details for a specific task.
+    pub fn get_task_details(&self, task_id: &str) -> WorkerResult<String> {
+        let tasks = self.run_async(self.state().get_tasks())?;
+        let task = tasks
+            .into_iter()
+            .find(|t| t.id == task_id)
+            .ok_or_else(|| WorkerError::Config(format!("Task '{}' not found", task_id)))?;
+
+        let blocked = self
+            .run_async(self.state().is_task_blocked(&task.id))
+            .unwrap_or(false);
+
+        let mut output = serde_json::json!({
+            "id": task.id,
+            "name": task.name,
+            "type": task.task_type.as_str(),
+            "status": task.status.as_str(),
+            "claimed_by": task.claimed_by,
+            "claimed_at": task.claimed_at,
+            "created_at": task.created_at,
+            "completed_at": task.completed_at,
+            "parent": task.parent_id,
+            "blocked": blocked,
+        });
+
+        if let Some(blocked_by) = &task.blocked_by {
+            output["blocked_by"] =
+                serde_json::json!(blocked_by.split(',').map(|s| s.trim()).collect::<Vec<_>>());
+        }
+
+        if task.task_type == crate::core::state::TaskType::Eval {
+            if let Ok(validates) = self.run_async(self.state().get_validated_tasks(&task.id)) {
+                if !validates.is_empty() {
+                    output["validates"] = serde_json::json!(validates);
+                }
+            }
+            if let Some(result) = &task.eval_result {
+                output["eval_result"] = serde_json::json!(result.as_str());
+            }
+            if let Some(feedback) = &task.eval_feedback {
+                output["eval_feedback"] = serde_json::json!(feedback);
+            }
+        }
+
+        serde_json::to_string_pretty(&output)
+            .map_err(|e| WorkerError::Config(format!("Serialization error: {}", e)))
+    }
+
+    /// List all tasks (legacy method, now calls get_task_tree).
+    pub fn task_list(&self) -> WorkerResult<String> {
+        self.get_task_tree()
     }
 
     /// Claim a task.
@@ -392,6 +561,35 @@ impl WorkerRunner {
         Ok(serde_json::json!({
             "success": true,
             "task_id": task_id,
+        })
+        .to_string())
+    }
+
+    /// Add a new eval task with validates relationship.
+    pub fn add_eval(
+        &self,
+        eval_id: &str,
+        name: &str,
+        validates: &[String],
+    ) -> WorkerResult<String> {
+        use crate::core::state::TaskType;
+
+        let validates_refs: Vec<&str> = validates.iter().map(|s| s.as_str()).collect();
+
+        self.run_async(self.state().add_task_with_type(
+            eval_id,
+            name,
+            None,                            // No parent
+            None,                            // No blocked_by (uses validates)
+            TaskType::Eval,                  // Eval type
+            Some(validates_refs.as_slice()), // Validates relationship
+            None,                            // No board_task_id
+        ))?;
+
+        Ok(serde_json::json!({
+            "success": true,
+            "eval_id": eval_id,
+            "validates": validates,
         })
         .to_string())
     }
@@ -562,6 +760,122 @@ impl WorkerRunner {
 
         Ok(serde_json::json!({
             "inbox": inbox,
+        })
+        .to_string())
+    }
+
+    // =========================================================================
+    // New Chat API (cleaner interface)
+    // =========================================================================
+
+    /// List available chat contacts.
+    /// Returns: user (human), group (team), other workers, scribe.
+    pub fn list_contacts(&self) -> WorkerResult<String> {
+        let workers = self.run_async(self.state().get_workers())?;
+        let worker_names: Vec<String> = workers
+            .iter()
+            .filter(|w| w.name != self.config.worker_name)
+            .map(|w| w.name.clone())
+            .collect();
+
+        let is_multi_worker = workers.len() > 1;
+
+        Ok(serde_json::json!({
+            "contacts": {
+                "user": true,
+                "group": is_multi_worker,
+                "workers": worker_names,
+                "scribe": true,
+            },
+            "note": "Use 'user' for human, 'group' for team chat, worker name for DM"
+        })
+        .to_string())
+    }
+
+    /// Get chat message history, optionally filtered by contact.
+    pub fn chat_history(&self, with: Option<&str>, limit: Option<usize>) -> WorkerResult<String> {
+        let worker_name = self.config.worker_name.clone();
+        let limit = limit.unwrap_or(50);
+
+        // Translate contact to thread name
+        let thread = with.map(|w| if w == "user" { worker_name.as_str() } else { w });
+
+        let messages = if let Some(t) = thread {
+            self.run_async(self.state().get_unread_messages(t, &worker_name))?
+        } else {
+            self.run_async(self.state().get_all_unread_messages(&worker_name))?
+        };
+
+        // Apply limit
+        let messages: Vec<_> = messages.into_iter().take(limit).collect();
+
+        let msgs: Vec<serde_json::Value> = messages
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "from": m.sender,
+                    "thread": m.thread,
+                    "content": m.content,
+                    "timestamp": m.timestamp,
+                })
+            })
+            .collect();
+
+        Ok(serde_json::json!({
+            "messages": msgs,
+            "count": msgs.len(),
+        })
+        .to_string())
+    }
+
+    /// Send a chat message to a specific contact.
+    pub fn chat_send(&self, to: &str, message: &str) -> WorkerResult<String> {
+        // Translate "user" to worker's own thread for DM semantics
+        let thread = if to == "user" {
+            self.config.worker_name.as_str()
+        } else {
+            to
+        };
+
+        self.msg_send(thread, message)
+    }
+
+    /// Check for unread messages, optionally filtered by contact.
+    pub fn chat_unread(&self, with: Option<&str>) -> WorkerResult<String> {
+        let worker_name = self.config.worker_name.clone();
+
+        // Translate contact to thread name
+        let thread = with.map(|w| {
+            if w == "user" {
+                worker_name.clone()
+            } else {
+                w.to_string()
+            }
+        });
+
+        let threads = if let Some(t) = thread {
+            vec![t]
+        } else {
+            self.run_async(self.state().get_threads())?
+        };
+
+        let mut unread = Vec::new();
+        for thread in &threads {
+            let messages =
+                self.run_async(self.state().get_unread_messages(thread, &worker_name))?;
+
+            if !messages.is_empty() {
+                unread.push(serde_json::json!({
+                    "from": thread,
+                    "count": messages.len(),
+                    "preview": messages.first().map(|m| m.content.chars().take(100).collect::<String>()),
+                }));
+            }
+        }
+
+        Ok(serde_json::json!({
+            "has_unread": !unread.is_empty(),
+            "threads": unread,
         })
         .to_string())
     }
