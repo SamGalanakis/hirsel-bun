@@ -168,6 +168,8 @@ mod tests {
             time_limit_minutes: Some(60),
             has_unread_messages: false,
             created_at: "2024-01-01T00:00:00Z".to_string(),
+            project_id: None,
+            project_name: None,
         };
 
         let info = RunInfo::from(summary);

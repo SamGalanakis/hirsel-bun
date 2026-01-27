@@ -140,13 +140,12 @@ impl LocalOrchestrator {
             crate::core::state::TaskStatus::NeedsRepair => TaskStatus::NeedsRepair,
         };
 
-        // Parse blocked_by string into Vec<String>
-        let blocked_by = t.blocked_by.as_ref().map(|b| {
-            b.split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect()
-        });
+        // blocked_by is already Vec<String>, convert to Option<Vec<String>> for API
+        let blocked_by = if t.blocked_by.is_empty() {
+            None
+        } else {
+            Some(t.blocked_by.clone())
+        };
 
         Task {
             id: t.id.clone(),
@@ -353,7 +352,7 @@ impl Orchestrator for LocalOrchestrator {
     async fn delete_run(&self, name: &str) -> OrchestratorResult<()> {
         use crate::core::ops::{delete_run as ops_delete_run, DeleteRunConfig};
 
-        let config = DeleteRunConfig::for_gui(name);
+        let config = DeleteRunConfig::new(name);
         ops_delete_run(config)
             .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))?;

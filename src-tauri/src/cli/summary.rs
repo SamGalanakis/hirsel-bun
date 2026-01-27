@@ -171,12 +171,8 @@ fn generate_summary(state: &SQLiteState, run_name: &str) -> Result<String, Summa
     if !tasks_todo.is_empty() {
         summary.push_str("## Tasks Remaining\n");
         for task in &tasks_todo {
-            let blocked = if let Some(blockers) = &task.blocked_by {
-                if !blockers.is_empty() {
-                    format!(" [blocked by: {}]", blockers)
-                } else {
-                    String::new()
-                }
+            let blocked = if !task.blocked_by.is_empty() {
+                format!(" [blocked by: {}]", task.blocked_by.join(", "))
             } else {
                 String::new()
             };

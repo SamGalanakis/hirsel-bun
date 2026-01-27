@@ -25,7 +25,8 @@ impl SQLiteState {
     // Task Methods
     // =========================================================================
 
-    pub(super) fn task_from_row(row: &Row) -> rusqlite::Result<Task> {
+    /// Create a Task from a row, without blocked_by (must be fetched separately)
+    fn task_from_row_without_blockers(row: &Row) -> rusqlite::Result<Task> {
         Ok(Task {
             id: row.get("id")?,
             name: row.get("name")?,
@@ -38,7 +39,7 @@ impl SQLiteState {
             pending_done_at: row.get("pending_done_at")?,
             tokens_used: row.get("tokens_used")?,
             parent_id: row.get("parent_id")?,
-            blocked_by: row.get("blocked_by")?,
+            blocked_by: vec![], // Will be populated by caller
             task_type: row
                 .get::<_, Option<String>>("task_type")?
                 .map(|s| TaskType::from_str(&s))
@@ -49,6 +50,22 @@ impl SQLiteState {
             eval_feedback: row.get("eval_feedback")?,
             board_task_id: row.get("board_task_id")?,
         })
+    }
+
+    /// Get blocker IDs for a task from the junction table
+    fn get_blocker_ids(&self, task_id: &str) -> rusqlite::Result<Vec<String>> {
+        let mut stmt = self
+            .db
+            .prepare_cached("SELECT blocker_id FROM task_blockers WHERE task_id = ?1")?;
+        let blocker_ids = stmt
+            .query_map(params![task_id], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(blocker_ids)
+    }
+
+    /// Get a task with its blockers populated
+    pub(super) fn task_from_row(row: &Row) -> rusqlite::Result<Task> {
+        Self::task_from_row_without_blockers(row)
     }
 
     /// Get task depth in hierarchy
@@ -70,11 +87,16 @@ impl SQLiteState {
     /// Get children of a task
     pub fn get_children(&self, task_id: &str) -> StateResult<Vec<Task>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by, task_type, eval_result, eval_feedback, board_task_id FROM tasks WHERE parent_id = ?1 ORDER BY created_at"
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, task_type, eval_result, eval_feedback, board_task_id FROM tasks WHERE parent_id = ?1 ORDER BY created_at"
         )?;
-        let tasks = stmt
+        let mut tasks: Vec<Task> = stmt
             .query_map(params![task_id], Self::task_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
+
+        // Populate blockers for all tasks
+        for task in &mut tasks {
+            task.blocked_by = self.get_blocker_ids(&task.id)?;
+        }
         Ok(tasks)
     }
 
@@ -135,13 +157,21 @@ impl SQLiteState {
             }
         }
 
-        let blocked_by_str = blocked_by.map(|b| b.join(","));
-
         match self.db.execute(
-            "INSERT INTO tasks (id, name, status, created_at, parent_id, blocked_by, task_type, board_task_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![task_id, name, TaskStatus::Todo.as_str(), self.now(), parent_id, blocked_by_str, task_type.as_str(), board_task_id],
+            "INSERT INTO tasks (id, name, status, created_at, parent_id, task_type, board_task_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![task_id, name, TaskStatus::Todo.as_str(), self.now(), parent_id, task_type.as_str(), board_task_id],
         ) {
             Ok(_) => {
+                // Insert task_blockers relationships
+                if let Some(b) = blocked_by {
+                    let mut stmt = self
+                        .db
+                        .prepare_cached("INSERT INTO task_blockers (task_id, blocker_id) VALUES (?1, ?2)")?;
+                    for blocker_id in b {
+                        stmt.execute(params![task_id, blocker_id])?;
+                    }
+                }
+
                 // Insert eval_validates relationships for eval tasks (prepared statement for efficiency)
                 if let Some(v) = validates {
                     let mut stmt = self
@@ -175,23 +205,31 @@ impl SQLiteState {
     /// Get all tasks
     pub fn get_tasks(&self) -> StateResult<Vec<Task>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by, task_type, eval_result, eval_feedback, board_task_id FROM tasks ORDER BY created_at"
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, task_type, eval_result, eval_feedback, board_task_id FROM tasks ORDER BY created_at"
         )?;
-        let tasks = stmt
+        let mut tasks: Vec<Task> = stmt
             .query_map([], Self::task_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
+
+        // Populate blockers for all tasks
+        for task in &mut tasks {
+            task.blocked_by = self.get_blocker_ids(&task.id)?;
+        }
         Ok(tasks)
     }
 
     /// Get a specific task
     pub fn get_task(&self, task_id: &str) -> StateResult<Option<Task>> {
         let result = self.db.query_row(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by, task_type, eval_result, eval_feedback, board_task_id FROM tasks WHERE id = ?1",
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, task_type, eval_result, eval_feedback, board_task_id FROM tasks WHERE id = ?1",
             params![task_id],
             Self::task_from_row,
         );
         match result {
-            Ok(task) => Ok(Some(task)),
+            Ok(mut task) => {
+                task.blocked_by = self.get_blocker_ids(&task.id)?;
+                Ok(Some(task))
+            }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(StateError::Sqlite(e)),
         }
@@ -206,16 +244,11 @@ impl SQLiteState {
             None => return Ok(false),
         };
 
-        let blocked_by = match &task.blocked_by {
-            Some(b) if !b.is_empty() => b,
-            _ => return Ok(false),
-        };
+        if task.blocked_by.is_empty() {
+            return Ok(false);
+        }
 
-        for blocker_id in blocked_by
-            .split(',')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-        {
+        for blocker_id in &task.blocked_by {
             if let Some(blocker) = self.get_task(blocker_id)? {
                 let is_blocking = match task.task_type {
                     TaskType::Work => {
@@ -240,25 +273,29 @@ impl SQLiteState {
     }
 
     /// Get incomplete blockers for a task
+    ///
+    /// A blocker is incomplete if:
+    /// - It has a validating eval and is not yet `Validated`
+    /// - It has no validating eval and is not yet `Done` or `Validated`
     pub fn get_blockers(&self, task_id: &str) -> StateResult<Vec<String>> {
         let task = match self.get_task(task_id)? {
             Some(t) => t,
             None => return Ok(vec![]),
         };
 
-        let blocked_by = match &task.blocked_by {
-            Some(b) if !b.is_empty() => b,
-            _ => return Ok(vec![]),
-        };
+        if task.blocked_by.is_empty() {
+            return Ok(vec![]);
+        }
 
         let mut incomplete = vec![];
-        for blocker_id in blocked_by
-            .split(',')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-        {
+        for blocker_id in &task.blocked_by {
             if let Some(blocker) = self.get_task(blocker_id)? {
-                if blocker.status != TaskStatus::Done {
+                let is_blocking = if self.has_validating_eval(blocker_id)? {
+                    blocker.status != TaskStatus::Validated
+                } else {
+                    !blocker.status.is_complete()
+                };
+                if is_blocking {
                     incomplete.push(blocker_id.to_string());
                 }
             }
@@ -319,9 +356,6 @@ impl SQLiteState {
             if task.claimed_by.is_some() {
                 continue;
             }
-            if task.id == "scope" {
-                continue;
-            }
 
             match task.task_type {
                 TaskType::Eval => {
@@ -347,21 +381,13 @@ impl SQLiteState {
                         .unwrap_or(false);
 
                     // Also check blocked_by (for repair flow)
-                    let is_blocked = if let Some(blocked_by) = &task.blocked_by {
-                        !blocked_by.is_empty()
-                            && blocked_by
-                                .split(',')
-                                .map(|s| s.trim())
-                                .filter(|s| !s.is_empty())
-                                .any(|blocker_id| {
-                                    status_map
-                                        .get(blocker_id)
-                                        .map(|status| !status.is_complete())
-                                        .unwrap_or(false)
-                                })
-                    } else {
-                        false
-                    };
+                    let is_blocked = !task.blocked_by.is_empty()
+                        && task.blocked_by.iter().any(|blocker_id| {
+                            status_map
+                                .get(blocker_id)
+                                .map(|status| !status.is_complete())
+                                .unwrap_or(false)
+                        });
 
                     if is_ready && !is_blocked {
                         eval_tasks.push(task);
@@ -369,25 +395,17 @@ impl SQLiteState {
                 }
                 TaskType::Work => {
                     // Work task: blocked_by tasks must be Validated (or Done if no eval)
-                    let is_blocked = if let Some(blocked_by) = &task.blocked_by {
-                        !blocked_by.is_empty()
-                            && blocked_by
-                                .split(',')
-                                .map(|s| s.trim())
-                                .filter(|s| !s.is_empty())
-                                .any(|blocker_id| {
-                                    let blocker_status = status_map.get(blocker_id);
-                                    let blocker_has_eval = has_validating_eval.contains(blocker_id);
+                    let is_blocked = !task.blocked_by.is_empty()
+                        && task.blocked_by.iter().any(|blocker_id| {
+                            let blocker_status = status_map.get(blocker_id);
+                            let blocker_has_eval = has_validating_eval.contains(blocker_id);
 
-                                    match blocker_status {
-                                        Some(TaskStatus::Validated) => false, // Not blocked
-                                        Some(TaskStatus::Done) if !blocker_has_eval => false, // No eval required, done is enough
-                                        _ => true, // Blocked
-                                    }
-                                })
-                    } else {
-                        false
-                    };
+                            match blocker_status {
+                                Some(TaskStatus::Validated) => false, // Not blocked
+                                Some(TaskStatus::Done) if !blocker_has_eval => false, // No eval required, done is enough
+                                _ => true,                                            // Blocked
+                            }
+                        });
 
                     if !is_blocked {
                         work_tasks.push(task);
@@ -709,14 +727,19 @@ impl SQLiteState {
 
         // Mark eval as pending (blocked by repair), set feedback
         self.db.execute(
-            "UPDATE tasks SET status = ?1, eval_result = ?2, eval_feedback = ?3, blocked_by = ?4, claimed_by = NULL, claimed_at = NULL WHERE id = ?5",
+            "UPDATE tasks SET status = ?1, eval_result = ?2, eval_feedback = ?3, claimed_by = NULL, claimed_at = NULL WHERE id = ?4",
             params![
                 TaskStatus::Todo.as_str(),
                 EvalResult::Fail.as_str(),
                 feedback,
-                repair_id,
                 eval_task_id
             ],
+        )?;
+
+        // Add blocking relationship (eval is now blocked by repair task)
+        self.db.execute(
+            "INSERT INTO task_blockers (task_id, blocker_id) VALUES (?1, ?2)",
+            params![eval_task_id, repair_id],
         )?;
 
         // Mark validated tasks as needs_repair (batch update)
@@ -883,32 +906,8 @@ impl SQLiteState {
             }
         }
 
-        // Remove from blocked_by lists of other tasks
-        let all_tasks = self.get_tasks()?;
-        for t in all_tasks {
-            if let Some(blocked_by) = &t.blocked_by {
-                let blockers: Vec<&str> = blocked_by
-                    .split(',')
-                    .map(|s| s.trim())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                let new_blockers: Vec<&str> = blockers
-                    .into_iter()
-                    .filter(|b| !all_to_delete.contains(&b.to_string()))
-                    .collect();
-                if new_blockers.len() != blocked_by.split(',').count() {
-                    let new_blocked_by = if new_blockers.is_empty() {
-                        None
-                    } else {
-                        Some(new_blockers.join(","))
-                    };
-                    self.db.execute(
-                        "UPDATE tasks SET blocked_by = ?1 WHERE id = ?2",
-                        params![new_blocked_by, t.id],
-                    )?;
-                }
-            }
-        }
+        // Note: task_blockers rows are automatically cleaned up via CASCADE delete
+        // when the blocker task is deleted
 
         // Delete all tasks
         for tid in &all_to_delete {
@@ -929,12 +928,15 @@ impl SQLiteState {
     /// Get claimed task for a worker
     pub fn get_claimed_task(&self, worker_name: &str) -> StateResult<Option<Task>> {
         let result = self.db.query_row(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, blocked_by, task_type, eval_result, eval_feedback, board_task_id FROM tasks WHERE claimed_by = ?1 AND status = ?2",
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, task_type, eval_result, eval_feedback, board_task_id FROM tasks WHERE claimed_by = ?1 AND status = ?2",
             params![worker_name, TaskStatus::Doing.as_str()],
             Self::task_from_row,
         );
         match result {
-            Ok(task) => Ok(Some(task)),
+            Ok(mut task) => {
+                task.blocked_by = self.get_blocker_ids(&task.id)?;
+                Ok(Some(task))
+            }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(StateError::Sqlite(e)),
         }

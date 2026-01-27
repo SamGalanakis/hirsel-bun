@@ -483,7 +483,7 @@ pub struct Task {
     pub pending_done_at: Option<String>,
     pub tokens_used: Option<i64>,
     pub parent_id: Option<String>,
-    pub blocked_by: Option<String>,
+    pub blocked_by: Vec<String>,
     // Eval system fields
     pub task_type: TaskType,
     pub eval_result: Option<EvalResult>,

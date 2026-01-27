@@ -52,17 +52,12 @@ pub async fn add_task(
         .map_err(|e| format!("Failed to get task: {}", e))?
         .ok_or_else(|| "Task not found after creation".to_string())?;
 
-    // Convert blocked_by from comma-separated string to Vec
-    let blocked_by_vec = task
-        .blocked_by
-        .as_ref()
-        .map(|s| {
-            s.split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-        })
-        .filter(|v: &Vec<String>| !v.is_empty());
+    // blocked_by is already Vec<String>, convert to Option<Vec<String>> for API
+    let blocked_by = if task.blocked_by.is_empty() {
+        None
+    } else {
+        Some(task.blocked_by)
+    };
 
     Ok(Task {
         id: task.id,
@@ -79,7 +74,7 @@ pub async fn add_task(
         claimed_at: task.claimed_at,
         completed_at: task.completed_at,
         parent_id: task.parent_id,
-        blocked_by: blocked_by_vec,
+        blocked_by,
         tokens_used: task.tokens_used.map(|t| t as u64),
         created_at: task.created_at,
     })

@@ -118,13 +118,22 @@ CREATE TABLE IF NOT EXISTS tasks (
     pending_done_at TEXT,
     tokens_used INTEGER,
     parent_id TEXT,
-    blocked_by TEXT,
     -- Eval system columns
     task_type TEXT DEFAULT 'work',      -- 'work' | 'eval'
     eval_result TEXT,                    -- 'pass' | 'fail' | null
     eval_feedback TEXT,                  -- Feedback if eval failed
     board_task_id TEXT                   -- Original board task ID for tracking
 );
+
+-- Normalized task blocking relationship (which tasks block another task)
+CREATE TABLE IF NOT EXISTS task_blockers (
+    task_id TEXT NOT NULL,
+    blocker_id TEXT NOT NULL,
+    PRIMARY KEY (task_id, blocker_id),
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    FOREIGN KEY (blocker_id) REFERENCES tasks(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_task_blockers_blocker ON task_blockers(blocker_id);
 
 -- Normalized eval-validates relationship (which tasks an eval validates)
 CREATE TABLE IF NOT EXISTS eval_validates (

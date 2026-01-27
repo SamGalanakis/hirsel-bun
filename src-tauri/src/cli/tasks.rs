@@ -37,7 +37,7 @@ pub struct TaskDisplay {
     pub status: String,
     pub claimed_by: Option<String>,
     pub parent_id: Option<String>,
-    pub blocked_by: Option<String>,
+    pub blocked_by: Vec<String>,
     pub depth: usize,
 }
 
@@ -130,14 +130,10 @@ pub fn run_tasks(run_name: &str, json_output: bool) -> Result<String, TaskError>
                 .map(|c| format!(" ({})", c))
                 .unwrap_or_default();
 
-            let blocked = if let Some(blockers) = &task.blocked_by {
-                if !blockers.is_empty() {
-                    // Check if actually blocked
-                    if let Ok(true) = state.is_task_blocked(&task.id) {
-                        " [blocked]".to_string()
-                    } else {
-                        String::new()
-                    }
+            let blocked = if !task.blocked_by.is_empty() {
+                // Check if actually blocked
+                if let Ok(true) = state.is_task_blocked(&task.id) {
+                    " [blocked]".to_string()
                 } else {
                     String::new()
                 }
@@ -370,7 +366,11 @@ mod tests {
             pending_done_at: None,
             tokens_used: None,
             parent_id: None,
-            blocked_by: Some("other".to_string()),
+            blocked_by: vec!["other".to_string()],
+            task_type: crate::core::state::TaskType::Work,
+            eval_result: None,
+            eval_feedback: None,
+            board_task_id: None,
         };
 
         let display = TaskDisplay::from_task(&task, 2);

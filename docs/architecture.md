@@ -170,7 +170,7 @@ cargo build --features s3-storage               # With S3 support
 | `delete.rs` | `hirsel delete <run>` | - |
 | `deliver.rs` | `hirsel deliver <run>` | - |
 | `msg.rs` | `hirsel msg <run>` | - |
-| `tasks.rs` | `hirsel tasks <run>` | - |
+| `tasks.rs` | `hirsel tasks <run>`, `hirsel task-add <run> <id> <desc>`, `hirsel task-done <run> <id>` | - |
 | `diff.rs` | `hirsel diff <run>` | - |
 | `summary.rs` | `hirsel summary <run>` | - |
 | `spec.rs` | `hirsel spec <run>` | - |
@@ -691,12 +691,18 @@ Daemon handles each ResumeWorker:
 
 **tasks:**
 - `id`, `name`, `status`, `claimed_by`, `claimed_at`
-- `parent_id`, `blocked_by`
+- `parent_id`
 - `task_type` - 'work' or 'eval'
-- `validates` - JSON array of task IDs (eval tasks only)
 - `eval_result` - 'pass' or 'fail'
 - `eval_feedback` - Feedback if eval failed
 - `board_task_id` - Original board task ID for tracking
+
+**task_blockers** (junction table):
+- `task_id`, `blocker_id` - FK references with CASCADE delete
+- Replaces the old comma-separated `blocked_by` column
+
+**eval_validates** (junction table):
+- `eval_id`, `task_id` - Which tasks an eval validates
 
 ### Project Database (`~/.hirsel/projects/{id}/specflow.db`)
 

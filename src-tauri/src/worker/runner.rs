@@ -328,9 +328,8 @@ impl WorkerRunner {
                 "blocked": blocked,
             });
 
-            if let Some(blocked_by) = &task.blocked_by {
-                node["blocked_by"] =
-                    serde_json::json!(blocked_by.split(',').map(|s| s.trim()).collect::<Vec<_>>());
+            if !task.blocked_by.is_empty() {
+                node["blocked_by"] = serde_json::json!(&task.blocked_by);
             }
 
             if task.task_type == crate::core::state::TaskType::Eval {
@@ -440,9 +439,8 @@ impl WorkerRunner {
             "blocked": blocked,
         });
 
-        if let Some(blocked_by) = &task.blocked_by {
-            output["blocked_by"] =
-                serde_json::json!(blocked_by.split(',').map(|s| s.trim()).collect::<Vec<_>>());
+        if !task.blocked_by.is_empty() {
+            output["blocked_by"] = serde_json::json!(&task.blocked_by);
         }
 
         if task.task_type == crate::core::state::TaskType::Eval {
@@ -461,11 +459,6 @@ impl WorkerRunner {
 
         serde_json::to_string_pretty(&output)
             .map_err(|e| WorkerError::Config(format!("Serialization error: {}", e)))
-    }
-
-    /// List all tasks (legacy method, now calls get_task_tree).
-    pub fn task_list(&self) -> WorkerResult<String> {
-        self.get_task_tree()
     }
 
     /// Claim a task.
@@ -1038,7 +1031,7 @@ impl WorkerRunner {
             WorkerCommands::Done => self.work_done(),
 
             WorkerCommands::Task(task_cmd) => match task_cmd {
-                TaskSubcommands::List => self.task_list(),
+                TaskSubcommands::List => self.get_task_tree(),
                 TaskSubcommands::Add(args) => self.task_add(
                     &args.task_id,
                     &args.name,

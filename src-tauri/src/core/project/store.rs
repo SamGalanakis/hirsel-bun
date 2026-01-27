@@ -496,6 +496,7 @@ mod tests {
             .update_project(
                 project.id,
                 &UpdateProjectRequest {
+                    name: None,
                     starting_point: None,
                     worker_scale: Some("4".to_string()),
                     time_limit_minutes: Some(120),
