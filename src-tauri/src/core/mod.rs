@@ -13,7 +13,6 @@
 pub mod acp;
 pub mod api_types;
 pub mod board;
-pub mod board_gyp_context;
 pub mod chat_orchestrator;
 pub mod chat_session;
 pub mod chats;
@@ -33,6 +32,7 @@ pub mod git;
 #[cfg(feature = "server")]
 pub mod git_http;
 pub mod github;
+pub mod gyp;
 pub mod gyp_chat;
 pub mod gyp_context;
 pub mod http_client;
@@ -147,11 +147,13 @@ pub use draft::{
     StartingPoint, WorkspaceInfo, WorkspaceProvider,
 };
 
-// Gyp context
+// Gyp context (legacy)
 pub use gyp_context::GypContext;
 
-// Board Gyp context (slugify already exported from names module)
-pub use board_gyp_context::{BoardContextScope, BoardGypContext};
+// Unified Gyp context builder
+pub use gyp::{
+    GypContextBuilder, GypScope, GypSessionConfig, HistoryScope, McpServerConfig, TaskFocus,
+};
 
 // GitHub client
 pub use github::{GitHubClient, GitHubError, GitHubResult, MergeInfo, PrInfo};

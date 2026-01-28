@@ -18,6 +18,12 @@ import { getCounterScale, MIN_SCREEN_SIZE, BASE_WORLD_SIZE } from './use-tree-la
 // Task Card Components
 // =============================================================================
 
+/** Active run info to display as a badge on task cards */
+interface ActiveRunInfo {
+  name: string;
+  status: string;
+}
+
 interface TaskCardProps {
   task: TaskTree;
   position: NodePosition;
@@ -27,6 +33,7 @@ interface TaskCardProps {
   zoom: number;
   inDispatchScope?: boolean;
   isDispatchRoot?: boolean;
+  activeRun?: ActiveRunInfo | null;
   onClick: (e: MouseEvent) => void;
   onDoubleClick: () => void;
   onContextMenu: (e: MouseEvent) => void;
@@ -62,12 +69,32 @@ const getTaskStatusBadge = (status: BoardTaskStatus): string => {
   }
 };
 
+/** Get run badge color based on status */
+const getRunBadgeColor = (status: string): string => {
+  switch (status) {
+    case 'working':
+    case 'eval':
+      return 'bg-amber-500';
+    case 'paused':
+      return 'bg-wool-500';
+    case 'done':
+    case 'delivered':
+    case 'merged':
+      return 'bg-sage';
+    case 'failed':
+      return 'bg-terra';
+    default:
+      return 'bg-wool-600';
+  }
+};
+
 /** Compact view - same size as full, just big centered name */
 const TaskCompact: Component<{
   task: TaskTree;
   selected: boolean;
   inDispatchScope?: boolean;
   isDispatchRoot?: boolean;
+  activeRun?: ActiveRunInfo | null;
   onClick: (e: MouseEvent) => void;
   onContextMenu: (e: MouseEvent) => void;
   onDragStart?: (e: MouseEvent, nodeId: string) => void;
@@ -100,7 +127,7 @@ const TaskCompact: Component<{
 
   return (
     <div
-      class="w-[280px] h-[120px] rounded-lg select-none flex flex-col items-center justify-center"
+      class="w-[280px] h-[120px] rounded-lg select-none flex flex-col items-center justify-center relative"
       classList={{
         'ring-2 ring-amber-500/50': props.selected && !props.inDispatchScope,
       }}
@@ -119,6 +146,19 @@ const TaskCompact: Component<{
         }
       }}
     >
+      {/* Active run badge */}
+      <Show when={props.activeRun}>
+        <div
+          class={`absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full ${getRunBadgeColor(props.activeRun!.status)}`}
+          classList={{
+            'animate-pulse': props.activeRun!.status === 'working' || props.activeRun!.status === 'eval',
+          }}
+          style={{
+            'box-shadow': '0 2px 6px rgba(0, 0, 0, 0.4)',
+          }}
+          title={`Run: ${props.activeRun!.name} (${props.activeRun!.status})`}
+        />
+      </Show>
       {/* Status dot */}
       <span
         class={`w-3 h-3 rounded-full mb-2 ${getTaskStatusColor(props.task.status)}`}
@@ -150,6 +190,7 @@ const TaskFull: Component<{
   editing: boolean;
   inDispatchScope?: boolean;
   isDispatchRoot?: boolean;
+  activeRun?: ActiveRunInfo | null;
   onClick: (e: MouseEvent) => void;
   onDoubleClick: () => void;
   onContextMenu: (e: MouseEvent) => void;
@@ -175,7 +216,7 @@ const TaskFull: Component<{
 
   return (
     <div
-      class="w-[280px] rounded-lg select-none group"
+      class="w-[280px] rounded-lg select-none group relative"
       classList={{
         'ring-2 ring-amber-500/50': props.selected && !props.inDispatchScope,
         'gyp-editing-shimmer': props.editing,
@@ -190,6 +231,20 @@ const TaskFull: Component<{
       onDblClick={props.onDoubleClick}
       onContextMenu={props.onContextMenu}
     >
+      {/* Active run badge */}
+      <Show when={props.activeRun}>
+        <div
+          class={`absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full ${getRunBadgeColor(props.activeRun!.status)}`}
+          classList={{
+            'animate-pulse': props.activeRun!.status === 'working' || props.activeRun!.status === 'eval',
+          }}
+          style={{
+            'box-shadow': '0 2px 6px rgba(0, 0, 0, 0.4)',
+            'z-index': 10,
+          }}
+          title={`Run: ${props.activeRun!.name} (${props.activeRun!.status})`}
+        />
+      </Show>
       {/* Header - draggable */}
       <div
         class="flex items-center justify-between px-3 py-2.5"
@@ -315,6 +370,7 @@ export const TaskCard: Component<TaskCardProps> = (props) => {
             selected={props.selected}
             inDispatchScope={props.inDispatchScope}
             isDispatchRoot={props.isDispatchRoot}
+            activeRun={props.activeRun}
             onClick={props.onClick}
             onContextMenu={props.onContextMenu}
             onDragStart={props.onDragStart}
@@ -327,6 +383,7 @@ export const TaskCard: Component<TaskCardProps> = (props) => {
             editing={props.editing}
             inDispatchScope={props.inDispatchScope}
             isDispatchRoot={props.isDispatchRoot}
+            activeRun={props.activeRun}
             onClick={props.onClick}
             onDoubleClick={props.onDoubleClick}
             onContextMenu={props.onContextMenu}

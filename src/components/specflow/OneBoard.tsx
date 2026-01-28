@@ -17,10 +17,11 @@ import {
   onCleanup,
   onMount,
 } from 'solid-js';
-import { useProject, useApp } from '../../stores';
+import { useProject, useApp, useRuns } from '../../stores';
 import { TaskCard, EvalCard } from './NodeRenderer';
 import { NodeContextMenu } from './NodeContextMenu';
 import { DispatchModal } from './DispatchModal';
+import { RunsOverlay } from './RunsOverlay';
 import {
   computeTreeLayout,
   generateEdgePath,
@@ -38,6 +39,8 @@ import type {
   BoardSyncResult,
   BoardTaskStatus,
   BoardEvalStatus,
+  TaskRun,
+  RunSummary,
 } from '../../lib/types';
 
 interface Transform {
@@ -54,9 +57,13 @@ const DEFAULT_ZOOM = 1.0;
 export const OneBoard: Component = () => {
   const project = useProject();
   const app = useApp();
+  const runs = useRuns();
 
   let viewportRef: HTMLDivElement | undefined;
   let canvasRef: HTMLCanvasElement | undefined;
+
+  // Task runs for this project (maps task ID -> runs dispatched from it)
+  const [taskRuns, setTaskRuns] = createSignal<Map<string, TaskRun[]>>(new Map());
 
   // Transform state
   const [transform, setTransform] = createSignal<Transform>({ x: 0, y: 0, k: DEFAULT_ZOOM });
@@ -302,6 +309,58 @@ export const OneBoard: Component = () => {
     window.addEventListener('board-refresh', handler);
     onCleanup(() => window.removeEventListener('board-refresh', handler));
   });
+
+  // Load task runs for project
+  const loadTaskRuns = async (projectId: number) => {
+    try {
+      const allRuns = await invoke<TaskRun[]>('get_all_task_runs', { projectId });
+      // Group by taskId
+      const runsByTask = new Map<string, TaskRun[]>();
+      for (const run of allRuns) {
+        const existing = runsByTask.get(run.taskId) || [];
+        existing.push(run);
+        runsByTask.set(run.taskId, existing);
+      }
+      setTaskRuns(runsByTask);
+    } catch (e) {
+      console.error('Failed to load task runs:', e);
+    }
+  };
+
+  // Load task runs when project changes
+  createEffect(() => {
+    const selectedId = project.selectedProjectId();
+    if (selectedId) {
+      loadTaskRuns(selectedId);
+    } else {
+      setTaskRuns(new Map());
+    }
+  });
+
+  // Subscribe to runs polling
+  createEffect(() => {
+    const unsubscribe = runs.subscribe();
+    onCleanup(unsubscribe);
+  });
+
+  // Helper: Get active run for a task (most recent active run)
+  const getActiveRunForTask = (taskId: string): { name: string; status: string } | null => {
+    const taskRunList = taskRuns().get(taskId);
+    if (!taskRunList || taskRunList.length === 0) return null;
+
+    // Get the most recent run name
+    const latestTaskRun = taskRunList[taskRunList.length - 1];
+
+    // Find the run in the runs list and check if it's active
+    const run = runs.runs().find((r) => r.name === latestTaskRun.runName);
+    if (!run) return null;
+
+    // Only return if it's an "active" status
+    const activeStatuses = ['working', 'eval', 'paused', 'idle', 'waiting'];
+    if (!activeStatuses.includes(run.status)) return null;
+
+    return { name: run.name, status: run.status };
+  };
 
   // ==========================================================================
   // Canvas Rendering
@@ -932,6 +991,7 @@ export const OneBoard: Component = () => {
                     zoom={transform().k}
                     inDispatchScope={dispatchTaskIds().has(task.id)}
                     isDispatchRoot={dispatchRoots().has(task.id)}
+                    activeRun={getActiveRunForTask(task.id)}
                     onClick={(e) => {
                       if (e.shiftKey) {
                         toggleDispatchScope(task.id);
@@ -1009,49 +1069,49 @@ export const OneBoard: Component = () => {
         </button>
       </div>
 
-      {/* Dispatch Scope Summary Pill */}
+      {/* Runs Overlay */}
+      <RunsOverlay
+        projectId={project.selectedProjectId()}
+        onViewRun={(runName) => {
+          runs.setSelectedRun(runName);
+        }}
+      />
+
+      {/* Dispatch Bar */}
       <Show when={dispatchRoots().size > 0}>
         <div
-          class="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-2.5 rounded-xl"
+          class="dispatch-bar absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-4 px-5 py-3 rounded-lg bg-pasture-800 border border-pasture-600"
           style={{
             'z-index': 50,
             'pointer-events': 'auto',
-            background: 'linear-gradient(180deg, rgba(245, 158, 11, 0.15) 0%, rgba(30, 27, 24, 0.95) 100%)',
-            border: '1px solid rgba(245, 158, 11, 0.4)',
-            'box-shadow': '0 8px 32px rgba(0, 0, 0, 0.5), 0 0 24px rgba(245, 158, 11, 0.15)',
-            'backdrop-filter': 'blur(12px)',
+            'box-shadow': '0 8px 24px rgba(0,0,0,0.3)',
           }}
         >
-          {/* Scope icon */}
-          <div class="flex items-center gap-2">
-            <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-            </svg>
-            <span class="text-sm font-semibold text-amber-200">Dispatch scope</span>
-          </div>
-
           {/* Stats */}
-          <div class="flex items-center gap-3 text-xs tabular-nums">
-            <span class="text-wool-300">
-              <span class="text-amber-400 font-semibold">{dispatchRoots().size}</span> root{dispatchRoots().size === 1 ? '' : 's'}
-            </span>
-            <span class="text-wool-600">•</span>
-            <span class="text-wool-300">
-              <span class="text-amber-400/80 font-medium">{dispatchTaskIds().size}</span> tasks
-            </span>
+          <div class="flex items-center gap-4 text-sm">
+            <div class="flex items-center gap-2">
+              <span class="text-wool-500">Roots</span>
+              <span class="text-amber-500 font-semibold tabular-nums">{dispatchRoots().size}</span>
+            </div>
+            <span class="text-wool-700">·</span>
+            <div class="flex items-center gap-2">
+              <span class="text-wool-500">Tasks</span>
+              <span class="text-wool-100 tabular-nums">{dispatchTaskIds().size}</span>
+            </div>
             <Show when={dispatchEvalIds().size > 0}>
-              <span class="text-wool-600">•</span>
-              <span class="text-sage/80">
-                <span class="font-medium">{dispatchEvalIds().size}</span> evals
-              </span>
+              <span class="text-wool-700">·</span>
+              <div class="flex items-center gap-2">
+                <span class="text-wool-500">Evals</span>
+                <span class="text-sage tabular-nums">{dispatchEvalIds().size}</span>
+              </div>
             </Show>
           </div>
 
           {/* Actions */}
-          <div class="flex items-center gap-1.5 ml-2 pl-3 border-l border-amber-500/20">
+          <div class="flex items-center gap-2 pl-4 border-l border-pasture-600">
             <button
               onClick={clearDispatchScope}
-              class="p-1.5 rounded-md text-wool-500 hover:text-wool-200 hover:bg-white/5 transition-all"
+              class="p-2 rounded-md text-wool-500 hover:text-wool-100 hover:bg-pasture-700 transition-colors"
               title="Clear selection (Esc)"
             >
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1060,12 +1120,7 @@ export const OneBoard: Component = () => {
             </button>
             <button
               onClick={() => setShowDispatchModal(true)}
-              class="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:scale-105"
-              style={{
-                background: 'linear-gradient(180deg, rgba(245, 158, 11, 0.3) 0%, rgba(245, 158, 11, 0.2) 100%)',
-                border: '1px solid rgba(245, 158, 11, 0.5)',
-                color: 'rgb(253, 230, 138)',
-              }}
+              class="btn-warning px-4 py-2 rounded-md text-sm font-medium transition-colors"
               title="Start run with selected scope"
             >
               Dispatch
@@ -1159,35 +1214,22 @@ export const OneBoard: Component = () => {
       {/* New Item Prompt */}
       <Show when={newItemPrompt()}>
         <div
-          class="fixed w-72 rounded-xl overflow-hidden"
+          class="fixed w-72 z-[100] card"
+          classList={{
+            'border-emerald-500/40': newItemPrompt()!.type === 'eval',
+          }}
           style={{
-            'z-index': 100,
             left: `${newItemPrompt()!.x}px`,
             top: `${newItemPrompt()!.y}px`,
             transform: 'translate(-50%, -50%)',
-            background: 'rgba(24,24,27,0.98)',
-            border: `1px solid ${newItemPrompt()!.type === 'eval' ? 'rgba(16,185,129,0.4)' : 'rgba(63,63,70,0.8)'}`,
-            'box-shadow': '0 20px 60px rgba(0,0,0,0.6)',
           }}
         >
-          <div
-            class="px-4 py-3 flex items-center gap-3"
-            style={{
-              background:
-                newItemPrompt()!.type === 'eval'
-                  ? 'linear-gradient(180deg, rgba(16,185,129,0.12) 0%, transparent 100%)'
-                  : 'linear-gradient(180deg, rgba(212,165,116,0.08) 0%, transparent 100%)',
-              'border-bottom': '1px solid rgba(63,63,70,0.5)',
-            }}
-          >
+          <header class="flex items-center gap-3">
             <div
               class="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{
-                background:
-                  newItemPrompt()!.type === 'eval'
-                    ? 'rgba(16,185,129,0.15)'
-                    : 'rgba(212,165,116,0.15)',
-                border: `1px solid ${newItemPrompt()!.type === 'eval' ? 'rgba(16,185,129,0.25)' : 'rgba(212,165,116,0.25)'}`,
+              classList={{
+                'bg-emerald-500/15 border border-emerald-500/25': newItemPrompt()!.type === 'eval',
+                'bg-amber-500/15 border border-amber-500/25': newItemPrompt()!.type !== 'eval',
               }}
             >
               <svg
@@ -1200,160 +1242,135 @@ export const OneBoard: Component = () => {
               </svg>
             </div>
             <div>
-              <div class="text-sm font-medium text-zinc-200">
+              <h3 class="text-sm font-medium text-wool-200">
                 {newItemPrompt()!.type === 'eval'
                   ? 'New Eval'
                   : newItemPrompt()!.parentId
                     ? 'New Child Task'
                     : 'New Root Task'}
-              </div>
-              <div class="text-[11px] text-zinc-500">
+              </h3>
+              <p class="text-[11px] text-wool-500">
                 {newItemPrompt()!.type === 'eval' ? 'Verification for tasks' : 'A work item'}
-              </div>
+              </p>
             </div>
-          </div>
-          <div class="p-4">
-            <input
-              ref={newItemInputRef}
-              type="text"
-              value={newItemName()}
-              onInput={(e) => setNewItemName(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  submitNewItem();
-                }
-                if (e.key === 'Escape') setNewItemPrompt(null);
-              }}
-              placeholder={`${newItemPrompt()!.type === 'eval' ? 'Eval' : 'Task'} name...`}
-              class="w-full text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none px-3 py-2.5 rounded-lg transition-all focus:ring-2 focus:ring-amber-500/30"
-              style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(63,63,70,0.6)' }}
-            />
-            <div class="flex items-center justify-between mt-4">
-              <span class="text-[11px] text-zinc-600">Enter to create</span>
-              <div class="flex gap-2">
-                <button
-                  onClick={() => setNewItemPrompt(null)}
-                  class="px-3 py-1.5 text-xs rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={submitNewItem}
-                  disabled={!newItemName().trim()}
-                  class="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-md transition-all disabled:opacity-40"
-                  style={{
-                    background:
-                      newItemPrompt()!.type === 'eval'
-                        ? 'linear-gradient(180deg, rgba(16,185,129,0.3) 0%, rgba(16,185,129,0.2) 100%)'
-                        : 'linear-gradient(180deg, rgba(212,165,116,0.3) 0%, rgba(212,165,116,0.2) 100%)',
-                    border: `1px solid ${newItemPrompt()!.type === 'eval' ? 'rgba(16,185,129,0.5)' : 'rgba(212,165,116,0.5)'}`,
-                    color: newItemPrompt()!.type === 'eval' ? 'rgb(134,239,172)' : 'rgb(232,193,154)',
-                  }}
-                >
-                  Create
-                </button>
-              </div>
+          </header>
+          <section>
+            <form class="form">
+              <input
+                ref={newItemInputRef}
+                type="text"
+                value={newItemName()}
+                onInput={(e) => setNewItemName(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    submitNewItem();
+                  }
+                  if (e.key === 'Escape') setNewItemPrompt(null);
+                }}
+                placeholder={`${newItemPrompt()!.type === 'eval' ? 'Eval' : 'Task'} name...`}
+              />
+            </form>
+          </section>
+          <footer class="flex items-center justify-between">
+            <span class="text-[11px] text-wool-600">Enter to create</span>
+            <div class="flex gap-2">
+              <button
+                onClick={() => setNewItemPrompt(null)}
+                class="btn-ghost btn-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitNewItem}
+                disabled={!newItemName().trim()}
+                class={`btn-sm ${newItemPrompt()!.type === 'eval' ? 'btn-success' : 'btn'}`}
+              >
+                Create
+              </button>
             </div>
-          </div>
+          </footer>
         </div>
       </Show>
 
       {/* Edit Modal */}
       <Show when={editingTask() || editingEval()}>
-        <div
-          class="fixed inset-0 flex items-center justify-center"
-          style={{ 'z-index': 100, background: 'rgba(0,0,0,0.6)', 'backdrop-filter': 'blur(4px)' }}
+        <dialog
+          open
+          class="dialog fixed inset-0 z-[100] m-0 h-full w-full max-w-none max-h-none bg-transparent flex items-center justify-center"
+          style={{ 'backdrop-filter': 'blur(4px)' }}
           onClick={() => {
             setEditingTask(null);
             setEditingEval(null);
           }}
         >
-          <div
-            class="w-full max-w-md rounded-xl overflow-hidden"
-            style={{
-              background: 'rgba(26,26,26,0.98)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              'box-shadow': '0 24px 64px rgba(0,0,0,0.5)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div class="px-4 py-3" style={{ 'border-bottom': '1px solid rgba(255,255,255,0.06)' }}>
+          <div class="card w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <header>
               <h3 class="text-sm font-semibold text-wool-200">
                 Edit {editingTask() ? 'Task' : 'Eval'}
               </h3>
-            </div>
-            <div class="p-4 space-y-4">
-              <div>
-                <label class="block text-xs font-medium text-wool-400 mb-1">Name</label>
-                <input
-                  type="text"
-                  value={editForm().name}
-                  onInput={(e) => setEditForm((f) => ({ ...f, name: e.currentTarget.value }))}
-                  class="w-full px-3 py-2 text-sm rounded-lg bg-black/30 border border-wool-800 text-wool-200 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
-                />
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-wool-400 mb-1">Content</label>
-                <textarea
-                  value={editForm().content}
-                  onInput={(e) => setEditForm((f) => ({ ...f, content: e.currentTarget.value }))}
-                  rows={4}
-                  class="w-full px-3 py-2 text-sm rounded-lg bg-black/30 border border-wool-800 text-wool-200 focus:outline-none focus:ring-2 focus:ring-amber-500/30 resize-none"
-                  placeholder={editingTask() ? 'Task details...' : 'What to verify...'}
-                />
-              </div>
-              <Show when={editingEval()}>
-                <div>
-                  <label class="block text-xs font-medium text-emerald-400/70 mb-1">
-                    Validates (task IDs)
-                  </label>
+            </header>
+            <section>
+              <form class="form grid gap-4">
+                <div class="grid gap-2">
+                  <label for="edit-name" class="text-xs font-medium text-wool-400">Name</label>
                   <input
+                    id="edit-name"
                     type="text"
-                    value={editForm().validates.join(', ')}
-                    onInput={(e) =>
-                      setEditForm((f) => ({
-                        ...f,
-                        validates: e.currentTarget.value
-                          .split(',')
-                          .map((s) => s.trim())
-                          .filter(Boolean),
-                      }))
-                    }
-                    class="w-full px-3 py-2 text-sm rounded-lg bg-black/30 border border-emerald-800/50 text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-                    placeholder="task-1, task-2"
+                    value={editForm().name}
+                    onInput={(e) => setEditForm((f) => ({ ...f, name: e.currentTarget.value }))}
                   />
                 </div>
-              </Show>
-            </div>
-            <div
-              class="px-4 py-3 flex justify-end gap-2"
-              style={{ 'border-top': '1px solid rgba(255,255,255,0.06)' }}
-            >
+                <div class="grid gap-2">
+                  <label for="edit-content" class="text-xs font-medium text-wool-400">Content</label>
+                  <textarea
+                    id="edit-content"
+                    value={editForm().content}
+                    onInput={(e) => setEditForm((f) => ({ ...f, content: e.currentTarget.value }))}
+                    rows={4}
+                    placeholder={editingTask() ? 'Task details...' : 'What to verify...'}
+                  />
+                </div>
+                <Show when={editingEval()}>
+                  <div class="grid gap-2">
+                    <label for="edit-validates" class="text-xs font-medium text-emerald-400/70">
+                      Validates (task IDs)
+                    </label>
+                    <input
+                      id="edit-validates"
+                      type="text"
+                      value={editForm().validates.join(', ')}
+                      onInput={(e) =>
+                        setEditForm((f) => ({
+                          ...f,
+                          validates: e.currentTarget.value
+                            .split(',')
+                            .map((s) => s.trim())
+                            .filter(Boolean),
+                        }))
+                      }
+                      placeholder="task-1, task-2"
+                    />
+                  </div>
+                </Show>
+              </form>
+            </section>
+            <footer>
               <button
                 onClick={() => {
                   setEditingTask(null);
                   setEditingEval(null);
                 }}
-                class="px-4 py-2 text-xs rounded-lg text-wool-400 hover:text-wool-200 hover:bg-white/5 transition-colors"
+                class="btn-ghost"
               >
                 Cancel
               </button>
-              <button
-                onClick={saveEdit}
-                class="px-4 py-2 text-xs font-medium rounded-lg transition-all"
-                style={{
-                  background:
-                    'linear-gradient(180deg, rgba(212,165,116,0.3) 0%, rgba(212,165,116,0.2) 100%)',
-                  border: '1px solid rgba(212,165,116,0.5)',
-                  color: 'rgb(232,193,154)',
-                }}
-              >
+              <button onClick={saveEdit} class="btn">
                 Save
               </button>
-            </div>
+            </footer>
           </div>
-        </div>
+        </dialog>
       </Show>
 
       {/* Empty state - no project selected */}

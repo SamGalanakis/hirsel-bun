@@ -59,7 +59,7 @@ Development project - no database migrations needed. Modify schema directly in `
 cargo build             # Build to src-tauri/target/debug/hirsel
 ```
 
-**CLI commands:** `runs`, `view <run>`, `attach <run>`, `go <run> <spec>`, `test <scenario> --yolo`
+**CLI commands:** `runs`, `view <run>`, `attach <run>`, `go <run> <spec>`, `test <scenario> --yolo`, `task-add <run>`, `task-done <run> <task-id>`
 
 ## Debugging
 

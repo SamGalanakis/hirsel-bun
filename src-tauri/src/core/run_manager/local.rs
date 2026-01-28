@@ -18,18 +18,14 @@ use crate::core::orchestrator::{HealthResponse, LocalOrchestrator, Orchestrator}
 
 /// Local run manager that wraps LocalOrchestrator and LocalLifecycleManager.
 pub struct LocalRunManager {
-    config: Config,
     orchestrator: LocalOrchestrator,
 }
 
 impl LocalRunManager {
     /// Create a new local run manager with the given configuration.
     pub fn new(config: Config) -> Self {
-        let orchestrator = LocalOrchestrator::new(config.clone());
-        Self {
-            config,
-            orchestrator,
-        }
+        let orchestrator = LocalOrchestrator::new(config);
+        Self { orchestrator }
     }
 }
 
@@ -319,11 +315,6 @@ impl LocalRunManager {
 
             LifecycleAction::WorkersResumed(names) => {
                 tracing::info!("RunManager: workers resumed for run '{}': {:?}", run, names);
-                Ok(())
-            }
-
-            LifecycleAction::WorkerScaledUp(name) => {
-                tracing::info!("RunManager: worker scaled up for run '{}': {}", run, name);
                 Ok(())
             }
 

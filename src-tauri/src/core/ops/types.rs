@@ -18,16 +18,6 @@ impl DeleteRunConfig {
             run_name: run_name.into(),
         }
     }
-
-    /// Alias for backward compatibility with GUI code
-    pub fn for_gui(run_name: impl Into<String>) -> Self {
-        Self::new(run_name)
-    }
-
-    /// Alias for backward compatibility with CLI code
-    pub fn for_cli(run_name: impl Into<String>) -> Self {
-        Self::new(run_name)
-    }
 }
 
 /// Result of a delete operation

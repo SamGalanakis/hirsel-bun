@@ -591,7 +591,20 @@ pub fn run() {
     use std::sync::Arc;
 
     let mut builder = tauri::Builder::default()
-        .plugin(tauri_plugin_log::Builder::new().build())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .filter(|metadata| {
+                    // Filter out noisy library spam
+                    let target = metadata.target();
+                    !target.starts_with("rustls")
+                        && !target.starts_with("hyper")
+                        && !target.starts_with("reqwest")
+                        && !target.starts_with("zbus")
+                        && !target.starts_with("mio")
+                        && !target.starts_with("tracing::span")
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // When a second instance tries to launch, focus the existing window
             use tauri::Manager;

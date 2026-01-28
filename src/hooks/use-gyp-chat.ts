@@ -2,18 +2,21 @@
  * Unified Gyp Chat Hook
  *
  * Manages Gyp chat sessions across all contexts (board, run, draft, general).
- * Merges DirectChat and useBoardChat functionality into a single hook.
+ * Uses the unified backend GypContextBuilder for consistent prompt and context handling.
  */
 import { invoke } from '@tauri-apps/api/core';
 import { type UnlistenFn, listen } from '@tauri-apps/api/event';
-import { createEffect, createSignal, onCleanup } from 'solid-js';
+import { createSignal, onCleanup } from 'solid-js';
 import { createStore, produce } from 'solid-js/store';
 import type {
   ChatEvent,
   ChatMessage,
   ChatToolCall,
+  GypScope,
   PendingPermission,
-  UIContext,
+  StartGypSessionRequest,
+  StartGypSessionResponse,
+  TaskFocus,
 } from '../lib/types';
 
 export type GypContextType = 'general' | 'board' | 'run' | 'draft';
@@ -70,20 +73,6 @@ const WELCOME_MESSAGE = `Hello! I'm Gyp, your AI assistant for Hirsel. I can hel
 
 What would you like to do today?`;
 
-const SYSTEM_PROMPT = `You are Gyp, an AI assistant for Hirsel.
-
-RULES:
-1. NEVER use "hirsel" CLI commands - they will fail
-2. Use hirsel MCP tools for tasks: task_list, task_add, task_done, msg_send, msg_read
-3. To edit spec/eval, use Read/Edit/Write on the paths provided in <ui-context>
-
-The <ui-context> block contains:
-- specFile: exact path to spec.md (use this for Read/Edit)
-- evalFile: exact path to eval.md
-- currentSpec: current spec contents
-
-Be concise.`;
-
 export function useGypChat(
   getContext: () => GypChatContext,
   options: UseGypChatOptions = {},
@@ -94,6 +83,9 @@ export function useGypChat(
   const [sessionId, setSessionId] = createSignal<string | null>(null);
   const [connected, setConnected] = createSignal(false);
   const [connecting, setConnecting] = createSignal(false);
+
+  // Current scope (from backend)
+  const [currentScope, setCurrentScope] = createSignal<GypScope | null>(null);
 
   // Message state
   const [messages, setMessages] = createStore<ChatMessage[]>([]);
@@ -107,245 +99,293 @@ export function useGypChat(
   const [pendingPermission, setPendingPermission] = createSignal<PendingPermission | null>(null);
 
   // Focus node (for board context)
-  const [focusNodeId, setFocusNodeId] = createSignal<string | null>(null);
-  const [focusNodeName, setFocusNodeName] = createSignal<string | null>(null);
+  const [focusNodeId, setFocusNodeIdState] = createSignal<string | null>(null);
+  const [focusNodeName, setFocusNodeNameState] = createSignal<string | null>(null);
 
   // Track tool calls during streaming
   const toolsById = new Map<string, ChatToolCall>();
   let lastChunkType: 'text' | 'thinking' | null = null;
   let unlisten: UnlistenFn | undefined;
 
-  // Build context with focus node
+  // Context accessor
   const context = () => {
-    const baseContext = getContext();
+    const ctx = getContext();
     return {
-      ...baseContext,
-      focusNodeId: focusNodeId() ?? undefined,
-      focusNodeName: focusNodeName() ?? undefined,
+      ...ctx,
+      focusNodeId: focusNodeId() ?? ctx.focusNodeId,
+      focusNodeName: focusNodeName() ?? ctx.focusNodeName,
     };
   };
 
   const setFocusNode = (id: string | null, name: string | null) => {
-    setFocusNodeId(id);
-    setFocusNodeName(name);
+    setFocusNodeIdState(id);
+    setFocusNodeNameState(name);
   };
 
-  // Handle chat events
-  const handleChatEvent = (event: ChatEvent) => {
-    if (event.sessionId !== sessionId()) return;
+  // Convert context to backend request
+  const contextToRequest = (ctx: GypChatContext): StartGypSessionRequest => {
+    if (ctx.type === 'board' && ctx.projectId) {
+      if (ctx.focusNodeId && ctx.focusNodeName) {
+        return {
+          type: 'boardFocused',
+          projectId: ctx.projectId,
+          taskId: ctx.focusNodeId,
+          taskName: ctx.focusNodeName,
+        };
+      }
+      return { type: 'board', projectId: ctx.projectId };
+    }
+    if ((ctx.type === 'run' || ctx.type === 'draft') && ctx.runName) {
+      return { type: 'run', runName: ctx.runName };
+    }
+    return { type: 'general' };
+  };
 
+  // Convert context to scope for sending messages
+  const contextToScope = (ctx: GypChatContext): GypScope => {
+    if (ctx.type === 'board' && ctx.projectId) {
+      const focus: TaskFocus | undefined =
+        ctx.focusNodeId && ctx.focusNodeName
+          ? { taskId: ctx.focusNodeId, taskName: ctx.focusNodeName }
+          : undefined;
+      return { type: 'board', projectId: ctx.projectId, focus };
+    }
+    if ((ctx.type === 'run' || ctx.type === 'draft') && ctx.runName) {
+      return { type: 'run', runName: ctx.runName, workspacePath: '' };
+    }
+    return { type: 'general' };
+  };
+
+  // Parse chunks helpers
+  const parseChunksContent = (chunksJson: string): string => {
+    try {
+      const chunks = JSON.parse(chunksJson);
+      return chunks
+        .filter((c: { type: string }) => c.type === 'text')
+        .map((c: { content: string }) => c.content)
+        .join('');
+    } catch {
+      return '';
+    }
+  };
+
+  const parseChunksThinking = (chunksJson: string): string | undefined => {
+    try {
+      const chunks = JSON.parse(chunksJson);
+      const thinking = chunks
+        .filter((c: { type: string }) => c.type === 'thinking')
+        .map((c: { content: string }) => c.content)
+        .join('');
+      return thinking || undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const parseChunksToolCalls = (chunksJson: string): ChatToolCall[] | undefined => {
+    try {
+      const chunks = JSON.parse(chunksJson);
+      const tools = chunks.filter((c: { type: string }) => c.type === 'tool');
+      return tools.length > 0 ? tools : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  // Handle chat events from backend
+  const handleChatEvent = (event: ChatEvent) => {
     switch (event.type) {
-      case 'textDelta':
-        handleTextDelta(event.text);
+      case 'textDelta': {
+        // Start new message or append
+        if (lastChunkType !== 'text') {
+          lastChunkType = 'text';
+        }
+        setCurrentMessage((prev) => ({
+          ...prev,
+          id: prev?.id || `msg-${Date.now()}`,
+          role: 'assistant',
+          content: (prev?.content || '') + event.text,
+          streaming: true,
+        }));
         break;
-      case 'thinkingDelta':
-        handleThinkingDelta(event.text);
+      }
+
+      case 'thinkingDelta': {
+        if (lastChunkType !== 'thinking') {
+          lastChunkType = 'thinking';
+        }
+        setCurrentMessage((prev) => ({
+          ...prev,
+          id: prev?.id || `msg-${Date.now()}`,
+          role: 'assistant',
+          thinking: (prev?.thinking || '') + event.text,
+          streaming: true,
+        }));
         break;
-      case 'toolCallStart':
-        handleToolCallStart(event.toolCallId, event.title, event.kind, event.input);
+      }
+
+      case 'toolCallStart': {
+        const tool: ChatToolCall = {
+          id: event.toolCallId,
+          title: event.title,
+          kind: event.kind,
+          status: 'in_progress',
+          input: event.input,
+          output: null,
+        };
+        toolsById.set(event.toolCallId, tool);
+        setCurrentMessage((prev) => ({
+          ...prev,
+          id: prev?.id || `msg-${Date.now()}`,
+          role: 'assistant',
+          toolCalls: [...(prev?.toolCalls || []), tool],
+          streaming: true,
+        }));
+
+        // Track file editing
+        if (event.title === 'Edit' || event.title === 'Write') {
+          setGypEditing(true);
+          // Extract file path if available
+          if (event.input) {
+            try {
+              const input = JSON.parse(event.input);
+              if (input.file_path) {
+                setEditingIslands((prev) => new Set<string>([...prev, input.file_path]));
+              }
+            } catch {
+              // Ignore parse errors
+            }
+          }
+        }
         break;
-      case 'toolCallUpdate':
-        handleToolCallUpdate(event.toolCallId, event.status, event.title, event.output);
+      }
+
+      case 'toolCallUpdate': {
+        const tool = toolsById.get(event.toolCallId);
+        if (tool) {
+          tool.status = event.status;
+          if (event.output) tool.output = event.output;
+          if (event.title) tool.title = event.title;
+
+          setCurrentMessage((prev) => ({
+            ...prev,
+            toolCalls: prev?.toolCalls?.map((t) => (t.id === event.toolCallId ? { ...tool } : t)),
+          }));
+
+          // Track completion of edit tools
+          if (
+            (tool.title === 'Edit' || tool.title === 'Write') &&
+            (event.status === 'completed' || event.status === 'failed')
+          ) {
+            // Check if any edit tools still running
+            const stillEditing = Array.from(toolsById.values()).some(
+              (t) => (t.title === 'Edit' || t.title === 'Write') && t.status === 'in_progress',
+            );
+            if (!stillEditing) {
+              setGypEditing(false);
+              onEditComplete?.();
+            }
+          }
+        }
         break;
-      case 'permissionRequest':
+      }
+
+      case 'permissionRequest': {
         setPendingPermission(event.request);
         break;
-      case 'messageComplete':
-        handleMessageComplete();
-        break;
-      case 'error':
-        handleError(event.message);
-        break;
-      case 'sessionEnded':
-        handleSessionEnded();
-        break;
-    }
-  };
-
-  const handleTextDelta = (text: string) => {
-    setCurrentMessage((prev) => {
-      const updated = prev ? { ...prev } : { role: 'assistant' as const, content: '' };
-      if (lastChunkType !== 'text') {
-        lastChunkType = 'text';
       }
-      updated.content = (updated.content || '') + text;
-      updated.streaming = true;
-      return updated;
-    });
-  };
 
-  const handleThinkingDelta = (text: string) => {
-    setCurrentMessage((prev) => {
-      const updated = prev ? { ...prev } : { role: 'assistant' as const, content: '' };
-      if (lastChunkType !== 'thinking') {
-        lastChunkType = 'thinking';
-      }
-      updated.thinking = (updated.thinking || '') + text;
-      updated.streaming = true;
-      return updated;
-    });
-  };
+      case 'messageComplete': {
+        // Finalize message
+        const current = currentMessage();
+        if (current) {
+          const finalMessage: ChatMessage = {
+            id: current.id || `msg-${Date.now()}`,
+            role: 'assistant',
+            content: current.content || '',
+            thinking: current.thinking,
+            toolCalls: current.toolCalls,
+            timestamp: new Date(),
+          };
+          setMessages(produce((msgs) => msgs.push(finalMessage)));
 
-  const handleToolCallStart = (
-    toolCallId: string,
-    title: string,
-    kind: string | null,
-    input: string | null,
-  ) => {
-    lastChunkType = null;
-
-    // Skip duplicates
-    if (toolsById.has(toolCallId)) {
-      const existing = toolsById.get(toolCallId)!;
-      if (title) existing.title = title;
-      if (input) existing.input = input;
-      setCurrentMessage((prev) => ({ ...prev }));
-      return;
-    }
-
-    const toolCall: ChatToolCall = {
-      id: toolCallId,
-      title,
-      kind,
-      status: 'in_progress',
-      input,
-      output: null,
-    };
-    toolsById.set(toolCallId, toolCall);
-
-    // Track if this is a board file edit (board.json or any file in board directory)
-    if (kind === 'write' || kind === 'edit') {
-      const inputStr = input || '';
-      if (inputStr.includes('/board/')) {
-        setGypEditing(true);
-        // Track specific files being edited
-        const match = inputStr.match(/\/board\/([^/]+)\.(md|json)/);
-        if (match) {
-          setEditingIslands((prev) => new Set([...prev, match[1]]));
+          // Save to history
+          saveAssistantMessage(finalMessage);
         }
+        setCurrentMessage(null);
+        toolsById.clear();
+        lastChunkType = null;
+        setGypEditing(false);
+        setEditingIslands(new Set<string>());
+        break;
+      }
+
+      case 'error': {
+        console.error('[gyp-chat] Error:', event.message);
+        window.toast?.error(event.message);
+        setCurrentMessage(null);
+        toolsById.clear();
+        lastChunkType = null;
+        setGypEditing(false);
+        break;
+      }
+
+      case 'sessionEnded': {
+        console.log('[gyp-chat] Session ended');
+        setConnected(false);
+        setSessionId(null);
+        break;
       }
     }
-
-    setCurrentMessage((prev) => ({
-      ...(prev || { role: 'assistant' as const, content: '' }),
-      toolCalls: Array.from(toolsById.values()),
-      streaming: true,
-    }));
   };
 
-  const handleToolCallUpdate = (
-    toolCallId: string,
-    status: string,
-    title: string | null,
-    output: string | null,
-  ) => {
-    const existing = toolsById.get(toolCallId);
-    if (existing) {
-      existing.status = status;
-      if (title) existing.title = title;
-      if (output) existing.output = output;
-      toolsById.set(toolCallId, existing);
-    }
-
-    setCurrentMessage((prev) => ({
-      ...(prev || { role: 'assistant' as const, content: '' }),
-      toolCalls: Array.from(toolsById.values()),
-    }));
-  };
-
-  const handleMessageComplete = () => {
-    const msg = currentMessage();
-    if (msg && (msg.content || msg.toolCalls?.length)) {
-      const finalMessage: ChatMessage = {
-        id: msg.id || `msg-${Date.now()}`,
-        role: msg.role || 'assistant',
-        content: msg.content || '',
-        thinking: msg.thinking,
-        toolCalls: msg.toolCalls,
-        timestamp: new Date(),
-        streaming: false,
-      };
-
-      setMessages(produce((draft) => draft.push(finalMessage)));
-      saveMessage('assistant', finalMessage);
-    }
-
-    setCurrentMessage(null);
-    toolsById.clear();
-    lastChunkType = null;
-
-    // Clear editing state and trigger refresh
-    if (gypEditing()) {
-      setGypEditing(false);
-      setEditingIslands(new Set<string>());
-      onEditComplete?.();
-    }
-
-    // Refresh draft if we edited spec/eval files
-    checkAndRefreshDraft();
-  };
-
-  const handleError = (message: string) => {
-    console.error('[gyp-chat] Error:', message);
-    window.toast?.error(`Gyp error: ${message}`);
-    setGypEditing(false);
-    setEditingIslands(new Set<string>());
-    setCurrentMessage(null);
-  };
-
-  const handleSessionEnded = () => {
-    setConnected(false);
-    setSessionId(null);
-    setGypEditing(false);
-    setEditingIslands(new Set<string>());
-    setCurrentMessage(null);
-    // Auto-reconnect after a delay
-    setTimeout(() => connect(), 1000);
-  };
-
-  // Refresh draft if we edited spec/eval files
-  const checkAndRefreshDraft = () => {
+  // Save assistant message to history
+  const saveAssistantMessage = async (msg: ChatMessage) => {
     const ctx = context();
-    if (ctx.type === 'run' || ctx.type === 'draft') {
-      window.dispatchEvent(new CustomEvent('draft-refresh', { detail: ctx.runName }));
-    }
-  };
-
-  // Connect to chat session
-  const connect = async () => {
-    if (connecting() || connected()) return;
-
-    const ctx = context();
-    setConnecting(true);
+    const chunks = [
+      ...(msg.thinking ? [{ type: 'thinking', content: msg.thinking }] : []),
+      { type: 'text', content: msg.content },
+      ...(msg.toolCalls || []).map((t) => ({ type: 'tool', ...t })),
+    ];
+    const chunksJson = JSON.stringify(chunks);
 
     try {
-      // Subscribe to events
-      const eventChannel = ctx.type === 'board' ? 'board-chat-event' : 'chat-event';
-      unlisten = await listen<ChatEvent>(eventChannel, (event) => {
-        handleChatEvent(event.payload);
+      await invoke('save_gyp_message', {
+        scope: contextToScope(ctx),
+        role: 'assistant',
+        chunksJson,
+      });
+    } catch (e) {
+      console.error('[gyp-chat] Failed to save message:', e);
+    }
+  };
+
+  // Connect to Gyp
+  const connect = async () => {
+    if (connected() || connecting()) return;
+
+    setConnecting(true);
+    const ctx = context();
+
+    try {
+      // Subscribe to unified event channel
+      unlisten = await listen<[string, ChatEvent]>('gyp-event', (event) => {
+        const [eventSessionId, chatEvent] = event.payload;
+        // Only handle events for our session
+        if (eventSessionId === sessionId()) {
+          handleChatEvent(chatEvent);
+        }
       });
 
       // Load history
       await loadHistory(ctx);
 
-      // Start session based on context type
-      let sid: string;
-      if (ctx.type === 'board' && ctx.projectId) {
-        sid = await invoke<string>('start_board_chat_session', {
-          projectId: ctx.projectId,
-        });
-      } else {
-        const runName = ctx.type === 'run' || ctx.type === 'draft' ? ctx.runName : undefined;
-        sid = await invoke<string>('start_chat_session', {
-          agentCommand: ['hirsel', '__acp-bridge'],
-          workingDir: undefined,
-          runName,
-          systemPrompt: SYSTEM_PROMPT,
-          profile: null,
-        });
-      }
+      // Start unified session
+      const request = contextToRequest(ctx);
+      const response = await invoke<StartGypSessionResponse>('start_gyp_session', { request });
 
-      setSessionId(sid);
+      setSessionId(response.sessionId);
+      setCurrentScope(response.scope);
       setConnected(true);
     } catch (e) {
       console.error('[gyp-chat] Failed to connect:', e);
@@ -360,23 +400,15 @@ export function useGypChat(
   // Load chat history
   const loadHistory = async (ctx: GypChatContext) => {
     try {
-      let history: Array<{ role: string; chunks?: string; chunksJson?: string }> = [];
-
-      if (ctx.type === 'board' && ctx.projectId) {
-        history = await invoke<Array<{ role: string; chunksJson: string }>>(
-          'get_board_chat_history',
-          { projectId: ctx.projectId, limit: historyDepth },
-        );
-      } else {
-        const runName = ctx.type === 'run' || ctx.type === 'draft' ? ctx.runName : undefined;
-        history = await invoke<Array<{ role: string; chunks: string }>>('get_gyp_chat_history', {
-          runName,
-        });
-      }
+      const scope = contextToScope(ctx);
+      const history = await invoke<Array<{ role: string; chunksJson: string }>>('get_gyp_history', {
+        scope,
+        limit: historyDepth,
+      });
 
       if (history && history.length > 0) {
         const loadedMessages: ChatMessage[] = history.map((msg, idx) => {
-          const chunksStr = msg.chunks || msg.chunksJson || '[]';
+          const chunksStr = msg.chunksJson || '[]';
           return {
             id: `history-${idx}`,
             role: msg.role as 'user' | 'assistant',
@@ -399,7 +431,7 @@ export function useGypChat(
         ]);
       }
     } catch (e) {
-      console.warn('[gyp-chat] Failed to load history:', e);
+      console.error('[gyp-chat] Failed to load history:', e);
       setMessages([
         {
           id: 'welcome',
@@ -411,22 +443,18 @@ export function useGypChat(
     }
   };
 
-  // Disconnect from chat session
+  // Disconnect
   const disconnect = async () => {
-    if (unlisten) {
-      unlisten();
-      unlisten = undefined;
-    }
-
     const sid = sessionId();
     if (sid) {
       try {
-        await invoke('stop_chat_session', { sessionId: sid, profile: null });
-      } catch {
-        // Ignore errors
+        await invoke('stop_gyp_session', { sessionId: sid });
+      } catch (e) {
+        console.error('[gyp-chat] Failed to stop session:', e);
       }
     }
-
+    unlisten?.();
+    unlisten = undefined;
     setConnected(false);
     setSessionId(null);
     setCurrentMessage(null);
@@ -436,7 +464,7 @@ export function useGypChat(
     lastChunkType = null;
   };
 
-  // Send a message
+  // Send message
   const sendMessage = async (content: string) => {
     const sid = sessionId();
     const ctx = context();
@@ -448,36 +476,29 @@ export function useGypChat(
 
     // Add user message to UI
     const userMessage: ChatMessage = {
-      id: `msg-${Date.now()}`,
+      id: `user-${Date.now()}`,
       role: 'user',
-      content,
+      content: content.trim(),
       timestamp: new Date(),
     };
-    setMessages(produce((draft) => draft.push(userMessage)));
+    setMessages(produce((msgs) => msgs.push(userMessage)));
 
-    // Save user message
-    saveMessage('user', userMessage);
-
-    // Start assistant message placeholder
-    setCurrentMessage({ role: 'assistant', content: '', streaming: true });
+    // Initialize streaming state
+    setCurrentMessage({ id: `msg-${Date.now()}`, role: 'assistant', streaming: true });
 
     try {
-      if (ctx.type === 'board' && ctx.projectId) {
-        await invoke('send_board_chat_message', {
-          projectId: ctx.projectId,
-          sessionId: sid,
-          content,
-          focusTaskId: focusNodeId(),
-          focusTaskName: focusNodeName(),
-        });
-      } else {
-        await invoke('send_chat_message', {
-          sessionId: sid,
-          content,
-          context: buildUIContext(ctx),
-          profile: null,
-        });
-      }
+      const scope = contextToScope(ctx);
+      const focus: TaskFocus | undefined =
+        ctx.focusNodeId && ctx.focusNodeName
+          ? { taskId: ctx.focusNodeId, taskName: ctx.focusNodeName }
+          : undefined;
+
+      await invoke('send_gyp_message', {
+        sessionId: sid,
+        content: content.trim(),
+        scope,
+        focus,
+      });
     } catch (e) {
       console.error('[gyp-chat] Failed to send message:', e);
       window.toast?.error('Failed to send message');
@@ -485,70 +506,30 @@ export function useGypChat(
     }
   };
 
-  // Build UI context for regular chat
-  const buildUIContext = (ctx: GypChatContext): UIContext => {
-    return {
-      selectedRun: ctx.runName ?? null,
-      selectedWorker: null,
-      uiSection: ctx.type,
-      extra: ctx.projectId ? { projectId: String(ctx.projectId) } : undefined,
-    };
-  };
-
-  // Save message to history
-  const saveMessage = async (role: string, msg: ChatMessage) => {
-    const ctx = context();
-    try {
-      const chunks = buildChunksJson(msg);
-
-      if (ctx.type === 'board' && ctx.projectId) {
-        await invoke('save_board_chat_message', {
-          projectId: ctx.projectId,
-          role,
-          chunksJson: chunks,
-        });
-      } else {
-        const runName = ctx.type === 'run' || ctx.type === 'draft' ? ctx.runName : undefined;
-        await invoke('save_gyp_message', {
-          runName,
-          role,
-          chunksJson: chunks,
-        });
-      }
-    } catch (e) {
-      console.error('[gyp-chat] Failed to save message:', e);
-    }
-  };
-
   // Respond to permission request
   const respondToPermission = async (optionId: string) => {
-    const permission = pendingPermission();
     const sid = sessionId();
-    if (!permission || !sid) return;
+    const permission = pendingPermission();
+    if (!sid || !permission) return;
 
     try {
       await invoke('respond_chat_permission', {
         sessionId: sid,
         requestId: permission.requestId,
         optionId,
-        profile: null,
       });
+      setPendingPermission(null);
     } catch (e) {
       console.error('[gyp-chat] Failed to respond to permission:', e);
-      window.toast?.error(`Failed to respond: ${e}`);
-    } finally {
-      setPendingPermission(null);
     }
   };
 
-  // Clear chat history
+  // Clear history
   const clearHistory = async () => {
     const ctx = context();
     try {
-      if (ctx.type === 'board' && ctx.projectId) {
-        await invoke('clear_board_chat_history', { projectId: ctx.projectId });
-      }
-      // For non-board contexts, history is file-based and we just clear locally
+      const scope = contextToScope(ctx);
+      await invoke('clear_gyp_history', { scope });
       setMessages([
         {
           id: 'welcome',
@@ -562,20 +543,16 @@ export function useGypChat(
     }
   };
 
-  // Reset: disconnect, clear history, and reconnect for a fresh session
+  // Reset (disconnect, clear, reconnect)
   const reset = async () => {
     await disconnect();
     await clearHistory();
-    // Small delay to ensure clean state
-    await new Promise((resolve) => setTimeout(resolve, 100));
     await connect();
   };
 
   // Cleanup on unmount
-  createEffect(() => {
-    onCleanup(() => {
-      disconnect();
-    });
+  onCleanup(() => {
+    disconnect();
   });
 
   return {
@@ -596,61 +573,4 @@ export function useGypChat(
     clearHistory,
     reset,
   };
-}
-
-// Helper functions for parsing message chunks
-function buildChunksJson(msg: ChatMessage): string {
-  const chunks: Array<{ type: string; content?: string; tool?: ChatToolCall }> = [];
-
-  if (msg.thinking) {
-    chunks.push({ type: 'thinking', content: msg.thinking });
-  }
-  if (msg.content) {
-    chunks.push({ type: 'text', content: msg.content });
-  }
-  if (msg.toolCalls) {
-    for (const tc of msg.toolCalls) {
-      chunks.push({ type: 'tool', tool: tc });
-    }
-  }
-
-  return JSON.stringify(chunks);
-}
-
-function parseChunksContent(chunksJson: string): string {
-  try {
-    const chunks = JSON.parse(chunksJson);
-    return chunks
-      .filter((c: { type: string }) => c.type === 'text')
-      .map((c: { content?: string }) => c.content || '')
-      .join('');
-  } catch {
-    return '';
-  }
-}
-
-function parseChunksThinking(chunksJson: string): string | undefined {
-  try {
-    const chunks = JSON.parse(chunksJson);
-    const thinking = chunks
-      .filter((c: { type: string }) => c.type === 'thinking')
-      .map((c: { content?: string }) => c.content || '')
-      .join('');
-    return thinking || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function parseChunksToolCalls(chunksJson: string): ChatToolCall[] | undefined {
-  try {
-    const chunks = JSON.parse(chunksJson);
-    const toolCalls = chunks
-      .filter((c: { type: string }) => c.type === 'tool')
-      .map((c: { tool?: ChatToolCall }) => c.tool)
-      .filter(Boolean);
-    return toolCalls.length > 0 ? toolCalls : undefined;
-  } catch {
-    return undefined;
-  }
 }

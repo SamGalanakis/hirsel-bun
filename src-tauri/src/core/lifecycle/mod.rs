@@ -104,9 +104,6 @@ pub enum LifecycleAction {
     /// Workers were resumed.
     WorkersResumed(Vec<String>),
 
-    /// A new worker was scaled up (legacy - for backwards compat, use SpawnWorker).
-    WorkerScaledUp(String),
-
     /// Request to spawn a new worker.
     ///
     /// The caller (daemon) should handle actual spawning via the orchestrator,

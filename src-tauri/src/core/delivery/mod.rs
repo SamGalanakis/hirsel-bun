@@ -101,11 +101,6 @@ impl DeliveryService {
         }
     }
 
-    /// Run a git command, returning None on failure instead of error
-    fn git_optional(&self, args: &[&str]) -> Option<String> {
-        self.git(args).ok()
-    }
-
     // ========== MERGE STATE ==========
 
     /// Check merge state by doing a dry-run merge

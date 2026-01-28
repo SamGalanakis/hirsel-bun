@@ -267,12 +267,10 @@ export const ProjectSetup: Component = () => {
   });
 
   return (
-    <div
-      class="absolute inset-0 flex items-center justify-center z-50"
-      style={{
-        background: 'rgba(15, 15, 15, 0.8)',
-        'backdrop-filter': 'blur(8px)',
-      }}
+    <dialog
+      open
+      class="dialog fixed inset-0 z-50 m-0 h-full w-full max-w-none max-h-none bg-transparent flex items-center justify-center"
+      style={{ 'backdrop-filter': 'blur(8px)' }}
       onClick={(e) => {
         if (e.target === e.currentTarget && !creating()) {
           project.cancelProjectSetup();
@@ -280,30 +278,11 @@ export const ProjectSetup: Component = () => {
       }}
     >
       {/* Modal Card */}
-      <div
-        class="w-full max-w-xl mx-4 rounded-xl overflow-hidden shadow-2xl"
-        style={{
-          background: 'linear-gradient(180deg, rgba(36, 36, 36, 0.98) 0%, rgba(26, 26, 26, 0.98) 100%)',
-          border: '1px solid rgba(63, 63, 70, 0.6)',
-          'box-shadow': '0 24px 64px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255,255,255,0.03) inset',
-        }}
-      >
+      <div class="card w-full max-w-xl mx-4">
         {/* Header */}
-        <div
-          class="px-6 py-5 flex items-center justify-between"
-          style={{
-            'border-bottom': '1px solid rgba(63, 63, 70, 0.4)',
-            background: 'linear-gradient(180deg, rgba(255,255,255,0.02) 0%, transparent 100%)',
-          }}
-        >
+        <header>
           <div class="flex items-center gap-3">
-            <div
-              class="w-10 h-10 rounded-lg flex items-center justify-center"
-              style={{
-                background: 'linear-gradient(145deg, rgba(212,165,116,0.2) 0%, rgba(212,165,116,0.1) 100%)',
-                border: '1px solid rgba(212,165,116,0.3)',
-              }}
-            >
+            <div class="w-10 h-10 rounded-lg flex items-center justify-center bg-amber-500/15 border border-amber-500/30">
               <svg class="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
               </svg>
@@ -315,7 +294,8 @@ export const ProjectSetup: Component = () => {
           </div>
           <button
             type="button"
-            class="p-2 rounded-lg text-wool-500 hover:text-wool-300 hover:bg-pasture-700 transition-all"
+            aria-label="Close"
+            class="absolute top-4 right-4 p-2 rounded-lg text-wool-500 hover:text-wool-300 hover:bg-pasture-700 transition-all"
             onClick={() => project.cancelProjectSetup()}
             disabled={creating()}
           >
@@ -323,16 +303,17 @@ export const ProjectSetup: Component = () => {
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
-        </div>
+        </header>
 
         {/* Content */}
-        <form
-          class="p-6 grid gap-5"
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleCreate();
-          }}
-        >
+        <section>
+          <form
+            class="form grid gap-5"
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleCreate();
+            }}
+          >
           {/* Project Name */}
           <div class="grid gap-2">
             <label for="project-name" class="text-sm font-medium text-wool-300">
@@ -490,11 +471,9 @@ export const ProjectSetup: Component = () => {
                     {/* Autocomplete dropdown */}
                     <Show when={showSuggestions() && filteredSuggestions().length > 0}>
                       <div
-                        class="absolute z-10 w-full mt-1 rounded-lg shadow-lg max-h-48 overflow-auto"
-                        style={{
-                          background: 'rgba(36, 36, 36, 0.98)',
-                          border: '1px solid rgba(63, 63, 70, 0.6)',
-                        }}
+                        data-popover
+                        role="listbox"
+                        class="absolute z-10 w-full mt-1 max-h-48 overflow-auto"
                       >
                         <For each={filteredSuggestions()}>
                           {(suggestion, index) => (
@@ -612,13 +591,7 @@ export const ProjectSetup: Component = () => {
 
           {/* Greenfield info */}
           <Show when={startingPointType() === 'greenfield'}>
-            <div
-              class="p-4 rounded-lg"
-              style={{
-                background: 'rgba(212, 165, 116, 0.05)',
-                border: '1px solid rgba(212, 165, 116, 0.15)',
-              }}
-            >
+            <div class="p-4 rounded-lg bg-amber-500/5 border border-amber-500/15">
               <div class="flex items-start gap-3">
                 <i data-lucide="info" class="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
                 <p class="text-sm text-wool-400">
@@ -628,19 +601,14 @@ export const ProjectSetup: Component = () => {
               </div>
             </div>
           </Show>
-        </form>
+          </form>
+        </section>
 
         {/* Footer */}
-        <div
-          class="px-6 py-4 flex items-center justify-end gap-3"
-          style={{
-            'border-top': '1px solid rgba(63, 63, 70, 0.4)',
-            background: 'rgba(0, 0, 0, 0.2)',
-          }}
-        >
+        <footer>
           <button
             type="button"
-            class="px-4 py-2 rounded-lg text-sm font-medium text-wool-400 hover:text-wool-200 hover:bg-pasture-700 transition-all"
+            class="btn-ghost"
             onClick={() => project.cancelProjectSetup()}
             disabled={creating()}
           >
@@ -648,14 +616,7 @@ export const ProjectSetup: Component = () => {
           </button>
           <button
             type="button"
-            class="px-5 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2"
-            style={{
-              background: isValid()
-                ? 'linear-gradient(180deg, rgba(212,165,116,0.9) 0%, rgba(180,140,100,0.9) 100%)'
-                : 'rgba(63, 63, 70, 0.5)',
-              color: isValid() ? 'rgb(26, 26, 26)' : 'rgb(138, 133, 128)',
-              cursor: isValid() && !creating() ? 'pointer' : 'not-allowed',
-            }}
+            class="btn"
             disabled={!isValid() || creating()}
             onClick={handleCreate}
           >
@@ -669,8 +630,8 @@ export const ProjectSetup: Component = () => {
             </Show>
             Create Project
           </button>
-        </div>
+        </footer>
       </div>
-    </div>
+    </dialog>
   );
 };

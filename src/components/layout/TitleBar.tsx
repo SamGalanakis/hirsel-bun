@@ -1,9 +1,9 @@
 /**
  * Application title bar with project selector breadcrumbs
  */
-import { type Component, Show, createEffect, onMount } from 'solid-js';
+import { type Component, Show, createEffect, createSignal, onMount } from 'solid-js';
 import { useApp, useProject, useRuns } from '../../stores';
-import { Notifications } from './Notifications';
+import { NotificationsDropdown } from './Notifications';
 import { ProjectSelector } from './ProjectSelector';
 import { initLucideIcons } from '../../lib/icons';
 
@@ -20,7 +20,7 @@ export const TitleBar: Component = () => {
   });
 
   return (
-    <header class="flex items-center justify-between px-4 py-2 border-b border-pasture-600/50 bg-pasture-900/50 backdrop-blur-sm select-none">
+    <header class="flex items-center justify-between px-4 py-2 border-b border-pasture-600/50 bg-pasture-900/50 backdrop-blur-sm select-none relative z-50">
       {/* Breadcrumbs */}
       <nav aria-label="Breadcrumb">
         <ol class="flex items-center gap-1 text-sm">
@@ -96,7 +96,7 @@ export const TitleBar: Component = () => {
 
       {/* Right side actions */}
       <div class="flex items-center gap-1">
-        <Notifications />
+        <NotificationsDropdown />
 
         <button
           type="button"

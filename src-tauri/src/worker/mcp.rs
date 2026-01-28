@@ -562,59 +562,6 @@ impl McpServer {
                 self.runner.eval_fail(feedback)
             }
 
-            // Legacy tool names (for backwards compatibility during transition)
-            "task_list" => self.runner.get_task_tree(),
-            "task_claim" => {
-                let task_id = args
-                    .get("task_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("task_id is required".into()))?;
-                self.runner.task_claim(task_id)
-            }
-            "task_done" => {
-                let task_id = args.get("task_id").and_then(|v| v.as_str());
-                self.runner.task_done(task_id)
-            }
-            "task_add" => {
-                let task_id = args
-                    .get("task_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("task_id is required".into()))?;
-                let task_name = args
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("name is required".into()))?;
-                let parent = args.get("parent").and_then(|v| v.as_str());
-                let blocked_by: Vec<String> = args
-                    .get("blocked_by")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                self.runner
-                    .task_add(task_id, task_name, parent, &blocked_by)
-            }
-            "msg_send" => {
-                let thread = args
-                    .get("thread")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("thread is required".into()))?;
-                let message = args
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("message is required".into()))?;
-                self.runner.msg_send(thread, message)
-            }
-            "msg_read" => {
-                let thread = args.get("thread").and_then(|v| v.as_str());
-                self.runner.msg_read(thread)
-            }
-            "msg_list" => self.runner.msg_list(),
-            "msg_inbox" => self.runner.msg_inbox(),
-
             _ => Err(WorkerError::Config(format!("Unknown tool: {}", name))),
         }
     }

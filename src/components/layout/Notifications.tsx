@@ -9,12 +9,14 @@ import {
   createEffect,
   createSignal,
   onCleanup,
+  onMount,
 } from 'solid-js';
 import type { UnreadNotification } from '../../lib/types';
+import { initLucideIcons } from '../../lib/icons';
 import { formatTimeShort } from '../../lib/utils/formatters';
 import { useRuns } from '../../stores';
 
-export const Notifications: Component = () => {
+export const NotificationsDropdown: Component = () => {
   const runs = useRuns();
   const [open, setOpen] = createSignal(false);
   const [notifications, setNotifications] = createSignal<
@@ -65,24 +67,40 @@ export const Notifications: Component = () => {
     );
   };
 
+  const toggleOpen = () => {
+    setOpen(!open());
+  };
+
+  // Initialize icons
+  onMount(() => initLucideIcons());
+
+  createEffect(() => {
+    if (open()) {
+      queueMicrotask(initLucideIcons);
+    }
+  });
+
   // Close on click outside
   let containerRef: HTMLDivElement | undefined;
+
+  const handleClickOutside = (e: MouseEvent) => {
+    if (open() && containerRef && !containerRef.contains(e.target as Node)) {
+      setOpen(false);
+    }
+  };
+
   createEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (containerRef && !containerRef.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('click', handler);
-    onCleanup(() => document.removeEventListener('click', handler));
+    document.addEventListener('mousedown', handleClickOutside);
+    onCleanup(() => document.removeEventListener('mousedown', handleClickOutside));
   });
 
   return (
-    <div class="relative" ref={containerRef}>
+    <div class="relative" ref={(el) => (containerRef = el)}>
       <button
-        onClick={() => setOpen(!open())}
-        class="p-2 rounded hover:bg-pasture-700 text-wool-300 relative"
-        classList={{ 'bg-pasture-700': open() }}
+        type="button"
+        onClick={toggleOpen}
+        class="p-2 rounded-md text-wool-500 hover:text-wool-300 hover:bg-pasture-800 transition-colors relative"
+        title="Notifications"
       >
         <i data-lucide="bell" class="w-4 h-4" />
         <Show when={totalUnread() > 0}>
@@ -99,6 +117,7 @@ export const Notifications: Component = () => {
             <h3 class="text-sm font-medium text-wool-300">Notifications</h3>
             <Show when={notifications().length > 0}>
               <button
+                type="button"
                 onClick={markAllRead}
                 class="text-xs text-wool-500 hover:text-wool-300"
               >
@@ -138,6 +157,7 @@ export const Notifications: Component = () => {
                     </span>
                     <Show when={!notif.read}>
                       <button
+                        type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           markOneRead(notif.id);

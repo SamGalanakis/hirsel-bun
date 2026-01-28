@@ -1520,8 +1520,8 @@ The existing `rusqlite`, `serde`, `uuid` crates are sufficient.
 ### Phase 3: LOAD & Virtualization ✅
 - [x] Three LOAD views (far/mid/near)
 - [x] Viewport culling (only render visible islands)
-- [ ] AI summary generation for LOAD mode (deferred)
 - [x] Performance optimization
+- [ ] AI summary generation for LOAD mode (deferred to future)
 
 ### Phase 4: Wires & Dependencies ✅
 - [x] Canvas wire rendering (bezier curves with arrowheads)
@@ -1542,7 +1542,7 @@ The existing `rusqlite`, `serde`, `uuid` crates are sufficient.
 - [x] Bookmarks (API ready, UI in template)
 - [x] Fit-all button
 - [x] Keyboard shortcuts (R for run mode, Escape, Cmd+K)
-- [ ] Gyp AI context integration (deferred)
+- [ ] Gyp AI context integration (deferred to future)
 
 ---
 

@@ -768,6 +768,35 @@ export interface ChatMessage {
 }
 
 // =============================================================================
+// Gyp Session Types (Unified Gyp Context)
+// =============================================================================
+
+/** Task focus for board context */
+export interface TaskFocus {
+  taskId: string;
+  taskName: string;
+}
+
+/** Gyp session scope - determines prompt, working dir, and MCP config */
+export type GypScope =
+  | { type: 'general' }
+  | { type: 'run'; runName: string; workspacePath: string; projectPath?: string }
+  | { type: 'board'; projectId: number; workspacePath?: string; focus?: TaskFocus };
+
+/** Request to start a Gyp session */
+export type StartGypSessionRequest =
+  | { type: 'general' }
+  | { type: 'run'; runName: string }
+  | { type: 'board'; projectId: number }
+  | { type: 'boardFocused'; projectId: number; taskId: string; taskName: string };
+
+/** Response from starting a Gyp session */
+export interface StartGypSessionResponse {
+  sessionId: string;
+  scope: GypScope;
+}
+
+// =============================================================================
 // Version Info
 // =============================================================================
 

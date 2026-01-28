@@ -15,6 +15,7 @@ mod drafts;
 mod events;
 mod files;
 mod filesystem;
+mod gyp;
 mod logs;
 mod messages;
 mod projects;
@@ -118,10 +119,6 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         debug::get_version,
         debug::get_process_counts,
         debug::kill_orphaned_acp_processes,
-        // Gyp chat history commands
-        debug::get_gyp_chat_history,
-        debug::save_gyp_message,
-        debug::clear_gyp_chat_history,
         // Filesystem commands
         filesystem::pick_folder,
         filesystem::suggest_paths,
@@ -154,16 +151,18 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         specflow::import_board_from_agent,
         specflow::get_board_directory,
         specflow::poll_board_changes,
-        // Board chat commands (Gyp integration)
-        specflow::start_board_chat_session,
-        specflow::send_board_chat_message,
-        specflow::get_board_chat_history,
-        specflow::save_board_chat_message,
-        specflow::clear_board_chat_history,
+        // Unified Gyp commands
+        gyp::start_gyp_session,
+        gyp::send_gyp_message,
+        gyp::save_gyp_message,
+        gyp::get_gyp_history,
+        gyp::clear_gyp_history,
+        gyp::stop_gyp_session,
         // Dispatch commands
         dispatch::preview_dispatch,
         dispatch::prepare_dispatch,
         dispatch::prepare_multi_dispatch,
+        dispatch::dispatch_board_run,
         dispatch::get_multi_dispatch_scope,
         dispatch::record_dispatch,
         dispatch::get_task_runs,

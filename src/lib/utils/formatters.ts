@@ -27,7 +27,7 @@ export function formatTimeRemaining(
   elapsed: number | null | undefined,
 ): string {
   if (!limit) return '';
-  const remaining = limit - (elapsed || 0);
+  const remaining = Math.round(limit - (elapsed || 0));
   if (remaining <= 0) return 'Time up!';
   if (remaining < 60) return `${remaining}m remaining`;
   const h = Math.floor(remaining / 60);

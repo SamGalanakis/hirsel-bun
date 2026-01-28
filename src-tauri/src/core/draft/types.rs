@@ -32,6 +32,14 @@ impl StartingPoint {
             Self::GitRepo { .. } => "git_repo",
         }
     }
+
+    /// Get the local filesystem path if this is a LocalFolder starting point.
+    pub fn local_path(&self) -> Option<PathBuf> {
+        match self {
+            Self::LocalFolder { path } => Some(PathBuf::from(path)),
+            _ => None,
+        }
+    }
 }
 
 /// Information about an initialized workspace

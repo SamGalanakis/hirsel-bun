@@ -13,7 +13,7 @@ import {
 import type { ShortcutAction } from '../lib/shortcuts';
 import { useRuns } from './runs-context';
 
-type TabId = 'overview' | 'tasks' | 'specs' | 'evals' | 'chat' | 'config';
+type TabId = 'overview' | 'work' | 'chat' | 'config';
 
 interface AttachPickerState {
   open: boolean;

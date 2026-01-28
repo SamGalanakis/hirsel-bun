@@ -351,10 +351,37 @@ impl DispatchService {
 
         // Filter to only dispatched tasks
         let task_id_set: std::collections::HashSet<&String> = task_ids.iter().collect();
-        let dispatched_tasks: Vec<_> = all_tasks
+        let filtered_tasks: Vec<_> = all_tasks
             .iter()
             .filter(|t| task_id_set.contains(&t.id))
             .collect();
+
+        // Topological sort: parents before children
+        // Build a map of task_id -> depth (within scope)
+        let mut depth_map: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        for task in &filtered_tasks {
+            // Calculate depth by walking up parent chain (within scope)
+            let mut depth = 0;
+            let mut current_parent = task.parent_id.as_ref();
+            while let Some(pid) = current_parent {
+                if task_id_set.contains(pid) {
+                    depth += 1;
+                    // Find parent task to continue walking
+                    current_parent = filtered_tasks
+                        .iter()
+                        .find(|t| &t.id == pid)
+                        .and_then(|t| t.parent_id.as_ref());
+                } else {
+                    break;
+                }
+            }
+            depth_map.insert(&task.id, depth);
+        }
+
+        // Sort by depth (parents first)
+        let mut dispatched_tasks = filtered_tasks;
+        dispatched_tasks.sort_by_key(|t| depth_map.get(t.id.as_str()).copied().unwrap_or(0));
 
         // Create work tasks
         let mut work_count = 0;
@@ -438,10 +465,37 @@ impl DispatchService {
 
         // Filter to only dispatched tasks
         let task_id_set: std::collections::HashSet<&String> = scope.task_ids.iter().collect();
-        let dispatched_tasks: Vec<_> = all_tasks
+        let filtered_tasks: Vec<_> = all_tasks
             .iter()
             .filter(|t| task_id_set.contains(&t.id))
             .collect();
+
+        // Topological sort: parents before children
+        // Build a map of task_id -> depth (within scope)
+        let mut depth_map: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        for task in &filtered_tasks {
+            // Calculate depth by walking up parent chain (within scope)
+            let mut depth = 0;
+            let mut current_parent = task.parent_id.as_ref();
+            while let Some(pid) = current_parent {
+                if task_id_set.contains(pid) {
+                    depth += 1;
+                    // Find parent task to continue walking
+                    current_parent = filtered_tasks
+                        .iter()
+                        .find(|t| &t.id == pid)
+                        .and_then(|t| t.parent_id.as_ref());
+                } else {
+                    break;
+                }
+            }
+            depth_map.insert(&task.id, depth);
+        }
+
+        // Sort by depth (parents first)
+        let mut dispatched_tasks = filtered_tasks;
+        dispatched_tasks.sort_by_key(|t| depth_map.get(t.id.as_str()).copied().unwrap_or(0));
 
         // Find leaf tasks (tasks with no children in scope) - these are initially ready
         let tasks_with_children: std::collections::HashSet<String> = dispatched_tasks
@@ -457,7 +511,7 @@ impl DispatchService {
             .collect();
 
         // Create scope task first (will block leaf tasks)
-        state.add_task("scope", "Review tasks and begin work", None, None)?;
+        state.add_task("scope", "Scope", None, None)?;
         state.claim_task("scope", "worker-1")?;
 
         // Create work tasks
