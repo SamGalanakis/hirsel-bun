@@ -23,6 +23,7 @@ pub mod config;
 pub mod coordinator_api;
 pub mod credentials;
 pub mod delivery;
+pub mod delta;
 pub mod dispatch;
 pub mod draft;
 pub mod error;
@@ -183,4 +184,13 @@ pub use board::{
     RemoteBoardStorage, SyncResult as BoardSyncResult, Task as BoardTask, TaskFile,
     TaskRun as BoardTaskRun, TaskStatus as BoardTaskStatus, TaskTree, UpdateEvalRequest,
     UpdateTaskRequest,
+};
+
+// Delta dispatch (unified board with draft/live trees)
+pub use delta::{
+    CreateDraftNodeRequest, DeltaDispatchService, DeltaGenerator, DeltaState, DeltaStatus,
+    DeltaTask, DeltaType, DiffNode, DiffService, DispatchPreview as DeltaDispatchPreview,
+    DispatchResult as DeltaDispatchResult, DraftNode, DraftNodeTree, LiveNode, LiveNodeStatus,
+    LiveNodeTree, ModifiedNode, NodeType, ProjectRun, ProjectRunStatus, Reference, TreeDiff,
+    UpdateDraftNodeRequest,
 };

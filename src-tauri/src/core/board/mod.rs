@@ -106,6 +106,83 @@ CREATE INDEX IF NOT EXISTS idx_board_bookmarks_project ON board_bookmarks(projec
 CREATE INDEX IF NOT EXISTS idx_task_runs_project ON task_runs(project_id);
 CREATE INDEX IF NOT EXISTS idx_task_runs_task ON task_runs(task_id);
 CREATE INDEX IF NOT EXISTS idx_task_runs_run ON task_runs(run_name);
+
+-- =============================================================================
+-- Draft/Live Trees and Delta Dispatch Tables
+-- =============================================================================
+
+-- Draft tree (user edits freely, not yet dispatched)
+CREATE TABLE IF NOT EXISTS draft_nodes (
+    id TEXT PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    parent_id TEXT REFERENCES draft_nodes(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0,
+    name TEXT NOT NULL,
+    node_type TEXT NOT NULL DEFAULT 'task',  -- 'task' | 'eval'
+    content TEXT NOT NULL DEFAULT '',
+    validates TEXT DEFAULT '[]',             -- JSON array for evals (task IDs)
+    x REAL,
+    y REAL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- Live tree (dispatched state, reflects current reality)
+CREATE TABLE IF NOT EXISTS live_nodes (
+    id TEXT PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    draft_node_id TEXT,                      -- Link to draft (null if deleted from draft)
+    parent_id TEXT REFERENCES live_nodes(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0,
+    name TEXT NOT NULL,
+    node_type TEXT NOT NULL DEFAULT 'task',
+    content TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending|working|done|failed
+    validates TEXT DEFAULT '[]',
+    x REAL,
+    y REAL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    last_commit_sha TEXT
+);
+
+-- Delta submissions (LLM-generated delta tasks for a dispatch)
+CREATE TABLE IF NOT EXISTS delta_submissions (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    batch_id INTEGER,                        -- Groups deltas from same dispatch
+    delta_type TEXT NOT NULL,                -- 'implement'|'modify'|'revert'
+    draft_node_id TEXT,                      -- Source draft node (for implement/modify)
+    live_node_id TEXT,                       -- Target live node (for modify/revert)
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    priority INTEGER DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending|processing|done|failed
+    refs TEXT DEFAULT '[]',                  -- JSON array of references
+    created_at TEXT NOT NULL,
+    processed_at TEXT
+);
+
+-- Persistent run per project (one long-running run that pauses between dispatches)
+CREATE TABLE IF NOT EXISTS project_runs (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+    run_name TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'paused',   -- paused|working|failed
+    created_at TEXT NOT NULL,
+    last_dispatch_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_draft_nodes_project ON draft_nodes(project_id);
+CREATE INDEX IF NOT EXISTS idx_draft_nodes_parent ON draft_nodes(parent_id);
+CREATE INDEX IF NOT EXISTS idx_live_nodes_project ON live_nodes(project_id);
+CREATE INDEX IF NOT EXISTS idx_live_nodes_parent ON live_nodes(parent_id);
+CREATE INDEX IF NOT EXISTS idx_live_nodes_draft ON live_nodes(draft_node_id);
+CREATE INDEX IF NOT EXISTS idx_delta_submissions_project ON delta_submissions(project_id);
+CREATE INDEX IF NOT EXISTS idx_delta_submissions_batch ON delta_submissions(batch_id);
+CREATE INDEX IF NOT EXISTS idx_delta_submissions_status ON delta_submissions(status);
+CREATE INDEX IF NOT EXISTS idx_project_runs_project ON project_runs(project_id);
 "#;
 
 /// Error type for board operations

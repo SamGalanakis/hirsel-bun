@@ -122,7 +122,11 @@ CREATE TABLE IF NOT EXISTS tasks (
     task_type TEXT DEFAULT 'work',      -- 'work' | 'eval'
     eval_result TEXT,                    -- 'pass' | 'fail' | null
     eval_feedback TEXT,                  -- Feedback if eval failed
-    board_task_id TEXT                   -- Original board task ID for tracking
+    board_task_id TEXT,                  -- Original board task ID for tracking
+    -- Delta dispatch columns
+    delta_submission_id INTEGER,         -- Link to delta_submissions table
+    delta_type TEXT,                     -- 'implement' | 'modify' | 'revert'
+    refs TEXT                            -- JSON array of references for context
 );
 
 -- Normalized task blocking relationship (which tasks block another task)

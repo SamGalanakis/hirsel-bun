@@ -14,6 +14,7 @@ import {
   ProjectProvider,
   RunsProvider,
   SelectionProvider,
+  DeltaProvider,
 } from './stores';
 
 // Initialize dev logger early
@@ -305,7 +306,9 @@ const App: Component = () => {
       <ProjectProvider>
         <RunsProvider>
           <SelectionProvider>
-            <Layout />
+            <DeltaProvider>
+              <Layout />
+            </DeltaProvider>
           </SelectionProvider>
         </RunsProvider>
       </ProjectProvider>

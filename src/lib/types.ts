@@ -1086,3 +1086,194 @@ export const MERGE_STATE_ICONS: Record<MergeState, string> = {
   clean: '\u2713', // ✓
   conflicts: '\u26a0', // ⚠
 };
+
+// =============================================================================
+// Delta Dispatch Types (Draft/Live Trees)
+// =============================================================================
+
+/** Node type in draft/live trees */
+export type NodeType = 'task' | 'eval';
+
+/** Status of a live node */
+export type LiveNodeStatus = 'pending' | 'working' | 'done' | 'failed';
+
+/** Type of delta operation */
+export type DeltaType = 'implement' | 'modify' | 'revert';
+
+/** Status of a delta submission */
+export type DeltaStatus = 'pending' | 'processing' | 'done' | 'failed';
+
+/** Status of a project's persistent run */
+export type ProjectRunStatus = 'paused' | 'working' | 'failed';
+
+/** A node in the draft tree (user edits freely) */
+export interface DraftNode {
+  id: string;
+  projectId: number;
+  parentId: string | null;
+  position: number;
+  name: string;
+  nodeType: NodeType;
+  content: string;
+  validates: string[];
+  x: number | null;
+  y: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Draft node tree (nested for rendering) */
+export interface DraftNodeTree {
+  id: string;
+  name: string;
+  nodeType: NodeType;
+  content: string;
+  validates: string[];
+  children: DraftNodeTree[];
+  x: number | null;
+  y: number | null;
+}
+
+/** A node in the live tree (dispatched state) */
+export interface LiveNode {
+  id: string;
+  projectId: number;
+  draftNodeId: string | null;
+  parentId: string | null;
+  position: number;
+  name: string;
+  nodeType: NodeType;
+  content: string;
+  status: LiveNodeStatus;
+  validates: string[];
+  x: number | null;
+  y: number | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  lastCommitSha: string | null;
+}
+
+/** Live node tree (nested for rendering) */
+export interface LiveNodeTree {
+  id: string;
+  draftNodeId: string | null;
+  name: string;
+  nodeType: NodeType;
+  content: string;
+  status: LiveNodeStatus;
+  validates: string[];
+  children: LiveNodeTree[];
+  x: number | null;
+  y: number | null;
+  completedAt: string | null;
+  lastCommitSha: string | null;
+}
+
+/** A reference for context in delta tasks */
+export interface Reference {
+  refType: string;
+  value: string;
+  description: string | null;
+}
+
+/** A node in a diff operation */
+export interface DiffNode {
+  id: string;
+  name: string;
+  nodeType: NodeType;
+  content: string;
+  validates: string[];
+  parentId: string | null;
+}
+
+/** A modified node with old and new state */
+export interface ModifiedNode {
+  draftNode: DiffNode;
+  liveNode: DiffNode;
+  changes: string[];
+}
+
+/** Result of diffing draft vs live trees */
+export interface TreeDiff {
+  newNodes: DiffNode[];
+  modifiedNodes: ModifiedNode[];
+  deletedNodes: DiffNode[];
+  unchangedIds: string[];
+}
+
+/** A persistent run for a project */
+export interface ProjectRun {
+  id: number;
+  projectId: number;
+  runName: string;
+  status: ProjectRunStatus;
+  createdAt: string;
+  lastDispatchAt: string | null;
+}
+
+/** Request to create a draft node */
+export interface CreateDraftNodeRequest {
+  parentId?: string | null;
+  name: string;
+  nodeType?: NodeType;
+  content?: string;
+  validates?: string[];
+  x?: number | null;
+  y?: number | null;
+}
+
+/** Request to update a draft node */
+export interface UpdateDraftNodeRequest {
+  name?: string;
+  content?: string;
+  validates?: string[];
+  x?: number | null;
+  y?: number | null;
+}
+
+/** Response from dispatch operation */
+export interface DeltaDispatchResponse {
+  runName: string;
+  batchId: number;
+  deltaCount: number;
+  diffSummary: string;
+}
+
+/** Preview response for dispatch */
+export interface DeltaDispatchPreviewResponse {
+  diff: TreeDiff;
+  taskCount: number;
+  hasExistingRun: boolean;
+}
+
+/** Response containing both trees */
+export interface DualTreeResponse {
+  draft: DraftNodeTree[];
+  live: LiveNodeTree[];
+  diff: TreeDiff;
+  projectRun: ProjectRun | null;
+}
+
+/** Status colors for live nodes */
+export const LIVE_NODE_STATUS_COLORS: Record<LiveNodeStatus, string> = {
+  pending: 'wool-500',
+  working: 'amber-500',
+  done: 'sage',
+  failed: 'terra',
+};
+
+/** Status icons for live nodes */
+export const LIVE_NODE_STATUS_ICONS: Record<LiveNodeStatus, string> = {
+  pending: '\u25cb', // ○
+  working: '\u25cf', // ●
+  done: '\u2713', // ✓
+  failed: '\u2717', // ✗
+};
+
+/** Delta type colors */
+export const DELTA_TYPE_COLORS: Record<DeltaType, string> = {
+  implement: 'sage',
+  modify: 'amber-500',
+  revert: 'terra',
+};

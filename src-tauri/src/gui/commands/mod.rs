@@ -10,6 +10,7 @@ mod config_cmd;
 mod credentials;
 mod debug;
 mod delivery;
+mod delta;
 mod dispatch;
 mod drafts;
 mod events;
@@ -179,5 +180,20 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         delivery::generate_pr_title,
         delivery::generate_pr_body,
         delivery::delivery_branch_name,
+        // Delta dispatch commands (unified board with draft/live trees)
+        delta::get_draft_tree,
+        delta::get_live_tree,
+        delta::create_draft_node,
+        delta::update_draft_node,
+        delta::delete_draft_node,
+        delta::move_draft_node,
+        delta::compute_tree_diff,
+        delta::get_diff_summary,
+        delta::dispatch_deltas,
+        delta::preview_delta_dispatch,
+        delta::get_project_run,
+        delta::complete_live_node,
+        delta::complete_revert,
+        delta::get_dual_trees,
     ]
 }
