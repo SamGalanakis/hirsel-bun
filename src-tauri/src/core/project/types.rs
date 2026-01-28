@@ -60,7 +60,7 @@ pub struct CreateProjectRequest {
 }
 
 /// Request to update a project
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateProjectRequest {
     #[serde(default)]

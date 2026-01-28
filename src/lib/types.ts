@@ -1092,7 +1092,7 @@ export const MERGE_STATE_ICONS: Record<MergeState, string> = {
 // =============================================================================
 
 /** Node type in draft/live trees */
-export type NodeType = 'task' | 'eval';
+export type NodeType = 'task' | 'eval' | 'project';
 
 /** Status of a live node */
 export type LiveNodeStatus = 'pending' | 'working' | 'done' | 'failed';

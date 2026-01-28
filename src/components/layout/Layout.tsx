@@ -1,9 +1,9 @@
 /**
  * Main layout component that composes the application structure
  *
- * Uses OneBoard as the primary view - a semantic zoom canvas where:
- * - Zoomed out: See all projects as draggable cards
- * - Zoomed in: See that project's task/eval board
+ * Uses SpecBoard as the primary view - a canvas-based delta board that shows:
+ * - Draft tree (editable) with visual diff indicators
+ * - Live tree (read-only) after first dispatch
  */
 import { type Component, Show, createEffect, onCleanup, onMount } from 'solid-js';
 import { useApp, useProject, useRuns, useSelection } from '../../stores';
@@ -16,7 +16,7 @@ import { RunDetail } from '../runs/RunDetail';
 import { DraftEditor } from '../runs/DraftEditor';
 import { ProjectSetup } from '../projects/ProjectSetup';
 import { ProjectSettings } from '../projects/ProjectSettings';
-import { OneBoard } from '../specflow/OneBoard';
+import { SpecBoard } from '../specflow/SpecBoard';
 import { GypMessenger } from '../chat/GypMessenger';
 import { WorkerOutputViewer } from '../workers/WorkerOutputViewer';
 import { AttachPicker } from '../modals/AttachPicker';
@@ -69,8 +69,8 @@ export const Layout: Component = () => {
     return runs.selectedRun() && detail?.status !== 'draft';
   };
 
-  // Show OneBoard as base when not viewing run details
-  const showOneBoard = () =>
+  // Show SpecBoard as base when not viewing run details
+  const showSpecBoard = () =>
     !project.showProjectSettings() &&
     !showDraftEditor() &&
     !showRunDetail();
@@ -83,9 +83,9 @@ export const Layout: Component = () => {
 
       {/* Main Content Area */}
       <main class="flex-1 flex overflow-hidden bg-pasture-900 relative">
-        {/* OneBoard - Primary canvas view (always rendered as base layer) */}
-        <Show when={showOneBoard()}>
-          <OneBoard />
+        {/* SpecBoard - Primary canvas view (always rendered as base layer) */}
+        <Show when={showSpecBoard()}>
+          <SpecBoard />
         </Show>
 
         {/* Full-screen overlays (replace OneBoard) */}
@@ -101,7 +101,7 @@ export const Layout: Component = () => {
           <RunDetail />
         </Show>
 
-        {/* Modal overlays (float above OneBoard) */}
+        {/* Modal overlays (float above SpecBoard) */}
         <Show when={project.showProjectSetup()}>
           <ProjectSetup />
         </Show>

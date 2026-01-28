@@ -9,7 +9,7 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 
-use crate::core::board::{BoardService, ExportScope};
+use crate::core::delta::DeltaExporter;
 use crate::core::draft::create_workspace_provider;
 use crate::core::gyp::{GypContextBuilder, GypScope, TaskFocus};
 use crate::core::{ChatContext, GypChatStore, ProjectStore};
@@ -82,12 +82,11 @@ pub async fn start_gyp_session(
             let store = ProjectStore::open().map_err(|e| e.to_string())?;
             let project = store.get_project(*project_id).map_err(|e| e.to_string())?;
 
-            // Export board files for agent access
-            let mut service = BoardService::new(*project_id);
-            service
-                .export_for_agent(&ExportScope::WholeBoard)
-                .await
-                .map_err(|e| format!("Failed to export board: {}", e))?;
+            // Export draft tree to board.json for agent access
+            let mut exporter = DeltaExporter::new(*project_id);
+            exporter
+                .export_for_agent()
+                .map_err(|e| format!("Failed to export draft tree: {}", e))?;
 
             (
                 GypContextBuilder::for_board(*project_id, &project.starting_point),
@@ -103,15 +102,11 @@ pub async fn start_gyp_session(
             let store = ProjectStore::open().map_err(|e| e.to_string())?;
             let project = store.get_project(*project_id).map_err(|e| e.to_string())?;
 
-            // Export board files for agent access
-            let mut service = BoardService::new(*project_id);
-            service
-                .export_for_agent(&ExportScope::FocusedTask {
-                    task_id: task_id.clone(),
-                    task_name: task_name.clone(),
-                })
-                .await
-                .map_err(|e| format!("Failed to export board: {}", e))?;
+            // Export draft tree to board.json for agent access
+            let mut exporter = DeltaExporter::new(*project_id);
+            exporter
+                .export_for_agent()
+                .map_err(|e| format!("Failed to export draft tree: {}", e))?;
 
             (
                 GypContextBuilder::for_board_focused(

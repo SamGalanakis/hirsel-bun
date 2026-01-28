@@ -2,8 +2,26 @@
 //!
 //! Commands for listing, creating, and managing projects for SpecFlow boards.
 
+use crate::core::delta::{CreateDraftNodeRequest, DeltaState, NodeType};
 use crate::core::draft::StartingPoint;
 use crate::core::project::{CreateProjectRequest, Project, ProjectStore, UpdateProjectRequest};
+
+/// Create a root node for a newly created project
+fn create_root_node(project: &Project) -> Result<(), String> {
+    let delta_state = DeltaState::new(project.id);
+    delta_state
+        .create_draft_node(&CreateDraftNodeRequest {
+            parent_id: None,
+            name: project.name.clone(),
+            node_type: NodeType::Project,
+            content: String::new(),
+            validates: vec![],
+            x: None,
+            y: None,
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
 
 /// List all projects, sorted by most recently created
 #[tauri::command]
@@ -64,7 +82,9 @@ pub async fn create_project_from_path(
             x: None,
             y: None,
         };
-        return store.create_project(&req).map_err(|e| e.to_string());
+        let project = store.create_project(&req).map_err(|e| e.to_string())?;
+        create_root_node(&project)?;
+        return Ok(project);
     }
 
     let req = CreateProjectRequest {
@@ -82,7 +102,9 @@ pub async fn create_project_from_path(
         y: None,
     };
 
-    store.create_project(&req).map_err(|e| e.to_string())
+    let project = store.create_project(&req).map_err(|e| e.to_string())?;
+    create_root_node(&project)?;
+    Ok(project)
 }
 
 /// Create a new project with a name and starting point
@@ -126,7 +148,9 @@ pub async fn create_project(
         y,
     };
 
-    store.create_project(&req).map_err(|e| e.to_string())
+    let project = store.create_project(&req).map_err(|e| e.to_string())?;
+    create_root_node(&project)?;
+    Ok(project)
 }
 
 /// Update a project's fields (e.g., canvas position)

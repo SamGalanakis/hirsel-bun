@@ -5,8 +5,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::core::delta::{
-    CreateDraftNodeRequest, DeltaDispatchService, DeltaState, DraftNodeTree, LiveNodeTree,
-    ProjectRun, TreeDiff, UpdateDraftNodeRequest,
+    CreateDraftNodeRequest, DeltaDispatchService, DeltaExporter, DeltaState, DraftNodeTree,
+    LiveNodeTree, ProjectRun, SyncResult, TreeDiff, UpdateDraftNodeRequest,
 };
 
 // =============================================================================
@@ -69,6 +69,13 @@ pub async fn move_draft_node(
     state
         .move_draft_node(&node_id, new_parent_id.as_deref(), new_position)
         .map_err(|e| e.to_string())
+}
+
+/// Reset project tree - delete all draft nodes except the root
+#[tauri::command]
+pub async fn reset_project_tree(project_id: i64) -> Result<(), String> {
+    let state = DeltaState::new(project_id);
+    state.reset_tree().map_err(|e| e.to_string())
 }
 
 // =============================================================================
@@ -203,4 +210,20 @@ pub async fn get_dual_trees(project_id: i64) -> Result<DualTreeResponse, String>
         diff,
         project_run,
     })
+}
+
+// =============================================================================
+// Gyp Sync Operations
+// =============================================================================
+
+/// Sync changes from Gyp JSON files back to the database
+///
+/// This should be called periodically while Gyp is active to pick up
+/// changes made by the agent to the board JSON files.
+#[tauri::command]
+pub async fn sync_gyp_changes(project_id: i64) -> Result<SyncResult, String> {
+    let mut exporter = DeltaExporter::new(project_id);
+    exporter
+        .sync_file_changes()
+        .map_err(|e| format!("Sync failed: {}", e))
 }

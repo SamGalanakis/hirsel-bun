@@ -13,6 +13,7 @@ import {
   createSignal,
   onCleanup,
 } from 'solid-js';
+import { Portal } from 'solid-js/web';
 import type { ChatMessage, ChatToolCall, PendingPermission } from '../../lib/types';
 import { useApp, useProject, useRuns } from '../../stores';
 import { useGypChat, type GypChatContext } from '../../hooks/use-gyp-chat';
@@ -28,11 +29,22 @@ export const GypMessenger: Component = () => {
 
   let messagesRef: HTMLDivElement | undefined;
   let inputRef: HTMLTextAreaElement | undefined;
+  let menuBtnRef: HTMLButtonElement | undefined;
 
   const [inputText, setInputText] = createSignal('');
   const [sending, setSending] = createSignal(false);
   const [expandedTools, setExpandedTools] = createSignal<Set<string>>(new Set());
   const [menuOpen, setMenuOpen] = createSignal(false);
+
+  // Compute fixed position for menu dropdown (escapes overflow-hidden panel)
+  const menuPosition = () => {
+    if (!menuOpen() || !menuBtnRef) return {};
+    const rect = menuBtnRef.getBoundingClientRect();
+    return {
+      top: `${rect.bottom + 4}px`,
+      right: `${window.innerWidth - rect.right}px`,
+    };
+  };
 
   // Build context based on current app state
   const buildContext = (): GypChatContext => {
@@ -250,37 +262,46 @@ export const GypMessenger: Component = () => {
                 </Show>
 
                 {/* Options menu */}
-                <div class="relative">
+                <div>
                   <button
+                    ref={menuBtnRef}
+                    type="button"
                     onClick={() => setMenuOpen(!menuOpen())}
                     class="gyp-options-btn"
                     title="Options"
+                    aria-haspopup="listbox"
+                    aria-expanded={menuOpen()}
                   >
                     <i data-lucide="more-vertical" class="w-4 h-4" />
                   </button>
 
                   <Show when={menuOpen()}>
-                    {/* Backdrop to close menu */}
-                    <div
-                      class="fixed inset-0 z-40"
-                      onClick={() => setMenuOpen(false)}
-                    />
-
-                    {/* Dropdown menu */}
-                    <div data-popover role="listbox" class="absolute right-0 top-full mt-1 w-40 z-50">
+                    <Portal>
                       <div
-                        role="option"
-                        onClick={async () => {
-                          setMenuOpen(false);
-                          await chat.reset();
-                          window.toast?.success('Chat reset');
-                        }}
-                        class="flex items-center gap-2 cursor-pointer"
+                        class="fixed inset-0 z-[1001]"
+                        onClick={() => setMenuOpen(false)}
+                      />
+                      <div
+                        class="fixed z-[1002] w-44 bg-popover border border-border rounded-md shadow-md py-1"
+                        style={menuPosition()}
+                        ref={() => queueMicrotask(() => initLucideIcons())}
                       >
-                        <i data-lucide="refresh-cw" class="w-3.5 h-3.5" />
-                        <span>Reset chat</span>
+                        <div role="listbox">
+                          <div
+                            role="option"
+                            class="px-3 py-2 text-sm cursor-pointer hover:bg-accent flex items-center gap-2"
+                            onClick={async () => {
+                              setMenuOpen(false);
+                              await chat.reset();
+                              window.toast?.success('Chat reset');
+                            }}
+                          >
+                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5" />
+                            <span>Reset chat</span>
+                          </div>
+                        </div>
                       </div>
-                    </div>
+                    </Portal>
                   </Show>
                 </div>
 
@@ -415,13 +436,13 @@ export const GypMessenger: Component = () => {
               <button
                 onClick={handleSend}
                 disabled={!inputText().trim() || !chat.connected() || chat.gypEditing() || sending()}
-                class="btn-icon absolute right-2.5 bottom-2.5"
+                class="gyp-send-btn absolute right-2 bottom-2 w-8 h-8 flex items-center justify-center"
               >
                 <Show when={sending()}>
                   <div class="w-4 h-4 border-2 border-amber-200 border-t-transparent rounded-full animate-spin" />
                 </Show>
                 <Show when={!sending()}>
-                  <i data-lucide="feather" class="w-4 h-4" />
+                  <i data-lucide="send" class="w-4 h-4 text-white" />
                 </Show>
               </button>
             </div>

@@ -26,14 +26,20 @@
 
 mod diff;
 mod dispatch;
+mod export;
 mod generator;
+mod runner;
 mod state;
 pub mod types;
 
 pub use diff::DiffService;
 pub use dispatch::{DeltaDispatchResult, DeltaDispatchService, DispatchError, DispatchPreview};
+pub use export::{
+    BoardEval, BoardFile, BoardTask, DeltaExporter, ExportError, ExportResult, SyncResult,
+};
 pub use generator::{
     build_llm_prompt, parse_llm_response, DeltaGenerator, GeneratorError, GeneratorResult,
 };
+pub use runner::{list_working_project_runs, DeltaRunner, RunnerError, RunnerResult};
 pub use state::{DeltaState, DeltaStateError, DeltaStateResult};
 pub use types::*;

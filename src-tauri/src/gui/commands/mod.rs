@@ -11,7 +11,6 @@ mod credentials;
 mod debug;
 mod delivery;
 mod delta;
-mod dispatch;
 mod drafts;
 mod events;
 mod files;
@@ -21,7 +20,6 @@ mod logs;
 mod messages;
 mod projects;
 mod runs;
-mod specflow;
 mod tasks;
 pub mod types;
 mod workers;
@@ -131,27 +129,6 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         projects::update_project,
         projects::update_project_name,
         projects::delete_project,
-        // SpecFlow board task commands
-        specflow::get_board_tasks,
-        specflow::get_board_task_tree,
-        specflow::create_board_task,
-        specflow::update_board_task,
-        specflow::delete_board_task,
-        specflow::move_board_task,
-        // SpecFlow board eval commands
-        specflow::get_board_evals,
-        specflow::create_board_eval,
-        specflow::update_board_eval,
-        specflow::delete_board_eval,
-        // Board bookmark commands
-        specflow::get_bookmarks,
-        specflow::save_bookmark,
-        specflow::delete_bookmark,
-        // Board sync commands
-        specflow::export_board_for_agent,
-        specflow::import_board_from_agent,
-        specflow::get_board_directory,
-        specflow::poll_board_changes,
         // Unified Gyp commands
         gyp::start_gyp_session,
         gyp::send_gyp_message,
@@ -159,16 +136,6 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         gyp::get_gyp_history,
         gyp::clear_gyp_history,
         gyp::stop_gyp_session,
-        // Dispatch commands
-        dispatch::preview_dispatch,
-        dispatch::prepare_dispatch,
-        dispatch::prepare_multi_dispatch,
-        dispatch::dispatch_board_run,
-        dispatch::get_multi_dispatch_scope,
-        dispatch::record_dispatch,
-        dispatch::get_task_runs,
-        dispatch::get_all_task_runs,
-        dispatch::create_dispatch_snapshot,
         // Delivery commands
         delivery::get_delivery_state,
         delivery::check_merge_state,
@@ -187,6 +154,7 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         delta::update_draft_node,
         delta::delete_draft_node,
         delta::move_draft_node,
+        delta::reset_project_tree,
         delta::compute_tree_diff,
         delta::get_diff_summary,
         delta::dispatch_deltas,
@@ -195,5 +163,6 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         delta::complete_live_node,
         delta::complete_revert,
         delta::get_dual_trees,
+        delta::sync_gyp_changes,
     ]
 }

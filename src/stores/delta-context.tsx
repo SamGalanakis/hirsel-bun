@@ -53,6 +53,7 @@ interface DeltaState {
   updateDraftNode: (nodeId: string, request: UpdateDraftNodeRequest) => Promise<DraftNode | null>;
   deleteDraftNode: (nodeId: string) => Promise<boolean>;
   moveDraftNode: (nodeId: string, newParentId: string | null, newPosition: number) => Promise<boolean>;
+  resetTree: () => Promise<boolean>;
   dispatch: () => Promise<DeltaDispatchResponse | null>;
   toggleDeltaIndicators: () => void;
 }
@@ -191,6 +192,22 @@ export const DeltaProvider: ParentComponent = (props) => {
     }
   };
 
+  const resetTree = async (): Promise<boolean> => {
+    const projectId = project.selectedProjectId();
+    if (!projectId) return false;
+
+    try {
+      await invoke('reset_project_tree', { projectId });
+      await refreshTrees();
+      window.toast?.success('Tree reset successfully');
+      return true;
+    } catch (e) {
+      console.error('Failed to reset tree:', e);
+      window.toast?.error(`Failed to reset tree: ${e}`);
+      return false;
+    }
+  };
+
   const dispatch = async (): Promise<DeltaDispatchResponse | null> => {
     const projectId = project.selectedProjectId();
     if (!projectId) return null;
@@ -233,17 +250,40 @@ export const DeltaProvider: ParentComponent = (props) => {
     }
   });
 
-  // Poll for changes
+  // Poll for changes (including Gyp sync)
   createEffect(() => {
     const projectId = project.selectedProjectId();
     if (!projectId) return;
 
     const interval = setInterval(async () => {
       // Only refresh if not currently dispatching
-      if (!dispatchPending()) {
-        await refreshTrees();
+      if (dispatchPending()) return;
+
+      try {
+        // Sync Gyp file changes first
+        await invoke('sync_gyp_changes', { projectId });
+
+        // Load trees and compare before updating to avoid flicker
+        const response = await invoke<DualTreeResponse>('get_dual_trees', { projectId });
+
+        // Only update if data actually changed (simple JSON comparison)
+        const newDraftJson = JSON.stringify(response.draft);
+        const newLiveJson = JSON.stringify(response.live);
+        const currentDraftJson = JSON.stringify(draftTree());
+        const currentLiveJson = JSON.stringify(liveTree());
+
+        if (newDraftJson !== currentDraftJson || newLiveJson !== currentLiveJson) {
+          batch(() => {
+            setDraftTree(response.draft);
+            setLiveTree(response.live);
+            setDiff(response.diff);
+            setProjectRun(response.projectRun);
+          });
+        }
+      } catch (e) {
+        // Silently ignore poll errors
       }
-    }, 3000);
+    }, 2000);
 
     onCleanup(() => clearInterval(interval));
   });
@@ -267,6 +307,7 @@ export const DeltaProvider: ParentComponent = (props) => {
     updateDraftNode,
     deleteDraftNode,
     moveDraftNode,
+    resetTree,
     dispatch,
     toggleDeltaIndicators,
   };

@@ -18,6 +18,7 @@ pub enum NodeType {
     #[default]
     Task,
     Eval,
+    Project, // Root node representing the project
 }
 
 impl NodeType {
@@ -25,12 +26,14 @@ impl NodeType {
         match self {
             Self::Task => "task",
             Self::Eval => "eval",
+            Self::Project => "project",
         }
     }
 
     pub fn from_str(s: &str) -> Self {
         match s {
             "eval" => Self::Eval,
+            "project" => Self::Project,
             _ => Self::Task,
         }
     }

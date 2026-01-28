@@ -4,11 +4,100 @@
 
 use rusqlite::{params, Connection, Row as SqliteRow};
 use std::collections::HashMap;
+use std::sync::Once;
 use uuid::Uuid;
 
 use super::types::*;
 use crate::core::config::global_db_path;
 use crate::core::names::slugify;
+use crate::core::project::{ProjectStore, UpdateProjectRequest};
+
+/// Schema for delta tables
+const SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS draft_nodes (
+    id TEXT PRIMARY KEY,
+    project_id INTEGER NOT NULL,
+    parent_id TEXT,
+    position INTEGER NOT NULL DEFAULT 0,
+    name TEXT NOT NULL,
+    node_type TEXT NOT NULL DEFAULT 'task',
+    content TEXT NOT NULL DEFAULT '',
+    validates TEXT DEFAULT '[]',
+    x REAL,
+    y REAL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_draft_nodes_project ON draft_nodes(project_id);
+CREATE INDEX IF NOT EXISTS idx_draft_nodes_parent ON draft_nodes(parent_id);
+
+CREATE TABLE IF NOT EXISTS live_nodes (
+    id TEXT PRIMARY KEY,
+    project_id INTEGER NOT NULL,
+    draft_node_id TEXT,
+    parent_id TEXT,
+    position INTEGER NOT NULL DEFAULT 0,
+    name TEXT NOT NULL,
+    node_type TEXT NOT NULL DEFAULT 'task',
+    content TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    validates TEXT DEFAULT '[]',
+    x REAL,
+    y REAL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    last_commit_sha TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_live_nodes_project ON live_nodes(project_id);
+CREATE INDEX IF NOT EXISTS idx_live_nodes_parent ON live_nodes(parent_id);
+
+CREATE TABLE IF NOT EXISTS delta_submissions (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL,
+    batch_id INTEGER,
+    delta_type TEXT NOT NULL,
+    draft_node_id TEXT,
+    live_node_id TEXT,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    priority INTEGER DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',
+    refs TEXT DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    processed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_delta_submissions_project ON delta_submissions(project_id);
+CREATE INDEX IF NOT EXISTS idx_delta_submissions_batch ON delta_submissions(batch_id);
+
+CREATE TABLE IF NOT EXISTS project_runs (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL UNIQUE,
+    run_name TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'paused',
+    created_at TEXT NOT NULL,
+    last_dispatch_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_runs_project ON project_runs(project_id);
+"#;
+
+static SCHEMA_INIT: Once = Once::new();
+
+fn ensure_schema(db: &Connection) -> Result<(), rusqlite::Error> {
+    SCHEMA_INIT.call_once(|| {
+        if let Err(e) = db.execute_batch(SCHEMA) {
+            tracing::error!("Failed to initialize delta schema: {}", e);
+        }
+    });
+    // Also try to run it in case the Once already ran but on a different db connection
+    // (IF NOT EXISTS makes this safe)
+    db.execute_batch(SCHEMA)?;
+    Ok(())
+}
 
 /// Error type for delta state operations
 #[derive(Debug, thiserror::Error)]
@@ -23,6 +112,16 @@ pub enum DeltaStateError {
     LiveNodeNotFound(String),
     #[error("Project run not found for project: {0}")]
     ProjectRunNotFound(i64),
+    #[error("Parent node not found: {0}")]
+    ParentNodeNotFound(String),
+    #[error("Eval nodes must validate at least one task")]
+    EvalValidatesEmpty,
+    #[error("Cannot move node to root - a root already exists")]
+    CannotCreateSecondRoot,
+    #[error("Cannot delete root node - delete the project instead")]
+    CannotDeleteRoot,
+    #[error("Project error: {0}")]
+    Project(String),
 }
 
 pub type DeltaStateResult<T> = Result<T, DeltaStateError>;
@@ -38,12 +137,13 @@ impl DeltaState {
         Self { project_id }
     }
 
-    /// Open database connection
+    /// Open database connection and ensure schema exists
     fn open_db(&self) -> DeltaStateResult<Connection> {
         let db = Connection::open(global_db_path())?;
         db.busy_timeout(std::time::Duration::from_secs(30))?;
         db.pragma_update(None, "journal_mode", "WAL")?;
         db.pragma_update(None, "foreign_keys", "ON")?;
+        ensure_schema(&db)?;
         Ok(db)
     }
 
@@ -130,17 +230,55 @@ impl DeltaState {
     }
 
     /// Create a new draft node
+    ///
+    /// Validation rules:
+    /// - If parent_id is provided, it must reference an existing node
+    /// - If parent_id is not provided, auto-assign to root node (if one exists)
+    /// - Eval nodes must have at least one task in validates
     pub fn create_draft_node(&self, req: &CreateDraftNodeRequest) -> DeltaStateResult<DraftNode> {
         let db = self.open_db()?;
+
+        // Validate: Eval nodes must have non-empty validates
+        if req.node_type == NodeType::Eval && req.validates.is_empty() {
+            return Err(DeltaStateError::EvalValidatesEmpty);
+        }
+
+        // Determine parent_id with auto-assignment to root
+        let parent_id = match &req.parent_id {
+            Some(pid) => {
+                // Validate that parent exists
+                let exists: bool = db.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM draft_nodes WHERE id = ?1 AND project_id = ?2)",
+                    params![pid, self.project_id],
+                    |row| row.get(0),
+                )?;
+                if !exists {
+                    return Err(DeltaStateError::ParentNodeNotFound(pid.clone()));
+                }
+                Some(pid.clone())
+            }
+            None => {
+                // Check if a root node already exists - if so, auto-assign to it
+                let root_id: Option<String> = db
+                    .query_row(
+                        "SELECT id FROM draft_nodes WHERE parent_id IS NULL AND project_id = ?1 ORDER BY position LIMIT 1",
+                        [self.project_id],
+                        |row| row.get(0),
+                    )
+                    .ok();
+                root_id // None means this will be the first root node
+            }
+        };
+
         let id = self.generate_slug(&db, "draft_nodes", &req.name)?;
         let now = self.now();
 
         // Get position (append to end of siblings)
-        let position: i32 = match &req.parent_id {
-            Some(parent_id) => db
+        let position: i32 = match &parent_id {
+            Some(pid) => db
                 .query_row(
                     "SELECT COALESCE(MAX(position), -1) FROM draft_nodes WHERE parent_id = ?1 AND project_id = ?2",
-                    params![parent_id, self.project_id],
+                    params![pid, self.project_id],
                     |row| row.get(0),
                 )
                 .unwrap_or(-1)
@@ -163,7 +301,7 @@ impl DeltaState {
             params![
                 &id,
                 self.project_id,
-                &req.parent_id,
+                &parent_id,
                 position,
                 &req.name,
                 req.node_type.as_str(),
@@ -180,6 +318,11 @@ impl DeltaState {
     }
 
     /// Update a draft node
+    ///
+    /// Validation: Eval nodes cannot have validates cleared to empty
+    ///
+    /// Special behavior: If updating a Project (root) node's name, the project
+    /// name is also updated to keep them in sync.
     pub fn update_draft_node(
         &self,
         id: &str,
@@ -187,8 +330,34 @@ impl DeltaState {
     ) -> DeltaStateResult<DraftNode> {
         let db = self.open_db()?;
 
-        // Verify exists
-        let _ = self.get_draft_node(id)?;
+        // Verify exists and get current state
+        let current = self.get_draft_node(id)?;
+
+        // Validate: Eval nodes cannot have empty validates
+        if current.node_type == NodeType::Eval {
+            if let Some(ref validates) = req.validates {
+                if validates.is_empty() {
+                    return Err(DeltaStateError::EvalValidatesEmpty);
+                }
+            }
+        }
+
+        // If updating a Project root node's name, sync with project name
+        if current.node_type == NodeType::Project {
+            if let Some(ref name) = req.name {
+                let store =
+                    ProjectStore::open().map_err(|e| DeltaStateError::Project(e.to_string()))?;
+                store
+                    .update_project(
+                        self.project_id,
+                        &UpdateProjectRequest {
+                            name: Some(name.clone()),
+                            ..Default::default()
+                        },
+                    )
+                    .map_err(|e| DeltaStateError::Project(e.to_string()))?;
+            }
+        }
 
         let now = self.now();
         let mut updates = vec!["updated_at = ?1".to_string()];
@@ -233,20 +402,65 @@ impl DeltaState {
         self.get_draft_node(id)
     }
 
-    /// Delete a draft node (and all descendants via CASCADE)
+    /// Delete a draft node and all its descendants
+    ///
+    /// Note: Root nodes (node_type = 'project') cannot be deleted directly.
+    /// Use delete_project instead.
     pub fn delete_draft_node(&self, id: &str) -> DeltaStateResult<()> {
         let db = self.open_db()?;
-        let deleted = db.execute(
-            "DELETE FROM draft_nodes WHERE id = ?1 AND project_id = ?2",
-            params![id, self.project_id],
-        )?;
-        if deleted == 0 {
-            return Err(DeltaStateError::DraftNodeNotFound(id.to_string()));
+
+        // Verify node exists and check if it's a root node
+        let node = self.get_draft_node(id)?;
+        if node.node_type == NodeType::Project {
+            return Err(DeltaStateError::CannotDeleteRoot);
         }
+
+        // Collect all descendant IDs (recursive)
+        let mut to_delete = vec![id.to_string()];
+        let mut i = 0;
+        while i < to_delete.len() {
+            let parent_id = &to_delete[i];
+            let mut stmt =
+                db.prepare("SELECT id FROM draft_nodes WHERE parent_id = ?1 AND project_id = ?2")?;
+            let children: Vec<String> = stmt
+                .query_map(params![parent_id, self.project_id], |row| row.get(0))?
+                .filter_map(|r| r.ok())
+                .collect();
+            to_delete.extend(children);
+            i += 1;
+        }
+
+        // Delete all nodes (children first due to potential FK constraints)
+        for node_id in to_delete.iter().rev() {
+            db.execute(
+                "DELETE FROM draft_nodes WHERE id = ?1 AND project_id = ?2",
+                params![node_id, self.project_id],
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Reset tree - delete all draft nodes except the root (project node)
+    ///
+    /// This preserves the root node but removes all its children.
+    pub fn reset_tree(&self) -> DeltaStateResult<()> {
+        let db = self.open_db()?;
+
+        // Delete all draft nodes except the root (where parent_id IS NOT NULL)
+        db.execute(
+            "DELETE FROM draft_nodes WHERE project_id = ?1 AND parent_id IS NOT NULL",
+            [self.project_id],
+        )?;
+
         Ok(())
     }
 
     /// Move a draft node to a new parent and/or position
+    ///
+    /// Validation:
+    /// - Cannot move to null parent if a root already exists (would create second root)
+    /// - If new_parent_id is provided, it must exist
     pub fn move_draft_node(
         &self,
         id: &str,
@@ -254,14 +468,143 @@ impl DeltaState {
         new_position: i32,
     ) -> DeltaStateResult<()> {
         let db = self.open_db()?;
-        let now = self.now();
 
+        // Get current node to check if it's currently the root
+        let current_node = self.get_draft_node(id)?;
+
+        match new_parent_id {
+            Some(pid) => {
+                // Validate parent exists
+                let exists: bool = db.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM draft_nodes WHERE id = ?1 AND project_id = ?2)",
+                    params![pid, self.project_id],
+                    |row| row.get(0),
+                )?;
+                if !exists {
+                    return Err(DeltaStateError::ParentNodeNotFound(pid.to_string()));
+                }
+            }
+            None => {
+                // Moving to root - only allowed if this node is already root
+                // or if there's no other root
+                if current_node.parent_id.is_some() {
+                    // This node is not currently root, check if another root exists
+                    let root_exists: bool = db.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM draft_nodes WHERE parent_id IS NULL AND project_id = ?1)",
+                        [self.project_id],
+                        |row| row.get(0),
+                    )?;
+                    if root_exists {
+                        return Err(DeltaStateError::CannotCreateSecondRoot);
+                    }
+                }
+            }
+        }
+
+        let now = self.now();
         db.execute(
             "UPDATE draft_nodes SET parent_id = ?1, position = ?2, updated_at = ?3 WHERE id = ?4 AND project_id = ?5",
             params![new_parent_id, new_position, &now, id, self.project_id],
         )?;
 
         Ok(())
+    }
+
+    /// Create a draft node with a specific ID (for agent import)
+    ///
+    /// If the ID already exists, returns the existing node (idempotent).
+    /// Otherwise creates a new node with the given ID.
+    pub fn create_draft_node_with_id(
+        &self,
+        id: &str,
+        parent_id: &str,
+        name: &str,
+        node_type: NodeType,
+        content: &str,
+        validates: &[String],
+    ) -> DeltaStateResult<DraftNode> {
+        // Check if already exists
+        match self.get_draft_node(id) {
+            Ok(existing) => return Ok(existing),
+            Err(DeltaStateError::DraftNodeNotFound(_)) => {}
+            Err(e) => return Err(e),
+        }
+
+        let db = self.open_db()?;
+        let now = self.now();
+
+        // Validate parent exists
+        let exists: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM draft_nodes WHERE id = ?1 AND project_id = ?2)",
+            params![parent_id, self.project_id],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Err(DeltaStateError::ParentNodeNotFound(parent_id.to_string()));
+        }
+
+        // Get position (append to end of siblings)
+        let position: i32 = db
+            .query_row(
+                "SELECT COALESCE(MAX(position), -1) FROM draft_nodes WHERE parent_id = ?1 AND project_id = ?2",
+                params![parent_id, self.project_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(-1)
+            + 1;
+
+        let validates_json = serde_json::to_string(validates)?;
+
+        db.execute(
+            "INSERT INTO draft_nodes (id, project_id, parent_id, position, name, node_type, content, validates, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                id,
+                self.project_id,
+                parent_id,
+                position,
+                name,
+                node_type.as_str(),
+                content,
+                &validates_json,
+                &now,
+                &now
+            ],
+        )?;
+
+        self.get_draft_node(id)
+    }
+
+    /// Get the root node ID for this project
+    pub fn get_root_node_id(&self) -> DeltaStateResult<Option<String>> {
+        let db = self.open_db()?;
+        let id: Option<String> = db
+            .query_row(
+                "SELECT id FROM draft_nodes WHERE parent_id IS NULL AND project_id = ?1 ORDER BY position LIMIT 1",
+                [self.project_id],
+                |row| row.get(0),
+            )
+            .ok();
+        Ok(id)
+    }
+
+    /// Get direct children of a node
+    pub fn get_children_of(&self, parent_id: &str) -> DeltaStateResult<Vec<DraftNode>> {
+        let db = self.open_db()?;
+        let mut stmt = db.prepare(
+            "SELECT id, project_id, parent_id, position, name, node_type, content, validates, x, y, created_at, updated_at
+             FROM draft_nodes
+             WHERE parent_id = ?1 AND project_id = ?2
+             ORDER BY position",
+        )?;
+
+        let nodes = stmt
+            .query_map(params![parent_id, self.project_id], |row| {
+                self.row_to_draft_node(row)
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(nodes)
     }
 
     /// Build tree from flat draft nodes

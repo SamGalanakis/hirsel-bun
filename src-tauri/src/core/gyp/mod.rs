@@ -265,22 +265,10 @@ For spec/eval editing, use Read/Edit/Write tools on files in the workspace."#
                 r#"
 ### Focused Task
 
-You are working on: **{}** (id: `{}`)
-Task file: `{}/{}.json`"#,
-                f.task_name,
-                f.task_id,
-                board_dir.display(),
-                f.task_id
+You are working on: **{}** (id: `{}`)"#,
+                f.task_name, f.task_id
             ),
-            None => format!(
-                r#"
-### Board Directory
-
-`{}/`
-Each top-level task has its own file: `{{task-slug}}.json`
-List files in the directory to see all available tasks."#,
-                board_dir.display()
-            ),
+            None => String::new(),
         };
 
         let workspace_section = match workspace_path {
@@ -304,8 +292,10 @@ When working on tasks related to actual code:
             r#"## Current Scope: SpecFlow Board
 
 You're helping plan work on a SpecFlow board (project ID: {project_id}).
+Board file: `{board_dir}/board.json`
 {focus_section}{workspace_section}"#,
             project_id = project_id,
+            board_dir = board_dir.display(),
             focus_section = focus_section,
             workspace_section = workspace_section
         )
@@ -314,37 +304,38 @@ You're helping plan work on a SpecFlow board (project ID: {project_id}).
     fn board_data_model_section(&self) -> String {
         r#"## Board Data Model
 
-The board has two entity types:
+Everything lives in a single `board.json` file. There is no `status` field and no `nodeType` field.
 
-### Tasks (Nested Tree)
-- **id**: Slug identifier (e.g., "build-api")
+### Tasks (Nested Tree in `tasks` array)
+- **id**: Slug identifier (e.g., "build-api") — lowercase-hyphenated, unique across the board
 - **name**: Display name
-- **status**: todo | doing | done | blocked
-- **content**: Description/notes
-- **children**: Nested child tasks
+- **content**: Description/notes (markdown)
+- **children**: Nested child tasks (same shape, recursive)
 
-### Evals (Flat List)
-- **id**: Slug identifier (e.g., "api-test")
+### Evals (Flat List in `evals` array)
+- **id**: Slug identifier (e.g., "api-test") — lowercase-hyphenated, unique across the board
 - **name**: Display name
-- **status**: blocked | queued | in_progress | passed | failed
-- **content**: What to verify
+- **content**: What to verify (markdown)
 - **validates**: Array of task IDs this eval validates
 
 ### File Format
 ```json
 {
-  "task": {
-    "id": "build-api",
-    "name": "Build API",
-    "status": "doing",
-    "content": "...",
-    "children": [...]
-  },
+  "tasks": [
+    {
+      "id": "build-api",
+      "name": "Build API",
+      "content": "Description...",
+      "children": [
+        { "id": "setup-routes", "name": "Setup Routes", "content": "...", "children": [] }
+      ]
+    }
+  ],
   "evals": [
     {
       "id": "api-test",
       "name": "API Test",
-      "status": "queued",
+      "content": "Verify endpoints return correct status codes",
       "validates": ["build-api"]
     }
   ]
@@ -362,16 +353,25 @@ The board has two entity types:
         format!(
             r#"## Board Workflow
 
-1. List files in `{board_dir}/` to see all tasks
-2. Read task files to understand content
-3. Modify with Write tool (complete file write)
-4. Add new tasks by creating `{{task-slug}}.json`
+1. Read `{board_dir}/board.json` to see the full board
+2. Make changes to the JSON structure
+3. Write the complete `board.json` back after changes
 
 ### Common Operations
 
-**Add subtask**: Read parent file → add to children array → write back
-**Add eval**: Read task file → add to evals array → write back
-**Update status**: Change status field (todo → doing → done)"#,
+**Add task**: Add an object to the `tasks` array (or a task's `children` array for nesting)
+**Edit task**: Change `name` or `content` fields
+**Remove task**: Remove the object from the array
+**Nest/unnest**: Move a task into or out of another task's `children`
+**Add eval**: Add an object to the `evals` array with `validates` referencing task IDs
+**Edit eval**: Change `name`, `content`, or `validates` fields
+**Remove eval**: Remove from the `evals` array
+
+### ID Rules
+
+- Use lowercase-hyphenated slugs (e.g., "build-api", "setup-auth")
+- IDs must be unique across the entire board (tasks + evals)
+- Never reuse an ID that was previously deleted"#,
             board_dir = board_dir.display()
         )
     }
@@ -475,29 +475,13 @@ The board has two entity types:
                 // Run context is in system prompt, no per-message injection needed
                 user_message.to_string()
             }
-            GypScope::Board {
-                project_id, focus, ..
-            } => {
-                let board_dir = hirsel_dir()
-                    .join("projects")
-                    .join(project_id.to_string())
-                    .join("board");
-
-                match focus {
-                    Some(f) => format!(
-                        r#"[Working on task "{}" ({})]
-File: {}/{}.json
-
-{}"#,
-                        f.task_name,
-                        f.task_id,
-                        board_dir.display(),
-                        f.task_id,
-                        user_message
-                    ),
-                    None => user_message.to_string(),
-                }
-            }
+            GypScope::Board { focus, .. } => match focus {
+                Some(f) => format!(
+                    "[Working on task \"{}\" (id: {})]\n\n{}",
+                    f.task_name, f.task_id, user_message
+                ),
+                None => user_message.to_string(),
+            },
         }
     }
 }
@@ -528,6 +512,12 @@ mod tests {
         assert!(config.system_prompt.contains("SpecFlow Board"));
         assert!(config.system_prompt.contains("/home/user/myproject"));
         assert!(config.system_prompt.contains("project ID: 42"));
+        assert!(config.system_prompt.contains("board.json"));
+        // Data model describes the single-file format
+        assert!(config.system_prompt.contains("no `status` field"));
+        assert!(config.system_prompt.contains("no `nodeType` field"));
+        assert!(config.system_prompt.contains("\"tasks\""));
+        assert!(config.system_prompt.contains("\"evals\""));
         assert_eq!(config.working_dir, PathBuf::from("/home/user/myproject"));
         assert_eq!(config.history_scope.project_id, Some(42));
     }

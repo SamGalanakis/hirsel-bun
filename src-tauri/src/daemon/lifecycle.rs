@@ -14,6 +14,7 @@ use tokio::time::interval;
 
 use crate::core::api_types::RunStatus;
 use crate::core::config::{self, Config};
+use crate::core::delta::{list_working_project_runs, DeltaRunner};
 use crate::core::lifecycle::{
     LifecycleAction, LifecycleEvent, LifecycleManager, LocalLifecycleManager,
 };
@@ -58,6 +59,35 @@ pub async fn run_polling_loop(state: Arc<AppState>, config: DaemonConfig) {
                 // Process active run using LifecycleManager
                 if let Err(e) = process_active_run(&run.name).await {
                     tracing::warn!("[Daemon] Error processing run '{}': {}", run.name, e);
+                }
+            }
+        }
+
+        // Process working project runs (delta dispatch system)
+        if let Ok(project_runs) = list_working_project_runs() {
+            for (project_id, run_name) in project_runs {
+                has_active_runs = true;
+                last_active = Instant::now();
+
+                // Process delta submissions for this project run
+                let runner = DeltaRunner::new(project_id);
+                match runner.process_pending() {
+                    Ok(processed) => {
+                        if processed > 0 {
+                            tracing::info!(
+                                "[Daemon] Processed {} delta submissions for project run '{}'",
+                                processed,
+                                run_name
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "[Daemon] Error processing project run '{}': {}",
+                            run_name,
+                            e
+                        );
+                    }
                 }
             }
         }
