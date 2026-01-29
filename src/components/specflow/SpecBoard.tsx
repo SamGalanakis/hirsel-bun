@@ -27,72 +27,218 @@ import type {
 } from '../../lib/types';
 
 // =============================================================================
-// Layout Constants
+// Layout Constants (Horizontal Tree: root left → children right)
 // =============================================================================
 
-const NODE_WIDTH = 140;
-const NODE_HEIGHT = 32;
-const H_GAP = 24;
-const V_GAP = 20;
-const TREE_PADDING = 32;
+const MIN_NODE_WIDTH = 80;
+const MAX_NODE_WIDTH = 140;
+const NODE_HEIGHT = 26;
+const NODE_LINE_HEIGHT = 12;
+const SIBLING_GAP = 6;      // Vertical gap between siblings
+const LEVEL_GAP = 32;       // Horizontal gap between parent and children
+const TREE_PADDING = 24;
 const DIVIDER_WIDTH = 40;
+const CHAR_WIDTH = 5.5;
+const MAX_CHARS_PER_LINE = 16;
 
 interface NodePosition {
   x: number;
   y: number;
+  width: number;
+  height: number;
+  lines: string[]; // Wrapped text lines
 }
 
 // =============================================================================
-// Tree Layout Algorithm
+// Helper: Calculate node dimensions with text wrapping
 // =============================================================================
 
-function layoutTree<T extends { id: string; children: T[] }>(
+function calcNodeDimensions(name: string): { width: number; height: number; lines: string[] } {
+  const padding = 20; // dot (6px) + gaps + px padding
+
+  // If name fits on one line, use single line
+  if (name.length <= MAX_CHARS_PER_LINE) {
+    const textWidth = name.length * CHAR_WIDTH;
+    return {
+      width: Math.max(MIN_NODE_WIDTH, Math.min(MAX_NODE_WIDTH, textWidth + padding)),
+      height: NODE_HEIGHT,
+      lines: [name],
+    };
+  }
+
+  // Wrap text into multiple lines
+  const words = name.split(/\s+/);
+  const lines: string[] = [];
+  let currentLine = '';
+
+  for (const word of words) {
+    const testLine = currentLine ? `${currentLine} ${word}` : word;
+    if (testLine.length <= MAX_CHARS_PER_LINE) {
+      currentLine = testLine;
+    } else {
+      if (currentLine) lines.push(currentLine);
+      // If a single word is too long, truncate it
+      currentLine = word.length > MAX_CHARS_PER_LINE ? word.slice(0, MAX_CHARS_PER_LINE - 1) + '…' : word;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+
+  // Cap at 2 lines max
+  if (lines.length > 2) {
+    lines.length = 2;
+    lines[1] = lines[1].slice(0, -1) + '…';
+  }
+
+  const maxLineLength = Math.max(...lines.map(l => l.length));
+  const textWidth = maxLineLength * CHAR_WIDTH;
+  const height = NODE_HEIGHT + (lines.length - 1) * NODE_LINE_HEIGHT;
+
+  return {
+    width: Math.max(MIN_NODE_WIDTH, Math.min(MAX_NODE_WIDTH, textWidth + padding)),
+    height,
+    lines,
+  };
+}
+
+// =============================================================================
+// Horizontal Tree Layout Algorithm
+//
+// Root on LEFT, children flow RIGHT. Siblings stack VERTICALLY.
+// This is far more space-efficient for wide trees with many branches.
+// =============================================================================
+
+interface LayoutNode {
+  id: string;
+  name: string;
+  children: LayoutNode[];
+  x: number;       // Horizontal position (depth)
+  y: number;       // Vertical position (sibling order)
+  width: number;
+  height: number;
+  lines: string[];
+  subtreeHeight: number;  // Total height of this subtree
+}
+
+function layoutTree<T extends { id: string; name: string; children: T[] }>(
   roots: T[],
-  startX: number = 0
+  _startX: number = 0
 ): { positions: Map<string, NodePosition>; width: number; height: number } {
   const positions = new Map<string, NodePosition>();
 
   if (roots.length === 0) {
-    return { positions, width: NODE_WIDTH, height: NODE_HEIGHT };
+    return { positions, width: MIN_NODE_WIDTH, height: NODE_HEIGHT };
   }
 
-  let maxHeight = 0;
+  // Convert input tree to layout nodes
+  function toLayoutNode(node: T): LayoutNode {
+    const dims = calcNodeDimensions(node.name);
+    return {
+      id: node.id,
+      name: node.name,
+      children: node.children.map(c => toLayoutNode(c)),
+      x: 0,
+      y: 0,
+      width: dims.width,
+      height: dims.height,
+      lines: dims.lines,
+      subtreeHeight: 0,
+    };
+  }
 
-  function layoutNode(node: T, depth: number, xOffset: number): number {
+  // First pass: compute subtree heights (post-order)
+  function computeSubtreeHeights(node: LayoutNode): number {
     if (node.children.length === 0) {
-      const y = depth * (NODE_HEIGHT + V_GAP);
-      positions.set(node.id, { x: xOffset + NODE_WIDTH / 2, y });
-      maxHeight = Math.max(maxHeight, y + NODE_HEIGHT);
-      return NODE_WIDTH;
+      node.subtreeHeight = node.height;
+      return node.subtreeHeight;
     }
 
-    let childX = xOffset;
-    let totalWidth = 0;
+    let totalChildrenHeight = 0;
     for (const child of node.children) {
-      const childWidth = layoutNode(child, depth + 1, childX);
-      childX += childWidth + H_GAP;
-      totalWidth += childWidth + H_GAP;
+      totalChildrenHeight += computeSubtreeHeights(child);
     }
-    totalWidth -= H_GAP;
+    // Add gaps between children
+    totalChildrenHeight += (node.children.length - 1) * SIBLING_GAP;
 
-    const nodeX = xOffset + totalWidth / 2;
-    const y = depth * (NODE_HEIGHT + V_GAP);
-    positions.set(node.id, { x: nodeX, y });
-    maxHeight = Math.max(maxHeight, y + NODE_HEIGHT);
-
-    return Math.max(NODE_WIDTH, totalWidth);
+    // Subtree height is max of node height and children's total height
+    node.subtreeHeight = Math.max(node.height, totalChildrenHeight);
+    return node.subtreeHeight;
   }
 
-  let currentX = startX;
-  for (const root of roots) {
-    const width = layoutNode(root, 0, currentX);
-    currentX += width + H_GAP * 2;
+  // Second pass: assign positions (pre-order)
+  function assignPositions(node: LayoutNode, depth: number, topY: number): void {
+    // X position based on depth (horizontal)
+    node.x = TREE_PADDING + depth * (MAX_NODE_WIDTH + LEVEL_GAP);
+
+    if (node.children.length === 0) {
+      // Leaf node: center vertically in its allocated space
+      node.y = topY + node.subtreeHeight / 2 - node.height / 2;
+    } else {
+      // Internal node: position children first, then center parent
+      let childY = topY;
+
+      // If children total height < subtree height, center children
+      let totalChildrenHeight = 0;
+      for (const child of node.children) {
+        totalChildrenHeight += child.subtreeHeight;
+      }
+      totalChildrenHeight += (node.children.length - 1) * SIBLING_GAP;
+
+      if (totalChildrenHeight < node.subtreeHeight) {
+        childY = topY + (node.subtreeHeight - totalChildrenHeight) / 2;
+      }
+
+      for (const child of node.children) {
+        assignPositions(child, depth + 1, childY);
+        childY += child.subtreeHeight + SIBLING_GAP;
+      }
+
+      // Center parent vertically among its children
+      const firstChildCenter = node.children[0].y + node.children[0].height / 2;
+      const lastChild = node.children[node.children.length - 1];
+      const lastChildCenter = lastChild.y + lastChild.height / 2;
+      const childrenMidpoint = (firstChildCenter + lastChildCenter) / 2;
+
+      node.y = childrenMidpoint - node.height / 2;
+    }
+
+    // Store position
+    positions.set(node.id, {
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+      lines: node.lines,
+    });
   }
+
+  // Layout all root trees
+  const layoutRoots = roots.map(r => toLayoutNode(r));
+
+  // Compute heights for all roots
+  for (const root of layoutRoots) {
+    computeSubtreeHeights(root);
+  }
+
+  // Assign positions, stacking roots vertically
+  let currentY = TREE_PADDING;
+  for (const root of layoutRoots) {
+    assignPositions(root, 0, currentY);
+    currentY += root.subtreeHeight + SIBLING_GAP * 2;
+  }
+
+  // Compute bounds
+  const allPositions = Array.from(positions.values());
+  if (allPositions.length === 0) {
+    return { positions, width: MIN_NODE_WIDTH, height: NODE_HEIGHT };
+  }
+
+  const maxX = Math.max(...allPositions.map(p => p.x + p.width));
+  const maxY = Math.max(...allPositions.map(p => p.y + p.height));
 
   return {
     positions,
-    width: Math.max(NODE_WIDTH, currentX - startX - H_GAP * 2),
-    height: maxHeight,
+    width: maxX + TREE_PADDING,
+    height: maxY + TREE_PADDING,
   };
 }
 
@@ -117,75 +263,108 @@ const DraftNodeCard: Component<{
   const isEval = () => props.node.nodeType === 'eval';
   const isProject = () => props.node.nodeType === 'project';
 
-  const getBorderColor = () => {
-    if (isNew()) return 'rgba(125, 153, 112, 0.6)';
-    if (isModified()) return 'rgba(212, 165, 116, 0.6)';
-    if (props.selected) return 'rgba(212, 165, 116, 0.5)';
-    if (isProject()) return 'rgba(212, 165, 116, 0.3)';
-    return 'rgba(64, 64, 64, 0.4)';
+  // Style based on node type: Project (amber), Task (neutral), Eval (sage/dashed)
+  const getStyles = () => {
+    if (isProject()) {
+      return {
+        bg: 'rgba(45, 42, 38, 0.95)',
+        border: props.selected ? 'rgba(212, 165, 116, 0.6)' : 'rgba(212, 165, 116, 0.3)',
+        borderStyle: 'solid',
+        textColor: 'var(--wool-100)',
+        accent: 'var(--amber-500)',
+      };
+    }
+    if (isEval()) {
+      // Eval nodes: sage tint, dashed border
+      const baseBorder = isNew() ? 'rgba(125, 153, 112, 0.6)'
+        : isModified() ? 'rgba(125, 153, 112, 0.5)'
+        : props.selected ? 'rgba(125, 153, 112, 0.5)'
+        : 'rgba(125, 153, 112, 0.3)';
+      return {
+        bg: isNew() || isModified() ? 'rgba(125, 153, 112, 0.12)' : 'rgba(125, 153, 112, 0.06)',
+        border: baseBorder,
+        borderStyle: 'dashed',
+        textColor: 'var(--wool-200)',
+        accent: 'var(--sage)',
+      };
+    }
+    // Task nodes: standard styling
+    const baseBorder = isNew() ? 'rgba(125, 153, 112, 0.6)'
+      : isModified() ? 'rgba(212, 165, 116, 0.6)'
+      : props.selected ? 'rgba(212, 165, 116, 0.5)'
+      : 'rgba(64, 64, 64, 0.4)';
+    return {
+      bg: isNew() ? 'rgba(125, 153, 112, 0.08)'
+        : isModified() ? 'rgba(212, 165, 116, 0.08)'
+        : 'rgba(36, 36, 36, 0.9)',
+      border: baseBorder,
+      borderStyle: 'solid',
+      textColor: 'var(--wool-200)',
+      accent: 'var(--amber-500)',
+    };
   };
 
-  const getBgColor = () => {
-    if (isNew()) return 'rgba(125, 153, 112, 0.08)';
-    if (isModified()) return 'rgba(212, 165, 116, 0.08)';
-    if (isProject()) return 'rgba(45, 42, 38, 0.95)';
-    return 'rgba(36, 36, 36, 0.9)';
-  };
+  const styles = () => getStyles();
+  const isMultiLine = () => props.position.lines.length > 1;
 
   return (
     <div
       class={`absolute cursor-pointer group ${props.selected ? 'z-10' : ''}`}
       style={{
-        left: `${props.position.x - NODE_WIDTH / 2}px`,
+        left: `${props.position.x}px`,
         top: `${props.position.y}px`,
-        width: `${NODE_WIDTH}px`,
-        height: `${NODE_HEIGHT}px`,
+        width: `${props.position.width}px`,
+        height: `${props.position.height}px`,
       }}
       onClick={() => props.onSelect()}
       onDblClick={() => props.onDoubleClick()}
       onContextMenu={(e) => props.onContextMenu(e)}
     >
       <div
-        class="h-full rounded flex items-center gap-1.5 px-2"
+        class={`h-full flex gap-1.5 px-2 ${isMultiLine() ? 'flex-col justify-center py-1' : 'items-center'}`}
         style={{
-          background: getBgColor(),
-          border: `1px solid ${getBorderColor()}`,
+          background: styles().bg,
+          border: `1px ${styles().borderStyle} ${styles().border}`,
+          'border-radius': isEval() ? '4px' : '6px',
           'box-shadow': props.selected ? '0 2px 8px rgba(0,0,0,0.25)' : undefined,
         }}
       >
-        {/* Type indicator */}
-        <div
-          class="w-1.5 h-1.5 rounded-full flex-shrink-0"
-          style={{
-            background: isProject() ? 'var(--amber-500)' : isEval() ? 'var(--sage)' : 'var(--amber-500)',
-            opacity: isProject() ? 1 : 0.7,
-          }}
-        />
-
-        {/* Name */}
-        <span
-          class="text-[11px] font-medium truncate flex-1"
-          style={{ color: isProject() ? 'var(--wool-100)' : 'var(--wool-200)' }}
-        >
-          {props.node.name}
-        </span>
-
-        {/* Delta badge */}
-        <Show when={isNew()}>
-          <span class="text-[8px] px-1 py-px rounded bg-sage/20 text-sage font-medium">+</span>
+        {/* Left accent bar for type (only for project and eval) */}
+        <Show when={isProject() || isEval()}>
+          <div
+            class="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full"
+            style={{ background: styles().accent, opacity: 0.7 }}
+          />
         </Show>
-        <Show when={isModified()}>
-          <span class="text-[8px] px-1 py-px rounded bg-amber-500/20 text-amber-400 font-medium">~</span>
+
+        {/* Eval checkmark icon */}
+        <Show when={isEval() && !isMultiLine()}>
+          <svg class="w-3 h-3 flex-shrink-0" style={{ color: 'var(--sage)', opacity: 0.7 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
         </Show>
+
+        {/* Name lines */}
+        <div class={`flex-1 min-w-0 ${isMultiLine() ? 'flex flex-col gap-0.5' : ''}`}>
+          <For each={props.position.lines}>
+            {(line, i) => (
+              <div class="flex items-center gap-1.5">
+                <Show when={isEval() && isMultiLine() && i() === 0}>
+                  <svg class="w-3 h-3 flex-shrink-0" style={{ color: 'var(--sage)', opacity: 0.7 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </Show>
+                <span
+                  class="text-[10px] font-medium truncate leading-tight"
+                  style={{ color: styles().textColor }}
+                >
+                  {line}
+                </span>
+              </div>
+            )}
+          </For>
+        </div>
       </div>
-
-      {/* Left edge indicator for delta */}
-      <Show when={props.showDelta && (isNew() || isModified())}>
-        <div
-          class="absolute left-0 top-1 bottom-1 w-0.5 rounded-full"
-          style={{ background: isNew() ? 'var(--sage)' : 'var(--amber-500)' }}
-        />
-      </Show>
     </div>
   );
 };
@@ -198,6 +377,8 @@ const LiveNodeCard: Component<{
 }> = (props) => {
   const isDeleted = () =>
     props.showDelta && props.diff?.deletedNodes.some((n) => n.id === props.node.id);
+  const isEval = () => props.node.nodeType === 'eval';
+  const isProject = () => props.node.nodeType === 'project';
 
   const statusStyles: Record<LiveNodeStatus, { border: string; bg: string; dot: string }> = {
     pending: {
@@ -222,54 +403,102 @@ const LiveNodeCard: Component<{
     },
   };
 
-  const style = () => statusStyles[props.node.status] || statusStyles.pending;
+  const baseStyle = () => statusStyles[props.node.status] || statusStyles.pending;
   const isWorking = () => props.node.status === 'working';
+  const isMultiLine = () => props.position.lines.length > 1;
+
+  // Eval nodes get dashed border and sage tint overlay
+  const getBorderStyle = () => isEval() ? 'dashed' : 'solid';
+  const getBg = () => {
+    if (isDeleted()) return 'rgba(196, 92, 74, 0.08)';
+    if (isEval()) {
+      // Blend eval sage with status color
+      const statusBg = baseStyle().bg;
+      return props.node.status === 'pending' ? 'rgba(125, 153, 112, 0.04)' : statusBg;
+    }
+    return baseStyle().bg;
+  };
 
   return (
     <div
       class="absolute"
       style={{
-        left: `${props.position.x - NODE_WIDTH / 2}px`,
+        left: `${props.position.x}px`,
         top: `${props.position.y}px`,
-        width: `${NODE_WIDTH}px`,
-        height: `${NODE_HEIGHT}px`,
+        width: `${props.position.width}px`,
+        height: `${props.position.height}px`,
       }}
     >
       <div
-        class={`h-full rounded flex items-center gap-1.5 px-2 ${isDeleted() ? 'opacity-40' : ''}`}
+        class={`h-full flex gap-1.5 px-2 ${isDeleted() ? 'opacity-40' : ''} ${isMultiLine() ? 'flex-col justify-center py-1' : 'items-center'}`}
         style={{
-          background: isDeleted() ? 'rgba(196, 92, 74, 0.08)' : style().bg,
-          border: `1px solid ${isDeleted() ? 'rgba(196, 92, 74, 0.4)' : style().border}`,
+          background: getBg(),
+          border: `1px ${getBorderStyle()} ${isDeleted() ? 'rgba(196, 92, 74, 0.4)' : baseStyle().border}`,
+          'border-radius': isEval() ? '4px' : '6px',
         }}
       >
-        {/* Status dot */}
-        <div class="relative flex-shrink-0">
+        {/* Left accent for project/eval */}
+        <Show when={isProject() || isEval()}>
           <div
-            class={`w-1.5 h-1.5 rounded-full ${isWorking() ? 'animate-pulse' : ''}`}
-            style={{ background: style().dot }}
+            class="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full"
+            style={{
+              background: isEval() ? 'var(--sage)' : 'var(--amber-500)',
+              opacity: 0.5,
+            }}
           />
+        </Show>
+
+        {/* Status dot for single line */}
+        <Show when={!isMultiLine()}>
+          <div class="relative flex-shrink-0">
+            <div
+              class={`w-1.5 h-1.5 rounded-full ${isWorking() ? 'animate-pulse' : ''}`}
+              style={{ background: baseStyle().dot }}
+            />
+          </div>
+        </Show>
+
+        {/* Eval icon (shown alongside status dot) */}
+        <Show when={isEval() && !isMultiLine()}>
+          <svg class="w-2.5 h-2.5 flex-shrink-0 -ml-0.5" style={{ color: 'var(--sage)', opacity: 0.6 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </Show>
+
+        {/* Name lines */}
+        <div class={`flex-1 min-w-0 ${isMultiLine() ? 'flex flex-col gap-0.5' : ''}`}>
+          <For each={props.position.lines}>
+            {(line, i) => (
+              <div class="flex items-center gap-1.5">
+                <Show when={isMultiLine() && i() === 0}>
+                  <div class="flex items-center gap-1">
+                    <div
+                      class={`w-1.5 h-1.5 rounded-full ${isWorking() ? 'animate-pulse' : ''}`}
+                      style={{ background: baseStyle().dot }}
+                    />
+                    <Show when={isEval()}>
+                      <svg class="w-2.5 h-2.5 flex-shrink-0" style={{ color: 'var(--sage)', opacity: 0.6 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </Show>
+                  </div>
+                </Show>
+                <span class="text-[10px] font-medium text-wool-300 truncate leading-tight">
+                  {line}
+                </span>
+              </div>
+            )}
+          </For>
         </div>
-
-        {/* Name */}
-        <span class="text-[11px] font-medium text-wool-300 truncate flex-1">
-          {props.node.name}
-        </span>
-
-        {/* Status indicator */}
-        <Show when={props.node.status === 'done'}>
-          <svg class="w-3 h-3 text-sage" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
-          </svg>
-        </Show>
-        <Show when={props.node.status === 'failed'}>
-          <svg class="w-3 h-3 text-terra" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </Show>
-        <Show when={isDeleted()}>
-          <span class="text-[8px] px-1 py-px rounded bg-terra/20 text-terra font-medium">-</span>
-        </Show>
       </div>
+
+      {/* Left edge indicator for deleted */}
+      <Show when={isDeleted()}>
+        <div
+          class="absolute left-0 top-1 bottom-1 w-0.5 rounded-full"
+          style={{ background: 'var(--terra)' }}
+        />
+      </Show>
     </div>
   );
 };
@@ -311,20 +540,21 @@ const TreeConnectors: Component<{
     <svg class="absolute inset-0 pointer-events-none overflow-visible" style={{ 'z-index': 0 }}>
       <For each={paths()}>
         {(edge) => {
-          const x1 = edge.from.x;
-          const y1 = edge.from.y + NODE_HEIGHT;
+          // Horizontal tree: parent right edge → child left edge
+          const x1 = edge.from.x + edge.from.width;
+          const y1 = edge.from.y + edge.from.height / 2;
           const x2 = edge.to.x;
-          const y2 = edge.to.y;
-          const midY = (y1 + y2) / 2;
+          const y2 = edge.to.y + edge.to.height / 2;
+          const midX = (x1 + x2) / 2;
 
           return (
             <path
-              d={`M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`}
+              d={`M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`}
               fill="none"
               stroke={props.color}
               stroke-width="1"
               stroke-dasharray={props.dashed ? '3 2' : undefined}
-              opacity="0.35"
+              opacity="0.4"
             />
           );
         }}
@@ -363,6 +593,13 @@ export const SpecBoard: Component = () => {
     isBackground: boolean;
   } | null>(null);
 
+  // Pan and zoom state
+  const [zoom, setZoom] = createSignal(1);
+  const [pan, setPan] = createSignal({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = createSignal(false);
+  const [panStart, setPanStart] = createSignal({ x: 0, y: 0 });
+  let canvasRef: HTMLDivElement | undefined;
+
   // Computed layouts
   const draftLayout = createMemo(() => layoutTree(delta.draftTree(), 0));
   const liveLayout = createMemo(() => layoutTree(delta.liveTree(), 0));
@@ -370,33 +607,59 @@ export const SpecBoard: Component = () => {
   // Check if we have a live tree (post-dispatch)
   const hasLiveTree = () => delta.liveTree().length > 0;
 
-  // Total canvas dimensions
+  // Section box padding for labels
+  const SECTION_PADDING = 28; // Space for label at top
+  const SECTION_GAP = 16;     // Gap between sections (horizontal)
+
+  // Total canvas dimensions (side-by-side: Live left, Draft right)
   const canvasDimensions = createMemo(() => {
     const draft = draftLayout();
     const live = liveLayout();
 
     if (!hasLiveTree()) {
+      // Single tree (draft only) - add section box when there's content
+      const hasDraft = delta.draftTree().length > 0;
       return {
-        width: draft.width + TREE_PADDING * 2,
-        height: Math.max(draft.height, NODE_HEIGHT) + TREE_PADDING * 2,
-        draftOffset: TREE_PADDING,
-        liveOffset: 0,
-        dividerOffset: 0,
-        showDivider: false,
+        width: draft.width + (hasDraft ? TREE_PADDING : 0),
+        height: Math.max(draft.height, NODE_HEIGHT) + (hasDraft ? SECTION_PADDING : 0),
+        // Draft positioning
+        draftBoxLeft: 0,
+        draftBoxWidth: draft.width + TREE_PADDING,
+        draftContentLeft: 0,
+        draftContentTop: hasDraft ? SECTION_PADDING : 0,
+        draftHeight: draft.height,
+        // No live
+        liveBoxLeft: 0,
+        liveBoxWidth: 0,
+        liveContentLeft: 0,
+        liveContentTop: 0,
+        liveHeight: 0,
+        showBothSections: false,
       };
     }
 
-    const liveWidth = Math.max(live.width, NODE_WIDTH);
-    const totalWidth = liveWidth + DIVIDER_WIDTH + draft.width + TREE_PADDING * 2;
-    const maxHeight = Math.max(draft.height, live.height, NODE_HEIGHT) + TREE_PADDING * 2;
+    // Both trees present - side by side (Live LEFT, Draft RIGHT)
+    const liveBoxWidth = live.width + TREE_PADDING;
+    const draftBoxWidth = draft.width + TREE_PADDING;
+    const totalWidth = liveBoxWidth + SECTION_GAP + draftBoxWidth;
+    const maxHeight = Math.max(live.height, draft.height) + SECTION_PADDING;
 
     return {
       width: totalWidth,
       height: maxHeight,
-      liveOffset: TREE_PADDING,
-      dividerOffset: TREE_PADDING + liveWidth + DIVIDER_WIDTH / 2,
-      draftOffset: TREE_PADDING + liveWidth + DIVIDER_WIDTH,
-      showDivider: true,
+      // Live section (LEFT)
+      liveBoxLeft: 0,
+      liveBoxWidth: liveBoxWidth,
+      liveContentLeft: 0,
+      liveContentTop: SECTION_PADDING,
+      liveHeight: live.height,
+      // Draft section (RIGHT)
+      draftBoxLeft: liveBoxWidth + SECTION_GAP,
+      draftBoxWidth: draftBoxWidth,
+      draftContentLeft: liveBoxWidth + SECTION_GAP,
+      draftContentTop: SECTION_PADDING,
+      draftHeight: draft.height,
+      showBothSections: true,
     };
   });
 
@@ -599,6 +862,60 @@ export const SpecBoard: Component = () => {
     onCleanup(() => document.removeEventListener('keydown', handler));
   });
 
+  // Pan and zoom handlers
+  const handleWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    const newZoom = Math.max(0.25, Math.min(2, zoom() * delta));
+
+    // Zoom toward cursor position
+    if (canvasRef) {
+      const rect = canvasRef.getBoundingClientRect();
+      const cursorX = e.clientX - rect.left;
+      const cursorY = e.clientY - rect.top;
+
+      const currentPan = pan();
+      const scale = newZoom / zoom();
+
+      setPan({
+        x: cursorX - (cursorX - currentPan.x) * scale,
+        y: cursorY - (cursorY - currentPan.y) * scale,
+      });
+    }
+
+    setZoom(newZoom);
+  };
+
+  const handleMouseDown = (e: MouseEvent) => {
+    // Middle mouse button or space+left click for panning
+    if (e.button === 1 || (e.button === 0 && e.altKey)) {
+      e.preventDefault();
+      setIsPanning(true);
+      setPanStart({ x: e.clientX - pan().x, y: e.clientY - pan().y });
+    }
+  };
+
+  const handleMouseMove = (e: MouseEvent) => {
+    if (isPanning()) {
+      setPan({
+        x: e.clientX - panStart().x,
+        y: e.clientY - panStart().y,
+      });
+    }
+  };
+
+  const handleMouseUp = () => {
+    setIsPanning(false);
+  };
+
+  const resetView = () => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
+
+  const zoomIn = () => setZoom(z => Math.min(2, z * 1.2));
+  const zoomOut = () => setZoom(z => Math.max(0.25, z / 1.2));
+
   // ==========================================================================
   // Render
   // ==========================================================================
@@ -733,34 +1050,97 @@ export const SpecBoard: Component = () => {
           </div>
         </div>
 
-        {/* Canvas Area */}
-        <div class="flex-1 overflow-auto flex items-start justify-center p-4">
+        {/* Canvas Area with Pan/Zoom */}
+        <div
+          ref={canvasRef}
+          class="flex-1 overflow-hidden relative"
+          style={{
+            cursor: isPanning() ? 'grabbing' : 'default',
+            // Subtle dot grid background
+            'background-image': `radial-gradient(circle, rgba(90, 85, 80, 0.15) 1px, transparent 1px)`,
+            'background-size': '24px 24px',
+            'background-position': '12px 12px',
+          }}
+          onWheel={handleWheel}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+        >
+          {/* Zoom controls */}
+          <div class="absolute bottom-3 right-3 z-20 flex items-center gap-1 px-1 py-0.5 rounded"
+               style={{ background: 'rgba(30, 30, 30, 0.8)', border: '1px solid rgba(64, 64, 64, 0.4)' }}>
+            <button onClick={zoomOut} class="p-1 text-wool-400 hover:text-wool-200" title="Zoom out">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4" />
+              </svg>
+            </button>
+            <span class="text-[10px] text-wool-500 min-w-[36px] text-center">{Math.round(zoom() * 100)}%</span>
+            <button onClick={zoomIn} class="p-1 text-wool-400 hover:text-wool-200" title="Zoom in">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+            </button>
+            <button onClick={resetView} class="p-1 text-wool-400 hover:text-wool-200 ml-1" title="Reset view">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
+              </svg>
+            </button>
+          </div>
+
           <Show
             when={delta.draftTree().length > 0 || delta.liveTree().length > 0}
             fallback={<EmptyTreeState />}
           >
-            {/* Canvas container */}
+            {/* Transformed canvas container */}
             <div
-              class="relative"
+              class="absolute origin-top-left"
               style={{
+                transform: `translate(${pan().x}px, ${pan().y}px) scale(${zoom()})`,
                 width: `${canvasDimensions().width}px`,
                 height: `${canvasDimensions().height}px`,
               }}
               onContextMenu={(e) => {
-                if ((e.target as HTMLElement).classList.contains('relative')) {
+                if ((e.target as HTMLElement).classList.contains('absolute')) {
                   handleContextMenu(e, null);
                 }
               }}
             >
-              {/* Live Tree Region (LEFT) */}
+              {/* Live Tree Section (LEFT when both present) */}
               <Show when={hasLiveTree()}>
+                {/* Section box */}
+                <div
+                  class="absolute rounded-lg"
+                  style={{
+                    left: `${canvasDimensions().liveBoxLeft}px`,
+                    top: '0',
+                    width: `${canvasDimensions().liveBoxWidth}px`,
+                    height: `${canvasDimensions().height}px`,
+                    border: '1px dashed rgba(90, 85, 80, 0.25)',
+                    background: 'rgba(30, 30, 30, 0.3)',
+                  }}
+                >
+                  {/* Section label */}
+                  <div
+                    class="absolute text-[9px] font-medium uppercase tracking-wider px-2 py-0.5 rounded"
+                    style={{
+                      left: '8px',
+                      top: '6px',
+                      color: 'var(--wool-500)',
+                      background: 'rgba(30, 30, 30, 0.8)',
+                    }}
+                  >
+                    Live
+                  </div>
+                </div>
+                {/* Tree content */}
                 <div
                   class="absolute"
                   style={{
-                    left: `${canvasDimensions().liveOffset}px`,
-                    top: `${TREE_PADDING / 2}px`,
-                    width: `${Math.max(liveLayout().width, NODE_WIDTH)}px`,
-                    height: `${Math.max(liveLayout().height, canvasDimensions().height - TREE_PADDING)}px`,
+                    left: `${canvasDimensions().liveContentLeft}px`,
+                    top: `${canvasDimensions().liveContentTop}px`,
+                    width: `${liveLayout().width}px`,
+                    height: `${canvasDimensions().liveHeight}px`,
                   }}
                 >
                   <TreeConnectors
@@ -787,55 +1167,69 @@ export const SpecBoard: Component = () => {
                 </div>
               </Show>
 
-              {/* Center Divider */}
-              <Show when={canvasDimensions().showDivider}>
+              {/* Draft Tree Section (RIGHT when both present, or full width) */}
+              <Show when={delta.draftTree().length > 0}>
+                {/* Section box */}
+                <div
+                  class="absolute rounded-lg"
+                  style={{
+                    left: `${canvasDimensions().draftBoxLeft}px`,
+                    top: '0',
+                    width: `${canvasDimensions().draftBoxWidth}px`,
+                    height: `${canvasDimensions().height}px`,
+                    border: '1px dashed rgba(212, 165, 116, 0.2)',
+                    background: 'rgba(36, 34, 30, 0.3)',
+                  }}
+                >
+                  {/* Section label */}
+                  <div
+                    class="absolute text-[9px] font-medium uppercase tracking-wider px-2 py-0.5 rounded"
+                    style={{
+                      left: '8px',
+                      top: '6px',
+                      color: 'var(--amber-600)',
+                      background: 'rgba(30, 30, 30, 0.8)',
+                    }}
+                  >
+                    Draft
+                  </div>
+                </div>
+                {/* Tree content */}
                 <div
                   class="absolute"
                   style={{
-                    left: `${canvasDimensions().dividerOffset}px`,
-                    top: '0',
-                    width: '1px',
-                    height: `${canvasDimensions().height}px`,
-                    'border-left': '1px dashed rgba(90, 85, 80, 0.3)',
+                    left: `${canvasDimensions().draftContentLeft}px`,
+                    top: `${canvasDimensions().draftContentTop}px`,
+                    width: `${draftLayout().width}px`,
+                    height: `${canvasDimensions().draftHeight}px`,
                   }}
-                />
+                >
+                  <TreeConnectors
+                    positions={draftLayout().positions}
+                    tree={delta.draftTree()}
+                    color="rgb(212, 165, 116)"
+                  />
+                  <For each={flattenDraftTree(delta.draftTree())}>
+                    {(node) => {
+                      const pos = () => draftLayout().positions.get(node.id);
+                      return (
+                        <Show when={pos()}>
+                          <DraftNodeCard
+                            node={node}
+                            position={pos()!}
+                            diff={delta.diff()}
+                            showDelta={delta.showDeltaIndicators()}
+                            selected={selectedNodeId() === node.id}
+                            onSelect={() => setSelectedNodeId(node.id)}
+                            onDoubleClick={() => handleDoubleClick(node)}
+                            onContextMenu={(e) => handleContextMenu(e, node)}
+                          />
+                        </Show>
+                      );
+                    }}
+                  </For>
+                </div>
               </Show>
-
-              {/* Draft Tree Region */}
-              <div
-                class="absolute"
-                style={{
-                  left: `${canvasDimensions().draftOffset}px`,
-                  top: `${TREE_PADDING / 2}px`,
-                  width: `${draftLayout().width}px`,
-                  height: `${draftLayout().height}px`,
-                }}
-              >
-                <TreeConnectors
-                  positions={draftLayout().positions}
-                  tree={delta.draftTree()}
-                  color="rgb(212, 165, 116)"
-                />
-                <For each={flattenDraftTree(delta.draftTree())}>
-                  {(node) => {
-                    const pos = () => draftLayout().positions.get(node.id);
-                    return (
-                      <Show when={pos()}>
-                        <DraftNodeCard
-                          node={node}
-                          position={pos()!}
-                          diff={delta.diff()}
-                          showDelta={delta.showDeltaIndicators()}
-                          selected={selectedNodeId() === node.id}
-                          onSelect={() => setSelectedNodeId(node.id)}
-                          onDoubleClick={() => handleDoubleClick(node)}
-                          onContextMenu={(e) => handleContextMenu(e, node)}
-                        />
-                      </Show>
-                    );
-                  }}
-                </For>
-              </div>
             </div>
           </Show>
         </div>

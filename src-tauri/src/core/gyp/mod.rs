@@ -302,78 +302,20 @@ Board file: `{board_dir}/board.json`
     }
 
     fn board_data_model_section(&self) -> String {
-        r#"## Board Data Model
+        r#"## Board Format
 
-Everything lives in a single `board.json` file. There is no `status` field and no `nodeType` field.
-
-### Tasks (Nested Tree in `tasks` array)
-- **id**: Slug identifier (e.g., "build-api") — lowercase-hyphenated, unique across the board
-- **name**: Display name
-- **content**: Description/notes (markdown)
-- **children**: Nested child tasks (same shape, recursive)
-
-### Evals (Flat List in `evals` array)
-- **id**: Slug identifier (e.g., "api-test") — lowercase-hyphenated, unique across the board
-- **name**: Display name
-- **content**: What to verify (markdown)
-- **validates**: Array of task IDs this eval validates
-
-### File Format
-```json
-{
-  "tasks": [
-    {
-      "id": "build-api",
-      "name": "Build API",
-      "content": "Description...",
-      "children": [
-        { "id": "setup-routes", "name": "Setup Routes", "content": "...", "children": [] }
-      ]
-    }
-  ],
-  "evals": [
-    {
-      "id": "api-test",
-      "name": "API Test",
-      "content": "Verify endpoints return correct status codes",
-      "validates": ["build-api"]
-    }
-  ]
-}
-```"#
+Single `board.json` with `tasks` (nested tree) and `evals` (flat list).
+- IDs: lowercase-hyphenated slugs, unique across board
+- Tasks have: id, name, content, children
+- Evals have: id, name, content, validates (task IDs)"#
             .to_string()
     }
 
-    fn board_workflow_section(&self, project_id: i64) -> String {
-        let board_dir = hirsel_dir()
-            .join("projects")
-            .join(project_id.to_string())
-            .join("board");
+    fn board_workflow_section(&self, _project_id: i64) -> String {
+        r#"## Editing
 
-        format!(
-            r#"## Board Workflow
-
-1. Read `{board_dir}/board.json` to see the full board
-2. Make changes to the JSON structure
-3. Write the complete `board.json` back after changes
-
-### Common Operations
-
-**Add task**: Add an object to the `tasks` array (or a task's `children` array for nesting)
-**Edit task**: Change `name` or `content` fields
-**Remove task**: Remove the object from the array
-**Nest/unnest**: Move a task into or out of another task's `children`
-**Add eval**: Add an object to the `evals` array with `validates` referencing task IDs
-**Edit eval**: Change `name`, `content`, or `validates` fields
-**Remove eval**: Remove from the `evals` array
-
-### ID Rules
-
-- Use lowercase-hyphenated slugs (e.g., "build-api", "setup-auth")
-- IDs must be unique across the entire board (tasks + evals)
-- Never reuse an ID that was previously deleted"#,
-            board_dir = board_dir.display()
-        )
+Read board.json first, then write complete file back after changes."#
+            .to_string()
     }
 
     fn rules_section(&self) -> String {
@@ -513,11 +455,9 @@ mod tests {
         assert!(config.system_prompt.contains("/home/user/myproject"));
         assert!(config.system_prompt.contains("project ID: 42"));
         assert!(config.system_prompt.contains("board.json"));
-        // Data model describes the single-file format
-        assert!(config.system_prompt.contains("no `status` field"));
-        assert!(config.system_prompt.contains("no `nodeType` field"));
-        assert!(config.system_prompt.contains("\"tasks\""));
-        assert!(config.system_prompt.contains("\"evals\""));
+        // Concise data model summary
+        assert!(config.system_prompt.contains("tasks"));
+        assert!(config.system_prompt.contains("evals"));
         assert_eq!(config.working_dir, PathBuf::from("/home/user/myproject"));
         assert_eq!(config.history_scope.project_id, Some(42));
     }
