@@ -607,6 +607,26 @@ export const SpecBoard: Component = () => {
   // Check if we have a live tree (post-dispatch)
   const hasLiveTree = () => delta.liveTree().length > 0;
 
+  // Compute effective run status from live tree
+  const liveRunStatus = createMemo(() => {
+    const run = delta.projectRun();
+    if (!run) return null;
+
+    // Check if any live node is working
+    const liveNodes = flattenLiveTree(delta.liveTree());
+    const hasWorkingNode = liveNodes.some(n => n.status === 'working');
+
+    if (hasWorkingNode) return 'working';
+    if (run.status === 'failed') return 'failed';
+    if (run.status === 'paused') return 'paused';
+
+    // All nodes done or pending - show idle
+    const allDone = liveNodes.every(n => n.status === 'done');
+    if (allDone && liveNodes.length > 0) return 'done';
+
+    return 'idle';
+  });
+
   // Section box padding for labels
   const SECTION_PADDING = 28; // Space for label at top
   const SECTION_GAP = 16;     // Gap between sections (horizontal)
@@ -1097,17 +1117,31 @@ export const SpecBoard: Component = () => {
                     background: 'rgba(30, 30, 30, 0.3)',
                   }}
                 >
-                  {/* Section label */}
+                  {/* Section label with status */}
                   <div
-                    class="absolute text-[9px] font-medium uppercase tracking-wider px-2 py-0.5 rounded"
+                    class="absolute flex items-center gap-1.5 text-[9px] font-medium uppercase tracking-wider px-2 py-0.5 rounded"
                     style={{
                       left: '8px',
                       top: '6px',
-                      color: 'var(--wool-500)',
                       background: 'rgba(30, 30, 30, 0.8)',
                     }}
                   >
-                    Live
+                    <span style={{ color: 'var(--wool-500)' }}>Live</span>
+                    <Show when={liveRunStatus()}>
+                      <span style={{ color: 'var(--wool-600)' }}>·</span>
+                      <span
+                        class={liveRunStatus() === 'working' ? 'animate-pulse' : ''}
+                        style={{
+                          color: liveRunStatus() === 'working' ? 'var(--amber-400)'
+                            : liveRunStatus() === 'done' ? 'var(--sage)'
+                            : liveRunStatus() === 'failed' ? 'var(--terra)'
+                            : liveRunStatus() === 'paused' ? 'var(--golden)'
+                            : 'var(--wool-600)',
+                        }}
+                      >
+                        {liveRunStatus()}
+                      </span>
+                    </Show>
                   </div>
                 </div>
                 {/* Tree content */}
@@ -1302,121 +1336,95 @@ export const SpecBoard: Component = () => {
             const typeLabel = () => (isEval() ? 'Eval' : 'Task');
 
             return (
-              <dialog
-                open
-                class="dialog"
+              <div
+                class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
                 onClick={(e) => {
                   if (e.target === e.currentTarget) setShowNewPrompt(false);
                 }}
               >
-                <div class="w-[340px]">
-                  <header>
+                <div
+                  class="w-[360px] rounded-lg shadow-xl"
+                  style={{
+                    background: 'var(--pasture-800)',
+                    border: '1px solid var(--pasture-600)',
+                  }}
+                >
+                  {/* Header */}
+                  <div class="p-4 border-b border-pasture-600">
                     <div class="flex items-center gap-3">
-                      {/* Type icon */}
                       <div
-                        class="w-9 h-9 rounded-lg flex items-center justify-center"
+                        class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
                         style={{
-                          background: isEval()
-                            ? 'rgba(125, 153, 112, 0.15)'
-                            : 'rgba(212, 165, 116, 0.12)',
+                          background: isEval() ? 'rgba(125, 153, 112, 0.15)' : 'rgba(212, 165, 116, 0.12)',
                           border: `1px solid ${isEval() ? 'rgba(125, 153, 112, 0.25)' : 'rgba(212, 165, 116, 0.2)'}`,
                         }}
                       >
-                        <Show
-                          when={isEval()}
-                          fallback={
-                            <svg
-                              class="w-4 h-4"
-                              style={{ color: 'var(--amber-500)' }}
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="1.5"
-                                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-                              />
-                            </svg>
-                          }
-                        >
-                          <svg
-                            class="w-4 h-4"
-                            style={{ color: 'var(--sage)' }}
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                              stroke-width="1.5"
-                              d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                            />
+                        <Show when={isEval()} fallback={
+                          <svg class="w-4 h-4" style={{ color: 'var(--amber-500)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                          </svg>
+                        }>
+                          <svg class="w-4 h-4" style={{ color: 'var(--sage)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                           </svg>
                         </Show>
                       </div>
                       <div>
-                        <h2 class="text-base font-semibold text-wool-100">New {typeLabel()}</h2>
-                        <p class="text-xs text-wool-500 -mt-0.5">
-                          {isEval() ? 'Add a verification checkpoint' : 'Add a work item to the board'}
+                        <h2 class="text-sm font-semibold text-wool-100">New {typeLabel()}</h2>
+                        <p class="text-xs text-wool-500">
+                          {isEval() ? 'Add a verification checkpoint' : 'Add a work item'}
                         </p>
                       </div>
                     </div>
-                  </header>
+                  </div>
 
-                  <section>
-                    <form
-                      class="form"
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        handleCreateNode();
-                      }}
-                    >
-                      <div class="grid gap-1.5">
-                        <label for="new-node-name" class="text-sm font-medium text-wool-200">
-                          Name
-                        </label>
+                  {/* Content */}
+                  <div class="p-4">
+                    <form onSubmit={(e) => { e.preventDefault(); handleCreateNode(); }}>
+                      <div class="space-y-1.5">
+                        <label for="new-node-name" class="text-xs font-medium text-wool-300">Name</label>
                         <input
                           ref={newNodeInputRef}
                           id="new-node-name"
                           type="text"
                           value={newNodeName()}
                           onInput={(e) => setNewNodeName(e.currentTarget.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Escape') setShowNewPrompt(false);
+                          onKeyDown={(e) => { if (e.key === 'Escape') setShowNewPrompt(false); }}
+                          placeholder={isEval() ? 'e.g., API returns valid JSON' : 'e.g., Build authentication flow'}
+                          class="w-full px-3 py-2 rounded-md text-sm bg-pasture-900 border text-wool-100 placeholder-wool-600 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+                          style={{
+                            'font-family': 'system-ui, -apple-system, sans-serif',
+                            'border-color': isEval() ? 'rgba(125, 153, 112, 0.4)' : 'var(--pasture-600)',
                           }}
-                          placeholder={
-                            isEval()
-                              ? 'e.g., API returns valid JSON'
-                              : 'e.g., Build authentication flow'
-                          }
-                          style={{ 'border-color': isEval() ? 'rgba(125, 153, 112, 0.3)' : undefined }}
                         />
-                        <p class="text-muted-foreground text-xs">
-                          Press Enter to create, Escape to cancel
-                        </p>
+                        <p class="text-[11px] text-wool-500">Press Enter to create, Escape to cancel</p>
                       </div>
                     </form>
-                  </section>
+                  </div>
 
-                  <footer>
-                    <button class="btn-ghost" onClick={() => setShowNewPrompt(false)}>
+                  {/* Footer */}
+                  <div class="px-4 py-3 border-t border-pasture-600 flex justify-end gap-2">
+                    <button
+                      onClick={() => setShowNewPrompt(false)}
+                      class="px-3 py-1.5 rounded-md text-xs font-medium text-wool-400 hover:text-wool-200 hover:bg-white/5"
+                    >
                       Cancel
                     </button>
                     <button
-                      class={
-                        isEval() ? 'btn bg-sage/20 border-sage/30 text-sage hover:bg-sage/30' : 'btn'
-                      }
                       onClick={handleCreateNode}
                       disabled={!newNodeName().trim()}
+                      class="px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-40"
+                      style={{
+                        background: isEval() ? 'rgba(125, 153, 112, 0.2)' : 'var(--amber-500)',
+                        color: isEval() ? 'var(--sage)' : 'var(--pasture-900)',
+                        border: isEval() ? '1px solid rgba(125, 153, 112, 0.3)' : 'none',
+                      }}
                     >
                       Create {typeLabel()}
                     </button>
-                  </footer>
+                  </div>
                 </div>
-              </dialog>
+              </div>
             );
           })()}
         </Show>
@@ -1427,22 +1435,25 @@ export const SpecBoard: Component = () => {
             const nodeType = () => node().nodeType;
             const isEval = () => nodeType() === 'eval';
             const isProject = () => nodeType() === 'project';
-            const typeLabel = () => isEval() ? 'Eval' : isProject() ? 'Project' : 'Task';
-            const accentColor = () => isEval() ? 'var(--sage)' : 'var(--amber-500)';
+            const typeLabel = () => (isEval() ? 'Eval' : isProject() ? 'Project' : 'Task');
 
             return (
-              <dialog
-                open
-                class="dialog"
+              <div
+                class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
                 onClick={(e) => { if (e.target === e.currentTarget) setEditingNode(null); }}
               >
-                <div class="w-[420px]">
-                  {/* Header with type indicator */}
-                  <header class="relative">
+                <div
+                  class="w-[420px] rounded-lg shadow-xl"
+                  style={{
+                    background: 'var(--pasture-800)',
+                    border: '1px solid var(--pasture-600)',
+                  }}
+                >
+                  {/* Header */}
+                  <div class="p-4 border-b border-pasture-600 flex items-start justify-between">
                     <div class="flex items-center gap-3">
-                      {/* Type icon */}
                       <div
-                        class="w-10 h-10 rounded-lg flex items-center justify-center"
+                        class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
                         style={{
                           background: isEval() ? 'rgba(125, 153, 112, 0.15)' : 'rgba(212, 165, 116, 0.12)',
                           border: `1px solid ${isEval() ? 'rgba(125, 153, 112, 0.25)' : 'rgba(212, 165, 116, 0.2)'}`,
@@ -1450,18 +1461,15 @@ export const SpecBoard: Component = () => {
                       >
                         <Show when={isEval()} fallback={
                           <Show when={isProject()} fallback={
-                            /* Task icon - square with checkbox */
                             <svg class="w-5 h-5" style={{ color: 'var(--amber-500)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                             </svg>
                           }>
-                            {/* Project icon - folder */}
                             <svg class="w-5 h-5" style={{ color: 'var(--amber-500)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
                             </svg>
                           </Show>
                         }>
-                          {/* Eval icon - checkmark circle */}
                           <svg class="w-5 h-5" style={{ color: 'var(--sage)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                           </svg>
@@ -1470,96 +1478,104 @@ export const SpecBoard: Component = () => {
                       <div>
                         <span
                           class="text-[10px] font-medium uppercase tracking-wider"
-                          style={{ color: accentColor(), opacity: 0.8 }}
+                          style={{ color: isEval() ? 'var(--sage)' : 'var(--amber-500)', opacity: 0.8 }}
                         >
                           {typeLabel()}
                         </span>
-                        <h2 class="text-base font-semibold text-wool-100 -mt-0.5">
+                        <h2 class="text-sm font-semibold text-wool-100 -mt-0.5">
                           {editForm().name || 'Untitled'}
                         </h2>
                       </div>
                     </div>
-                    {/* Close button */}
                     <button
-                      aria-label="Close"
                       onClick={() => setEditingNode(null)}
-                      class="absolute top-0 right-0 p-1.5 rounded text-wool-500 hover:text-wool-300 hover:bg-white/5 transition-colors"
+                      class="p-1 rounded text-wool-500 hover:text-wool-300 hover:bg-white/5"
                     >
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                       </svg>
                     </button>
-                  </header>
+                  </div>
 
-                  {/* Form */}
-                  <section>
-                    <form class="form grid gap-5" onSubmit={(e) => { e.preventDefault(); handleSaveEdit(); }}>
-                      {/* Name field */}
-                      <div class="grid gap-1.5">
-                        <label for="edit-name" class="text-sm font-medium text-wool-200">Name</label>
-                        <input
-                          id="edit-name"
-                          type="text"
-                          value={editForm().name}
-                          onInput={(e) => setEditForm((f) => ({ ...f, name: e.currentTarget.value }))}
-                          placeholder={`${typeLabel()} name...`}
-                        />
-                      </div>
+                  {/* Content */}
+                  <div class="p-4 space-y-4">
+                    {/* Name field */}
+                    <div class="space-y-1.5">
+                      <label for="edit-name" class="text-xs font-medium text-wool-300">Name</label>
+                      <input
+                        id="edit-name"
+                        type="text"
+                        value={editForm().name}
+                        onInput={(e) => setEditForm((f) => ({ ...f, name: e.currentTarget.value }))}
+                        placeholder={`${typeLabel()} name...`}
+                        class="w-full px-3 py-2 rounded-md text-sm bg-pasture-900 border border-pasture-600 text-wool-100 placeholder-wool-600 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+                        style={{ 'font-family': 'system-ui, -apple-system, sans-serif' }}
+                      />
+                    </div>
 
-                      {/* Content field */}
-                      <div class="grid gap-1.5">
-                        <label for="edit-content" class="text-sm font-medium text-wool-200">
-                          {isEval() ? 'Acceptance Criteria' : 'Description'}
+                    {/* Content field */}
+                    <div class="space-y-1.5">
+                      <label for="edit-content" class="text-xs font-medium text-wool-300">
+                        {isEval() ? 'Acceptance Criteria' : 'Description'}
+                      </label>
+                      <textarea
+                        id="edit-content"
+                        value={editForm().content}
+                        onInput={(e) => setEditForm((f) => ({ ...f, content: e.currentTarget.value }))}
+                        rows={4}
+                        placeholder={isEval() ? 'What conditions must be met?' : 'What needs to be done?'}
+                        class="w-full px-3 py-2 rounded-md text-sm bg-pasture-900 border border-pasture-600 text-wool-100 placeholder-wool-600 focus:outline-none focus:ring-2 focus:ring-amber-500/30 resize-none"
+                        style={{ 'font-family': 'system-ui, -apple-system, sans-serif' }}
+                      />
+                      <p class="text-[11px] text-wool-500">
+                        {isEval() ? 'Describe how to verify this requirement.' : 'Markdown supported.'}
+                      </p>
+                    </div>
+
+                    {/* Validates field (eval only) */}
+                    <Show when={isEval()}>
+                      <div class="space-y-1.5">
+                        <label for="edit-validates" class="text-xs font-medium" style={{ color: 'var(--sage)' }}>
+                          Validates Tasks
                         </label>
-                        <textarea
-                          id="edit-content"
-                          value={editForm().content}
-                          onInput={(e) => setEditForm((f) => ({ ...f, content: e.currentTarget.value }))}
-                          rows={4}
-                          placeholder={isEval() ? 'What conditions must be met to pass this eval?' : 'What needs to be done?'}
+                        <input
+                          id="edit-validates"
+                          type="text"
+                          value={editForm().validates}
+                          onInput={(e) => setEditForm((f) => ({ ...f, validates: e.currentTarget.value }))}
+                          placeholder="task-id-1, task-id-2"
+                          class="w-full px-3 py-2 rounded-md text-sm font-mono bg-pasture-900 text-wool-100 placeholder-wool-600 focus:outline-none focus:ring-2 focus:ring-sage/30"
+                          style={{ 'border': '1px solid rgba(125, 153, 112, 0.4)' }}
                         />
-                        <p class="text-muted-foreground text-xs">
-                          {isEval() ? 'Describe how to verify this requirement is satisfied.' : 'Markdown supported.'}
+                        <p class="text-[11px] text-wool-500">
+                          Comma-separated task IDs this eval validates.
                         </p>
                       </div>
-
-                      {/* Validates field (eval only) */}
-                      <Show when={isEval()}>
-                        <div class="grid gap-1.5">
-                          <label for="edit-validates" class="text-sm font-medium" style={{ color: 'var(--sage)' }}>
-                            Validates Tasks
-                          </label>
-                          <input
-                            id="edit-validates"
-                            type="text"
-                            value={editForm().validates}
-                            onInput={(e) => setEditForm((f) => ({ ...f, validates: e.currentTarget.value }))}
-                            placeholder="task-id-1, task-id-2"
-                            class="font-mono text-sm"
-                            style={{ 'border-color': 'rgba(125, 153, 112, 0.3)' }}
-                          />
-                          <p class="text-xs" style={{ color: 'var(--wool-500)' }}>
-                            Comma-separated task IDs that this eval validates.
-                          </p>
-                        </div>
-                      </Show>
-                    </form>
-                  </section>
+                    </Show>
+                  </div>
 
                   {/* Footer */}
-                  <footer>
-                    <button class="btn-ghost" onClick={() => setEditingNode(null)}>
+                  <div class="px-4 py-3 border-t border-pasture-600 flex justify-end gap-2">
+                    <button
+                      onClick={() => setEditingNode(null)}
+                      class="px-3 py-1.5 rounded-md text-xs font-medium text-wool-400 hover:text-wool-200 hover:bg-white/5"
+                    >
                       Cancel
                     </button>
                     <button
-                      class={isEval() ? 'btn bg-sage/20 border-sage/30 text-sage hover:bg-sage/30' : 'btn'}
                       onClick={handleSaveEdit}
+                      class="px-3 py-1.5 rounded-md text-xs font-medium"
+                      style={{
+                        background: isEval() ? 'rgba(125, 153, 112, 0.2)' : 'var(--amber-500)',
+                        color: isEval() ? 'var(--sage)' : 'var(--pasture-900)',
+                        border: isEval() ? '1px solid rgba(125, 153, 112, 0.3)' : 'none',
+                      }}
                     >
                       Save Changes
                     </button>
-                  </footer>
+                  </div>
                 </div>
-              </dialog>
+              </div>
             );
           }}
         </Show>
