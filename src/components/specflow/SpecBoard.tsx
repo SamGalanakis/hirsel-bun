@@ -972,30 +972,7 @@ export const SpecBoard: Component = () => {
           style={{ 'border-bottom': '1px solid rgba(51, 51, 51, 0.5)' }}
         >
           <div class="flex items-center gap-2">
-            {/* Run status if active */}
-            <Show when={delta.projectRun()}>
-              <span class="text-[10px] text-wool-600">Run:</span>
-              <span class="text-[10px] text-amber-400 font-mono">{delta.projectRun()?.runName}</span>
-              <span
-                class="text-[8px] px-1.5 py-0.5 rounded font-medium uppercase"
-                style={{
-                  background:
-                    delta.projectRun()?.status === 'working'
-                      ? 'rgba(212, 165, 116, 0.15)'
-                      : delta.projectRun()?.status === 'paused'
-                        ? 'rgba(90, 85, 80, 0.2)'
-                        : 'rgba(196, 92, 74, 0.15)',
-                  color:
-                    delta.projectRun()?.status === 'working'
-                      ? 'var(--amber-400)'
-                      : delta.projectRun()?.status === 'paused'
-                        ? 'var(--wool-500)'
-                        : 'var(--terra)',
-                }}
-              >
-                {delta.projectRun()?.status}
-              </span>
-            </Show>
+            {/* Project name shown here if needed */}
           </div>
 
           <div class="flex items-center gap-2">
@@ -1320,137 +1297,271 @@ export const SpecBoard: Component = () => {
 
         {/* New Node Prompt */}
         <Show when={showNewPrompt()}>
-          <dialog
-            open
-            class="fixed inset-0 z-[100] m-0 h-full w-full max-w-none max-h-none bg-black/50 flex items-center justify-center"
-            onClick={() => setShowNewPrompt(false)}
-          >
-            <div
-              class="w-64 rounded-lg overflow-hidden"
-              style={{
-                background: 'linear-gradient(180deg, #2a2825 0%, #1f1d1a 100%)',
-                border: '1px solid rgba(64, 64, 64, 0.5)',
-                'box-shadow': '0 16px 48px rgba(0,0,0,0.5)',
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div class="px-3 py-2.5 border-b border-white/5">
-                <h3 class="text-[13px] font-semibold text-wool-100">
-                  New {newNodeType() === 'eval' ? 'Eval' : 'Task'}
-                </h3>
-              </div>
-              <div class="p-3">
-                <form onSubmit={(e) => { e.preventDefault(); handleCreateNode(); }}>
-                  <input
-                    ref={newNodeInputRef}
-                    type="text"
-                    value={newNodeName()}
-                    onInput={(e) => setNewNodeName(e.currentTarget.value)}
-                    onKeyDown={(e) => { if (e.key === 'Escape') setShowNewPrompt(false); }}
-                    placeholder={`${newNodeType() === 'eval' ? 'Eval' : 'Task'} name...`}
-                    class="w-full px-2.5 py-1.5 rounded bg-pasture-800 border border-pasture-600/50 text-[12px] text-wool-100 placeholder-wool-600 focus:outline-none focus:border-amber-500/40"
-                  />
-                </form>
-              </div>
-              <div class="px-3 py-2.5 border-t border-white/5 flex justify-end gap-2">
-                <button
-                  onClick={() => setShowNewPrompt(false)}
-                  class="px-2.5 py-1 rounded text-[11px] font-medium text-wool-500 hover:text-wool-300 hover:bg-white/5"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleCreateNode}
-                  disabled={!newNodeName().trim()}
-                  class="px-2.5 py-1 rounded text-[11px] font-medium disabled:opacity-30"
-                  style={{
-                    background: newNodeType() === 'eval' ? 'rgba(125, 153, 112, 0.2)' : 'rgba(212, 165, 116, 0.2)',
-                    border: newNodeType() === 'eval' ? '1px solid rgba(125, 153, 112, 0.3)' : '1px solid rgba(212, 165, 116, 0.3)',
-                    color: newNodeType() === 'eval' ? 'var(--sage)' : 'var(--amber-400)',
-                  }}
-                >
-                  Create
-                </button>
-              </div>
-            </div>
-          </dialog>
+          {(() => {
+            const isEval = () => newNodeType() === 'eval';
+            const typeLabel = () => (isEval() ? 'Eval' : 'Task');
+
+            return (
+              <dialog
+                open
+                class="dialog"
+                onClick={(e) => {
+                  if (e.target === e.currentTarget) setShowNewPrompt(false);
+                }}
+              >
+                <div class="w-[340px]">
+                  <header>
+                    <div class="flex items-center gap-3">
+                      {/* Type icon */}
+                      <div
+                        class="w-9 h-9 rounded-lg flex items-center justify-center"
+                        style={{
+                          background: isEval()
+                            ? 'rgba(125, 153, 112, 0.15)'
+                            : 'rgba(212, 165, 116, 0.12)',
+                          border: `1px solid ${isEval() ? 'rgba(125, 153, 112, 0.25)' : 'rgba(212, 165, 116, 0.2)'}`,
+                        }}
+                      >
+                        <Show
+                          when={isEval()}
+                          fallback={
+                            <svg
+                              class="w-4 h-4"
+                              style={{ color: 'var(--amber-500)' }}
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="1.5"
+                                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+                              />
+                            </svg>
+                          }
+                        >
+                          <svg
+                            class="w-4 h-4"
+                            style={{ color: 'var(--sage)' }}
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              stroke-width="1.5"
+                              d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                            />
+                          </svg>
+                        </Show>
+                      </div>
+                      <div>
+                        <h2 class="text-base font-semibold text-wool-100">New {typeLabel()}</h2>
+                        <p class="text-xs text-wool-500 -mt-0.5">
+                          {isEval() ? 'Add a verification checkpoint' : 'Add a work item to the board'}
+                        </p>
+                      </div>
+                    </div>
+                  </header>
+
+                  <section>
+                    <form
+                      class="form"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        handleCreateNode();
+                      }}
+                    >
+                      <div class="grid gap-1.5">
+                        <label for="new-node-name" class="text-sm font-medium text-wool-200">
+                          Name
+                        </label>
+                        <input
+                          ref={newNodeInputRef}
+                          id="new-node-name"
+                          type="text"
+                          value={newNodeName()}
+                          onInput={(e) => setNewNodeName(e.currentTarget.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') setShowNewPrompt(false);
+                          }}
+                          placeholder={
+                            isEval()
+                              ? 'e.g., API returns valid JSON'
+                              : 'e.g., Build authentication flow'
+                          }
+                          style={{ 'border-color': isEval() ? 'rgba(125, 153, 112, 0.3)' : undefined }}
+                        />
+                        <p class="text-muted-foreground text-xs">
+                          Press Enter to create, Escape to cancel
+                        </p>
+                      </div>
+                    </form>
+                  </section>
+
+                  <footer>
+                    <button class="btn-ghost" onClick={() => setShowNewPrompt(false)}>
+                      Cancel
+                    </button>
+                    <button
+                      class={
+                        isEval() ? 'btn bg-sage/20 border-sage/30 text-sage hover:bg-sage/30' : 'btn'
+                      }
+                      onClick={handleCreateNode}
+                      disabled={!newNodeName().trim()}
+                    >
+                      Create {typeLabel()}
+                    </button>
+                  </footer>
+                </div>
+              </dialog>
+            );
+          })()}
         </Show>
 
         {/* Edit Modal */}
         <Show when={editingNode()}>
-          <dialog
-            open
-            class="fixed inset-0 z-[100] m-0 h-full w-full max-w-none max-h-none bg-black/50 flex items-center justify-center"
-            onClick={() => setEditingNode(null)}
-          >
-            <div
-              class="w-80 rounded-lg overflow-hidden"
-              style={{
-                background: 'linear-gradient(180deg, #2a2825 0%, #1f1d1a 100%)',
-                border: '1px solid rgba(64, 64, 64, 0.5)',
-                'box-shadow': '0 16px 48px rgba(0,0,0,0.5)',
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div class="px-3 py-2.5 border-b border-white/5">
-                <h3 class="text-[13px] font-semibold text-wool-100">
-                  Edit {editingNode()!.nodeType === 'eval' ? 'Eval' : editingNode()!.nodeType === 'project' ? 'Project' : 'Task'}
-                </h3>
-              </div>
-              <div class="p-3 space-y-2.5">
-                <div>
-                  <label class="block text-[10px] font-medium text-wool-500 mb-1 uppercase tracking-wide">Name</label>
-                  <input
-                    type="text"
-                    value={editForm().name}
-                    onInput={(e) => setEditForm((f) => ({ ...f, name: e.currentTarget.value }))}
-                    class="w-full px-2.5 py-1.5 rounded bg-pasture-800 border border-pasture-600/50 text-[12px] text-wool-100 focus:outline-none focus:border-amber-500/40"
-                  />
+          {(node) => {
+            const nodeType = () => node().nodeType;
+            const isEval = () => nodeType() === 'eval';
+            const isProject = () => nodeType() === 'project';
+            const typeLabel = () => isEval() ? 'Eval' : isProject() ? 'Project' : 'Task';
+            const accentColor = () => isEval() ? 'var(--sage)' : 'var(--amber-500)';
+
+            return (
+              <dialog
+                open
+                class="dialog"
+                onClick={(e) => { if (e.target === e.currentTarget) setEditingNode(null); }}
+              >
+                <div class="w-[420px]">
+                  {/* Header with type indicator */}
+                  <header class="relative">
+                    <div class="flex items-center gap-3">
+                      {/* Type icon */}
+                      <div
+                        class="w-10 h-10 rounded-lg flex items-center justify-center"
+                        style={{
+                          background: isEval() ? 'rgba(125, 153, 112, 0.15)' : 'rgba(212, 165, 116, 0.12)',
+                          border: `1px solid ${isEval() ? 'rgba(125, 153, 112, 0.25)' : 'rgba(212, 165, 116, 0.2)'}`,
+                        }}
+                      >
+                        <Show when={isEval()} fallback={
+                          <Show when={isProject()} fallback={
+                            /* Task icon - square with checkbox */
+                            <svg class="w-5 h-5" style={{ color: 'var(--amber-500)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                            </svg>
+                          }>
+                            {/* Project icon - folder */}
+                            <svg class="w-5 h-5" style={{ color: 'var(--amber-500)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                            </svg>
+                          </Show>
+                        }>
+                          {/* Eval icon - checkmark circle */}
+                          <svg class="w-5 h-5" style={{ color: 'var(--sage)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        </Show>
+                      </div>
+                      <div>
+                        <span
+                          class="text-[10px] font-medium uppercase tracking-wider"
+                          style={{ color: accentColor(), opacity: 0.8 }}
+                        >
+                          {typeLabel()}
+                        </span>
+                        <h2 class="text-base font-semibold text-wool-100 -mt-0.5">
+                          {editForm().name || 'Untitled'}
+                        </h2>
+                      </div>
+                    </div>
+                    {/* Close button */}
+                    <button
+                      aria-label="Close"
+                      onClick={() => setEditingNode(null)}
+                      class="absolute top-0 right-0 p-1.5 rounded text-wool-500 hover:text-wool-300 hover:bg-white/5 transition-colors"
+                    >
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </header>
+
+                  {/* Form */}
+                  <section>
+                    <form class="form grid gap-5" onSubmit={(e) => { e.preventDefault(); handleSaveEdit(); }}>
+                      {/* Name field */}
+                      <div class="grid gap-1.5">
+                        <label for="edit-name" class="text-sm font-medium text-wool-200">Name</label>
+                        <input
+                          id="edit-name"
+                          type="text"
+                          value={editForm().name}
+                          onInput={(e) => setEditForm((f) => ({ ...f, name: e.currentTarget.value }))}
+                          placeholder={`${typeLabel()} name...`}
+                        />
+                      </div>
+
+                      {/* Content field */}
+                      <div class="grid gap-1.5">
+                        <label for="edit-content" class="text-sm font-medium text-wool-200">
+                          {isEval() ? 'Acceptance Criteria' : 'Description'}
+                        </label>
+                        <textarea
+                          id="edit-content"
+                          value={editForm().content}
+                          onInput={(e) => setEditForm((f) => ({ ...f, content: e.currentTarget.value }))}
+                          rows={4}
+                          placeholder={isEval() ? 'What conditions must be met to pass this eval?' : 'What needs to be done?'}
+                        />
+                        <p class="text-muted-foreground text-xs">
+                          {isEval() ? 'Describe how to verify this requirement is satisfied.' : 'Markdown supported.'}
+                        </p>
+                      </div>
+
+                      {/* Validates field (eval only) */}
+                      <Show when={isEval()}>
+                        <div class="grid gap-1.5">
+                          <label for="edit-validates" class="text-sm font-medium" style={{ color: 'var(--sage)' }}>
+                            Validates Tasks
+                          </label>
+                          <input
+                            id="edit-validates"
+                            type="text"
+                            value={editForm().validates}
+                            onInput={(e) => setEditForm((f) => ({ ...f, validates: e.currentTarget.value }))}
+                            placeholder="task-id-1, task-id-2"
+                            class="font-mono text-sm"
+                            style={{ 'border-color': 'rgba(125, 153, 112, 0.3)' }}
+                          />
+                          <p class="text-xs" style={{ color: 'var(--wool-500)' }}>
+                            Comma-separated task IDs that this eval validates.
+                          </p>
+                        </div>
+                      </Show>
+                    </form>
+                  </section>
+
+                  {/* Footer */}
+                  <footer>
+                    <button class="btn-ghost" onClick={() => setEditingNode(null)}>
+                      Cancel
+                    </button>
+                    <button
+                      class={isEval() ? 'btn bg-sage/20 border-sage/30 text-sage hover:bg-sage/30' : 'btn'}
+                      onClick={handleSaveEdit}
+                    >
+                      Save Changes
+                    </button>
+                  </footer>
                 </div>
-                <div>
-                  <label class="block text-[10px] font-medium text-wool-500 mb-1 uppercase tracking-wide">Content</label>
-                  <textarea
-                    value={editForm().content}
-                    onInput={(e) => setEditForm((f) => ({ ...f, content: e.currentTarget.value }))}
-                    rows={3}
-                    placeholder="Description..."
-                    class="w-full px-2.5 py-1.5 rounded bg-pasture-800 border border-pasture-600/50 text-[12px] text-wool-100 placeholder-wool-600 focus:outline-none focus:border-amber-500/40 resize-none"
-                  />
-                </div>
-                <Show when={editingNode()!.nodeType === 'eval'}>
-                  <div>
-                    <label class="block text-[10px] font-medium text-sage/70 mb-1 uppercase tracking-wide">Validates</label>
-                    <input
-                      type="text"
-                      value={editForm().validates}
-                      onInput={(e) => setEditForm((f) => ({ ...f, validates: e.currentTarget.value }))}
-                      placeholder="task-1, task-2"
-                      class="w-full px-2.5 py-1.5 rounded bg-pasture-800 border border-sage/30 text-[12px] text-wool-100 placeholder-wool-600 focus:outline-none focus:border-sage/50 font-mono"
-                    />
-                  </div>
-                </Show>
-              </div>
-              <div class="px-3 py-2.5 border-t border-white/5 flex justify-end gap-2">
-                <button
-                  onClick={() => setEditingNode(null)}
-                  class="px-2.5 py-1 rounded text-[11px] font-medium text-wool-500 hover:text-wool-300 hover:bg-white/5"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSaveEdit}
-                  class="px-2.5 py-1 rounded text-[11px] font-medium"
-                  style={{
-                    background: 'rgba(212, 165, 116, 0.2)',
-                    border: '1px solid rgba(212, 165, 116, 0.3)',
-                    color: 'var(--amber-400)',
-                  }}
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-          </dialog>
+              </dialog>
+            );
+          }}
         </Show>
 
         {/* Loading overlay */}
