@@ -302,12 +302,51 @@ Board file: `{board_dir}/board.json`
     }
 
     fn board_data_model_section(&self) -> String {
-        r#"## Board Format
+        r#"## Board Data Model
 
-Single `board.json` with `tasks` (nested tree) and `evals` (flat list).
-- IDs: lowercase-hyphenated slugs, unique across board
-- Tasks have: id, name, content, children
-- Evals have: id, name, content, validates (task IDs)"#
+The board is stored in `board.json` with two sections:
+
+### Tasks (nested tree)
+```json
+{
+  "tasks": [
+    {
+      "id": "feature-name",
+      "name": "Feature Name",
+      "content": "Description of what to build...",
+      "children": [
+        { "id": "subtask-1", "name": "Subtask 1", "content": "...", "children": [] }
+      ]
+    }
+  ]
+}
+```
+
+**IMPORTANT:** The project itself is the implicit root - it is NOT in this file.
+All top-level items in the `tasks` array are direct children of the project.
+Break work into granular tasks. Each task should be a single, focused unit of work.
+
+### Evals (flat list of verifications)
+```json
+{
+  "evals": [
+    {
+      "id": "api-works",
+      "name": "API Returns Valid Data",
+      "content": "Steps to verify this requirement...",
+      "validates": ["endpoint-get", "endpoint-post"]
+    }
+  ]
+}
+```
+
+The `validates` array specifies which tasks this eval verifies:
+- **Specific task IDs**: Eval runs after those tasks complete, verifies their work
+- **Empty array `[]`**: Final project-level gate - runs after ALL tasks complete
+
+### ID Format
+IDs must be lowercase-hyphenated slugs (e.g., `build-api`, `user-auth-flow`).
+IDs must be unique across all tasks and evals."#
             .to_string()
     }
 
@@ -322,7 +361,12 @@ Read board.json first, then write complete file back after changes."#
         let scope_rules = match &self.scope {
             GypScope::General => "",
             GypScope::Run { .. } => "\n- Use hirsel MCP tools, NOT CLI commands",
-            GypScope::Board { .. } => "\n- Edit board files with Write tool (complete rewrites)",
+            GypScope::Board { .. } => {
+                r#"
+- Edit board files with Write tool (complete rewrites)
+- DON'T list tasks/evals in chat - the user sees them in the board visualization
+- After editing, just confirm briefly (e.g., "Done. Added 10 tasks and 5 evals.")"#
+            }
         };
 
         format!(

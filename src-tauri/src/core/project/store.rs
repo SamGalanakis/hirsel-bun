@@ -296,14 +296,35 @@ impl ProjectStore {
         self.get_project(id)
     }
 
-    /// Delete a project (caller is responsible for cascading to runs)
+    /// Delete a project and all associated data
     pub fn delete_project(&self, id: i64) -> ProjectResult<()> {
         // Check if project exists
         let _ = self.get_project(id)?;
 
-        // Delete from database
+        // Delete from projects table
         self.db
             .execute("DELETE FROM projects WHERE id = ?1", params![id])?;
+
+        // Cascade delete delta-related tables (they're in the same DB)
+        // These may not exist in older DBs, so ignore errors
+        let _ = self
+            .db
+            .execute("DELETE FROM draft_nodes WHERE project_id = ?1", params![id]);
+        let _ = self
+            .db
+            .execute("DELETE FROM live_nodes WHERE project_id = ?1", params![id]);
+        let _ = self.db.execute(
+            "DELETE FROM project_runs WHERE project_id = ?1",
+            params![id],
+        );
+        let _ = self.db.execute(
+            "DELETE FROM delta_submissions WHERE project_id = ?1",
+            params![id],
+        );
+        let _ = self.db.execute(
+            "DELETE FROM delta_file_baselines WHERE project_id = ?1",
+            params![id],
+        );
 
         // Delete project data directory (board, etc.)
         let project_dir = crate::core::config::hirsel_dir()

@@ -119,34 +119,133 @@ interface LayoutNode {
   subtreeHeight: number;  // Total height of this subtree
 }
 
-function layoutTree<T extends { id: string; name: string; children: T[] }>(
+// Extended node type for layout with eval info
+interface ExtendedLayoutNode extends LayoutNode {
+  nodeType?: NodeType;
+  validates?: string[];
+  isEvalChild?: boolean; // True if this node is a child of an eval (validated by it)
+}
+
+interface LayoutTreeResult {
+  positions: Map<string, NodePosition>;
+  width: number;
+  height: number;
+  evalsWithValidates: { id: string; validates: string[] }[];
+  // Restructured tree for connectors (evals become parents of validated tasks)
+  restructuredTree: { id: string; nodeType?: NodeType; children: any[] }[];
+}
+
+function layoutTree<T extends { id: string; name: string; children: T[]; nodeType?: NodeType; validates?: string[] }>(
   roots: T[],
   _startX: number = 0
-): { positions: Map<string, NodePosition>; width: number; height: number } {
+): LayoutTreeResult {
   const positions = new Map<string, NodePosition>();
+  const evalsWithValidates: { id: string; validates: string[] }[] = [];
 
   if (roots.length === 0) {
-    return { positions, width: MIN_NODE_WIDTH, height: NODE_HEIGHT };
+    return { positions, width: MIN_NODE_WIDTH, height: NODE_HEIGHT, evalsWithValidates, restructuredTree: [] };
   }
 
-  // Convert input tree to layout nodes
-  function toLayoutNode(node: T): LayoutNode {
+  // Collect all evals with non-empty validates arrays and build lookup
+  const evalValidatesMap = new Map<string, string[]>(); // evalId -> validated task IDs
+  const taskValidatedByMap = new Map<string, string>(); // taskId -> evalId that validates it
+
+  function collectEvalsWithValidates(node: T) {
+    if (node.nodeType === 'eval' && node.validates && node.validates.length > 0) {
+      evalsWithValidates.push({ id: node.id, validates: node.validates });
+      evalValidatesMap.set(node.id, node.validates);
+      for (const taskId of node.validates) {
+        taskValidatedByMap.set(taskId, node.id);
+      }
+    }
+    for (const child of node.children) {
+      collectEvalsWithValidates(child);
+    }
+  }
+  for (const root of roots) {
+    collectEvalsWithValidates(root);
+  }
+
+  // Restructure tree: evals become parents of tasks they validate
+  // Structure: parent -> [non-validated tasks, evals with their validated tasks as children]
+  function toLayoutNode(node: T): ExtendedLayoutNode {
     const dims = calcNodeDimensions(node.name);
+
+    // Separate children into categories
+    const validatedTaskIds = new Set<string>();
+    const evalNodes: T[] = [];
+    const regularChildren: T[] = [];
+
+    for (const child of node.children) {
+      if (child.nodeType === 'eval' && evalValidatesMap.has(child.id)) {
+        evalNodes.push(child);
+        // Mark the tasks this eval validates
+        for (const taskId of evalValidatesMap.get(child.id)!) {
+          validatedTaskIds.add(taskId);
+        }
+      } else if (!taskValidatedByMap.has(child.id)) {
+        // Regular child (not validated by any eval at this level)
+        regularChildren.push(child);
+      }
+      // Tasks that are validated get skipped here - they'll be children of their eval
+    }
+
+    // Build layout children: regular tasks first, then evals with their validated tasks
+    const layoutChildren: ExtendedLayoutNode[] = [];
+
+    // Add regular children (tasks not validated by any eval)
+    for (const child of regularChildren) {
+      layoutChildren.push(toLayoutNode(child));
+    }
+
+    // Add evals, each with their validated tasks as children
+    for (const evalNode of evalNodes) {
+      const evalDims = calcNodeDimensions(evalNode.name);
+      const validatedIds = evalValidatesMap.get(evalNode.id) || [];
+
+      // Find the validated tasks from the original children
+      const validatedChildren: ExtendedLayoutNode[] = [];
+      for (const taskId of validatedIds) {
+        const taskNode = node.children.find(c => c.id === taskId);
+        if (taskNode) {
+          const taskLayout = toLayoutNode(taskNode);
+          taskLayout.isEvalChild = true;
+          validatedChildren.push(taskLayout);
+        }
+      }
+
+      layoutChildren.push({
+        id: evalNode.id,
+        name: evalNode.name,
+        children: validatedChildren,
+        x: 0,
+        y: 0,
+        width: evalDims.width,
+        height: evalDims.height,
+        lines: evalDims.lines,
+        subtreeHeight: 0,
+        nodeType: evalNode.nodeType,
+        validates: evalNode.validates,
+      });
+    }
+
     return {
       id: node.id,
       name: node.name,
-      children: node.children.map(c => toLayoutNode(c)),
+      children: layoutChildren,
       x: 0,
       y: 0,
       width: dims.width,
       height: dims.height,
       lines: dims.lines,
       subtreeHeight: 0,
+      nodeType: node.nodeType,
+      validates: node.validates,
     };
   }
 
   // First pass: compute subtree heights (post-order)
-  function computeSubtreeHeights(node: LayoutNode): number {
+  function computeSubtreeHeights(node: ExtendedLayoutNode): number {
     if (node.children.length === 0) {
       node.subtreeHeight = node.height;
       return node.subtreeHeight;
@@ -165,7 +264,7 @@ function layoutTree<T extends { id: string; name: string; children: T[] }>(
   }
 
   // Second pass: assign positions (pre-order)
-  function assignPositions(node: LayoutNode, depth: number, topY: number): void {
+  function assignPositions(node: ExtendedLayoutNode, depth: number, topY: number): void {
     // X position based on depth (horizontal)
     node.x = TREE_PADDING + depth * (MAX_NODE_WIDTH + LEVEL_GAP);
 
@@ -211,7 +310,7 @@ function layoutTree<T extends { id: string; name: string; children: T[] }>(
     });
   }
 
-  // Layout all root trees
+  // Layout all root trees with restructured hierarchy
   const layoutRoots = roots.map(r => toLayoutNode(r));
 
   // Compute heights for all roots
@@ -229,16 +328,27 @@ function layoutTree<T extends { id: string; name: string; children: T[] }>(
   // Compute bounds
   const allPositions = Array.from(positions.values());
   if (allPositions.length === 0) {
-    return { positions, width: MIN_NODE_WIDTH, height: NODE_HEIGHT };
+    return { positions, width: MIN_NODE_WIDTH, height: NODE_HEIGHT, evalsWithValidates, restructuredTree: [] };
   }
 
   const maxX = Math.max(...allPositions.map(p => p.x + p.width));
   const maxY = Math.max(...allPositions.map(p => p.y + p.height));
 
+  // Convert layout nodes back to simple structure for connectors
+  function toConnectorTree(node: ExtendedLayoutNode): { id: string; nodeType?: NodeType; children: any[] } {
+    return {
+      id: node.id,
+      nodeType: node.nodeType,
+      children: node.children.map(c => toConnectorTree(c)),
+    };
+  }
+
   return {
     positions,
     width: maxX + TREE_PADDING,
     height: maxY + TREE_PADDING,
+    evalsWithValidates,
+    restructuredTree: layoutRoots.map(r => toConnectorTree(r)),
   };
 }
 
@@ -374,6 +484,8 @@ const LiveNodeCard: Component<{
   position: NodePosition;
   diff: TreeDiff | null;
   showDelta: boolean;
+  selected: boolean;
+  onSelect: () => void;
 }> = (props) => {
   const isDeleted = () =>
     props.showDelta && props.diff?.deletedNodes.some((n) => n.id === props.node.id);
@@ -421,20 +533,22 @@ const LiveNodeCard: Component<{
 
   return (
     <div
-      class="absolute"
+      class={`absolute cursor-pointer ${props.selected ? 'z-10' : ''}`}
       style={{
         left: `${props.position.x}px`,
         top: `${props.position.y}px`,
         width: `${props.position.width}px`,
         height: `${props.position.height}px`,
       }}
+      onClick={() => props.onSelect()}
     >
       <div
         class={`h-full flex gap-1.5 px-2 ${isDeleted() ? 'opacity-40' : ''} ${isMultiLine() ? 'flex-col justify-center py-1' : 'items-center'}`}
         style={{
           background: getBg(),
-          border: `1px ${getBorderStyle()} ${isDeleted() ? 'rgba(196, 92, 74, 0.4)' : baseStyle().border}`,
+          border: `1px ${getBorderStyle()} ${props.selected ? 'rgba(212, 165, 116, 0.6)' : isDeleted() ? 'rgba(196, 92, 74, 0.4)' : baseStyle().border}`,
           'border-radius': isEval() ? '4px' : '6px',
+          'box-shadow': props.selected ? '0 2px 8px rgba(0,0,0,0.25)' : undefined,
         }}
       >
         {/* Left accent for project/eval */}
@@ -509,28 +623,34 @@ const LiveNodeCard: Component<{
 
 const TreeConnectors: Component<{
   positions: Map<string, NodePosition>;
-  tree: { id: string; children: { id: string; children: any[] }[] }[];
+  tree: { id: string; nodeType?: NodeType; children: { id: string; nodeType?: NodeType; children: any[] }[] }[];
   color: string;
   dashed?: boolean;
 }> = (props) => {
   const paths = createMemo(() => {
-    const result: { from: NodePosition; to: NodePosition }[] = [];
+    const result: { from: NodePosition; to: NodePosition; isEvalConnection: boolean }[] = [];
 
-    function collectEdges(node: { id: string; children: { id: string; children: any[] }[] }) {
+    function collectEdges(
+      node: { id: string; nodeType?: NodeType; children: { id: string; nodeType?: NodeType; children: any[] }[] },
+      parentIsEval: boolean
+    ) {
       const parentPos = props.positions.get(node.id);
       if (!parentPos) return;
+
+      const nodeIsEval = node.nodeType === 'eval';
 
       for (const child of node.children) {
         const childPos = props.positions.get(child.id);
         if (childPos) {
-          result.push({ from: parentPos, to: childPos });
+          // Mark as eval connection if parent is an eval (these get green lines)
+          result.push({ from: parentPos, to: childPos, isEvalConnection: nodeIsEval });
         }
-        collectEdges(child);
+        collectEdges(child, nodeIsEval);
       }
     }
 
     for (const root of props.tree) {
-      collectEdges(root);
+      collectEdges(root, false);
     }
 
     return result;
@@ -547,14 +667,17 @@ const TreeConnectors: Component<{
           const y2 = edge.to.y + edge.to.height / 2;
           const midX = (x1 + x2) / 2;
 
+          // Green for eval→task connections, normal color otherwise
+          const strokeColor = edge.isEvalConnection ? 'rgb(125, 153, 112)' : props.color;
+
           return (
             <path
               d={`M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`}
               fill="none"
-              stroke={props.color}
-              stroke-width="1"
+              stroke={strokeColor}
+              stroke-width={edge.isEvalConnection ? 1.5 : 1}
               stroke-dasharray={props.dashed ? '3 2' : undefined}
-              opacity="0.4"
+              opacity={edge.isEvalConnection ? 0.6 : 0.4}
             />
           );
         }}
@@ -562,6 +685,7 @@ const TreeConnectors: Component<{
     </svg>
   );
 };
+
 
 // =============================================================================
 // Main Component
@@ -573,9 +697,14 @@ export const SpecBoard: Component = () => {
 
   // Selection state
   const [selectedNodeId, setSelectedNodeId] = createSignal<string | null>(null);
+  const [selectedLiveNodeId, setSelectedLiveNodeId] = createSignal<string | null>(null);
+
+  // View focus state: 'both' shows side-by-side, 'live'/'draft' expands that section
+  const [focusedView, setFocusedView] = createSignal<'both' | 'live' | 'draft'>('both');
 
   // Edit modal state
   const [editingNode, setEditingNode] = createSignal<DraftNodeTree | null>(null);
+  const [viewingLiveNode, setViewingLiveNode] = createSignal<LiveNodeTree | null>(null);
   const [editForm, setEditForm] = createSignal({ name: '', content: '', validates: '' });
 
   // New node prompt
@@ -593,11 +722,14 @@ export const SpecBoard: Component = () => {
     isBackground: boolean;
   } | null>(null);
 
-  // Pan and zoom state
-  const [zoom, setZoom] = createSignal(1);
-  const [pan, setPan] = createSignal({ x: 0, y: 0 });
+  // Pan and zoom state (per side)
+  const [draftZoom, setDraftZoom] = createSignal(1);
+  const [liveZoom, setLiveZoom] = createSignal(1);
+  const [draftPan, setDraftPan] = createSignal({ x: 0, y: 0 });
+  const [livePan, setLivePan] = createSignal({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = createSignal(false);
   const [panStart, setPanStart] = createSignal({ x: 0, y: 0 });
+  const [activePanSide, setActivePanSide] = createSignal<'draft' | 'live' | null>(null);
   let canvasRef: HTMLDivElement | undefined;
 
   // Computed layouts
@@ -627,61 +759,9 @@ export const SpecBoard: Component = () => {
     return 'idle';
   });
 
-  // Section box padding for labels
-  const SECTION_PADDING = 28; // Space for label at top
+  // Layout constants
   const SECTION_GAP = 16;     // Gap between sections (horizontal)
-
-  // Total canvas dimensions (side-by-side: Live left, Draft right)
-  const canvasDimensions = createMemo(() => {
-    const draft = draftLayout();
-    const live = liveLayout();
-
-    if (!hasLiveTree()) {
-      // Single tree (draft only) - add section box when there's content
-      const hasDraft = delta.draftTree().length > 0;
-      return {
-        width: draft.width + (hasDraft ? TREE_PADDING : 0),
-        height: Math.max(draft.height, NODE_HEIGHT) + (hasDraft ? SECTION_PADDING : 0),
-        // Draft positioning
-        draftBoxLeft: 0,
-        draftBoxWidth: draft.width + TREE_PADDING,
-        draftContentLeft: 0,
-        draftContentTop: hasDraft ? SECTION_PADDING : 0,
-        draftHeight: draft.height,
-        // No live
-        liveBoxLeft: 0,
-        liveBoxWidth: 0,
-        liveContentLeft: 0,
-        liveContentTop: 0,
-        liveHeight: 0,
-        showBothSections: false,
-      };
-    }
-
-    // Both trees present - side by side (Live LEFT, Draft RIGHT)
-    const liveBoxWidth = live.width + TREE_PADDING;
-    const draftBoxWidth = draft.width + TREE_PADDING;
-    const totalWidth = liveBoxWidth + SECTION_GAP + draftBoxWidth;
-    const maxHeight = Math.max(live.height, draft.height) + SECTION_PADDING;
-
-    return {
-      width: totalWidth,
-      height: maxHeight,
-      // Live section (LEFT)
-      liveBoxLeft: 0,
-      liveBoxWidth: liveBoxWidth,
-      liveContentLeft: 0,
-      liveContentTop: SECTION_PADDING,
-      liveHeight: live.height,
-      // Draft section (RIGHT)
-      draftBoxLeft: liveBoxWidth + SECTION_GAP,
-      draftBoxWidth: draftBoxWidth,
-      draftContentLeft: liveBoxWidth + SECTION_GAP,
-      draftContentTop: SECTION_PADDING,
-      draftHeight: draft.height,
-      showBothSections: true,
-    };
-  });
+  const TREE_LEFT_MARGIN = 24; // Left margin for tree root
 
   // ==========================================================================
   // Helpers
@@ -882,59 +962,107 @@ export const SpecBoard: Component = () => {
     onCleanup(() => document.removeEventListener('keydown', handler));
   });
 
-  // Pan and zoom handlers
+  // Detect which side the cursor is over
+  const getSideFromEvent = (e: MouseEvent | WheelEvent): 'draft' | 'live' | null => {
+    const target = e.target as HTMLElement;
+    const section = target.closest('.tree-section');
+    if (!section) return null;
+    return section.classList.contains('draft-section') ? 'draft' : 'live';
+  };
+
+  // Pan and zoom handlers (per side)
+  // Figma-style: scroll up (negative deltaY) = zoom in, scroll down = zoom out
+  // Zoom centers on cursor position
   const handleWheel = (e: WheelEvent) => {
+    const side = getSideFromEvent(e);
+    if (!side) return;
+
     e.preventDefault();
-    const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    const newZoom = Math.max(0.25, Math.min(2, zoom() * delta));
+    const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
 
-    // Zoom toward cursor position
-    if (canvasRef) {
-      const rect = canvasRef.getBoundingClientRect();
-      const cursorX = e.clientX - rect.left;
-      const cursorY = e.clientY - rect.top;
-
-      const currentPan = pan();
-      const scale = newZoom / zoom();
-
-      setPan({
-        x: cursorX - (cursorX - currentPan.x) * scale,
-        y: cursorY - (cursorY - currentPan.y) * scale,
-      });
+    if (side === 'draft') {
+      const oldZoom = draftZoom();
+      const newZoom = Math.max(0.25, Math.min(3, oldZoom * zoomFactor));
+      const section = (e.target as HTMLElement).closest('.tree-section');
+      if (section) {
+        const rect = section.getBoundingClientRect();
+        // Cursor position relative to section
+        const cursorX = e.clientX - rect.left - TREE_LEFT_MARGIN;
+        const cursorY = e.clientY - rect.top - rect.height / 2;
+        const currentPan = draftPan();
+        // Point in content space under cursor
+        const contentX = (cursorX - currentPan.x) / oldZoom;
+        const contentY = (cursorY - currentPan.y) / oldZoom;
+        // New pan to keep that point under cursor
+        setDraftPan({
+          x: cursorX - contentX * newZoom,
+          y: cursorY - contentY * newZoom,
+        });
+      }
+      setDraftZoom(newZoom);
+    } else {
+      const oldZoom = liveZoom();
+      const newZoom = Math.max(0.25, Math.min(3, oldZoom * zoomFactor));
+      const section = (e.target as HTMLElement).closest('.tree-section');
+      if (section) {
+        const rect = section.getBoundingClientRect();
+        // Cursor position relative to section
+        const cursorX = e.clientX - rect.left - TREE_LEFT_MARGIN;
+        const cursorY = e.clientY - rect.top - rect.height / 2;
+        const currentPan = livePan();
+        // Point in content space under cursor
+        const contentX = (cursorX - currentPan.x) / oldZoom;
+        const contentY = (cursorY - currentPan.y) / oldZoom;
+        // New pan to keep that point under cursor
+        setLivePan({
+          x: cursorX - contentX * newZoom,
+          y: cursorY - contentY * newZoom,
+        });
+      }
+      setLiveZoom(newZoom);
     }
-
-    setZoom(newZoom);
   };
 
   const handleMouseDown = (e: MouseEvent) => {
-    // Middle mouse button or space+left click for panning
+    // Middle mouse button or alt+left click for panning
     if (e.button === 1 || (e.button === 0 && e.altKey)) {
+      const side = getSideFromEvent(e);
+      if (!side) return;
+
       e.preventDefault();
       setIsPanning(true);
-      setPanStart({ x: e.clientX - pan().x, y: e.clientY - pan().y });
+      setActivePanSide(side);
+      const pan = side === 'draft' ? draftPan() : livePan();
+      setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
     }
   };
 
   const handleMouseMove = (e: MouseEvent) => {
-    if (isPanning()) {
-      setPan({
+    if (isPanning() && activePanSide()) {
+      const newPan = {
         x: e.clientX - panStart().x,
         y: e.clientY - panStart().y,
-      });
+      };
+      if (activePanSide() === 'draft') {
+        setDraftPan(newPan);
+      } else {
+        setLivePan(newPan);
+      }
     }
   };
 
   const handleMouseUp = () => {
     setIsPanning(false);
+    setActivePanSide(null);
   };
 
   const resetView = () => {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
+    setDraftZoom(1);
+    setLiveZoom(1);
+    setDraftPan({ x: 0, y: 0 });
+    setLivePan({ x: 0, y: 0 });
+    setFocusedView('both');
   };
-
-  const zoomIn = () => setZoom(z => Math.min(2, z * 1.2));
-  const zoomOut = () => setZoom(z => Math.max(0.25, z / 1.2));
 
   // ==========================================================================
   // Render
@@ -1064,24 +1192,18 @@ export const SpecBoard: Component = () => {
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
         >
-          {/* Zoom controls */}
-          <div class="absolute bottom-3 right-3 z-20 flex items-center gap-1 px-1 py-0.5 rounded"
-               style={{ background: 'rgba(30, 30, 30, 0.8)', border: '1px solid rgba(64, 64, 64, 0.4)' }}>
-            <button onClick={zoomOut} class="p-1 text-wool-400 hover:text-wool-200" title="Zoom out">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4" />
-              </svg>
-            </button>
-            <span class="text-[10px] text-wool-500 min-w-[36px] text-center">{Math.round(zoom() * 100)}%</span>
-            <button onClick={zoomIn} class="p-1 text-wool-400 hover:text-wool-200" title="Zoom in">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-              </svg>
-            </button>
-            <button onClick={resetView} class="p-1 text-wool-400 hover:text-wool-200 ml-1" title="Reset view">
+          {/* Reset view button */}
+          <div class="absolute bottom-3 right-3 z-20">
+            <button
+              onClick={resetView}
+              class="flex items-center gap-1.5 px-2 py-1 rounded text-wool-400 hover:text-wool-200"
+              style={{ background: 'rgba(30, 30, 30, 0.8)', border: '1px solid rgba(64, 64, 64, 0.4)' }}
+              title="Reset view (zoom & pan)"
+            >
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
               </svg>
+              <span class="text-[10px]">Reset</span>
             </button>
           </div>
 
@@ -1089,156 +1211,193 @@ export const SpecBoard: Component = () => {
             when={delta.draftTree().length > 0 || delta.liveTree().length > 0}
             fallback={<EmptyTreeState />}
           >
-            {/* Transformed canvas container */}
+            {/* Split view container - fills viewport */}
             <div
-              class="absolute origin-top-left"
-              style={{
-                transform: `translate(${pan().x}px, ${pan().y}px) scale(${zoom()})`,
-                width: `${canvasDimensions().width}px`,
-                height: `${canvasDimensions().height}px`,
-              }}
+              class="absolute inset-0 flex"
+              style={{ gap: `${SECTION_GAP}px`, padding: '8px' }}
               onContextMenu={(e) => {
-                if ((e.target as HTMLElement).classList.contains('absolute')) {
+                if ((e.target as HTMLElement).closest('.tree-section')) {
                   handleContextMenu(e, null);
                 }
               }}
             >
-              {/* Live Tree Section (LEFT when both present) */}
-              <Show when={hasLiveTree()}>
-                {/* Section box */}
+              {/* Draft Section (LEFT) */}
+              <Show when={delta.draftTree().length > 0 && focusedView() !== 'live'}>
                 <div
-                  class="absolute rounded-lg"
+                  class="tree-section draft-section flex-1 rounded-lg relative overflow-hidden"
                   style={{
-                    left: `${canvasDimensions().liveBoxLeft}px`,
-                    top: '0',
-                    width: `${canvasDimensions().liveBoxWidth}px`,
-                    height: `${canvasDimensions().height}px`,
-                    border: '1px dashed rgba(90, 85, 80, 0.25)',
-                    background: 'rgba(30, 30, 30, 0.3)',
-                  }}
-                >
-                  {/* Section label with status */}
-                  <div
-                    class="absolute flex items-center gap-1.5 text-[9px] font-medium uppercase tracking-wider px-2 py-0.5 rounded"
-                    style={{
-                      left: '8px',
-                      top: '6px',
-                      background: 'rgba(30, 30, 30, 0.8)',
-                    }}
-                  >
-                    <span style={{ color: 'var(--wool-500)' }}>Live</span>
-                    <Show when={liveRunStatus()}>
-                      <span style={{ color: 'var(--wool-600)' }}>·</span>
-                      <span
-                        class={liveRunStatus() === 'working' ? 'animate-pulse' : ''}
-                        style={{
-                          color: liveRunStatus() === 'working' ? 'var(--amber-400)'
-                            : liveRunStatus() === 'done' ? 'var(--sage)'
-                            : liveRunStatus() === 'failed' ? 'var(--terra)'
-                            : liveRunStatus() === 'paused' ? 'var(--golden)'
-                            : 'var(--wool-600)',
-                        }}
-                      >
-                        {liveRunStatus()}
-                      </span>
-                    </Show>
-                  </div>
-                </div>
-                {/* Tree content */}
-                <div
-                  class="absolute"
-                  style={{
-                    left: `${canvasDimensions().liveContentLeft}px`,
-                    top: `${canvasDimensions().liveContentTop}px`,
-                    width: `${liveLayout().width}px`,
-                    height: `${canvasDimensions().liveHeight}px`,
-                  }}
-                >
-                  <TreeConnectors
-                    positions={liveLayout().positions}
-                    tree={delta.liveTree()}
-                    color="rgb(90, 85, 80)"
-                    dashed
-                  />
-                  <For each={flattenLiveTree(delta.liveTree())}>
-                    {(node) => {
-                      const pos = () => liveLayout().positions.get(node.id);
-                      return (
-                        <Show when={pos()}>
-                          <LiveNodeCard
-                            node={node}
-                            position={pos()!}
-                            diff={delta.diff()}
-                            showDelta={delta.showDeltaIndicators()}
-                          />
-                        </Show>
-                      );
-                    }}
-                  </For>
-                </div>
-              </Show>
-
-              {/* Draft Tree Section (RIGHT when both present, or full width) */}
-              <Show when={delta.draftTree().length > 0}>
-                {/* Section box */}
-                <div
-                  class="absolute rounded-lg"
-                  style={{
-                    left: `${canvasDimensions().draftBoxLeft}px`,
-                    top: '0',
-                    width: `${canvasDimensions().draftBoxWidth}px`,
-                    height: `${canvasDimensions().height}px`,
                     border: '1px dashed rgba(212, 165, 116, 0.2)',
                     background: 'rgba(36, 34, 30, 0.3)',
                   }}
                 >
                   {/* Section label */}
                   <div
-                    class="absolute text-[9px] font-medium uppercase tracking-wider px-2 py-0.5 rounded"
+                    class="absolute z-10 text-[9px] font-medium uppercase tracking-wider px-2 py-0.5 rounded"
                     style={{
                       left: '8px',
                       top: '6px',
-                      color: 'var(--amber-600)',
                       background: 'rgba(30, 30, 30, 0.8)',
                     }}
                   >
-                    Draft
+                    <button
+                      onClick={() => setFocusedView(focusedView() === 'draft' ? 'both' : 'draft')}
+                      class="flex items-center gap-1.5 hover:opacity-80"
+                      title={focusedView() === 'draft' ? 'Show both' : 'Focus Draft'}
+                    >
+                      <span style={{ color: 'var(--amber-600)' }}>Draft</span>
+                      <span class="text-wool-600 text-[8px]">{Math.round(draftZoom() * 100)}%</span>
+                      <Show when={hasLiveTree() && focusedView() !== 'draft'}>
+                        <svg class="w-2.5 h-2.5 text-wool-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                        </svg>
+                      </Show>
+                      <Show when={focusedView() === 'draft'}>
+                        <svg class="w-2.5 h-2.5 text-wool-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+                        </svg>
+                      </Show>
+                    </button>
+                  </div>
+
+                  {/* Tree content - centered vertically, root at left */}
+                  <div
+                    class="absolute"
+                    style={{
+                      left: `${TREE_LEFT_MARGIN}px`,
+                      top: '50%',
+                      transform: `translate(${draftPan().x}px, calc(-50% + ${draftPan().y}px)) scale(${draftZoom()})`,
+                      'transform-origin': '0 50%',
+                    }}
+                  >
+                    <div class="relative" style={{ width: `${draftLayout().width}px`, height: `${draftLayout().height}px` }}>
+                      {/* Tree connectors (green for eval→task, amber for rest) */}
+                      <TreeConnectors
+                        positions={draftLayout().positions}
+                        tree={draftLayout().restructuredTree}
+                        color="rgb(212, 165, 116)"
+                      />
+                      <For each={flattenDraftTree(delta.draftTree())}>
+                        {(node) => {
+                          const pos = () => draftLayout().positions.get(node.id);
+                          return (
+                            <Show when={pos()}>
+                              <DraftNodeCard
+                                node={node}
+                                position={pos()!}
+                                diff={delta.diff()}
+                                showDelta={delta.showDeltaIndicators()}
+                                selected={selectedNodeId() === node.id}
+                                onSelect={() => {
+                                  setSelectedNodeId(node.id);
+                                  setSelectedLiveNodeId(null);
+                                  setViewingLiveNode(null);
+                                }}
+                                onDoubleClick={() => handleDoubleClick(node)}
+                                onContextMenu={(e) => handleContextMenu(e, node)}
+                              />
+                            </Show>
+                          );
+                        }}
+                      </For>
+                    </div>
                   </div>
                 </div>
-                {/* Tree content */}
+              </Show>
+
+              {/* Live Section (RIGHT) */}
+              <Show when={hasLiveTree() && focusedView() !== 'draft'}>
                 <div
-                  class="absolute"
+                  class="tree-section live-section flex-1 rounded-lg relative overflow-hidden"
                   style={{
-                    left: `${canvasDimensions().draftContentLeft}px`,
-                    top: `${canvasDimensions().draftContentTop}px`,
-                    width: `${draftLayout().width}px`,
-                    height: `${canvasDimensions().draftHeight}px`,
+                    border: '1px dashed rgba(90, 85, 80, 0.25)',
+                    background: 'rgba(30, 30, 30, 0.3)',
                   }}
                 >
-                  <TreeConnectors
-                    positions={draftLayout().positions}
-                    tree={delta.draftTree()}
-                    color="rgb(212, 165, 116)"
-                  />
-                  <For each={flattenDraftTree(delta.draftTree())}>
-                    {(node) => {
-                      const pos = () => draftLayout().positions.get(node.id);
-                      return (
-                        <Show when={pos()}>
-                          <DraftNodeCard
-                            node={node}
-                            position={pos()!}
-                            diff={delta.diff()}
-                            showDelta={delta.showDeltaIndicators()}
-                            selected={selectedNodeId() === node.id}
-                            onSelect={() => setSelectedNodeId(node.id)}
-                            onDoubleClick={() => handleDoubleClick(node)}
-                            onContextMenu={(e) => handleContextMenu(e, node)}
-                          />
-                        </Show>
-                      );
+                  {/* Section label */}
+                  <div
+                    class="absolute z-10 flex items-center gap-1.5 text-[9px] font-medium uppercase tracking-wider px-2 py-0.5 rounded"
+                    style={{
+                      left: '8px',
+                      top: '6px',
+                      background: 'rgba(30, 30, 30, 0.8)',
                     }}
-                  </For>
+                  >
+                    <button
+                      onClick={() => setFocusedView(focusedView() === 'live' ? 'both' : 'live')}
+                      class="flex items-center gap-1.5 hover:opacity-80"
+                      title={focusedView() === 'live' ? 'Show both' : 'Focus Live'}
+                    >
+                      <span style={{ color: 'var(--wool-500)' }}>Live</span>
+                      <span class="text-wool-600 text-[8px]">{Math.round(liveZoom() * 100)}%</span>
+                      <Show when={liveRunStatus()}>
+                        <span style={{ color: 'var(--wool-600)' }}>·</span>
+                        <span
+                          class={liveRunStatus() === 'working' ? 'animate-pulse' : ''}
+                          style={{
+                            color: liveRunStatus() === 'working' ? 'var(--amber-400)'
+                              : liveRunStatus() === 'done' ? 'var(--sage)'
+                              : liveRunStatus() === 'failed' ? 'var(--terra)'
+                              : liveRunStatus() === 'paused' ? 'var(--golden)'
+                              : 'var(--wool-600)',
+                          }}
+                        >
+                          {liveRunStatus()}
+                        </span>
+                      </Show>
+                      <Show when={focusedView() !== 'live'}>
+                        <svg class="w-2.5 h-2.5 text-wool-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                        </svg>
+                      </Show>
+                      <Show when={focusedView() === 'live'}>
+                        <svg class="w-2.5 h-2.5 text-wool-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+                        </svg>
+                      </Show>
+                    </button>
+                  </div>
+
+                  {/* Tree content - centered vertically, root at left */}
+                  <div
+                    class="absolute"
+                    style={{
+                      left: `${TREE_LEFT_MARGIN}px`,
+                      top: '50%',
+                      transform: `translate(${livePan().x}px, calc(-50% + ${livePan().y}px)) scale(${liveZoom()})`,
+                      'transform-origin': '0 50%',
+                    }}
+                  >
+                    <div class="relative" style={{ width: `${liveLayout().width}px`, height: `${liveLayout().height}px` }}>
+                      {/* Tree connectors (green for eval→task, neutral for rest) */}
+                      <TreeConnectors
+                        positions={liveLayout().positions}
+                        tree={liveLayout().restructuredTree}
+                        color="rgb(90, 85, 80)"
+                        dashed
+                      />
+                      <For each={flattenLiveTree(delta.liveTree())}>
+                        {(node) => {
+                          const pos = () => liveLayout().positions.get(node.id);
+                          return (
+                            <Show when={pos()}>
+                              <LiveNodeCard
+                                node={node}
+                                position={pos()!}
+                                diff={delta.diff()}
+                                showDelta={delta.showDeltaIndicators()}
+                                selected={selectedLiveNodeId() === node.id}
+                                onSelect={() => {
+                                  setSelectedLiveNodeId(node.id);
+                                  setSelectedNodeId(null);
+                                  setViewingLiveNode(node);
+                                }}
+                              />
+                            </Show>
+                          );
+                        }}
+                      </For>
+                    </div>
+                  </div>
                 </div>
               </Show>
             </div>
@@ -1572,6 +1731,183 @@ export const SpecBoard: Component = () => {
                       }}
                     >
                       Save Changes
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          }}
+        </Show>
+
+        {/* Live Node Detail Modal (Read-only) */}
+        <Show when={viewingLiveNode()}>
+          {(node) => {
+            const nodeType = () => node().nodeType;
+            const isEval = () => nodeType() === 'eval';
+            const isProject = () => nodeType() === 'project';
+            const typeLabel = () => (isEval() ? 'Eval' : isProject() ? 'Project' : 'Task');
+
+            const statusLabel = () => {
+              switch (node().status) {
+                case 'pending': return 'Pending';
+                case 'working': return 'Working';
+                case 'done': return 'Done';
+                case 'failed': return 'Failed';
+                default: return node().status;
+              }
+            };
+
+            const statusColor = () => {
+              switch (node().status) {
+                case 'pending': return 'var(--wool-500)';
+                case 'working': return 'var(--amber-500)';
+                case 'done': return 'var(--sage)';
+                case 'failed': return 'var(--terra)';
+                default: return 'var(--wool-500)';
+              }
+            };
+
+            return (
+              <div
+                class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+                onClick={(e) => { if (e.target === e.currentTarget) { setViewingLiveNode(null); setSelectedLiveNodeId(null); } }}
+              >
+                <div
+                  class="w-[420px] rounded-lg shadow-xl"
+                  style={{
+                    background: 'var(--pasture-800)',
+                    border: '1px solid var(--pasture-600)',
+                  }}
+                >
+                  {/* Header */}
+                  <div class="p-4 border-b border-pasture-600 flex items-start justify-between">
+                    <div class="flex items-center gap-3">
+                      <div
+                        class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+                        style={{
+                          background: isEval() ? 'rgba(125, 153, 112, 0.15)' : 'rgba(212, 165, 116, 0.12)',
+                          border: `1px solid ${isEval() ? 'rgba(125, 153, 112, 0.25)' : 'rgba(212, 165, 116, 0.2)'}`,
+                        }}
+                      >
+                        <Show when={isEval()} fallback={
+                          <Show when={isProject()} fallback={
+                            <svg class="w-5 h-5" style={{ color: 'var(--amber-500)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                            </svg>
+                          }>
+                            <svg class="w-5 h-5" style={{ color: 'var(--amber-500)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                            </svg>
+                          </Show>
+                        }>
+                          <svg class="w-5 h-5" style={{ color: 'var(--sage)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        </Show>
+                      </div>
+                      <div>
+                        <div class="flex items-center gap-2">
+                          <span
+                            class="text-[10px] font-medium uppercase tracking-wider"
+                            style={{ color: isEval() ? 'var(--sage)' : 'var(--amber-500)', opacity: 0.8 }}
+                          >
+                            {typeLabel()}
+                          </span>
+                          <span class="text-[9px] font-medium px-1.5 py-0.5 rounded" style={{ color: statusColor(), background: `color-mix(in srgb, ${statusColor()} 15%, transparent)` }}>
+                            {statusLabel()}
+                          </span>
+                        </div>
+                        <h2 class="text-sm font-semibold text-wool-100 -mt-0.5">
+                          {node().name || 'Untitled'}
+                        </h2>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => { setViewingLiveNode(null); setSelectedLiveNodeId(null); }}
+                      class="p-1 rounded text-wool-500 hover:text-wool-300 hover:bg-white/5"
+                    >
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  {/* Content */}
+                  <div class="p-4 space-y-4">
+                    {/* Description/Content (read-only) */}
+                    <Show when={node().content}>
+                      <div class="space-y-1.5">
+                        <label class="text-xs font-medium text-wool-300">
+                          {isEval() ? 'Acceptance Criteria' : 'Description'}
+                        </label>
+                        <div
+                          class="w-full px-3 py-2 rounded-md text-sm bg-pasture-900/50 border border-pasture-700 text-wool-200 whitespace-pre-wrap"
+                          style={{ 'min-height': '60px' }}
+                        >
+                          {node().content}
+                        </div>
+                      </div>
+                    </Show>
+
+                    {/* Validates (eval only) */}
+                    <Show when={isEval() && node().validates.length > 0}>
+                      <div class="space-y-1.5">
+                        <label class="text-xs font-medium" style={{ color: 'var(--sage)' }}>
+                          Validates Tasks
+                        </label>
+                        <div class="flex flex-wrap gap-1.5">
+                          <For each={node().validates}>
+                            {(taskId) => (
+                              <span
+                                class="px-2 py-0.5 rounded text-xs font-mono"
+                                style={{ background: 'rgba(125, 153, 112, 0.15)', color: 'var(--sage)', border: '1px solid rgba(125, 153, 112, 0.3)' }}
+                              >
+                                {taskId}
+                              </span>
+                            )}
+                          </For>
+                        </div>
+                      </div>
+                    </Show>
+
+                    {/* Commit SHA (if completed) */}
+                    <Show when={node().lastCommitSha}>
+                      <div class="space-y-1.5">
+                        <label class="text-xs font-medium text-wool-300">Last Commit</label>
+                        <div class="flex items-center gap-2">
+                          <code class="px-2 py-1 rounded text-xs font-mono bg-pasture-900/50 border border-pasture-700 text-wool-300">
+                            {node().lastCommitSha?.slice(0, 7)}
+                          </code>
+                        </div>
+                      </div>
+                    </Show>
+
+                    {/* Completed at (if done) */}
+                    <Show when={node().completedAt}>
+                      <div class="space-y-1.5">
+                        <label class="text-xs font-medium text-wool-300">Completed</label>
+                        <div class="text-xs text-wool-400">
+                          {new Date(node().completedAt!).toLocaleString()}
+                        </div>
+                      </div>
+                    </Show>
+
+                    {/* Node ID */}
+                    <div class="space-y-1.5">
+                      <label class="text-xs font-medium text-wool-500">Node ID</label>
+                      <code class="block px-2 py-1 rounded text-[10px] font-mono bg-pasture-900/30 border border-pasture-700/50 text-wool-500 truncate">
+                        {node().id}
+                      </code>
+                    </div>
+                  </div>
+
+                  {/* Footer */}
+                  <div class="px-4 py-3 border-t border-pasture-600 flex justify-end">
+                    <button
+                      onClick={() => { setViewingLiveNode(null); setSelectedLiveNodeId(null); }}
+                      class="px-3 py-1.5 rounded-md text-xs font-medium text-wool-400 hover:text-wool-200 hover:bg-white/5"
+                    >
+                      Close
                     </button>
                   </div>
                 </div>
