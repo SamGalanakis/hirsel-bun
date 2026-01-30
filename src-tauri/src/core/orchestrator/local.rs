@@ -158,6 +158,7 @@ impl LocalOrchestrator {
             blocked_by,
             tokens_used: t.tokens_used.map(|n| n as u64),
             created_at: t.created_at.clone(),
+            board_task_id: t.board_task_id.clone(),
         }
     }
 
@@ -779,6 +780,59 @@ impl Orchestrator for LocalOrchestrator {
             .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
         Ok(())
+    }
+
+    async fn add_delta_task(
+        &self,
+        run: &str,
+        request: super::AddDeltaTaskRequest,
+    ) -> OrchestratorResult<Task> {
+        use crate::core::state::types::TaskType;
+
+        let state = self.get_state(run)?;
+
+        // Parse task type
+        let task_type = match request.task_type.as_str() {
+            "eval" => TaskType::Eval,
+            _ => TaskType::Work,
+        };
+
+        // Build blocked_by slice
+        let blocked_by_vec = request.blocked_by.unwrap_or_default();
+        let blocked_by: Vec<&str> = blocked_by_vec.iter().map(|s| s.as_str()).collect();
+        let blocked_by_opt = if blocked_by.is_empty() {
+            None
+        } else {
+            Some(blocked_by.as_slice())
+        };
+
+        // Build validates slice
+        let validates_vec = request.validates.unwrap_or_default();
+        let validates: Vec<&str> = validates_vec.iter().map(|s| s.as_str()).collect();
+        let validates_opt = if validates.is_empty() {
+            None
+        } else {
+            Some(validates.as_slice())
+        };
+
+        state
+            .add_task_with_type(
+                &request.task_id,
+                &request.name,
+                request.parent_id.as_deref(),
+                blocked_by_opt,
+                task_type,
+                validates_opt,
+                request.board_task_id.as_deref(),
+            )
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+        let task = state
+            .get_task(&request.task_id)
+            .map_err(|e| OrchestratorError::State(e.to_string()))?
+            .ok_or_else(|| OrchestratorError::TaskNotFound(request.task_id.clone()))?;
+
+        Ok(self.convert_task(&task))
     }
 
     // -------------------------------------------------------------------------

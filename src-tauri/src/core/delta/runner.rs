@@ -9,16 +9,23 @@
 //! 2. DeltaRunner processes pending delta_submissions
 //! 3. For each submission:
 //!    - Generate spec content from draft node
-//!    - Add task to the underlying run
-//!    - Mark live node as working
+//!    - Ensure run exists (create via orchestrator if first dispatch)
+//!    - Add task to the underlying run via orchestrator
+//!    - Mark live node as pending (workers will set working)
 //! 4. When all submissions complete, pause the project run
 
 use rusqlite::Connection;
 use tracing::{debug, info, warn};
 
 use super::state::{DeltaState, DeltaStateError};
-use super::types::{DeltaStatus, DeltaSubmission, DeltaType, LiveNodeStatus, ProjectRunStatus};
+use super::types::{
+    DeltaStatus, DeltaSubmission, DeltaType, LiveNodeStatus, NodeType, ProjectRunStatus,
+};
 use crate::core::config::global_db_path;
+use crate::core::orchestrator::{
+    AddDeltaTaskRequest, Orchestrator, OrchestratorError, StartRunRequest,
+};
+use crate::core::project::ProjectStore;
 
 /// Error type for runner operations
 #[derive(Debug, thiserror::Error)]
@@ -31,6 +38,16 @@ pub enum RunnerError {
     NoProjectRun,
     #[error("Run not in working state")]
     RunNotWorking,
+    #[error("Project not found: {0}")]
+    ProjectNotFound(i64),
+    #[error("Orchestrator error: {0}")]
+    Orchestrator(String),
+}
+
+impl From<OrchestratorError> for RunnerError {
+    fn from(e: OrchestratorError) -> Self {
+        RunnerError::Orchestrator(e.to_string())
+    }
 }
 
 pub type RunnerResult<T> = Result<T, RunnerError>;
@@ -54,7 +71,7 @@ impl DeltaRunner {
     ///
     /// This is called by the daemon during its polling loop.
     /// Returns the number of submissions processed.
-    pub fn process_pending(&self) -> RunnerResult<usize> {
+    pub async fn process_pending(&self, orchestrator: &dyn Orchestrator) -> RunnerResult<usize> {
         // Get project run
         let run = self
             .state
@@ -74,59 +91,229 @@ impl DeltaRunner {
             return Ok(0);
         }
 
+        // Ensure the run exists in ~/.hirsel/runs/
+        // If this is the first dispatch, we need to create it
+        let run_name = self.ensure_run_exists(orchestrator, &run.run_name).await?;
+
         let mut processed = 0;
         for submission in pending {
             // Mark as processing
             self.state
                 .update_submission_status(submission.id, DeltaStatus::Processing)?;
 
-            // Mark the corresponding live node as working
-            if let Some(ref node_id) = submission.live_node_id {
-                if let Err(e) =
-                    self.state
-                        .update_live_node_status(node_id, LiveNodeStatus::Working, None)
-                {
-                    warn!("Failed to update live node {} status: {}", node_id, e);
-                }
-            }
-
             // Generate spec content for the task
             let spec_content = self.generate_task_spec(&submission)?;
 
-            // Log what we're processing (actual task dispatch will be handled
-            // by connecting to the run system)
             info!(
                 "Processing delta submission: {} ({:?}) - {}",
                 submission.id, submission.delta_type, submission.name
             );
             debug!("Task spec:\n{}", spec_content);
 
-            // For now, mark as done immediately
-            // The full integration will:
-            // 1. Add task to run's task queue
-            // 2. Let workers pick it up
-            // 3. Mark done/failed based on worker outcome
-            self.state
-                .update_submission_status(submission.id, DeltaStatus::Done)?;
+            // Add task to the run via orchestrator
+            let task_id = submission
+                .live_node_id
+                .clone()
+                .unwrap_or_else(|| format!("delta-{}", submission.id));
 
-            // Update live node status
-            if let Some(ref node_id) = submission.live_node_id {
-                let status = LiveNodeStatus::Done;
-                if let Err(e) = self.state.update_live_node_status(node_id, status, None) {
-                    warn!(
-                        "Failed to update live node {} to {:?}: {}",
-                        node_id, status, e
-                    );
+            // Determine task type based on delta node type
+            let task_type = self.get_task_type_for_submission(&submission)?;
+
+            // Build blocked_by list for eval tasks
+            let blocked_by = self.get_blocked_by_for_submission(&submission)?;
+
+            // Build validates list for eval tasks
+            let validates = self.get_validates_for_submission(&submission)?;
+
+            let request = AddDeltaTaskRequest {
+                task_id: task_id.clone(),
+                name: submission.name.clone(),
+                content: spec_content,
+                parent_id: None,
+                blocked_by,
+                task_type,
+                validates,
+                board_task_id: submission.live_node_id.clone(),
+                delta_type: Some(submission.delta_type.as_str().to_string()),
+                refs: if submission.refs.is_empty() {
+                    None
+                } else {
+                    serde_json::to_string(&submission.refs).ok()
+                },
+            };
+
+            match orchestrator.add_delta_task(&run_name, request).await {
+                Ok(_task) => {
+                    info!("Added task {} to run {}", task_id, run_name);
+
+                    // Update live node status to pending (workers will set working when claimed)
+                    if let Some(ref node_id) = submission.live_node_id {
+                        if let Err(e) = self.state.update_live_node_status(
+                            node_id,
+                            LiveNodeStatus::Pending,
+                            None,
+                        ) {
+                            warn!("Failed to update live node {} status: {}", node_id, e);
+                        }
+                    }
+
+                    // Mark submission as processing (not done yet - that happens when task completes)
+                    // We keep it at processing until task completion callback
+                    processed += 1;
+                }
+                Err(e) => {
+                    warn!("Failed to add task {} to run: {}", task_id, e);
+                    // Mark submission as failed
+                    self.state
+                        .update_submission_status(submission.id, DeltaStatus::Failed)?;
+
+                    // Update live node to failed
+                    if let Some(ref node_id) = submission.live_node_id {
+                        let _ = self.state.update_live_node_status(
+                            node_id,
+                            LiveNodeStatus::Failed,
+                            None,
+                        );
+                    }
                 }
             }
-
-            processed += 1;
         }
 
-        // Check if all done after processing
-        self.check_completion()?;
-
         Ok(processed)
+    }
+
+    /// Ensure the actual run directory exists in ~/.hirsel/runs/
+    ///
+    /// If the run doesn't exist yet, create it via orchestrator.start_run().
+    /// This happens on first dispatch for a project.
+    async fn ensure_run_exists(
+        &self,
+        orchestrator: &dyn Orchestrator,
+        run_name: &str,
+    ) -> RunnerResult<String> {
+        // Check if run already exists
+        match orchestrator.get_run(run_name).await {
+            Ok(_detail) => {
+                // Run exists, return the name
+                return Ok(run_name.to_string());
+            }
+            Err(OrchestratorError::RunNotFound(_)) => {
+                // Run doesn't exist, need to create it
+                info!("Run '{}' not found, creating...", run_name);
+            }
+            Err(e) => {
+                // Some other error
+                return Err(RunnerError::Orchestrator(format!(
+                    "Failed to check run existence: {}",
+                    e
+                )));
+            }
+        }
+
+        // Load project to get starting point
+        let store = ProjectStore::open().map_err(|e| RunnerError::Orchestrator(e.to_string()))?;
+        let project = store
+            .get_project(self.project_id)
+            .map_err(|_| RunnerError::ProjectNotFound(self.project_id))?;
+
+        // Generate the spec from the root node content
+        let spec = self.generate_run_spec()?;
+
+        // Create run via orchestrator
+        let request = StartRunRequest {
+            name: run_name.to_string(),
+            project_id: self.project_id,
+            spec,
+            starting_point: Some(project.starting_point.clone()),
+            eval: None, // Eval nodes are handled as tasks
+            worker_scale: project.worker_scale.as_ref().and_then(|s| s.parse().ok()),
+            time_limit_minutes: project.time_limit_minutes,
+            max_iterations: project.max_iterations,
+            human_in_the_loop: Some(project.human_in_the_loop),
+            runner: None,
+            worker_runners: None,
+            tailscale_oauth: None,
+            draft: false, // Spawn workers immediately
+        };
+
+        let detail = orchestrator.start_run(request).await?;
+        info!(
+            "Created run '{}' for project {}",
+            detail.name, self.project_id
+        );
+
+        Ok(detail.name)
+    }
+
+    /// Generate the run spec from the root node content
+    fn generate_run_spec(&self) -> RunnerResult<String> {
+        // Get the root node (project node)
+        if let Ok(Some(root_id)) = self.state.get_root_node_id() {
+            if let Ok(root) = self.state.get_draft_node(&root_id) {
+                if !root.content.is_empty() {
+                    return Ok(root.content);
+                }
+            }
+        }
+
+        // Fallback: generate from all task nodes
+        let nodes = self.state.get_draft_nodes()?;
+        let mut spec = String::new();
+        spec.push_str("# Project Scope\n\n");
+        spec.push_str("## Tasks\n\n");
+
+        for node in nodes {
+            if node.node_type == NodeType::Task {
+                spec.push_str(&format!("- **{}**: {}\n", node.name, node.content));
+            }
+        }
+
+        Ok(spec)
+    }
+
+    /// Get the task type string for a submission
+    fn get_task_type_for_submission(&self, submission: &DeltaSubmission) -> RunnerResult<String> {
+        // Check the live node to determine if it's an eval
+        if let Some(ref node_id) = submission.live_node_id {
+            if let Ok(node) = self.state.get_live_node(node_id) {
+                if node.node_type == NodeType::Eval {
+                    return Ok("eval".to_string());
+                }
+            }
+        }
+        Ok("work".to_string())
+    }
+
+    /// Get blocked_by list for eval submissions
+    fn get_blocked_by_for_submission(
+        &self,
+        submission: &DeltaSubmission,
+    ) -> RunnerResult<Option<Vec<String>>> {
+        // For eval nodes, they're blocked by the tasks they validate
+        if let Some(ref node_id) = submission.live_node_id {
+            if let Ok(node) = self.state.get_live_node(node_id) {
+                if node.node_type == NodeType::Eval && !node.validates.is_empty() {
+                    return Ok(Some(node.validates.clone()));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Get validates list for eval submissions
+    fn get_validates_for_submission(
+        &self,
+        submission: &DeltaSubmission,
+    ) -> RunnerResult<Option<Vec<String>>> {
+        // For eval nodes, return the list of tasks they validate
+        if let Some(ref node_id) = submission.live_node_id {
+            if let Ok(node) = self.state.get_live_node(node_id) {
+                if node.node_type == NodeType::Eval && !node.validates.is_empty() {
+                    return Ok(Some(node.validates.clone()));
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// Get all pending submissions for this project
@@ -308,6 +495,16 @@ impl DeltaRunner {
         db.busy_timeout(std::time::Duration::from_secs(30))?;
         db.pragma_update(None, "journal_mode", "WAL")?;
         Ok(db)
+    }
+
+    /// Get the project ID
+    pub fn project_id(&self) -> i64 {
+        self.project_id
+    }
+
+    /// Get a reference to the state
+    pub fn state(&self) -> &DeltaState {
+        &self.state
     }
 }
 

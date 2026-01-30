@@ -120,6 +120,7 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
             "/api/runs/{name}/tasks",
             get(routes::list_tasks).post(routes::add_task),
         )
+        .route("/api/runs/{name}/delta-tasks", post(routes::add_delta_task))
         .route(
             "/api/runs/{name}/tasks/{task_id}",
             delete(routes::delete_task),

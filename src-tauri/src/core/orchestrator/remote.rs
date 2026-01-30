@@ -260,6 +260,18 @@ impl Orchestrator for RemoteOrchestrator {
         .await
     }
 
+    async fn add_delta_task(
+        &self,
+        run: &str,
+        request: super::AddDeltaTaskRequest,
+    ) -> OrchestratorResult<Task> {
+        self.post(
+            &format!("/api/runs/{}/delta-tasks", urlencoding::encode(run)),
+            &request,
+        )
+        .await
+    }
+
     // -------------------------------------------------------------------------
     // Messages
     // -------------------------------------------------------------------------

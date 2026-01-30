@@ -204,6 +204,17 @@ impl Orchestrator for DaemonOrchestrator {
         Ok(())
     }
 
+    async fn add_delta_task(
+        &self,
+        run: &str,
+        request: super::AddDeltaTaskRequest,
+    ) -> OrchestratorResult<crate::core::api_types::Task> {
+        self.client
+            .post(&format!("/api/runs/{}/delta-tasks", run), request)
+            .await
+            .map_err(|e| OrchestratorError::Other(e.to_string()))
+    }
+
     // -------------------------------------------------------------------------
     // Messages
     // -------------------------------------------------------------------------

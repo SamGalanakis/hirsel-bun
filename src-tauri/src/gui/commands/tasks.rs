@@ -77,6 +77,7 @@ pub async fn add_task(
         blocked_by,
         tokens_used: task.tokens_used.map(|t| t as u64),
         created_at: task.created_at,
+        board_task_id: task.board_task_id,
     })
 }
 

@@ -129,6 +129,32 @@ pub struct AddTaskRequest {
     pub content: String,
 }
 
+/// Add delta task request (for delta dispatch system)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddDeltaTaskRequest {
+    /// Task ID (from live_node.id)
+    pub task_id: String,
+    /// Task name
+    pub name: String,
+    /// Task content/spec
+    pub content: String,
+    /// Parent task ID (for subtasks)
+    pub parent_id: Option<String>,
+    /// Task IDs this task is blocked by
+    pub blocked_by: Option<Vec<String>>,
+    /// Task type: 'work' or 'eval'
+    pub task_type: String,
+    /// For eval tasks: task IDs this eval validates
+    pub validates: Option<Vec<String>>,
+    /// Link to the original board task ID
+    pub board_task_id: Option<String>,
+    /// Delta type: 'implement', 'modify', 'revert'
+    pub delta_type: Option<String>,
+    /// Reference context
+    pub refs: Option<String>,
+}
+
 /// Send message request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -358,6 +384,21 @@ pub trait Orchestrator: Send + Sync {
 
     /// Reopen a completed task
     async fn reopen_task(&self, run: &str, task_id: &str) -> OrchestratorResult<()>;
+
+    /// Add a delta task (for delta dispatch system)
+    ///
+    /// Creates a task with full control over task_id, type, blocking, and validation.
+    /// Used by the delta dispatch system to add tasks from the board.
+    async fn add_delta_task(
+        &self,
+        run: &str,
+        request: AddDeltaTaskRequest,
+    ) -> OrchestratorResult<Task> {
+        let _ = (run, request);
+        Err(OrchestratorError::Other(
+            "add_delta_task not implemented for this orchestrator".to_string(),
+        ))
+    }
 
     // -------------------------------------------------------------------------
     // Messages

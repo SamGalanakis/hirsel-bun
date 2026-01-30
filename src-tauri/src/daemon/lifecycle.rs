@@ -14,7 +14,7 @@ use tokio::time::interval;
 
 use crate::core::api_types::RunStatus;
 use crate::core::config::{self, Config};
-use crate::core::delta::{list_working_project_runs, DeltaRunner};
+use crate::core::delta::{list_working_project_runs, DeltaRunner, DeltaState, LiveNodeStatus};
 use crate::core::lifecycle::{
     LifecycleAction, LifecycleEvent, LifecycleManager, LocalLifecycleManager,
 };
@@ -71,7 +71,7 @@ pub async fn run_polling_loop(state: Arc<AppState>, config: DaemonConfig) {
 
                 // Process delta submissions for this project run
                 let runner = DeltaRunner::new(project_id);
-                match runner.process_pending() {
+                match runner.process_pending(&state.orchestrator).await {
                     Ok(processed) => {
                         if processed > 0 {
                             tracing::info!(
@@ -88,6 +88,14 @@ pub async fn run_polling_loop(state: Arc<AppState>, config: DaemonConfig) {
                             e
                         );
                     }
+                }
+
+                // Sync task statuses back to live nodes
+                if let Err(e) =
+                    sync_task_statuses_to_live_nodes(project_id, &run_name, &state.orchestrator)
+                        .await
+                {
+                    tracing::debug!("[Daemon] Task status sync for '{}': {}", run_name, e);
                 }
             }
         }
@@ -472,4 +480,105 @@ async fn handle_lifecycle_actions(
             _ => {}
         }
     }
+}
+
+/// Sync task completion statuses from run to live nodes
+///
+/// Polls the run's task statuses and updates corresponding live nodes
+/// when tasks complete (done/failed). This is the callback mechanism
+/// from the run system back to the delta dispatch system.
+async fn sync_task_statuses_to_live_nodes(
+    project_id: i64,
+    run_name: &str,
+    orchestrator: &dyn Orchestrator,
+) -> anyhow::Result<()> {
+    // Get tasks from the run
+    let tasks = match orchestrator.list_tasks(run_name).await {
+        Ok(tasks) => tasks,
+        Err(crate::core::orchestrator::OrchestratorError::RunNotFound(_)) => {
+            // Run doesn't exist yet (first dispatch hasn't completed)
+            return Ok(());
+        }
+        Err(e) => {
+            return Err(anyhow::anyhow!("Failed to list tasks: {}", e));
+        }
+    };
+
+    let state = DeltaState::new(project_id);
+
+    // Update live nodes based on task status
+    for task in tasks {
+        // Skip tasks without a board_task_id (not from delta dispatch)
+        let node_id = match task.board_task_id {
+            Some(ref id) => id,
+            None => continue,
+        };
+
+        // Get current live node status
+        let current_status = match state.get_live_node(node_id) {
+            Ok(node) => node.status,
+            Err(_) => continue, // Node doesn't exist
+        };
+
+        // Determine expected status from task
+        use crate::core::api_types::TaskStatus;
+        let expected_status = match task.status {
+            TaskStatus::Done | TaskStatus::Validated => LiveNodeStatus::Done,
+            TaskStatus::NeedsRepair => LiveNodeStatus::Failed,
+            TaskStatus::Doing => LiveNodeStatus::Working,
+            _ => LiveNodeStatus::Pending,
+        };
+
+        // Update if changed (and not going backwards)
+        if current_status != expected_status {
+            // Don't downgrade from done/failed back to working/pending
+            let should_update = match (current_status, expected_status) {
+                (LiveNodeStatus::Done, _) | (LiveNodeStatus::Failed, _) => false,
+                _ => true,
+            };
+
+            if should_update {
+                if let Err(e) = state.update_live_node_status(node_id, expected_status, None) {
+                    tracing::warn!(
+                        "[Daemon] Failed to update live node {} status: {}",
+                        node_id,
+                        e
+                    );
+                } else {
+                    tracing::debug!(
+                        "[Daemon] Updated live node {} status to {:?}",
+                        node_id,
+                        expected_status
+                    );
+                }
+
+                // If task completed, also update the delta submission
+                if matches!(
+                    expected_status,
+                    LiveNodeStatus::Done | LiveNodeStatus::Failed
+                ) {
+                    let runner = DeltaRunner::new(project_id);
+                    // Find the submission by live_node_id
+                    if let Ok(db) = rusqlite::Connection::open(config::global_db_path()) {
+                        if let Ok(submission_id) = db.query_row::<i64, _, _>(
+                            "SELECT id FROM delta_submissions WHERE live_node_id = ?1 AND status = 'processing'",
+                            [node_id],
+                            |row| row.get(0),
+                        ) {
+                            let success = expected_status == LiveNodeStatus::Done;
+                            if let Err(e) = runner.complete_submission(submission_id, success, None) {
+                                tracing::warn!(
+                                    "[Daemon] Failed to complete submission {}: {}",
+                                    submission_id,
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }

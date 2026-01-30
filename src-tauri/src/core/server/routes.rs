@@ -16,9 +16,9 @@ use crate::core::api_types::{
     Worker, WorkerEventsResponse,
 };
 use crate::core::orchestrator::{
-    AddTaskRequest, CreateRunRequest, CreateRunResponse, DeliverRunRequest, HealthResponse,
-    Orchestrator, OrchestratorError, ResumeRunRequest, ResumeWorkerRequest, SendMessageRequest,
-    SpawnSingleWorkerRequest, SpawnWorkersRequest, SpawnWorkersResponse,
+    AddDeltaTaskRequest, AddTaskRequest, CreateRunRequest, CreateRunResponse, DeliverRunRequest,
+    HealthResponse, Orchestrator, OrchestratorError, ResumeRunRequest, ResumeWorkerRequest,
+    SendMessageRequest, SpawnSingleWorkerRequest, SpawnWorkersRequest, SpawnWorkersResponse,
 };
 
 /// Convert OrchestratorError to HTTP response
@@ -350,6 +350,18 @@ pub async fn reopen_task(
 ) -> Result<StatusCode> {
     state.orchestrator.reopen_task(&name, &task_id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Add a delta task (for delta dispatch system)
+///
+/// POST /api/runs/{name}/delta-tasks
+pub async fn add_delta_task(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Json(request): Json<AddDeltaTaskRequest>,
+) -> Result<Json<Task>> {
+    let task = state.orchestrator.add_delta_task(&name, request).await?;
+    Ok(Json(task))
 }
 
 // =============================================================================

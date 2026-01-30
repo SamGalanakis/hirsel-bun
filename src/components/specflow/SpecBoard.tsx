@@ -372,50 +372,44 @@ const DraftNodeCard: Component<{
     props.showDelta && props.diff?.modifiedNodes.some((m) => m.draftNode.id === props.node.id);
   const isEval = () => props.node.nodeType === 'eval';
   const isProject = () => props.node.nodeType === 'project';
-
-  // Style based on node type: Project (amber), Task (neutral), Eval (sage/dashed)
-  const getStyles = () => {
-    if (isProject()) {
-      return {
-        bg: 'rgba(45, 42, 38, 0.95)',
-        border: props.selected ? 'rgba(212, 165, 116, 0.6)' : 'rgba(212, 165, 116, 0.3)',
-        borderStyle: 'solid',
-        textColor: 'var(--wool-100)',
-        accent: 'var(--amber-500)',
-      };
-    }
-    if (isEval()) {
-      // Eval nodes: sage tint, dashed border
-      const baseBorder = isNew() ? 'rgba(125, 153, 112, 0.6)'
-        : isModified() ? 'rgba(125, 153, 112, 0.5)'
-        : props.selected ? 'rgba(125, 153, 112, 0.5)'
-        : 'rgba(125, 153, 112, 0.3)';
-      return {
-        bg: isNew() || isModified() ? 'rgba(125, 153, 112, 0.12)' : 'rgba(125, 153, 112, 0.06)',
-        border: baseBorder,
-        borderStyle: 'dashed',
-        textColor: 'var(--wool-200)',
-        accent: 'var(--sage)',
-      };
-    }
-    // Task nodes: standard styling
-    const baseBorder = isNew() ? 'rgba(125, 153, 112, 0.6)'
-      : isModified() ? 'rgba(212, 165, 116, 0.6)'
-      : props.selected ? 'rgba(212, 165, 116, 0.5)'
-      : 'rgba(64, 64, 64, 0.4)';
-    return {
-      bg: isNew() ? 'rgba(125, 153, 112, 0.08)'
-        : isModified() ? 'rgba(212, 165, 116, 0.08)'
-        : 'rgba(36, 36, 36, 0.9)',
-      border: baseBorder,
-      borderStyle: 'solid',
-      textColor: 'var(--wool-200)',
-      accent: 'var(--amber-500)',
-    };
-  };
-
-  const styles = () => getStyles();
   const isMultiLine = () => props.position.lines.length > 1;
+
+  // ==========================================================================
+  // Visual Hierarchy - Distinguished by SHAPE and BORDER only
+  // NO color for delta status - colors reserved for live status only
+  // ==========================================================================
+
+  // PROJECT: The shepherd's lantern - amber tint, prominent border, rounded
+  const projectStyles = () => ({
+    bg: 'linear-gradient(135deg, rgba(212, 165, 116, 0.12) 0%, rgba(36, 36, 36, 0.95) 100%)',
+    border: props.selected ? 'rgba(212, 165, 116, 0.7)' : 'rgba(212, 165, 116, 0.4)',
+    borderWidth: '2px',
+    borderStyle: 'solid',
+    textColor: 'var(--wool-100)',
+    radius: '8px',
+  });
+
+  // EVAL: The gate/checkpoint - DASHED border, dark sage green tint
+  const evalStyles = () => ({
+    bg: 'rgba(42, 45, 40, 0.9)',  // Very subtle green tint
+    border: props.selected ? 'rgba(92, 120, 82, 0.6)' : 'rgba(70, 90, 65, 0.5)',  // sage-dark tones
+    borderWidth: '1px',
+    borderStyle: 'dashed',
+    textColor: 'var(--wool-300)',
+    radius: '5px',
+  });
+
+  // TASK: The sheep - neutral, solid border, standard rounded
+  const taskStyles = () => ({
+    bg: 'rgba(42, 40, 38, 0.85)',
+    border: props.selected ? 'rgba(140, 135, 130, 0.5)' : 'rgba(80, 76, 72, 0.45)',
+    borderWidth: '1px',
+    borderStyle: 'solid',  // Solid = work task
+    textColor: 'var(--wool-300)',
+    radius: '5px',
+  });
+
+  const styles = () => isProject() ? projectStyles() : isEval() ? evalStyles() : taskStyles();
 
   return (
     <div
@@ -431,46 +425,32 @@ const DraftNodeCard: Component<{
       onContextMenu={(e) => props.onContextMenu(e)}
     >
       <div
-        class={`h-full flex gap-1.5 px-2 ${isMultiLine() ? 'flex-col justify-center py-1' : 'items-center'}`}
+        class={`h-full flex items-center gap-1.5 px-2 relative ${isMultiLine() ? 'flex-col justify-center !items-start py-1' : ''}`}
         style={{
           background: styles().bg,
-          border: `1px ${styles().borderStyle} ${styles().border}`,
-          'border-radius': isEval() ? '4px' : '6px',
-          'box-shadow': props.selected ? '0 2px 8px rgba(0,0,0,0.25)' : undefined,
+          border: `${styles().borderWidth} ${styles().borderStyle} ${styles().border}`,
+          'border-radius': styles().radius,
+          'box-shadow': props.selected ? '0 2px 8px rgba(0,0,0,0.3)' : undefined,
         }}
       >
-        {/* Left accent bar for type (only for project and eval) */}
-        <Show when={isProject() || isEval()}>
+        {/* PROJECT: Amber accent bar on left edge */}
+        <Show when={isProject()}>
           <div
-            class="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full"
-            style={{ background: styles().accent, opacity: 0.7 }}
+            class="absolute left-0 top-1 bottom-1 w-0.5"
+            style={{ background: 'var(--amber-500)', 'border-radius': '2px' }}
           />
         </Show>
 
-        {/* Eval checkmark icon */}
-        <Show when={isEval() && !isMultiLine()}>
-          <svg class="w-3 h-3 flex-shrink-0" style={{ color: 'var(--sage)', opacity: 0.7 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        </Show>
-
-        {/* Name lines */}
-        <div class={`flex-1 min-w-0 ${isMultiLine() ? 'flex flex-col gap-0.5' : ''}`}>
+        {/* Name text - no icons, just text */}
+        <div class={`flex-1 min-w-0 ${isProject() ? 'pl-1' : ''} ${isMultiLine() ? 'flex flex-col gap-0.5' : ''}`}>
           <For each={props.position.lines}>
-            {(line, i) => (
-              <div class="flex items-center gap-1.5">
-                <Show when={isEval() && isMultiLine() && i() === 0}>
-                  <svg class="w-3 h-3 flex-shrink-0" style={{ color: 'var(--sage)', opacity: 0.7 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </Show>
-                <span
-                  class="text-[10px] font-medium truncate leading-tight"
-                  style={{ color: styles().textColor }}
-                >
-                  {line}
-                </span>
-              </div>
+            {(line) => (
+              <span
+                class={`text-[10px] truncate leading-tight block ${isProject() ? 'font-semibold' : 'font-medium'}`}
+                style={{ color: styles().textColor }}
+              >
+                {line}
+              </span>
             )}
           </For>
         </div>
@@ -491,44 +471,70 @@ const LiveNodeCard: Component<{
     props.showDelta && props.diff?.deletedNodes.some((n) => n.id === props.node.id);
   const isEval = () => props.node.nodeType === 'eval';
   const isProject = () => props.node.nodeType === 'project';
+  const isMultiLine = () => props.position.lines.length > 1;
+  const isWorking = () => props.node.status === 'working';
+  const isDone = () => props.node.status === 'done';
+  const isFailed = () => props.node.status === 'failed';
 
-  const statusStyles: Record<LiveNodeStatus, { border: string; bg: string; dot: string }> = {
-    pending: {
-      border: 'rgba(90, 85, 80, 0.4)',
-      bg: 'rgba(30, 30, 30, 0.8)',
-      dot: 'var(--wool-600)',
-    },
-    working: {
-      border: 'rgba(212, 165, 116, 0.5)',
-      bg: 'rgba(212, 165, 116, 0.08)',
-      dot: 'var(--amber-500)',
-    },
-    done: {
-      border: 'rgba(125, 153, 112, 0.5)',
-      bg: 'rgba(125, 153, 112, 0.08)',
-      dot: 'var(--sage)',
-    },
-    failed: {
-      border: 'rgba(196, 92, 74, 0.5)',
-      bg: 'rgba(196, 92, 74, 0.08)',
-      dot: 'var(--terra)',
-    },
+  // Status colors (used for status indicators, not full styling)
+  // ==========================================================================
+  // Visual Hierarchy - Distinguished by SHAPE and BORDER, not color
+  // Colors show STATUS: sage=done, amber=working, terra=failed, wool=pending
+  // ==========================================================================
+
+  // Status-based border color (applies to all types)
+  const statusBorder = () => {
+    if (isDone()) return 'rgba(125, 153, 112, 0.5)';    // sage
+    if (isFailed()) return 'rgba(196, 92, 74, 0.5)';    // terra
+    if (isWorking()) return 'rgba(212, 165, 116, 0.5)'; // amber
+    return null; // Use type default
   };
 
-  const baseStyle = () => statusStyles[props.node.status] || statusStyles.pending;
-  const isWorking = () => props.node.status === 'working';
-  const isMultiLine = () => props.position.lines.length > 1;
+  const statusBg = () => {
+    if (isDone()) return 'rgba(125, 153, 112, 0.06)';
+    if (isFailed()) return 'rgba(196, 92, 74, 0.06)';
+    if (isWorking()) return 'rgba(212, 165, 116, 0.06)';
+    return null;
+  };
 
-  // Eval nodes get dashed border and sage tint overlay
-  const getBorderStyle = () => isEval() ? 'dashed' : 'solid';
-  const getBg = () => {
-    if (isDeleted()) return 'rgba(196, 92, 74, 0.08)';
-    if (isEval()) {
-      // Blend eval sage with status color
-      const statusBg = baseStyle().bg;
-      return props.node.status === 'pending' ? 'rgba(125, 153, 112, 0.04)' : statusBg;
-    }
-    return baseStyle().bg;
+  // PROJECT: Amber tint, 2px border, rounded
+  const projectStyles = () => ({
+    bg: statusBg() || 'linear-gradient(135deg, rgba(212, 165, 116, 0.1) 0%, rgba(36, 36, 36, 0.95) 100%)',
+    border: statusBorder() || (props.selected ? 'rgba(212, 165, 116, 0.7)' : 'rgba(212, 165, 116, 0.35)'),
+    borderWidth: '2px',
+    borderStyle: 'solid',
+    textColor: 'var(--wool-100)',
+    radius: '8px',
+  });
+
+  // EVAL: DASHED border - the key visual differentiator
+  const evalStyles = () => ({
+    bg: statusBg() || 'rgba(36, 36, 36, 0.9)',
+    border: statusBorder() || (props.selected ? 'rgba(180, 175, 170, 0.5)' : 'rgba(100, 96, 92, 0.5)'),
+    borderWidth: '1.5px',
+    borderStyle: 'dashed',  // Dashed = eval/checkpoint
+    textColor: isDone() ? 'var(--wool-200)' : 'var(--wool-300)',
+    radius: '4px',
+  });
+
+  // TASK: Solid border, neutral
+  const taskStyles = () => ({
+    bg: statusBg() || 'rgba(42, 40, 38, 0.85)',
+    border: statusBorder() || (props.selected ? 'rgba(140, 135, 130, 0.5)' : 'rgba(80, 76, 72, 0.4)'),
+    borderWidth: '1px',
+    borderStyle: 'solid',  // Solid = work task
+    textColor: isDone() ? 'var(--wool-200)' : 'var(--wool-400)',
+    radius: '5px',
+  });
+
+  const styles = () => isProject() ? projectStyles() : isEval() ? evalStyles() : taskStyles();
+
+  // Status dot color (small indicator for live status)
+  const statusDotColor = () => {
+    if (isDone()) return 'var(--sage)';
+    if (isFailed()) return 'var(--terra)';
+    if (isWorking()) return 'var(--amber-500)';
+    return 'var(--wool-600)';
   };
 
   return (
@@ -543,70 +549,47 @@ const LiveNodeCard: Component<{
       onClick={() => props.onSelect()}
     >
       <div
-        class={`h-full flex gap-1.5 px-2 ${isDeleted() ? 'opacity-40' : ''} ${isMultiLine() ? 'flex-col justify-center py-1' : 'items-center'}`}
+        class={`h-full flex items-center gap-1.5 px-2 relative ${isDeleted() ? 'opacity-40' : ''} ${isMultiLine() ? 'flex-col justify-center !items-start py-1' : ''}`}
         style={{
-          background: getBg(),
-          border: `1px ${getBorderStyle()} ${props.selected ? 'rgba(212, 165, 116, 0.6)' : isDeleted() ? 'rgba(196, 92, 74, 0.4)' : baseStyle().border}`,
-          'border-radius': isEval() ? '4px' : '6px',
-          'box-shadow': props.selected ? '0 2px 8px rgba(0,0,0,0.25)' : undefined,
+          background: styles().bg,
+          border: `${styles().borderWidth} ${styles().borderStyle} ${props.selected ? 'rgba(212, 165, 116, 0.7)' : isDeleted() ? 'rgba(196, 92, 74, 0.4)' : styles().border}`,
+          'border-radius': styles().radius,
+          'box-shadow': props.selected ? '0 2px 8px rgba(0,0,0,0.3)' : undefined,
         }}
       >
-        {/* Left accent for project/eval */}
-        <Show when={isProject() || isEval()}>
+        {/* PROJECT: Amber accent bar on left */}
+        <Show when={isProject()}>
           <div
-            class="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full"
+            class="absolute left-0 top-1 bottom-1 w-0.5"
             style={{
-              background: isEval() ? 'var(--sage)' : 'var(--amber-500)',
-              opacity: 0.5,
+              background: isDone() ? 'var(--sage)' : isFailed() ? 'var(--terra)' : 'var(--amber-500)',
+              'border-radius': '2px',
             }}
           />
         </Show>
 
-        {/* Status dot for single line */}
-        <Show when={!isMultiLine()}>
-          <div class="relative flex-shrink-0">
-            <div
-              class={`w-1.5 h-1.5 rounded-full ${isWorking() ? 'animate-pulse' : ''}`}
-              style={{ background: baseStyle().dot }}
-            />
-          </div>
-        </Show>
+        {/* Status dot - small, unobtrusive, just shows live status */}
+        <div
+          class={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isWorking() ? 'animate-pulse' : ''}`}
+          style={{ background: statusDotColor() }}
+        />
 
-        {/* Eval icon (shown alongside status dot) */}
-        <Show when={isEval() && !isMultiLine()}>
-          <svg class="w-2.5 h-2.5 flex-shrink-0 -ml-0.5" style={{ color: 'var(--sage)', opacity: 0.6 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        </Show>
-
-        {/* Name lines */}
-        <div class={`flex-1 min-w-0 ${isMultiLine() ? 'flex flex-col gap-0.5' : ''}`}>
+        {/* Name text */}
+        <div class={`flex-1 min-w-0 ${isProject() ? 'pl-0.5' : ''} ${isMultiLine() ? 'flex flex-col gap-0.5' : ''}`}>
           <For each={props.position.lines}>
-            {(line, i) => (
-              <div class="flex items-center gap-1.5">
-                <Show when={isMultiLine() && i() === 0}>
-                  <div class="flex items-center gap-1">
-                    <div
-                      class={`w-1.5 h-1.5 rounded-full ${isWorking() ? 'animate-pulse' : ''}`}
-                      style={{ background: baseStyle().dot }}
-                    />
-                    <Show when={isEval()}>
-                      <svg class="w-2.5 h-2.5 flex-shrink-0" style={{ color: 'var(--sage)', opacity: 0.6 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    </Show>
-                  </div>
-                </Show>
-                <span class="text-[10px] font-medium text-wool-300 truncate leading-tight">
-                  {line}
-                </span>
-              </div>
+            {(line) => (
+              <span
+                class={`text-[10px] truncate leading-tight block ${isProject() ? 'font-semibold' : 'font-medium'}`}
+                style={{ color: styles().textColor }}
+              >
+                {line}
+              </span>
             )}
           </For>
         </div>
       </div>
 
-      {/* Left edge indicator for deleted */}
+      {/* Deleted indicator */}
       <Show when={isDeleted()}>
         <div
           class="absolute left-0 top-1 bottom-1 w-0.5 rounded-full"
@@ -667,17 +650,19 @@ const TreeConnectors: Component<{
           const y2 = edge.to.y + edge.to.height / 2;
           const midX = (x1 + x2) / 2;
 
-          // Green for eval→task connections, normal color otherwise
-          const strokeColor = edge.isEvalConnection ? 'rgb(125, 153, 112)' : props.color;
+          // Dark sage for eval→task connections, normal color otherwise
+          const strokeColor = edge.isEvalConnection ? 'rgb(70, 90, 65)' : props.color;
+          // Dashed lines for eval connections to match dashed border
+          const isDashed = props.dashed || edge.isEvalConnection;
 
           return (
             <path
               d={`M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`}
               fill="none"
               stroke={strokeColor}
-              stroke-width={edge.isEvalConnection ? 1.5 : 1}
-              stroke-dasharray={props.dashed ? '3 2' : undefined}
-              opacity={edge.isEvalConnection ? 0.6 : 0.4}
+              stroke-width={1}
+              stroke-dasharray={isDashed ? '4 3' : undefined}
+              opacity={edge.isEvalConnection ? 0.7 : 0.4}
             />
           );
         }}

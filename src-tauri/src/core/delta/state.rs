@@ -608,66 +608,59 @@ impl DeltaState {
     }
 
     /// Build tree from flat draft nodes
+    ///
+    /// Uses recursive approach to ensure all descendants are included.
     pub fn build_draft_tree(&self, nodes: &[DraftNode]) -> Vec<DraftNodeTree> {
-        let mut node_map: HashMap<String, DraftNodeTree> = HashMap::new();
-        let mut roots: Vec<String> = Vec::new();
-        let mut parent_child_pairs: Vec<(String, String)> = Vec::new();
-
-        // First pass: create tree wrappers and collect relationships
+        // Group children by parent
+        let mut children_by_parent: HashMap<Option<String>, Vec<&DraftNode>> = HashMap::new();
         for node in nodes {
-            let tree_node: DraftNodeTree = node.clone().into();
-            node_map.insert(node.id.clone(), tree_node);
-            if let Some(parent_id) = &node.parent_id {
-                parent_child_pairs.push((parent_id.clone(), node.id.clone()));
-            } else {
-                roots.push(node.id.clone());
-            }
-        }
-
-        // Second pass: link children to parents
-        for (parent_id, child_id) in parent_child_pairs {
-            let child = node_map.get(&child_id).cloned();
-            if let (Some(parent), Some(child)) = (node_map.get_mut(&parent_id), child) {
-                parent.children.push(child);
-            }
+            children_by_parent
+                .entry(node.parent_id.clone())
+                .or_default()
+                .push(node);
         }
 
         // Sort children by position
-        fn sort_children(node: &mut DraftNodeTree, nodes: &[DraftNode]) {
-            let get_pos = |id: &str| {
-                nodes
-                    .iter()
-                    .find(|n| n.id == id)
-                    .map(|n| n.position)
-                    .unwrap_or(0)
-            };
-            node.children.sort_by_key(|n| get_pos(&n.id));
-            for child in &mut node.children {
-                sort_children(child, nodes);
+        for children in children_by_parent.values_mut() {
+            children.sort_by_key(|n| n.position);
+        }
+
+        // Recursive tree builder
+        fn build_node(
+            node: &DraftNode,
+            children_by_parent: &HashMap<Option<String>, Vec<&DraftNode>>,
+        ) -> DraftNodeTree {
+            let children: Vec<DraftNodeTree> = children_by_parent
+                .get(&Some(node.id.clone()))
+                .map(|kids| {
+                    kids.iter()
+                        .map(|child| build_node(child, children_by_parent))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            DraftNodeTree {
+                id: node.id.clone(),
+                name: node.name.clone(),
+                node_type: node.node_type.clone(),
+                content: node.content.clone(),
+                validates: node.validates.clone(),
+                children,
+                x: node.x,
+                y: node.y,
             }
         }
 
-        // Build result from roots
-        let mut result: Vec<DraftNodeTree> = roots
-            .into_iter()
-            .filter_map(|id| node_map.remove(&id))
-            .collect();
-
-        // Sort roots by position
-        let get_root_pos = |id: &str| {
-            nodes
-                .iter()
-                .find(|n| n.id == id)
-                .map(|n| n.position)
-                .unwrap_or(0)
-        };
-        result.sort_by_key(|n| get_root_pos(&n.id));
-
-        for root in &mut result {
-            sort_children(root, nodes);
-        }
-
-        result
+        // Build from roots (nodes with no parent)
+        children_by_parent
+            .get(&None)
+            .map(|roots| {
+                roots
+                    .iter()
+                    .map(|root| build_node(root, &children_by_parent))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Get draft tree for project
@@ -827,61 +820,64 @@ impl DeltaState {
     }
 
     /// Build tree from flat live nodes
+    /// Build tree from flat live nodes
+    ///
+    /// Uses recursive approach to ensure all descendants are included.
     pub fn build_live_tree(&self, nodes: &[LiveNode]) -> Vec<LiveNodeTree> {
-        let mut node_map: HashMap<String, LiveNodeTree> = HashMap::new();
-        let mut roots: Vec<String> = Vec::new();
-        let mut parent_child_pairs: Vec<(String, String)> = Vec::new();
-
+        // Group children by parent
+        let mut children_by_parent: HashMap<Option<String>, Vec<&LiveNode>> = HashMap::new();
         for node in nodes {
-            let tree_node: LiveNodeTree = node.clone().into();
-            node_map.insert(node.id.clone(), tree_node);
-            if let Some(parent_id) = &node.parent_id {
-                parent_child_pairs.push((parent_id.clone(), node.id.clone()));
-            } else {
-                roots.push(node.id.clone());
+            children_by_parent
+                .entry(node.parent_id.clone())
+                .or_default()
+                .push(node);
+        }
+
+        // Sort children by position
+        for children in children_by_parent.values_mut() {
+            children.sort_by_key(|n| n.position);
+        }
+
+        // Recursive tree builder
+        fn build_node(
+            node: &LiveNode,
+            children_by_parent: &HashMap<Option<String>, Vec<&LiveNode>>,
+        ) -> LiveNodeTree {
+            let children: Vec<LiveNodeTree> = children_by_parent
+                .get(&Some(node.id.clone()))
+                .map(|kids| {
+                    kids.iter()
+                        .map(|child| build_node(child, children_by_parent))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            LiveNodeTree {
+                id: node.id.clone(),
+                draft_node_id: node.draft_node_id.clone(),
+                name: node.name.clone(),
+                node_type: node.node_type.clone(),
+                content: node.content.clone(),
+                status: node.status.clone(),
+                validates: node.validates.clone(),
+                completed_at: node.completed_at.clone(),
+                last_commit_sha: node.last_commit_sha.clone(),
+                children,
+                x: node.x,
+                y: node.y,
             }
         }
 
-        for (parent_id, child_id) in parent_child_pairs {
-            let child = node_map.get(&child_id).cloned();
-            if let (Some(parent), Some(child)) = (node_map.get_mut(&parent_id), child) {
-                parent.children.push(child);
-            }
-        }
-
-        fn sort_children(node: &mut LiveNodeTree, nodes: &[LiveNode]) {
-            let get_pos = |id: &str| {
-                nodes
+        // Build from roots (nodes with no parent)
+        children_by_parent
+            .get(&None)
+            .map(|roots| {
+                roots
                     .iter()
-                    .find(|n| n.id == id)
-                    .map(|n| n.position)
-                    .unwrap_or(0)
-            };
-            node.children.sort_by_key(|n| get_pos(&n.id));
-            for child in &mut node.children {
-                sort_children(child, nodes);
-            }
-        }
-
-        let mut result: Vec<LiveNodeTree> = roots
-            .into_iter()
-            .filter_map(|id| node_map.remove(&id))
-            .collect();
-
-        let get_root_pos = |id: &str| {
-            nodes
-                .iter()
-                .find(|n| n.id == id)
-                .map(|n| n.position)
-                .unwrap_or(0)
-        };
-        result.sort_by_key(|n| get_root_pos(&n.id));
-
-        for root in &mut result {
-            sort_children(root, nodes);
-        }
-
-        result
+                    .map(|root| build_node(root, &children_by_parent))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Get live tree for project

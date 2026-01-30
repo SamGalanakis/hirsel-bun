@@ -18,6 +18,8 @@
 | Add service worker | `src-tauri/src/core/service_worker/scribe.rs`, `src-tauri/src/cli/service_worker.rs` |
 | Add SpecFlow island | `src-tauri/src/core/specflow/state.rs`, `src-tauri/src/gui/commands/specflow.rs` |
 | Modify board UI | `src/components/specflow/OneBoard.tsx`, `src/components/specflow/NodeRenderer.tsx` |
+| Add orchestrator method | `src-tauri/src/core/orchestrator/mod.rs` → trait, `local.rs`, `daemon.rs`, `remote.rs` impls |
+| Modify delta dispatch | `src-tauri/src/core/delta/runner.rs`, `src-tauri/src/daemon/lifecycle.rs` |
 
 ### Feature Flags
 
@@ -82,6 +84,7 @@ cargo build --features s3-storage               # With S3 support
 | `board/` | `mod.rs`, `types.rs` | Board file sync service (local/remote transparent routing) |
 | `github/` | `mod.rs` | GitHub API client (octocrab) with auth fallback (env → gh config → hirsel config) |
 | `dispatch/` | `mod.rs` | Dispatch service: creates runs from board tasks, generates spec/eval, creates work+eval tasks with validates relationship |
+| `delta/` | `mod.rs`, `runner.rs`, `dispatch.rs`, `state.rs`, `types.rs` | Delta dispatch system: draft/live tree diffs, task generation, persistent project runs |
 | `delivery/` | `mod.rs` | Delivery service: three-tier delivery (push/PR/merge), conflict detection, staleness checking |
 | `orchestrator/` | `mod.rs` → `Orchestrator` trait, `local.rs`, `remote.rs`, `daemon.rs` | Run orchestration pattern |
 | `lifecycle/` | `mod.rs` → `LifecycleManager` trait, `local.rs`, `remote.rs`, `transitions.rs` | Event-driven state machine |
