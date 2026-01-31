@@ -31,12 +31,14 @@ import type {
 // =============================================================================
 
 const MIN_NODE_WIDTH = 80;
-const MAX_NODE_WIDTH = 140;
+const MAX_NODE_WIDTH = 120;
 const NODE_HEIGHT = 26;
 const NODE_LINE_HEIGHT = 12;
-const SIBLING_GAP = 6;      // Vertical gap between siblings
-const LEVEL_GAP = 32;       // Horizontal gap between parent and children
-const TREE_PADDING = 24;
+const SIBLING_GAP = 4;
+const LEVEL_GAP = 12;
+const LAYER_OFFSET = 50;     // Compact horizontal offset between layers
+const TREE_PADDING = 12;
+const PROJECT_BAR_WIDTH = 24;  // Narrow vertical bar for project node
 const DIVIDER_WIDTH = 40;
 const CHAR_WIDTH = 5.5;
 const MAX_CHARS_PER_LINE = 16;
@@ -101,29 +103,32 @@ function calcNodeDimensions(name: string): { width: number; height: number; line
 }
 
 // =============================================================================
-// Horizontal Tree Layout Algorithm
+// Column-Based Dependency Layout Algorithm
 //
-// Root on LEFT, children flow RIGHT. Siblings stack VERTICALLY.
-// This is far more space-efficient for wide trees with many branches.
+// X position = dependency depth (steps from a node with no blockers)
+// Y position = stacked vertically within each column
+// Lines = explicit blocked_by arrows flowing left-to-right
 // =============================================================================
 
 interface LayoutNode {
   id: string;
   name: string;
-  children: LayoutNode[];
-  x: number;       // Horizontal position (depth)
-  y: number;       // Vertical position (sibling order)
+  nodeType?: NodeType;
+  x: number;
+  y: number;
   width: number;
   height: number;
   lines: string[];
-  subtreeHeight: number;  // Total height of this subtree
+  validates?: string[];
+  blockedBy?: string[];
+  parentId?: string; // For grouping related nodes
 }
 
-// Extended node type for layout with eval info
-interface ExtendedLayoutNode extends LayoutNode {
-  nodeType?: NodeType;
-  validates?: string[];
-  isEvalChild?: boolean; // True if this node is a child of an eval (validated by it)
+/** Dependency relationship for drawing connector lines */
+interface DependencyRelationship {
+  from: string;    // blocker node ID
+  to: string;      // blocked node ID
+  type: 'blockedBy' | 'validates' | 'project';
 }
 
 interface LayoutTreeResult {
@@ -131,176 +136,367 @@ interface LayoutTreeResult {
   width: number;
   height: number;
   evalsWithValidates: { id: string; validates: string[] }[];
-  // Restructured tree for connectors (evals become parents of validated tasks)
   restructuredTree: { id: string; nodeType?: NodeType; children: any[] }[];
+  crossTreeRelationships: DependencyRelationship[];
 }
 
-function layoutTree<T extends { id: string; name: string; children: T[]; nodeType?: NodeType; validates?: string[] }>(
+function layoutTree<T extends { id: string; name: string; children: T[]; nodeType?: NodeType; validates?: string[]; blockedBy?: string[] }>(
   roots: T[],
   _startX: number = 0
 ): LayoutTreeResult {
   const positions = new Map<string, NodePosition>();
   const evalsWithValidates: { id: string; validates: string[] }[] = [];
+  const dependencyRelationships: DependencyRelationship[] = [];
 
   if (roots.length === 0) {
-    return { positions, width: MIN_NODE_WIDTH, height: NODE_HEIGHT, evalsWithValidates, restructuredTree: [] };
+    return { positions, width: MIN_NODE_WIDTH, height: NODE_HEIGHT, evalsWithValidates, restructuredTree: [], crossTreeRelationships: [] };
   }
 
-  // Collect all evals with non-empty validates arrays and build lookup
-  const evalValidatesMap = new Map<string, string[]>(); // evalId -> validated task IDs
-  const taskValidatedByMap = new Map<string, string>(); // taskId -> evalId that validates it
+  // Flatten all nodes and build lookup maps
+  const allNodes: LayoutNode[] = [];
+  const nodeById = new Map<string, LayoutNode>();
+  const childrenByParent = new Map<string, string[]>();
 
-  function collectEvalsWithValidates(node: T) {
-    if (node.nodeType === 'eval' && node.validates && node.validates.length > 0) {
-      evalsWithValidates.push({ id: node.id, validates: node.validates });
-      evalValidatesMap.set(node.id, node.validates);
-      for (const taskId of node.validates) {
-        taskValidatedByMap.set(taskId, node.id);
-      }
-    }
-    for (const child of node.children) {
-      collectEvalsWithValidates(child);
-    }
-  }
-  for (const root of roots) {
-    collectEvalsWithValidates(root);
-  }
-
-  // Restructure tree: evals become parents of tasks they validate
-  // Structure: parent -> [non-validated tasks, evals with their validated tasks as children]
-  function toLayoutNode(node: T): ExtendedLayoutNode {
+  function flattenNodes(node: T, parentId?: string) {
     const dims = calcNodeDimensions(node.name);
-
-    // Separate children into categories
-    const validatedTaskIds = new Set<string>();
-    const evalNodes: T[] = [];
-    const regularChildren: T[] = [];
-
-    for (const child of node.children) {
-      if (child.nodeType === 'eval' && evalValidatesMap.has(child.id)) {
-        evalNodes.push(child);
-        // Mark the tasks this eval validates
-        for (const taskId of evalValidatesMap.get(child.id)!) {
-          validatedTaskIds.add(taskId);
-        }
-      } else if (!taskValidatedByMap.has(child.id)) {
-        // Regular child (not validated by any eval at this level)
-        regularChildren.push(child);
-      }
-      // Tasks that are validated get skipped here - they'll be children of their eval
-    }
-
-    // Build layout children: regular tasks first, then evals with their validated tasks
-    const layoutChildren: ExtendedLayoutNode[] = [];
-
-    // Add regular children (tasks not validated by any eval)
-    for (const child of regularChildren) {
-      layoutChildren.push(toLayoutNode(child));
-    }
-
-    // Add evals, each with their validated tasks as children
-    for (const evalNode of evalNodes) {
-      const evalDims = calcNodeDimensions(evalNode.name);
-      const validatedIds = evalValidatesMap.get(evalNode.id) || [];
-
-      // Find the validated tasks from the original children
-      const validatedChildren: ExtendedLayoutNode[] = [];
-      for (const taskId of validatedIds) {
-        const taskNode = node.children.find(c => c.id === taskId);
-        if (taskNode) {
-          const taskLayout = toLayoutNode(taskNode);
-          taskLayout.isEvalChild = true;
-          validatedChildren.push(taskLayout);
-        }
-      }
-
-      layoutChildren.push({
-        id: evalNode.id,
-        name: evalNode.name,
-        children: validatedChildren,
-        x: 0,
-        y: 0,
-        width: evalDims.width,
-        height: evalDims.height,
-        lines: evalDims.lines,
-        subtreeHeight: 0,
-        nodeType: evalNode.nodeType,
-        validates: evalNode.validates,
-      });
-    }
-
-    return {
+    // Project nodes are narrow vertical bars - height will be computed later
+    const isProjectNode = node.nodeType === 'project';
+    const layoutNode: LayoutNode = {
       id: node.id,
       name: node.name,
-      children: layoutChildren,
+      nodeType: node.nodeType,
       x: 0,
       y: 0,
-      width: dims.width,
-      height: dims.height,
+      width: isProjectNode ? PROJECT_BAR_WIDTH : dims.width,
+      height: isProjectNode ? NODE_HEIGHT : dims.height,  // Placeholder, will be updated
       lines: dims.lines,
-      subtreeHeight: 0,
-      nodeType: node.nodeType,
       validates: node.validates,
+      blockedBy: node.blockedBy,
+      parentId,
     };
-  }
+    allNodes.push(layoutNode);
+    nodeById.set(node.id, layoutNode);
 
-  // First pass: compute subtree heights (post-order)
-  function computeSubtreeHeights(node: ExtendedLayoutNode): number {
-    if (node.children.length === 0) {
-      node.subtreeHeight = node.height;
-      return node.subtreeHeight;
+    // Track children for grouping
+    if (parentId) {
+      const siblings = childrenByParent.get(parentId) || [];
+      siblings.push(node.id);
+      childrenByParent.set(parentId, siblings);
     }
 
-    let totalChildrenHeight = 0;
+    // Collect evals with validates
+    if (node.nodeType === 'eval' && node.validates && node.validates.length > 0) {
+      evalsWithValidates.push({ id: node.id, validates: node.validates });
+    }
+
     for (const child of node.children) {
-      totalChildrenHeight += computeSubtreeHeights(child);
+      flattenNodes(child, node.id);
     }
-    // Add gaps between children
-    totalChildrenHeight += (node.children.length - 1) * SIBLING_GAP;
-
-    // Subtree height is max of node height and children's total height
-    node.subtreeHeight = Math.max(node.height, totalChildrenHeight);
-    return node.subtreeHeight;
   }
 
-  // Second pass: assign positions (pre-order)
-  function assignPositions(node: ExtendedLayoutNode, depth: number, topY: number): void {
-    // X position based on depth (horizontal)
-    node.x = TREE_PADDING + depth * (MAX_NODE_WIDTH + LEVEL_GAP);
+  for (const root of roots) {
+    flattenNodes(root);
+  }
 
-    if (node.children.length === 0) {
-      // Leaf node: center vertically in its allocated space
-      node.y = topY + node.subtreeHeight / 2 - node.height / 2;
-    } else {
-      // Internal node: position children first, then center parent
-      let childY = topY;
+  const allNodeIds = new Set(allNodes.map(n => n.id));
 
-      // If children total height < subtree height, center children
-      let totalChildrenHeight = 0;
-      for (const child of node.children) {
-        totalChildrenHeight += child.subtreeHeight;
+  // Find project nodes and other evals for final gate positioning
+  const projectNodes = allNodes.filter(n => n.nodeType === 'project');
+  const otherEvals = allNodes.filter(n => n.nodeType === 'eval' && n.validates && n.validates.length > 0);
+
+  // Compute effective blockers for DEPTH CALCULATION (positioning)
+  // This determines which column a node goes in
+  // Note: Evals use blockers of their validated tasks (same column as what they validate)
+  function getDepthBlockers(node: LayoutNode): string[] {
+    const blockers: string[] = [];
+
+    if (node.nodeType === 'eval') {
+      if (node.validates && node.validates.length > 0) {
+        // Eval should be in same column as tasks it validates
+        // So inherit the blockers OF those tasks (not the tasks themselves)
+        for (const taskId of node.validates) {
+          const task = nodeById.get(taskId);
+          if (task && task.blockedBy) {
+            for (const blockerId of task.blockedBy) {
+              if (allNodeIds.has(blockerId) && !blockers.includes(blockerId)) {
+                blockers.push(blockerId);
+              }
+            }
+          }
+        }
       }
-      totalChildrenHeight += (node.children.length - 1) * SIBLING_GAP;
-
-      if (totalChildrenHeight < node.subtreeHeight) {
-        childY = topY + (node.subtreeHeight - totalChildrenHeight) / 2;
-      }
-
-      for (const child of node.children) {
-        assignPositions(child, depth + 1, childY);
-        childY += child.subtreeHeight + SIBLING_GAP;
-      }
-
-      // Center parent vertically among its children
-      const firstChildCenter = node.children[0].y + node.children[0].height / 2;
-      const lastChild = node.children[node.children.length - 1];
-      const lastChildCenter = lastChild.y + lastChild.height / 2;
-      const childrenMidpoint = (firstChildCenter + lastChildCenter) / 2;
-
-      node.y = childrenMidpoint - node.height / 2;
+      // Empty validates = final gate, no blockers = column 1 (like parentless tasks)
     }
 
-    // Store position
+    // For tasks (and evals with explicit blockedBy), use blocked_by
+    if (node.blockedBy) {
+      for (const blockerId of node.blockedBy) {
+        if (allNodeIds.has(blockerId) && !blockers.includes(blockerId)) {
+          blockers.push(blockerId);
+        }
+      }
+    }
+
+    return blockers;
+  }
+
+  // Compute effective blockers for LINE DRAWING (visual connections)
+  // This determines which lines are drawn
+  function getLineBlockers(node: LayoutNode): string[] {
+    const blockers: string[] = [];
+
+    // Skip project nodes - they don't connect to anything
+    if (node.nodeType === 'project') {
+      return blockers;
+    }
+
+    if (node.nodeType === 'eval') {
+      if (node.validates && node.validates.length > 0) {
+        // Eval validates specific tasks - show lines to those tasks
+        for (const taskId of node.validates) {
+          if (allNodeIds.has(taskId)) {
+            blockers.push(taskId);
+          }
+        }
+      } else if (projectNodes.length > 0) {
+        // Empty validates = final gate, connects to project (like parentless tasks)
+        blockers.push(projectNodes[0].id);
+      }
+    }
+
+    // For tasks (and evals with explicit blockedBy), use blocked_by
+    if (node.blockedBy) {
+      for (const blockerId of node.blockedBy) {
+        if (allNodeIds.has(blockerId) && !blockers.includes(blockerId)) {
+          blockers.push(blockerId);
+        }
+      }
+    }
+
+    // If node has no blockers, connect to project (visual anchor)
+    if (blockers.length === 0 && projectNodes.length > 0) {
+      blockers.push(projectNodes[0].id);
+    }
+
+    return blockers;
+  }
+
+  // Compute dependency depth for each node using Kahn's algorithm
+  const depthByNode = new Map<string, number>();
+  const inDegree = new Map<string, number>();
+  const dependents = new Map<string, string[]>();
+
+  // Initialize
+  for (const node of allNodes) {
+    inDegree.set(node.id, 0);
+    dependents.set(node.id, []);
+  }
+
+  // Build graph
+  for (const node of allNodes) {
+    const blockers = getDepthBlockers(node);
+    inDegree.set(node.id, blockers.length);
+    for (const blockerId of blockers) {
+      dependents.get(blockerId)?.push(node.id);
+    }
+  }
+
+  // BFS to assign depths
+  const queue: string[] = [];
+  for (const node of allNodes) {
+    if ((inDegree.get(node.id) || 0) === 0) {
+      queue.push(node.id);
+      depthByNode.set(node.id, 0);
+    }
+  }
+
+  while (queue.length > 0) {
+    const nodeId = queue.shift()!;
+    const currentDepth = depthByNode.get(nodeId) || 0;
+
+    for (const depId of dependents.get(nodeId) || []) {
+      const newInDegree = (inDegree.get(depId) || 1) - 1;
+      inDegree.set(depId, newInDegree);
+
+      // Update depth to be max of all blockers + 1
+      const existingDepth = depthByNode.get(depId);
+      const newDepth = currentDepth + 1;
+      if (existingDepth === undefined || newDepth > existingDepth) {
+        depthByNode.set(depId, newDepth);
+      }
+
+      if (newInDegree === 0) {
+        queue.push(depId);
+      }
+    }
+  }
+
+  // Handle any cycles (nodes not processed yet) - put them at depth 0
+  for (const node of allNodes) {
+    if (!depthByNode.has(node.id)) {
+      depthByNode.set(node.id, 0);
+    }
+  }
+
+  // Shift all non-project nodes right by 1 so project has its own column
+  for (const node of allNodes) {
+    if (node.nodeType !== 'project') {
+      const currentDepth = depthByNode.get(node.id) || 0;
+      depthByNode.set(node.id, currentDepth + 1);
+    }
+  }
+
+  // Group nodes by depth (column)
+  const nodesByColumn = new Map<number, LayoutNode[]>();
+  for (const node of allNodes) {
+    const depth = depthByNode.get(node.id) || 0;
+    const column = nodesByColumn.get(depth) || [];
+    column.push(node);
+    nodesByColumn.set(depth, column);
+  }
+
+  // =========================================================================
+  // Barycenter Y-positioning to minimize line crossings
+  // Column 0: simple stack. Columns 1+: position at average Y of dependencies.
+  // =========================================================================
+
+  const maxDepth = Math.max(...Array.from(nodesByColumn.keys()), 0);
+
+  // First pass: assign X positions
+  for (const node of allNodes) {
+    const depth = depthByNode.get(node.id) || 0;
+    node.x = TREE_PADDING + depth * LAYER_OFFSET;
+  }
+
+  // Helper: check if two nodes overlap in 2D
+  const nodesOverlap = (a: LayoutNode, b: LayoutNode): boolean => {
+    const xOverlap = a.x < b.x + b.width && a.x + a.width > b.x;
+    const yOverlap = a.y < b.y + b.height && a.y + a.height > b.y;
+    return xOverlap && yOverlap;
+  };
+
+  // Helper: find Y where node doesn't overlap, trying both up and down from target
+  const findNonOverlappingY = (node: LayoutNode, targetY: number, positionedNodes: LayoutNode[]): number => {
+    // Find nodes that could overlap horizontally
+    const horizontallyOverlapping = positionedNodes.filter(other =>
+      node.x < other.x + other.width && node.x + node.width > other.x
+    );
+
+    if (horizontallyOverlapping.length === 0) {
+      return Math.max(TREE_PADDING, targetY);
+    }
+
+    // Sort by Y
+    horizontallyOverlapping.sort((a, b) => a.y - b.y);
+
+    // Try target Y first
+    node.y = Math.max(TREE_PADDING, targetY);
+    let hasOverlap = horizontallyOverlapping.some(other => nodesOverlap(node, other));
+    if (!hasOverlap) return node.y;
+
+    // Find gaps and try to fit - alternate between going up and down
+    const gaps: { start: number; end: number }[] = [];
+
+    // Gap before first node
+    if (horizontallyOverlapping[0].y > TREE_PADDING + node.height + SIBLING_GAP) {
+      gaps.push({ start: TREE_PADDING, end: horizontallyOverlapping[0].y - SIBLING_GAP });
+    }
+
+    // Gaps between nodes
+    for (let i = 0; i < horizontallyOverlapping.length - 1; i++) {
+      const gapStart = horizontallyOverlapping[i].y + horizontallyOverlapping[i].height + SIBLING_GAP;
+      const gapEnd = horizontallyOverlapping[i + 1].y - SIBLING_GAP;
+      if (gapEnd - gapStart >= node.height) {
+        gaps.push({ start: gapStart, end: gapEnd });
+      }
+    }
+
+    // Gap after last node (infinite)
+    const lastNode = horizontallyOverlapping[horizontallyOverlapping.length - 1];
+    gaps.push({ start: lastNode.y + lastNode.height + SIBLING_GAP, end: Infinity });
+
+    // Find best gap (closest to target Y)
+    let bestY = gaps[gaps.length - 1].start; // Default to after last node
+    let bestDistance = Math.abs(bestY - targetY);
+
+    for (const gap of gaps) {
+      // Try fitting at start of gap
+      const fitY = Math.max(gap.start, Math.min(targetY, gap.end - node.height));
+      if (fitY >= gap.start && fitY + node.height <= gap.end) {
+        const distance = Math.abs(fitY - targetY);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestY = fitY;
+        }
+      }
+    }
+
+    return Math.max(TREE_PADDING, bestY);
+  };
+
+  // Track positioned nodes for collision detection
+  const positionedNodes: LayoutNode[] = [];
+
+  // Column 0: project node
+  const col0 = nodesByColumn.get(0) || [];
+  const projectNode = col0.find(n => n.nodeType === 'project');
+
+  // Position columns 1+ with 2D collision detection
+  for (let depth = 1; depth <= maxDepth; depth++) {
+    const nodes = nodesByColumn.get(depth) || [];
+
+    // Calculate target Y based on DEPTH blockers (barycenter positioning)
+    // Use getDepthBlockers for positioning (includes final gate's eval dependencies)
+    // Use getLineBlockers only for actual line drawing
+    const targetYs: { node: LayoutNode; targetY: number }[] = [];
+    for (const node of nodes) {
+      const blockers = getDepthBlockers(node);
+      if (blockers.length > 0) {
+        let sumY = 0;
+        let count = 0;
+        for (const blockerId of blockers) {
+          const blocker = nodeById.get(blockerId);
+          if (blocker && blocker.y !== undefined) {
+            sumY += blocker.y + blocker.height / 2;
+            count++;
+          }
+        }
+        const avgY = count > 0 ? sumY / count - node.height / 2 : TREE_PADDING;
+        targetYs.push({ node, targetY: avgY });
+      } else {
+        targetYs.push({ node, targetY: TREE_PADDING });
+      }
+    }
+
+    // Sort by target Y
+    targetYs.sort((a, b) => a.targetY - b.targetY);
+
+    // Position each node, avoiding overlaps with all previously positioned nodes
+    for (const { node, targetY } of targetYs) {
+      node.y = findNonOverlappingY(node, targetY, positionedNodes);
+      positionedNodes.push(node);
+    }
+  }
+
+  // Make project node a vertical bar spanning all column 1 nodes
+  const col1 = nodesByColumn.get(1) || [];
+  if (projectNode) {
+    if (col1.length > 0) {
+      const sortedCol1 = [...col1].sort((a, b) => a.y - b.y);
+      const firstY = sortedCol1[0].y;
+      const lastNode = sortedCol1[sortedCol1.length - 1];
+      const lastY = lastNode.y + lastNode.height;
+      // Project bar spans from first to last node in column 1
+      projectNode.y = firstY;
+      projectNode.height = lastY - firstY;
+    } else {
+      projectNode.y = TREE_PADDING;
+      projectNode.height = NODE_HEIGHT;
+    }
+  }
+
+  // Store final positions
+  for (const node of allNodes) {
     positions.set(node.id, {
       x: node.x,
       y: node.y,
@@ -310,45 +506,59 @@ function layoutTree<T extends { id: string; name: string; children: T[]; nodeTyp
     });
   }
 
-  // Layout all root trees with restructured hierarchy
-  const layoutRoots = roots.map(r => toLayoutNode(r));
+  // Collect dependency relationships for drawing lines
+  const projectId = projectNodes.length > 0 ? projectNodes[0].id : null;
+  for (const node of allNodes) {
+    const blockers = getLineBlockers(node);
+    for (const blockerId of blockers) {
+      // Determine relationship type
+      const isProjectConnection = blockerId === projectId;
+      const isValidates = node.nodeType === 'eval' && node.validates?.includes(blockerId);
+      // Final gate eval (empty validates) connecting to project = validates style
+      const isFinalGateToProject = node.nodeType === 'eval' && isProjectConnection &&
+        (!node.validates || node.validates.length === 0);
+      const isBlockedBy = !isProjectConnection && !isValidates && node.blockedBy?.includes(blockerId);
 
-  // Compute heights for all roots
-  for (const root of layoutRoots) {
-    computeSubtreeHeights(root);
-  }
+      let type: 'validates' | 'blockedBy' | 'project';
+      if (isValidates || isFinalGateToProject) {
+        type = 'validates';
+      } else if (isBlockedBy) {
+        type = 'blockedBy';
+      } else {
+        type = 'project'; // Default for project connections (tasks)
+      }
 
-  // Assign positions, stacking roots vertically
-  let currentY = TREE_PADDING;
-  for (const root of layoutRoots) {
-    assignPositions(root, 0, currentY);
-    currentY += root.subtreeHeight + SIBLING_GAP * 2;
+      dependencyRelationships.push({
+        from: blockerId,
+        to: node.id,
+        type,
+      });
+    }
   }
 
   // Compute bounds
   const allPositions = Array.from(positions.values());
   if (allPositions.length === 0) {
-    return { positions, width: MIN_NODE_WIDTH, height: NODE_HEIGHT, evalsWithValidates, restructuredTree: [] };
+    return { positions, width: MIN_NODE_WIDTH, height: NODE_HEIGHT, evalsWithValidates, restructuredTree: [], crossTreeRelationships: [] };
   }
 
   const maxX = Math.max(...allPositions.map(p => p.x + p.width));
   const maxY = Math.max(...allPositions.map(p => p.y + p.height));
 
-  // Convert layout nodes back to simple structure for connectors
-  function toConnectorTree(node: ExtendedLayoutNode): { id: string; nodeType?: NodeType; children: any[] } {
-    return {
-      id: node.id,
-      nodeType: node.nodeType,
-      children: node.children.map(c => toConnectorTree(c)),
-    };
-  }
+  // Build minimal restructured tree for compatibility (just root nodes, no children needed for column layout)
+  const restructuredTree = roots.map(r => ({
+    id: r.id,
+    nodeType: r.nodeType,
+    children: [],
+  }));
 
   return {
     positions,
     width: maxX + TREE_PADDING,
     height: maxY + TREE_PADDING,
     evalsWithValidates,
-    restructuredTree: layoutRoots.map(r => toConnectorTree(r)),
+    restructuredTree,
+    crossTreeRelationships: dependencyRelationships,
   };
 }
 
@@ -411,6 +621,50 @@ const DraftNodeCard: Component<{
 
   const styles = () => isProject() ? projectStyles() : isEval() ? evalStyles() : taskStyles();
 
+  // Project nodes render as vertical bars
+  if (isProject()) {
+    return (
+      <div
+        class={`absolute cursor-pointer group ${props.selected ? 'z-10' : ''}`}
+        style={{
+          left: `${props.position.x}px`,
+          top: `${props.position.y}px`,
+          width: `${props.position.width}px`,
+          height: `${props.position.height}px`,
+        }}
+        onClick={() => props.onSelect()}
+        onDblClick={() => props.onDoubleClick()}
+        onContextMenu={(e) => props.onContextMenu(e)}
+      >
+        <div
+          class="h-full w-full flex items-center justify-center relative"
+          style={{
+            background: styles().bg,
+            border: `${styles().borderWidth} ${styles().borderStyle} ${styles().border}`,
+            'border-radius': styles().radius,
+            'box-shadow': props.selected ? '0 2px 8px rgba(0,0,0,0.3)' : undefined,
+          }}
+        >
+          {/* Vertical text centered in bar */}
+          <span
+            class="text-[9px] font-semibold whitespace-nowrap"
+            style={{
+              color: styles().textColor,
+              'writing-mode': 'vertical-rl',
+              'text-orientation': 'mixed',
+              transform: 'rotate(180deg)',
+              'max-height': `${props.position.height - 8}px`,
+              overflow: 'hidden',
+              'text-overflow': 'ellipsis',
+            }}
+          >
+            {props.node.name}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       class={`absolute cursor-pointer group ${props.selected ? 'z-10' : ''}`}
@@ -433,20 +687,12 @@ const DraftNodeCard: Component<{
           'box-shadow': props.selected ? '0 2px 8px rgba(0,0,0,0.3)' : undefined,
         }}
       >
-        {/* PROJECT: Amber accent bar on left edge */}
-        <Show when={isProject()}>
-          <div
-            class="absolute left-0 top-1 bottom-1 w-0.5"
-            style={{ background: 'var(--amber-500)', 'border-radius': '2px' }}
-          />
-        </Show>
-
         {/* Name text - no icons, just text */}
-        <div class={`flex-1 min-w-0 ${isProject() ? 'pl-1' : ''} ${isMultiLine() ? 'flex flex-col gap-0.5' : ''}`}>
+        <div class={`flex-1 min-w-0 ${isMultiLine() ? 'flex flex-col gap-0.5' : ''}`}>
           <For each={props.position.lines}>
             {(line) => (
               <span
-                class={`text-[10px] truncate leading-tight block ${isProject() ? 'font-semibold' : 'font-medium'}`}
+                class="text-[10px] truncate leading-tight block font-medium"
                 style={{ color: styles().textColor }}
               >
                 {line}
@@ -457,6 +703,14 @@ const DraftNodeCard: Component<{
       </div>
     </div>
   );
+};
+
+// Helper to recursively check if a node tree is completely done
+const isTreeDone = (node: LiveNodeTree): boolean => {
+  if (node.children.length > 0) {
+    return node.children.every(child => isTreeDone(child));
+  }
+  return node.status === 'done';
 };
 
 const LiveNodeCard: Component<{
@@ -473,69 +727,139 @@ const LiveNodeCard: Component<{
   const isProject = () => props.node.nodeType === 'project';
   const isMultiLine = () => props.position.lines.length > 1;
   const isWorking = () => props.node.status === 'working';
-  const isDone = () => props.node.status === 'done';
+  // Project nodes compute status from children for robustness
+  const isDone = () => {
+    if (isProject() && props.node.children.length > 0) {
+      return props.node.children.every(child => isTreeDone(child));
+    }
+    return props.node.status === 'done';
+  };
   const isFailed = () => props.node.status === 'failed';
 
-  // Status colors (used for status indicators, not full styling)
   // ==========================================================================
-  // Visual Hierarchy - Distinguished by SHAPE and BORDER, not color
-  // Colors show STATUS: sage=done, amber=working, terra=failed, wool=pending
+  // Visual Hierarchy - Identical to DraftNodeCard
+  // Status shown via subtle external glow only (no internal changes)
   // ==========================================================================
 
-  // Status-based border color (applies to all types)
-  const statusBorder = () => {
-    if (isDone()) return 'rgba(125, 153, 112, 0.5)';    // sage
-    if (isFailed()) return 'rgba(196, 92, 74, 0.5)';    // terra
-    if (isWorking()) return 'rgba(212, 165, 116, 0.5)'; // amber
-    return null; // Use type default
-  };
-
-  const statusBg = () => {
-    if (isDone()) return 'rgba(125, 153, 112, 0.06)';
-    if (isFailed()) return 'rgba(196, 92, 74, 0.06)';
-    if (isWorking()) return 'rgba(212, 165, 116, 0.06)';
-    return null;
-  };
-
-  // PROJECT: Amber tint, 2px border, rounded
+  // PROJECT: The shepherd's lantern - amber tint, prominent border, rounded
   const projectStyles = () => ({
-    bg: statusBg() || 'linear-gradient(135deg, rgba(212, 165, 116, 0.1) 0%, rgba(36, 36, 36, 0.95) 100%)',
-    border: statusBorder() || (props.selected ? 'rgba(212, 165, 116, 0.7)' : 'rgba(212, 165, 116, 0.35)'),
+    bg: 'linear-gradient(135deg, rgba(212, 165, 116, 0.12) 0%, rgba(36, 36, 36, 0.95) 100%)',
+    border: props.selected ? 'rgba(212, 165, 116, 0.7)' : 'rgba(212, 165, 116, 0.4)',
     borderWidth: '2px',
     borderStyle: 'solid',
     textColor: 'var(--wool-100)',
     radius: '8px',
   });
 
-  // EVAL: DASHED border - the key visual differentiator
+  // EVAL: The gate/checkpoint - DASHED border, dark sage green tint
   const evalStyles = () => ({
-    bg: statusBg() || 'rgba(36, 36, 36, 0.9)',
-    border: statusBorder() || (props.selected ? 'rgba(180, 175, 170, 0.5)' : 'rgba(100, 96, 92, 0.5)'),
-    borderWidth: '1.5px',
-    borderStyle: 'dashed',  // Dashed = eval/checkpoint
-    textColor: isDone() ? 'var(--wool-200)' : 'var(--wool-300)',
-    radius: '4px',
+    bg: 'rgba(42, 45, 40, 0.9)',  // Very subtle green tint
+    border: props.selected ? 'rgba(92, 120, 82, 0.6)' : 'rgba(70, 90, 65, 0.5)',  // sage-dark tones
+    borderWidth: '1px',
+    borderStyle: 'dashed',
+    textColor: 'var(--wool-300)',
+    radius: '5px',
   });
 
-  // TASK: Solid border, neutral
+  // TASK: The sheep - neutral, solid border, standard rounded
   const taskStyles = () => ({
-    bg: statusBg() || 'rgba(42, 40, 38, 0.85)',
-    border: statusBorder() || (props.selected ? 'rgba(140, 135, 130, 0.5)' : 'rgba(80, 76, 72, 0.4)'),
+    bg: 'rgba(42, 40, 38, 0.85)',
+    border: props.selected ? 'rgba(140, 135, 130, 0.5)' : 'rgba(80, 76, 72, 0.45)',
     borderWidth: '1px',
     borderStyle: 'solid',  // Solid = work task
-    textColor: isDone() ? 'var(--wool-200)' : 'var(--wool-400)',
+    textColor: 'var(--wool-300)',
     radius: '5px',
   });
 
   const styles = () => isProject() ? projectStyles() : isEval() ? evalStyles() : taskStyles();
 
-  // Status dot color (small indicator for live status)
-  const statusDotColor = () => {
-    if (isDone()) return 'var(--sage)';
-    if (isFailed()) return 'var(--terra)';
-    if (isWorking()) return 'var(--amber-500)';
-    return 'var(--wool-600)';
+  // Status glow - external indicator that doesn't affect card dimensions
+  const statusGlow = () => {
+    if (isWorking()) return '0 0 12px rgba(212, 165, 116, 0.4)';  // amber glow
+    if (isDone()) return '0 0 8px rgba(125, 153, 112, 0.25)';     // subtle sage
+    if (isFailed()) return '0 0 10px rgba(196, 92, 74, 0.35)';    // terra
+    return undefined;  // pending = no glow
   };
+
+  // Combined shadow: selection shadow + status glow
+  const combinedShadow = () => {
+    const shadows: string[] = [];
+    if (props.selected) shadows.push('0 2px 8px rgba(0,0,0,0.3)');
+    const glow = statusGlow();
+    if (glow) shadows.push(glow);
+    return shadows.length > 0 ? shadows.join(', ') : undefined;
+  };
+
+  // Project nodes render as vertical bars
+  if (isProject()) {
+    return (
+      <div
+        class={`absolute cursor-pointer ${props.selected ? 'z-10' : ''}`}
+        style={{
+          left: `${props.position.x}px`,
+          top: `${props.position.y}px`,
+          width: `${props.position.width}px`,
+          height: `${props.position.height}px`,
+        }}
+        onClick={() => props.onSelect()}
+      >
+        <div
+          class={`h-full w-full flex items-center justify-center relative ${isDeleted() ? 'opacity-40' : ''}`}
+          style={{
+            background: styles().bg,
+            border: `${styles().borderWidth} ${styles().borderStyle} ${isDeleted() ? 'rgba(196, 92, 74, 0.4)' : styles().border}`,
+            'border-radius': styles().radius,
+            'box-shadow': combinedShadow(),
+          }}
+        >
+          {/* Vertical text centered in bar */}
+          <span
+            class="text-[9px] font-semibold whitespace-nowrap"
+            style={{
+              color: styles().textColor,
+              'writing-mode': 'vertical-rl',
+              'text-orientation': 'mixed',
+              transform: 'rotate(180deg)',
+              'max-height': `${props.position.height - 8}px`,
+              overflow: 'hidden',
+              'text-overflow': 'ellipsis',
+            }}
+          >
+            {props.node.name}
+          </span>
+        </div>
+
+        {/* Status corner badge */}
+        <Show when={isDone() || isFailed() || isWorking()}>
+          <div
+            class="absolute -top-1 -right-1 flex items-center justify-center rounded-full"
+            style={{
+              width: '14px',
+              height: '14px',
+              background: isDone() ? 'var(--sage)' : isFailed() ? 'var(--terra)' : 'var(--amber-500)',
+              'box-shadow': '0 1px 3px rgba(0,0,0,0.3)',
+            }}
+          >
+            <Show when={isDone()}>
+              <svg class="w-2.5 h-2.5 text-pasture-900" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+            </Show>
+            <Show when={isFailed()}>
+              <svg class="w-2.5 h-2.5 text-pasture-900" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </Show>
+            <Show when={isWorking()}>
+              <svg class="w-2.5 h-2.5 text-pasture-900 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+              </svg>
+            </Show>
+          </div>
+        </Show>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -552,34 +876,17 @@ const LiveNodeCard: Component<{
         class={`h-full flex items-center gap-1.5 px-2 relative ${isDeleted() ? 'opacity-40' : ''} ${isMultiLine() ? 'flex-col justify-center !items-start py-1' : ''}`}
         style={{
           background: styles().bg,
-          border: `${styles().borderWidth} ${styles().borderStyle} ${props.selected ? 'rgba(212, 165, 116, 0.7)' : isDeleted() ? 'rgba(196, 92, 74, 0.4)' : styles().border}`,
+          border: `${styles().borderWidth} ${styles().borderStyle} ${isDeleted() ? 'rgba(196, 92, 74, 0.4)' : styles().border}`,
           'border-radius': styles().radius,
-          'box-shadow': props.selected ? '0 2px 8px rgba(0,0,0,0.3)' : undefined,
+          'box-shadow': combinedShadow(),
         }}
       >
-        {/* PROJECT: Amber accent bar on left */}
-        <Show when={isProject()}>
-          <div
-            class="absolute left-0 top-1 bottom-1 w-0.5"
-            style={{
-              background: isDone() ? 'var(--sage)' : isFailed() ? 'var(--terra)' : 'var(--amber-500)',
-              'border-radius': '2px',
-            }}
-          />
-        </Show>
-
-        {/* Status dot - small, unobtrusive, just shows live status */}
-        <div
-          class={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isWorking() ? 'animate-pulse' : ''}`}
-          style={{ background: statusDotColor() }}
-        />
-
-        {/* Name text */}
-        <div class={`flex-1 min-w-0 ${isProject() ? 'pl-0.5' : ''} ${isMultiLine() ? 'flex flex-col gap-0.5' : ''}`}>
+        {/* Name text - no icons, just text */}
+        <div class={`flex-1 min-w-0 ${isMultiLine() ? 'flex flex-col gap-0.5' : ''}`}>
           <For each={props.position.lines}>
             {(line) => (
               <span
-                class={`text-[10px] truncate leading-tight block ${isProject() ? 'font-semibold' : 'font-medium'}`}
+                class="text-[10px] truncate leading-tight block font-medium"
                 style={{ color: styles().textColor }}
               >
                 {line}
@@ -588,6 +895,35 @@ const LiveNodeCard: Component<{
           </For>
         </div>
       </div>
+
+      {/* Status corner badge */}
+      <Show when={isDone() || isFailed() || isWorking()}>
+        <div
+          class="absolute -top-1 -right-1 flex items-center justify-center rounded-full"
+          style={{
+            width: '14px',
+            height: '14px',
+            background: isDone() ? 'var(--sage)' : isFailed() ? 'var(--terra)' : 'var(--amber-500)',
+            'box-shadow': '0 1px 3px rgba(0,0,0,0.3)',
+          }}
+        >
+          <Show when={isDone()}>
+            <svg class="w-2.5 h-2.5 text-pasture-900" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+          </Show>
+          <Show when={isFailed()}>
+            <svg class="w-2.5 h-2.5 text-pasture-900" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </Show>
+          <Show when={isWorking()}>
+            <svg class="w-2.5 h-2.5 text-pasture-900 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            </svg>
+          </Show>
+        </div>
+      </Show>
 
       {/* Deleted indicator */}
       <Show when={isDeleted()}>
@@ -601,39 +937,22 @@ const LiveNodeCard: Component<{
 };
 
 // =============================================================================
-// Tree Connectors (SVG)
+// Dependency Connectors (Orthogonal Routing)
 // =============================================================================
 
-const TreeConnectors: Component<{
+const DependencyConnectors: Component<{
   positions: Map<string, NodePosition>;
-  tree: { id: string; nodeType?: NodeType; children: { id: string; nodeType?: NodeType; children: any[] }[] }[];
-  color: string;
-  dashed?: boolean;
+  relationships: DependencyRelationship[];
 }> = (props) => {
   const paths = createMemo(() => {
-    const result: { from: NodePosition; to: NodePosition; isEvalConnection: boolean }[] = [];
+    const result: { from: NodePosition; to: NodePosition; type: 'validates' | 'blockedBy' | 'project' }[] = [];
 
-    function collectEdges(
-      node: { id: string; nodeType?: NodeType; children: { id: string; nodeType?: NodeType; children: any[] }[] },
-      parentIsEval: boolean
-    ) {
-      const parentPos = props.positions.get(node.id);
-      if (!parentPos) return;
-
-      const nodeIsEval = node.nodeType === 'eval';
-
-      for (const child of node.children) {
-        const childPos = props.positions.get(child.id);
-        if (childPos) {
-          // Mark as eval connection if parent is an eval (these get green lines)
-          result.push({ from: parentPos, to: childPos, isEvalConnection: nodeIsEval });
-        }
-        collectEdges(child, nodeIsEval);
+    for (const rel of props.relationships) {
+      const fromPos = props.positions.get(rel.from);
+      const toPos = props.positions.get(rel.to);
+      if (fromPos && toPos) {
+        result.push({ from: fromPos, to: toPos, type: rel.type });
       }
-    }
-
-    for (const root of props.tree) {
-      collectEdges(root, false);
     }
 
     return result;
@@ -643,26 +962,54 @@ const TreeConnectors: Component<{
     <svg class="absolute inset-0 pointer-events-none overflow-visible" style={{ 'z-index': 0 }}>
       <For each={paths()}>
         {(edge) => {
-          // Horizontal tree: parent right edge → child left edge
+          // Connect center-right of source to center-left of target
           const x1 = edge.from.x + edge.from.width;
-          const y1 = edge.from.y + edge.from.height / 2;
           const x2 = edge.to.x;
           const y2 = edge.to.y + edge.to.height / 2;
-          const midX = (x1 + x2) / 2;
 
-          // Dark sage for eval→task connections, normal color otherwise
-          const strokeColor = edge.isEvalConnection ? 'rgb(70, 90, 65)' : props.color;
-          // Dashed lines for eval connections to match dashed border
-          const isDashed = props.dashed || edge.isEvalConnection;
+          // For project connections, y1 should match y2 so line is horizontal
+          // (project bar spans full height, so we connect at target's Y level)
+          const isFromProjectBar = edge.type === 'project';
+          const y1 = isFromProjectBar ? y2 : edge.from.y + edge.from.height / 2;
+
+          // Orthogonal routing: right-angle lines
+          // Route: horizontal at source Y level → vertical in gap before target → horizontal to target
+          // This avoids crossing through nodes in intermediate columns
+          const turnX = x2 - LEVEL_GAP / 2; // Turn point in the gap before target
+
+          let pathD: string;
+          if (Math.abs(y2 - y1) < 2) {
+            // Same Y level - straight horizontal line
+            pathD = `M ${x1} ${y1} L ${x2} ${y2}`;
+          } else {
+            // Different Y levels - go horizontal first, then vertical near target
+            pathD = `M ${x1} ${y1} L ${turnX} ${y1} L ${turnX} ${y2} L ${x2} ${y2}`;
+          }
+
+          // Styling based on relationship type
+          const isValidates = edge.type === 'validates';
+          const isBlockedBy = edge.type === 'blockedBy';
+
+          // Validates: sage green solid (eval checking task)
+          // BlockedBy: terra/red dashed (task depends on task)
+          // Default (project connections): neutral solid
+          const strokeColor = isValidates
+            ? 'rgb(70, 90, 65)'     // Dark sage for validates
+            : isBlockedBy
+            ? 'rgb(160, 82, 65)'    // Terra/red for blockedBy
+            : 'rgb(90, 85, 80)';    // Neutral for project connections
+          const strokeDash = isBlockedBy
+            ? '4 3'  // Dashed for blockedBy
+            : undefined; // Solid for validates and project
 
           return (
             <path
-              d={`M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`}
+              d={pathD}
               fill="none"
               stroke={strokeColor}
               stroke-width={1}
-              stroke-dasharray={isDashed ? '4 3' : undefined}
-              opacity={edge.isEvalConnection ? 0.7 : 0.4}
+              stroke-dasharray={strokeDash}
+              opacity={0.6}
             />
           );
         }}
@@ -671,6 +1018,80 @@ const TreeConnectors: Component<{
   );
 };
 
+
+// =============================================================================
+// Helper: Synthesize Live Tree with Project Hierarchy from Draft
+//
+// Since project nodes are UI-only and not stored in the live_nodes table,
+// we rebuild the project structure from the draft tree when rendering live.
+// =============================================================================
+
+/**
+ * Build live tree with project structure from draft tree.
+ * Project nodes are synthesized; tasks/evals come from actual live nodes.
+ */
+function buildLiveTreeWithProjects(
+  draftTree: DraftNodeTree[],
+  liveNodes: LiveNodeTree[]
+): LiveNodeTree[] {
+  // Create a map of live nodes by their ID for quick lookup
+  const liveById = new Map<string, LiveNodeTree>();
+  for (const node of liveNodes) {
+    liveById.set(node.id, node);
+  }
+
+  // Recursively build tree using draft structure
+  const buildNode = (draft: DraftNodeTree): LiveNodeTree | null => {
+    if (draft.nodeType === 'project') {
+      // Project nodes: synthesize from children
+      const children = draft.children
+        .map(child => buildNode(child))
+        .filter((n): n is LiveNodeTree => n !== null);
+
+      if (children.length === 0) return null; // No live children yet
+
+      // Compute status from children
+      const allDone = children.every(c => c.status === 'done');
+      const anyWorking = children.some(c => c.status === 'working');
+      const anyFailed = children.some(c => c.status === 'failed');
+      const status: LiveNodeStatus = anyFailed ? 'failed' : anyWorking ? 'working' : allDone ? 'done' : 'pending';
+
+      return {
+        id: draft.id,
+        draftNodeId: draft.id,
+        name: draft.name,
+        nodeType: 'project',
+        content: draft.content,
+        status,
+        validates: [],
+        blockedBy: [],
+        children,
+        x: draft.x,
+        y: draft.y,
+        completedAt: null,
+        lastCommitSha: null,
+      };
+    } else {
+      // Task/eval: look up live node
+      const live = liveById.get(draft.id);
+      if (!live) return null; // Not dispatched yet
+
+      // Recursively build children from draft structure
+      const children = draft.children
+        .map(child => buildNode(child))
+        .filter((n): n is LiveNodeTree => n !== null);
+
+      return {
+        ...live,
+        children,
+      };
+    }
+  };
+
+  return draftTree
+    .map(root => buildNode(root))
+    .filter((n): n is LiveNodeTree => n !== null);
+}
 
 // =============================================================================
 // Main Component
@@ -690,7 +1111,7 @@ export const SpecBoard: Component = () => {
   // Edit modal state
   const [editingNode, setEditingNode] = createSignal<DraftNodeTree | null>(null);
   const [viewingLiveNode, setViewingLiveNode] = createSignal<LiveNodeTree | null>(null);
-  const [editForm, setEditForm] = createSignal({ name: '', content: '', validates: '' });
+  const [editForm, setEditForm] = createSignal({ name: '', content: '', validates: '', blockedBy: '' });
 
   // New node prompt
   const [showNewPrompt, setShowNewPrompt] = createSignal(false);
@@ -717,20 +1138,25 @@ export const SpecBoard: Component = () => {
   const [activePanSide, setActivePanSide] = createSignal<'draft' | 'live' | null>(null);
   let canvasRef: HTMLDivElement | undefined;
 
+  // Build live tree with project hierarchy from draft (project nodes are UI-only)
+  const liveTreeWithProjects = createMemo(() =>
+    buildLiveTreeWithProjects(delta.draftTree(), delta.liveTree())
+  );
+
   // Computed layouts
   const draftLayout = createMemo(() => layoutTree(delta.draftTree(), 0));
-  const liveLayout = createMemo(() => layoutTree(delta.liveTree(), 0));
+  const liveLayout = createMemo(() => layoutTree(liveTreeWithProjects(), 0));
 
   // Check if we have a live tree (post-dispatch)
-  const hasLiveTree = () => delta.liveTree().length > 0;
+  const hasLiveTree = () => liveTreeWithProjects().length > 0;
 
   // Compute effective run status from live tree
   const liveRunStatus = createMemo(() => {
     const run = delta.projectRun();
     if (!run) return null;
 
-    // Check if any live node is working
-    const liveNodes = flattenLiveTree(delta.liveTree());
+    // Check if any live node is working (use synthesized tree with projects)
+    const liveNodes = flattenLiveTree(liveTreeWithProjects());
     const hasWorkingNode = liveNodes.some(n => n.status === 'working');
 
     if (hasWorkingNode) return 'working';
@@ -740,6 +1166,11 @@ export const SpecBoard: Component = () => {
     // All nodes done or pending - show idle
     const allDone = liveNodes.every(n => n.status === 'done');
     if (allDone && liveNodes.length > 0) return 'done';
+
+    // Run is working but no nodes active yet - workers starting up
+    // Only show "starting" if ALL nodes are still pending (no work started yet)
+    const allPending = liveNodes.every(n => n.status === 'pending');
+    if (run.status === 'working' && liveNodes.length > 0 && allPending) return 'starting';
 
     return 'idle';
   });
@@ -792,6 +1223,7 @@ export const SpecBoard: Component = () => {
       name: node.name,
       content: node.content,
       validates: node.validates.join(', '),
+      blockedBy: node.blockedBy.join(', '),
     });
     setEditingNode(node);
   };
@@ -805,6 +1237,10 @@ export const SpecBoard: Component = () => {
       name: form.name,
       content: form.content,
       validates: form.validates
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+      blockedBy: form.blockedBy
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean),
@@ -892,8 +1328,11 @@ export const SpecBoard: Component = () => {
   };
 
   const handleDispatch = async () => {
-    if (!delta.hasDiff()) {
-      window.toast?.info('No changes to dispatch');
+    // Guard against double-click - check both hasDiff and dispatchPending
+    if (!delta.hasDiff() || delta.dispatchPending()) {
+      if (!delta.hasDiff()) {
+        window.toast?.info('No changes to dispatch');
+      }
       return;
     }
 
@@ -955,6 +1394,17 @@ export const SpecBoard: Component = () => {
     return section.classList.contains('draft-section') ? 'draft' : 'live';
   };
 
+  // Calculate minimum zoom to fit tree within panel
+  const calcFitZoom = (treeWidth: number, treeHeight: number, panelWidth: number, panelHeight: number): number => {
+    if (treeWidth <= 0 || treeHeight <= 0) return 0.25;
+    const padding = TREE_LEFT_MARGIN * 2; // Padding on both sides
+    const availableWidth = Math.max(panelWidth - padding, 100);
+    const availableHeight = Math.max(panelHeight - padding, 100);
+    const fitZoom = Math.min(availableWidth / treeWidth, availableHeight / treeHeight);
+    // Clamp to reasonable bounds (never smaller than would make tree 50px, never larger than 1)
+    return Math.max(0.1, Math.min(1, fitZoom));
+  };
+
   // Pan and zoom handlers (per side)
   // Figma-style: scroll up (negative deltaY) = zoom in, scroll down = zoom out
   // Zoom centers on cursor position
@@ -967,10 +1417,13 @@ export const SpecBoard: Component = () => {
 
     if (side === 'draft') {
       const oldZoom = draftZoom();
-      const newZoom = Math.max(0.25, Math.min(3, oldZoom * zoomFactor));
       const section = (e.target as HTMLElement).closest('.tree-section');
-      if (section) {
-        const rect = section.getBoundingClientRect();
+      const layout = draftLayout();
+      // Calculate minimum zoom to fit tree in panel
+      const rect = section?.getBoundingClientRect();
+      const minZoom = rect ? calcFitZoom(layout.width, layout.height, rect.width, rect.height) : 0.25;
+      const newZoom = Math.max(minZoom, Math.min(3, oldZoom * zoomFactor));
+      if (section && rect) {
         // Cursor position relative to section
         const cursorX = e.clientX - rect.left - TREE_LEFT_MARGIN;
         const cursorY = e.clientY - rect.top - rect.height / 2;
@@ -987,10 +1440,13 @@ export const SpecBoard: Component = () => {
       setDraftZoom(newZoom);
     } else {
       const oldZoom = liveZoom();
-      const newZoom = Math.max(0.25, Math.min(3, oldZoom * zoomFactor));
       const section = (e.target as HTMLElement).closest('.tree-section');
-      if (section) {
-        const rect = section.getBoundingClientRect();
+      const layout = liveLayout();
+      // Calculate minimum zoom to fit tree in panel
+      const rect = section?.getBoundingClientRect();
+      const minZoom = rect ? calcFitZoom(layout.width, layout.height, rect.width, rect.height) : 0.25;
+      const newZoom = Math.max(minZoom, Math.min(3, oldZoom * zoomFactor));
+      if (section && rect) {
         // Cursor position relative to section
         const cursorX = e.clientX - rect.left - TREE_LEFT_MARGIN;
         const cursorY = e.clientY - rect.top - rect.height / 2;
@@ -1022,16 +1478,62 @@ export const SpecBoard: Component = () => {
     }
   };
 
+  // Clamp pan to keep tree within reasonable bounds
+  // Ensures at least some portion of tree is always visible
+  const clampPan = (
+    pan: { x: number; y: number },
+    treeWidth: number,
+    treeHeight: number,
+    panelWidth: number,
+    panelHeight: number,
+    zoom: number
+  ): { x: number; y: number } => {
+    const scaledTreeWidth = treeWidth * zoom;
+    const scaledTreeHeight = treeHeight * zoom;
+
+    // Allow panning such that at least 20% of tree (or 50px) stays visible
+    const minVisible = Math.max(50, Math.min(scaledTreeWidth, scaledTreeHeight) * 0.2);
+
+    // X bounds: tree can't go further right than showing minVisible on left edge,
+    // and can't go further left than showing minVisible on right edge
+    const maxX = panelWidth - minVisible - TREE_LEFT_MARGIN;
+    const minX = -(scaledTreeWidth - minVisible);
+
+    // Y bounds: similar for vertical (remember y=0 is centered due to transform)
+    const maxY = (panelHeight / 2) - minVisible;
+    const minY = -(scaledTreeHeight / 2) + minVisible - (panelHeight / 2);
+
+    return {
+      x: Math.max(minX, Math.min(maxX, pan.x)),
+      y: Math.max(minY, Math.min(maxY, pan.y)),
+    };
+  };
+
   const handleMouseMove = (e: MouseEvent) => {
     if (isPanning() && activePanSide()) {
-      const newPan = {
+      const rawPan = {
         x: e.clientX - panStart().x,
         y: e.clientY - panStart().y,
       };
+
+      // Get panel dimensions for clamping
+      const section = document.querySelector(
+        activePanSide() === 'draft' ? '.draft-section' : '.live-section'
+      );
+      const rect = section?.getBoundingClientRect();
+
       if (activePanSide() === 'draft') {
-        setDraftPan(newPan);
+        const layout = draftLayout();
+        const clampedPan = rect
+          ? clampPan(rawPan, layout.width, layout.height, rect.width, rect.height, draftZoom())
+          : rawPan;
+        setDraftPan(clampedPan);
       } else {
-        setLivePan(newPan);
+        const layout = liveLayout();
+        const clampedPan = rect
+          ? clampPan(rawPan, layout.width, layout.height, rect.width, rect.height, liveZoom())
+          : rawPan;
+        setLivePan(clampedPan);
       }
     }
   };
@@ -1193,7 +1695,7 @@ export const SpecBoard: Component = () => {
           </div>
 
           <Show
-            when={delta.draftTree().length > 0 || delta.liveTree().length > 0}
+            when={delta.draftTree().length > 0 || liveTreeWithProjects().length > 0}
             fallback={<EmptyTreeState />}
           >
             {/* Split view container - fills viewport */}
@@ -1201,48 +1703,52 @@ export const SpecBoard: Component = () => {
               class="absolute inset-0 flex"
               style={{ gap: `${SECTION_GAP}px`, padding: '8px' }}
               onContextMenu={(e) => {
-                if ((e.target as HTMLElement).closest('.tree-section')) {
+                // Only show context menu for draft section (live is read-only)
+                if ((e.target as HTMLElement).closest('.draft-section')) {
                   handleContextMenu(e, null);
                 }
               }}
             >
-              {/* Draft Section (LEFT) */}
+              {/* Draft Section (LEFT, or FULL when no live tree) */}
               <Show when={delta.draftTree().length > 0 && focusedView() !== 'live'}>
                 <div
                   class="tree-section draft-section flex-1 rounded-lg relative overflow-hidden"
                   style={{
-                    border: '1px dashed rgba(212, 165, 116, 0.2)',
-                    background: 'rgba(36, 34, 30, 0.3)',
+                    // Only show split-view styling when live tree exists
+                    border: hasLiveTree() ? '1px dashed rgba(212, 165, 116, 0.2)' : 'none',
+                    background: hasLiveTree() ? 'rgba(36, 34, 30, 0.3)' : 'transparent',
                   }}
                 >
-                  {/* Section label */}
-                  <div
-                    class="absolute z-10 text-[9px] font-medium uppercase tracking-wider px-2 py-0.5 rounded"
-                    style={{
-                      left: '8px',
-                      top: '6px',
-                      background: 'rgba(30, 30, 30, 0.8)',
-                    }}
-                  >
-                    <button
-                      onClick={() => setFocusedView(focusedView() === 'draft' ? 'both' : 'draft')}
-                      class="flex items-center gap-1.5 hover:opacity-80"
-                      title={focusedView() === 'draft' ? 'Show both' : 'Focus Draft'}
+                  {/* Section label - only show when split view (live tree exists) */}
+                  <Show when={hasLiveTree()}>
+                    <div
+                      class="absolute z-10 text-[9px] font-medium uppercase tracking-wider px-2 py-0.5 rounded"
+                      style={{
+                        left: '8px',
+                        top: '6px',
+                        background: 'rgba(30, 30, 30, 0.8)',
+                      }}
                     >
-                      <span style={{ color: 'var(--amber-600)' }}>Draft</span>
-                      <span class="text-wool-600 text-[8px]">{Math.round(draftZoom() * 100)}%</span>
-                      <Show when={hasLiveTree() && focusedView() !== 'draft'}>
-                        <svg class="w-2.5 h-2.5 text-wool-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-                        </svg>
-                      </Show>
-                      <Show when={focusedView() === 'draft'}>
-                        <svg class="w-2.5 h-2.5 text-wool-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
-                        </svg>
-                      </Show>
-                    </button>
-                  </div>
+                      <button
+                        onClick={() => setFocusedView(focusedView() === 'draft' ? 'both' : 'draft')}
+                        class="flex items-center gap-1.5 hover:opacity-80"
+                        title={focusedView() === 'draft' ? 'Show both' : 'Focus Draft'}
+                      >
+                        <span style={{ color: 'var(--amber-600)' }}>Draft</span>
+                        <span class="text-wool-600 text-[8px]">{Math.round(draftZoom() * 100)}%</span>
+                        <Show when={focusedView() !== 'draft'}>
+                          <svg class="w-2.5 h-2.5 text-wool-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                          </svg>
+                        </Show>
+                        <Show when={focusedView() === 'draft'}>
+                          <svg class="w-2.5 h-2.5 text-wool-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+                          </svg>
+                        </Show>
+                      </button>
+                    </div>
+                  </Show>
 
                   {/* Tree content - centered vertically, root at left */}
                   <div
@@ -1255,11 +1761,10 @@ export const SpecBoard: Component = () => {
                     }}
                   >
                     <div class="relative" style={{ width: `${draftLayout().width}px`, height: `${draftLayout().height}px` }}>
-                      {/* Tree connectors (green for eval→task, amber for rest) */}
-                      <TreeConnectors
+                      {/* Dependency connectors (blocked_by and validates relationships) */}
+                      <DependencyConnectors
                         positions={draftLayout().positions}
-                        tree={draftLayout().restructuredTree}
-                        color="rgb(212, 165, 116)"
+                        relationships={draftLayout().crossTreeRelationships}
                       />
                       <For each={flattenDraftTree(delta.draftTree())}>
                         {(node) => {
@@ -1317,16 +1822,17 @@ export const SpecBoard: Component = () => {
                       <Show when={liveRunStatus()}>
                         <span style={{ color: 'var(--wool-600)' }}>·</span>
                         <span
-                          class={liveRunStatus() === 'working' ? 'animate-pulse' : ''}
+                          class={(liveRunStatus() === 'working' || liveRunStatus() === 'starting') ? 'animate-pulse' : ''}
                           style={{
                             color: liveRunStatus() === 'working' ? 'var(--amber-400)'
+                              : liveRunStatus() === 'starting' ? 'var(--amber-300)'
                               : liveRunStatus() === 'done' ? 'var(--sage)'
                               : liveRunStatus() === 'failed' ? 'var(--terra)'
                               : liveRunStatus() === 'paused' ? 'var(--golden)'
                               : 'var(--wool-600)',
                           }}
                         >
-                          {liveRunStatus()}
+                          {liveRunStatus() === 'starting' ? 'starting...' : liveRunStatus()}
                         </span>
                       </Show>
                       <Show when={focusedView() !== 'live'}>
@@ -1353,14 +1859,12 @@ export const SpecBoard: Component = () => {
                     }}
                   >
                     <div class="relative" style={{ width: `${liveLayout().width}px`, height: `${liveLayout().height}px` }}>
-                      {/* Tree connectors (green for eval→task, neutral for rest) */}
-                      <TreeConnectors
+                      {/* Dependency connectors (blocked_by and validates relationships) */}
+                      <DependencyConnectors
                         positions={liveLayout().positions}
-                        tree={liveLayout().restructuredTree}
-                        color="rgb(90, 85, 80)"
-                        dashed
+                        relationships={liveLayout().crossTreeRelationships}
                       />
-                      <For each={flattenLiveTree(delta.liveTree())}>
+                      <For each={flattenLiveTree(liveTreeWithProjects())}>
                         {(node) => {
                           const pos = () => liveLayout().positions.get(node.id);
                           return (
@@ -1693,6 +2197,27 @@ export const SpecBoard: Component = () => {
                         />
                         <p class="text-[11px] text-wool-500">
                           Comma-separated task IDs this eval validates.
+                        </p>
+                      </div>
+                    </Show>
+
+                    {/* Blocked By field (task only) */}
+                    <Show when={!isEval()}>
+                      <div class="space-y-1.5">
+                        <label for="edit-blocked-by" class="text-xs font-medium" style={{ color: 'var(--amber-500)' }}>
+                          Blocked By
+                        </label>
+                        <input
+                          id="edit-blocked-by"
+                          type="text"
+                          value={editForm().blockedBy}
+                          onInput={(e) => setEditForm((f) => ({ ...f, blockedBy: e.currentTarget.value }))}
+                          placeholder="task-id-1, task-id-2"
+                          class="w-full px-3 py-2 rounded-md text-sm font-mono bg-pasture-900 text-wool-100 placeholder-wool-600 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+                          style={{ 'border': '1px solid rgba(212, 165, 116, 0.4)' }}
+                        />
+                        <p class="text-[11px] text-wool-500">
+                          Comma-separated task IDs that must complete before this task.
                         </p>
                       </div>
                     </Show>

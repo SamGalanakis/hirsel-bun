@@ -106,7 +106,6 @@ export interface RunDetail {
   createdAt: string;
   updatedAt: string;
   iterationCount: number;
-  maxIterations: number | null;
   humanInTheLoop: boolean;
   waitingReason: string | null;
   unreadCount: number;
@@ -180,7 +179,6 @@ export interface RunState {
   createdAt: string;
   updatedAt: string;
   iterationCount: number;
-  maxIterations: number | null;
   humanInTheLoop: boolean;
   waitingReason: string | null;
   unreadCount: number;
@@ -387,6 +385,20 @@ export interface Config {
   agentPresets: Record<string, AgentPreset>;
   defaultWorkerScale: string;
   defaultTimeLimit: number | null;
+}
+
+/** Config defaults for project settings inheritance */
+export interface ConfigDefaults {
+  /** Default worker scale (typically "1") */
+  workerScale: string;
+  /** Default time limit in minutes (null = no limit) */
+  timeLimitMinutes: number | null;
+  /** Default human-in-the-loop setting */
+  humanInTheLoop: boolean;
+  /** Available runner names from global config */
+  runners: string[];
+  /** Default runner name from global config */
+  defaultRunner: string | null;
 }
 
 // =============================================================================
@@ -1116,6 +1128,7 @@ export interface DraftNode {
   nodeType: NodeType;
   content: string;
   validates: string[];
+  blockedBy: string[];
   x: number | null;
   y: number | null;
   createdAt: string;
@@ -1129,6 +1142,7 @@ export interface DraftNodeTree {
   nodeType: NodeType;
   content: string;
   validates: string[];
+  blockedBy: string[]; // Computed inverse of validates - tasks blocked by evals
   children: DraftNodeTree[];
   x: number | null;
   y: number | null;
@@ -1146,6 +1160,7 @@ export interface LiveNode {
   content: string;
   status: LiveNodeStatus;
   validates: string[];
+  blockedBy: string[];
   x: number | null;
   y: number | null;
   createdAt: string;
@@ -1163,6 +1178,7 @@ export interface LiveNodeTree {
   content: string;
   status: LiveNodeStatus;
   validates: string[];
+  blockedBy: string[]; // Computed inverse of validates - tasks blocked by evals
   children: LiveNodeTree[];
   x: number | null;
   y: number | null;
@@ -1184,6 +1200,7 @@ export interface DiffNode {
   nodeType: NodeType;
   content: string;
   validates: string[];
+  blockedBy: string[];
   parentId: string | null;
 }
 
@@ -1219,6 +1236,7 @@ export interface CreateDraftNodeRequest {
   nodeType?: NodeType;
   content?: string;
   validates?: string[];
+  blockedBy?: string[];
   x?: number | null;
   y?: number | null;
 }
@@ -1228,6 +1246,7 @@ export interface UpdateDraftNodeRequest {
   name?: string;
   content?: string;
   validates?: string[];
+  blockedBy?: string[];
   x?: number | null;
   y?: number | null;
 }
@@ -1238,6 +1257,8 @@ export interface DeltaDispatchResponse {
   batchId: number;
   deltaCount: number;
   diffSummary: string;
+  versionNumber: number;
+  versionId: number;
 }
 
 /** Preview response for dispatch */
@@ -1276,4 +1297,82 @@ export const DELTA_TYPE_COLORS: Record<DeltaType, string> = {
   implement: 'sage',
   modify: 'amber-500',
   revert: 'terra',
+};
+
+// =============================================================================
+// Board Delivery Types
+// =============================================================================
+
+/** A version of the board (created on each dispatch) */
+export interface BoardVersion {
+  id: number;
+  projectId: number;
+  batchId: number;
+  versionNumber: number;
+  createdAt: string;
+  description: string | null;
+}
+
+/** Status of a board delivery */
+export type BoardDeliveryStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'resolving_conflicts'
+  | 'pushed'
+  | 'pr_open'
+  | 'merged'
+  | 'failed'
+  | 'abandoned';
+
+/** A delivery tracks the publication of a board version */
+export interface BoardDelivery {
+  id: number;
+  projectId: number;
+  versionId: number;
+  status: BoardDeliveryStatus;
+  targetBranch: string;
+  deliveryBranch: string | null;
+  prUrl: string | null;
+  prNumber: number | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  failureReason: string | null;
+}
+
+/** Status of a delivery attempt */
+export type DeliveryAttemptStatus = 'success' | 'failed' | 'cancelled';
+
+/** A delivery attempt (retry history) */
+export interface DeliveryAttempt {
+  id: number;
+  deliveryId: number;
+  attemptNumber: number;
+  status: DeliveryAttemptStatus;
+  startedAt: string;
+  completedAt: string | null;
+  errorMessage: string | null;
+}
+
+/** Status colors for board delivery */
+export const BOARD_DELIVERY_STATUS_COLORS: Record<BoardDeliveryStatus, string> = {
+  pending: 'wool-500',
+  in_progress: 'amber-500',
+  resolving_conflicts: 'amber-400',
+  pushed: 'sky-500',
+  pr_open: 'sky-400',
+  merged: 'sage',
+  failed: 'terra',
+  abandoned: 'wool-600',
+};
+
+/** Status icons for board delivery */
+export const BOARD_DELIVERY_STATUS_ICONS: Record<BoardDeliveryStatus, string> = {
+  pending: '\u25cb', // ○
+  in_progress: '\u25cf', // ●
+  resolving_conflicts: '\u2699', // ⚙
+  pushed: '\u2191', // ↑
+  pr_open: '\u21bb', // ↻
+  merged: '\u2713', // ✓
+  failed: '\u2717', // ✗
+  abandoned: '\u2205', // ∅
 };
