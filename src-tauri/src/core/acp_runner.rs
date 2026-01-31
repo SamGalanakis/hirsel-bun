@@ -1,7 +1,7 @@
 //! Shared ACP Agent Runner
 //!
 //! Provides a unified interface for running ACP agents. This reduces
-//! duplication across scribe, conflict_resolver, compaction, eval, etc.
+//! duplication across scribe, conflict_resolver, eval, etc.
 //!
 //! ## Usage
 //!

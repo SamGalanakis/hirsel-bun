@@ -208,9 +208,6 @@ interface Settings {
   humanInTheLoop: boolean;
   userMessagePause: 'sender' | 'all' | 'none';
   autoLearn: boolean;
-  compactionEnabled: boolean;
-  compactionThreshold: number;
-  compactionKeepMessages: number;
   contextWarningThreshold: number;
   coordinatorPort: number;
   profiles: Record<string, RemoteProfile>;
@@ -243,9 +240,6 @@ const defaultSettings = (): Settings => ({
   humanInTheLoop: true,
   userMessagePause: 'sender',
   autoLearn: false,
-  compactionEnabled: false,
-  compactionThreshold: 10000,
-  compactionKeepMessages: 20,
   contextWarningThreshold: 0.5,
   coordinatorPort: 19700,
   profiles: {},
@@ -1670,43 +1664,6 @@ export const SettingsModal: Component = () => {
                           description="Enable the Scribe system to update docs based on worker discoveries."
                         />
 
-                        {/* Auto-compact */}
-                        <Switch
-                          id="compaction-switch"
-                          checked={settings.compactionEnabled}
-                          onChange={(checked) => setSettings('compactionEnabled', checked)}
-                          label="Auto-compact Messages"
-                          description="Periodically summarize old messages to save context space."
-                        />
-
-                        <Show when={settings.compactionEnabled}>
-                          <div class="grid grid-cols-2 gap-4 pl-4 border-l-2 border-pasture-600">
-                            <div class="space-y-2">
-                              <label class="block text-sm text-wool-300">Threshold (chars)</label>
-                              <input
-                                type="number"
-                                class="input w-full"
-                                value={settings.compactionThreshold}
-                                onInput={(e) => setSettings('compactionThreshold', Number.parseInt(e.currentTarget.value) || 10000)}
-                                min={1000}
-                                max={100000}
-                                step={1000}
-                              />
-                            </div>
-                            <div class="space-y-2">
-                              <label class="block text-sm text-wool-300">Keep messages</label>
-                              <input
-                                type="number"
-                                class="input w-full"
-                                value={settings.compactionKeepMessages}
-                                onInput={(e) => setSettings('compactionKeepMessages', Number.parseInt(e.currentTarget.value) || 20)}
-                                min={5}
-                                max={200}
-                                step={5}
-                              />
-                            </div>
-                          </div>
-                        </Show>
                       </div>
                     </Show>
 

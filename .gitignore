@@ -6,9 +6,6 @@ build/
 dist/
 references/
 
-# Runtime data
-/runs/
-
 # Environment and secrets
 .env
 .env.*

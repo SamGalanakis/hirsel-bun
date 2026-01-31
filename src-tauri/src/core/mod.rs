@@ -57,8 +57,6 @@ pub mod state;
 pub mod state_access;
 pub mod storage;
 pub mod tailscale;
-#[cfg(feature = "server")]
-pub mod tunnel;
 pub mod workers;
 
 // Re-export commonly used types

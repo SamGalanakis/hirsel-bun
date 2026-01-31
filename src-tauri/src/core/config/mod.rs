@@ -111,18 +111,6 @@ fn default_human_in_the_loop() -> bool {
     true
 }
 
-fn default_compaction_enabled() -> bool {
-    true
-}
-
-fn default_compaction_threshold() -> Option<u32> {
-    Some(10000)
-}
-
-fn default_compaction_keep_messages() -> u32 {
-    40
-}
-
 fn default_context_warning_threshold() -> f64 {
     0.5
 }
@@ -264,15 +252,6 @@ pub struct Config {
     #[serde(default = "default_human_in_the_loop")]
     pub human_in_the_loop: bool,
 
-    #[serde(default = "default_compaction_enabled")]
-    pub compaction_enabled: bool,
-
-    #[serde(default = "default_compaction_threshold")]
-    pub compaction_threshold: Option<u32>,
-
-    #[serde(default = "default_compaction_keep_messages")]
-    pub compaction_keep_messages: u32,
-
     #[serde(default = "default_context_warning_threshold")]
     pub context_warning_threshold: f64,
 
@@ -346,9 +325,6 @@ impl Default for Config {
             auto_learn: true,
             user_message_pause: default_user_message_pause(),
             human_in_the_loop: default_human_in_the_loop(),
-            compaction_enabled: default_compaction_enabled(),
-            compaction_threshold: default_compaction_threshold(),
-            compaction_keep_messages: default_compaction_keep_messages(),
             context_warning_threshold: default_context_warning_threshold(),
             coordinator_port: default_coordinator_port(),
             auth: AuthConfig::default(),
@@ -449,15 +425,6 @@ impl Config {
         }
         if let Some(human_in_the_loop) = partial.human_in_the_loop {
             self.human_in_the_loop = human_in_the_loop;
-        }
-        if let Some(compaction_enabled) = partial.compaction_enabled {
-            self.compaction_enabled = compaction_enabled;
-        }
-        if let Some(compaction_threshold) = partial.compaction_threshold {
-            self.compaction_threshold = compaction_threshold;
-        }
-        if let Some(compaction_keep_messages) = partial.compaction_keep_messages {
-            self.compaction_keep_messages = compaction_keep_messages;
         }
         if let Some(context_warning_threshold) = partial.context_warning_threshold {
             self.context_warning_threshold = context_warning_threshold;
@@ -668,24 +635,6 @@ impl Config {
     pub fn update_agent(&mut self, command: Option<Vec<String>>) {
         if let Some(cmd) = command {
             self.agent.command = cmd;
-        }
-    }
-
-    /// Update compaction settings
-    pub fn update_compaction(
-        &mut self,
-        enabled: Option<bool>,
-        threshold: Option<Option<u32>>,
-        keep_messages: Option<u32>,
-    ) {
-        if let Some(v) = enabled {
-            self.compaction_enabled = v;
-        }
-        if let Some(v) = threshold {
-            self.compaction_threshold = v;
-        }
-        if let Some(v) = keep_messages {
-            self.compaction_keep_messages = v;
         }
     }
 

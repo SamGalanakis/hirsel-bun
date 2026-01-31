@@ -62,15 +62,6 @@ pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
     if let Some(hitl) = updates.human_in_the_loop {
         cfg.human_in_the_loop = hitl;
     }
-    if let Some(enabled) = updates.compaction_enabled {
-        cfg.compaction_enabled = enabled;
-    }
-    if let Some(threshold) = updates.compaction_threshold {
-        cfg.compaction_threshold = threshold;
-    }
-    if let Some(keep) = updates.compaction_keep_messages {
-        cfg.compaction_keep_messages = keep;
-    }
     if let Some(warning) = updates.context_warning_threshold {
         cfg.context_warning_threshold = warning;
     }

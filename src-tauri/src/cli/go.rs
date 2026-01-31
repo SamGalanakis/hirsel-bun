@@ -20,8 +20,6 @@ use crate::core::names::slugify;
 use crate::core::project::{CreateProjectRequest, ProjectStore};
 use crate::core::runner::RunnerError;
 use crate::core::state::StateError;
-#[cfg(feature = "server")]
-use crate::core::tunnel::TunnelError;
 use crate::core::workers::WorkerError;
 use tracing::info;
 
@@ -36,7 +34,6 @@ pub enum GoError {
     State(StateError),
     Chat(ChatError),
     Worker(WorkerError),
-    Tunnel(TunnelError),
     Runner(RunnerError),
     Orchestrator(String),
     InvalidSpec(String),
@@ -60,7 +57,6 @@ impl std::fmt::Display for GoError {
             GoError::State(e) => write!(f, "State error: {}", e),
             GoError::Chat(e) => write!(f, "Chat error: {}", e),
             GoError::Worker(e) => write!(f, "Worker error: {}", e),
-            GoError::Tunnel(e) => write!(f, "Tunnel error: {}", e),
             GoError::Runner(e) => write!(f, "Runner error: {}", e),
             GoError::Orchestrator(msg) => write!(f, "Orchestrator error: {}", msg),
             GoError::InvalidSpec(msg) => write!(f, "Invalid spec: {}", msg),
@@ -107,12 +103,6 @@ impl From<ChatError> for GoError {
 impl From<WorkerError> for GoError {
     fn from(e: WorkerError) -> Self {
         GoError::Worker(e)
-    }
-}
-
-impl From<TunnelError> for GoError {
-    fn from(e: TunnelError) -> Self {
-        GoError::Tunnel(e)
     }
 }
 

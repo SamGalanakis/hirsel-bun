@@ -38,17 +38,6 @@ pub fn save_config(config: &Config, config_path: &Path) -> Result<(), ConfigErro
         config.human_in_the_loop
     ));
     output.push_str(&format!(
-        "compaction_enabled = {}\n",
-        config.compaction_enabled
-    ));
-    if let Some(threshold) = config.compaction_threshold {
-        output.push_str(&format!("compaction_threshold = {}\n", threshold));
-    }
-    output.push_str(&format!(
-        "compaction_keep_messages = {}\n",
-        config.compaction_keep_messages
-    ));
-    output.push_str(&format!(
         "context_warning_threshold = {}\n",
         config.context_warning_threshold
     ));

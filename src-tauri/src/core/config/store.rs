@@ -49,9 +49,6 @@ pub struct PartialConfig {
     pub auto_learn: Option<bool>,
     pub user_message_pause: Option<String>,
     pub human_in_the_loop: Option<bool>,
-    pub compaction_enabled: Option<bool>,
-    pub compaction_threshold: Option<Option<u32>>,
-    pub compaction_keep_messages: Option<u32>,
     pub context_warning_threshold: Option<f64>,
     pub coordinator_port: Option<u16>,
     pub auth: Option<AuthConfig>,
@@ -167,19 +164,6 @@ impl ConfigStore {
                 "human_in_the_loop" => {
                     partial.human_in_the_loop = Some(value == "true");
                 }
-                "compaction_enabled" => {
-                    partial.compaction_enabled = Some(value == "true");
-                }
-                "compaction_threshold" => {
-                    if value == "null" {
-                        partial.compaction_threshold = Some(None);
-                    } else {
-                        partial.compaction_threshold = value.parse().ok().map(Some);
-                    }
-                }
-                "compaction_keep_messages" => {
-                    partial.compaction_keep_messages = value.parse().ok();
-                }
                 "context_warning_threshold" => {
                     partial.context_warning_threshold = value.parse().ok();
                 }
@@ -254,22 +238,6 @@ impl ConfigStore {
             } else {
                 "false"
             },
-        )?;
-        self.set(
-            "compaction_enabled",
-            if config.compaction_enabled {
-                "true"
-            } else {
-                "false"
-            },
-        )?;
-        match config.compaction_threshold {
-            Some(n) => self.set("compaction_threshold", &n.to_string())?,
-            None => self.set("compaction_threshold", "null")?,
-        }
-        self.set(
-            "compaction_keep_messages",
-            &config.compaction_keep_messages.to_string(),
         )?;
         self.set(
             "context_warning_threshold",

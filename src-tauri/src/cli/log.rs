@@ -51,7 +51,6 @@ fn format_history_entry(entry: &HistoryEntry) -> String {
         "resume_all" => format!("{} RESUME: {}", ts, detail),
         "init" => format!("{} INIT", ts),
         "summary_generated" => format!("{} SUMMARY: generated", ts),
-        "compaction" => format!("{} COMPACT: {}", ts, detail),
         _ => format!("{} {}: {}", ts, entry.action.to_uppercase(), detail),
     }
 }

@@ -587,9 +587,8 @@ pub async fn get_config(State(state): State<Arc<AppState>>) -> Result<Json<Confi
 // =============================================================================
 
 use crate::core::api_types::{
-    mask_credential, AgentAuthConfigRequest, AgentConfigRequest, CompactionConfigRequest,
-    CredentialStatusResponse, GeneralConfigRequest, GitConfigRequest, RunnerConfigResponse,
-    StoreCredentialRequest,
+    mask_credential, AgentAuthConfigRequest, AgentConfigRequest, CredentialStatusResponse,
+    GeneralConfigRequest, GitConfigRequest, RunnerConfigResponse, StoreCredentialRequest,
 };
 use crate::core::config::OrchestratorProfile;
 use crate::core::credentials::CredentialStore;
@@ -621,19 +620,6 @@ pub async fn patch_agent_config(
 ) -> Result<StatusCode> {
     let mut config = state.config.write().await;
     config.update_agent(body.command);
-    config
-        .save()
-        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-/// Patch compaction configuration settings
-pub async fn patch_compaction_config(
-    State(state): State<Arc<AppState>>,
-    Json(body): Json<CompactionConfigRequest>,
-) -> Result<StatusCode> {
-    let mut config = state.config.write().await;
-    config.update_compaction(body.enabled, body.threshold, body.keep_messages);
     config
         .save()
         .map_err(|e| OrchestratorError::Config(e.to_string()))?;
@@ -946,12 +932,6 @@ pub struct PutConfigRequest {
     #[serde(default)]
     pub coordinator_port: Option<u16>,
     #[serde(default)]
-    pub compaction_enabled: Option<bool>,
-    #[serde(default)]
-    pub compaction_threshold: Option<Option<u32>>,
-    #[serde(default)]
-    pub compaction_keep_messages: Option<u32>,
-    #[serde(default)]
     pub auth: Option<crate::core::config::AuthConfig>,
     #[serde(default)]
     pub storage: Option<crate::core::config::StorageConfig>,
@@ -994,15 +974,6 @@ pub async fn put_config(
     }
     if let Some(coordinator_port) = body.coordinator_port {
         config.coordinator_port = coordinator_port;
-    }
-    if let Some(compaction_enabled) = body.compaction_enabled {
-        config.compaction_enabled = compaction_enabled;
-    }
-    if let Some(compaction_threshold) = body.compaction_threshold {
-        config.compaction_threshold = compaction_threshold;
-    }
-    if let Some(compaction_keep_messages) = body.compaction_keep_messages {
-        config.compaction_keep_messages = compaction_keep_messages;
     }
     if let Some(auth) = body.auth {
         config.auth = auth;

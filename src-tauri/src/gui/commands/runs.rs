@@ -8,7 +8,7 @@ use crate::core::orchestrator::create_orchestrator;
 /// Ensure the daemon is running for lifecycle management
 fn ensure_daemon_running() {
     // Attempt to start daemon in background - non-blocking
-    // The daemon handles eval triggering, time limits, and compaction
+    // The daemon handles eval triggering and time limits
     if let Err(e) = crate::daemon::DaemonClient::connect_or_start() {
         tracing::debug!("Could not start daemon: {}", e);
     }
@@ -32,8 +32,7 @@ pub async fn get_run_detail(run_name: String) -> Result<RunDetail, String> {
     let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
     let detail = orch.get_run(&run_name).await.map_err(|e| e.to_string())?;
 
-    // Note: Lifecycle management (eval triggering, compaction) is now handled
-    // by the daemon's polling loop, not by the GUI polling
+    // Note: Lifecycle management (eval triggering) is handled by the daemon
 
     Ok(detail)
 }

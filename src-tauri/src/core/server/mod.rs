@@ -160,10 +160,6 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
         // Config - granular updates
         .route("/api/config/general", patch(routes::patch_general_config))
         .route("/api/config/agent", patch(routes::patch_agent_config))
-        .route(
-            "/api/config/compaction",
-            patch(routes::patch_compaction_config),
-        )
         .route("/api/config/auth", get(routes::get_auth_config))
         .route(
             "/api/config/auth/{agent}",

@@ -777,9 +777,6 @@ pub struct ConfigResponse {
     pub auto_learn: bool,
     pub user_message_pause: String,
     pub human_in_the_loop: bool,
-    pub compaction_enabled: bool,
-    pub compaction_threshold: Option<u32>,
-    pub compaction_keep_messages: u32,
     pub context_warning_threshold: f64,
     pub coordinator_port: u16,
     pub auth: AuthConfigResponse,
@@ -899,15 +896,6 @@ pub struct GeneralConfigRequest {
 #[serde(rename_all = "camelCase")]
 pub struct AgentConfigRequest {
     pub command: Option<Vec<String>>,
-}
-
-/// Request to update compaction configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CompactionConfigRequest {
-    pub enabled: Option<bool>,
-    pub threshold: Option<Option<u32>>,
-    pub keep_messages: Option<u32>,
 }
 
 /// Request to update agent auth configuration
