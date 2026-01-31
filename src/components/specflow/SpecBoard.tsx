@@ -361,32 +361,6 @@ const DependencyConnectors: Component<{
 }> = (props) => {
   return (
     <svg class="absolute inset-0 pointer-events-none overflow-visible" style={{ 'z-index': 0 }}>
-      {/* Arrowhead markers */}
-      <defs>
-        <marker
-          id="arrow-blockedBy"
-          viewBox="0 0 10 10"
-          refX="9"
-          refY="5"
-          markerWidth="6"
-          markerHeight="6"
-          orient="auto-start-reverse"
-        >
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="rgb(145, 85, 70)" />
-        </marker>
-        <marker
-          id="arrow-validates"
-          viewBox="0 0 10 10"
-          refX="9"
-          refY="5"
-          markerWidth="5"
-          markerHeight="5"
-          orient="auto-start-reverse"
-        >
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="rgb(85, 115, 75)" />
-        </marker>
-      </defs>
-
       <For each={props.edgeRoutes}>
         {(edge) => {
           const { waypoints, type } = edge;
@@ -400,13 +374,12 @@ const DependencyConnectors: Component<{
           // Styling based on relationship type
           const isValidates = type === 'validates';
 
-          // BlockedBy: terra/red lines (dependency flows to target)
-          // Validates: sage/green lines (validation flows to target)
+          // BlockedBy: terra/red lines (task depends on task)
+          // Validates: sage/green lines (eval validates task)
           const strokeColor = isValidates
             ? 'rgb(85, 115, 75)'     // Sage/green for validates
             : 'rgb(145, 85, 70)';    // Terra/red for blockedBy
           const strokeWidth = isValidates ? 1 : 1.25;
-          const markerId = isValidates ? 'arrow-validates' : 'arrow-blockedBy';
 
           return (
             <path
@@ -414,7 +387,6 @@ const DependencyConnectors: Component<{
               fill="none"
               stroke={strokeColor}
               stroke-width={strokeWidth}
-              marker-end={`url(#${markerId})`}
             />
           );
         }}
