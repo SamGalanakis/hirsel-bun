@@ -863,18 +863,16 @@ export const SpecBoard: Component = () => {
     await delta.dispatch();
   };
 
-  const handleAttachWorker = async () => {
+  const handleAttachWorker = () => {
     const worker = selectedWorker();
     const run = delta.projectRun();
     if (!worker || !run) return;
 
-    try {
-      await invoke('attach_worker', { runName: run.runName, workerName: worker.name });
-      setSelectedWorker(null);
-    } catch (e) {
-      console.error('Failed to attach to worker:', e);
-      window.toast?.error(`Failed to attach: ${e}`);
-    }
+    // Dispatch event to open WorkerOutputViewer for spectating
+    window.dispatchEvent(new CustomEvent('show-worker-output', {
+      detail: { runName: run.runName, workerName: worker.name }
+    }));
+    setSelectedWorker(null);
   };
 
   // Keyboard shortcuts

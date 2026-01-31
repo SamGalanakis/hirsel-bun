@@ -7,7 +7,7 @@ dist/
 references/
 
 # Runtime data
-runs/
+/runs/
 
 # Environment and secrets
 .env
