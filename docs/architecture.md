@@ -98,7 +98,9 @@ cargo build --features s3-storage               # With S3 support
 | `server/` | `mod.rs` → `start_server()`, `routes.rs`, `auth.rs`, `gyp.rs`, `board.rs` | HTTP server for remote mode |
 | `eval/` | `mod.rs` | Eval runner and management |
 | `storage/` | `mod.rs` | File storage abstraction (local/S3) |
-| `service_worker/` | `mod.rs`, `scribe.rs`, `types.rs` | ScribeService for documentation batches |
+| `service_worker/` | `mod.rs`, `scribe.rs`, `conflict_resolver.rs`, `types.rs` | Service workers: ScribeService for documentation, ConflictResolverServiceWrapper for merge conflicts |
+| `conflict_resolver/` | `mod.rs`, `client.rs`, `state.rs` | Git conflict resolution with AI agent |
+| `acp_runner.rs` | - | Unified ACP agent runner for scribe, conflict_resolver, compaction, eval |
 | `error.rs` | - | `HirselError` enum with `ErrorKind` categorization |
 | `acp.rs` | - | Agent Control Protocol types, `AcpChild` process wrapper |
 | `state_access.rs` | - | Worker state abstraction (SQLite vs HTTP) |
@@ -117,10 +119,7 @@ cargo build --features s3-storage               # With S3 support
 | `git_http.rs` | - | Git HTTP server for remote workers |
 | `credentials.rs` | - | Encrypted credential store |
 | `git.rs` | - | Git operations |
-| `compaction.rs` | - | Context compaction for long sessions |
 | `tailscale.rs` | - | Tailscale integration |
-| `acp_runner.rs` | - | Unified ACP agent runner for scribe, conflict_resolver, compaction, eval |
-| `conflict_resolver/` | `mod.rs`, `types.rs` | Git conflict resolution service with AI agent |
 | `gyp.rs` | - | Unified Gyp context builder and session config |
 
 ### `src-tauri/src/worker/` - Worker Subprocess
@@ -226,22 +225,24 @@ cargo build --features s3-storage               # With S3 support
 | `components/chat/` | GypMessenger |
 | `stores/` | AppProvider, ProjectProvider, RunsProvider, SelectionProvider, DeltaProvider, DispatchProvider |
 | `hooks/` | usePolling, useDebounce, useTauriEvent |
-| `lib/` | Icons, theme, toast, dev-logger, utils, elk-layout (graph layout via ELK.js) |
+| `lib/` | Icons, theme, toast, dev-logger, utils |
+| `lib/elk-layout.ts` | ELK.js wrapper for hierarchical graph layout with orthogonal edge routing |
 
 **SpecBoard Architecture:**
-- `SpecBoard.tsx` - Unified canvas component (~2000 lines) handling:
+- `SpecBoard.tsx` - Unified canvas component handling:
   - Draft/live tree visualization with delta dispatch
   - Node rendering with visual hierarchy indicators
   - Context menus for node operations
   - Drag-and-drop node reordering
   - Keyboard navigation and shortcuts
-  - **Graph Layout** - ELK.js (Eclipse Layout Kernel) for hierarchical graph layout:
-    - `src/lib/elk-layout.ts` - ELK wrapper with orthogonal edge routing
-    - Layered algorithm with proper crossing minimization
-    - Edges routed as orthogonal polylines (right-angle bends)
-  - **DependencyConnectors** - SVG polylines for all edges:
-    - `validates` (eval→task): sage green lines
-    - `blockedBy` (task→task): terra red lines
+- **Graph Layout** - ELK.js (Eclipse Layout Kernel) for hierarchical graph layout:
+  - `src/lib/elk-layout.ts` - ELK wrapper with orthogonal edge routing
+  - Layered algorithm with proper crossing minimization
+  - Uses only tree structure (parent-child) for positioning
+  - blockedBy/validates edges are visual overlays that don't affect layout
+- **DependencyConnectors** - SVG polylines for dependency edges:
+  - `validates` (eval→task): sage green lines
+  - `blockedBy` (task→task): terra red lines
   - `blockedBy` computed as inverse of `validates` in backend tree builders
 
 ---
@@ -1150,6 +1151,7 @@ Service workers (`service_worker/`) manage background services that benefit from
 | Service | Purpose | Default Timeout |
 |---------|---------|-----------------|
 | Scribe | Documentation agent processing learnings | 5 min |
+| ConflictResolver | AI-assisted git merge conflict resolution | 5 min |
 
 **Architecture:**
 ```
@@ -1174,6 +1176,9 @@ ScribeService.process_batch(run_name)
 
 **Key files:**
 - `core/service_worker/scribe.rs` - `ScribeService` handles local vs remote internally
+- `core/service_worker/conflict_resolver.rs` - `ConflictResolverServiceWrapper` for merge conflicts
+- `core/conflict_resolver/` - Core conflict resolution logic and ACP client
+- `core/acp_runner.rs` - Shared ACP agent runner used by both services
 - `core/service_worker/types.rs` - `ServiceWorkerType`, `ServiceWorkerHandle`
 - `cli/service_worker.rs` - HTTP server for `__service-worker` command (remote only)
 - `daemon/lifecycle.rs` - Integration in `maybe_process_scribe()`
