@@ -114,33 +114,6 @@ pub fn generate_worker_name() -> String {
     format!("{}-{}", adj, breed)
 }
 
-/// Generate a worker name with a specific index suffix
-pub fn generate_worker_name_indexed(index: usize) -> String {
-    let mut rng = rand::rng();
-    let adj = ADJECTIVES.choose(&mut rng).unwrap_or(&"swift");
-    let breed = BREEDS.choose(&mut rng).unwrap_or(&"cheviot");
-    format!("{}-{}-{}", adj, breed, index)
-}
-
-/// Generate a deterministic name based on a seed (for consistent naming)
-pub fn generate_worker_name_seeded(seed: u64) -> String {
-    use rand::SeedableRng;
-    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-    let adj = ADJECTIVES.choose(&mut rng).unwrap_or(&"swift");
-    let breed = BREEDS.choose(&mut rng).unwrap_or(&"cheviot");
-    format!("{}-{}", adj, breed)
-}
-
-/// Get all available breed names
-pub fn get_breeds() -> &'static [&'static str] {
-    BREEDS
-}
-
-/// Get all available adjectives
-pub fn get_adjectives() -> &'static [&'static str] {
-    ADJECTIVES
-}
-
 // =============================================================================
 // Eval Agent Names (Detective/QA themed)
 // =============================================================================
@@ -176,15 +149,6 @@ const EVAL_ADJECTIVES: &[&str] = &[
 /// Format: title-adjective-N (e.g., "inspector-keen-1", "detective-sharp-2")
 pub fn generate_eval_name(eval_number: usize) -> String {
     let mut rng = rand::rng();
-    let title = EVAL_TITLES.choose(&mut rng).unwrap_or(&"inspector");
-    let adj = EVAL_ADJECTIVES.choose(&mut rng).unwrap_or(&"keen");
-    format!("{}-{}-{}", title, adj, eval_number)
-}
-
-/// Generate a deterministic eval name based on eval ID
-pub fn generate_eval_name_seeded(eval_id: u64, eval_number: usize) -> String {
-    use rand::SeedableRng;
-    let mut rng = rand::rngs::StdRng::seed_from_u64(eval_id);
     let title = EVAL_TITLES.choose(&mut rng).unwrap_or(&"inspector");
     let adj = EVAL_ADJECTIVES.choose(&mut rng).unwrap_or(&"keen");
     format!("{}-{}-{}", title, adj, eval_number)
@@ -330,13 +294,6 @@ mod tests {
         for name in &names {
             assert!(seen.insert(name.clone()));
         }
-    }
-
-    #[test]
-    fn test_seeded_deterministic() {
-        let name1 = generate_worker_name_seeded(12345);
-        let name2 = generate_worker_name_seeded(12345);
-        assert_eq!(name1, name2);
     }
 
     #[test]

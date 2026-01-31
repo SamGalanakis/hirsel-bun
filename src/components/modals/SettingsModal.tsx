@@ -205,7 +205,6 @@ interface StorageConfig {
 interface Settings {
   defaultProfile: string;
   evalTimeout: number;
-  maxIterations: number | null;
   humanInTheLoop: boolean;
   userMessagePause: 'sender' | 'all' | 'none';
   autoLearn: boolean;
@@ -241,7 +240,6 @@ interface RunnerHealth {
 const defaultSettings = (): Settings => ({
   defaultProfile: 'local',
   evalTimeout: 300,
-  maxIterations: null,
   humanInTheLoop: true,
   userMessagePause: 'sender',
   autoLearn: false,
@@ -1627,32 +1625,18 @@ export const SettingsModal: Component = () => {
                     {/* Defaults Tab */}
                     <Show when={profileTab() === 'defaults'}>
                       <div class="space-y-6">
-                        {/* Eval & Limits */}
-                        <div class="grid grid-cols-2 gap-4">
-                          <div class="space-y-2">
-                            <label class="block text-sm text-wool-300">Eval Timeout (seconds)</label>
-                            <input
-                              type="number"
-                              class="input w-full"
-                              value={settings.evalTimeout}
-                              onInput={(e) => setSettings('evalTimeout', Number.parseInt(e.currentTarget.value) || 300)}
-                              min={60}
-                              step={60}
-                            />
-                            <p class="text-xs text-wool-500">Time limit for eval agent.</p>
-                          </div>
-                          <div class="space-y-2">
-                            <label class="block text-sm text-wool-300">Max Iterations</label>
-                            <input
-                              type="number"
-                              class="input w-full"
-                              value={settings.maxIterations || ''}
-                              onInput={(e) => setSettings('maxIterations', Number.parseInt(e.currentTarget.value) || null)}
-                              placeholder="No limit"
-                              min={1}
-                            />
-                            <p class="text-xs text-wool-500">Max eval/fix cycles.</p>
-                          </div>
+                        {/* Eval Timeout */}
+                        <div class="space-y-2">
+                          <label class="block text-sm text-wool-300">Eval Timeout (seconds)</label>
+                          <input
+                            type="number"
+                            class="input w-full"
+                            value={settings.evalTimeout}
+                            onInput={(e) => setSettings('evalTimeout', Number.parseInt(e.currentTarget.value) || 300)}
+                            min={60}
+                            step={60}
+                          />
+                          <p class="text-xs text-wool-500">Time limit for eval agent.</p>
                         </div>
 
                         {/* Human in the Loop */}

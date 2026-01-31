@@ -76,9 +76,6 @@ pub struct CloneRunResult {
     /// Human-in-the-loop setting
     pub human_in_the_loop: bool,
 
-    /// Max iterations (if set)
-    pub max_iterations: Option<i64>,
-
     /// Default runner (if set)
     pub default_runner: Option<String>,
 

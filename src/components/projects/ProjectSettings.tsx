@@ -1,26 +1,127 @@
 /**
- * Project settings modal - Info display, editing, and delete functionality
- *
- * Displays as a centered modal dialog matching ProjectSetup style.
+ * Project settings modal - Styled to match global SettingsModal
  */
 import { invoke } from '@tauri-apps/api/core';
 import {
   type Component,
+  For,
   Show,
   createEffect,
   createSignal,
   onCleanup,
   onMount,
 } from 'solid-js';
-import type { StartingPoint } from '../../lib/types';
+import type { ConfigDefaults, StartingPoint } from '../../lib/types';
 import { useProject } from '../../stores';
 import { initLucideIcons } from '../../lib/icons';
+
+// Dropdown option type
+interface DropdownOption {
+  value: string;
+  label: string;
+}
+
+// Basecoat-style Dropdown component (matches SettingsModal)
+const Dropdown: Component<{
+  value: string;
+  options: DropdownOption[];
+  onChange: (value: string) => void;
+  placeholder?: string;
+  class?: string;
+}> = (props) => {
+  const [open, setOpen] = createSignal(false);
+  let containerRef: HTMLDivElement | undefined;
+
+  const selectedLabel = () => {
+    const option = props.options.find((o) => o.value === props.value);
+    return option?.label || props.placeholder || 'Select...';
+  };
+
+  // Close on click outside
+  createEffect(() => {
+    if (open()) {
+      const handler = (e: MouseEvent) => {
+        if (containerRef && !containerRef.contains(e.target as Node)) {
+          setOpen(false);
+        }
+      };
+      document.addEventListener('click', handler);
+      onCleanup(() => document.removeEventListener('click', handler));
+    }
+  });
+
+  // Reinit icons when dropdown opens
+  createEffect(() => {
+    if (open()) {
+      queueMicrotask(() => initLucideIcons());
+    }
+  });
+
+  return (
+    <div ref={containerRef} class={`dropdown relative ${props.class || ''}`}>
+      <button
+        type="button"
+        class="btn-outline w-full justify-between"
+        onClick={() => setOpen(!open())}
+        aria-haspopup="listbox"
+        aria-expanded={open()}
+      >
+        <span class="truncate flex-1 text-left" classList={{ 'text-muted-foreground': !props.value }}>
+          {selectedLabel()}
+        </span>
+        <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0" />
+      </button>
+      <Show when={open()}>
+        <div
+          data-popover
+          class="absolute z-50 mt-1 w-full bg-popover border border-border rounded-md shadow-md py-1 max-h-60 overflow-auto"
+        >
+          <div role="listbox" aria-orientation="vertical">
+            <For each={props.options}>
+              {(option) => (
+                <div
+                  role="option"
+                  aria-selected={props.value === option.value}
+                  class="px-3 py-2 text-sm cursor-pointer hover:bg-accent flex items-center justify-between"
+                  classList={{ 'bg-accent/50': props.value === option.value }}
+                  onClick={() => {
+                    props.onChange(option.value);
+                    setOpen(false);
+                  }}
+                >
+                  <span>{option.label}</span>
+                  <Show when={props.value === option.value}>
+                    <i data-lucide="check" class="w-4 h-4 text-primary" />
+                  </Show>
+                </div>
+              )}
+            </For>
+          </div>
+        </div>
+      </Show>
+    </div>
+  );
+};
 
 export const ProjectSettings: Component = () => {
   const project = useProject();
   const [deleting, setDeleting] = createSignal(false);
   const [editingName, setEditingName] = createSignal(false);
   const [nameValue, setNameValue] = createSignal('');
+  const [saving, setSaving] = createSignal(false);
+
+  // Config defaults for showing inherited values
+  const [configDefaults, setConfigDefaults] = createSignal<ConfigDefaults | null>(null);
+
+  // Form values (None = use global default)
+  const [workerScale, setWorkerScale] = createSignal<string>('');
+  const [timeLimitMinutes, setTimeLimitMinutes] = createSignal<string>('');
+  const [humanInTheLoop, setHumanInTheLoop] = createSignal<boolean>(true);
+  const [runner, setRunner] = createSignal<string>('');
+  const [targetBranch, setTargetBranch] = createSignal<string>('');
+
+  // Track dirty state to avoid toast spam on blur without changes
+  const [isDirty, setIsDirty] = createSignal(false);
 
   let nameInputRef: HTMLInputElement | undefined;
 
@@ -31,17 +132,34 @@ export const ProjectSettings: Component = () => {
     initLucideIcons();
   });
 
+  // Load config defaults when modal opens
   createEffect(() => {
     if (project.showProjectSettings()) {
+      loadConfigDefaults();
       queueMicrotask(initLucideIcons);
     }
   });
 
-  // Sync name value when project changes
+  const loadConfigDefaults = async () => {
+    try {
+      const defaults = await invoke<ConfigDefaults>('get_config_defaults');
+      setConfigDefaults(defaults);
+    } catch (e) {
+      console.error('Failed to load config defaults:', e);
+    }
+  };
+
+  // Sync form values when project changes
   createEffect(() => {
     const proj = selectedProject();
     if (proj) {
       setNameValue(proj.name);
+      setWorkerScale(proj.workerScale || '');
+      setTimeLimitMinutes(proj.timeLimitMinutes?.toString() || '');
+      setHumanInTheLoop(proj.humanInTheLoop ?? true);
+      setRunner(proj.runner || '');
+      setTargetBranch(proj.targetBranch || '');
+      setIsDirty(false);
     }
   });
 
@@ -76,8 +194,26 @@ export const ProjectSettings: Component = () => {
     return null;
   };
 
+  // Get placeholder text for inherited values
+  const runnerPlaceholder = () => {
+    const defaults = configDefaults();
+    return defaults?.defaultRunner || 'local';
+  };
+
+  // Runner dropdown options
+  const runnerOptions = (): DropdownOption[] => {
+    const defaults = configDefaults();
+    const options: DropdownOption[] = [
+      { value: '', label: `Default (${runnerPlaceholder()})` },
+    ];
+    for (const name of defaults?.runners || []) {
+      options.push({ value: name, label: name });
+    }
+    return options;
+  };
+
   const handleClose = () => {
-    if (!deleting()) {
+    if (!deleting() && !saving()) {
       setEditingName(false);
       project.setShowProjectSettings(false);
     }
@@ -98,6 +234,29 @@ export const ProjectSettings: Component = () => {
     } catch (e) {
       console.error('Failed to rename project:', e);
       window.toast?.error(`Failed to rename: ${e}`);
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    const proj = selectedProject();
+    if (!proj || !isDirty()) return;
+
+    setSaving(true);
+    try {
+      await project.updateProjectSettings(proj.id, {
+        workerScale: workerScale() || null,
+        timeLimitMinutes: timeLimitMinutes() ? Number.parseInt(timeLimitMinutes(), 10) : null,
+        humanInTheLoop: humanInTheLoop(),
+        runner: runner() || null,
+        targetBranch: targetBranch() || null,
+      });
+      window.toast?.success('Settings saved');
+      setIsDirty(false);
+    } catch (e) {
+      console.error('Failed to save settings:', e);
+      window.toast?.error(`Failed to save: ${e}`);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -124,7 +283,7 @@ export const ProjectSettings: Component = () => {
 
   // Handle escape key to close
   const handleEscape = (e: KeyboardEvent) => {
-    if (e.key === 'Escape' && !deleting()) {
+    if (e.key === 'Escape' && !deleting() && !saving()) {
       if (editingName()) {
         setEditingName(false);
         setNameValue(selectedProject()?.name || '');
@@ -144,43 +303,18 @@ export const ProjectSettings: Component = () => {
   return (
     <Show when={project.showProjectSettings() && selectedProject()}>
       <div
-        class="absolute inset-0 flex items-center justify-center z-50"
-        style={{
-          background: 'rgba(15, 15, 15, 0.8)',
-          'backdrop-filter': 'blur(8px)',
-        }}
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
         onClick={(e) => {
-          if (e.target === e.currentTarget) {
-            handleClose();
-          }
+          if (e.target === e.currentTarget) handleClose();
         }}
       >
-        {/* Modal Card */}
-        <div
-          class="w-full max-w-md mx-4 rounded-xl overflow-hidden shadow-2xl"
-          style={{
-            background: 'linear-gradient(180deg, rgba(36, 36, 36, 0.98) 0%, rgba(26, 26, 26, 0.98) 100%)',
-            border: '1px solid rgba(63, 63, 70, 0.6)',
-            'box-shadow': '0 24px 64px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255,255,255,0.03) inset',
-          }}
-        >
-          {/* Header with editable name */}
-          <div
-            class="px-6 py-5 flex items-center justify-between"
-            style={{
-              'border-bottom': '1px solid rgba(63, 63, 70, 0.4)',
-              background: 'linear-gradient(180deg, rgba(255,255,255,0.02) 0%, transparent 100%)',
-            }}
-          >
+        {/* Modal Panel - matches SettingsModal styling */}
+        <div class="bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl w-full max-w-lg mx-4 max-h-[85vh] flex flex-col">
+          {/* Header */}
+          <div class="px-6 py-4 border-b border-pasture-600 flex items-center justify-between shrink-0">
             <div class="flex items-center gap-3 flex-1 min-w-0">
-              <div
-                class="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-                style={{
-                  background: 'linear-gradient(145deg, rgba(138,133,128,0.15) 0%, rgba(138,133,128,0.05) 100%)',
-                  border: '1px solid rgba(138,133,128,0.2)',
-                }}
-              >
-                <i data-lucide="settings" class="w-5 h-5 text-wool-400" />
+              <div class="w-10 h-10 rounded-lg bg-pasture-700 flex items-center justify-center shrink-0">
+                <i data-lucide="folder-cog" class="w-5 h-5 text-wool-400" />
               </div>
 
               {/* Editable project name */}
@@ -196,97 +330,38 @@ export const ProjectSettings: Component = () => {
                 </button>
               </Show>
               <Show when={editingName()}>
-                <div class="flex items-center gap-2 flex-1">
-                  <input
-                    ref={nameInputRef}
-                    type="text"
-                    class="flex-1 bg-pasture-900 border border-pasture-600 rounded-lg px-3 py-1.5 text-lg font-semibold text-wool-100 focus:border-amber-500/50 focus:outline-none"
-                    value={nameValue()}
-                    onInput={(e) => setNameValue(e.currentTarget.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleSaveName();
-                      if (e.key === 'Escape') {
-                        setEditingName(false);
-                        setNameValue(selectedProject()?.name || '');
-                      }
-                    }}
-                    onBlur={() => {
-                      // Save on blur if changed, otherwise cancel
-                      if (nameValue().trim() && nameValue() !== selectedProject()?.name) {
-                        handleSaveName();
-                      } else {
-                        setEditingName(false);
-                        setNameValue(selectedProject()?.name || '');
-                      }
-                    }}
-                  />
-                </div>
+                <input
+                  ref={nameInputRef}
+                  type="text"
+                  class="input flex-1 text-lg font-semibold"
+                  value={nameValue()}
+                  onInput={(e) => setNameValue(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSaveName();
+                    if (e.key === 'Escape') {
+                      setEditingName(false);
+                      setNameValue(selectedProject()?.name || '');
+                    }
+                  }}
+                  onBlur={() => {
+                    if (nameValue().trim() && nameValue() !== selectedProject()?.name) {
+                      handleSaveName();
+                    } else {
+                      setEditingName(false);
+                      setNameValue(selectedProject()?.name || '');
+                    }
+                  }}
+                />
               </Show>
             </div>
 
-            <button
-              type="button"
-              class="p-2 rounded-lg text-wool-500 hover:text-wool-300 hover:bg-pasture-700 transition-all shrink-0 ml-2"
-              onClick={handleClose}
-              disabled={deleting()}
-            >
-              <i data-lucide="x" class="w-5 h-5" />
-            </button>
-          </div>
-
-          {/* Content - Starting Point info */}
-          <Show when={startingPointInfo()}>
-            <div class="p-6">
-              <label class="text-xs font-medium text-wool-500 uppercase tracking-wider">
-                Starting Point
-              </label>
-              <div
-                class="mt-2 p-3 rounded-lg"
-                style={{ background: 'rgba(0,0,0,0.2)' }}
-              >
-                <div class="flex items-center gap-2 mb-1">
-                  <i
-                    data-lucide={startingPointInfo()?.icon}
-                    class="w-4 h-4 text-amber-400/70"
-                  />
-                  <span class="text-sm font-medium text-wool-200">
-                    {startingPointInfo()?.label}
-                  </span>
-                </div>
-                <Show when={startingPointInfo()?.detail}>
-                  <p class="text-xs text-wool-500 pl-6 break-all font-mono">
-                    {startingPointInfo()?.detail}
-                  </p>
-                </Show>
-              </div>
-            </div>
-          </Show>
-
-          {/* Footer / Danger Zone */}
-          <div
-            class="px-6 py-4"
-            style={{
-              'border-top': '1px solid rgba(196, 92, 74, 0.2)',
-              background: 'linear-gradient(180deg, rgba(196, 92, 74, 0.05) 0%, rgba(196, 92, 74, 0.02) 100%)',
-            }}
-          >
-            <div class="flex items-center justify-between">
-              <div>
-                <p class="text-sm font-medium text-terra">Delete Project</p>
-                <p class="text-xs text-wool-600 mt-0.5">
-                  This action cannot be undone
-                </p>
-              </div>
+            <div class="flex items-center gap-1 shrink-0 ml-2">
               <button
                 type="button"
-                class="px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2"
-                style={{
-                  background: 'linear-gradient(180deg, rgba(196, 92, 74, 0.2) 0%, rgba(196, 92, 74, 0.1) 100%)',
-                  border: '1px solid rgba(196, 92, 74, 0.3)',
-                  color: 'rgb(212, 120, 106)',
-                }}
+                class="p-2 rounded-lg text-wool-500 hover:text-destructive hover:bg-destructive/10 transition-all"
                 onClick={handleDelete}
-                disabled={deleting()}
+                disabled={deleting() || saving()}
+                title="Delete project"
               >
                 <Show when={deleting()}>
                   <span class="spinner w-4 h-4" />
@@ -294,8 +369,149 @@ export const ProjectSettings: Component = () => {
                 <Show when={!deleting()}>
                   <i data-lucide="trash-2" class="w-4 h-4" />
                 </Show>
-                Delete
               </button>
+              <button
+                type="button"
+                class="p-2 rounded-lg text-wool-500 hover:text-wool-300 hover:bg-pasture-700 transition-all"
+                onClick={handleClose}
+                disabled={deleting() || saving()}
+              >
+                <i data-lucide="x" class="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Scrollable content */}
+          <div class="overflow-y-auto flex-1 p-6 space-y-6">
+            {/* Starting Point */}
+            <Show when={startingPointInfo()}>
+              <div>
+                <h4 class="text-sm font-medium text-wool-200 mb-3">Starting Point</h4>
+                <div class="bg-pasture-900 rounded-lg p-3 border border-pasture-700">
+                  <div class="flex items-center gap-2 mb-1">
+                    <i
+                      data-lucide={startingPointInfo()?.icon}
+                      class="w-4 h-4 text-amber-400/70"
+                    />
+                    <span class="text-sm font-medium text-wool-200">
+                      {startingPointInfo()?.label}
+                    </span>
+                  </div>
+                  <Show when={startingPointInfo()?.detail}>
+                    <p class="text-xs text-wool-500 pl-6 break-all font-mono">
+                      {startingPointInfo()?.detail}
+                    </p>
+                  </Show>
+                </div>
+              </div>
+            </Show>
+
+            {/* Run Configuration Section */}
+            <div>
+              <h4 class="text-sm font-medium text-wool-200 mb-3 flex items-center gap-2">
+                <i data-lucide="play" class="w-4 h-4 text-wool-500" />
+                Run Configuration
+              </h4>
+
+              <div class="space-y-4">
+                <div class="grid grid-cols-2 gap-4">
+                  {/* Workers */}
+                  <div>
+                    <label class="block text-sm font-medium text-wool-300 mb-1.5">Workers</label>
+                    <input
+                      type="text"
+                      class="input w-full"
+                      placeholder={configDefaults()?.workerScale || '1'}
+                      value={workerScale()}
+                      onInput={(e) => {
+                        setWorkerScale(e.currentTarget.value);
+                        setIsDirty(true);
+                      }}
+                      onBlur={handleSaveSettings}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSaveSettings()}
+                    />
+                    <p class="text-xs text-muted-foreground mt-1">Number of parallel workers</p>
+                  </div>
+
+                  {/* Time Limit */}
+                  <div>
+                    <label class="block text-sm font-medium text-wool-300 mb-1.5">Time Limit (min)</label>
+                    <input
+                      type="text"
+                      class="input w-full"
+                      placeholder={configDefaults()?.timeLimitMinutes?.toString() || 'No limit'}
+                      value={timeLimitMinutes()}
+                      onInput={(e) => {
+                        setTimeLimitMinutes(e.currentTarget.value);
+                        setIsDirty(true);
+                      }}
+                      onBlur={handleSaveSettings}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSaveSettings()}
+                    />
+                    <p class="text-xs text-muted-foreground mt-1">Maximum run duration</p>
+                  </div>
+
+                  {/* Runner - Basecoat Dropdown */}
+                  <div>
+                    <label class="block text-sm font-medium text-wool-300 mb-1.5">Runner</label>
+                    <Dropdown
+                      value={runner()}
+                      options={runnerOptions()}
+                      onChange={(value) => {
+                        setRunner(value);
+                        setIsDirty(true);
+                        handleSaveSettings();
+                      }}
+                      placeholder={`Default (${runnerPlaceholder()})`}
+                    />
+                    <p class="text-xs text-muted-foreground mt-1">Where workers execute</p>
+                  </div>
+                </div>
+
+                {/* Human in the Loop Toggle - Basecoat Switch pattern */}
+                <div class="flex items-start justify-between rounded-lg border border-border p-4">
+                  <div class="flex flex-col gap-0.5">
+                    <label for="hitl-switch" class="font-medium leading-normal">Human in the Loop</label>
+                    <p class="text-muted-foreground text-sm">Workers pause for approval on critical actions</p>
+                  </div>
+                  <input
+                    id="hitl-switch"
+                    type="checkbox"
+                    role="switch"
+                    checked={humanInTheLoop()}
+                    onChange={(e) => {
+                      setHumanInTheLoop(e.currentTarget.checked);
+                      setIsDirty(true);
+                      handleSaveSettings();
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Delivery Section */}
+            <div>
+              <h4 class="text-sm font-medium text-wool-200 mb-3 flex items-center gap-2">
+                <i data-lucide="git-merge" class="w-4 h-4 text-wool-500" />
+                Delivery
+              </h4>
+
+              <div>
+                <label class="block text-sm font-medium text-wool-300 mb-1.5">Target Branch</label>
+                <input
+                  type="text"
+                  class="input w-full"
+                  placeholder="main"
+                  value={targetBranch()}
+                  onInput={(e) => {
+                    setTargetBranch(e.currentTarget.value);
+                    setIsDirty(true);
+                  }}
+                  onBlur={handleSaveSettings}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSaveSettings()}
+                />
+                <p class="text-xs text-muted-foreground mt-1">Branch for PRs and merges</p>
+              </div>
             </div>
           </div>
         </div>

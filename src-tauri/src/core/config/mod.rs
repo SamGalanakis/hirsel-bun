@@ -155,6 +155,10 @@ fn default_gyp_idle_timeout() -> u32 {
     600 // 10 minutes
 }
 
+fn default_conflict_resolver_idle_timeout() -> u32 {
+    600 // 10 minutes (conflict resolution can take a while)
+}
+
 fn default_scribe_docs_path() -> String {
     "docs".to_string()
 }
@@ -180,7 +184,7 @@ pub struct ServiceWorkerConfig {
     pub idle_timeout_seconds: Option<u32>,
 }
 
-/// Configuration for service workers (scribe, gyp)
+/// Configuration for service workers (scribe, gyp, conflict_resolver)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ServiceWorkersConfig {
     /// Default runner for all service workers (falls back to local)
@@ -192,6 +196,9 @@ pub struct ServiceWorkersConfig {
     /// Gyp service worker configuration
     #[serde(default)]
     pub gyp: ServiceWorkerConfig,
+    /// Conflict resolver service worker configuration
+    #[serde(default)]
+    pub conflict_resolver: ServiceWorkerConfig,
 }
 
 impl ServiceWorkersConfig {
@@ -218,6 +225,21 @@ impl ServiceWorkersConfig {
             .idle_timeout_seconds
             .unwrap_or(default_gyp_idle_timeout())
     }
+
+    /// Get the effective runner for conflict resolver
+    pub fn conflict_resolver_runner(&self) -> Option<&str> {
+        self.conflict_resolver
+            .runner
+            .as_deref()
+            .or(self.runner.as_deref())
+    }
+
+    /// Get the idle timeout for conflict resolver in seconds
+    pub fn conflict_resolver_idle_timeout(&self) -> u32 {
+        self.conflict_resolver
+            .idle_timeout_seconds
+            .unwrap_or(default_conflict_resolver_idle_timeout())
+    }
 }
 
 /// Main configuration struct
@@ -235,8 +257,6 @@ pub struct Config {
 
     #[serde(default)]
     pub auto_learn: bool,
-
-    pub max_iterations: Option<u32>,
 
     #[serde(default = "default_user_message_pause")]
     pub user_message_pause: String,
@@ -324,7 +344,6 @@ impl Default for Config {
             agent: AgentConfig::default(),
             eval_timeout: default_eval_timeout(),
             auto_learn: true,
-            max_iterations: None,
             user_message_pause: default_user_message_pause(),
             human_in_the_loop: default_human_in_the_loop(),
             compaction_enabled: default_compaction_enabled(),
@@ -424,9 +443,6 @@ impl Config {
         }
         if let Some(auto_learn) = partial.auto_learn {
             self.auto_learn = auto_learn;
-        }
-        if let Some(max_iterations) = partial.max_iterations {
-            self.max_iterations = max_iterations;
         }
         if let Some(user_message_pause) = partial.user_message_pause {
             self.user_message_pause = user_message_pause;
@@ -622,12 +638,11 @@ impl Config {
         Ok(())
     }
 
-    /// Update general settings (max_workers, default_runner, etc.)
+    /// Update general settings (default_runner, etc.)
     pub fn update_general(
         &mut self,
         eval_timeout: Option<u32>,
         auto_learn: Option<bool>,
-        max_iterations: Option<Option<u32>>,
         human_in_the_loop: Option<bool>,
         default_runner: Option<Option<String>>,
         coordinator_port: Option<u16>,
@@ -637,9 +652,6 @@ impl Config {
         }
         if let Some(v) = auto_learn {
             self.auto_learn = v;
-        }
-        if let Some(v) = max_iterations {
-            self.max_iterations = v;
         }
         if let Some(v) = human_in_the_loop {
             self.human_in_the_loop = v;

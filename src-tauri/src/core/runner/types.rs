@@ -81,6 +81,8 @@ pub struct WorkerSpawnConfig {
     pub coordinator_url: Option<String>,
     /// Tailscale auth key for auto-joining worker hosts to tailnet
     pub tailscale_authkey: Option<String>,
+    /// Task ID assigned to this worker (required for direct task assignment)
+    pub assigned_task_id: Option<String>,
 }
 
 impl WorkerSpawnConfig {

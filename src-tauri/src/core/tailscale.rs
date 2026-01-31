@@ -12,6 +12,8 @@ use std::time::Duration;
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
+use super::http_client::ResponseExt;
+
 /// Tailscale API errors
 #[derive(Debug, Error)]
 pub enum TailscaleError {
@@ -98,25 +100,18 @@ impl TailscaleClient {
     async fn get_access_token(&self) -> TailscaleResult<String> {
         debug!("Requesting Tailscale OAuth token");
 
-        let response = self
+        let token_response: OAuthTokenResponse = self
             .http
             .post("https://api.tailscale.com/api/v2/oauth/token")
             .basic_auth(&self.client_id, Some(&self.client_secret))
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body("grant_type=client_credentials")
             .send()
-            .await?;
+            .await?
+            .json_or_error()
+            .await
+            .map_err(|e| TailscaleError::OAuthFailed(e.to_string()))?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(TailscaleError::OAuthFailed(format!(
-                "HTTP {}: {}",
-                status, body
-            )));
-        }
-
-        let token_response: OAuthTokenResponse = response.json().await?;
         Ok(token_response.access_token)
     }
 
@@ -153,24 +148,17 @@ impl TailscaleClient {
             expiry_seconds: 300, // 5 minutes
         };
 
-        let response = self
+        let key_response: CreateKeyResponse = self
             .http
             .post("https://api.tailscale.com/api/v2/tailnet/-/keys")
             .bearer_auth(&access_token)
             .json(&request)
             .send()
-            .await?;
+            .await?
+            .json_or_error()
+            .await
+            .map_err(|e| TailscaleError::KeyGenerationFailed(e.to_string()))?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(TailscaleError::KeyGenerationFailed(format!(
-                "HTTP {}: {}",
-                status, body
-            )));
-        }
-
-        let key_response: CreateKeyResponse = response.json().await?;
         info!(
             "Generated Tailscale auth key for {} (expires in 5 min)",
             hostname
@@ -209,24 +197,17 @@ impl TailscaleClient {
             expiry_seconds: 300, // 5 minutes to use the key
         };
 
-        let response = self
+        let key_response: CreateKeyResponse = self
             .http
             .post("https://api.tailscale.com/api/v2/tailnet/-/keys")
             .bearer_auth(&access_token)
             .json(&request)
             .send()
-            .await?;
+            .await?
+            .json_or_error()
+            .await
+            .map_err(|e| TailscaleError::KeyGenerationFailed(e.to_string()))?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(TailscaleError::KeyGenerationFailed(format!(
-                "HTTP {}: {}",
-                status, body
-            )));
-        }
-
-        let key_response: CreateKeyResponse = response.json().await?;
         info!("Generated Tailscale orchestrator auth key (expires in 5 min)");
 
         Ok(key_response.key)

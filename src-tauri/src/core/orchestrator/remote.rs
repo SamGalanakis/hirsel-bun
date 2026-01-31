@@ -414,7 +414,6 @@ impl Orchestrator for RemoteOrchestrator {
             runner: request.runner,
             worker_scale: request.worker_scale,
             time_limit_minutes: request.time_limit_minutes.map(|m| m as u32),
-            max_iterations: request.max_iterations.map(|m| m as u32),
             human_in_the_loop: request.human_in_the_loop,
             eval: request.eval,
             tailscale_oauth: request.tailscale_oauth,

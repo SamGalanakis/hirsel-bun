@@ -197,8 +197,6 @@ pub struct CreateRunRequest {
     pub worker_scale: Option<u32>,
     /// Time limit in minutes
     pub time_limit_minutes: Option<u32>,
-    /// Max iterations before pausing
-    pub max_iterations: Option<u32>,
     /// Human-in-the-loop mode
     pub human_in_the_loop: Option<bool>,
     /// Eval file content (markdown)
@@ -296,8 +294,6 @@ pub struct StartRunRequest {
     pub worker_scale: Option<u32>,
     /// Time limit in minutes (optional override)
     pub time_limit_minutes: Option<i64>,
-    /// Max iterations before pausing (optional override)
-    pub max_iterations: Option<i64>,
     /// Human-in-the-loop mode (optional override)
     pub human_in_the_loop: Option<bool>,
     /// Runner name (default: from config or "local")

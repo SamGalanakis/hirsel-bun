@@ -511,8 +511,8 @@ impl DispatchService {
             .collect();
 
         // Create scope task first (will block leaf tasks)
+        // Don't pre-claim - let the leader claim it when ready
         state.add_task("scope", "Scope", None, None)?;
-        state.claim_task("scope", "worker-1")?;
 
         // Create work tasks
         let mut work_count = 0;

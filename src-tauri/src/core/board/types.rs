@@ -2,7 +2,7 @@
 //!
 //! The board has two types of entities:
 //! - **Tasks**: Nested tree of work items (post-it style)
-//! - **Evals**: Flat list of verifications that validate tasks
+//! - **Evals**: Flat list that validate tasks
 //!
 //! ## Validation Rules
 //! A task is "validated" if:
@@ -109,8 +109,8 @@ pub enum EvalStatus {
     Blocked, // Cannot run yet (dependencies not ready)
     Queued,     // Ready to run
     InProgress, // Currently running
-    Passed,     // Verification succeeded
-    Failed,     // Verification failed
+    Passed,     // Eval passed
+    Failed,     // Eval failed
 }
 
 impl EvalStatus {
@@ -135,7 +135,7 @@ impl EvalStatus {
     }
 }
 
-/// An eval (verification) in the board
+/// An eval in the board
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Eval {

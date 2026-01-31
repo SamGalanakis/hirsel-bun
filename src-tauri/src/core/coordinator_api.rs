@@ -175,6 +175,7 @@ pub fn create_router(state: Arc<Mutex<SQLiteState>>, run_dir: PathBuf, run_name:
         .route("/tasks/claimable", get(get_claimable_tasks))
         .route("/tasks/{task_id}", get(get_task).delete(delete_task))
         .route("/tasks/{task_id}/claim", post(claim_task))
+        .route("/tasks/{task_id}/try-claim", post(try_claim_task))
         .route("/tasks/{task_id}/complete", post(complete_task))
         .route("/tasks/{task_id}/unclaim", post(unclaim_task))
         .route("/tasks/{task_id}/blocked", get(is_task_blocked))
@@ -196,6 +197,7 @@ pub fn create_router(state: Arc<Mutex<SQLiteState>>, run_dir: PathBuf, run_name:
         .route("/workers/all_done", get(all_workers_done))
         .route("/workers/pause_all", post(pause_all_workers))
         .route("/workers/resume_all", post(resume_all_workers))
+        .route("/scaling_check", post(request_scaling_check))
         .route("/workers/{name}", get(get_worker))
         .route("/workers/{name}/update", post(update_worker))
         .route("/workers/{name}/claimed_task", get(get_claimed_task))
@@ -248,10 +250,6 @@ pub fn create_router(state: Arc<Mutex<SQLiteState>>, run_dir: PathBuf, run_name:
         // Iteration tracking
         .route("/iterations/count", get(get_iteration_count))
         .route("/iterations/increment", post(increment_iteration))
-        .route(
-            "/iterations/max",
-            get(get_max_iterations).post(set_max_iterations),
-        )
         // History
         .route("/history", get(get_history))
         // Lifecycle
@@ -362,6 +360,18 @@ async fn claim_task(
     task_routes::claim_task(&state, &task_id, &req.worker_name)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
+}
+
+async fn try_claim_task(
+    State(api): State<Arc<ApiState>>,
+    Path(task_id): Path<String>,
+    Json(req): Json<WorkerNameRequest>,
+) -> ApiResult<Json<super::state::ClaimTaskResult>> {
+    let state = api.state.lock().await;
+    let result = state
+        .try_claim_task(&task_id, &req.worker_name)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    Ok(Json(result))
 }
 
 async fn complete_task(
@@ -553,6 +563,14 @@ async fn pause_all_workers(
 async fn resume_all_workers(State(api): State<Arc<ApiState>>) -> ApiResult<Json<SuccessResponse>> {
     let state = api.state.lock().await;
     worker_routes::resume_all_workers(&state).map_err(|e| anyhow::anyhow!("{}", e))?;
+    Ok(Json(SuccessResponse::ok()))
+}
+
+async fn request_scaling_check(
+    State(api): State<Arc<ApiState>>,
+) -> ApiResult<Json<SuccessResponse>> {
+    let state = api.state.lock().await;
+    worker_routes::request_scaling_check(&state).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(SuccessResponse::ok()))
 }
 
@@ -995,28 +1013,6 @@ async fn increment_iteration(
         .increment_iteration()
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(Json(serde_json::json!({ "count": count })))
-}
-
-async fn get_max_iterations(
-    State(api): State<Arc<ApiState>>,
-) -> ApiResult<Json<serde_json::Value>> {
-    let state = api.state.lock().await;
-    let max = state
-        .get_max_iterations()
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
-    Ok(Json(serde_json::json!({ "max": max })))
-}
-
-async fn set_max_iterations(
-    State(api): State<Arc<ApiState>>,
-    Json(data): Json<serde_json::Value>,
-) -> ApiResult<Json<SuccessResponse>> {
-    let state = api.state.lock().await;
-    let max = data.get("max").and_then(|v| v.as_i64());
-    state
-        .set_max_iterations(max)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
-    Ok(Json(SuccessResponse::ok()))
 }
 
 // =============================================================================

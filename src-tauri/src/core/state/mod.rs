@@ -78,7 +78,10 @@ CREATE TABLE IF NOT EXISTS state (
 
     -- Merge state
     staleness_commits INTEGER DEFAULT 0,  -- Commits on target since branch-off
-    merge_state TEXT DEFAULT 'unknown'    -- unknown/clean/conflicts
+    merge_state TEXT DEFAULT 'unknown',   -- unknown/clean/conflicts
+
+    -- Scaling check flag (event-driven worker spawning)
+    scaling_check_requested INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS workers (
@@ -97,7 +100,10 @@ CREATE TABLE IF NOT EXISTS workers (
     last_heartbeat TEXT,
     created_at TEXT NOT NULL,
     hitl_waiting INTEGER DEFAULT 0,
-    state_handle TEXT
+    state_handle TEXT,
+    -- Direct task assignment fields
+    assigned_task_id TEXT,    -- Currently assigned task
+    last_task_id TEXT         -- Last completed task (for tree distance)
 );
 
 CREATE TABLE IF NOT EXISTS history (
@@ -126,7 +132,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- Delta dispatch columns
     delta_submission_id INTEGER,         -- Link to delta_submissions table
     delta_type TEXT,                     -- 'implement' | 'modify' | 'revert'
-    refs TEXT                            -- JSON array of references for context
+    refs TEXT,                           -- JSON array of references for context
+    -- Direct task assignment columns
+    assigned_to TEXT,                    -- Worker this task is assigned to
+    completed_by TEXT                    -- Worker who completed this task (for tree distance)
 );
 
 -- Normalized task blocking relationship (which tasks block another task)

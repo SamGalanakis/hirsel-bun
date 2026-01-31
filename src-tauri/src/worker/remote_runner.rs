@@ -34,6 +34,8 @@ pub struct RemoteWorkerConfig<'a> {
     pub wait_for_files: bool,
     /// Port for file receiver (default: 19800)
     pub file_receiver_port: Option<u16>,
+    /// Assigned task ID (direct task assignment)
+    pub assigned_task_id: Option<String>,
 }
 
 /// Run a remote worker that communicates with coordinator via HTTP.
@@ -65,6 +67,7 @@ pub async fn run_remote_worker(
         teammates,
         wait_for_files: false,
         file_receiver_port: None,
+        assigned_task_id: None,
     })
     .await
 }
@@ -158,6 +161,7 @@ pub async fn run_remote_worker_with_config(
         teammates: config.teammates,
         resume_session_id: None,
         api_url: Some(config.api_url.to_string()),
+        assigned_task_id: config.assigned_task_id,
     };
 
     tracing::info!(

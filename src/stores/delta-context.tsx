@@ -25,6 +25,9 @@ import type {
   UpdateDraftNodeRequest,
   DeltaDispatchResponse,
   DraftNode,
+  BoardVersion,
+  BoardDelivery,
+  DeliveryAttempt,
 } from '../lib/types';
 
 // =============================================================================
@@ -38,10 +41,16 @@ interface DeltaState {
   diff: () => TreeDiff | null;
   projectRun: () => ProjectRun | null;
 
+  // Delivery state
+  boardVersions: () => BoardVersion[];
+  currentDelivery: () => BoardDelivery | null;
+  latestVersion: () => BoardVersion | null;
+
   // UI state
   loading: () => boolean;
   dispatchPending: () => boolean;
   showDeltaIndicators: () => boolean;
+  deliveryPending: () => boolean;
 
   // Computed
   hasDiff: () => boolean;
@@ -56,6 +65,13 @@ interface DeltaState {
   resetTree: () => Promise<boolean>;
   dispatch: () => Promise<DeltaDispatchResponse | null>;
   toggleDeltaIndicators: () => void;
+
+  // Delivery actions
+  loadDeliveryState: () => Promise<void>;
+  startDelivery: (targetBranch: string, resolveConflicts?: boolean) => Promise<BoardDelivery | null>;
+  completeDelivery: (action: 'push' | 'pr' | 'merge') => Promise<BoardDelivery | null>;
+  retryDelivery: () => Promise<DeliveryAttempt | null>;
+  abandonDelivery: () => Promise<boolean>;
 }
 
 // =============================================================================
@@ -85,10 +101,16 @@ export const DeltaProvider: ParentComponent = (props) => {
   const [diff, setDiff] = createSignal<TreeDiff | null>(null);
   const [projectRun, setProjectRun] = createSignal<ProjectRun | null>(null);
 
+  // Delivery state
+  const [boardVersions, setBoardVersions] = createSignal<BoardVersion[]>([]);
+  const [currentDelivery, setCurrentDelivery] = createSignal<BoardDelivery | null>(null);
+  const [latestVersion, setLatestVersion] = createSignal<BoardVersion | null>(null);
+
   // UI state
   const [loading, setLoading] = createSignal(false);
   const [dispatchPending, setDispatchPending] = createSignal(false);
   const [showDeltaIndicators, setShowDeltaIndicators] = createSignal(true);
+  const [deliveryPending, setDeliveryPending] = createSignal(false);
 
   // Computed
   const hasDiff = () => {
@@ -232,20 +254,158 @@ export const DeltaProvider: ParentComponent = (props) => {
   };
 
   // ==========================================================================
+  // Delivery Actions
+  // ==========================================================================
+
+  const loadDeliveryState = async () => {
+    const projectId = project.selectedProjectId();
+    if (!projectId) return;
+
+    try {
+      const [versions, latest, delivery] = await Promise.all([
+        invoke<BoardVersion[]>('get_board_versions', { projectId }),
+        invoke<BoardVersion | null>('get_latest_board_version', { projectId }),
+        invoke<BoardDelivery | null>('get_current_board_delivery', { projectId }),
+      ]);
+
+      batch(() => {
+        setBoardVersions(versions);
+        setLatestVersion(latest);
+        setCurrentDelivery(delivery);
+      });
+    } catch (e) {
+      console.error('Failed to load delivery state:', e);
+    }
+  };
+
+  const startDelivery = async (
+    targetBranch: string,
+    resolveConflicts = false
+  ): Promise<BoardDelivery | null> => {
+    const projectId = project.selectedProjectId();
+    const version = latestVersion();
+    if (!projectId || !version) {
+      window.toast?.error('No version available for delivery');
+      return null;
+    }
+
+    try {
+      setDeliveryPending(true);
+      const delivery = await invoke<BoardDelivery>('start_board_delivery', {
+        projectId,
+        versionId: version.id,
+        targetBranch,
+        resolveConflicts,
+      });
+      setCurrentDelivery(delivery);
+      window.toast?.success(`Started delivery for v${version.versionNumber}`);
+      return delivery;
+    } catch (e) {
+      console.error('Failed to start delivery:', e);
+      window.toast?.error(`Failed to start delivery: ${e}`);
+      return null;
+    } finally {
+      setDeliveryPending(false);
+    }
+  };
+
+  const completeDelivery = async (
+    action: 'push' | 'pr' | 'merge'
+  ): Promise<BoardDelivery | null> => {
+    const projectId = project.selectedProjectId();
+    const delivery = currentDelivery();
+    if (!projectId || !delivery) {
+      window.toast?.error('No active delivery');
+      return null;
+    }
+
+    try {
+      setDeliveryPending(true);
+      const updated = await invoke<BoardDelivery>('complete_board_delivery', {
+        projectId,
+        deliveryId: delivery.id,
+        action,
+      });
+      setCurrentDelivery(updated);
+
+      const actionLabels = { push: 'Pushed', pr: 'PR created', merge: 'Merged' };
+      window.toast?.success(actionLabels[action]);
+      return updated;
+    } catch (e) {
+      console.error('Failed to complete delivery:', e);
+      window.toast?.error(`Failed to ${action}: ${e}`);
+      return null;
+    } finally {
+      setDeliveryPending(false);
+    }
+  };
+
+  const retryDelivery = async (): Promise<DeliveryAttempt | null> => {
+    const delivery = currentDelivery();
+    if (!delivery) {
+      window.toast?.error('No delivery to retry');
+      return null;
+    }
+
+    try {
+      setDeliveryPending(true);
+      const attempt = await invoke<DeliveryAttempt>('retry_board_delivery', {
+        deliveryId: delivery.id,
+      });
+      await loadDeliveryState();
+      window.toast?.success('Retry started');
+      return attempt;
+    } catch (e) {
+      console.error('Failed to retry delivery:', e);
+      window.toast?.error(`Failed to retry: ${e}`);
+      return null;
+    } finally {
+      setDeliveryPending(false);
+    }
+  };
+
+  const abandonDelivery = async (): Promise<boolean> => {
+    const projectId = project.selectedProjectId();
+    const delivery = currentDelivery();
+    if (!projectId || !delivery) {
+      window.toast?.error('No delivery to abandon');
+      return false;
+    }
+
+    try {
+      await invoke('abandon_board_delivery', {
+        projectId,
+        deliveryId: delivery.id,
+      });
+      setCurrentDelivery(null);
+      window.toast?.success('Delivery abandoned');
+      return true;
+    } catch (e) {
+      console.error('Failed to abandon delivery:', e);
+      window.toast?.error(`Failed to abandon: ${e}`);
+      return false;
+    }
+  };
+
+  // ==========================================================================
   // Effects
   // ==========================================================================
 
-  // Load trees when project changes
+  // Load trees and delivery state when project changes
   createEffect(() => {
     const projectId = project.selectedProjectId();
     if (projectId) {
       loadTrees(projectId);
+      loadDeliveryState();
     } else {
       batch(() => {
         setDraftTree([]);
         setLiveTree([]);
         setDiff(null);
         setProjectRun(null);
+        setBoardVersions([]);
+        setLatestVersion(null);
+        setCurrentDelivery(null);
       });
     }
   });
@@ -281,7 +441,7 @@ export const DeltaProvider: ParentComponent = (props) => {
           });
         }
       } catch (e) {
-        // Silently ignore poll errors
+        console.warn('Delta tree poll failed:', e);
       }
     }, 2000);
 
@@ -293,14 +453,27 @@ export const DeltaProvider: ParentComponent = (props) => {
   // ==========================================================================
 
   const value: DeltaState = {
+    // Tree data
     draftTree,
     liveTree,
     diff,
     projectRun,
+
+    // Delivery state
+    boardVersions,
+    currentDelivery,
+    latestVersion,
+
+    // UI state
     loading,
     dispatchPending,
     showDeltaIndicators,
+    deliveryPending,
+
+    // Computed
     hasDiff,
+
+    // Tree actions
     loadTrees,
     refreshTrees,
     createDraftNode,
@@ -310,6 +483,13 @@ export const DeltaProvider: ParentComponent = (props) => {
     resetTree,
     dispatch,
     toggleDeltaIndicators,
+
+    // Delivery actions
+    loadDeliveryState,
+    startDelivery,
+    completeDelivery,
+    retryDelivery,
+    abandonDelivery,
   };
 
   return <DeltaContext.Provider value={value}>{props.children}</DeltaContext.Provider>;

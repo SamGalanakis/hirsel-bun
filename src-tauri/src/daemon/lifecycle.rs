@@ -14,14 +14,17 @@ use tokio::time::interval;
 
 use crate::core::api_types::RunStatus;
 use crate::core::config::{self, Config};
-use crate::core::delta::{list_working_project_runs, DeltaRunner, DeltaState, LiveNodeStatus};
+use crate::core::delta::{
+    list_working_project_runs, BoardDeliveryStatus, Delivery, DeltaRunner, DeltaState,
+    LiveNodeStatus,
+};
 use crate::core::lifecycle::{
     LifecycleAction, LifecycleEvent, LifecycleManager, LocalLifecycleManager,
 };
 use crate::core::orchestrator::{create_local_orchestrator, Orchestrator};
 use crate::core::scribe;
 use crate::core::server::AppState;
-use crate::core::service_worker::ScribeService;
+use crate::core::service_worker::{ConflictResolverServiceWrapper, ScribeService};
 use crate::core::state::{SQLiteState, Status};
 use crate::core::Files;
 
@@ -100,6 +103,11 @@ pub async fn run_polling_loop(state: Arc<AppState>, config: DaemonConfig) {
             }
         }
 
+        // Process deliveries that need conflict resolution
+        if let Err(e) = process_resolving_deliveries().await {
+            tracing::debug!("[Daemon] Conflict resolution processing: {}", e);
+        }
+
         // Check for idle timeout
         if config.idle_timeout_secs > 0 && !has_active_runs {
             let idle_duration = last_active.elapsed();
@@ -153,7 +161,33 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
 
     match status {
         Status::Working => {
-            // Process TimeCheck event - handles time limit, eval triggering, and scaling
+            // Check if event-driven scaling was requested
+            let scaling_requested = lifecycle.state().consume_scaling_check().unwrap_or(false);
+
+            if scaling_requested {
+                // Event-driven scaling evaluation
+                match lifecycle.evaluate_scaling() {
+                    Ok(actions) => {
+                        if !actions.is_empty() {
+                            tracing::info!(
+                                "[Daemon] Scaling evaluation for '{}': {} actions",
+                                run_name,
+                                actions.len()
+                            );
+                        }
+                        handle_lifecycle_actions(run_name, &run_dir, actions).await;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "[Daemon] Failed to evaluate scaling for '{}': {}",
+                            run_name,
+                            e
+                        );
+                    }
+                }
+            }
+
+            // Process TimeCheck event - handles time limit, eval triggering
             match lifecycle.process_event(LifecycleEvent::TimeCheck) {
                 Ok(actions) => {
                     for action in &actions {
@@ -577,6 +611,163 @@ async fn sync_task_statuses_to_live_nodes(
                     }
                 }
             }
+        }
+    }
+
+    Ok(())
+}
+
+/// Process deliveries that are in the "resolving_conflicts" state
+///
+/// This function is called from the polling loop to check for deliveries
+/// that need AI-assisted conflict resolution.
+async fn process_resolving_deliveries() -> anyhow::Result<()> {
+    // Get all deliveries in resolving_conflicts status
+    let deliveries = DeltaState::list_resolving_deliveries()?;
+
+    if deliveries.is_empty() {
+        return Ok(());
+    }
+
+    tracing::info!(
+        "[Daemon] Found {} deliveries needing conflict resolution",
+        deliveries.len()
+    );
+
+    // Load config for the service wrapper
+    let config = Config::load().map(|(c, _)| c).unwrap_or_default();
+
+    for (project_id, delivery) in deliveries {
+        if let Err(e) = process_single_delivery(project_id, &delivery, &config).await {
+            tracing::warn!(
+                "[Daemon] Failed to process delivery {} for project {}: {}",
+                delivery.id,
+                project_id,
+                e
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Process a single delivery that needs conflict resolution
+async fn process_single_delivery(
+    project_id: i64,
+    delivery: &Delivery,
+    config: &Config,
+) -> anyhow::Result<()> {
+    let state = DeltaState::new(project_id);
+
+    // Get the project run to find the work directory
+    let project_run = state
+        .get_project_run()?
+        .ok_or_else(|| anyhow::anyhow!("No project run found"))?;
+
+    let run_path = config::run_dir(&project_run.run_name);
+    let work_dir = run_path.join("work").join("staging");
+
+    if !work_dir.exists() {
+        return Err(anyhow::anyhow!(
+            "Work directory not found: {}",
+            work_dir.display()
+        ));
+    }
+
+    tracing::info!(
+        "[Daemon] Starting conflict resolution for delivery {} in {}",
+        delivery.id,
+        work_dir.display()
+    );
+
+    // Get the conflicting files from the working tree
+    let delivery_service = crate::core::delivery::DeliveryService::new(&work_dir);
+    let conflicts = delivery_service.get_working_tree_conflicts()?;
+
+    if conflicts.is_empty() {
+        // No conflicts - this shouldn't happen but handle gracefully
+        tracing::warn!(
+            "[Daemon] Delivery {} marked as resolving but no conflicts found",
+            delivery.id
+        );
+        state.update_delivery_status(delivery.id, BoardDeliveryStatus::InProgress)?;
+        return Ok(());
+    }
+
+    // Build context for the resolver
+    let context = format!(
+        "Delivery {} of board version {} to branch '{}'",
+        delivery.id, delivery.version_id, delivery.target_branch
+    );
+
+    // Use the conflict resolver service wrapper which handles local vs remote execution
+    let resolver_service = ConflictResolverServiceWrapper::with_config(config.clone());
+    let result = resolver_service
+        .resolve_conflicts(&work_dir, conflicts.clone(), &context)
+        .await;
+
+    match result {
+        Ok(resolution_result) if resolution_result.success => {
+            tracing::info!(
+                "[Daemon] Conflict resolution succeeded for delivery {}: {} files resolved",
+                delivery.id,
+                resolution_result.files_resolved
+            );
+
+            // Verify no conflict markers remain
+            if let Err(e) = delivery_service.verify_no_conflict_markers() {
+                tracing::error!(
+                    "[Daemon] Conflict markers still present after resolution: {}",
+                    e
+                );
+                state.fail_delivery(delivery.id, "Conflict markers remain after AI resolution")?;
+                return Ok(());
+            }
+
+            // Complete the merge
+            match delivery_service.complete_merge(&format!(
+                "Merge {} (conflicts resolved by AI)",
+                delivery.target_branch
+            )) {
+                Ok(sha) => {
+                    tracing::info!(
+                        "[Daemon] Merge completed for delivery {}: {}",
+                        delivery.id,
+                        sha
+                    );
+                    state.update_delivery_status(delivery.id, BoardDeliveryStatus::InProgress)?;
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "[Daemon] Failed to complete merge for delivery {}: {}",
+                        delivery.id,
+                        e
+                    );
+                    state.fail_delivery(delivery.id, &format!("Merge failed: {}", e))?;
+                }
+            }
+        }
+        Ok(_) => {
+            // Resolution reported failure
+            tracing::warn!(
+                "[Daemon] Conflict resolution failed for delivery {}",
+                delivery.id
+            );
+            state.fail_delivery(delivery.id, "AI conflict resolution failed")?;
+
+            // Abort the merge
+            let _ = delivery_service.abort_merge();
+        }
+        Err(e) => {
+            tracing::error!(
+                "[Daemon] Conflict resolver error for delivery {}: {}",
+                delivery.id,
+                e
+            );
+            state.fail_delivery(delivery.id, &format!("Resolver error: {}", e))?;
+
+            // Abort the merge
+            let _ = delivery_service.abort_merge();
         }
     }
 

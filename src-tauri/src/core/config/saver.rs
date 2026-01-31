@@ -29,9 +29,6 @@ pub fn save_config(config: &Config, config_path: &Path) -> Result<(), ConfigErro
     // Top-level settings
     output.push_str(&format!("eval_timeout = {}\n", config.eval_timeout));
     output.push_str(&format!("auto_learn = {}\n", config.auto_learn));
-    if let Some(max_iter) = config.max_iterations {
-        output.push_str(&format!("max_iterations = {}\n", max_iter));
-    }
     output.push_str(&format!(
         "user_message_pause = \"{}\"\n",
         config.user_message_pause

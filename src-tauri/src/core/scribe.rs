@@ -20,22 +20,19 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 use thiserror::Error;
-use tokio::time::timeout;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use agent_client_protocol::{
-    Agent, Client, ClientSideConnection, ContentBlock, CreateTerminalRequest,
-    CreateTerminalResponse, Implementation, InitializeRequest, KillTerminalCommandRequest,
-    KillTerminalCommandResponse, NewSessionRequest, PermissionOptionKind, PromptRequest,
-    ProtocolVersion, ReadTextFileRequest, ReadTextFileResponse, ReleaseTerminalRequest,
-    ReleaseTerminalResponse, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SelectedPermissionOutcome, SessionNotification,
-    TerminalOutputRequest, TerminalOutputResponse, TextContent, WaitForTerminalExitRequest,
+    Client, CreateTerminalRequest, CreateTerminalResponse, KillTerminalCommandRequest,
+    KillTerminalCommandResponse, PermissionOptionKind, ReadTextFileRequest, ReadTextFileResponse,
+    ReleaseTerminalRequest, ReleaseTerminalResponse, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome,
+    SessionNotification, TerminalOutputRequest, TerminalOutputResponse, WaitForTerminalExitRequest,
     WaitForTerminalExitResponse, WriteTextFileRequest, WriteTextFileResponse,
 };
 
+use crate::core::acp_runner::{AcpAgentRunner, AcpRunnerError};
 use crate::core::config::Config;
 use crate::core::files::Files;
 use crate::core::state::{SQLiteState, ScribeSubmission, StateError};
@@ -55,6 +52,16 @@ pub enum ScribeError {
     NoPending,
     #[error("Batch already processing")]
     BatchProcessing,
+}
+
+impl From<AcpRunnerError> for ScribeError {
+    fn from(err: AcpRunnerError) -> Self {
+        match err {
+            AcpRunnerError::Timeout(secs) => ScribeError::Timeout(secs),
+            AcpRunnerError::Io(e) => ScribeError::Io(e),
+            other => ScribeError::AgentError(other.to_string()),
+        }
+    }
 }
 
 /// Result of processing a scribe batch
@@ -224,15 +231,8 @@ async fn run_scribe_agent(
     docs_dir: &Path,
     agent_command: &[String],
 ) -> Result<(), ScribeError> {
-    use crate::core::acp::{AcpChild, AcpSpawnConfig};
-    use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
-
     if submissions.is_empty() {
         return Err(ScribeError::NoPending);
-    }
-
-    if agent_command.is_empty() {
-        return Err(ScribeError::AgentError("Empty agent command".to_string()));
     }
 
     // Ensure docs directory exists
@@ -243,80 +243,14 @@ async fn run_scribe_agent(
         submissions.len()
     );
 
-    // Build the prompt
     let prompt = build_scribe_prompt(submissions);
-
-    // Create the client that handles agent requests
     let client = Arc::new(ScribeClient::new());
 
-    // Spawn agent process using AcpChild
-    // Working directory is the docs directory so the agent can read/write docs
-    let spawn_config =
-        AcpSpawnConfig::new(agent_command.to_vec(), docs_dir.to_path_buf(), "scribe");
-    let mut acp_child = AcpChild::spawn(spawn_config)
-        .map_err(|e| ScribeError::AgentError(format!("Failed to spawn agent: {}", e)))?;
-
-    let stdin = acp_child
-        .take_stdin()
-        .ok_or_else(|| ScribeError::AgentError("Failed to get stdin".to_string()))?;
-    let stdout = acp_child
-        .take_stdout()
-        .ok_or_else(|| ScribeError::AgentError("Failed to get stdout".to_string()))?;
-
-    // Convert to futures-compatible streams
-    let stdin_compat = stdin.compat_write();
-    let stdout_compat = stdout.compat();
-
-    // Create ACP connection
-    let (conn, io_task) =
-        ClientSideConnection::new(client.clone(), stdin_compat, stdout_compat, |fut| {
-            tokio::task::spawn_local(fut);
-        });
-
-    // Spawn IO task
-    let io_handle = tokio::task::spawn_local(async move {
-        if let Err(e) = io_task.await {
-            debug!("ACP IO task ended: {:?}", e);
-        }
-    });
-
-    // Run with timeout
-    let result = timeout(Duration::from_secs(SCRIBE_TIMEOUT_SECS), async {
-        // Initialize
-        let init_request = InitializeRequest::new(ProtocolVersion::LATEST).client_info(
-            Implementation::new("hirsel-scribe", env!("CARGO_PKG_VERSION")),
-        );
-        conn.initialize(init_request).await?;
-
-        // Create session
-        let session_request = NewSessionRequest::new(docs_dir.to_string_lossy().to_string());
-        let session = conn.new_session(session_request).await?;
-        let session_id = session.session_id;
-
-        debug!("ACP session created for scribe: {}", session_id);
-
-        // Send prompt
-        let prompt_request = PromptRequest::new(
-            session_id,
-            vec![ContentBlock::Text(TextContent::new(prompt))],
-        );
-        conn.prompt(prompt_request).await?;
-
-        Ok::<(), agent_client_protocol::Error>(())
-    })
-    .await;
-
-    // Clean up
-    drop(conn);
-    let _ = io_handle.await;
-    let _ = acp_child.kill().await;
-
-    // Check result
-    match result {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(e)) => Err(ScribeError::AgentError(format!("ACP error: {}", e))),
-        Err(_) => Err(ScribeError::Timeout(SCRIBE_TIMEOUT_SECS)),
-    }
+    AcpAgentRunner::new(agent_command.to_vec(), docs_dir, "scribe")
+        .timeout_secs(SCRIBE_TIMEOUT_SECS)
+        .run(client, prompt)
+        .await
+        .map_err(ScribeError::from)
 }
 
 // ============================================================================

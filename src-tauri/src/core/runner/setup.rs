@@ -344,6 +344,7 @@ pub fn generate_fly_init_script(
     is_leader: bool,
     leader_name: Option<&str>,
     teammates: Option<&[String]>,
+    assigned_task_id: Option<&str>,
 ) -> String {
     let work_dir = "/work";
     let setup_config = WorkerSetupConfig {
@@ -364,6 +365,9 @@ pub fn generate_fly_init_script(
     let teammates_arg = teammates
         .map(|t| format!("--teammates '{}'", t.join(",")))
         .filter(|s| !s.is_empty())
+        .unwrap_or_default();
+    let assigned_task_arg = assigned_task_id
+        .map(|t| format!("--assigned-task-id '{}'", t))
         .unwrap_or_default();
 
     // Escape agent command for shell
@@ -442,7 +446,7 @@ exec hirsel __remote-worker \
     --work-dir '{work_dir}' \
     --spec '{work_dir}/spec.md' \
     --agent-command '{agent_command}' \
-    {leader_arg} {leader_name_arg} {teammates_arg}
+    {leader_arg} {leader_name_arg} {teammates_arg} {assigned_task_arg}
 "#,
         coordinator_url = coordinator_url,
         run_name = run_name,
@@ -455,6 +459,7 @@ exec hirsel __remote-worker \
         leader_arg = leader_arg,
         leader_name_arg = leader_name_arg,
         teammates_arg = teammates_arg,
+        assigned_task_arg = assigned_task_arg,
     )
 }
 

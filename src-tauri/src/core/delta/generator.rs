@@ -121,7 +121,8 @@ impl DeltaGenerator {
             name: format!("Implement: {}", node.name),
             description,
             draft_node_id: Some(node.id.clone()),
-            live_node_id: None,
+            // Live node will be created with the same ID as draft node
+            live_node_id: Some(node.id.clone()),
             refs: vec![],
             priority: self.calculate_priority(node, DeltaType::Implement),
         }
@@ -414,6 +415,7 @@ Done!"#;
                 node_type: NodeType::Task,
                 content: "Do the thing".to_string(),
                 validates: vec![],
+                blocked_by: vec![],
                 parent_id: None,
             }],
             ..Default::default()

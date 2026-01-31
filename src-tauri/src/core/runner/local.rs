@@ -114,6 +114,11 @@ impl LocalRunner {
             args.push(session_id.clone());
         }
 
+        if let Some(ref task_id) = config.assigned_task_id {
+            args.push("--assigned-task-id".to_string());
+            args.push(task_id.clone());
+        }
+
         // Spawn the detached subprocess in its own process group
         // This allows us to kill the entire process tree when stopping workers
         let mut cmd = Command::new(&hirsel_exe);

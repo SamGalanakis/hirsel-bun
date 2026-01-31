@@ -20,7 +20,7 @@ use std::path::PathBuf;
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use super::state::DeltaState;
 use super::types::{DraftNodeTree, NodeType, UpdateDraftNodeRequest};
@@ -55,6 +55,8 @@ pub struct BoardTask {
     pub id: String,
     pub name: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked_by: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<BoardTask>,
 }
@@ -179,16 +181,6 @@ impl DeltaExporter {
         Ok(())
     }
 
-    /// Clean up old per-node baselines (migration from per-file system)
-    fn cleanup_old_baselines(&self) -> ExportResult<()> {
-        let db = self.open_db()?;
-        db.execute(
-            "DELETE FROM delta_file_baselines WHERE project_id = ?1 AND node_slug != 'board'",
-            params![self.project_id],
-        )?;
-        Ok(())
-    }
-
     // =========================================================================
     // Export
     // =========================================================================
@@ -233,9 +225,8 @@ impl DeltaExporter {
         // Save single baseline hash
         self.set_baseline_hash(&content_hash)?;
 
-        // Clean up old per-node JSON files and baselines
+        // Clean up old per-node JSON files
         self.cleanup_old_files(&board_dir)?;
-        self.cleanup_old_baselines()?;
 
         info!("Exported draft tree to {:?}", path);
         Ok(board_dir)
@@ -247,6 +238,7 @@ impl DeltaExporter {
             id: node.id.clone(),
             name: node.name.clone(),
             content: node.content.clone(),
+            blocked_by: node.blocked_by.clone(),
             children: node
                 .children
                 .iter()
@@ -299,32 +291,20 @@ impl DeltaExporter {
         let board_file: BoardFile = serde_json::from_str(&content)?;
         let mut result = SyncResult::default();
 
-        // Resolve root node ID
-        let root_id = match self.state.get_root_node_id()? {
-            Some(id) => id,
-            None => {
-                warn!(
-                    "No root node found for project {}, skipping import",
-                    self.project_id
-                );
-                return Ok(result);
-            }
-        };
-
-        // Import tasks recursively
+        // Import tasks recursively (top-level tasks have no parent)
         let file_task_ids: HashSet<String> = Self::collect_board_task_ids(&board_file.tasks);
         for task in &board_file.tasks {
-            self.import_task_tree(task, &root_id, &mut result)?;
+            self.import_task_tree(task, None, &mut result)?;
         }
 
-        // Detect removed tasks: DB children of root not in file
-        self.detect_removed_children(&root_id, &file_task_ids, &mut result)?;
+        // Detect removed root-level tasks: DB root nodes not in file
+        self.detect_removed_root_nodes(&file_task_ids, &mut result)?;
 
-        // Import evals
+        // Import evals (always at root level)
         let file_eval_ids: HashSet<String> =
             board_file.evals.iter().map(|e| e.id.clone()).collect();
         for eval in &board_file.evals {
-            self.import_eval(eval, &root_id, &mut result)?;
+            self.import_eval(eval, &mut result)?;
         }
 
         // Detect removed evals: DB eval nodes not in file
@@ -352,18 +332,22 @@ impl DeltaExporter {
     fn import_task_tree(
         &self,
         task: &BoardTask,
-        parent_id: &str,
+        parent_id: Option<&str>,
         result: &mut SyncResult,
     ) -> ExportResult<()> {
         match self.state.get_draft_node(&task.id) {
             Ok(existing) => {
-                // Update if name or content changed
-                if existing.name != task.name || existing.content != task.content {
+                // Update if name, content, or blocked_by changed
+                if existing.name != task.name
+                    || existing.content != task.content
+                    || existing.blocked_by != task.blocked_by
+                {
                     self.state.update_draft_node(
                         &task.id,
                         &UpdateDraftNodeRequest {
                             name: Some(task.name.clone()),
                             content: Some(task.content.clone()),
+                            blocked_by: Some(task.blocked_by.clone()),
                             ..Default::default()
                         },
                     )?;
@@ -379,6 +363,7 @@ impl DeltaExporter {
                     NodeType::Task,
                     &task.content,
                     &[],
+                    &task.blocked_by,
                 )?;
                 result.nodes_added.push(task.id.clone());
             }
@@ -388,7 +373,7 @@ impl DeltaExporter {
         // Recurse into children
         let child_ids: HashSet<String> = task.children.iter().map(|c| c.id.clone()).collect();
         for child in &task.children {
-            self.import_task_tree(child, &task.id, result)?;
+            self.import_task_tree(child, Some(&task.id), result)?;
         }
 
         // Detect removed children of this task
@@ -397,13 +382,8 @@ impl DeltaExporter {
         Ok(())
     }
 
-    /// Import an eval node, creating or updating
-    fn import_eval(
-        &self,
-        eval: &BoardEval,
-        root_id: &str,
-        result: &mut SyncResult,
-    ) -> ExportResult<()> {
+    /// Import an eval node, creating or updating (always at root level)
+    fn import_eval(&self, eval: &BoardEval, result: &mut SyncResult) -> ExportResult<()> {
         match self.state.get_draft_node(&eval.id) {
             Ok(existing) => {
                 if existing.name != eval.name
@@ -423,13 +403,15 @@ impl DeltaExporter {
                 }
             }
             Err(super::state::DeltaStateError::DraftNodeNotFound(_)) => {
+                // Evals are always root-level nodes (parent_id = None)
                 self.state.create_draft_node_with_id(
                     &eval.id,
-                    root_id,
+                    None,
                     &eval.name,
                     NodeType::Eval,
                     &eval.content,
                     &eval.validates,
+                    &[], // Evals don't have blocked_by (they ARE the blockers via validates)
                 )?;
                 result.nodes_added.push(eval.id.clone());
             }
@@ -454,6 +436,26 @@ impl DeltaExporter {
             if !file_child_ids.contains(&child.id) {
                 self.state.delete_draft_node(&child.id)?;
                 result.nodes_deleted.push(child.id);
+            }
+        }
+        Ok(())
+    }
+
+    /// Detect root-level task nodes in DB that are no longer in the file
+    fn detect_removed_root_nodes(
+        &self,
+        file_task_ids: &HashSet<String>,
+        result: &mut SyncResult,
+    ) -> ExportResult<()> {
+        let all_nodes = self.state.get_draft_nodes()?;
+        for node in all_nodes {
+            // Only check root-level tasks (parent_id is None, not evals)
+            if node.parent_id.is_none()
+                && node.node_type == NodeType::Task
+                && !file_task_ids.contains(&node.id)
+            {
+                self.state.delete_draft_node(&node.id)?;
+                result.nodes_deleted.push(node.id);
             }
         }
         Ok(())

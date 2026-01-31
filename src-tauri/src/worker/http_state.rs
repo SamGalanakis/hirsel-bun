@@ -9,6 +9,7 @@ use reqwest::Client;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::core::http_client::ResponseExt;
 use crate::core::state::{Message, Status, Task, Worker, WorkerStatus};
 
 // =============================================================================
@@ -39,6 +40,20 @@ pub enum HttpStateError {
 }
 
 pub type HttpStateResult<T> = Result<T, HttpStateError>;
+
+/// Convert HttpError to HttpStateError
+fn http_error_to_state_error(e: crate::core::http_client::HttpError) -> HttpStateError {
+    match e {
+        crate::core::http_client::HttpError::Response { status, body, .. } => {
+            HttpStateError::Operation {
+                status,
+                message: body,
+            }
+        }
+        crate::core::http_client::HttpError::Request(e) => HttpStateError::Connection(e),
+        crate::core::http_client::HttpError::Parse(msg) => HttpStateError::InvalidResponse(msg),
+    }
+}
 
 // =============================================================================
 // HTTP State Client
@@ -84,18 +99,13 @@ impl HttpState {
 
     async fn get<T: DeserializeOwned>(&self, endpoint: &str) -> HttpStateResult<T> {
         let url = format!("{}{}", self.base_url, endpoint);
-        let response = self.client.get(&url).send().await?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let message = response.text().await.unwrap_or_default();
-            return Err(HttpStateError::Operation { status, message });
-        }
-
-        response
-            .json()
+        self.client
+            .get(&url)
+            .send()
+            .await?
+            .json_or_error()
             .await
-            .map_err(|e| HttpStateError::InvalidResponse(e.to_string()))
+            .map_err(http_error_to_state_error)
     }
 
     async fn post<T: DeserializeOwned, B: Serialize>(
@@ -104,34 +114,25 @@ impl HttpState {
         body: &B,
     ) -> HttpStateResult<T> {
         let url = format!("{}{}", self.base_url, endpoint);
-        let response = self.client.post(&url).json(body).send().await?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let message = response.text().await.unwrap_or_default();
-            return Err(HttpStateError::Operation { status, message });
-        }
-
-        response
-            .json()
+        self.client
+            .post(&url)
+            .json(body)
+            .send()
+            .await?
+            .json_or_error()
             .await
-            .map_err(|e| HttpStateError::InvalidResponse(e.to_string()))
+            .map_err(http_error_to_state_error)
     }
 
     async fn delete<T: DeserializeOwned>(&self, endpoint: &str) -> HttpStateResult<T> {
         let url = format!("{}{}", self.base_url, endpoint);
-        let response = self.client.delete(&url).send().await?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let message = response.text().await.unwrap_or_default();
-            return Err(HttpStateError::Operation { status, message });
-        }
-
-        response
-            .json()
+        self.client
+            .delete(&url)
+            .send()
+            .await?
+            .json_or_error()
             .await
-            .map_err(|e| HttpStateError::InvalidResponse(e.to_string()))
+            .map_err(http_error_to_state_error)
     }
 
     // =========================================================================
@@ -223,6 +224,24 @@ impl HttpState {
             )
             .await?;
         Ok(result.success)
+    }
+
+    pub async fn try_claim_task(
+        &self,
+        task_id: &str,
+        worker_name: &str,
+    ) -> HttpStateResult<crate::core::state::ClaimTaskResult> {
+        #[derive(Serialize)]
+        struct ClaimRequest {
+            worker_name: String,
+        }
+        self.post(
+            &format!("/tasks/{}/try-claim", task_id),
+            &ClaimRequest {
+                worker_name: worker_name.to_string(),
+            },
+        )
+        .await
     }
 
     pub async fn complete_task(&self, task_id: &str, worker_name: &str) -> HttpStateResult<bool> {
@@ -417,6 +436,14 @@ impl HttpState {
         Status::from_str(&result.status).ok_or_else(|| {
             HttpStateError::InvalidResponse(format!("Invalid status: {}", result.status))
         })
+    }
+
+    pub async fn request_scaling_check(&self) -> HttpStateResult<()> {
+        #[derive(Serialize)]
+        struct Empty {}
+        let endpoint = self.run_endpoint("/scaling_check");
+        let _: SuccessResponse = self.post(&endpoint, &Empty {}).await?;
+        Ok(())
     }
 
     pub async fn get_claimed_task(&self, worker_name: &str) -> HttpStateResult<Option<Task>> {
@@ -689,15 +716,6 @@ impl HttpState {
         Ok(result.count)
     }
 
-    pub async fn get_max_iterations(&self) -> HttpStateResult<Option<i64>> {
-        #[derive(Deserialize)]
-        struct MaxResponse {
-            max: Option<i64>,
-        }
-        let result: MaxResponse = self.get("/iterations/max").await?;
-        Ok(result.max)
-    }
-
     // =========================================================================
     // Additional methods for StateAccess trait
     // =========================================================================
@@ -945,6 +963,14 @@ impl StateAccess for HttpState {
 
     async fn claim_task(&self, task_id: &str, worker_name: &str) -> StateAccessResult<bool> {
         Ok(HttpState::claim_task(self, task_id, worker_name).await?)
+    }
+
+    async fn try_claim_task(
+        &self,
+        task_id: &str,
+        worker_name: &str,
+    ) -> StateAccessResult<crate::core::state::ClaimTaskResult> {
+        Ok(HttpState::try_claim_task(self, task_id, worker_name).await?)
     }
 
     async fn complete_task(&self, task_id: &str, worker_name: &str) -> StateAccessResult<bool> {
@@ -1272,16 +1298,6 @@ impl StateAccess for HttpState {
         Ok(HttpState::increment_iteration(self).await?)
     }
 
-    async fn get_max_iterations(&self) -> StateAccessResult<Option<i64>> {
-        Ok(HttpState::get_max_iterations(self).await?)
-    }
-
-    async fn set_max_iterations(&self, _max_iter: Option<i64>) -> StateAccessResult<()> {
-        Err(StateAccessError::InvalidOperation(
-            "Remote workers cannot set max iterations".to_string(),
-        ))
-    }
-
     async fn get_history(&self, _limit: i64) -> StateAccessResult<Vec<HistoryEntry>> {
         // Not implemented for remote workers
         Ok(vec![])
@@ -1310,5 +1326,11 @@ impl StateAccess for HttpState {
 
     async fn heartbeat(&self) -> StateAccessResult<Status> {
         Ok(HttpState::heartbeat(self).await?)
+    }
+
+    async fn request_scaling_check(&self) -> StateAccessResult<()> {
+        // Remote workers trigger scaling via the coordinator
+        // The scaling check will be processed by the daemon on the coordinator side
+        Ok(HttpState::request_scaling_check(self).await?)
     }
 }

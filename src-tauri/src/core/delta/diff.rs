@@ -107,6 +107,13 @@ impl DiffService {
             ));
         }
 
+        if draft.blocked_by != live.blocked_by {
+            changes.push(format!(
+                "blocked_by: {:?} -> {:?}",
+                live.blocked_by, draft.blocked_by
+            ));
+        }
+
         if draft.parent_id != live.parent_id {
             changes.push(format!(
                 "parent: {:?} -> {:?}",
@@ -213,6 +220,7 @@ mod tests {
                 node_type: NodeType::Task,
                 content: "Do something".to_string(),
                 validates: vec![],
+                blocked_by: vec![],
                 parent_id: None,
             }],
             modified_nodes: vec![],

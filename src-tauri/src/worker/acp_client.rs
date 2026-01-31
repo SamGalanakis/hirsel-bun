@@ -331,6 +331,8 @@ pub struct WorkerRunConfig {
     pub resume_session_id: Option<String>,
     /// Optional API URL for reporting status (used by Docker/remote workers)
     pub api_url: Option<String>,
+    /// Task ID assigned to this worker (direct task assignment)
+    pub assigned_task_id: Option<String>,
 }
 
 /// Run the ACP worker loop.
@@ -447,6 +449,7 @@ pub async fn run_acp_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
         config.teammates.as_deref(),
         &config.work_dir,
         &config.run_dir,
+        config.assigned_task_id.as_deref(),
     );
 
     // Send the prompt
@@ -490,6 +493,7 @@ pub fn build_worker_prompt(
     teammates: Option<&[String]>,
     work_dir: &Path,
     run_dir: &Path,
+    assigned_task_id: Option<&str>,
 ) -> String {
     let is_multi_worker = teammates.map(|t| !t.is_empty()).unwrap_or(false);
 
@@ -503,6 +507,9 @@ pub fn build_worker_prompt(
     prompt.push_str("## Your Context\n\n");
     prompt.push_str(&format!("- **Worker name:** {}\n", worker_name));
     prompt.push_str(&format!("- **Run name:** {}\n", run_name));
+    if let Some(task_id) = assigned_task_id {
+        prompt.push_str(&format!("- **Assigned task:** `{}`\n", task_id));
+    }
     prompt.push_str(&format!(
         "- **Work directory:** {} (git worktree - write code here)\n",
         work_dir.display()
@@ -513,15 +520,19 @@ pub fn build_worker_prompt(
         run_dir.join("assets").display()
     ));
 
-    // Your Task - MCP-first approach
-    prompt.push_str("## Your Task\n\n");
-    prompt.push_str("You have a pre-defined task scope. Use MCP tools to understand the work:\n\n");
-    prompt.push_str("1. `get_task_tree()` - See all tasks and their relationships\n");
-    prompt.push_str("2. `get_task_details(id)` - Get full content for a specific task\n");
-    prompt.push_str("3. `get_available_tasks()` - See what's ready to work on\n\n");
-    prompt.push_str(
-        "Tasks were created from a planning board - use these tools to understand the scope.\n\n",
-    );
+    // Your Task - Direct assignment
+    prompt.push_str("## Your Assigned Task\n\n");
+    if let Some(task_id) = assigned_task_id {
+        prompt.push_str(&format!(
+            "You have been assigned task `{}`. Use `get_task_details(\"{}\")` to see the full content.\n\n",
+            task_id, task_id
+        ));
+    } else {
+        prompt.push_str("Check `get_my_tasks()` to see your assigned work.\n\n");
+    }
+    prompt.push_str("**Additional context tools:**\n");
+    prompt.push_str("- `get_task_tree()` - See all tasks and their relationships\n");
+    prompt.push_str("- `get_available_tasks()` - See other tasks that are ready to work on\n\n");
 
     // Git workflow
     prompt.push_str("## Git Workflow\n\n");
@@ -592,14 +603,13 @@ pub fn build_worker_prompt(
     prompt.push_str("- `get_available_tasks()` - Unblocked, unclaimed tasks ready to work on\n");
     prompt.push_str("- `get_my_tasks()` - Tasks you've claimed\n");
     prompt.push_str("- `get_task_details(task_id)` - Full content for a specific task\n");
-    prompt.push_str("- `claim_task(task_id)` - Claim a task (TODO → DOING)\n");
     prompt.push_str("- `complete_task(task_id?)` - Mark task done (auto-unblocks dependents)\n");
     prompt.push_str("- `add_task(task_id, name, parent?, blocked_by?)` - Create a new task\n");
     prompt.push_str("  - `task_id`: lowercase with underscores (e.g., `implement_auth`)\n");
     prompt.push_str("  - `parent`: Optional parent task ID for hierarchy\n");
     prompt.push_str("  - `blocked_by`: Array of task IDs that must complete first\n");
-    prompt.push_str("- `add_eval(eval_id, name, validates)` - Create verification task\n");
-    prompt.push_str("  - `validates`: Array of task IDs this eval verifies\n\n");
+    prompt.push_str("- `add_eval(eval_id, name, validates)` - Create eval task\n");
+    prompt.push_str("  - `validates`: Array of task IDs this eval validates\n\n");
 
     prompt.push_str("### Communication\n");
     prompt
@@ -618,7 +628,7 @@ pub fn build_worker_prompt(
     prompt.push_str("  - Omit `file` to get all docs, or specify e.g. `patterns.md`\n\n");
 
     prompt.push_str("### Completion\n");
-    prompt.push_str("- `work_done` - Signal all work is complete (triggers verification)\n");
+    prompt.push_str("- `work_done` - Signal all work is complete (triggers eval)\n");
     prompt.push_str("- `time_status` - Check time limit status\n\n");
 
     prompt.push_str("### Eval Operations\n");
@@ -628,17 +638,20 @@ pub fn build_worker_prompt(
     // Task statuses
     prompt.push_str("## Task Workflow\n\n");
     prompt.push_str("**Statuses:**\n");
-    prompt.push_str("- `TODO` - Available to claim\n");
-    prompt.push_str("- `DOING` - Claimed by a worker\n");
+    prompt.push_str("- `TODO` - Available to work on\n");
+    prompt.push_str("- `DOING` - Assigned to a worker\n");
     prompt.push_str("- `DONE` - Completed\n");
     prompt.push_str("- `BLOCKED` - Waiting for dependencies\n\n");
-    prompt.push_str("**Rules:**\n");
-    prompt.push_str(
-        "- **NEVER edit code without a claimed task** - if no task exists, create one first\n",
-    );
-    prompt.push_str("- You can only have **one claimed task** at a time\n");
-    prompt.push_str("- You can only complete tasks you have claimed\n");
-    prompt.push_str("- If you need to switch tasks, release your current one first\n\n");
+    prompt.push_str("**Direct Task Assignment:**\n");
+    prompt.push_str("- Your task is **pre-assigned** when you spawn - no need to claim\n");
+    prompt.push_str("- Use `get_task_details(task_id)` to see full task content\n");
+    prompt.push_str("- Complete the work in your git workspace\n");
+    prompt.push_str("- Call `complete_task()` when done (no task_id needed)\n");
+    prompt.push_str("- Call `work_done()` to signal you're ready for next assignment\n");
+    prompt.push_str("- You'll exit and be respawned with a new task if one is available\n\n");
+    prompt.push_str("**Creating subtasks:**\n");
+    prompt.push_str("- You can still use `add_task()` to break down work\n");
+    prompt.push_str("- Subtasks go into the pool and may be assigned to you or other workers\n\n");
 
     // The scope task
     prompt.push_str("## The \"scope\" Task\n\n");
@@ -747,13 +760,11 @@ pub fn build_worker_prompt(
 
     // Getting started
     prompt.push_str("## Getting Started\n\n");
-    prompt.push_str("1. Use `get_task_tree()` to see all tasks and relationships\n");
-    prompt.push_str("2. If scope task is yours (claimed), review tasks and decide approach\n");
-    prompt.push_str("3. Complete scope task to unblock other tasks\n");
-    prompt.push_str("4. Use `get_available_tasks()` to find work\n");
-    prompt.push_str("5. `claim_task(id)` → work on it → commit → `complete_task()`\n");
-    prompt.push_str("6. Repeat until all tasks done\n");
-    prompt.push_str("7. Call `work_done()` to finish\n\n");
+    prompt.push_str("1. Use `get_task_details(your_assigned_task)` to see your task\n");
+    prompt.push_str("2. Work on the task in your git workspace\n");
+    prompt.push_str("3. Commit your changes\n");
+    prompt.push_str("4. Call `complete_task()` when done\n");
+    prompt.push_str("5. Call `work_done()` - you'll be respawned with a new task if available\n\n");
 
     // When stuck
     prompt.push_str("## When Stuck\n\n");
@@ -762,7 +773,7 @@ pub fn build_worker_prompt(
     prompt.push_str("chat_send(\"user\", \"Specific question about what's blocking you\")\n");
     prompt.push_str("```\n\n");
 
-    prompt.push_str("**Begin by using `get_task_tree()` to see available tasks.**\n");
+    prompt.push_str("**Begin by reviewing your assigned task with `get_task_details()`.**\n");
 
     prompt
 }
@@ -797,6 +808,7 @@ pub async fn run_claude_cli_worker(config: WorkerRunConfig) -> anyhow::Result<()
         config.teammates.as_deref(),
         &config.work_dir,
         &config.run_dir,
+        config.assigned_task_id.as_deref(),
     );
 
     // Create Claude worker config

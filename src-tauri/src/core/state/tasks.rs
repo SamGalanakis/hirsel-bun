@@ -4,7 +4,7 @@
 //!
 //! ## Task Types
 //! - **Work tasks**: Implementation tasks that produce code changes
-//! - **Eval tasks**: Validation tasks that verify work tasks
+//! - **Eval tasks**: Tasks that validate work tasks
 //!
 //! ## Task Lifecycle
 //! Work:  todo → doing → done → awaiting_eval → validated
@@ -49,6 +49,8 @@ impl SQLiteState {
                 .and_then(|s| EvalResult::from_str(&s)),
             eval_feedback: row.get("eval_feedback")?,
             board_task_id: row.get("board_task_id")?,
+            assigned_to: row.get("assigned_to")?,
+            completed_by: row.get("completed_by")?,
         })
     }
 
@@ -84,10 +86,51 @@ impl SQLiteState {
         Ok(depth)
     }
 
+    /// Add a blocker to a task
+    ///
+    /// This adds an entry to the task_blockers junction table indicating that
+    /// task_id is blocked by blocker_id.
+    pub fn add_blocker(&self, task_id: &str, blocker_id: &str) -> StateResult<()> {
+        self.db.execute(
+            "INSERT OR IGNORE INTO task_blockers (task_id, blocker_id) VALUES (?1, ?2)",
+            params![task_id, blocker_id],
+        )?;
+        self.log_history(
+            "task_block",
+            Some(&format!("{} blocked by {}", task_id, blocker_id)),
+        )?;
+        Ok(())
+    }
+
+    /// Set the assigned_to field on a task
+    ///
+    /// This is used by the coordinator to directly assign tasks to workers
+    /// instead of workers claiming tasks themselves.
+    pub fn set_task_assigned_to(
+        &self,
+        task_id: &str,
+        worker_name: Option<&str>,
+    ) -> StateResult<()> {
+        let affected = self.db.execute(
+            "UPDATE tasks SET assigned_to = ?1 WHERE id = ?2",
+            params![worker_name, task_id],
+        )?;
+        if affected == 0 {
+            return Err(StateError::NotFound(format!(
+                "Task '{}' not found",
+                task_id
+            )));
+        }
+        if let Some(name) = worker_name {
+            self.log_history("task_assign", Some(&format!("{} → {}", task_id, name)))?;
+        }
+        Ok(())
+    }
+
     /// Get children of a task
     pub fn get_children(&self, task_id: &str) -> StateResult<Vec<Task>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, task_type, eval_result, eval_feedback, board_task_id FROM tasks WHERE parent_id = ?1 ORDER BY created_at"
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, task_type, eval_result, eval_feedback, board_task_id, assigned_to, completed_by FROM tasks WHERE parent_id = ?1 ORDER BY created_at"
         )?;
         let mut tasks: Vec<Task> = stmt
             .query_map(params![task_id], Self::task_from_row)?
@@ -193,6 +236,10 @@ impl SQLiteState {
                     detail.push_str(&format!(" (validates: {})", v.join(", ")));
                 }
                 self.log_history("task_add", Some(&detail))?;
+
+                // Trigger scaling check - new task may need a worker
+                self.request_scaling_check()?;
+
                 Ok(())
             }
             Err(rusqlite::Error::SqliteFailure(e, _)) if e.extended_code == 1555 => {
@@ -205,7 +252,7 @@ impl SQLiteState {
     /// Get all tasks
     pub fn get_tasks(&self) -> StateResult<Vec<Task>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, task_type, eval_result, eval_feedback, board_task_id FROM tasks ORDER BY created_at"
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, task_type, eval_result, eval_feedback, board_task_id, assigned_to, completed_by FROM tasks ORDER BY created_at"
         )?;
         let mut tasks: Vec<Task> = stmt
             .query_map([], Self::task_from_row)?
@@ -221,7 +268,7 @@ impl SQLiteState {
     /// Get a specific task
     pub fn get_task(&self, task_id: &str) -> StateResult<Option<Task>> {
         let result = self.db.query_row(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, task_type, eval_result, eval_feedback, board_task_id FROM tasks WHERE id = ?1",
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, task_type, eval_result, eval_feedback, board_task_id, assigned_to, completed_by FROM tasks WHERE id = ?1",
             params![task_id],
             Self::task_from_row,
         );
@@ -419,37 +466,83 @@ impl SQLiteState {
         Ok(eval_tasks)
     }
 
-    /// Claim a task for a worker
+    /// Claim a task for a worker (legacy wrapper for backwards compatibility)
     pub fn claim_task(&self, task_id: &str, worker_name: &str) -> StateResult<()> {
+        use super::types::ClaimTaskResult;
+        match self.try_claim_task(task_id, worker_name)? {
+            ClaimTaskResult::Success { .. } => Ok(()),
+            ClaimTaskResult::Rejected { reason, .. } => {
+                Err(StateError::InvalidState(format!("{:?}", reason)))
+            }
+        }
+    }
+
+    /// Try to claim a task, returning detailed rejection info on failure
+    pub fn try_claim_task(
+        &self,
+        task_id: &str,
+        worker_name: &str,
+    ) -> StateResult<super::types::ClaimTaskResult> {
+        use super::types::{ClaimRejectReason, ClaimTaskResult, TaskSummary};
+
         // Use BEGIN IMMEDIATE to prevent race conditions
         self.db.execute("BEGIN IMMEDIATE", [])?;
 
-        let result = (|| -> StateResult<()> {
+        let result = (|| -> StateResult<ClaimTaskResult> {
+            // Helper to get claimable alternatives
+            let get_alternatives = || -> Vec<TaskSummary> {
+                self.get_claimable_tasks()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .take(5)
+                    .map(|t| TaskSummary {
+                        id: t.id,
+                        name: t.name,
+                        task_type: t.task_type,
+                    })
+                    .collect()
+            };
+
+            // 1. Task exists
             let task = match self.get_task(task_id)? {
                 Some(t) => t,
                 None => {
-                    return Err(StateError::NotFound(format!(
-                        "Task '{}' not found",
-                        task_id
-                    )))
+                    return Ok(ClaimTaskResult::Rejected {
+                        reason: ClaimRejectReason::NotFound {
+                            task_id: task_id.to_string(),
+                        },
+                        alternatives: get_alternatives(),
+                    });
                 }
             };
 
-            if task.status != TaskStatus::Todo {
-                return Err(StateError::InvalidState(format!(
-                    "Task '{}' is not TODO (status: {})",
-                    task_id, task.status
-                )));
+            // 2. Already done/validated
+            if task.status != TaskStatus::Todo && task.status != TaskStatus::Doing {
+                return Ok(ClaimTaskResult::Rejected {
+                    reason: ClaimRejectReason::AlreadyComplete {
+                        task_id: task_id.to_string(),
+                        status: task.status,
+                    },
+                    alternatives: get_alternatives(),
+                });
             }
 
-            if self.has_children(task_id)? {
-                return Err(StateError::InvalidState(format!(
-                    "Task '{}' has children and cannot be claimed directly",
-                    task_id
-                )));
+            // 3. Claimed by other (not us)
+            if task.status == TaskStatus::Doing {
+                if task.claimed_by.as_deref() == Some(worker_name) {
+                    // Already claimed by us - return success with current task
+                    return Ok(ClaimTaskResult::Success { task });
+                }
+                return Ok(ClaimTaskResult::Rejected {
+                    reason: ClaimRejectReason::ClaimedByOther {
+                        task_id: task_id.to_string(),
+                        claimed_by: task.claimed_by.unwrap_or_default(),
+                    },
+                    alternatives: get_alternatives(),
+                });
             }
 
-            // Check if worker already has a claimed task
+            // 4. Worker already has a task
             let existing: Option<String> = self
                 .db
                 .query_row(
@@ -460,12 +553,57 @@ impl SQLiteState {
                 .ok();
 
             if let Some(existing_id) = existing {
-                return Err(StateError::InvalidState(format!(
-                    "You already have task '{}' claimed. Complete or unclaim it first.",
-                    existing_id
-                )));
+                return Ok(ClaimTaskResult::Rejected {
+                    reason: ClaimRejectReason::WorkerBusy {
+                        existing_task_id: existing_id,
+                    },
+                    alternatives: vec![], // No alternatives when busy
+                });
             }
 
+            // 5. Has children
+            if self.has_children(task_id)? {
+                let children = self.get_children(task_id)?;
+                return Ok(ClaimTaskResult::Rejected {
+                    reason: ClaimRejectReason::HasChildren {
+                        task_id: task_id.to_string(),
+                        children: children.iter().map(|c| c.id.clone()).collect(),
+                    },
+                    alternatives: get_alternatives(),
+                });
+            }
+
+            // 6 & 7. Check blocking based on task type
+            match task.task_type {
+                TaskType::Work => {
+                    // Work tasks: blockers must be Validated (or Done if no eval)
+                    let blockers = self.get_blocker_details(task_id)?;
+                    if !blockers.is_empty() {
+                        return Ok(ClaimTaskResult::Rejected {
+                            reason: ClaimRejectReason::Blocked {
+                                task_id: task_id.to_string(),
+                                blockers,
+                            },
+                            alternatives: get_alternatives(),
+                        });
+                    }
+                }
+                TaskType::Eval => {
+                    // Eval tasks: validates tasks must be Done/AwaitingEval/Validated
+                    let pending = self.get_pending_validates(task_id)?;
+                    if !pending.is_empty() {
+                        return Ok(ClaimTaskResult::Rejected {
+                            reason: ClaimRejectReason::EvalNotReady {
+                                task_id: task_id.to_string(),
+                                pending_tasks: pending,
+                            },
+                            alternatives: get_alternatives(),
+                        });
+                    }
+                }
+            }
+
+            // All checks passed - claim the task
             self.db.execute(
                 "UPDATE tasks SET status = ?1, claimed_by = ?2, claimed_at = ?3 WHERE id = ?4",
                 params![TaskStatus::Doing.as_str(), worker_name, self.now(), task_id],
@@ -475,19 +613,87 @@ impl SQLiteState {
                 "task_claim",
                 Some(&format!("{} by {}", task_id, worker_name)),
             )?;
-            Ok(())
+
+            // Fetch the updated task
+            let claimed_task = self.get_task(task_id)?.ok_or_else(|| {
+                StateError::InvalidState("Task disappeared after claim".to_string())
+            })?;
+
+            Ok(ClaimTaskResult::Success { task: claimed_task })
         })();
 
         match result {
-            Ok(_) => {
+            Ok(claim_result) => {
                 self.db.execute("COMMIT", [])?;
-                Ok(())
+                Ok(claim_result)
             }
             Err(e) => {
                 let _ = self.db.execute("ROLLBACK", []);
                 Err(e)
             }
         }
+    }
+
+    /// Get detailed info about incomplete blockers for a task
+    fn get_blocker_details(&self, task_id: &str) -> StateResult<Vec<super::types::BlockerInfo>> {
+        use super::types::BlockerInfo;
+
+        let task = match self.get_task(task_id)? {
+            Some(t) => t,
+            None => return Ok(vec![]),
+        };
+
+        if task.blocked_by.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut blockers = vec![];
+        for blocker_id in &task.blocked_by {
+            if let Some(blocker) = self.get_task(blocker_id)? {
+                // Check if this blocker is actually blocking
+                let is_blocking = if self.has_validating_eval(blocker_id)? {
+                    blocker.status != TaskStatus::Validated
+                } else {
+                    !blocker.status.is_complete()
+                };
+
+                if is_blocking {
+                    blockers.push(BlockerInfo {
+                        task_id: blocker.id,
+                        name: blocker.name,
+                        status: blocker.status,
+                        claimed_by: blocker.claimed_by,
+                    });
+                }
+            }
+        }
+        Ok(blockers)
+    }
+
+    /// Get pending validates tasks for an eval (tasks not ready for eval)
+    fn get_pending_validates(&self, eval_id: &str) -> StateResult<Vec<super::types::TaskSummary>> {
+        use super::types::TaskSummary;
+
+        let validates = self.get_validated_tasks(eval_id)?;
+        let mut pending = vec![];
+
+        for task_id in validates {
+            if let Some(task) = self.get_task(&task_id)? {
+                // Eval is ready when validates tasks are Done/AwaitingEval/Validated
+                let is_ready = matches!(
+                    task.status,
+                    TaskStatus::Done | TaskStatus::AwaitingEval | TaskStatus::Validated
+                );
+                if !is_ready {
+                    pending.push(TaskSummary {
+                        id: task.id,
+                        name: task.name,
+                        task_type: task.task_type,
+                    });
+                }
+            }
+        }
+        Ok(pending)
     }
 
     /// Unclaim a task
@@ -518,6 +724,10 @@ impl SQLiteState {
             "task_unclaim",
             Some(&format!("{} by {}", task_id, worker_name)),
         )?;
+
+        // Trigger scaling check - unclaimed task may need a worker
+        self.request_scaling_check()?;
+
         Ok(())
     }
 
@@ -569,10 +779,19 @@ impl SQLiteState {
             )),
         )?;
 
+        // Record completed_by for tree distance calculations
+        self.db.execute(
+            "UPDATE tasks SET completed_by = ?1 WHERE id = ?2",
+            params![worker_name, task_id],
+        )?;
+
         // Auto-complete parent if all siblings are done
         if let Some(parent_id) = &task.parent_id {
             self.maybe_complete_parent(parent_id)?;
         }
+
+        // Trigger scaling check - completion may unblock other tasks
+        self.request_scaling_check()?;
 
         Ok(())
     }
@@ -666,6 +885,9 @@ impl SQLiteState {
             "eval_pass",
             Some(&format!("{} by {}", eval_task_id, worker_name)),
         )?;
+
+        // Trigger scaling check - validation may unblock other tasks
+        self.request_scaling_check()?;
 
         Ok(())
     }
@@ -773,6 +995,9 @@ impl SQLiteState {
                 eval_task_id, worker_name, feedback
             )),
         )?;
+
+        // Trigger scaling check - repair task created
+        self.request_scaling_check()?;
 
         Ok(repair_id)
     }
@@ -922,13 +1147,16 @@ impl SQLiteState {
         };
         self.log_history("task_delete", Some(&detail))?;
 
+        // Trigger scaling check - deleting tasks may affect scaling needs
+        self.request_scaling_check()?;
+
         Ok(())
     }
 
     /// Get claimed task for a worker
     pub fn get_claimed_task(&self, worker_name: &str) -> StateResult<Option<Task>> {
         let result = self.db.query_row(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, task_type, eval_result, eval_feedback, board_task_id FROM tasks WHERE claimed_by = ?1 AND status = ?2",
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, task_type, eval_result, eval_feedback, board_task_id, assigned_to, completed_by FROM tasks WHERE claimed_by = ?1 AND status = ?2",
             params![worker_name, TaskStatus::Doing.as_str()],
             Self::task_from_row,
         );

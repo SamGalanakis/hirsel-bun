@@ -226,7 +226,6 @@ pub fn run_scenario(
         project: temp_project_dir
             .as_ref()
             .map(|p| p.to_str().unwrap_or("").to_string()),
-        max_iterations: None,
         pause_mode: None,
         draft: false,
         assets: None,

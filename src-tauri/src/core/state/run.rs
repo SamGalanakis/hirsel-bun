@@ -537,28 +537,6 @@ impl SQLiteState {
         self.get_iteration_count()
     }
 
-    /// Get max iterations
-    pub fn get_max_iterations(&self) -> StateResult<Option<i64>> {
-        match self
-            .db
-            .query_row("SELECT max_iterations FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<i64>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
-    }
-
-    /// Set max iterations
-    pub fn set_max_iterations(&self, max_iter: Option<i64>) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET max_iterations = ?1, updated_at = ?2 WHERE id = 1",
-            params![max_iter, self.now()],
-        )?;
-        Ok(())
-    }
-
     // =========================================================================
     // Failure Reason
     // =========================================================================
@@ -592,15 +570,6 @@ impl SQLiteState {
         self.set_failure_reason(Some(reason))?;
         self.set_status(Status::Failed)?;
         Ok(())
-    }
-
-    /// Check if iteration limit has been exceeded
-    pub fn is_iteration_limit_exceeded(&self) -> StateResult<bool> {
-        let count = self.get_iteration_count()?;
-        match self.get_max_iterations()? {
-            Some(max) => Ok(count >= max),
-            None => Ok(false),
-        }
     }
 
     /// Get last compaction timestamp
@@ -785,28 +754,23 @@ impl SQLiteState {
 
     /// Get the resolved runner config for a specific worker.
     ///
-    /// First checks stored runner_configs (captured at run creation), then falls
-    /// back to looking up by name from global config if runner_configs is empty
-    /// (for backwards compatibility with old runs).
+    /// Looks up the runner config from stored runner_configs (captured at run creation).
     pub fn get_runner_config_for_worker(
         &self,
         worker_name: &str,
-        global_config: &crate::core::config::Config,
     ) -> StateResult<crate::core::runner::RunnerConfig> {
         // Get the runner name for this worker
         let runner_name = self.get_runner_for_worker(worker_name)?;
 
-        // Try stored configs first (new runs)
+        // Look up from stored configs
         if let Some(configs) = self.get_runner_configs()? {
             if let Some(config) = configs.get(&runner_name) {
                 return Ok(config.clone());
             }
         }
 
-        // Fall back to global config lookup (old runs without stored configs)
-        Ok(global_config
-            .get_runner(&runner_name)
-            .unwrap_or_else(crate::core::runner::RunnerConfig::local))
+        // No stored config - use local runner
+        Ok(crate::core::runner::RunnerConfig::local())
     }
 
     // =========================================================================
@@ -1169,5 +1133,43 @@ impl SQLiteState {
         self.set_abandoned_at(None)?;
         self.log_history("abandoned", None)?;
         Ok(())
+    }
+
+    // =========================================================================
+    // Scaling Check (Event-Driven Worker Spawning)
+    // =========================================================================
+
+    /// Request a scaling check on the next daemon poll.
+    ///
+    /// Called by task state changes to signal that worker scaling should be evaluated.
+    /// The daemon's 5-second poll provides natural debouncing.
+    pub fn request_scaling_check(&self) -> StateResult<()> {
+        self.db.execute(
+            "UPDATE state SET scaling_check_requested = 1 WHERE id = 1",
+            [],
+        )?;
+        Ok(())
+    }
+
+    /// Consume the scaling check flag, returning whether it was set.
+    ///
+    /// Called by the daemon on its polling loop. Atomically reads and clears the flag.
+    pub fn consume_scaling_check(&self) -> StateResult<bool> {
+        let requested: bool = self
+            .db
+            .query_row(
+                "SELECT scaling_check_requested FROM state WHERE id = 1",
+                [],
+                |row| row.get::<_, i64>(0).map(|v| v != 0),
+            )
+            .unwrap_or(false);
+
+        if requested {
+            self.db.execute(
+                "UPDATE state SET scaling_check_requested = 0 WHERE id = 1",
+                [],
+            )?;
+        }
+        Ok(requested)
     }
 }

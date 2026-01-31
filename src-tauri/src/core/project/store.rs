@@ -37,6 +37,9 @@ CREATE TABLE IF NOT EXISTS projects (
     -- Delivery configuration
     target_branch TEXT,  -- Branch for PR/merge delivery (e.g., "staging", "main")
 
+    -- Runner configuration
+    runner TEXT,  -- Default runner for this project's runs
+
     -- Canvas position (for OneBoard portfolio view)
     x REAL,
     y REAL
@@ -124,8 +127,8 @@ impl ProjectStore {
             "INSERT INTO projects (
                 name, created_at, updated_at,
                 starting_point_type, starting_point_path, starting_point_url, starting_point_branch,
-                worker_scale, time_limit_minutes, max_iterations, human_in_the_loop,
-                docs_path, persist_docs_changes, description, target_branch, x, y
+                worker_scale, time_limit_minutes, human_in_the_loop,
+                docs_path, persist_docs_changes, description, target_branch, runner, x, y
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 &req.name,
@@ -137,12 +140,12 @@ impl ProjectStore {
                 sp_branch,
                 req.worker_scale,
                 req.time_limit_minutes,
-                req.max_iterations,
                 human_in_the_loop as i64,
                 docs_path,
                 persist_docs_changes as i64,
                 req.description,
                 req.target_branch,
+                req.runner,
                 req.x,
                 req.y,
             ],
@@ -157,8 +160,8 @@ impl ProjectStore {
         let mut stmt = self.db.prepare(
             "SELECT id, name, created_at, updated_at,
                     starting_point_type, starting_point_path, starting_point_url, starting_point_branch,
-                    worker_scale, time_limit_minutes, max_iterations, human_in_the_loop,
-                    docs_path, persist_docs_changes, description, target_branch, x, y
+                    worker_scale, time_limit_minutes, human_in_the_loop,
+                    docs_path, persist_docs_changes, description, target_branch, runner, x, y
              FROM projects
              WHERE id = ?1",
         )?;
@@ -175,8 +178,8 @@ impl ProjectStore {
         let mut stmt = self.db.prepare(
             "SELECT id, name, created_at, updated_at,
                     starting_point_type, starting_point_path, starting_point_url, starting_point_branch,
-                    worker_scale, time_limit_minutes, max_iterations, human_in_the_loop,
-                    docs_path, persist_docs_changes, description, target_branch, x, y
+                    worker_scale, time_limit_minutes, human_in_the_loop,
+                    docs_path, persist_docs_changes, description, target_branch, runner, x, y
              FROM projects
              WHERE name = ?1",
         )?;
@@ -193,8 +196,8 @@ impl ProjectStore {
         let mut stmt = self.db.prepare(
             "SELECT id, name, created_at, updated_at,
                     starting_point_type, starting_point_path, starting_point_url, starting_point_branch,
-                    worker_scale, time_limit_minutes, max_iterations, human_in_the_loop,
-                    docs_path, persist_docs_changes, description, target_branch, x, y
+                    worker_scale, time_limit_minutes, human_in_the_loop,
+                    docs_path, persist_docs_changes, description, target_branch, runner, x, y
              FROM projects
              ORDER BY created_at DESC",
         )?;
@@ -244,11 +247,6 @@ impl ProjectStore {
             values.push(Box::new(tl));
         }
 
-        if let Some(mi) = req.max_iterations {
-            updates.push("max_iterations = ?");
-            values.push(Box::new(mi));
-        }
-
         if let Some(hitl) = req.human_in_the_loop {
             updates.push("human_in_the_loop = ?");
             values.push(Box::new(hitl as i64));
@@ -272,6 +270,11 @@ impl ProjectStore {
         if let Some(ref tb) = req.target_branch {
             updates.push("target_branch = ?");
             values.push(Box::new(tb.clone()));
+        }
+
+        if let Some(ref runner) = req.runner {
+            updates.push("runner = ?");
+            values.push(Box::new(runner.clone()));
         }
 
         if let Some(x) = req.x {
@@ -390,12 +393,12 @@ impl ProjectStore {
             starting_point: self.denormalize_starting_point(row)?,
             worker_scale: row.get("worker_scale")?,
             time_limit_minutes: row.get("time_limit_minutes")?,
-            max_iterations: row.get("max_iterations")?,
             human_in_the_loop: row.get::<_, i64>("human_in_the_loop")? != 0,
             docs_path: row.get("docs_path")?,
             persist_docs_changes: row.get::<_, i64>("persist_docs_changes")? != 0,
             description: row.get("description")?,
             target_branch: row.get("target_branch")?,
+            runner: row.get("runner")?,
             x: row.get("x")?,
             y: row.get("y")?,
         })
@@ -418,12 +421,12 @@ mod tests {
             starting_point: StartingPoint::Greenfield,
             worker_scale: Some("2".to_string()),
             time_limit_minutes: Some(60),
-            max_iterations: None,
             human_in_the_loop: Some(true),
             docs_path: Some("docs".to_string()),
             persist_docs_changes: Some(true),
             description: Some("Test project".to_string()),
             target_branch: None,
+            runner: None,
             x: None,
             y: None,
         };
@@ -455,12 +458,12 @@ mod tests {
                 starting_point: StartingPoint::Greenfield,
                 worker_scale: None,
                 time_limit_minutes: None,
-                max_iterations: None,
                 human_in_the_loop: None,
                 docs_path: None,
                 persist_docs_changes: None,
                 description: None,
                 target_branch: None,
+                runner: None,
                 x: None,
                 y: None,
             })
@@ -475,12 +478,12 @@ mod tests {
                 },
                 worker_scale: None,
                 time_limit_minutes: None,
-                max_iterations: None,
                 human_in_the_loop: None,
                 docs_path: None,
                 persist_docs_changes: None,
                 description: None,
                 target_branch: None,
+                runner: None,
                 x: None,
                 y: None,
             })
@@ -502,12 +505,12 @@ mod tests {
                 starting_point: StartingPoint::Greenfield,
                 worker_scale: None,
                 time_limit_minutes: None,
-                max_iterations: None,
                 human_in_the_loop: None,
                 docs_path: None,
                 persist_docs_changes: None,
                 description: None,
                 target_branch: None,
+                runner: None,
                 x: None,
                 y: None,
             })
@@ -521,12 +524,12 @@ mod tests {
                     starting_point: None,
                     worker_scale: Some("4".to_string()),
                     time_limit_minutes: Some(120),
-                    max_iterations: None,
                     human_in_the_loop: None,
                     docs_path: None,
                     persist_docs_changes: None,
                     description: Some("Updated".to_string()),
                     target_branch: None,
+                    runner: None,
                     x: None,
                     y: None,
                 },
@@ -550,12 +553,12 @@ mod tests {
                 starting_point: StartingPoint::Greenfield,
                 worker_scale: None,
                 time_limit_minutes: None,
-                max_iterations: None,
                 human_in_the_loop: None,
                 docs_path: None,
                 persist_docs_changes: None,
                 description: None,
                 target_branch: None,
+                runner: None,
                 x: None,
                 y: None,
             })
@@ -579,12 +582,12 @@ mod tests {
                 starting_point: StartingPoint::Greenfield,
                 worker_scale: None,
                 time_limit_minutes: None,
-                max_iterations: None,
                 human_in_the_loop: None,
                 docs_path: None,
                 persist_docs_changes: None,
                 description: None,
                 target_branch: None,
+                runner: None,
                 x: None,
                 y: None,
             })
@@ -600,12 +603,12 @@ mod tests {
                 },
                 worker_scale: None,
                 time_limit_minutes: None,
-                max_iterations: None,
                 human_in_the_loop: None,
                 docs_path: None,
                 persist_docs_changes: None,
                 description: None,
                 target_branch: None,
+                runner: None,
                 x: None,
                 y: None,
             })
@@ -626,12 +629,12 @@ mod tests {
                 },
                 worker_scale: None,
                 time_limit_minutes: None,
-                max_iterations: None,
                 human_in_the_loop: None,
                 docs_path: None,
                 persist_docs_changes: None,
                 description: None,
                 target_branch: None,
+                runner: None,
                 x: None,
                 y: None,
             })

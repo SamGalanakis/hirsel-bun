@@ -16,32 +16,31 @@ import {
   createSignal,
   onCleanup,
 } from 'solid-js';
+import { invoke } from '@tauri-apps/api/core';
 import { useProject } from '../../stores';
 import { useDelta } from '../../stores/delta-context';
+import { generateSheepSvg } from '../../lib/sheep-avatar';
+import { WorkerDetailModal } from '../runs/WorkerDetailModal';
+import { computeElkLayout, type LayoutInputNode, type ElkLayoutResult } from '../../lib/elk-layout';
 import type {
   DraftNodeTree,
   LiveNodeTree,
   TreeDiff,
   NodeType,
   LiveNodeStatus,
+  WorkerDisplay,
 } from '../../lib/types';
 
 // =============================================================================
-// Layout Constants (Horizontal Tree: root left → children right)
+// Layout Constants
 // =============================================================================
 
-const MIN_NODE_WIDTH = 80;
-const MAX_NODE_WIDTH = 120;
-const NODE_HEIGHT = 26;
-const NODE_LINE_HEIGHT = 12;
-const SIBLING_GAP = 4;
-const LEVEL_GAP = 12;
-const LAYER_OFFSET = 50;     // Compact horizontal offset between layers
-const TREE_PADDING = 12;
-const PROJECT_BAR_WIDTH = 24;  // Narrow vertical bar for project node
+// UI-only constants (not used for layout computation)
 const DIVIDER_WIDTH = 40;
-const CHAR_WIDTH = 5.5;
-const MAX_CHARS_PER_LINE = 16;
+
+// Text rendering constants (must match what Rust uses)
+const CHAR_WIDTH = 5.8;
+const TEXT_PADDING = 20;
 
 interface NodePosition {
   x: number;
@@ -52,20 +51,18 @@ interface NodePosition {
 }
 
 // =============================================================================
-// Helper: Calculate node dimensions with text wrapping
+// Helper: Wrap text to fit within a given width
 // =============================================================================
 
-function calcNodeDimensions(name: string): { width: number; height: number; lines: string[] } {
-  const padding = 20; // dot (6px) + gaps + px padding
+/** Wrap text to fit within the given pixel width (from Rust layout) */
+function wrapTextToWidth(name: string, width: number): string[] {
+  // Derive max chars from width: width = chars * CHAR_WIDTH + TEXT_PADDING
+  const maxChars = Math.floor((width - TEXT_PADDING) / CHAR_WIDTH);
+  const charsPerLine = Math.max(8, maxChars); // Minimum 8 chars
 
   // If name fits on one line, use single line
-  if (name.length <= MAX_CHARS_PER_LINE) {
-    const textWidth = name.length * CHAR_WIDTH;
-    return {
-      width: Math.max(MIN_NODE_WIDTH, Math.min(MAX_NODE_WIDTH, textWidth + padding)),
-      height: NODE_HEIGHT,
-      lines: [name],
-    };
+  if (name.length <= charsPerLine) {
+    return [name];
   }
 
   // Wrap text into multiple lines
@@ -75,12 +72,12 @@ function calcNodeDimensions(name: string): { width: number; height: number; line
 
   for (const word of words) {
     const testLine = currentLine ? `${currentLine} ${word}` : word;
-    if (testLine.length <= MAX_CHARS_PER_LINE) {
+    if (testLine.length <= charsPerLine) {
       currentLine = testLine;
     } else {
       if (currentLine) lines.push(currentLine);
       // If a single word is too long, truncate it
-      currentLine = word.length > MAX_CHARS_PER_LINE ? word.slice(0, MAX_CHARS_PER_LINE - 1) + '…' : word;
+      currentLine = word.length > charsPerLine ? word.slice(0, charsPerLine - 1) + '…' : word;
     }
   }
   if (currentLine) lines.push(currentLine);
@@ -91,44 +88,19 @@ function calcNodeDimensions(name: string): { width: number; height: number; line
     lines[1] = lines[1].slice(0, -1) + '…';
   }
 
-  const maxLineLength = Math.max(...lines.map(l => l.length));
-  const textWidth = maxLineLength * CHAR_WIDTH;
-  const height = NODE_HEIGHT + (lines.length - 1) * NODE_LINE_HEIGHT;
-
-  return {
-    width: Math.max(MIN_NODE_WIDTH, Math.min(MAX_NODE_WIDTH, textWidth + padding)),
-    height,
-    lines,
-  };
+  return lines;
 }
 
 // =============================================================================
-// Column-Based Dependency Layout Algorithm
-//
-// X position = dependency depth (steps from a node with no blockers)
-// Y position = stacked vertically within each column
-// Lines = explicit blocked_by arrows flowing left-to-right
+// Layout Types
 // =============================================================================
 
-interface LayoutNode {
-  id: string;
-  name: string;
-  nodeType?: NodeType;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  lines: string[];
-  validates?: string[];
-  blockedBy?: string[];
-  parentId?: string; // For grouping related nodes
-}
-
-/** Dependency relationship for drawing connector lines */
-interface DependencyRelationship {
-  from: string;    // blocker node ID
-  to: string;      // blocked node ID
-  type: 'blockedBy' | 'validates' | 'project';
+/** Computed edge route with waypoints */
+interface EdgeRoute {
+  from: string;
+  to: string;
+  type: 'blockedBy' | 'validates';
+  waypoints: [number, number][]; // Full path through all waypoints
 }
 
 interface LayoutTreeResult {
@@ -136,430 +108,7 @@ interface LayoutTreeResult {
   width: number;
   height: number;
   evalsWithValidates: { id: string; validates: string[] }[];
-  restructuredTree: { id: string; nodeType?: NodeType; children: any[] }[];
-  crossTreeRelationships: DependencyRelationship[];
-}
-
-function layoutTree<T extends { id: string; name: string; children: T[]; nodeType?: NodeType; validates?: string[]; blockedBy?: string[] }>(
-  roots: T[],
-  _startX: number = 0
-): LayoutTreeResult {
-  const positions = new Map<string, NodePosition>();
-  const evalsWithValidates: { id: string; validates: string[] }[] = [];
-  const dependencyRelationships: DependencyRelationship[] = [];
-
-  if (roots.length === 0) {
-    return { positions, width: MIN_NODE_WIDTH, height: NODE_HEIGHT, evalsWithValidates, restructuredTree: [], crossTreeRelationships: [] };
-  }
-
-  // Flatten all nodes and build lookup maps
-  const allNodes: LayoutNode[] = [];
-  const nodeById = new Map<string, LayoutNode>();
-  const childrenByParent = new Map<string, string[]>();
-
-  function flattenNodes(node: T, parentId?: string) {
-    const dims = calcNodeDimensions(node.name);
-    // Project nodes are narrow vertical bars - height will be computed later
-    const isProjectNode = node.nodeType === 'project';
-    const layoutNode: LayoutNode = {
-      id: node.id,
-      name: node.name,
-      nodeType: node.nodeType,
-      x: 0,
-      y: 0,
-      width: isProjectNode ? PROJECT_BAR_WIDTH : dims.width,
-      height: isProjectNode ? NODE_HEIGHT : dims.height,  // Placeholder, will be updated
-      lines: dims.lines,
-      validates: node.validates,
-      blockedBy: node.blockedBy,
-      parentId,
-    };
-    allNodes.push(layoutNode);
-    nodeById.set(node.id, layoutNode);
-
-    // Track children for grouping
-    if (parentId) {
-      const siblings = childrenByParent.get(parentId) || [];
-      siblings.push(node.id);
-      childrenByParent.set(parentId, siblings);
-    }
-
-    // Collect evals with validates
-    if (node.nodeType === 'eval' && node.validates && node.validates.length > 0) {
-      evalsWithValidates.push({ id: node.id, validates: node.validates });
-    }
-
-    for (const child of node.children) {
-      flattenNodes(child, node.id);
-    }
-  }
-
-  for (const root of roots) {
-    flattenNodes(root);
-  }
-
-  const allNodeIds = new Set(allNodes.map(n => n.id));
-
-  // Find project nodes and other evals for final gate positioning
-  const projectNodes = allNodes.filter(n => n.nodeType === 'project');
-  const otherEvals = allNodes.filter(n => n.nodeType === 'eval' && n.validates && n.validates.length > 0);
-
-  // Compute effective blockers for DEPTH CALCULATION (positioning)
-  // This determines which column a node goes in
-  // Note: Evals use blockers of their validated tasks (same column as what they validate)
-  function getDepthBlockers(node: LayoutNode): string[] {
-    const blockers: string[] = [];
-
-    if (node.nodeType === 'eval') {
-      if (node.validates && node.validates.length > 0) {
-        // Eval should be in same column as tasks it validates
-        // So inherit the blockers OF those tasks (not the tasks themselves)
-        for (const taskId of node.validates) {
-          const task = nodeById.get(taskId);
-          if (task && task.blockedBy) {
-            for (const blockerId of task.blockedBy) {
-              if (allNodeIds.has(blockerId) && !blockers.includes(blockerId)) {
-                blockers.push(blockerId);
-              }
-            }
-          }
-        }
-      }
-      // Empty validates = final gate, no blockers = column 1 (like parentless tasks)
-    }
-
-    // For tasks (and evals with explicit blockedBy), use blocked_by
-    if (node.blockedBy) {
-      for (const blockerId of node.blockedBy) {
-        if (allNodeIds.has(blockerId) && !blockers.includes(blockerId)) {
-          blockers.push(blockerId);
-        }
-      }
-    }
-
-    return blockers;
-  }
-
-  // Compute effective blockers for LINE DRAWING (visual connections)
-  // This determines which lines are drawn
-  function getLineBlockers(node: LayoutNode): string[] {
-    const blockers: string[] = [];
-
-    // Skip project nodes - they don't connect to anything
-    if (node.nodeType === 'project') {
-      return blockers;
-    }
-
-    if (node.nodeType === 'eval') {
-      if (node.validates && node.validates.length > 0) {
-        // Eval validates specific tasks - show lines to those tasks
-        for (const taskId of node.validates) {
-          if (allNodeIds.has(taskId)) {
-            blockers.push(taskId);
-          }
-        }
-      } else if (projectNodes.length > 0) {
-        // Empty validates = final gate, connects to project (like parentless tasks)
-        blockers.push(projectNodes[0].id);
-      }
-    }
-
-    // For tasks (and evals with explicit blockedBy), use blocked_by
-    if (node.blockedBy) {
-      for (const blockerId of node.blockedBy) {
-        if (allNodeIds.has(blockerId) && !blockers.includes(blockerId)) {
-          blockers.push(blockerId);
-        }
-      }
-    }
-
-    // If node has no blockers, connect to project (visual anchor)
-    if (blockers.length === 0 && projectNodes.length > 0) {
-      blockers.push(projectNodes[0].id);
-    }
-
-    return blockers;
-  }
-
-  // Compute dependency depth for each node using Kahn's algorithm
-  const depthByNode = new Map<string, number>();
-  const inDegree = new Map<string, number>();
-  const dependents = new Map<string, string[]>();
-
-  // Initialize
-  for (const node of allNodes) {
-    inDegree.set(node.id, 0);
-    dependents.set(node.id, []);
-  }
-
-  // Build graph
-  for (const node of allNodes) {
-    const blockers = getDepthBlockers(node);
-    inDegree.set(node.id, blockers.length);
-    for (const blockerId of blockers) {
-      dependents.get(blockerId)?.push(node.id);
-    }
-  }
-
-  // BFS to assign depths
-  const queue: string[] = [];
-  for (const node of allNodes) {
-    if ((inDegree.get(node.id) || 0) === 0) {
-      queue.push(node.id);
-      depthByNode.set(node.id, 0);
-    }
-  }
-
-  while (queue.length > 0) {
-    const nodeId = queue.shift()!;
-    const currentDepth = depthByNode.get(nodeId) || 0;
-
-    for (const depId of dependents.get(nodeId) || []) {
-      const newInDegree = (inDegree.get(depId) || 1) - 1;
-      inDegree.set(depId, newInDegree);
-
-      // Update depth to be max of all blockers + 1
-      const existingDepth = depthByNode.get(depId);
-      const newDepth = currentDepth + 1;
-      if (existingDepth === undefined || newDepth > existingDepth) {
-        depthByNode.set(depId, newDepth);
-      }
-
-      if (newInDegree === 0) {
-        queue.push(depId);
-      }
-    }
-  }
-
-  // Handle any cycles (nodes not processed yet) - put them at depth 0
-  for (const node of allNodes) {
-    if (!depthByNode.has(node.id)) {
-      depthByNode.set(node.id, 0);
-    }
-  }
-
-  // Shift all non-project nodes right by 1 so project has its own column
-  for (const node of allNodes) {
-    if (node.nodeType !== 'project') {
-      const currentDepth = depthByNode.get(node.id) || 0;
-      depthByNode.set(node.id, currentDepth + 1);
-    }
-  }
-
-  // Group nodes by depth (column)
-  const nodesByColumn = new Map<number, LayoutNode[]>();
-  for (const node of allNodes) {
-    const depth = depthByNode.get(node.id) || 0;
-    const column = nodesByColumn.get(depth) || [];
-    column.push(node);
-    nodesByColumn.set(depth, column);
-  }
-
-  // =========================================================================
-  // Barycenter Y-positioning to minimize line crossings
-  // Column 0: simple stack. Columns 1+: position at average Y of dependencies.
-  // =========================================================================
-
-  const maxDepth = Math.max(...Array.from(nodesByColumn.keys()), 0);
-
-  // First pass: assign X positions
-  for (const node of allNodes) {
-    const depth = depthByNode.get(node.id) || 0;
-    node.x = TREE_PADDING + depth * LAYER_OFFSET;
-  }
-
-  // Helper: check if two nodes overlap in 2D
-  const nodesOverlap = (a: LayoutNode, b: LayoutNode): boolean => {
-    const xOverlap = a.x < b.x + b.width && a.x + a.width > b.x;
-    const yOverlap = a.y < b.y + b.height && a.y + a.height > b.y;
-    return xOverlap && yOverlap;
-  };
-
-  // Helper: find Y where node doesn't overlap, trying both up and down from target
-  const findNonOverlappingY = (node: LayoutNode, targetY: number, positionedNodes: LayoutNode[]): number => {
-    // Find nodes that could overlap horizontally
-    const horizontallyOverlapping = positionedNodes.filter(other =>
-      node.x < other.x + other.width && node.x + node.width > other.x
-    );
-
-    if (horizontallyOverlapping.length === 0) {
-      return Math.max(TREE_PADDING, targetY);
-    }
-
-    // Sort by Y
-    horizontallyOverlapping.sort((a, b) => a.y - b.y);
-
-    // Try target Y first
-    node.y = Math.max(TREE_PADDING, targetY);
-    let hasOverlap = horizontallyOverlapping.some(other => nodesOverlap(node, other));
-    if (!hasOverlap) return node.y;
-
-    // Find gaps and try to fit - alternate between going up and down
-    const gaps: { start: number; end: number }[] = [];
-
-    // Gap before first node
-    if (horizontallyOverlapping[0].y > TREE_PADDING + node.height + SIBLING_GAP) {
-      gaps.push({ start: TREE_PADDING, end: horizontallyOverlapping[0].y - SIBLING_GAP });
-    }
-
-    // Gaps between nodes
-    for (let i = 0; i < horizontallyOverlapping.length - 1; i++) {
-      const gapStart = horizontallyOverlapping[i].y + horizontallyOverlapping[i].height + SIBLING_GAP;
-      const gapEnd = horizontallyOverlapping[i + 1].y - SIBLING_GAP;
-      if (gapEnd - gapStart >= node.height) {
-        gaps.push({ start: gapStart, end: gapEnd });
-      }
-    }
-
-    // Gap after last node (infinite)
-    const lastNode = horizontallyOverlapping[horizontallyOverlapping.length - 1];
-    gaps.push({ start: lastNode.y + lastNode.height + SIBLING_GAP, end: Infinity });
-
-    // Find best gap (closest to target Y)
-    let bestY = gaps[gaps.length - 1].start; // Default to after last node
-    let bestDistance = Math.abs(bestY - targetY);
-
-    for (const gap of gaps) {
-      // Try fitting at start of gap
-      const fitY = Math.max(gap.start, Math.min(targetY, gap.end - node.height));
-      if (fitY >= gap.start && fitY + node.height <= gap.end) {
-        const distance = Math.abs(fitY - targetY);
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          bestY = fitY;
-        }
-      }
-    }
-
-    return Math.max(TREE_PADDING, bestY);
-  };
-
-  // Track positioned nodes for collision detection
-  const positionedNodes: LayoutNode[] = [];
-
-  // Column 0: project node
-  const col0 = nodesByColumn.get(0) || [];
-  const projectNode = col0.find(n => n.nodeType === 'project');
-
-  // Position columns 1+ with 2D collision detection
-  for (let depth = 1; depth <= maxDepth; depth++) {
-    const nodes = nodesByColumn.get(depth) || [];
-
-    // Calculate target Y based on DEPTH blockers (barycenter positioning)
-    // Use getDepthBlockers for positioning (includes final gate's eval dependencies)
-    // Use getLineBlockers only for actual line drawing
-    const targetYs: { node: LayoutNode; targetY: number }[] = [];
-    for (const node of nodes) {
-      const blockers = getDepthBlockers(node);
-      if (blockers.length > 0) {
-        let sumY = 0;
-        let count = 0;
-        for (const blockerId of blockers) {
-          const blocker = nodeById.get(blockerId);
-          if (blocker && blocker.y !== undefined) {
-            sumY += blocker.y + blocker.height / 2;
-            count++;
-          }
-        }
-        const avgY = count > 0 ? sumY / count - node.height / 2 : TREE_PADDING;
-        targetYs.push({ node, targetY: avgY });
-      } else {
-        targetYs.push({ node, targetY: TREE_PADDING });
-      }
-    }
-
-    // Sort by target Y
-    targetYs.sort((a, b) => a.targetY - b.targetY);
-
-    // Position each node, avoiding overlaps with all previously positioned nodes
-    for (const { node, targetY } of targetYs) {
-      node.y = findNonOverlappingY(node, targetY, positionedNodes);
-      positionedNodes.push(node);
-    }
-  }
-
-  // Make project node a vertical bar spanning all column 1 nodes
-  const col1 = nodesByColumn.get(1) || [];
-  if (projectNode) {
-    if (col1.length > 0) {
-      const sortedCol1 = [...col1].sort((a, b) => a.y - b.y);
-      const firstY = sortedCol1[0].y;
-      const lastNode = sortedCol1[sortedCol1.length - 1];
-      const lastY = lastNode.y + lastNode.height;
-      // Project bar spans from first to last node in column 1
-      projectNode.y = firstY;
-      projectNode.height = lastY - firstY;
-    } else {
-      projectNode.y = TREE_PADDING;
-      projectNode.height = NODE_HEIGHT;
-    }
-  }
-
-  // Store final positions
-  for (const node of allNodes) {
-    positions.set(node.id, {
-      x: node.x,
-      y: node.y,
-      width: node.width,
-      height: node.height,
-      lines: node.lines,
-    });
-  }
-
-  // Collect dependency relationships for drawing lines
-  const projectId = projectNodes.length > 0 ? projectNodes[0].id : null;
-  for (const node of allNodes) {
-    const blockers = getLineBlockers(node);
-    for (const blockerId of blockers) {
-      // Determine relationship type
-      const isProjectConnection = blockerId === projectId;
-      const isValidates = node.nodeType === 'eval' && node.validates?.includes(blockerId);
-      // Final gate eval (empty validates) connecting to project = validates style
-      const isFinalGateToProject = node.nodeType === 'eval' && isProjectConnection &&
-        (!node.validates || node.validates.length === 0);
-      const isBlockedBy = !isProjectConnection && !isValidates && node.blockedBy?.includes(blockerId);
-
-      let type: 'validates' | 'blockedBy' | 'project';
-      if (isValidates || isFinalGateToProject) {
-        type = 'validates';
-      } else if (isBlockedBy) {
-        type = 'blockedBy';
-      } else {
-        type = 'project'; // Default for project connections (tasks)
-      }
-
-      dependencyRelationships.push({
-        from: blockerId,
-        to: node.id,
-        type,
-      });
-    }
-  }
-
-  // Compute bounds
-  const allPositions = Array.from(positions.values());
-  if (allPositions.length === 0) {
-    return { positions, width: MIN_NODE_WIDTH, height: NODE_HEIGHT, evalsWithValidates, restructuredTree: [], crossTreeRelationships: [] };
-  }
-
-  const maxX = Math.max(...allPositions.map(p => p.x + p.width));
-  const maxY = Math.max(...allPositions.map(p => p.y + p.height));
-
-  // Build minimal restructured tree for compatibility (just root nodes, no children needed for column layout)
-  const restructuredTree = roots.map(r => ({
-    id: r.id,
-    nodeType: r.nodeType,
-    children: [],
-  }));
-
-  return {
-    positions,
-    width: maxX + TREE_PADDING,
-    height: maxY + TREE_PADDING,
-    evalsWithValidates,
-    restructuredTree,
-    crossTreeRelationships: dependencyRelationships,
-  };
+  edgeRoutes: EdgeRoute[];
 }
 
 // =============================================================================
@@ -581,89 +130,40 @@ const DraftNodeCard: Component<{
   const isModified = () =>
     props.showDelta && props.diff?.modifiedNodes.some((m) => m.draftNode.id === props.node.id);
   const isEval = () => props.node.nodeType === 'eval';
-  const isProject = () => props.node.nodeType === 'project';
   const isMultiLine = () => props.position.lines.length > 1;
 
   // ==========================================================================
-  // Visual Hierarchy - Distinguished by SHAPE and BORDER only
+  // Visual Hierarchy - Distinguished by SHAPE, BORDER, and GRADIENT
   // NO color for delta status - colors reserved for live status only
   // ==========================================================================
 
-  // PROJECT: The shepherd's lantern - amber tint, prominent border, rounded
-  const projectStyles = () => ({
-    bg: 'linear-gradient(135deg, rgba(212, 165, 116, 0.12) 0%, rgba(36, 36, 36, 0.95) 100%)',
-    border: props.selected ? 'rgba(212, 165, 116, 0.7)' : 'rgba(212, 165, 116, 0.4)',
-    borderWidth: '2px',
-    borderStyle: 'solid',
-    textColor: 'var(--wool-100)',
-    radius: '8px',
-  });
-
-  // EVAL: The gate/checkpoint - DASHED border, dark sage green tint
+  // EVAL: The gate/checkpoint - DASHED border, sage-tinted (green) to match validates edges
   const evalStyles = () => ({
-    bg: 'rgba(42, 45, 40, 0.9)',  // Very subtle green tint
-    border: props.selected ? 'rgba(92, 120, 82, 0.6)' : 'rgba(70, 90, 65, 0.5)',  // sage-dark tones
+    bg: 'linear-gradient(135deg, rgba(38, 45, 40, 0.95) 0%, rgba(32, 38, 34, 0.98) 100%)',
+    border: props.selected ? 'rgba(100, 140, 90, 0.6)' : 'rgba(70, 100, 65, 0.5)',
     borderWidth: '1px',
     borderStyle: 'dashed',
     textColor: 'var(--wool-300)',
     radius: '5px',
+    boxShadow: props.selected
+      ? '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.03)'
+      : '0 2px 4px rgba(0,0,0,0.25)',
   });
 
-  // TASK: The sheep - neutral, solid border, standard rounded
+  // TASK: The sheep - warmer, more grounded gradient
   const taskStyles = () => ({
-    bg: 'rgba(42, 40, 38, 0.85)',
-    border: props.selected ? 'rgba(140, 135, 130, 0.5)' : 'rgba(80, 76, 72, 0.45)',
+    bg: 'linear-gradient(135deg, rgba(45, 42, 38, 0.95) 0%, rgba(38, 35, 32, 0.98) 100%)',
+    border: props.selected ? 'rgba(140, 130, 115, 0.5)' : 'rgba(90, 85, 78, 0.4)',
     borderWidth: '1px',
-    borderStyle: 'solid',  // Solid = work task
+    borderStyle: 'solid',
     textColor: 'var(--wool-300)',
     radius: '5px',
+    boxShadow: props.selected
+      ? '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.03)'
+      : '0 2px 4px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.02)',
   });
 
-  const styles = () => isProject() ? projectStyles() : isEval() ? evalStyles() : taskStyles();
-
-  // Project nodes render as vertical bars
-  if (isProject()) {
-    return (
-      <div
-        class={`absolute cursor-pointer group ${props.selected ? 'z-10' : ''}`}
-        style={{
-          left: `${props.position.x}px`,
-          top: `${props.position.y}px`,
-          width: `${props.position.width}px`,
-          height: `${props.position.height}px`,
-        }}
-        onClick={() => props.onSelect()}
-        onDblClick={() => props.onDoubleClick()}
-        onContextMenu={(e) => props.onContextMenu(e)}
-      >
-        <div
-          class="h-full w-full flex items-center justify-center relative"
-          style={{
-            background: styles().bg,
-            border: `${styles().borderWidth} ${styles().borderStyle} ${styles().border}`,
-            'border-radius': styles().radius,
-            'box-shadow': props.selected ? '0 2px 8px rgba(0,0,0,0.3)' : undefined,
-          }}
-        >
-          {/* Vertical text centered in bar */}
-          <span
-            class="text-[9px] font-semibold whitespace-nowrap"
-            style={{
-              color: styles().textColor,
-              'writing-mode': 'vertical-rl',
-              'text-orientation': 'mixed',
-              transform: 'rotate(180deg)',
-              'max-height': `${props.position.height - 8}px`,
-              overflow: 'hidden',
-              'text-overflow': 'ellipsis',
-            }}
-          >
-            {props.node.name}
-          </span>
-        </div>
-      </div>
-    );
-  }
+  const styles = () => isEval() ? evalStyles() : taskStyles();
 
   return (
     <div
@@ -679,20 +179,20 @@ const DraftNodeCard: Component<{
       onContextMenu={(e) => props.onContextMenu(e)}
     >
       <div
-        class={`h-full flex items-center gap-1.5 px-2 relative ${isMultiLine() ? 'flex-col justify-center !items-start py-1' : ''}`}
+        class={`h-full flex items-center justify-center px-2 relative ${isMultiLine() ? 'flex-col py-1' : ''}`}
         style={{
           background: styles().bg,
           border: `${styles().borderWidth} ${styles().borderStyle} ${styles().border}`,
           'border-radius': styles().radius,
-          'box-shadow': props.selected ? '0 2px 8px rgba(0,0,0,0.3)' : undefined,
+          'box-shadow': styles().boxShadow,
         }}
       >
-        {/* Name text - no icons, just text */}
-        <div class={`flex-1 min-w-0 ${isMultiLine() ? 'flex flex-col gap-0.5' : ''}`}>
+        {/* Name text - centered */}
+        <div class={`min-w-0 ${isMultiLine() ? 'flex flex-col gap-0.5 items-center' : ''}`}>
           <For each={props.position.lines}>
             {(line) => (
               <span
-                class="text-[10px] truncate leading-tight block font-medium"
+                class="text-[10px] truncate leading-tight block font-medium text-center"
                 style={{ color: styles().textColor }}
               >
                 {line}
@@ -701,16 +201,11 @@ const DraftNodeCard: Component<{
           </For>
         </div>
       </div>
+      {/* Connection anchor indicators (visible on hover) */}
+      <div class="absolute left-1/2 -bottom-1 w-1.5 h-1.5 rounded-full bg-wool-600/50 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity" />
+      <div class="absolute left-1/2 -top-1 w-1.5 h-1.5 rounded-full bg-wool-600/50 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity" />
     </div>
   );
-};
-
-// Helper to recursively check if a node tree is completely done
-const isTreeDone = (node: LiveNodeTree): boolean => {
-  if (node.children.length > 0) {
-    return node.children.every(child => isTreeDone(child));
-  }
-  return node.status === 'done';
 };
 
 const LiveNodeCard: Component<{
@@ -724,16 +219,9 @@ const LiveNodeCard: Component<{
   const isDeleted = () =>
     props.showDelta && props.diff?.deletedNodes.some((n) => n.id === props.node.id);
   const isEval = () => props.node.nodeType === 'eval';
-  const isProject = () => props.node.nodeType === 'project';
   const isMultiLine = () => props.position.lines.length > 1;
   const isWorking = () => props.node.status === 'working';
-  // Project nodes compute status from children for robustness
-  const isDone = () => {
-    if (isProject() && props.node.children.length > 0) {
-      return props.node.children.every(child => isTreeDone(child));
-    }
-    return props.node.status === 'done';
-  };
+  const isDone = () => props.node.status === 'done';
   const isFailed = () => props.node.status === 'failed';
 
   // ==========================================================================
@@ -741,37 +229,33 @@ const LiveNodeCard: Component<{
   // Status shown via subtle external glow only (no internal changes)
   // ==========================================================================
 
-  // PROJECT: The shepherd's lantern - amber tint, prominent border, rounded
-  const projectStyles = () => ({
-    bg: 'linear-gradient(135deg, rgba(212, 165, 116, 0.12) 0%, rgba(36, 36, 36, 0.95) 100%)',
-    border: props.selected ? 'rgba(212, 165, 116, 0.7)' : 'rgba(212, 165, 116, 0.4)',
-    borderWidth: '2px',
-    borderStyle: 'solid',
-    textColor: 'var(--wool-100)',
-    radius: '8px',
-  });
-
-  // EVAL: The gate/checkpoint - DASHED border, dark sage green tint
+  // EVAL: The gate/checkpoint - DASHED border, sage-tinted (green) to match validates edges
   const evalStyles = () => ({
-    bg: 'rgba(42, 45, 40, 0.9)',  // Very subtle green tint
-    border: props.selected ? 'rgba(92, 120, 82, 0.6)' : 'rgba(70, 90, 65, 0.5)',  // sage-dark tones
+    bg: 'linear-gradient(135deg, rgba(38, 45, 40, 0.95) 0%, rgba(32, 38, 34, 0.98) 100%)',
+    border: props.selected ? 'rgba(100, 140, 90, 0.6)' : 'rgba(70, 100, 65, 0.5)',
     borderWidth: '1px',
     borderStyle: 'dashed',
     textColor: 'var(--wool-300)',
     radius: '5px',
+    boxShadow: props.selected
+      ? '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.03)'
+      : '0 2px 4px rgba(0,0,0,0.25)',
   });
 
-  // TASK: The sheep - neutral, solid border, standard rounded
+  // TASK: The sheep - warmer, more grounded gradient
   const taskStyles = () => ({
-    bg: 'rgba(42, 40, 38, 0.85)',
-    border: props.selected ? 'rgba(140, 135, 130, 0.5)' : 'rgba(80, 76, 72, 0.45)',
+    bg: 'linear-gradient(135deg, rgba(45, 42, 38, 0.95) 0%, rgba(38, 35, 32, 0.98) 100%)',
+    border: props.selected ? 'rgba(140, 130, 115, 0.5)' : 'rgba(90, 85, 78, 0.4)',
     borderWidth: '1px',
-    borderStyle: 'solid',  // Solid = work task
+    borderStyle: 'solid',
     textColor: 'var(--wool-300)',
     radius: '5px',
+    boxShadow: props.selected
+      ? '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.03)'
+      : '0 2px 4px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.02)',
   });
 
-  const styles = () => isProject() ? projectStyles() : isEval() ? evalStyles() : taskStyles();
+  const styles = () => isEval() ? evalStyles() : taskStyles();
 
   // Status glow - external indicator that doesn't affect card dimensions
   const statusGlow = () => {
@@ -781,89 +265,17 @@ const LiveNodeCard: Component<{
     return undefined;  // pending = no glow
   };
 
-  // Combined shadow: selection shadow + status glow
+  // Combined shadow: base shadow + status glow
   const combinedShadow = () => {
-    const shadows: string[] = [];
-    if (props.selected) shadows.push('0 2px 8px rgba(0,0,0,0.3)');
+    const shadows: string[] = [styles().boxShadow];
     const glow = statusGlow();
     if (glow) shadows.push(glow);
-    return shadows.length > 0 ? shadows.join(', ') : undefined;
+    return shadows.join(', ');
   };
-
-  // Project nodes render as vertical bars
-  if (isProject()) {
-    return (
-      <div
-        class={`absolute cursor-pointer ${props.selected ? 'z-10' : ''}`}
-        style={{
-          left: `${props.position.x}px`,
-          top: `${props.position.y}px`,
-          width: `${props.position.width}px`,
-          height: `${props.position.height}px`,
-        }}
-        onClick={() => props.onSelect()}
-      >
-        <div
-          class={`h-full w-full flex items-center justify-center relative ${isDeleted() ? 'opacity-40' : ''}`}
-          style={{
-            background: styles().bg,
-            border: `${styles().borderWidth} ${styles().borderStyle} ${isDeleted() ? 'rgba(196, 92, 74, 0.4)' : styles().border}`,
-            'border-radius': styles().radius,
-            'box-shadow': combinedShadow(),
-          }}
-        >
-          {/* Vertical text centered in bar */}
-          <span
-            class="text-[9px] font-semibold whitespace-nowrap"
-            style={{
-              color: styles().textColor,
-              'writing-mode': 'vertical-rl',
-              'text-orientation': 'mixed',
-              transform: 'rotate(180deg)',
-              'max-height': `${props.position.height - 8}px`,
-              overflow: 'hidden',
-              'text-overflow': 'ellipsis',
-            }}
-          >
-            {props.node.name}
-          </span>
-        </div>
-
-        {/* Status corner badge */}
-        <Show when={isDone() || isFailed() || isWorking()}>
-          <div
-            class="absolute -top-1 -right-1 flex items-center justify-center rounded-full"
-            style={{
-              width: '14px',
-              height: '14px',
-              background: isDone() ? 'var(--sage)' : isFailed() ? 'var(--terra)' : 'var(--amber-500)',
-              'box-shadow': '0 1px 3px rgba(0,0,0,0.3)',
-            }}
-          >
-            <Show when={isDone()}>
-              <svg class="w-2.5 h-2.5 text-pasture-900" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M20 6 9 17l-5-5" />
-              </svg>
-            </Show>
-            <Show when={isFailed()}>
-              <svg class="w-2.5 h-2.5 text-pasture-900" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M18 6 6 18M6 6l12 12" />
-              </svg>
-            </Show>
-            <Show when={isWorking()}>
-              <svg class="w-2.5 h-2.5 text-pasture-900 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-              </svg>
-            </Show>
-          </div>
-        </Show>
-      </div>
-    );
-  }
 
   return (
     <div
-      class={`absolute cursor-pointer ${props.selected ? 'z-10' : ''}`}
+      class={`absolute cursor-pointer group ${props.selected ? 'z-10' : ''}`}
       style={{
         left: `${props.position.x}px`,
         top: `${props.position.y}px`,
@@ -873,7 +285,7 @@ const LiveNodeCard: Component<{
       onClick={() => props.onSelect()}
     >
       <div
-        class={`h-full flex items-center gap-1.5 px-2 relative ${isDeleted() ? 'opacity-40' : ''} ${isMultiLine() ? 'flex-col justify-center !items-start py-1' : ''}`}
+        class={`h-full flex items-center justify-center px-2 relative ${isDeleted() ? 'opacity-40' : ''} ${isMultiLine() ? 'flex-col py-1' : ''}`}
         style={{
           background: styles().bg,
           border: `${styles().borderWidth} ${styles().borderStyle} ${isDeleted() ? 'rgba(196, 92, 74, 0.4)' : styles().border}`,
@@ -881,12 +293,12 @@ const LiveNodeCard: Component<{
           'box-shadow': combinedShadow(),
         }}
       >
-        {/* Name text - no icons, just text */}
-        <div class={`flex-1 min-w-0 ${isMultiLine() ? 'flex flex-col gap-0.5' : ''}`}>
+        {/* Name text - centered */}
+        <div class={`min-w-0 ${isMultiLine() ? 'flex flex-col gap-0.5 items-center' : ''}`}>
           <For each={props.position.lines}>
             {(line) => (
               <span
-                class="text-[10px] truncate leading-tight block font-medium"
+                class="text-[10px] truncate leading-tight block font-medium text-center"
                 style={{ color: styles().textColor }}
               >
                 {line}
@@ -932,84 +344,77 @@ const LiveNodeCard: Component<{
           style={{ background: 'var(--terra)' }}
         />
       </Show>
+
+      {/* Connection anchor indicators (visible on hover) */}
+      <div class="absolute left-1/2 -bottom-1 w-1.5 h-1.5 rounded-full bg-wool-600/50 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity" />
+      <div class="absolute left-1/2 -top-1 w-1.5 h-1.5 rounded-full bg-wool-600/50 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity" />
     </div>
   );
 };
 
 // =============================================================================
-// Dependency Connectors (Orthogonal Routing)
+// Dependency Connectors (Polyline through waypoints)
 // =============================================================================
 
 const DependencyConnectors: Component<{
-  positions: Map<string, NodePosition>;
-  relationships: DependencyRelationship[];
+  edgeRoutes: EdgeRoute[];
 }> = (props) => {
-  const paths = createMemo(() => {
-    const result: { from: NodePosition; to: NodePosition; type: 'validates' | 'blockedBy' | 'project' }[] = [];
-
-    for (const rel of props.relationships) {
-      const fromPos = props.positions.get(rel.from);
-      const toPos = props.positions.get(rel.to);
-      if (fromPos && toPos) {
-        result.push({ from: fromPos, to: toPos, type: rel.type });
-      }
-    }
-
-    return result;
-  });
-
   return (
     <svg class="absolute inset-0 pointer-events-none overflow-visible" style={{ 'z-index': 0 }}>
-      <For each={paths()}>
+      {/* Arrowhead markers */}
+      <defs>
+        <marker
+          id="arrow-blockedBy"
+          viewBox="0 0 10 10"
+          refX="9"
+          refY="5"
+          markerWidth="6"
+          markerHeight="6"
+          orient="auto-start-reverse"
+        >
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="rgb(145, 85, 70)" />
+        </marker>
+        <marker
+          id="arrow-validates"
+          viewBox="0 0 10 10"
+          refX="9"
+          refY="5"
+          markerWidth="5"
+          markerHeight="5"
+          orient="auto-start-reverse"
+        >
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="rgb(85, 115, 75)" />
+        </marker>
+      </defs>
+
+      <For each={props.edgeRoutes}>
         {(edge) => {
-          // Connect center-right of source to center-left of target
-          const x1 = edge.from.x + edge.from.width;
-          const x2 = edge.to.x;
-          const y2 = edge.to.y + edge.to.height / 2;
+          const { waypoints, type } = edge;
+          if (waypoints.length < 2) return null;
 
-          // For project connections, y1 should match y2 so line is horizontal
-          // (project bar spans full height, so we connect at target's Y level)
-          const isFromProjectBar = edge.type === 'project';
-          const y1 = isFromProjectBar ? y2 : edge.from.y + edge.from.height / 2;
-
-          // Orthogonal routing: right-angle lines
-          // Route: horizontal at source Y level → vertical in gap before target → horizontal to target
-          // This avoids crossing through nodes in intermediate columns
-          const turnX = x2 - LEVEL_GAP / 2; // Turn point in the gap before target
-
-          let pathD: string;
-          if (Math.abs(y2 - y1) < 2) {
-            // Same Y level - straight horizontal line
-            pathD = `M ${x1} ${y1} L ${x2} ${y2}`;
-          } else {
-            // Different Y levels - go horizontal first, then vertical near target
-            pathD = `M ${x1} ${y1} L ${turnX} ${y1} L ${turnX} ${y2} L ${x2} ${y2}`;
-          }
+          // Build SVG path through all waypoints
+          const pathD = waypoints
+            .map((pt, i) => `${i === 0 ? 'M' : 'L'} ${pt[0]} ${pt[1]}`)
+            .join(' ');
 
           // Styling based on relationship type
-          const isValidates = edge.type === 'validates';
-          const isBlockedBy = edge.type === 'blockedBy';
+          const isValidates = type === 'validates';
 
-          // Validates: sage green solid (eval checking task)
-          // BlockedBy: terra/red dashed (task depends on task)
-          // Default (project connections): neutral solid
+          // BlockedBy: terra/red lines (dependency flows to target)
+          // Validates: sage/green lines (validation flows to target)
           const strokeColor = isValidates
-            ? 'rgb(70, 90, 65)'     // Dark sage for validates
-            : isBlockedBy
-            ? 'rgb(160, 82, 65)'    // Terra/red for blockedBy
-            : 'rgb(90, 85, 80)';    // Neutral for project connections
-          const strokeDash = isBlockedBy
-            ? '4 3'  // Dashed for blockedBy
-            : undefined; // Solid for validates and project
+            ? 'rgb(85, 115, 75)'     // Sage/green for validates
+            : 'rgb(145, 85, 70)';    // Terra/red for blockedBy
+          const strokeWidth = isValidates ? 1 : 1.25;
+          const markerId = isValidates ? 'arrow-validates' : 'arrow-blockedBy';
 
           return (
             <path
               d={pathD}
               fill="none"
               stroke={strokeColor}
-              stroke-width={1}
-              stroke-dasharray={strokeDash}
-              opacity={0.6}
+              stroke-width={strokeWidth}
+              marker-end={`url(#${markerId})`}
             />
           );
         }}
@@ -1020,17 +425,15 @@ const DependencyConnectors: Component<{
 
 
 // =============================================================================
-// Helper: Synthesize Live Tree with Project Hierarchy from Draft
+// Helper: Build Live Tree from Draft Structure
 //
-// Since project nodes are UI-only and not stored in the live_nodes table,
-// we rebuild the project structure from the draft tree when rendering live.
+// Uses draft tree structure to organize live nodes into a hierarchical tree.
 // =============================================================================
 
 /**
- * Build live tree with project structure from draft tree.
- * Project nodes are synthesized; tasks/evals come from actual live nodes.
+ * Build live tree structure from draft tree, matching live nodes to their draft IDs.
  */
-function buildLiveTreeWithProjects(
+function buildLiveTreeFromDraft(
   draftTree: DraftNodeTree[],
   liveNodes: LiveNodeTree[]
 ): LiveNodeTree[] {
@@ -1042,52 +445,22 @@ function buildLiveTreeWithProjects(
 
   // Recursively build tree using draft structure
   const buildNode = (draft: DraftNodeTree): LiveNodeTree | null => {
-    if (draft.nodeType === 'project') {
-      // Project nodes: synthesize from children
-      const children = draft.children
-        .map(child => buildNode(child))
-        .filter((n): n is LiveNodeTree => n !== null);
+    // Look up corresponding live node
+    const live = liveById.get(draft.id);
+    if (!live) return null; // Not dispatched yet
 
-      if (children.length === 0) return null; // No live children yet
+    // Recursively build children from draft structure
+    const children = draft.children
+      .map(child => buildNode(child))
+      .filter((n): n is LiveNodeTree => n !== null);
 
-      // Compute status from children
-      const allDone = children.every(c => c.status === 'done');
-      const anyWorking = children.some(c => c.status === 'working');
-      const anyFailed = children.some(c => c.status === 'failed');
-      const status: LiveNodeStatus = anyFailed ? 'failed' : anyWorking ? 'working' : allDone ? 'done' : 'pending';
-
-      return {
-        id: draft.id,
-        draftNodeId: draft.id,
-        name: draft.name,
-        nodeType: 'project',
-        content: draft.content,
-        status,
-        validates: [],
-        blockedBy: [],
-        children,
-        x: draft.x,
-        y: draft.y,
-        completedAt: null,
-        lastCommitSha: null,
-      };
-    } else {
-      // Task/eval: look up live node
-      const live = liveById.get(draft.id);
-      if (!live) return null; // Not dispatched yet
-
-      // Recursively build children from draft structure
-      const children = draft.children
-        .map(child => buildNode(child))
-        .filter((n): n is LiveNodeTree => n !== null);
-
-      return {
-        ...live,
-        children,
-      };
-    }
+    return {
+      ...live,
+      children,
+    };
   };
 
+  // Build tree for each root
   return draftTree
     .map(root => buildNode(root))
     .filter((n): n is LiveNodeTree => n !== null);
@@ -1138,14 +511,168 @@ export const SpecBoard: Component = () => {
   const [activePanSide, setActivePanSide] = createSignal<'draft' | 'live' | null>(null);
   let canvasRef: HTMLDivElement | undefined;
 
+  // Worker state
+  const [workers, setWorkers] = createSignal<WorkerDisplay[]>([]);
+  const [selectedWorker, setSelectedWorker] = createSignal<WorkerDisplay | null>(null);
+  let workerScrollRef: HTMLDivElement | undefined;
+
   // Build live tree with project hierarchy from draft (project nodes are UI-only)
   const liveTreeWithProjects = createMemo(() =>
-    buildLiveTreeWithProjects(delta.draftTree(), delta.liveTree())
+    buildLiveTreeFromDraft(delta.draftTree(), delta.liveTree())
   );
 
-  // Computed layouts
-  const draftLayout = createMemo(() => layoutTree(delta.draftTree(), 0));
-  const liveLayout = createMemo(() => layoutTree(liveTreeWithProjects(), 0));
+  // Layout state (computed via ELK.js in frontend)
+  const [draftLayoutResult, setDraftLayoutResult] = createSignal<ElkLayoutResult | null>(null);
+  const [liveLayoutResult, setLiveLayoutResult] = createSignal<ElkLayoutResult | null>(null);
+
+  // Convert tree nodes to ELK input format
+  const treeToLayoutNodes = (trees: (DraftNodeTree | LiveNodeTree)[]): LayoutInputNode[] => {
+    const convert = (node: DraftNodeTree | LiveNodeTree): LayoutInputNode => ({
+      id: node.id,
+      name: node.name,
+      nodeType: node.nodeType,
+      blockedBy: node.blockedBy,
+      validates: node.validates,
+      children: node.children.map(convert),
+    });
+    return trees.map(convert);
+  };
+
+  // Compute draft layout when tree changes (using ELK.js)
+  createEffect(() => {
+    const trees = delta.draftTree();
+    if (trees.length === 0) {
+      setDraftLayoutResult(null);
+      return;
+    }
+    // Compute layout using ELK.js
+    const layoutNodes = treeToLayoutNodes(trees);
+    computeElkLayout(layoutNodes)
+      .then(setDraftLayoutResult)
+      .catch(e => console.warn('Failed to compute draft layout:', e));
+  });
+
+  // Compute live layout when tree changes (using ELK.js)
+  createEffect(() => {
+    const trees = liveTreeWithProjects();
+    if (trees.length === 0) {
+      setLiveLayoutResult(null);
+      return;
+    }
+    // Compute layout using ELK.js
+    const layoutNodes = treeToLayoutNodes(trees);
+    computeElkLayout(layoutNodes)
+      .then(setLiveLayoutResult)
+      .catch(e => console.warn('Failed to compute live layout:', e));
+  });
+
+  // Transform ELK layout to LayoutTreeResult format for rendering
+  const transformLayout = (
+    elkLayout: ElkLayoutResult | null,
+    trees: DraftNodeTree[] | LiveNodeTree[]
+  ): LayoutTreeResult => {
+    const positions = new Map<string, NodePosition>();
+    const edgeRoutes: EdgeRoute[] = [];
+    const evalsWithValidates: { id: string; validates: string[] }[] = [];
+
+    if (!elkLayout || trees.length === 0) {
+      return {
+        positions,
+        width: 0,
+        height: 0,
+        evalsWithValidates,
+        edgeRoutes,
+      };
+    }
+
+    // Build position map, adding text wrapping info
+    for (const pos of elkLayout.positions) {
+      if (pos.isDummy) continue; // Skip dummy nodes
+
+      // Find the node to get its name for text wrapping
+      const node = findNodeById(trees, pos.id);
+      const name = node?.name || '';
+
+      positions.set(pos.id, {
+        x: pos.x,
+        y: pos.y,
+        width: pos.width,
+        height: pos.height,
+        lines: wrapTextToWidth(name, pos.width),
+      });
+    }
+
+    // Transform ELK edges to our format - pass waypoints through directly
+    for (const edge of elkLayout.edges) {
+      if (edge.waypoints.length < 2) continue;
+
+      edgeRoutes.push({
+        from: edge.fromId,
+        to: edge.toId,
+        type: edge.edgeType,
+        waypoints: edge.waypoints,
+      });
+    }
+
+    // Collect evals with validates
+    const flatNodes = flattenTree(trees);
+    for (const node of flatNodes) {
+      if (node.nodeType === 'eval' && 'validates' in node && node.validates && node.validates.length > 0) {
+        evalsWithValidates.push({ id: node.id, validates: node.validates as string[] });
+      }
+    }
+
+    return {
+      positions,
+      width: elkLayout.width,
+      height: elkLayout.height,
+      evalsWithValidates,
+      edgeRoutes,
+    };
+  };
+
+  // Helper to find node by ID in tree
+  const findNodeById = (trees: (DraftNodeTree | LiveNodeTree)[], id: string): DraftNodeTree | LiveNodeTree | null => {
+    for (const root of trees) {
+      if (root.id === id) return root;
+      const found = findInChildren(root.children, id);
+      if (found) return found;
+    }
+    return null;
+  };
+
+  const findInChildren = (children: (DraftNodeTree | LiveNodeTree)[], id: string): DraftNodeTree | LiveNodeTree | null => {
+    for (const child of children) {
+      if (child.id === id) return child;
+      const found = findInChildren(child.children, id);
+      if (found) return found;
+    }
+    return null;
+  };
+
+  // Helper to flatten tree
+  const flattenTree = (trees: (DraftNodeTree | LiveNodeTree)[]): (DraftNodeTree | LiveNodeTree)[] => {
+    const result: (DraftNodeTree | LiveNodeTree)[] = [];
+    const flatten = (node: DraftNodeTree | LiveNodeTree) => {
+      result.push(node);
+      for (const child of node.children) {
+        flatten(child);
+      }
+    };
+    for (const tree of trees) {
+      flatten(tree);
+    }
+    return result;
+  };
+
+  // Computed layouts from Rust
+  const draftLayout = createMemo(() =>
+    transformLayout(draftLayoutResult(), delta.draftTree())
+  );
+
+  const liveLayout = createMemo(() =>
+    transformLayout(liveLayoutResult(), liveTreeWithProjects())
+  );
 
   // Check if we have a live tree (post-dispatch)
   const hasLiveTree = () => liveTreeWithProjects().length > 0;
@@ -1173,6 +700,31 @@ export const SpecBoard: Component = () => {
     if (run.status === 'working' && liveNodes.length > 0 && allPending) return 'starting';
 
     return 'idle';
+  });
+
+  // Fetch workers when a project run is active
+  createEffect(() => {
+    const run = delta.projectRun();
+    if (!run) {
+      setWorkers([]);
+      return;
+    }
+
+    const fetchWorkers = async () => {
+      try {
+        const result = await invoke<WorkerDisplay[]>('get_workers', { runName: run.runName });
+        setWorkers(result);
+      } catch (e) {
+        console.warn('Failed to fetch workers:', e);
+      }
+    };
+
+    // Initial fetch
+    fetchWorkers();
+
+    // Poll every 2 seconds while run is active
+    const interval = setInterval(fetchWorkers, 2000);
+    onCleanup(() => clearInterval(interval));
   });
 
   // Layout constants
@@ -1339,34 +891,18 @@ export const SpecBoard: Component = () => {
     await delta.dispatch();
   };
 
-  const handleResetTree = async () => {
-    const confirmed = await window.confirmDialog?.show({
-      title: 'Reset Tree',
-      message: 'This will delete all tasks and evals, keeping only the project root. This cannot be undone.',
-      confirmText: 'Reset',
-      danger: true,
-    });
-    if (confirmed) {
-      await delta.resetTree();
-    }
-    hideContextMenu();
-  };
+  const handleAttachWorker = async () => {
+    const worker = selectedWorker();
+    const run = delta.projectRun();
+    if (!worker || !run) return;
 
-  const handleDeleteProject = async () => {
-    const projectName = project.selectedProject()?.name || 'this project';
-    const confirmed = await window.confirmDialog?.show({
-      title: 'Delete Project',
-      message: `Are you sure you want to delete "${projectName}"? This will remove the project and all its tasks. This cannot be undone.`,
-      confirmText: 'Delete Project',
-      danger: true,
-    });
-    if (confirmed) {
-      const projectId = project.selectedProjectId();
-      if (projectId) {
-        await project.removeProject(projectId);
-      }
+    try {
+      await invoke('attach_worker', { runName: run.runName, workerName: worker.name });
+      setSelectedWorker(null);
+    } catch (e) {
+      console.error('Failed to attach to worker:', e);
+      window.toast?.error(`Failed to attach: ${e}`);
     }
-    hideContextMenu();
   };
 
   // Keyboard shortcuts
@@ -1376,7 +912,8 @@ export const SpecBoard: Component = () => {
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
       if (e.key === 'Escape') {
-        if (editingNode()) setEditingNode(null);
+        if (selectedWorker()) setSelectedWorker(null);
+        else if (editingNode()) setEditingNode(null);
         else if (showNewPrompt()) setShowNewPrompt(false);
         else if (contextMenu()) hideContextMenu();
       }
@@ -1606,11 +1143,122 @@ export const SpecBoard: Component = () => {
           class="flex items-center justify-between px-3 py-2"
           style={{ 'border-bottom': '1px solid rgba(51, 51, 51, 0.5)' }}
         >
-          <div class="flex items-center gap-2">
-            {/* Project name shown here if needed */}
-          </div>
+          {/* Left spacer for balance */}
+          <div class="flex-1" />
 
-          <div class="flex items-center gap-2">
+          {/* Center: Worker Carousel */}
+          <Show when={workers().length > 0}>
+            <div
+              class="flex items-center gap-2 px-2.5 py-1.5 rounded-full"
+              style={{
+                background: 'rgba(36, 36, 36, 0.5)',
+                border: '1px solid rgba(64, 64, 64, 0.4)',
+              }}
+            >
+              {/* Flock label */}
+              <span class="text-[9px] text-wool-500 font-medium uppercase tracking-wider">
+                Flock
+              </span>
+
+              {/* Worker avatars carousel */}
+              <div
+                ref={workerScrollRef}
+                class="flex items-center gap-1.5 overflow-x-auto scrollbar-none"
+                style={{ 'max-width': 'min(320px, 40vw)' }}
+              >
+                <For each={workers()}>
+                  {(worker) => {
+                    const isWorking = () => worker.status === 'working';
+                    const isError = () => worker.status === 'error';
+                    const isHitl = () => worker.hitlWaiting;
+
+                    return (
+                      <button
+                        onClick={() => setSelectedWorker(worker)}
+                        class="relative flex-shrink-0 rounded-full transition-all hover:scale-110 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+                        style={{
+                          width: '32px',
+                          height: '32px',
+                          'box-shadow': isWorking()
+                            ? '0 0 12px rgba(212, 165, 116, 0.5)'
+                            : isError()
+                            ? '0 0 10px rgba(196, 92, 74, 0.5)'
+                            : isHitl()
+                            ? '0 0 10px rgba(201, 162, 39, 0.5)'
+                            : undefined,
+                        }}
+                        title={`${worker.name} · ${worker.status}${worker.currentTask ? ` · ${worker.currentTask}` : ''}`}
+                      >
+                        <div
+                          innerHTML={generateSheepSvg(worker.sheepConfig, 32, worker.status)}
+                          class="w-full h-full"
+                        />
+                        {/* HITL indicator dot */}
+                        <Show when={isHitl()}>
+                          <div
+                            class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full animate-pulse"
+                            style={{ background: 'var(--golden)' }}
+                          />
+                        </Show>
+                      </button>
+                    );
+                  }}
+                </For>
+              </div>
+
+              {/* Status indicator */}
+              <Show when={liveRunStatus()}>
+                <div
+                  class="flex items-center gap-1.5 pl-2"
+                  style={{ 'border-left': '1px solid rgba(64, 64, 64, 0.5)' }}
+                >
+                  <div
+                    class={`w-1.5 h-1.5 rounded-full ${
+                      liveRunStatus() === 'working' || liveRunStatus() === 'starting'
+                        ? 'animate-pulse'
+                        : ''
+                    }`}
+                    style={{
+                      background:
+                        liveRunStatus() === 'working'
+                          ? 'var(--amber-500)'
+                          : liveRunStatus() === 'starting'
+                          ? 'var(--amber-400)'
+                          : liveRunStatus() === 'done'
+                          ? 'var(--sage)'
+                          : liveRunStatus() === 'failed'
+                          ? 'var(--terra)'
+                          : liveRunStatus() === 'paused'
+                          ? 'var(--golden)'
+                          : 'var(--wool-600)',
+                    }}
+                  />
+                  <span
+                    class="text-[9px] font-medium"
+                    style={{
+                      color:
+                        liveRunStatus() === 'working'
+                          ? 'var(--amber-400)'
+                          : liveRunStatus() === 'starting'
+                          ? 'var(--amber-300)'
+                          : liveRunStatus() === 'done'
+                          ? 'var(--sage)'
+                          : liveRunStatus() === 'failed'
+                          ? 'var(--terra)'
+                          : liveRunStatus() === 'paused'
+                          ? 'var(--golden)'
+                          : 'var(--wool-600)',
+                    }}
+                  >
+                    {liveRunStatus()}
+                  </span>
+                </div>
+              </Show>
+            </div>
+          </Show>
+
+          {/* Right side: Controls */}
+          <div class="flex-1 flex items-center justify-end gap-2">
             {/* Delta toggle */}
             <button
               onClick={() => delta.toggleDeltaIndicators()}
@@ -1762,10 +1410,7 @@ export const SpecBoard: Component = () => {
                   >
                     <div class="relative" style={{ width: `${draftLayout().width}px`, height: `${draftLayout().height}px` }}>
                       {/* Dependency connectors (blocked_by and validates relationships) */}
-                      <DependencyConnectors
-                        positions={draftLayout().positions}
-                        relationships={draftLayout().crossTreeRelationships}
-                      />
+                      <DependencyConnectors edgeRoutes={draftLayout().edgeRoutes} />
                       <For each={flattenDraftTree(delta.draftTree())}>
                         {(node) => {
                           const pos = () => draftLayout().positions.get(node.id);
@@ -1860,10 +1505,7 @@ export const SpecBoard: Component = () => {
                   >
                     <div class="relative" style={{ width: `${liveLayout().width}px`, height: `${liveLayout().height}px` }}>
                       {/* Dependency connectors (blocked_by and validates relationships) */}
-                      <DependencyConnectors
-                        positions={liveLayout().positions}
-                        relationships={liveLayout().crossTreeRelationships}
-                      />
+                      <DependencyConnectors edgeRoutes={liveLayout().edgeRoutes} />
                       <For each={flattenLiveTree(liveTreeWithProjects())}>
                         {(node) => {
                           const pos = () => liveLayout().positions.get(node.id);
@@ -1910,60 +1552,24 @@ export const SpecBoard: Component = () => {
               'box-shadow': '0 4px 16px rgba(0,0,0,0.4)',
             }}
           >
+            {/* Task/eval node menu */}
             <Show when={contextMenu()!.node}>
-              {/* Project node menu */}
-              <Show when={contextMenu()!.node!.nodeType === 'project'}>
-                <button class="w-full px-3 py-1.5 text-left text-[11px] text-wool-200 hover:bg-white/5" onClick={handleAddChild}>
-                  Add Task
-                </button>
-                <button
-                  class="w-full px-3 py-1.5 text-left text-[11px] text-sage hover:bg-sage/10"
-                  onClick={() => {
-                    const cm = contextMenu();
-                    if (cm?.node) {
-                      setNewNodeParentId(cm.node.id);
-                      setNewNodeType('eval');
-                      setShowNewPrompt(true);
-                      hideContextMenu();
-                      setTimeout(() => newNodeInputRef?.focus(), 50);
-                    }
-                  }}
-                >
-                  Add Eval
-                </button>
-                <button
-                  class="w-full px-3 py-1.5 text-left text-[11px] text-wool-200 hover:bg-white/5"
-                  onClick={() => { handleDoubleClick(contextMenu()!.node!); hideContextMenu(); }}
-                >
-                  Rename
-                </button>
-                <div class="h-px bg-white/10 my-1" />
-                <button class="w-full px-3 py-1.5 text-left text-[11px] text-amber-400 hover:bg-amber-500/10" onClick={handleResetTree}>
-                  Reset Tree
-                </button>
-                <button class="w-full px-3 py-1.5 text-left text-[11px] text-terra hover:bg-terra/10" onClick={handleDeleteProject}>
-                  Delete Project
-                </button>
-              </Show>
-              {/* Task/eval node menu */}
-              <Show when={contextMenu()!.node!.nodeType !== 'project'}>
-                <button class="w-full px-3 py-1.5 text-left text-[11px] text-wool-200 hover:bg-white/5" onClick={handleAddChild}>
-                  Add child
-                </button>
-                <button class="w-full px-3 py-1.5 text-left text-[11px] text-wool-200 hover:bg-white/5" onClick={handleAddSibling}>
-                  Add sibling
-                </button>
-                <button
-                  class="w-full px-3 py-1.5 text-left text-[11px] text-wool-200 hover:bg-white/5"
-                  onClick={() => { handleDoubleClick(contextMenu()!.node!); hideContextMenu(); }}
-                >
-                  Edit
-                </button>
-                <div class="h-px bg-white/10 my-1" />
-                <button class="w-full px-3 py-1.5 text-left text-[11px] text-terra hover:bg-terra/10" onClick={handleDelete}>
-                  Delete
-                </button>
-              </Show>
+              <button class="w-full px-3 py-1.5 text-left text-[11px] text-wool-200 hover:bg-white/5" onClick={handleAddChild}>
+                Add child
+              </button>
+              <button class="w-full px-3 py-1.5 text-left text-[11px] text-wool-200 hover:bg-white/5" onClick={handleAddSibling}>
+                Add sibling
+              </button>
+              <button
+                class="w-full px-3 py-1.5 text-left text-[11px] text-wool-200 hover:bg-white/5"
+                onClick={() => { handleDoubleClick(contextMenu()!.node!); hideContextMenu(); }}
+              >
+                Edit
+              </button>
+              <div class="h-px bg-white/10 my-1" />
+              <button class="w-full px-3 py-1.5 text-left text-[11px] text-terra hover:bg-terra/10" onClick={handleDelete}>
+                Delete
+              </button>
             </Show>
             {/* Background menu */}
             <Show when={contextMenu()!.isBackground}>
@@ -2020,7 +1626,7 @@ export const SpecBoard: Component = () => {
                       <div>
                         <h2 class="text-sm font-semibold text-wool-100">New {typeLabel()}</h2>
                         <p class="text-xs text-wool-500">
-                          {isEval() ? 'Add a verification checkpoint' : 'Add a work item'}
+                          {isEval() ? 'Add an eval' : 'Add a work item'}
                         </p>
                       </div>
                     </div>
@@ -2082,8 +1688,7 @@ export const SpecBoard: Component = () => {
           {(node) => {
             const nodeType = () => node().nodeType;
             const isEval = () => nodeType() === 'eval';
-            const isProject = () => nodeType() === 'project';
-            const typeLabel = () => (isEval() ? 'Eval' : isProject() ? 'Project' : 'Task');
+            const typeLabel = () => (isEval() ? 'Eval' : 'Task');
 
             return (
               <div
@@ -2108,15 +1713,9 @@ export const SpecBoard: Component = () => {
                         }}
                       >
                         <Show when={isEval()} fallback={
-                          <Show when={isProject()} fallback={
-                            <svg class="w-5 h-5" style={{ color: 'var(--amber-500)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                            </svg>
-                          }>
-                            <svg class="w-5 h-5" style={{ color: 'var(--amber-500)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                            </svg>
-                          </Show>
+                          <svg class="w-5 h-5" style={{ color: 'var(--amber-500)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                          </svg>
                         }>
                           <svg class="w-5 h-5" style={{ color: 'var(--sage)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -2254,8 +1853,7 @@ export const SpecBoard: Component = () => {
           {(node) => {
             const nodeType = () => node().nodeType;
             const isEval = () => nodeType() === 'eval';
-            const isProject = () => nodeType() === 'project';
-            const typeLabel = () => (isEval() ? 'Eval' : isProject() ? 'Project' : 'Task');
+            const typeLabel = () => (isEval() ? 'Eval' : 'Task');
 
             const statusLabel = () => {
               switch (node().status) {
@@ -2300,15 +1898,9 @@ export const SpecBoard: Component = () => {
                         }}
                       >
                         <Show when={isEval()} fallback={
-                          <Show when={isProject()} fallback={
-                            <svg class="w-5 h-5" style={{ color: 'var(--amber-500)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                            </svg>
-                          }>
-                            <svg class="w-5 h-5" style={{ color: 'var(--amber-500)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                            </svg>
-                          </Show>
+                          <svg class="w-5 h-5" style={{ color: 'var(--amber-500)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                          </svg>
                         }>
                           <svg class="w-5 h-5" style={{ color: 'var(--sage)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -2424,6 +2016,19 @@ export const SpecBoard: Component = () => {
               </div>
             );
           }}
+        </Show>
+
+        {/* Worker Detail Modal */}
+        <Show when={selectedWorker()}>
+          {(worker) => (
+            <WorkerDetailModal
+              worker={worker()}
+              metricsAvailable={true}
+              runName={delta.projectRun()?.runName || ''}
+              onClose={() => setSelectedWorker(null)}
+              onAttach={handleAttachWorker}
+            />
+          )}
         </Show>
 
         {/* Loading overlay */}

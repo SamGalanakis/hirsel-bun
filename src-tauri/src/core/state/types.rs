@@ -489,6 +489,9 @@ pub struct Task {
     pub eval_result: Option<EvalResult>,
     pub eval_feedback: Option<String>,
     pub board_task_id: Option<String>,
+    // Direct task assignment fields
+    pub assigned_to: Option<String>, // Worker this task is assigned to
+    pub completed_by: Option<String>, // Worker who completed this task (for tree distance)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -509,6 +512,9 @@ pub struct Worker {
     pub created_at: String,
     pub hitl_waiting: bool, // True if worker is awaiting user input (HITL)
     pub state_handle: Option<String>, // JSON-serialized WorkerStateHandle for pause/resume
+    // Direct task assignment fields
+    pub assigned_task_id: Option<String>, // Currently assigned task
+    pub last_task_id: Option<String>,     // Last completed task (for tree distance)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -644,6 +650,76 @@ pub type StateResult<T> = Result<T, StateError>;
 // Worker Update Helper
 // =============================================================================
 
+// =============================================================================
+// Task Claim Result Types
+// =============================================================================
+
+/// Result of attempting to claim a task
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "result", rename_all = "snake_case")]
+pub enum ClaimTaskResult {
+    Success {
+        task: Task,
+    },
+    Rejected {
+        reason: ClaimRejectReason,
+        alternatives: Vec<TaskSummary>,
+    },
+}
+
+/// Reason why a task claim was rejected
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ClaimRejectReason {
+    NotFound {
+        task_id: String,
+    },
+    AlreadyComplete {
+        task_id: String,
+        status: TaskStatus,
+    },
+    Blocked {
+        task_id: String,
+        blockers: Vec<BlockerInfo>,
+    },
+    ClaimedByOther {
+        task_id: String,
+        claimed_by: String,
+    },
+    WorkerBusy {
+        existing_task_id: String,
+    },
+    HasChildren {
+        task_id: String,
+        children: Vec<String>,
+    },
+    EvalNotReady {
+        task_id: String,
+        pending_tasks: Vec<TaskSummary>,
+    },
+}
+
+/// Information about a blocking task
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockerInfo {
+    pub task_id: String,
+    pub name: String,
+    pub status: TaskStatus,
+    pub claimed_by: Option<String>,
+}
+
+/// Summary of a task for alternatives list
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskSummary {
+    pub id: String,
+    pub name: String,
+    pub task_type: TaskType,
+}
+
+// =============================================================================
+// Worker Update Helper
+// =============================================================================
+
 /// Helper struct for partial worker updates
 #[derive(Default)]
 pub struct WorkerUpdate {
@@ -658,10 +734,8 @@ pub struct WorkerUpdate {
     pub hitl_waiting: Option<bool>,
     /// Worker state handle (JSON-serialized). Use Some(Some(json)) to set, Some(None) to clear.
     pub state_handle: Option<Option<String>>,
+    /// Currently assigned task. Use Some(Some(id)) to set, Some(None) to clear.
+    pub assigned_task_id: Option<Option<String>>,
+    /// Last completed task (for tree distance). Use Some(Some(id)) to set, Some(None) to clear.
+    pub last_task_id: Option<Option<String>>,
 }
-
-// =============================================================================
-// Type Alias for backwards compatibility
-// =============================================================================
-
-pub type State = super::SQLiteState;

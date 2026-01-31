@@ -102,7 +102,6 @@ pub struct RunDetail {
     pub created_at: String,
     pub updated_at: String,
     pub iteration_count: u32,
-    pub max_iterations: Option<u32>,
     pub human_in_the_loop: bool,
     pub waiting_reason: Option<String>,
     pub unread_count: u32,
@@ -776,7 +775,6 @@ pub struct ConfigResponse {
     pub agent_command: Vec<String>,
     pub eval_timeout: u32,
     pub auto_learn: bool,
-    pub max_iterations: Option<u32>,
     pub user_message_pause: String,
     pub human_in_the_loop: bool,
     pub compaction_enabled: bool,
@@ -891,7 +889,6 @@ pub fn parse_timestamp(timestamp: &str) -> Option<chrono::DateTime<chrono::Utc>>
 pub struct GeneralConfigRequest {
     pub eval_timeout: Option<u32>,
     pub auto_learn: Option<bool>,
-    pub max_iterations: Option<Option<u32>>,
     pub human_in_the_loop: Option<bool>,
     pub default_runner: Option<Option<String>>,
     pub coordinator_port: Option<u16>,

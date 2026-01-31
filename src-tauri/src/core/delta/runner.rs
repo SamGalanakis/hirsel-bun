@@ -228,7 +228,6 @@ impl DeltaRunner {
             eval: None, // Eval nodes are handled as tasks
             worker_scale: project.worker_scale.as_ref().and_then(|s| s.parse().ok()),
             time_limit_minutes: project.time_limit_minutes,
-            max_iterations: project.max_iterations,
             human_in_the_loop: Some(project.human_in_the_loop),
             runner: None,
             worker_runners: None,
@@ -284,16 +283,26 @@ impl DeltaRunner {
         Ok("work".to_string())
     }
 
-    /// Get blocked_by list for eval submissions
+    /// Get blocked_by list for submissions
+    ///
+    /// - Evals: blocked by tasks they validate (implicit from `validates`)
+    /// - Tasks: blocked by explicit `blocked_by` list (task-to-task dependencies)
     fn get_blocked_by_for_submission(
         &self,
         submission: &DeltaSubmission,
     ) -> RunnerResult<Option<Vec<String>>> {
-        // For eval nodes, they're blocked by the tasks they validate
         if let Some(ref node_id) = submission.live_node_id {
             if let Ok(node) = self.state.get_live_node(node_id) {
-                if node.node_type == NodeType::Eval && !node.validates.is_empty() {
-                    return Ok(Some(node.validates.clone()));
+                let blocked_by = if node.node_type == NodeType::Eval {
+                    // Evals are implicitly blocked by tasks they validate
+                    node.validates.clone()
+                } else {
+                    // Tasks use explicit blocked_by dependencies
+                    node.blocked_by.clone()
+                };
+
+                if !blocked_by.is_empty() {
+                    return Ok(Some(blocked_by));
                 }
             }
         }

@@ -21,8 +21,13 @@
 //! idle_timeout_seconds = 300
 //! ```
 
+mod conflict_resolver;
 mod scribe;
 mod types;
 
+pub use conflict_resolver::{create_conflict_resolver_service, ConflictResolverServiceWrapper};
 pub use scribe::{create_scribe_service, ScribeService};
-pub use types::{ServiceWorkerError, ServiceWorkerHandle, ServiceWorkerResult, ServiceWorkerType};
+pub use types::{
+    ServiceWorkerBase, ServiceWorkerError, ServiceWorkerHandle, ServiceWorkerResult,
+    ServiceWorkerType,
+};

@@ -8,6 +8,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::time::Duration;
 
+use crate::core::http_client::ResponseExt;
+
 use super::{get_daemon_port, DAEMON_PORT_ENV};
 
 /// Client for the hirsel daemon
@@ -112,105 +114,64 @@ impl DaemonClient {
     /// Make a GET request to the daemon
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);
-        let response = self.client.get(&url).send().await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(anyhow!("HTTP {}: {}", status, body));
-        }
-
-        response
-            .json()
-            .await
-            .map_err(|e| anyhow!("Failed to parse response: {}", e))
+        Ok(self.client.get(&url).send().await?.json_or_error().await?)
     }
 
     /// POST request with JSON body
     pub async fn post<T: DeserializeOwned, B: Serialize>(&self, path: &str, body: B) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);
-        let response = self.client.post(&url).json(&body).send().await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(anyhow!("HTTP {}: {}", status, body));
-        }
-
-        response
-            .json()
-            .await
-            .map_err(|e| anyhow!("Failed to parse response: {}", e))
+        Ok(self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await?
+            .json_or_error()
+            .await?)
     }
 
     /// POST request without body
     pub async fn post_empty<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);
-        let response = self.client.post(&url).send().await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(anyhow!("HTTP {}: {}", status, body));
-        }
-
-        response
-            .json()
-            .await
-            .map_err(|e| anyhow!("Failed to parse response: {}", e))
+        Ok(self.client.post(&url).send().await?.json_or_error().await?)
     }
 
     /// PATCH request with JSON body
     pub async fn patch<T: DeserializeOwned, B: Serialize>(&self, path: &str, body: B) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);
-        let response = self.client.patch(&url).json(&body).send().await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(anyhow!("HTTP {}: {}", status, body));
-        }
-
-        response
-            .json()
-            .await
-            .map_err(|e| anyhow!("Failed to parse response: {}", e))
+        Ok(self
+            .client
+            .patch(&url)
+            .json(&body)
+            .send()
+            .await?
+            .json_or_error()
+            .await?)
     }
 
     /// DELETE request
     pub async fn delete<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);
-        let response = self.client.delete(&url).send().await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(anyhow!("HTTP {}: {}", status, body));
-        }
-
-        response
-            .json()
-            .await
-            .map_err(|e| anyhow!("Failed to parse response: {}", e))
+        Ok(self
+            .client
+            .delete(&url)
+            .send()
+            .await?
+            .json_or_error()
+            .await?)
     }
 
     /// POST request with raw bytes (for file upload)
     pub async fn post_bytes(&self, path: &str, body: Vec<u8>) -> Result<()> {
         let url = format!("{}{}", self.base_url, path);
-        let response = self
-            .client
+        self.client
             .post(&url)
             .header("Content-Type", "application/gzip")
             .body(body)
             .send()
+            .await?
+            .success_or_error()
             .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(anyhow!("HTTP {}: {}", status, body));
-        }
-
         Ok(())
     }
 

@@ -17,7 +17,7 @@
 | Add archive strategy | `src-tauri/src/core/snapshot/mod.rs`, new strategy impl of `ArchiveStrategy` |
 | Add service worker | `src-tauri/src/core/service_worker/scribe.rs`, `src-tauri/src/cli/service_worker.rs` |
 | Add SpecFlow island | `src-tauri/src/core/specflow/state.rs`, `src-tauri/src/gui/commands/specflow.rs` |
-| Modify board UI | `src/components/specflow/OneBoard.tsx`, `src/components/specflow/NodeRenderer.tsx` |
+| Modify board UI | `src/components/specflow/SpecBoard.tsx` |
 | Add orchestrator method | `src-tauri/src/core/orchestrator/mod.rs` → trait, `local.rs`, `daemon.rs`, `remote.rs` impls |
 | Modify delta dispatch | `src-tauri/src/core/delta/runner.rs`, `src-tauri/src/daemon/lifecycle.rs` |
 
@@ -119,6 +119,9 @@ cargo build --features s3-storage               # With S3 support
 | `git.rs` | - | Git operations |
 | `compaction.rs` | - | Context compaction for long sessions |
 | `tailscale.rs` | - | Tailscale integration |
+| `acp_runner.rs` | - | Unified ACP agent runner for scribe, conflict_resolver, compaction, eval |
+| `conflict_resolver/` | `mod.rs`, `types.rs` | Git conflict resolution service with AI agent |
+| `gyp.rs` | - | Unified Gyp context builder and session config |
 
 ### `src-tauri/src/worker/` - Worker Subprocess
 
@@ -133,9 +136,18 @@ cargo build --features s3-storage               # With S3 support
 | `http_state.rs` | HTTP-based state for remote workers |
 | `file_server.rs` | File upload server for remote workers |
 
+**MCP Worker Tools** (available to all workers):
+- `add_task` - Create subtasks (go to pool for assignment)
+- `complete_task` - Mark assigned task as done
+- `work_done` - Signal ready for next assignment (triggers scaling check, worker exits)
+- `get_task_details` - Get full task content
+- `send_message` / `get_messages` - Team communication
+
 **MCP Eval Tools** (available to eval tasks):
 - `eval_pass` - Mark eval as passed, validate all tasks in `validates[]`
 - `eval_fail(feedback)` - Mark eval as failed, create repair task as child of eval
+
+**Note:** Workers receive pre-assigned tasks at spawn time. There is no `claim_task` tool - task assignment is handled by the coordinator via direct assignment.
 
 ### `src-tauri/src/gui/commands/` - Tauri IPC Commands
 
@@ -155,9 +167,9 @@ cargo build --features s3-storage               # With S3 support
 | `filesystem.rs` | `pick_folder`, `suggest_paths` |
 | `debug.rs` | `log_frontend`, `get_version`, `get_process_counts`, `kill_orphaned_acp_processes`, `get_gyp_chat_history`, `save_gyp_message`, `clear_gyp_chat_history` |
 | `projects.rs` | `list_projects`, `get_project`, `create_project_from_path`, `delete_project` |
-| `specflow.rs` | `get_project_islands`, `create_island`, `update_island`, `delete_island`, `create_row`, `update_row`, `delete_row`, `reorder_rows`, `get_wires`, `create_wire`, `delete_wire`, `get_bookmarks`, `save_bookmark`, `delete_bookmark`, `dispatch_rows`, `dispatch_rows_confirm`, `sync_run_status`, `set_task_blocked_by`, `export_board_for_agent`, `import_board_from_agent`, `get_board_directory` |
-| `dispatch.rs` | `preview_dispatch`, `prepare_dispatch`, `record_dispatch`, `get_task_runs`, `get_all_task_runs` |
-| `delivery.rs` | `get_delivery_state`, `push_run_branch`, `create_run_pr`, `auto_merge_run`, `generate_pr_body` |
+| `gyp.rs` | `start_gyp_session`, `send_gyp_message`, `save_gyp_message`, `get_gyp_history`, `clear_gyp_history`, `stop_gyp_session` |
+| `delta.rs` | `get_draft_tree`, `get_live_tree`, `create_draft_node`, `update_draft_node`, `delete_draft_node`, `move_draft_node`, `reset_project_tree`, `compute_tree_diff`, `get_diff_summary`, `dispatch_deltas`, `preview_delta_dispatch`, `get_project_run`, `complete_live_node`, `complete_revert`, `get_dual_trees`, `sync_gyp_changes` |
+| `delivery.rs` | `get_delivery_state`, `check_merge_state`, `get_conflicting_files`, `check_staleness`, `push_run_branch`, `create_run_pr`, `auto_merge_run`, `generate_pr_title`, `generate_pr_body`, `delivery_branch_name`, `get_board_versions`, `get_latest_board_version`, `get_current_board_delivery`, `start_board_delivery`, `get_board_delivery_status`, `retry_board_delivery`, `get_delivery_attempts`, `complete_board_delivery`, `abandon_board_delivery` |
 
 ### `src-tauri/src/cli/` - CLI Commands
 
@@ -209,19 +221,28 @@ cargo build --features s3-storage               # With S3 support
 |-----------|---------|
 | `components/layout/` | Layout, TitleBar, StatusBar |
 | `components/runs/` | RunListPanel, RunDetail, DraftEditor, WorkerCard |
-| `components/specflow/` | OneBoard (main canvas), ProjectCard, NodeRenderer, NodeContextMenu |
+| `components/specflow/` | SpecBoard (unified canvas component with delta dispatch, node rendering, context menus) |
 | `components/modals/` | SettingsModal, HelpModal, ConfirmDialog |
 | `components/chat/` | GypMessenger |
-| `stores/` | AppProvider, ProjectProvider, RunsProvider, SelectionProvider |
+| `stores/` | AppProvider, ProjectProvider, RunsProvider, SelectionProvider, DeltaProvider, DispatchProvider |
 | `hooks/` | usePolling, useDebounce, useTauriEvent |
-| `lib/` | Icons, theme, toast, dev-logger, utils |
+| `lib/` | Icons, theme, toast, dev-logger, utils, elk-layout (graph layout via ELK.js) |
 
-**OneBoard Architecture:**
-- `OneBoard.tsx` - Main semantic zoom canvas with two levels:
-  - Portfolio level (zoomed out): Shows all projects as draggable cards
-  - Project level (zoomed in): Shows task/eval tree for focused project
-- `ProjectCard.tsx` - Counter-scaled project cards (stay readable at any zoom)
-- `NodeRenderer.tsx` - LOAD-aware task/eval cards (compact/full variants)
+**SpecBoard Architecture:**
+- `SpecBoard.tsx` - Unified canvas component (~2000 lines) handling:
+  - Draft/live tree visualization with delta dispatch
+  - Node rendering with visual hierarchy indicators
+  - Context menus for node operations
+  - Drag-and-drop node reordering
+  - Keyboard navigation and shortcuts
+  - **Graph Layout** - ELK.js (Eclipse Layout Kernel) for hierarchical graph layout:
+    - `src/lib/elk-layout.ts` - ELK wrapper with orthogonal edge routing
+    - Layered algorithm with proper crossing minimization
+    - Edges routed as orthogonal polylines (right-angle bends)
+  - **DependencyConnectors** - SVG polylines for all edges:
+    - `validates` (eval→task): sage green lines
+    - `blockedBy` (task→task): terra red lines
+  - `blockedBy` computed as inverse of `validates` in backend tree builders
 
 ---
 
@@ -271,10 +292,11 @@ pub trait LifecycleManager {
 
 | Event | Action(s) |
 |-------|-----------|
-| `TimeCheck` | `SpawnWorker`, `ResumeWorker`, `EvalTriggered`, `RunFailed`, `TimeWarning` |
+| `TimeCheck` | `EvalTriggered`, `RunFailed`, `TimeWarning` |
 | `WorkerDone` | `EvalTriggered`, `RunCompleted` |
 | `PauseRequested` | `WorkersPaused`, `RunStatusChanged` |
-| `ResumeRequested` | `ResumeWorker` |
+| `ResumeRequested` | (handled via scaling check) |
+| `ScalingCheck` | `SpawnWorker(assigned_task_id)`, `WakeWorker(assigned_task_id)` |
 
 | Implementation | Location | Use Case |
 |----------------|----------|----------|
@@ -294,6 +316,14 @@ pub trait Runner: Send + Sync {
     fn runner_type(&self) -> &'static str;
     async fn setup(&self) -> RunnerResult<()>;
     async fn cleanup(&self) -> RunnerResult<()>;
+}
+
+// WorkerSpawnConfig includes assigned_task_id for direct task assignment
+pub struct WorkerSpawnConfig {
+    pub worker_name: String,
+    pub work_dir: PathBuf,
+    pub assigned_task_id: Option<String>,  // Pre-assigned task
+    // ... other fields
 }
 ```
 
@@ -379,9 +409,10 @@ pub trait StateAccess: Send {
     async fn status(&self) -> StateAccessResult<Status>;
     async fn set_status(&self, status: Status) -> StateAccessResult<()>;
     async fn add_task(&self, ...) -> StateAccessResult<()>;
-    async fn claim_task(&self, ...) -> StateAccessResult<bool>;
+    async fn complete_task(&self, task_id: &str, worker_name: &str) -> StateAccessResult<()>;
     async fn eval_pass(&self, eval_task_id: &str, worker_name: &str) -> StateAccessResult<()>;
     async fn eval_fail(&self, eval_task_id: &str, worker_name: &str, feedback: &str) -> StateAccessResult<String>;
+    async fn request_scaling_check(&self) -> StateAccessResult<()>;
     // ... task, message, worker operations
 }
 ```
@@ -390,6 +421,7 @@ pub trait StateAccess: Send {
 - Enables same worker binary for local and remote deployment
 - `SQLiteState` for local, `HttpState` for remote
 - `eval_pass`/`eval_fail` handle unified eval workflow for both local and remote workers
+- `request_scaling_check` triggers event-driven worker scaling (via DB flag or HTTP)
 
 ### Board Service (`src-tauri/src/core/board/mod.rs`)
 
@@ -504,7 +536,7 @@ Draft ──start──► Working ───────────────
 | Type | Description |
 |------|-------------|
 | `Work` | Implementation task that produces code changes |
-| `Eval` | Validation task that verifies work tasks |
+| `Eval` | Task that validates work tasks |
 
 ### Task Lifecycle (Unified Eval Model)
 
@@ -576,41 +608,65 @@ DaemonOrchestrator ──TCP──► Daemon
    └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Worker Lifecycle
+### Worker Lifecycle (Event-Driven)
+
+Workers receive pre-assigned tasks at spawn time. No worker-initiated task claiming.
 
 ```
-Daemon ──spawn──► Worker Process
-                      │
-                      ▼
-               AcpClient.connect()
-                      │
-                      ▼
-               Send initial prompt (spec + tasks)
-                      │
-                      ▼
-              ┌───────────────┐
-              │  Main Loop    │◄─────────────────┐
-              └───────┬───────┘                  │
-                      │                          │
-                      ▼                          │
-              Process agent response             │
-              (text, tool calls)                 │
-                      │                          │
-                      ▼                          │
-              Update state (events, status)      │
-                      │                          │
-                      ▼                          │
-              Check for messages ────────────────┘
-                      │
-                      ▼ (no more work)
-              worker_done()
-                      │
-                      ▼
-              Daemon lifecycle poll
-                      │
-                      ▼
-              Trigger eval (if all workers idle)
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Event-Driven Scaling                              │
+│                                                                      │
+│  Task state change ──► request_scaling_check() ──► DB flag set      │
+│                                                                      │
+│  Daemon 5s poll ──► consume_scaling_check() ──► evaluate_scaling()  │
+│       │                                                              │
+│       └──► SpawnWorker(assigned_task_id) or WakeWorker(...)         │
+└─────────────────────────────────────────────────────────────────────┘
+
+Daemon ──spawn(assigned_task_id)──► Worker Process
+                                          │
+                                          ▼
+                                   AcpClient.connect()
+                                          │
+                                          ▼
+                                   Send prompt with assigned task
+                                          │
+                                          ▼
+                                  ┌───────────────┐
+                                  │  Main Loop    │◄─────────────────┐
+                                  └───────┬───────┘                  │
+                                          │                          │
+                                          ▼                          │
+                                  Process agent response             │
+                                  (text, tool calls)                 │
+                                          │                          │
+                                          ▼                          │
+                                  Update state (events, status)      │
+                                          │                          │
+                                          ▼                          │
+                                  Check for messages ────────────────┘
+                                          │
+                                          ▼ (task complete)
+                                  complete_task() + work_done()
+                                          │
+                                          ▼
+                                  request_scaling_check()
+                                          │
+                                          ▼
+                                  Worker exits (fresh context per task)
+                                          │
+                                          ▼
+                                  Daemon evaluates scaling
+                                          │
+                                          ▼
+                                  Respawn with new task (if available)
 ```
+
+**Key behaviors:**
+- **Direct task assignment**: Workers spawn with `assigned_task_id`, no `claim_task` tool
+- **Fresh context**: Each task gets a new worker session (no session resume)
+- **Scope blocking**: Root tasks are blocked by "scope" task until leader explores spec
+- **Tree-walk distance**: Task assignment prefers nearby tasks (same subtree) for work, distant for eval
 
 ### Archive/Restore (Ephemeral Runners)
 
@@ -637,16 +693,17 @@ Daemon.resume_run()
    ▼
 LocalLifecycleManager.resume_run()
    │
-   └─► Returns ResumeWorker actions
+   └─► Triggers scaling check
          │
          ▼
-Daemon handles each ResumeWorker:
+Daemon evaluates scaling:
    1. Check if runner is_ephemeral()
    2. If yes: ArchiveStrategy.restore(work_dir_handle)
-   3. ArchiveStrategy.restore(session_handle)
-   4. Runner.spawn() with resume_session_id
-   5. Update worker DB (clear state handle, set status)
+   3. Runner.spawn() with assigned_task_id (fresh context)
+   4. Update worker DB (clear state handle, set status)
 ```
+
+**Note:** Workers always spawn with fresh context. Session resume is not used - each task gets a new agent session for cleaner context management.
 
 ---
 
@@ -684,13 +741,16 @@ Daemon handles each ResumeWorker:
 
 **state:**
 - `status`, `failure_reason`, `started_at`, `time_limit_minutes`
-- `worker_scale`, `max_iterations`, `human_in_the_loop`
+- `worker_scale`, `human_in_the_loop`
 - `default_runner`, `worker_runners` (JSON), `runner_configs` (JSON), `starting_point` (JSON)
+- `scaling_check_requested` - Boolean flag for event-driven scaling
 
 **workers:**
 - `name`, `pid`, `runner_id`, `runner_type`, `status`
 - `session_id`, `work_dir`, `hitl_waiting`
 - `state_handle` (JSON: WorkerStateHandle with work_dir and agent_session snapshots)
+- `assigned_task_id` - Currently assigned task (direct assignment model)
+- `last_task_id` - Last completed task (for tree-walk distance calculation)
 
 **tasks:**
 - `id`, `name`, `status`, `claimed_by`, `claimed_at`
@@ -699,6 +759,8 @@ Daemon handles each ResumeWorker:
 - `eval_result` - 'pass' or 'fail'
 - `eval_feedback` - Feedback if eval failed
 - `board_task_id` - Original board task ID for tracking
+- `assigned_to` - Worker this task is assigned to (direct assignment)
+- `completed_by` - Worker who completed this task (for tree distance)
 
 **task_blockers** (junction table):
 - `task_id`, `blocker_id` - FK references with CASCADE delete
@@ -932,6 +994,10 @@ idle_timeout_seconds = 300        # 5 min default
 | GET | `/api/runs/{name}/workers/{w}/events` | `get_worker_events` |
 | GET/POST | `/api/runs/{name}/tasks` | `list_tasks`, `add_task` |
 | DELETE | `/api/runs/{name}/tasks/{id}` | `delete_task` |
+| POST | `/api/runs/{name}/delta-tasks` | `add_delta_task` |
+| POST | `/api/runs/{name}/scribe` | `add_scribe` |
+| GET | `/api/runs/{name}/docs` | `get_docs` |
+| POST | `/api/runs/{name}/docs/sync` | `sync_docs` |
 | GET | `/api/runs/{name}/threads` | `list_threads` |
 | GET/POST | `/api/runs/{name}/threads/{t}/messages` | `get_messages`, `send_message` |
 
@@ -955,6 +1021,10 @@ idle_timeout_seconds = 300        # 5 min default
 | POST | `/api/board/{project_id}/export` | `export_board` - Export board to agent JSON files |
 | POST | `/api/board/{project_id}/import` | `import_board` - Import board changes from agent JSON files |
 | GET | `/api/board/{project_id}/directory` | `get_board_directory` - Get board directory path |
+| GET | `/api/board/{project_id}/tasks` | `list_task_files` - List task files in board |
+| GET | `/api/board/{project_id}/tasks/{slug}` | `get_task_file` - Get task file content |
+| POST | `/api/board/{project_id}/tasks/{slug}` | `save_task_file` - Save task file |
+| DELETE | `/api/board/{project_id}/tasks/{slug}` | `delete_task_file` - Delete task file |
 
 ### Gyp Chat Endpoints
 
@@ -985,10 +1055,17 @@ Background process that owns lifecycle management.
 **Polling Loop (every 5s):**
 ```rust
 for run in active_runs {
+    // Event-driven scaling: check if any task state changes requested scaling
+    if state.consume_scaling_check()? {
+        let actions = evaluate_scaling(&state)?;
+        // Handle: SpawnWorker(assigned_task_id), WakeWorker(assigned_task_id)
+        handle_lifecycle_actions(actions).await;
+    }
+
     match status {
         Status::Working => {
             let actions = lifecycle.process_event(LifecycleEvent::TimeCheck)?;
-            // Handle: SpawnWorker, ResumeWorker, EvalTriggered, RunFailed, TimeWarning
+            // Handle: EvalTriggered, RunFailed, TimeWarning
             handle_lifecycle_actions(actions).await;
             maybe_process_scribe(run);
         }
@@ -999,6 +1076,8 @@ for run in active_runs {
     }
 }
 ```
+
+**Event-Driven Scaling:** Worker scaling is triggered by task state changes (add_task, complete_task, etc.) setting the `scaling_check_requested` DB flag. The daemon's 5-second poll provides natural debouncing - multiple rapid task changes get batched into one scaling evaluation. The `evaluate_scaling()` function uses tree-walk distance to assign nearby work tasks and distant eval tasks to workers.
 
 **Eval Crash Detection:** When a run is in `Eval` state, the daemon checks if the eval process PID is still alive. If the process crashed, the daemon marks the eval as failed and re-triggers it by resetting the run to `Working` and processing a `TimeCheck` event.
 
@@ -1045,12 +1124,12 @@ Runner configurations are stored per-run at creation time in the `runner_configs
 
 1. At run creation, resolve runner names to full `RunnerConfig` objects
 2. Store the configs in the run's SQLite database
-3. When spawning workers, use stored configs with fallback to global config (for backwards compatibility)
+3. When spawning workers, use stored configs
 
 Methods in `state/run.rs`:
 - `get_runner_configs()` - Get stored configs
 - `set_runner_configs()` - Store configs at run creation
-- `get_runner_config_for_worker()` - Get config for a worker (stored → global fallback)
+- `get_runner_config_for_worker()` - Get config for a worker from stored configs
 
 ### Remote Worker Bootstrap
 

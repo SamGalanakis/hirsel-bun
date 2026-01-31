@@ -17,7 +17,6 @@ pub struct Project {
     // Default configuration (None = use global defaults)
     pub worker_scale: Option<String>,
     pub time_limit_minutes: Option<i64>,
-    pub max_iterations: Option<i64>,
     pub human_in_the_loop: bool,
     pub docs_path: String,
     pub persist_docs_changes: bool,
@@ -25,6 +24,9 @@ pub struct Project {
 
     // Delivery configuration
     pub target_branch: Option<String>, // e.g., "staging", "main" - branch for PR/merge delivery
+
+    // Runner configuration
+    pub runner: Option<String>, // Default runner for this project's runs
 
     // Canvas position (for OneBoard portfolio view)
     pub x: Option<f64>,
@@ -42,8 +44,6 @@ pub struct CreateProjectRequest {
     #[serde(default)]
     pub time_limit_minutes: Option<i64>,
     #[serde(default)]
-    pub max_iterations: Option<i64>,
-    #[serde(default)]
     pub human_in_the_loop: Option<bool>,
     #[serde(default)]
     pub docs_path: Option<String>,
@@ -53,6 +53,8 @@ pub struct CreateProjectRequest {
     pub description: Option<String>,
     #[serde(default)]
     pub target_branch: Option<String>,
+    #[serde(default)]
+    pub runner: Option<String>,
     #[serde(default)]
     pub x: Option<f64>,
     #[serde(default)]
@@ -72,8 +74,6 @@ pub struct UpdateProjectRequest {
     #[serde(default)]
     pub time_limit_minutes: Option<i64>,
     #[serde(default)]
-    pub max_iterations: Option<i64>,
-    #[serde(default)]
     pub human_in_the_loop: Option<bool>,
     #[serde(default)]
     pub docs_path: Option<String>,
@@ -83,6 +83,8 @@ pub struct UpdateProjectRequest {
     pub description: Option<String>,
     #[serde(default)]
     pub target_branch: Option<String>,
+    #[serde(default)]
+    pub runner: Option<String>,
     #[serde(default)]
     pub x: Option<f64>,
     #[serde(default)]

@@ -604,7 +604,6 @@ pub async fn patch_general_config(
     config.update_general(
         body.eval_timeout,
         body.auto_learn,
-        body.max_iterations,
         body.human_in_the_loop,
         body.default_runner,
         body.coordinator_port,
@@ -945,8 +944,6 @@ pub struct PutConfigRequest {
     #[serde(default)]
     pub human_in_the_loop: Option<bool>,
     #[serde(default)]
-    pub max_iterations: Option<Option<u32>>,
-    #[serde(default)]
     pub coordinator_port: Option<u16>,
     #[serde(default)]
     pub compaction_enabled: Option<bool>,
@@ -994,9 +991,6 @@ pub async fn put_config(
     }
     if let Some(human_in_the_loop) = body.human_in_the_loop {
         config.human_in_the_loop = human_in_the_loop;
-    }
-    if let Some(max_iterations) = body.max_iterations {
-        config.max_iterations = max_iterations;
     }
     if let Some(coordinator_port) = body.coordinator_port {
         config.coordinator_port = coordinator_port;

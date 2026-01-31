@@ -301,6 +301,10 @@ pub struct InternalWorkerRunArgs {
     /// Coordinator API URL (for remote/Docker workers to report status)
     #[arg(long)]
     pub api_url: Option<String>,
+
+    /// Assigned task ID (direct task assignment)
+    #[arg(long)]
+    pub assigned_task_id: Option<String>,
 }
 
 /// Arguments for internal eval run command
@@ -365,6 +369,10 @@ pub struct RemoteWorkerArgs {
     /// Port for file receiver (default: 19800)
     #[arg(long)]
     pub file_receiver_port: Option<u16>,
+
+    /// Assigned task ID (direct task assignment)
+    #[arg(long)]
+    pub assigned_task_id: Option<String>,
 }
 
 // ========== Argument structs ==========
@@ -413,10 +421,6 @@ pub struct GoArgs {
     /// Project path (defaults to current directory)
     #[arg(short = 'P', long)]
     pub project: Option<String>,
-
-    /// Maximum iterations before auto-pause
-    #[arg(long)]
-    pub max_iterations: Option<i64>,
 
     /// Pause behavior when messaging user: "sender" or "all"
     #[arg(long)]

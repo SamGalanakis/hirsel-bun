@@ -33,6 +33,10 @@ pub enum DeliveryError {
     NoRemote,
     #[error("Not a GitHub repository")]
     NotGitHub,
+    #[error("Conflict markers remain in files: {0:?}")]
+    ConflictMarkersRemain(Vec<String>),
+    #[error("Conflict resolution failed: {0}")]
+    ConflictResolutionFailed(String),
 }
 
 pub type DeliveryResult<T> = Result<T, DeliveryError>;
@@ -398,6 +402,171 @@ impl DeliveryService {
         }
 
         Ok(state)
+    }
+
+    // ========== CONFLICT RESOLUTION ==========
+
+    /// Start a merge that may have conflicts (returns conflicting files)
+    ///
+    /// This initiates a merge with --no-commit so conflicts appear in the working tree.
+    /// Returns the list of files with conflicts, or empty if merge is clean.
+    pub fn start_merge_with_conflicts(&self, target_branch: &str) -> DeliveryResult<Vec<String>> {
+        // Fetch latest from remote
+        let _ = self.git(&["fetch", "origin", target_branch]);
+
+        // Try the merge with --no-commit
+        let merge_result = self.git(&[
+            "merge",
+            "--no-commit",
+            "--no-ff",
+            &format!("origin/{}", target_branch),
+        ]);
+
+        match merge_result {
+            Ok(_) => {
+                // Clean merge
+                debug!("Merge with {} is clean", target_branch);
+                Ok(vec![])
+            }
+            Err(DeliveryError::Git(msg)) if msg.contains("CONFLICT") => {
+                // Get the conflicting files from working tree
+                let conflicts = self.get_working_tree_conflicts()?;
+                info!(
+                    "Started merge with {} - {} conflicting files",
+                    target_branch,
+                    conflicts.len()
+                );
+                Ok(conflicts)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Get list of files with conflict markers in the working tree
+    pub fn get_working_tree_conflicts(&self) -> DeliveryResult<Vec<String>> {
+        // Use git status to find unmerged files
+        let output = self.git(&["status", "--porcelain"])?;
+
+        let conflicts: Vec<String> = output
+            .lines()
+            .filter(|line| {
+                // Unmerged files have status codes like "UU", "AA", "DD", etc.
+                line.starts_with("UU ")
+                    || line.starts_with("AA ")
+                    || line.starts_with("DD ")
+                    || line.starts_with("AU ")
+                    || line.starts_with("UA ")
+                    || line.starts_with("DU ")
+                    || line.starts_with("UD ")
+            })
+            .map(|line| line[3..].to_string()) // Skip the 3-char status prefix
+            .collect();
+
+        Ok(conflicts)
+    }
+
+    /// Verify no conflict markers remain in the working tree
+    ///
+    /// Searches for <<<<<<< markers in all files and returns an error if found.
+    pub fn verify_no_conflict_markers(&self) -> DeliveryResult<()> {
+        // Use grep to find conflict markers
+        let result = Command::new("grep")
+            .args(["-r", "-l", "<<<<<<<", "."])
+            .current_dir(&self.work_dir)
+            .output()?;
+
+        if result.status.success() {
+            // grep found matches - conflict markers remain
+            let files: Vec<String> = String::from_utf8_lossy(&result.stdout)
+                .lines()
+                .map(|s| s.to_string())
+                .collect();
+
+            if !files.is_empty() {
+                return Err(DeliveryError::ConflictMarkersRemain(files));
+            }
+        }
+        // grep exit code 1 means no matches found (good)
+        // grep exit code 2 means error (we ignore as a best-effort check)
+
+        Ok(())
+    }
+
+    /// Complete the merge after conflicts have been resolved
+    ///
+    /// Stages all changes and commits the merge.
+    pub fn complete_merge(&self, commit_message: &str) -> DeliveryResult<String> {
+        // Verify no conflict markers remain
+        self.verify_no_conflict_markers()?;
+
+        // Check if there are still unmerged files
+        let unmerged = self.get_working_tree_conflicts()?;
+        if !unmerged.is_empty() {
+            return Err(DeliveryError::ConflictResolutionFailed(format!(
+                "Still have {} unmerged files",
+                unmerged.len()
+            )));
+        }
+
+        // Stage all changes
+        self.git(&["add", "-A"])?;
+
+        // Commit the merge
+        self.git(&["commit", "-m", commit_message])?;
+
+        // Get the commit SHA
+        let sha = self.git(&["rev-parse", "HEAD"])?;
+        info!("Completed merge commit: {}", sha);
+
+        Ok(sha)
+    }
+
+    /// Abort an in-progress merge
+    pub fn abort_merge(&self) -> DeliveryResult<()> {
+        self.git(&["merge", "--abort"])?;
+        info!("Aborted merge");
+        Ok(())
+    }
+
+    /// Merge with conflict resolution callback
+    ///
+    /// This is the main entry point for Tier 4 delivery with AI conflict resolution.
+    /// The callback receives the list of conflicting files and should resolve them.
+    pub fn merge_with_conflict_resolution<F>(
+        &self,
+        target_branch: &str,
+        resolve_fn: F,
+    ) -> DeliveryResult<String>
+    where
+        F: FnOnce(Vec<String>) -> Result<(), String>,
+    {
+        // Start the merge
+        let conflicts = self.start_merge_with_conflicts(target_branch)?;
+
+        if conflicts.is_empty() {
+            // Clean merge - just commit
+            return self.complete_merge(&format!("Merge origin/{}", target_branch));
+        }
+
+        info!("Merge has {} conflicts, invoking resolver", conflicts.len());
+
+        // Call the resolver
+        if let Err(e) = resolve_fn(conflicts) {
+            // Resolution failed - abort merge
+            let _ = self.abort_merge();
+            return Err(DeliveryError::ConflictResolutionFailed(e));
+        }
+
+        // Complete the merge
+        self.complete_merge(&format!(
+            "Merge origin/{} (conflicts resolved)",
+            target_branch
+        ))
+    }
+
+    /// Get the work directory path
+    pub fn work_dir(&self) -> &std::path::Path {
+        &self.work_dir
     }
 
     // ========== HELPERS ==========

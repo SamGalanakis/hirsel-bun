@@ -11,14 +11,15 @@
 //! - Orchestrator abstraction for local/remote coordination
 
 pub mod acp;
+pub mod acp_runner;
 pub mod api_types;
 pub mod board;
 pub mod chat_orchestrator;
 pub mod chat_session;
 pub mod chats;
 pub mod claude_cli;
-pub mod compaction;
 pub mod config;
+pub mod conflict_resolver;
 #[cfg(feature = "server")]
 pub mod coordinator_api;
 pub mod credentials;
@@ -116,6 +117,12 @@ pub use runner::{
     WorkerHandle, WorkerSpawnConfig as RunnerSpawnConfig,
 };
 pub use scribe::{process_scribe_batch, should_process_batch, ScribeBatchResult, ScribeError};
+
+// Conflict resolver
+pub use conflict_resolver::{
+    ConflictResolution, ConflictResolutionStatus, ConflictResolverClient, ConflictResolverError,
+    ConflictResolverResult, ConflictResolverService, ConflictResolverState, ResolutionResult,
+};
 pub use service_worker::{
     create_scribe_service, ScribeService, ServiceWorkerError, ServiceWorkerHandle,
     ServiceWorkerResult, ServiceWorkerType,

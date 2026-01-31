@@ -14,8 +14,18 @@ import {
 export interface Project {
   id: number;
   name: string;
-  startingPoint?: { type: string; path?: string };
+  startingPoint?: { type: string; path?: string; url?: string; branch?: string };
   description?: string;
+  // Run configuration (None = use global defaults)
+  workerScale?: string | null;
+  timeLimitMinutes?: number | null;
+  humanInTheLoop?: boolean;
+  docsPath?: string;
+  persistDocsChanges?: boolean;
+  // Delivery configuration
+  targetBranch?: string | null;
+  // Runner configuration
+  runner?: string | null;
   // Canvas position (for OneBoard portfolio view)
   x?: number | null;
   y?: number | null;
@@ -63,6 +73,7 @@ interface ProjectContextValue {
   // Actions
   removeProject: (projectId: number) => Promise<void>;
   updateProjectPosition: (projectId: number, x: number, y: number) => Promise<void>;
+  updateProjectSettings: (projectId: number, settings: Partial<Project>) => Promise<Project | null>;
 }
 
 const ProjectContext = createContext<ProjectContextValue>();
@@ -188,6 +199,38 @@ export const ProjectProvider: ParentComponent = (props) => {
     }
   };
 
+  const updateProjectSettings = async (
+    projectId: number,
+    settings: Partial<Project>
+  ): Promise<Project | null> => {
+    try {
+      const updated = await invoke<Project>('update_project', {
+        projectId,
+        x: settings.x,
+        y: settings.y,
+        description: settings.description,
+        targetBranch: settings.targetBranch,
+        workerScale: settings.workerScale,
+        timeLimitMinutes: settings.timeLimitMinutes,
+        humanInTheLoop: settings.humanInTheLoop,
+        runner: settings.runner,
+      });
+      // Update local state
+      setProjects((prev) =>
+        prev.map((p) => (p.id === projectId ? { ...p, ...updated } : p))
+      );
+      // Update selected project if it's the one being edited
+      if (selectedProjectId() === projectId) {
+        setSelectedProject({ ...selectedProject()!, ...updated });
+      }
+      return updated;
+    } catch (e) {
+      console.error('Failed to update project settings:', e);
+      window.toast?.error(`Failed to update settings: ${e}`);
+      return null;
+    }
+  };
+
   const filteredProjects = () => {
     const query = projectSearchQuery().toLowerCase();
     if (!query) return projects();
@@ -265,6 +308,7 @@ export const ProjectProvider: ParentComponent = (props) => {
     filteredProjects,
     removeProject,
     updateProjectPosition,
+    updateProjectSettings,
   };
 
   return <ProjectContext.Provider value={value}>{props.children}</ProjectContext.Provider>;

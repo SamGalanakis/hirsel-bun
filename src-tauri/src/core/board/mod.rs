@@ -8,7 +8,7 @@
 //! ## Data Model
 //!
 //! - **Tasks**: Nested tree of work items with slug IDs
-//! - **Evals**: Flat list of verifications that reference tasks
+//! - **Evals**: Flat list that validate tasks
 //!
 //! ## Agent Access
 //!
@@ -120,11 +120,26 @@ CREATE TABLE IF NOT EXISTS draft_nodes (
     name TEXT NOT NULL,
     node_type TEXT NOT NULL DEFAULT 'task',  -- 'task' | 'eval'
     content TEXT NOT NULL DEFAULT '',
-    validates TEXT DEFAULT '[]',             -- JSON array for evals (task IDs)
     x REAL,
     y REAL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+
+-- Junction table: eval node -> task nodes it validates
+CREATE TABLE IF NOT EXISTS draft_node_validates (
+    eval_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    project_id INTEGER NOT NULL,
+    PRIMARY KEY (eval_id, task_id)
+);
+
+-- Junction table: node -> nodes that must complete before it can start
+CREATE TABLE IF NOT EXISTS draft_node_blocked_by (
+    node_id TEXT NOT NULL,
+    blocker_id TEXT NOT NULL,
+    project_id INTEGER NOT NULL,
+    PRIMARY KEY (node_id, blocker_id)
 );
 
 -- Live tree (dispatched state, reflects current reality)
@@ -138,13 +153,28 @@ CREATE TABLE IF NOT EXISTS live_nodes (
     node_type TEXT NOT NULL DEFAULT 'task',
     content TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'pending',  -- pending|working|done|failed
-    validates TEXT DEFAULT '[]',
     x REAL,
     y REAL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     completed_at TEXT,
     last_commit_sha TEXT
+);
+
+-- Junction table: live eval node -> live task nodes it validates
+CREATE TABLE IF NOT EXISTS live_node_validates (
+    eval_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    project_id INTEGER NOT NULL,
+    PRIMARY KEY (eval_id, task_id)
+);
+
+-- Junction table: live node -> live nodes that must complete before it can start
+CREATE TABLE IF NOT EXISTS live_node_blocked_by (
+    node_id TEXT NOT NULL,
+    blocker_id TEXT NOT NULL,
+    project_id INTEGER NOT NULL,
+    PRIMARY KEY (node_id, blocker_id)
 );
 
 -- Delta submissions (LLM-generated delta tasks for a dispatch)
@@ -176,9 +206,17 @@ CREATE TABLE IF NOT EXISTS project_runs (
 
 CREATE INDEX IF NOT EXISTS idx_draft_nodes_project ON draft_nodes(project_id);
 CREATE INDEX IF NOT EXISTS idx_draft_nodes_parent ON draft_nodes(parent_id);
+CREATE INDEX IF NOT EXISTS idx_draft_validates_eval ON draft_node_validates(eval_id);
+CREATE INDEX IF NOT EXISTS idx_draft_validates_task ON draft_node_validates(task_id);
+CREATE INDEX IF NOT EXISTS idx_draft_blocked_node ON draft_node_blocked_by(node_id);
+CREATE INDEX IF NOT EXISTS idx_draft_blocked_blocker ON draft_node_blocked_by(blocker_id);
 CREATE INDEX IF NOT EXISTS idx_live_nodes_project ON live_nodes(project_id);
 CREATE INDEX IF NOT EXISTS idx_live_nodes_parent ON live_nodes(parent_id);
 CREATE INDEX IF NOT EXISTS idx_live_nodes_draft ON live_nodes(draft_node_id);
+CREATE INDEX IF NOT EXISTS idx_live_validates_eval ON live_node_validates(eval_id);
+CREATE INDEX IF NOT EXISTS idx_live_validates_task ON live_node_validates(task_id);
+CREATE INDEX IF NOT EXISTS idx_live_blocked_node ON live_node_blocked_by(node_id);
+CREATE INDEX IF NOT EXISTS idx_live_blocked_blocker ON live_node_blocked_by(blocker_id);
 CREATE INDEX IF NOT EXISTS idx_delta_submissions_project ON delta_submissions(project_id);
 CREATE INDEX IF NOT EXISTS idx_delta_submissions_batch ON delta_submissions(batch_id);
 CREATE INDEX IF NOT EXISTS idx_delta_submissions_status ON delta_submissions(status);
@@ -215,6 +253,8 @@ pub struct BoardService {
     project_id: i64,
     profile: Option<OrchestratorProfile>,
     last_sync_time: Option<SystemTime>,
+    #[cfg(test)]
+    db_path: Option<PathBuf>,
 }
 
 impl BoardService {
@@ -224,6 +264,8 @@ impl BoardService {
             project_id,
             profile: None,
             last_sync_time: None,
+            #[cfg(test)]
+            db_path: None,
         }
     }
 
@@ -233,6 +275,19 @@ impl BoardService {
             project_id,
             profile: Some(profile),
             last_sync_time: None,
+            #[cfg(test)]
+            db_path: None,
+        }
+    }
+
+    /// Create a board service with a specific database path (for testing)
+    #[cfg(test)]
+    pub fn with_db_path(project_id: i64, db_path: PathBuf) -> Self {
+        Self {
+            project_id,
+            profile: None,
+            last_sync_time: None,
+            db_path: Some(db_path),
         }
     }
 
@@ -283,7 +338,16 @@ impl BoardService {
 
     /// Open database connection
     fn open_db(&self) -> BoardResult<Connection> {
-        let db = Connection::open(global_db_path())?;
+        #[cfg(test)]
+        let path = self
+            .db_path
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(global_db_path);
+        #[cfg(not(test))]
+        let path = global_db_path();
+
+        let db = Connection::open(path)?;
         db.busy_timeout(std::time::Duration::from_secs(30))?;
         db.pragma_update(None, "journal_mode", "WAL")?;
         db.pragma_update(None, "foreign_keys", "ON")?;
@@ -930,13 +994,6 @@ impl BoardService {
         let task_tree = self.get_task_tree()?;
         let evals = self.get_evals()?;
 
-        // Clean up legacy board.json on first export
-        let legacy_path = board_dir.join("board.json");
-        if legacy_path.exists() {
-            info!("Removing legacy board.json, migrating to per-task files");
-            std::fs::remove_file(&legacy_path)?;
-        }
-
         // Determine which tasks to export based on scope
         let tasks_to_export: Vec<&TaskTree> = match scope {
             ExportScope::WholeBoard => task_tree.iter().collect(),
@@ -1029,7 +1086,7 @@ impl BoardService {
             let entry = entry?;
             let path = entry.path();
 
-            // Skip non-json files and legacy board.json
+            // Skip non-json files
             if path.extension().map(|e| e != "json").unwrap_or(true) {
                 continue;
             }
@@ -1037,9 +1094,6 @@ impl BoardService {
                 Some(s) => s.to_string_lossy().to_string(),
                 None => continue,
             };
-            if slug == "board" {
-                continue; // Skip legacy file
-            }
 
             seen_slugs.insert(slug.clone());
 
@@ -1488,12 +1542,16 @@ mod tests {
 
     fn setup_test_db() -> (PathBuf, i64) {
         let dir = tempdir().unwrap();
-        let db_path = dir.into_path().join("hirsel.db");
+        let db_path = dir.keep().join("hirsel.db");
 
-        // Create projects table
+        // Create projects table (minimal schema for tests)
         let db = Connection::open(&db_path).unwrap();
         db.execute_batch(
-            "CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+            "CREATE TABLE projects (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                runner TEXT
+            );
              INSERT INTO projects (id, name) VALUES (1, 'Test Project');",
         )
         .unwrap();
@@ -1506,8 +1564,8 @@ mod tests {
 
     #[test]
     fn test_task_crud() {
-        let (_db_path, project_id) = setup_test_db();
-        let service = BoardService::new(project_id);
+        let (db_path, project_id) = setup_test_db();
+        let service = BoardService::with_db_path(project_id, db_path);
 
         // Create root task
         let root = service
@@ -1560,8 +1618,8 @@ mod tests {
 
     #[test]
     fn test_eval_crud() {
-        let (_db_path, project_id) = setup_test_db();
-        let service = BoardService::new(project_id);
+        let (db_path, project_id) = setup_test_db();
+        let service = BoardService::with_db_path(project_id, db_path);
 
         // Create a task first
         let task = service
@@ -1610,8 +1668,8 @@ mod tests {
 
     #[test]
     fn test_validation_computation() {
-        let (_db_path, project_id) = setup_test_db();
-        let service = BoardService::new(project_id);
+        let (db_path, project_id) = setup_test_db();
+        let service = BoardService::with_db_path(project_id, db_path);
 
         // Create parent with two children
         let parent = service
@@ -1689,8 +1747,8 @@ mod tests {
 
     #[test]
     fn test_bookmarks() {
-        let (_db_path, project_id) = setup_test_db();
-        let service = BoardService::new(project_id);
+        let (db_path, project_id) = setup_test_db();
+        let service = BoardService::with_db_path(project_id, db_path);
 
         let bm = service
             .save_bookmark("Overview", 100.0, 200.0, 1.5)

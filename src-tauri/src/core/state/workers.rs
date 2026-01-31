@@ -39,6 +39,8 @@ impl SQLiteState {
                 .map(|v| v != 0)
                 .unwrap_or(false),
             state_handle: row.get("state_handle")?,
+            assigned_task_id: row.get("assigned_task_id")?,
+            last_task_id: row.get("last_task_id")?,
         })
     }
 
@@ -67,7 +69,7 @@ impl SQLiteState {
     /// Get a worker by name
     pub fn get_worker(&self, name: &str) -> StateResult<Option<Worker>> {
         let result = self.db.query_row(
-            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle FROM workers WHERE name = ?1",
+            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle, assigned_task_id, last_task_id FROM workers WHERE name = ?1",
             params![name],
             Self::worker_from_row,
         );
@@ -81,7 +83,7 @@ impl SQLiteState {
     /// Get all workers
     pub fn get_workers(&self) -> StateResult<Vec<Worker>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle FROM workers ORDER BY id"
+            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle, assigned_task_id, last_task_id FROM workers ORDER BY id"
         )?;
         let workers = stmt
             .query_map([], Self::worker_from_row)?
@@ -92,7 +94,7 @@ impl SQLiteState {
     /// Get active workers (not awaiting or error)
     pub fn get_active_workers(&self) -> StateResult<Vec<Worker>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle FROM workers WHERE status NOT IN (?1, ?2) ORDER BY id"
+            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle, assigned_task_id, last_task_id FROM workers WHERE status NOT IN (?1, ?2) ORDER BY id"
         )?;
         let workers = stmt
             .query_map(
@@ -159,6 +161,14 @@ impl SQLiteState {
         if let Some(ref state_handle) = updates.state_handle {
             set_clauses.push("state_handle = ?");
             params_vec.push(Box::new(state_handle.clone()));
+        }
+        if let Some(ref assigned_task_id) = updates.assigned_task_id {
+            set_clauses.push("assigned_task_id = ?");
+            params_vec.push(Box::new(assigned_task_id.clone()));
+        }
+        if let Some(ref last_task_id) = updates.last_task_id {
+            set_clauses.push("last_task_id = ?");
+            params_vec.push(Box::new(last_task_id.clone()));
         }
 
         if set_clauses.is_empty() {
@@ -252,7 +262,7 @@ impl SQLiteState {
     /// Get workers waiting for HITL input
     pub fn get_hitl_waiting_workers(&self) -> StateResult<Vec<Worker>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle FROM workers WHERE hitl_waiting = 1 ORDER BY id"
+            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle, assigned_task_id, last_task_id FROM workers WHERE hitl_waiting = 1 ORDER BY id"
         )?;
         let workers = stmt
             .query_map([], Self::worker_from_row)?

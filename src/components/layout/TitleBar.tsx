@@ -98,6 +98,18 @@ export const TitleBar: Component = () => {
       <div class="flex items-center gap-1">
         <NotificationsDropdown />
 
+        {/* Project settings - only show when project selected */}
+        <Show when={project.selectedProject()}>
+          <button
+            type="button"
+            onClick={() => project.setShowProjectSettings(true)}
+            class="p-2 rounded-md text-wool-500 hover:text-wool-300 hover:bg-pasture-800 transition-colors"
+            title={`${project.selectedProject()?.name} settings`}
+          >
+            <i data-lucide="folder-cog" class="w-4 h-4" />
+          </button>
+        </Show>
+
         <button
           type="button"
           onClick={() => app.setShowHelp(true)}

@@ -57,38 +57,3 @@ pub fn cleanup_process_group(context: &str) {
         let _ = context; // Suppress unused warning
     }
 }
-
-/// Kill a specific process group by PID.
-///
-/// This is useful when you have the PID of a process group leader and want
-/// to kill all processes in that group.
-///
-/// # Arguments
-///
-/// * `pid` - The PID of the process group leader
-/// * `force` - If true, sends SIGKILL after SIGTERM (always, since children may survive)
-pub fn kill_process_group(pid: u32, force: bool) {
-    #[cfg(unix)]
-    {
-        unsafe {
-            // Send SIGTERM to the process group
-            libc::kill(-(pid as i32), libc::SIGTERM);
-        }
-
-        if force {
-            // Brief wait for graceful shutdown
-            std::thread::sleep(std::time::Duration::from_millis(100));
-
-            // Always send SIGKILL - the leader may die quickly but children
-            // (like Node.js hirsel __acp-bridge) may ignore SIGTERM
-            unsafe {
-                libc::kill(-(pid as i32), libc::SIGKILL);
-            }
-        }
-    }
-
-    #[cfg(not(unix))]
-    {
-        let _ = (pid, force); // Suppress unused warnings
-    }
-}

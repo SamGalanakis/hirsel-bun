@@ -371,6 +371,8 @@ mod tests {
             eval_result: None,
             eval_feedback: None,
             board_task_id: None,
+            assigned_to: None,
+            completed_by: None,
         };
 
         let display = TaskDisplay::from_task(&task, 2);

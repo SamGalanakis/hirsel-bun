@@ -616,6 +616,7 @@ mod tests {
             credentials: None,
             coordinator_url: None,
             tailscale_authkey: None,
+            assigned_task_id: None,
         };
 
         assert!(config.is_leader);

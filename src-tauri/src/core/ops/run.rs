@@ -233,7 +233,6 @@ pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
         .unwrap_or_else(|| "1".to_string());
     let time_limit_minutes = source_state.get_time_limit_minutes().ok().flatten();
     let human_in_the_loop = source_state.get_human_in_the_loop().unwrap_or(true);
-    let max_iterations = source_state.get_max_iterations().ok().flatten();
     let default_runner = source_state.get_default_runner().ok().flatten();
 
     // Read spec.md from source
@@ -310,9 +309,6 @@ pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
     if let Some(limit) = time_limit_minutes {
         new_state.set_time_limit_minutes(Some(limit))?;
     }
-    if let Some(max_iter) = max_iterations {
-        new_state.set_max_iterations(Some(max_iter))?;
-    }
     if let Some(ref runner) = default_runner {
         new_state.set_default_runner(Some(runner))?;
     }
@@ -339,7 +335,6 @@ pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
         worker_scale,
         time_limit_minutes,
         human_in_the_loop,
-        max_iterations,
         default_runner,
         spec_content,
         has_eval,

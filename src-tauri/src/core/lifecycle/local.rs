@@ -246,10 +246,9 @@ impl LocalLifecycleManager {
             }
 
             // Build unified state handle from work dir snapshot and agent session
-            // Use stored runner configs (captured at run creation) with fallback to global config
             let runner_config = self
                 .state
-                .get_runner_config_for_worker(&worker.name, &config)
+                .get_runner_config_for_worker(&worker.name)
                 .unwrap_or_default();
             let mut state_handle = WorkerStateHandle::new();
 
@@ -619,6 +618,352 @@ impl LocalLifecycleManager {
             worker_name: new_name,
             work_dir: worker_dir,
         }))
+    }
+
+    /// Evaluate scaling needs and return actions for spawning/waking workers.
+    ///
+    /// This is the event-driven scaling evaluation that replaces the old polling-based
+    /// approach. It's called when the scaling_check_requested flag is set.
+    pub fn evaluate_scaling(&self) -> LifecycleResult<Vec<LifecycleAction>> {
+        use crate::core::git::create_worker_clone;
+        use crate::core::workers::WorkerScale;
+
+        // Don't scale if run is paused
+        let status = self
+            .state
+            .status()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        if status == Status::Paused {
+            debug!("evaluate_scaling: run is paused, not scaling");
+            return Ok(vec![]);
+        }
+
+        // Get scaling configuration
+        let scale_str = match self
+            .state
+            .get_worker_scale()
+            .map_err(|e| LifecycleError::State(e.to_string()))?
+        {
+            Some(s) => s,
+            None => return Ok(vec![]),
+        };
+        let scale = match WorkerScale::parse(&scale_str) {
+            Some(s) => s,
+            None => return Ok(vec![]),
+        };
+        let max_workers = scale.max as usize;
+
+        // Get claimable tasks and workers
+        let claimable = self
+            .state
+            .get_claimable_tasks()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+        if claimable.is_empty() {
+            debug!("evaluate_scaling: no claimable tasks");
+            return Ok(vec![]);
+        }
+
+        let workers = self
+            .state
+            .get_workers()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+        let active_count = workers
+            .iter()
+            .filter(|w| w.status == WorkerStatus::Working)
+            .count();
+
+        let idle_workers: Vec<_> = workers
+            .iter()
+            .filter(|w| w.status == WorkerStatus::Awaiting && !w.hitl_waiting)
+            .collect();
+
+        // Calculate how many workers we need
+        let needed = claimable
+            .len()
+            .min(max_workers)
+            .saturating_sub(active_count);
+        if needed == 0 {
+            debug!("evaluate_scaling: no additional workers needed");
+            return Ok(vec![]);
+        }
+
+        let mut actions = vec![];
+        let mut tasks_to_assign: Vec<_> = claimable.clone();
+        let all_tasks = self
+            .state
+            .get_tasks()
+            .map_err(|e| LifecycleError::State(e.to_string()))?;
+
+        // First: wake idle workers with assigned tasks
+        for worker in idle_workers.iter().take(needed) {
+            if let Some(task) = self.pick_task_for_worker(&tasks_to_assign, worker, &all_tasks) {
+                tasks_to_assign.retain(|t| t.id != task.id);
+
+                // Assign task to worker in database
+                if let Err(e) = self.state.claim_task(&task.id, &worker.name) {
+                    warn!(
+                        "evaluate_scaling: failed to claim task {} for worker {}: {}",
+                        task.id, worker.name, e
+                    );
+                    continue;
+                }
+
+                // Update worker's assigned_task_id
+                if let Err(e) = self.state.update_worker(
+                    &worker.name,
+                    WorkerUpdate {
+                        assigned_task_id: Some(Some(task.id.clone())),
+                        ..Default::default()
+                    },
+                ) {
+                    warn!(
+                        "evaluate_scaling: failed to update assigned_task_id for worker {}: {}",
+                        worker.name, e
+                    );
+                }
+
+                // Get work_dir from database, fallback to standard location
+                let work_dir = worker
+                    .work_dir
+                    .as_ref()
+                    .filter(|s| !s.is_empty())
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| self.context.run_dir.join("work").join(&worker.name));
+
+                actions.push(LifecycleAction::ResumeWorker {
+                    worker_name: worker.name.clone(),
+                    work_dir,
+                    resume_session_id: worker.session_id.clone(),
+                    state_handle: worker
+                        .state_handle
+                        .as_ref()
+                        .and_then(|json| serde_json::from_str::<WorkerStateHandle>(json).ok()),
+                });
+
+                info!(
+                    "evaluate_scaling: waking idle worker {} with task {}",
+                    worker.name, task.id
+                );
+            }
+        }
+
+        // Then: spawn new workers for remaining tasks
+        let remaining = needed - actions.len();
+        if remaining > 0 {
+            let project_path_str = match self
+                .state
+                .get_project_path()
+                .map_err(|e| LifecycleError::State(e.to_string()))?
+            {
+                Some(p) => p,
+                None => {
+                    warn!("evaluate_scaling: no project path, cannot spawn new workers");
+                    return Ok(actions);
+                }
+            };
+
+            let project_path = PathBuf::from(&project_path_str);
+            let staging_dir = self.context.run_dir.join("work").join("staging");
+            let existing_names: Vec<String> = workers.iter().map(|w| w.name.clone()).collect();
+
+            for _ in 0..remaining {
+                if tasks_to_assign.is_empty() {
+                    break;
+                }
+
+                // Get task to assign (just take first available for new workers)
+                let task = tasks_to_assign.remove(0);
+
+                // Generate new worker name
+                let new_name = crate::core::names::get_available_name(&existing_names);
+
+                // Create worker clone
+                let worker_dir = match create_worker_clone(
+                    &self.context.run_name,
+                    &project_path,
+                    &new_name,
+                    Some(&staging_dir),
+                    &self.context.run_dir,
+                ) {
+                    Ok(dir) => dir,
+                    Err(e) => {
+                        warn!(
+                            "evaluate_scaling: failed to create worker clone for {}: {}",
+                            new_name, e
+                        );
+                        continue;
+                    }
+                };
+
+                // Add worker to state
+                let location = self
+                    .state
+                    .get_default_runner()
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "local".to_string());
+
+                if let Err(e) =
+                    self.state
+                        .add_worker(&new_name, worker_dir.to_str().unwrap_or("."), &location)
+                {
+                    warn!("evaluate_scaling: failed to add worker {}: {}", new_name, e);
+                    continue;
+                }
+
+                // Claim task for new worker
+                if let Err(e) = self.state.claim_task(&task.id, &new_name) {
+                    warn!(
+                        "evaluate_scaling: failed to claim task {} for new worker {}: {}",
+                        task.id, new_name, e
+                    );
+                    continue;
+                }
+
+                // Set assigned_task_id for new worker
+                if let Err(e) = self.state.update_worker(
+                    &new_name,
+                    WorkerUpdate {
+                        assigned_task_id: Some(Some(task.id.clone())),
+                        ..Default::default()
+                    },
+                ) {
+                    warn!(
+                        "evaluate_scaling: failed to set assigned_task_id for {}: {}",
+                        new_name, e
+                    );
+                }
+
+                // Create worker chat file
+                let chat_file = self.files.chats_dir().join(format!("{}.md", new_name));
+                if let Err(e) = std::fs::write(&chat_file, format!("# {} Chat\n\n", new_name)) {
+                    warn!(
+                        "evaluate_scaling: failed to create worker chat for {}: {}",
+                        new_name, e
+                    );
+                }
+
+                // Announce in group chat
+                let _ = self.state.add_message(
+                    "group",
+                    "System",
+                    &format!(
+                        "New worker **{}** has joined and is assigned task **{}**.",
+                        new_name, task.id
+                    ),
+                    false,
+                );
+
+                actions.push(LifecycleAction::SpawnWorker {
+                    worker_name: new_name.clone(),
+                    work_dir: worker_dir,
+                });
+
+                info!(
+                    "evaluate_scaling: spawning new worker {} with task {}",
+                    new_name, task.id
+                );
+            }
+        }
+
+        Ok(actions)
+    }
+
+    /// Pick the best task for a worker based on tree-walk distance.
+    ///
+    /// For work tasks: prefer tasks CLOSE to the worker's last completed task
+    /// For eval tasks: prefer tasks FAR from the worker's last completed task
+    ///   (so eval is done by a different worker than who did the work)
+    fn pick_task_for_worker(
+        &self,
+        claimable: &[crate::core::state::Task],
+        worker: &crate::core::state::Worker,
+        all_tasks: &[crate::core::state::Task],
+    ) -> Option<crate::core::state::Task> {
+        use crate::core::state::TaskType;
+
+        if claimable.is_empty() {
+            return None;
+        }
+
+        // If no history, just return first task
+        let last_task_id = match &worker.last_task_id {
+            Some(id) => id,
+            None => return Some(claimable[0].clone()),
+        };
+
+        // Calculate tree distances from last_task_id using BFS
+        let distances = self.calculate_tree_distances(all_tasks, last_task_id);
+
+        // Score each claimable task
+        let mut scored: Vec<_> = claimable
+            .iter()
+            .map(|t| {
+                let dist = distances.get(&t.id).copied().unwrap_or(usize::MAX);
+                let score = match t.task_type {
+                    TaskType::Eval => {
+                        // Eval: prefer FAR (high distance = high score = pick first)
+                        dist
+                    }
+                    TaskType::Work => {
+                        // Work: prefer CLOSE (low distance = high score)
+                        usize::MAX.saturating_sub(dist)
+                    }
+                };
+                (t, score)
+            })
+            .collect();
+
+        // Sort by score descending (highest score first)
+        scored.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
+        scored.first().map(|(t, _)| (*t).clone())
+    }
+
+    /// Calculate tree distances from a given task using BFS.
+    ///
+    /// Distance is measured as the number of parent/child edges to traverse.
+    fn calculate_tree_distances(
+        &self,
+        tasks: &[crate::core::state::Task],
+        from_id: &str,
+    ) -> std::collections::HashMap<String, usize> {
+        use std::collections::{HashMap, VecDeque};
+
+        let mut distances: HashMap<String, usize> = HashMap::new();
+        let mut queue: VecDeque<(String, usize)> = VecDeque::new();
+
+        distances.insert(from_id.to_string(), 0);
+        queue.push_back((from_id.to_string(), 0));
+
+        while let Some((id, dist)) = queue.pop_front() {
+            // Find the current task
+            let task = match tasks.iter().find(|t| t.id == id) {
+                Some(t) => t,
+                None => continue,
+            };
+
+            // Parent edge
+            if let Some(ref parent) = task.parent_id {
+                if !distances.contains_key(parent) {
+                    distances.insert(parent.clone(), dist + 1);
+                    queue.push_back((parent.clone(), dist + 1));
+                }
+            }
+
+            // Child edges
+            for child in tasks.iter().filter(|c| c.parent_id.as_ref() == Some(&id)) {
+                if !distances.contains_key(&child.id) {
+                    distances.insert(child.id.clone(), dist + 1);
+                    queue.push_back((child.id.clone(), dist + 1));
+                }
+            }
+
+            // Sibling edges (through parent) are covered transitively via parent traversal
+        }
+
+        distances
     }
 
     /// Spawn the eval agent as a background process.

@@ -4,9 +4,10 @@
 //!
 //! Uses the Orchestrator trait to support both local and remote modes.
 
-use crate::cli::helpers::{block_on, get_orchestrator};
+use crate::cli::helpers::{block_on, get_orchestrator, CliOutput};
 use crate::core::orchestrator::OrchestratorError;
 use regex::Regex;
+use serde::Serialize;
 use std::sync::LazyLock;
 
 /// Regex patterns for time limit parsing
@@ -16,6 +17,12 @@ static TIME_MIN_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\d+)m$").expect("invalid regex"));
 static TIME_HOUR_MIN_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\d+)h(\d+)m$").expect("invalid regex"));
+
+#[derive(Serialize)]
+struct ResumeData {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    time_limit: Option<String>,
+}
 
 /// Run the resume command
 pub fn run_resume(run_name: &str, time_limit: Option<&str>, json: bool) -> anyhow::Result<()> {
@@ -29,16 +36,14 @@ pub fn run_resume_with_profile(
     profile: Option<&str>,
     json: bool,
 ) -> anyhow::Result<()> {
+    let output = CliOutput::new(json);
+
     // Parse time limit if provided
     let time_limit_minutes = if let Some(limit_str) = time_limit {
         match parse_time_limit(limit_str) {
             Ok(minutes) => Some(minutes as u32),
             Err(e) => {
-                if json {
-                    println!(r#"{{"success": false, "error": "{}"}}"#, e);
-                } else {
-                    eprintln!("{}", e);
-                }
+                output.error_continue(&e);
                 return Ok(());
             }
         }
@@ -50,46 +55,30 @@ pub fn run_resume_with_profile(
 
     match block_on(orch.resume_run(run_name, time_limit_minutes)) {
         Ok(()) => {
-            if json {
-                let time_limit_msg = time_limit
-                    .map(|t| format!(r#", "time_limit": "{}""#, t))
-                    .unwrap_or_default();
-                println!(
-                    r#"{{"success": true, "message": "Run '{}' resumed"{}}}"#,
-                    run_name, time_limit_msg
-                );
-            } else {
+            let data = ResumeData {
+                time_limit: time_limit.map(|s| s.to_string()),
+            };
+            output.success_with_data(&format!("Resumed run '{}'", run_name), data);
+            if !json {
                 if let Some(limit) = time_limit_minutes {
                     println!("Time limit set: {} minutes", limit);
                 }
-                println!("Resumed run '{}'", run_name);
                 println!();
                 println!("Use 'hirsel attach {}' to watch progress.", run_name);
             }
             Ok(())
         }
         Err(OrchestratorError::RunNotFound(name)) => {
-            if json {
-                println!(
-                    r#"{{"success": false, "error": "Run '{}' not found"}}"#,
-                    name
-                );
-            } else {
-                eprintln!("Run '{}' not found", name);
-            }
+            output.error_continue(&format!("Run '{}' not found", name));
             Ok(())
         }
         Err(OrchestratorError::InvalidOperation(msg)) => {
-            if json {
-                println!(r#"{{"success": false, "error": "{}"}}"#, msg);
-            } else {
-                eprintln!("{}", msg);
-            }
+            output.error_continue(&msg);
             Ok(())
         }
         Err(e) => {
             if json {
-                println!(r#"{{"success": false, "error": "{}"}}"#, e);
+                output.error_continue(&e.to_string());
                 Ok(())
             } else {
                 Err(e.into())

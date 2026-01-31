@@ -258,6 +258,7 @@ fn build_router(state: Arc<AppState>, gyp_state: Arc<gyp::GypState>) -> Router {
         .route("/api/runs/{run}/workers/list", get(list_workers))
         .route("/api/runs/{run}/workers/active", get(list_active_workers))
         .route("/api/runs/{run}/workers/all_done", get(all_workers_done))
+        .route("/api/runs/{run}/scaling_check", post(request_scaling_check))
         .route("/api/runs/{run}/workers/{worker}", get(get_worker))
         .route(
             "/api/runs/{run}/workers/{worker}/update",
@@ -625,6 +626,22 @@ async fn get_worker_claimed_task(
 
     match worker_routes::get_claimed_task(&sqlite_state, &worker) {
         Ok(task) => Json(ClaimedTaskResponse { task }).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Request a scaling check (triggers event-driven worker spawn/assignment)
+async fn request_scaling_check(
+    axum::extract::Path(run): axum::extract::Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let sqlite_state = match get_run_state(&state, &run).await {
+        Ok(s) => s,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+
+    match worker_routes::request_scaling_check(&sqlite_state) {
+        Ok(_) => Json(SuccessResponse::ok()).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }

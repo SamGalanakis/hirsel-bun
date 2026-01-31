@@ -114,7 +114,6 @@ pub struct ConfigUpdateRequest {
     pub agent_command: Option<Vec<String>>,
     pub eval_timeout: Option<u32>,
     pub auto_learn: Option<bool>,
-    pub max_iterations: Option<Option<u32>>,
     pub user_message_pause: Option<String>,
     pub human_in_the_loop: Option<bool>,
     pub compaction_enabled: Option<bool>,
@@ -180,4 +179,22 @@ pub struct GypChatMessage {
     pub role: String,
     pub content: String,
     pub timestamp: String,
+}
+
+/// Config defaults for project settings inheritance
+///
+/// These values are used as defaults when project-specific settings are not set.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigDefaults {
+    /// Default worker scale (typically "1")
+    pub worker_scale: String,
+    /// Default time limit in minutes (None = no limit)
+    pub time_limit_minutes: Option<i64>,
+    /// Default human-in-the-loop setting
+    pub human_in_the_loop: bool,
+    /// Available runner names from global config
+    pub runners: Vec<String>,
+    /// Default runner name from global config
+    pub default_runner: Option<String>,
 }

@@ -461,17 +461,35 @@ impl WorkerRunner {
             .map_err(|e| WorkerError::Config(format!("Serialization error: {}", e)))
     }
 
-    /// Claim a task.
+    /// Claim a task with detailed rejection info.
     pub fn task_claim(&self, task_id: &str) -> WorkerResult<String> {
-        let worker_name = self.config.worker_name.clone();
-        self.run_async(self.state().claim_task(task_id, &worker_name))?;
+        use crate::core::state::ClaimTaskResult;
 
-        Ok(serde_json::json!({
-            "success": true,
-            "task_id": task_id,
-            "claimed_by": self.config.worker_name,
-        })
-        .to_string())
+        let worker_name = self.config.worker_name.clone();
+        let result = self.run_async(self.state().try_claim_task(task_id, &worker_name))?;
+
+        match result {
+            ClaimTaskResult::Success { task } => Ok(serde_json::json!({
+                "success": true,
+                "task_id": task.id,
+                "task_name": task.name,
+                "claimed_by": self.config.worker_name,
+            })
+            .to_string()),
+            ClaimTaskResult::Rejected {
+                reason,
+                alternatives,
+            } => {
+                let message = format_claim_rejection(&reason);
+                Ok(serde_json::json!({
+                    "success": false,
+                    "message": message,
+                    "reason": reason,
+                    "alternatives": alternatives,
+                })
+                .to_string())
+            }
+        }
     }
 
     /// Mark a task as done.
@@ -886,8 +904,22 @@ impl WorkerRunner {
     /// Workers are "dumb" - they just do tasks and report status.
     /// The daemon handles all lifecycle management.
     pub fn work_done(&self) -> WorkerResult<String> {
-        // Just set status to Awaiting - daemon will handle eval triggering
+        use crate::core::state::WorkerUpdate;
+
+        // Set status to Awaiting
         self.set_status(WorkerStatus::Awaiting)?;
+
+        // Clear assigned task (signals we're ready for a new assignment)
+        self.run_async(self.state().update_worker(
+            &self.config.worker_name,
+            WorkerUpdate {
+                assigned_task_id: Some(None),
+                ..Default::default()
+            },
+        ))?;
+
+        // Trigger scaling check - daemon might spawn us again with a new task
+        self.run_async(self.state().request_scaling_check())?;
 
         tracing::info!(
             "[{}] work_done: status set to Awaiting, daemon will handle lifecycle",
@@ -898,6 +930,7 @@ impl WorkerRunner {
             "success": true,
             "worker": self.config.worker_name,
             "status": "awaiting",
+            "message": "Work complete. Exiting - will be respawned if more tasks available.",
         })
         .to_string())
     }
@@ -1052,6 +1085,64 @@ impl WorkerRunner {
                 MsgSubcommands::List => self.msg_list(),
                 MsgSubcommands::Inbox => self.msg_inbox(),
             },
+        }
+    }
+}
+
+/// Format a claim rejection reason into a human-readable message
+fn format_claim_rejection(reason: &crate::core::state::ClaimRejectReason) -> String {
+    use crate::core::state::ClaimRejectReason;
+
+    match reason {
+        ClaimRejectReason::NotFound { task_id } => {
+            format!("Task '{}' not found", task_id)
+        }
+        ClaimRejectReason::AlreadyComplete { task_id, status } => {
+            format!("Task '{}' is already {} - no work needed", task_id, status)
+        }
+        ClaimRejectReason::Blocked { task_id, blockers } => {
+            let blocker_names: Vec<String> = blockers
+                .iter()
+                .map(|b| format!("{} ({})", b.task_id, b.status))
+                .collect();
+            format!(
+                "Task '{}' is blocked by: {}. Complete those first.",
+                task_id,
+                blocker_names.join(", ")
+            )
+        }
+        ClaimRejectReason::ClaimedByOther {
+            task_id,
+            claimed_by,
+        } => {
+            format!(
+                "Task '{}' is already claimed by {}. Pick a different task.",
+                task_id, claimed_by
+            )
+        }
+        ClaimRejectReason::WorkerBusy { existing_task_id } => {
+            format!(
+                "You already have task '{}' claimed. Complete or unclaim it first.",
+                existing_task_id
+            )
+        }
+        ClaimRejectReason::HasChildren { task_id, children } => {
+            format!(
+                "Task '{}' has children ({}). Claim and complete child tasks instead.",
+                task_id,
+                children.join(", ")
+            )
+        }
+        ClaimRejectReason::EvalNotReady {
+            task_id,
+            pending_tasks,
+        } => {
+            let pending_names: Vec<String> = pending_tasks.iter().map(|t| t.id.clone()).collect();
+            format!(
+                "Eval '{}' cannot be claimed yet. These tasks must be done first: {}",
+                task_id,
+                pending_names.join(", ")
+            )
         }
     }
 }

@@ -242,7 +242,6 @@ pub async fn create_draft() -> Result<RunDetail, String> {
         created_at: created_at.clone(),
         updated_at: created_at,
         iteration_count: 0,
-        max_iterations: None,
         human_in_the_loop: true,
         waiting_reason: None,
         unread_count: 0,
@@ -292,7 +291,6 @@ pub async fn clone_run(source_run: String, new_name: String) -> Result<RunDetail
         created_at: created_at.clone(),
         updated_at: created_at,
         iteration_count: 0,
-        max_iterations: result.max_iterations.map(|m| m as u32),
         human_in_the_loop: result.human_in_the_loop,
         waiting_reason: None,
         unread_count: 0,
@@ -696,6 +694,7 @@ pub async fn start_draft(
             coordinator_url: None,
             tailscale_authkey: None,
             credentials: None,
+            assigned_task_id: None,
         };
 
         // Spawn the worker

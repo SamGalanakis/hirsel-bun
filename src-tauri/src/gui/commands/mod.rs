@@ -97,6 +97,7 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         messages::mark_messages_read,
         // Config commands
         config_cmd::get_config,
+        config_cmd::get_config_defaults,
         config_cmd::save_config,
         config_cmd::get_tailscale_info,
         config_cmd::check_ssh_runner,
@@ -136,7 +137,7 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         gyp::get_gyp_history,
         gyp::clear_gyp_history,
         gyp::stop_gyp_session,
-        // Delivery commands
+        // Delivery commands (run-based)
         delivery::get_delivery_state,
         delivery::check_merge_state,
         delivery::get_conflicting_files,
@@ -147,6 +148,16 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         delivery::generate_pr_title,
         delivery::generate_pr_body,
         delivery::delivery_branch_name,
+        // Board delivery commands (delta dispatch system)
+        delivery::get_board_versions,
+        delivery::get_latest_board_version,
+        delivery::get_current_board_delivery,
+        delivery::start_board_delivery,
+        delivery::get_board_delivery_status,
+        delivery::retry_board_delivery,
+        delivery::get_delivery_attempts,
+        delivery::complete_board_delivery,
+        delivery::abandon_board_delivery,
         // Delta dispatch commands (unified board with draft/live trees)
         delta::get_draft_tree,
         delta::get_live_tree,

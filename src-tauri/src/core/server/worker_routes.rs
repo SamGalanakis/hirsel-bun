@@ -217,3 +217,8 @@ pub fn pause_all_workers(state: &SQLiteState, reason: &str) -> StateResult<()> {
 pub fn resume_all_workers(state: &SQLiteState) -> StateResult<()> {
     state.resume_all_workers()
 }
+
+/// Request a scaling check
+pub fn request_scaling_check(state: &SQLiteState) -> StateResult<()> {
+    state.request_scaling_check()
+}

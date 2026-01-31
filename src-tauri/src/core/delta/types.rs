@@ -18,7 +18,6 @@ pub enum NodeType {
     #[default]
     Task,
     Eval,
-    Project, // Root node representing the project
 }
 
 impl NodeType {
@@ -26,14 +25,12 @@ impl NodeType {
         match self {
             Self::Task => "task",
             Self::Eval => "eval",
-            Self::Project => "project",
         }
     }
 
     pub fn from_str(s: &str) -> Self {
         match s {
             "eval" => Self::Eval,
-            "project" => Self::Project,
             _ => Self::Task,
         }
     }
@@ -81,7 +78,8 @@ pub struct DraftNode {
     pub name: String,
     pub node_type: NodeType,
     pub content: String,
-    pub validates: Vec<String>, // For eval nodes
+    pub validates: Vec<String>, // For eval nodes: tasks this eval validates
+    pub blocked_by: Vec<String>, // For task nodes: tasks/evals that must complete first
     pub x: Option<f64>,
     pub y: Option<f64>,
     pub created_at: String,
@@ -97,6 +95,9 @@ pub struct DraftNodeTree {
     pub node_type: NodeType,
     pub content: String,
     pub validates: Vec<String>,
+    /// Computed inverse of validates - tasks blocked by evals
+    #[serde(default)]
+    pub blocked_by: Vec<String>,
     pub children: Vec<DraftNodeTree>,
     pub x: Option<f64>,
     pub y: Option<f64>,
@@ -110,6 +111,7 @@ impl From<DraftNode> for DraftNodeTree {
             node_type: node.node_type,
             content: node.content,
             validates: node.validates,
+            blocked_by: node.blocked_by, // Now stored, not computed
             children: vec![],
             x: node.x,
             y: node.y,
@@ -130,7 +132,8 @@ pub struct LiveNode {
     pub node_type: NodeType,
     pub content: String,
     pub status: LiveNodeStatus,
-    pub validates: Vec<String>,
+    pub validates: Vec<String>, // For eval nodes: tasks this eval validates
+    pub blocked_by: Vec<String>, // For task nodes: tasks/evals that must complete first
     pub x: Option<f64>,
     pub y: Option<f64>,
     pub created_at: String,
@@ -150,6 +153,9 @@ pub struct LiveNodeTree {
     pub content: String,
     pub status: LiveNodeStatus,
     pub validates: Vec<String>,
+    /// Computed inverse of validates - tasks blocked by evals
+    #[serde(default)]
+    pub blocked_by: Vec<String>,
     pub children: Vec<LiveNodeTree>,
     pub x: Option<f64>,
     pub y: Option<f64>,
@@ -167,6 +173,7 @@ impl From<LiveNode> for LiveNodeTree {
             content: node.content,
             status: node.status,
             validates: node.validates,
+            blocked_by: node.blocked_by, // Now stored, not computed
             children: vec![],
             x: node.x,
             y: node.y,
@@ -299,6 +306,7 @@ pub struct DiffNode {
     pub node_type: NodeType,
     pub content: String,
     pub validates: Vec<String>,
+    pub blocked_by: Vec<String>,
     pub parent_id: Option<String>,
 }
 
@@ -310,6 +318,7 @@ impl From<&DraftNode> for DiffNode {
             node_type: node.node_type,
             content: node.content.clone(),
             validates: node.validates.clone(),
+            blocked_by: node.blocked_by.clone(),
             parent_id: node.parent_id.clone(),
         }
     }
@@ -323,6 +332,7 @@ impl From<&LiveNode> for DiffNode {
             node_type: node.node_type,
             content: node.content.clone(),
             validates: node.validates.clone(),
+            blocked_by: node.blocked_by.clone(),
             parent_id: node.parent_id.clone(),
         }
     }
@@ -412,6 +422,131 @@ pub struct ProjectRun {
 }
 
 // =============================================================================
+// Board Version Types
+// =============================================================================
+
+/// A version of the board (created on each dispatch)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoardVersion {
+    pub id: i64,
+    pub project_id: i64,
+    pub batch_id: i64,
+    pub version_number: i32,
+    pub created_at: String,
+    pub description: Option<String>,
+}
+
+// =============================================================================
+// Delivery Types
+// =============================================================================
+
+/// Status of a delivery
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BoardDeliveryStatus {
+    #[default]
+    Pending,
+    InProgress,
+    ResolvingConflicts,
+    Pushed,
+    PrOpen,
+    Merged,
+    Failed,
+    Abandoned,
+}
+
+impl BoardDeliveryStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::InProgress => "in_progress",
+            Self::ResolvingConflicts => "resolving_conflicts",
+            Self::Pushed => "pushed",
+            Self::PrOpen => "pr_open",
+            Self::Merged => "merged",
+            Self::Failed => "failed",
+            Self::Abandoned => "abandoned",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "in_progress" => Self::InProgress,
+            "resolving_conflicts" => Self::ResolvingConflicts,
+            "pushed" => Self::Pushed,
+            "pr_open" => Self::PrOpen,
+            "merged" => Self::Merged,
+            "failed" => Self::Failed,
+            "abandoned" => Self::Abandoned,
+            _ => Self::Pending,
+        }
+    }
+
+    /// Check if delivery is terminal (no further actions possible)
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Merged | Self::Abandoned | Self::Failed)
+    }
+}
+
+/// A delivery tracks the publication of a board version
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Delivery {
+    pub id: i64,
+    pub project_id: i64,
+    pub version_id: i64,
+    pub status: BoardDeliveryStatus,
+    pub target_branch: String,
+    pub delivery_branch: Option<String>,
+    pub pr_url: Option<String>,
+    pub pr_number: Option<i64>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub failure_reason: Option<String>,
+}
+
+/// Status of a delivery attempt
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryAttemptStatus {
+    Success,
+    Failed,
+    Cancelled,
+}
+
+impl DeliveryAttemptStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "success" => Self::Success,
+            "cancelled" => Self::Cancelled,
+            _ => Self::Failed,
+        }
+    }
+}
+
+/// A delivery attempt (retry history)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeliveryAttempt {
+    pub id: i64,
+    pub delivery_id: i64,
+    pub attempt_number: i32,
+    pub status: DeliveryAttemptStatus,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+    pub error_message: Option<String>,
+}
+
+// =============================================================================
 // Request Types
 // =============================================================================
 
@@ -427,6 +562,8 @@ pub struct CreateDraftNodeRequest {
     pub content: String,
     #[serde(default)]
     pub validates: Vec<String>,
+    #[serde(default)]
+    pub blocked_by: Vec<String>,
     pub x: Option<f64>,
     pub y: Option<f64>,
 }
@@ -438,6 +575,7 @@ pub struct UpdateDraftNodeRequest {
     pub name: Option<String>,
     pub content: Option<String>,
     pub validates: Option<Vec<String>>,
+    pub blocked_by: Option<Vec<String>>,
     pub x: Option<f64>,
     pub y: Option<f64>,
 }
@@ -450,4 +588,6 @@ pub struct DispatchResult {
     pub batch_id: i64,
     pub delta_count: usize,
     pub diff_summary: String,
+    pub version_number: i32,
+    pub version_id: i64,
 }

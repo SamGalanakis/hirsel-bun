@@ -1,12 +1,16 @@
 //! Shared authenticated HTTP client for remote API access.
 //!
-//! This module provides `AuthenticatedClient`, a wrapper around `reqwest::Client`
-//! that handles bearer token authentication and provides typed request methods.
+//! This module provides:
+//! - `AuthenticatedClient`: A wrapper around `reqwest::Client` with bearer token auth
+//! - `ResponseExt`: Extension trait for consistent HTTP response handling
 //!
 //! Used by:
 //! - `RemoteOrchestrator` for run management API calls
 //! - `RemoteChatOrchestrator` for chat session API calls
+//! - `DaemonClient` for daemon communication
+//! - Service workers for remote HTTP calls
 
+use async_trait::async_trait;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -34,6 +38,99 @@ pub enum HttpError {
 
 /// Result type for HTTP operations
 pub type HttpResult<T> = Result<T, HttpError>;
+
+// =============================================================================
+// Response Extension Trait
+// =============================================================================
+
+/// Extension trait for consistent HTTP response handling.
+///
+/// Provides methods to check success status and deserialize JSON responses
+/// with proper error handling. Use this trait to reduce boilerplate when
+/// working with `reqwest::Response`.
+///
+/// # Example
+///
+/// ```ignore
+/// use crate::core::http_client::ResponseExt;
+///
+/// // Before (6 lines):
+/// let response = client.get(url).send().await?;
+/// if !response.status().is_success() {
+///     let status = response.status();
+///     let body = response.text().await.unwrap_or_default();
+///     return Err(anyhow!("HTTP {}: {}", status, body));
+/// }
+/// let result: T = response.json().await?;
+///
+/// // After (1 line):
+/// let result: T = client.get(url).send().await?.json_or_error().await?;
+/// ```
+#[async_trait]
+pub trait ResponseExt {
+    /// Check if response is successful, returning error with body on failure.
+    ///
+    /// Consumes the response if status is not successful (2xx).
+    async fn success_or_error(self) -> HttpResult<Self>
+    where
+        Self: Sized;
+
+    /// Check success and deserialize JSON body in one call.
+    ///
+    /// Combines `success_or_error()` with JSON deserialization.
+    async fn json_or_error<T: DeserializeOwned>(self) -> HttpResult<T>;
+
+    /// Check success and return the text body.
+    async fn text_or_error(self) -> HttpResult<String>;
+
+    /// Check success and return raw bytes.
+    async fn bytes_or_error(self) -> HttpResult<Vec<u8>>;
+}
+
+#[async_trait]
+impl ResponseExt for reqwest::Response {
+    async fn success_or_error(self) -> HttpResult<Self> {
+        if !self.status().is_success() {
+            let status = self.status().as_u16();
+            let url = self.url().to_string();
+            let body = self.text().await.unwrap_or_default();
+            return Err(HttpError::Response { status, url, body });
+        }
+        Ok(self)
+    }
+
+    async fn json_or_error<T: DeserializeOwned>(self) -> HttpResult<T> {
+        let url = self.url().to_string();
+        let response = self.success_or_error().await?;
+        response
+            .json()
+            .await
+            .map_err(|e| HttpError::Parse(format!("{}: {}", url, e)))
+    }
+
+    async fn text_or_error(self) -> HttpResult<String> {
+        let url = self.url().to_string();
+        let response = self.success_or_error().await?;
+        response
+            .text()
+            .await
+            .map_err(|e| HttpError::Parse(format!("{}: {}", url, e)))
+    }
+
+    async fn bytes_or_error(self) -> HttpResult<Vec<u8>> {
+        let url = self.url().to_string();
+        let response = self.success_or_error().await?;
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| HttpError::Parse(format!("{}: {}", url, e)))?;
+        Ok(bytes.to_vec())
+    }
+}
+
+// =============================================================================
+// Authenticated Client
+// =============================================================================
 
 /// HTTP client with bearer token authentication.
 ///
@@ -116,16 +213,13 @@ impl AuthenticatedClient {
 
     /// Make a GET request and deserialize the JSON response
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> HttpResult<T> {
-        let url = self.url(path);
-
-        let resp = self
-            .client
-            .get(&url)
+        self.client
+            .get(&self.url(path))
             .bearer_auth(&self.api_key)
             .send()
-            .await?;
-
-        self.handle_response(resp, &url).await
+            .await?
+            .json_or_error()
+            .await
     }
 
     /// Make a POST request with a JSON body and deserialize the response
@@ -134,32 +228,27 @@ impl AuthenticatedClient {
         path: &str,
         body: &B,
     ) -> HttpResult<T> {
-        let url = self.url(path);
-
-        let resp = self
-            .client
-            .post(&url)
+        self.client
+            .post(&self.url(path))
             .bearer_auth(&self.api_key)
             .json(body)
             .send()
-            .await?;
-
-        self.handle_response(resp, &url).await
+            .await?
+            .json_or_error()
+            .await
     }
 
     /// Make a POST request with a JSON body, ignoring the response body
     pub async fn post_empty<B: Serialize>(&self, path: &str, body: &B) -> HttpResult<()> {
-        let url = self.url(path);
-
-        let resp = self
-            .client
-            .post(&url)
+        self.client
+            .post(&self.url(path))
             .bearer_auth(&self.api_key)
             .json(body)
             .send()
+            .await?
+            .success_or_error()
             .await?;
-
-        self.handle_empty_response(resp, &url).await
+        Ok(())
     }
 
     /// Make a PATCH request with a JSON body and deserialize the response
@@ -168,17 +257,14 @@ impl AuthenticatedClient {
         path: &str,
         body: &B,
     ) -> HttpResult<T> {
-        let url = self.url(path);
-
-        let resp = self
-            .client
-            .patch(&url)
+        self.client
+            .patch(&self.url(path))
             .bearer_auth(&self.api_key)
             .json(body)
             .send()
-            .await?;
-
-        self.handle_response(resp, &url).await
+            .await?
+            .json_or_error()
+            .await
     }
 
     /// Make a POST request with raw bytes body
@@ -188,92 +274,38 @@ impl AuthenticatedClient {
         body: Vec<u8>,
         content_type: &str,
     ) -> HttpResult<()> {
-        let url = self.url(path);
-
-        let resp = self
-            .client
-            .post(&url)
+        self.client
+            .post(&self.url(path))
             .bearer_auth(&self.api_key)
             .header("Content-Type", content_type)
             .body(body)
             .send()
+            .await?
+            .success_or_error()
             .await?;
-
-        self.handle_empty_response(resp, &url).await
+        Ok(())
     }
 
     /// Make a GET request and return raw bytes
     pub async fn get_bytes(&self, path: &str) -> HttpResult<Vec<u8>> {
-        let url = self.url(path);
-
-        let resp = self
-            .client
-            .get(&url)
+        self.client
+            .get(&self.url(path))
             .bearer_auth(&self.api_key)
             .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(HttpError::Response { status, url, body });
-        }
-
-        let bytes = resp
-            .bytes()
+            .await?
+            .bytes_or_error()
             .await
-            .map_err(|e| HttpError::Parse(format!("Failed to read response: {}", e)))?;
-
-        Ok(bytes.to_vec())
     }
 
     /// Make a DELETE request
     pub async fn delete(&self, path: &str) -> HttpResult<()> {
-        let url = self.url(path);
-
-        let resp = self
-            .client
-            .delete(&url)
+        self.client
+            .delete(&self.url(path))
             .bearer_auth(&self.api_key)
             .send()
+            .await?
+            .success_or_error()
             .await?;
-
-        self.handle_empty_response(resp, &url).await
-    }
-
-    /// Handle a response that should have a JSON body
-    async fn handle_response<T: DeserializeOwned>(
-        &self,
-        resp: reqwest::Response,
-        url: &str,
-    ) -> HttpResult<T> {
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(HttpError::Response {
-                status,
-                url: url.to_string(),
-                body,
-            });
-        }
-
-        resp.json()
-            .await
-            .map_err(|e| HttpError::Parse(format!("JSON parse error: {}", e)))
-    }
-
-    /// Handle a response where we only care about success/failure
-    async fn handle_empty_response(&self, resp: reqwest::Response, url: &str) -> HttpResult<()> {
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(HttpError::Response {
-                status,
-                url: url.to_string(),
-                body,
-            });
-        }
-
         Ok(())
     }
 }

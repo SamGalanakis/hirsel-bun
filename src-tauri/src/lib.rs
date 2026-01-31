@@ -340,6 +340,7 @@ fn run_command(
                 teammates,
                 resume_session_id: args.resume_session_id,
                 api_url: args.api_url,
+                assigned_task_id: args.assigned_task_id,
             };
 
             // Run the async worker in a tokio runtime with signal handling
@@ -452,6 +453,7 @@ fn run_command(
                             teammates,
                             wait_for_files: args.wait_for_files,
                             file_receiver_port: args.file_receiver_port,
+                            assigned_task_id: args.assigned_task_id,
                         })
                         .await
                     })

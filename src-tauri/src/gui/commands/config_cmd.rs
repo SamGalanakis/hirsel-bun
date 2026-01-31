@@ -2,7 +2,7 @@
 //!
 //! Commands for reading and writing application configuration.
 
-use super::types::ConfigUpdateRequest;
+use super::types::{ConfigDefaults, ConfigUpdateRequest};
 use crate::core::api_types::ConfigResponse;
 use crate::core::config;
 use crate::core::orchestrator::create_orchestrator;
@@ -17,6 +17,24 @@ use std::time::Instant;
 pub async fn get_config() -> Result<ConfigResponse, String> {
     let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
     orch.get_config().await.map_err(|e| e.to_string())
+}
+
+/// Get global config defaults for project settings inheritance
+///
+/// Returns default values that projects inherit when they don't have
+/// project-specific settings. This allows the UI to show what values
+/// will be used when a project setting is empty.
+#[tauri::command]
+pub async fn get_config_defaults() -> Result<ConfigDefaults, String> {
+    let (cfg, _) = config::Config::load().unwrap_or_else(|_| (config::Config::default(), vec![]));
+
+    Ok(ConfigDefaults {
+        worker_scale: "1".to_string(),
+        time_limit_minutes: None,
+        human_in_the_loop: cfg.human_in_the_loop,
+        runners: cfg.runner_names(),
+        default_runner: cfg.default_runner.clone(),
+    })
 }
 
 /// Save application configuration
@@ -37,9 +55,6 @@ pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
     }
     if let Some(auto) = updates.auto_learn {
         cfg.auto_learn = auto;
-    }
-    if let Some(max) = updates.max_iterations {
-        cfg.max_iterations = max;
     }
     if let Some(pause) = updates.user_message_pause {
         cfg.user_message_pause = pause;

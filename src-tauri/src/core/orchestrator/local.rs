@@ -275,7 +275,6 @@ impl Orchestrator for LocalOrchestrator {
             .flatten()
             .unwrap_or_else(|| Utc::now().to_rfc3339());
         let iteration_count = state.get_iteration_count().unwrap_or(0) as u32;
-        let max_iterations = state.get_max_iterations().ok().flatten().map(|m| m as u32);
         let human_in_the_loop = state.get_human_in_the_loop().unwrap_or(true);
         let waiting_reason = state.get_waiting_reason().ok().flatten();
         let unread_count = state.get_unread_count().unwrap_or(0) as u32;
@@ -332,7 +331,6 @@ impl Orchestrator for LocalOrchestrator {
             created_at: created_at.clone(),
             updated_at: created_at,
             iteration_count,
-            max_iterations,
             human_in_the_loop,
             waiting_reason,
             unread_count,
@@ -664,6 +662,7 @@ impl Orchestrator for LocalOrchestrator {
             credentials: None,
             coordinator_url: None,
             tailscale_authkey: None,
+            assigned_task_id: worker_data.assigned_task_id.clone(),
         };
 
         spawn_worker(config, &state).map_err(|e| OrchestratorError::Other(e.to_string()))?;
@@ -968,7 +967,6 @@ impl Orchestrator for LocalOrchestrator {
             agent_command: self.config.agent.command.clone(),
             eval_timeout: self.config.eval_timeout,
             auto_learn: self.config.auto_learn,
-            max_iterations: self.config.max_iterations,
             user_message_pause: self.config.user_message_pause.clone(),
             human_in_the_loop: self.config.human_in_the_loop,
             compaction_enabled: self.config.compaction_enabled,
@@ -1146,14 +1144,6 @@ impl Orchestrator for LocalOrchestrator {
                 .set_time_limit_minutes(Some(limit as i64))
                 .map_err(|e| {
                     OrchestratorError::Other(format!("Failed to set time limit: {}", e))
-                })?;
-        }
-
-        if let Some(max_iter) = request.max_iterations {
-            sqlite_state
-                .set_max_iterations(Some(max_iter as i64))
-                .map_err(|e| {
-                    OrchestratorError::Other(format!("Failed to set max iterations: {}", e))
                 })?;
         }
 
@@ -1471,9 +1461,9 @@ impl Orchestrator for LocalOrchestrator {
                 None
             };
 
-            // Get runner config for this worker (from stored configs or fallback to global)
+            // Get runner config for this worker (from stored configs)
             let runner_config = sqlite_state
-                .get_runner_config_for_worker(worker_name, &self.config)
+                .get_runner_config_for_worker(worker_name)
                 .unwrap_or_default();
 
             // Check if local workers are allowed
@@ -1531,6 +1521,7 @@ impl Orchestrator for LocalOrchestrator {
                 coordinator_url,
                 tailscale_authkey,
                 credentials: None,
+                assigned_task_id: None,
             };
 
             match runner.spawn(&spawn_config).await {
@@ -1713,12 +1704,6 @@ impl Orchestrator for LocalOrchestrator {
             })?;
         }
 
-        if let Some(max_iter) = request.max_iterations {
-            state.set_max_iterations(Some(max_iter)).map_err(|e| {
-                OrchestratorError::Other(format!("Failed to set max iterations: {}", e))
-            })?;
-        }
-
         let hitl = request.human_in_the_loop.unwrap_or(true);
         state
             .set_human_in_the_loop(hitl)
@@ -1780,6 +1765,17 @@ impl Orchestrator for LocalOrchestrator {
             )));
         }
 
+        // Block all root tasks by scope (event-driven scaling will unblock when scope completes)
+        if let Ok(claimable) = state.get_claimable_tasks() {
+            for task in claimable {
+                if task.id != "scope" && task.parent_id.is_none() && task.blocked_by.is_empty() {
+                    if let Err(e) = state.add_blocker(&task.id, "scope") {
+                        tracing::warn!("Failed to block task '{}' by scope: {}", task.id, e);
+                    }
+                }
+            }
+        }
+
         // 6. Parse worker scale and generate worker names
         // Always start with 1, autoscaling will add more based on scale_max
         let initial_count = 1u32;
@@ -1788,10 +1784,14 @@ impl Orchestrator for LocalOrchestrator {
         // Determine if multi-worker mode (current or potential via autoscale)
         let (is_multi_worker, leader_name) = compute_multi_worker_config(&worker_names, scale_max);
 
-        // Pre-claim scope for first worker
+        // Pre-claim scope for first worker and set assigned_task_id
         let first_worker = &worker_names[0];
         if let Err(e) = state.claim_task("scope", first_worker) {
             tracing::warn!("Failed to pre-claim scope task for {}: {}", first_worker, e);
+        }
+        // Set assigned_task_id on scope task
+        if let Err(e) = state.set_task_assigned_to("scope", Some(first_worker)) {
+            tracing::warn!("Failed to set assigned_to for scope task: {}", e);
         }
 
         // Store docs config from global settings
@@ -1870,9 +1870,9 @@ impl Orchestrator for LocalOrchestrator {
                     None
                 };
 
-                // Get runner config for this worker (from stored configs or fallback to global)
+                // Get runner config for this worker (from stored configs)
                 let runner_config = state
-                    .get_runner_config_for_worker(worker_name, &self.config)
+                    .get_runner_config_for_worker(worker_name)
                     .unwrap_or_default();
 
                 // Check if local workers are allowed
@@ -1919,6 +1919,13 @@ impl Orchestrator for LocalOrchestrator {
 
                 let runner: Box<dyn Runner> = create_runner(&runner_config);
 
+                // Get assigned task for this worker (first worker gets scope task)
+                let assigned_task_id = if i == 0 {
+                    Some("scope".to_string())
+                } else {
+                    None
+                };
+
                 let spawn_config = RunnerSpawnConfig {
                     run_name: run_name.clone(),
                     worker_name: worker_name.clone(),
@@ -1934,11 +1941,12 @@ impl Orchestrator for LocalOrchestrator {
                     coordinator_url,
                     tailscale_authkey,
                     credentials: None,
+                    assigned_task_id: assigned_task_id.clone(),
                 };
 
                 match runner.spawn(&spawn_config).await {
                     Ok(result) => {
-                        // Update worker with PID and runner info
+                        // Update worker with PID, runner info, and assigned task
                         let pid = result.pid.map(|p| p as i64);
                         let _ = state.update_worker(
                             worker_name,
@@ -1947,14 +1955,18 @@ impl Orchestrator for LocalOrchestrator {
                                 runner_id: Some(result.handle.runner_id.clone()),
                                 runner_type: Some(result.handle.runner_type.clone()),
                                 status: Some(crate::core::state::WorkerStatus::Working),
+                                assigned_task_id: assigned_task_id
+                                    .as_ref()
+                                    .map(|t| Some(t.clone())),
                                 ..Default::default()
                             },
                         );
                         tracing::info!(
-                            "Spawned worker '{}' (runner_id: {}, runner_type: {})",
+                            "Spawned worker '{}' (runner_id: {}, runner_type: {}, task: {:?})",
                             worker_name,
                             result.handle.runner_id,
-                            result.handle.runner_type
+                            result.handle.runner_type,
+                            assigned_task_id
                         );
                     }
                     Err(e) => {
@@ -2037,9 +2049,9 @@ impl Orchestrator for LocalOrchestrator {
             None
         };
 
-        // Get runner config for this worker (from stored configs or fallback to global)
+        // Get runner config for this worker (from stored configs)
         let runner_config = state
-            .get_runner_config_for_worker(worker_name, &self.config)
+            .get_runner_config_for_worker(worker_name)
             .unwrap_or_default();
 
         // Check if local workers are allowed
@@ -2103,6 +2115,13 @@ impl Orchestrator for LocalOrchestrator {
             })
             .collect();
 
+        // Get assigned task from worker record (set by evaluate_scaling before spawn)
+        let assigned_task_id = state
+            .get_worker(worker_name)
+            .ok()
+            .flatten()
+            .and_then(|w| w.assigned_task_id);
+
         let spawn_config = RunnerSpawnConfig {
             run_name: run_name.to_string(),
             worker_name: worker_name.to_string(),
@@ -2118,6 +2137,7 @@ impl Orchestrator for LocalOrchestrator {
             coordinator_url,
             tailscale_authkey,
             credentials: None,
+            assigned_task_id,
         };
 
         // Spawn via runner (handles local/docker/fly/ssh correctly)
@@ -2192,9 +2212,9 @@ impl Orchestrator for LocalOrchestrator {
             .map_err(|e| OrchestratorError::State(e.to_string()))?
             .ok_or_else(|| OrchestratorError::WorkerNotFound(worker_name.to_string()))?;
 
-        // Get runner config for this worker (from stored configs or fallback to global)
+        // Get runner config for this worker (from stored configs)
         let runner_config = state
-            .get_runner_config_for_worker(worker_name, &self.config)
+            .get_runner_config_for_worker(worker_name)
             .unwrap_or_default();
 
         // Check if local workers are allowed
@@ -2419,6 +2439,9 @@ impl Orchestrator for LocalOrchestrator {
             (None, None)
         };
 
+        // Get assigned task from worker record
+        let assigned_task_id = worker.assigned_task_id.clone();
+
         let spawn_config = RunnerSpawnConfig {
             run_name: run_name.to_string(),
             worker_name: worker_name.to_string(),
@@ -2434,6 +2457,7 @@ impl Orchestrator for LocalOrchestrator {
             coordinator_url,
             tailscale_authkey,
             credentials: None,
+            assigned_task_id,
         };
 
         // Spawn via runner

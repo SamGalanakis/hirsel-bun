@@ -130,20 +130,6 @@ fn get_tools() -> Vec<Tool> {
             }),
         },
         Tool {
-            name: "claim_task",
-            description: "Claim a task to work on. Only one task can be claimed at a time.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "task_id": {
-                        "type": "string",
-                        "description": "Task ID to claim"
-                    }
-                },
-                "required": ["task_id"]
-            }),
-        },
-        Tool {
             name: "complete_task",
             description: "Mark a task as complete. This unblocks dependent tasks.",
             input_schema: json!({
@@ -449,13 +435,6 @@ impl McpServer {
                     .ok_or_else(|| WorkerError::Config("task_id is required".into()))?;
                 self.runner.get_task_details(task_id)
             }
-            "claim_task" => {
-                let task_id = args
-                    .get("task_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("task_id is required".into()))?;
-                self.runner.task_claim(task_id)
-            }
             "complete_task" => {
                 let task_id = args.get("task_id").and_then(|v| v.as_str());
                 self.runner.task_done(task_id)
@@ -668,7 +647,6 @@ mod tests {
         assert!(names.contains(&"get_available_tasks"));
         assert!(names.contains(&"get_my_tasks"));
         assert!(names.contains(&"get_task_details"));
-        assert!(names.contains(&"claim_task"));
         assert!(names.contains(&"complete_task"));
         assert!(names.contains(&"add_task"));
         assert!(names.contains(&"add_eval"));

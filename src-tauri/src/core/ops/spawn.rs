@@ -105,6 +105,7 @@ pub fn spawn_local_workers(
             credentials: None,
             coordinator_url: None,
             tailscale_authkey: None,
+            assigned_task_id: None,
         };
 
         match spawn_worker(spawn_config, state) {

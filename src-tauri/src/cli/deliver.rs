@@ -6,8 +6,14 @@
 //!
 //! Uses the Orchestrator trait to support both local and remote modes.
 
-use crate::cli::helpers::{block_on, get_orchestrator};
+use crate::cli::helpers::{block_on, get_orchestrator, CliOutput};
 use crate::core::orchestrator::OrchestratorError;
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct DeliverData {
+    branch: String,
+}
 
 /// Execute the deliver command for a run
 pub fn execute(
@@ -25,58 +31,32 @@ pub fn execute_with_profile(
     profile: Option<&str>,
     json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let output = CliOutput::new(json);
     let orch = get_orchestrator(profile)?;
 
     match block_on(orch.deliver_run(run_name, branch.map(|s| s.to_string()))) {
         Ok(branch_name) => {
-            if json {
-                let output = serde_json::json!({
-                    "success": true,
-                    "branch": branch_name,
-                    "message": format!("Delivered to branch '{}'", branch_name),
-                });
-                println!("{}", serde_json::to_string_pretty(&output)?);
-            } else {
-                println!("Delivered to branch '{}'", branch_name);
+            let data = DeliverData {
+                branch: branch_name.clone(),
+            };
+            output.success_with_data(&format!("Delivered to branch '{}'", branch_name), data);
+            if !json {
                 println!();
                 println!("To cleanup: hirsel delete {}", run_name);
             }
             Ok(())
         }
         Err(OrchestratorError::RunNotFound(name)) => {
-            if json {
-                let output = serde_json::json!({
-                    "success": false,
-                    "error": "not_found",
-                    "message": format!("Run '{}' not found", name),
-                });
-                println!("{}", serde_json::to_string_pretty(&output)?);
-            } else {
-                eprintln!("Run '{}' not found", name);
-            }
+            output.error_continue(&format!("Run '{}' not found", name));
             Ok(())
         }
         Err(OrchestratorError::InvalidOperation(msg)) => {
-            if json {
-                let output = serde_json::json!({
-                    "success": false,
-                    "error": "invalid_operation",
-                    "message": msg,
-                });
-                println!("{}", serde_json::to_string_pretty(&output)?);
-            } else {
-                eprintln!("{}", msg);
-            }
+            output.error_continue(&msg);
             Ok(())
         }
         Err(e) => {
             if json {
-                let output = serde_json::json!({
-                    "success": false,
-                    "error": "deliver_failed",
-                    "message": e.to_string(),
-                });
-                println!("{}", serde_json::to_string_pretty(&output)?);
+                output.error_continue(&e.to_string());
                 Ok(())
             } else {
                 Err(e.into())

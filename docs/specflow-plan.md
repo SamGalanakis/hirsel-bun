@@ -1,14 +1,21 @@
 # SpecFlow Implementation Plan
 
-> **HISTORICAL:** This planning doc references the old Alpine.js/TypeScript frontend.
-> The implementation has been migrated to SolidJS in `src/components/specflow/`.
+> **ARCHIVED:** This document describes the original SpecFlow design from early development.
+> The actual implementation uses a unified `SpecBoard.tsx` component with significant architectural changes.
+> See `src/components/specflow/SpecBoard.tsx` for current code (~2000 lines, single file).
+>
+> Key differences from this plan:
+> - Frontend: SolidJS instead of Alpine.js/TypeScript
+> - Component: Single `SpecBoard.tsx` instead of separate OneBoard/NodeRenderer/ProjectCard files
+> - Commands: Delta dispatch system (`delta.rs`) instead of island-based specflow.rs commands
+> - Data flow: Draft/live tree model instead of island/row dispatch
 
-**Status: Complete** - Jan 2026
+**Status: Archived** - Jan 2026
 
-Current implementation:
+Historical implementation references (outdated):
 - Backend: `src-tauri/src/core/specflow/` (types.rs, state.rs, mod.rs)
-- Commands: `src-tauri/src/gui/commands/specflow.rs`
-- Frontend: `src/components/specflow/` (OneBoard.tsx, NodeRenderer.tsx, ProjectCard.tsx)
+- Commands: `src-tauri/src/gui/commands/specflow.rs` (replaced by delta.rs)
+- Frontend: `src/components/specflow/SpecBoard.tsx` (unified component)
 
 ## Overview
 

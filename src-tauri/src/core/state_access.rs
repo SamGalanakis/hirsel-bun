@@ -27,7 +27,7 @@
 use async_trait::async_trait;
 
 use crate::core::state::{
-    Eval, Message, Status, Task, TimeInfo, Worker, WorkerStatus, WorkerUpdate,
+    ClaimTaskResult, Eval, Message, Status, Task, TimeInfo, Worker, WorkerStatus, WorkerUpdate,
 };
 
 /// Error type for state access operations
@@ -96,6 +96,13 @@ pub trait StateAccess: Send {
     async fn get_task(&self, task_id: &str) -> StateAccessResult<Option<Task>>;
 
     async fn claim_task(&self, task_id: &str, worker_name: &str) -> StateAccessResult<bool>;
+
+    /// Try to claim a task with detailed rejection info
+    async fn try_claim_task(
+        &self,
+        task_id: &str,
+        worker_name: &str,
+    ) -> StateAccessResult<ClaimTaskResult>;
 
     async fn complete_task(&self, task_id: &str, worker_name: &str) -> StateAccessResult<bool>;
 
@@ -277,10 +284,6 @@ pub trait StateAccess: Send {
 
     async fn increment_iteration(&self) -> StateAccessResult<i64>;
 
-    async fn get_max_iterations(&self) -> StateAccessResult<Option<i64>>;
-
-    async fn set_max_iterations(&self, max_iter: Option<i64>) -> StateAccessResult<()>;
-
     // =========================================================================
     // Scribe - Documentation
     // =========================================================================
@@ -315,6 +318,13 @@ pub trait StateAccess: Send {
 
     /// Heartbeat for remote workers - updates last_heartbeat timestamp
     async fn heartbeat(&self) -> StateAccessResult<Status>;
+
+    // =========================================================================
+    // Scaling
+    // =========================================================================
+
+    /// Request a scaling check (triggers event-driven worker scaling)
+    async fn request_scaling_check(&self) -> StateAccessResult<()>;
 }
 
 // =============================================================================
@@ -386,6 +396,14 @@ impl StateAccess for SQLiteState {
             Ok(()) => Ok(true),
             Err(_) => Ok(false),
         }
+    }
+
+    async fn try_claim_task(
+        &self,
+        task_id: &str,
+        worker_name: &str,
+    ) -> StateAccessResult<ClaimTaskResult> {
+        Ok(SQLiteState::try_claim_task(self, task_id, worker_name)?)
     }
 
     async fn complete_task(&self, task_id: &str, worker_name: &str) -> StateAccessResult<bool> {
@@ -680,14 +698,6 @@ impl StateAccess for SQLiteState {
         Ok(SQLiteState::increment_iteration(self)?)
     }
 
-    async fn get_max_iterations(&self) -> StateAccessResult<Option<i64>> {
-        Ok(SQLiteState::get_max_iterations(self)?)
-    }
-
-    async fn set_max_iterations(&self, max_iter: Option<i64>) -> StateAccessResult<()> {
-        Ok(SQLiteState::set_max_iterations(self, max_iter)?)
-    }
-
     async fn get_history(
         &self,
         limit: i64,
@@ -733,5 +743,9 @@ impl StateAccess for SQLiteState {
         // For local SQLiteState, heartbeat just returns current status
         // (no network operation needed)
         Ok(SQLiteState::status(self)?)
+    }
+
+    async fn request_scaling_check(&self) -> StateAccessResult<()> {
+        Ok(SQLiteState::request_scaling_check(self)?)
     }
 }

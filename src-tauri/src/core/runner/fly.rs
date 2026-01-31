@@ -115,6 +115,7 @@ impl Runner for FlyRunner {
             config.is_leader,
             config.leader_name.as_deref(),
             config.teammates.as_deref(),
+            config.assigned_task_id.as_deref(),
         );
 
         // Create machine request

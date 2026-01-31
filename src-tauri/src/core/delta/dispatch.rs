@@ -54,8 +54,9 @@ impl DeltaDispatchService {
     /// 2. Generate delta tasks
     /// 3. Get or create persistent run
     /// 4. Create delta submissions in DB
-    /// 5. Update live tree to reflect new/modified nodes
-    /// 6. Return dispatch result
+    /// 5. Create board version
+    /// 6. Update live tree to reflect new/modified nodes
+    /// 7. Return dispatch result
     pub fn dispatch(&self) -> DeltaDispatchResult<DispatchResult> {
         // 1. Get the diff
         let diff = self.generator.get_diff()?;
@@ -87,13 +88,24 @@ impl DeltaDispatchService {
             batch_id
         );
 
-        // 5. Update live tree
+        // 5. Create board version for this dispatch
+        let description = Some(diff.summary());
+        let version = self
+            .state
+            .create_board_version(batch_id, description.as_deref())?;
+
+        info!(
+            "Created board version v{} (batch {})",
+            version.version_number, batch_id
+        );
+
+        // 6. Update live tree
         self.sync_live_tree(&diff)?;
 
-        // 6. Record dispatch time
+        // 7. Record dispatch time
         self.state.record_dispatch()?;
 
-        // 7. Update run status to working
+        // 8. Update run status to working
         self.state
             .update_project_run_status(ProjectRunStatus::Working)?;
 
@@ -102,6 +114,8 @@ impl DeltaDispatchService {
             batch_id,
             delta_count: submissions.len(),
             diff_summary: diff.summary(),
+            version_number: version.version_number,
+            version_id: version.id,
         })
     }
 
@@ -122,7 +136,7 @@ impl DeltaDispatchService {
 
     /// Sync live tree to reflect dispatch
     ///
-    /// - Create live nodes for new draft nodes
+    /// - Create live nodes for new draft nodes (excluding project nodes - UI-only)
     /// - Update live nodes for modified draft nodes
     /// - Mark deleted nodes in live (don't delete yet - revert task will handle)
     fn sync_live_tree(&self, diff: &TreeDiff) -> DeltaDispatchResult<()> {
@@ -246,6 +260,36 @@ impl DeltaDispatchService {
     /// Get underlying state
     pub fn state(&self) -> &DeltaState {
         &self.state
+    }
+
+    /// Get all board versions for this project
+    pub fn get_board_versions(&self) -> DeltaDispatchResult<Vec<BoardVersion>> {
+        Ok(self.state.get_board_versions()?)
+    }
+
+    /// Get the latest board version
+    pub fn get_latest_version(&self) -> DeltaDispatchResult<Option<BoardVersion>> {
+        Ok(self.state.get_latest_version()?)
+    }
+
+    /// Get a specific board version
+    pub fn get_board_version(&self, id: i64) -> DeltaDispatchResult<BoardVersion> {
+        Ok(self.state.get_board_version(id)?)
+    }
+
+    /// Create a delivery for the latest board version
+    pub fn create_delivery(&self, target_branch: &str) -> DeltaDispatchResult<Delivery> {
+        let version = self
+            .state
+            .get_latest_version()?
+            .ok_or_else(|| DispatchError::NoChanges)?;
+
+        Ok(self.state.create_delivery(version.id, target_branch)?)
+    }
+
+    /// Get current delivery for this project
+    pub fn get_current_delivery(&self) -> DeltaDispatchResult<Option<Delivery>> {
+        Ok(self.state.get_current_delivery()?)
     }
 }
 

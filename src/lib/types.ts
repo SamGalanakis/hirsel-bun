@@ -904,7 +904,7 @@ export interface TaskTree {
 }
 
 /**
- * An eval (verification) in the board
+ * An eval in the board
  *
  * Evals are flat (not nested) and reference tasks via validates[]
  */
@@ -1104,7 +1104,7 @@ export const MERGE_STATE_ICONS: Record<MergeState, string> = {
 // =============================================================================
 
 /** Node type in draft/live trees */
-export type NodeType = 'task' | 'eval' | 'project';
+export type NodeType = 'task' | 'eval';
 
 /** Status of a live node */
 export type LiveNodeStatus = 'pending' | 'working' | 'done' | 'failed';

@@ -31,6 +31,9 @@ pub enum GypScope {
         /// Original project path (for context in prompt)
         #[serde(rename = "projectPath", default)]
         project_path: Option<PathBuf>,
+        /// Project ID for history scoping
+        #[serde(rename = "projectId", default)]
+        project_id: Option<i64>,
     },
     /// Board context - planning on SpecFlow board
     #[serde(rename = "board")]
@@ -102,21 +105,24 @@ impl GypContextBuilder {
                 run_name: run_name.to_string(),
                 workspace_path: workspace.workspace_path(run_name),
                 project_path: None,
+                project_id: None,
             },
         }
     }
 
-    /// Create builder for run context with project path
+    /// Create builder for run context with project info
     pub fn for_run_with_project(
         run_name: &str,
         workspace: &dyn WorkspaceProvider,
         project_path: Option<PathBuf>,
+        project_id: Option<i64>,
     ) -> Self {
         Self {
             scope: GypScope::Run {
                 run_name: run_name.to_string(),
                 workspace_path: workspace.workspace_path(run_name),
                 project_path,
+                project_id,
             },
         }
     }
@@ -178,6 +184,7 @@ impl GypContextBuilder {
                 run_name,
                 workspace_path,
                 project_path,
+                ..
             } => {
                 sections.push(self.run_scope_section(run_name, workspace_path, project_path));
                 sections.push(self.run_tools_section());
@@ -314,8 +321,9 @@ The board is stored in `board.json` with two sections:
       "id": "feature-name",
       "name": "Feature Name",
       "content": "Description of what to build...",
+      "blocked_by": [],
       "children": [
-        { "id": "subtask-1", "name": "Subtask 1", "content": "...", "children": [] }
+        { "id": "subtask-1", "name": "Subtask 1", "content": "...", "blocked_by": ["other-task"], "children": [] }
       ]
     }
   ]
@@ -326,7 +334,12 @@ The board is stored in `board.json` with two sections:
 All top-level items in the `tasks` array are direct children of the project.
 Break work into granular tasks. Each task should be a single, focused unit of work.
 
-### Evals (flat list of verifications)
+**Task Dependencies (`blocked_by`):**
+- Use `blocked_by` to specify tasks that must complete before this task can start
+- Example: `"blocked_by": ["setup-db", "config-env"]` means this task waits for both
+- Only use for explicit task-to-task dependencies (evals don't use blocked_by)
+
+### Evals
 ```json
 {
   "evals": [
@@ -340,8 +353,9 @@ Break work into granular tasks. Each task should be a single, focused unit of wo
 }
 ```
 
-The `validates` array specifies which tasks this eval verifies:
-- **Specific task IDs**: Eval runs after those tasks complete, verifies their work
+**Eval Dependencies (`validates`):**
+- Evals are automatically blocked by the tasks they validate - no `blocked_by` needed
+- **Specific task IDs**: Eval runs after those tasks complete, validates their work
 - **Empty array `[]`**: Final project-level gate - runs after ALL tasks complete
 
 ### ID Format
@@ -438,8 +452,12 @@ Read board.json first, then write complete file back after changes."#
                 project_id: None,
                 run_name: None,
             },
-            GypScope::Run { run_name, .. } => HistoryScope {
-                project_id: None, // TODO: Could add project_id to Run scope
+            GypScope::Run {
+                run_name,
+                project_id,
+                ..
+            } => HistoryScope {
+                project_id: *project_id,
                 run_name: Some(run_name.clone()),
             },
             GypScope::Board { project_id, .. } => HistoryScope {

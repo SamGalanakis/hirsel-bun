@@ -47,7 +47,6 @@ pub struct PartialConfig {
     pub agent: Option<AgentConfig>,
     pub eval_timeout: Option<u32>,
     pub auto_learn: Option<bool>,
-    pub max_iterations: Option<Option<u32>>,
     pub user_message_pause: Option<String>,
     pub human_in_the_loop: Option<bool>,
     pub compaction_enabled: Option<bool>,
@@ -162,13 +161,6 @@ impl ConfigStore {
                 "auto_learn" => {
                     partial.auto_learn = Some(value == "true");
                 }
-                "max_iterations" => {
-                    if value == "null" {
-                        partial.max_iterations = Some(None);
-                    } else {
-                        partial.max_iterations = value.parse().ok().map(Some);
-                    }
-                }
                 "user_message_pause" => {
                     partial.user_message_pause = Some(value);
                 }
@@ -254,10 +246,6 @@ impl ConfigStore {
             "auto_learn",
             if config.auto_learn { "true" } else { "false" },
         )?;
-        match config.max_iterations {
-            Some(n) => self.set("max_iterations", &n.to_string())?,
-            None => self.set("max_iterations", "null")?,
-        }
         self.set("user_message_pause", &config.user_message_pause)?;
         self.set(
             "human_in_the_loop",

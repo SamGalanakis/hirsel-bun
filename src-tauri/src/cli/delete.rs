@@ -5,8 +5,14 @@
 //!
 //! Uses the Orchestrator trait to support both local and remote modes.
 
-use crate::cli::helpers::{block_on, get_orchestrator};
+use crate::cli::helpers::{block_on, get_orchestrator, CliOutput};
 use crate::core::orchestrator::OrchestratorError;
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct DeleteData {
+    run: String,
+}
 
 /// Execute the delete command for a run
 pub fn execute(run_name: &str, json: bool) -> Result<(), Box<dyn std::error::Error>> {
@@ -19,43 +25,24 @@ pub fn execute_with_profile(
     profile: Option<&str>,
     json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let output = CliOutput::new(json);
     let orch = get_orchestrator(profile)?;
 
     match block_on(orch.delete_run(run_name)) {
         Ok(()) => {
-            if json {
-                let output = serde_json::json!({
-                    "success": true,
-                    "run": run_name,
-                    "message": format!("Removed: {}", run_name),
-                });
-                println!("{}", serde_json::to_string_pretty(&output)?);
-            } else {
-                println!("Removed: {}", run_name);
-            }
+            let data = DeleteData {
+                run: run_name.to_string(),
+            };
+            output.success_with_data(&format!("Removed: {}", run_name), data);
             Ok(())
         }
         Err(OrchestratorError::RunNotFound(name)) => {
-            if json {
-                let output = serde_json::json!({
-                    "success": false,
-                    "error": "not_found",
-                    "message": format!("Run '{}' not found", name),
-                });
-                println!("{}", serde_json::to_string_pretty(&output)?);
-            } else {
-                eprintln!("Run '{}' not found", name);
-            }
+            output.error_continue(&format!("Run '{}' not found", name));
             Ok(())
         }
         Err(e) => {
             if json {
-                let output = serde_json::json!({
-                    "success": false,
-                    "error": "delete_failed",
-                    "message": e.to_string(),
-                });
-                println!("{}", serde_json::to_string_pretty(&output)?);
+                output.error_continue(&e.to_string());
                 Ok(())
             } else {
                 Err(e.into())
