@@ -71,6 +71,18 @@ impl DeltaRunner {
     ///
     /// This is called by the daemon during its polling loop.
     /// Returns the number of submissions processed.
+    ///
+    /// ## First Dispatch
+    ///
+    /// On first dispatch (run doesn't exist), we:
+    /// 1. Create run in draft mode (no workers spawned)
+    /// 2. Create a "scope" task that blocks all root tasks
+    /// 3. Add scope + all delta tasks in one batch
+    /// 4. Spawn workers after batch succeeds
+    ///
+    /// ## Later Dispatches
+    ///
+    /// Just add delta tasks to the existing run.
     pub async fn process_pending(&self, orchestrator: &dyn Orchestrator) -> RunnerResult<usize> {
         // Get project run
         let run = self
@@ -92,17 +104,21 @@ impl DeltaRunner {
         }
 
         // Ensure the run exists in ~/.hirsel/runs/
-        // If this is the first dispatch, we need to create it
-        let run_name = self.ensure_run_exists(orchestrator, &run.run_name).await?;
+        // Returns (run_name, is_first_dispatch)
+        let (run_name, is_first_dispatch) =
+            self.ensure_run_exists(orchestrator, &run.run_name).await?;
 
-        let mut processed = 0;
-        for submission in pending {
+        // Build all task requests first (for batch insertion)
+        let mut requests = Vec::new();
+        let mut submission_map = Vec::new(); // Track submission -> request index
+
+        for submission in &pending {
             // Mark as processing
             self.state
                 .update_submission_status(submission.id, DeltaStatus::Processing)?;
 
             // Generate spec content for the task
-            let spec_content = self.generate_task_spec(&submission)?;
+            let spec_content = self.generate_task_spec(submission)?;
 
             info!(
                 "Processing delta submission: {} ({:?}) - {}",
@@ -117,13 +133,13 @@ impl DeltaRunner {
                 .unwrap_or_else(|| format!("delta-{}", submission.id));
 
             // Determine task type based on delta node type
-            let task_type = self.get_task_type_for_submission(&submission)?;
+            let task_type = self.get_task_type_for_submission(submission)?;
 
-            // Build blocked_by list for eval tasks
-            let blocked_by = self.get_blocked_by_for_submission(&submission)?;
+            // Build blocked_by list from the live node (orchestrator handles scope blocking)
+            let blocked_by = self.get_blocked_by_for_submission(submission)?;
 
             // Build validates list for eval tasks
-            let validates = self.get_validates_for_submission(&submission)?;
+            let validates = self.get_validates_for_submission(submission)?;
 
             let request = AddDeltaTaskRequest {
                 task_id: task_id.clone(),
@@ -142,12 +158,25 @@ impl DeltaRunner {
                 },
             };
 
-            match orchestrator.add_delta_task(&run_name, request).await {
-                Ok(_task) => {
-                    info!("Added task {} to run {}", task_id, run_name);
+            submission_map.push((submission.id, submission.live_node_id.clone(), task_id));
+            requests.push(request);
+        }
 
-                    // Update live node status to pending (workers will set working when claimed)
-                    if let Some(ref node_id) = submission.live_node_id {
+        // Add all tasks in a single batch with deferred FK constraints
+        match orchestrator
+            .add_delta_tasks_batch(&run_name, requests)
+            .await
+        {
+            Ok(tasks) => {
+                info!(
+                    "Added {} tasks to run {} via batch insert",
+                    tasks.len(),
+                    run_name
+                );
+
+                // Update live node statuses to pending
+                for (_sub_id, live_node_id, task_id) in &submission_map {
+                    if let Some(ref node_id) = live_node_id {
                         if let Err(e) = self.state.update_live_node_status(
                             node_id,
                             LiveNodeStatus::Pending,
@@ -156,19 +185,40 @@ impl DeltaRunner {
                             warn!("Failed to update live node {} status: {}", node_id, e);
                         }
                     }
-
-                    // Mark submission as processing (not done yet - that happens when task completes)
-                    // We keep it at processing until task completion callback
-                    processed += 1;
+                    info!("Added task {} to run {}", task_id, run_name);
                 }
-                Err(e) => {
-                    warn!("Failed to add task {} to run: {}", task_id, e);
-                    // Mark submission as failed
-                    self.state
-                        .update_submission_status(submission.id, DeltaStatus::Failed)?;
 
-                    // Update live node to failed
-                    if let Some(ref node_id) = submission.live_node_id {
+                // On first dispatch, spawn leader with scope task
+                if is_first_dispatch {
+                    info!(
+                        "First dispatch complete, spawning leader with scope task for run '{}'",
+                        run_name
+                    );
+                    if let Err(e) = orchestrator
+                        .spawn_workers(&run_name, 1, Some("scope".to_string()))
+                        .await
+                    {
+                        tracing::error!("Failed to spawn workers for run '{}': {}", run_name, e);
+                        // Don't fail the whole operation - tasks are in place
+                    }
+                }
+
+                Ok(submission_map.len())
+            }
+            Err(e) => {
+                // Log at error level AND print to stderr for debugging
+                tracing::error!("Failed to add tasks batch to run '{}': {}", run_name, e);
+                eprintln!(
+                    "[DELTA ERROR] Failed to add tasks batch to run '{}': {}",
+                    run_name, e
+                );
+
+                // Mark all submissions as failed
+                for (sub_id, live_node_id, _task_id) in &submission_map {
+                    self.state
+                        .update_submission_status(*sub_id, DeltaStatus::Failed)?;
+
+                    if let Some(ref node_id) = live_node_id {
                         let _ = self.state.update_live_node_status(
                             node_id,
                             LiveNodeStatus::Failed,
@@ -176,30 +226,32 @@ impl DeltaRunner {
                         );
                     }
                 }
+
+                Err(RunnerError::Orchestrator(e.to_string()))
             }
         }
-
-        Ok(processed)
     }
 
     /// Ensure the actual run directory exists in ~/.hirsel/runs/
     ///
-    /// If the run doesn't exist yet, create it via orchestrator.start_run().
+    /// If the run doesn't exist yet, create it via orchestrator.start_run() in draft mode.
     /// This happens on first dispatch for a project.
+    ///
+    /// Returns (run_name, is_first_dispatch).
     async fn ensure_run_exists(
         &self,
         orchestrator: &dyn Orchestrator,
         run_name: &str,
-    ) -> RunnerResult<String> {
+    ) -> RunnerResult<(String, bool)> {
         // Check if run already exists
         match orchestrator.get_run(run_name).await {
             Ok(_detail) => {
-                // Run exists, return the name
-                return Ok(run_name.to_string());
+                // Run exists, not first dispatch
+                return Ok((run_name.to_string(), false));
             }
             Err(OrchestratorError::RunNotFound(_)) => {
                 // Run doesn't exist, need to create it
-                info!("Run '{}' not found, creating...", run_name);
+                info!("Run '{}' not found, creating in draft mode...", run_name);
             }
             Err(e) => {
                 // Some other error
@@ -219,7 +271,7 @@ impl DeltaRunner {
         // Generate the spec from the root node content
         let spec = self.generate_run_spec()?;
 
-        // Create run via orchestrator
+        // Create run - orchestrator will create scope task and block other tasks by it
         let request = StartRunRequest {
             name: run_name.to_string(),
             project_id: self.project_id,
@@ -232,16 +284,15 @@ impl DeltaRunner {
             runner: None,
             worker_runners: None,
             tailscale_oauth: None,
-            draft: false, // Spawn workers immediately
         };
 
         let detail = orchestrator.start_run(request).await?;
         info!(
-            "Created run '{}' for project {}",
+            "Created draft run '{}' for project {} (workers not spawned yet)",
             detail.name, self.project_id
         );
 
-        Ok(detail.name)
+        Ok((detail.name, true))
     }
 
     /// Generate the run spec from the root node content

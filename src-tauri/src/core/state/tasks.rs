@@ -17,7 +17,9 @@
 
 use rusqlite::{params, Row};
 
-use super::types::{EvalResult, StateError, StateResult, Task, TaskStatus, TaskType};
+use super::types::{
+    DeltaTaskInput, EvalResult, StateError, StateResult, Task, TaskStatus, TaskType,
+};
 use super::SQLiteState;
 
 impl SQLiteState {
@@ -246,6 +248,94 @@ impl SQLiteState {
                 Err(StateError::AlreadyExists(format!("Task '{}' already exists", task_id)))
             }
             Err(e) => Err(StateError::Sqlite(e)),
+        }
+    }
+
+    /// Add multiple tasks in a batch with deferred FK constraints
+    ///
+    /// This allows tasks to reference each other as blockers without requiring
+    /// a specific insertion order. FK constraints are checked at commit time.
+    pub fn add_tasks_batch(&self, tasks: &[DeltaTaskInput]) -> StateResult<()> {
+        // Enable deferred FK checking for this connection
+        self.db.execute("PRAGMA defer_foreign_keys = ON", [])?;
+
+        // Use DEFERRED transaction (allows FK violations until commit)
+        self.db.execute("BEGIN DEFERRED", [])?;
+
+        let result = (|| -> StateResult<()> {
+            for task in tasks {
+                // Check hierarchy depth limit (max 3 levels)
+                if let Some(ref pid) = task.parent_id {
+                    let parent_depth = self.get_task_depth(pid)?;
+                    if parent_depth == 0 {
+                        return Err(StateError::NotFound(format!(
+                            "Parent task '{}' not found",
+                            pid
+                        )));
+                    }
+                    if parent_depth >= 3 {
+                        return Err(StateError::InvalidState(format!(
+                            "Cannot add child to '{}': max hierarchy depth is 3",
+                            pid
+                        )));
+                    }
+                }
+
+                // Insert task (use INSERT OR IGNORE to skip duplicates gracefully)
+                self.db.execute(
+                "INSERT OR IGNORE INTO tasks (id, name, status, created_at, parent_id, task_type, board_task_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![&task.task_id, &task.name, TaskStatus::Todo.as_str(), self.now(), task.parent_id.as_deref(), task.task_type.as_str(), task.board_task_id.as_deref()],
+            )?;
+
+                // Insert task_blockers relationships (ignore duplicates)
+                if let Some(ref blockers) = task.blocked_by {
+                    for blocker_id in blockers {
+                        self.db.execute(
+                        "INSERT OR IGNORE INTO task_blockers (task_id, blocker_id) VALUES (?1, ?2)",
+                        params![&task.task_id, blocker_id],
+                    )?;
+                    }
+                }
+
+                // Insert eval_validates relationships for eval tasks (ignore duplicates)
+                if let Some(ref validates) = task.validates {
+                    for validated_task_id in validates {
+                        self.db.execute(
+                        "INSERT OR IGNORE INTO eval_validates (eval_id, task_id) VALUES (?1, ?2)",
+                        params![&task.task_id, validated_task_id],
+                    )?;
+                    }
+                }
+            }
+
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                // Commit - FK constraints are checked here
+                self.db.execute("COMMIT", [])?;
+
+                // Log history for each task
+                for task in tasks {
+                    let detail = format!(
+                        "{}: {} ({})",
+                        task.task_id,
+                        task.name,
+                        task.task_type.as_str()
+                    );
+                    let _ = self.log_history("task_add", Some(&detail));
+                }
+
+                // Trigger scaling check once after batch
+                self.request_scaling_check()?;
+
+                Ok(())
+            }
+            Err(e) => {
+                let _ = self.db.execute("ROLLBACK", []);
+                Err(e)
+            }
         }
     }
 

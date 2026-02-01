@@ -617,6 +617,7 @@ impl LocalLifecycleManager {
         Ok(Some(LifecycleAction::SpawnWorker {
             worker_name: new_name,
             work_dir: worker_dir,
+            assigned_task_id: None, // maybe_scale_up doesn't assign tasks here
         }))
     }
 
@@ -859,6 +860,7 @@ impl LocalLifecycleManager {
                 actions.push(LifecycleAction::SpawnWorker {
                     worker_name: new_name.clone(),
                     work_dir: worker_dir,
+                    assigned_task_id: Some(task.id.clone()),
                 });
 
                 info!(

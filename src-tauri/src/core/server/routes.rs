@@ -231,7 +231,10 @@ pub async fn spawn_workers(
     Path(name): Path<String>,
     Json(body): Json<SpawnWorkersRequest>,
 ) -> Result<Json<SpawnWorkersResponse>> {
-    let response = state.orchestrator.spawn_workers(&name, body.count).await?;
+    let response = state
+        .orchestrator
+        .spawn_workers(&name, body.count, body.assigned_task_id)
+        .await?;
     Ok(Json(response))
 }
 

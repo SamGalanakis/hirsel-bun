@@ -379,8 +379,12 @@ impl Orchestrator for RemoteOrchestrator {
         &self,
         run_name: &str,
         count: u32,
+        assigned_task_id: Option<String>,
     ) -> OrchestratorResult<SpawnWorkersResponse> {
-        let body = SpawnWorkersRequest { count };
+        let body = SpawnWorkersRequest {
+            count,
+            assigned_task_id,
+        };
         self.post(
             &format!("/api/runs/{}/spawn", urlencoding::encode(run_name)),
             &body,
@@ -427,8 +431,10 @@ impl Orchestrator for RemoteOrchestrator {
             self.upload_files(&create_response.name, tarball).await?;
         }
 
-        // 5. Spawn initial worker
-        let _ = self.spawn_workers(&create_response.name, 1).await?;
+        // 5. Spawn initial worker with scope task
+        let _ = self
+            .spawn_workers(&create_response.name, 1, Some("scope".to_string()))
+            .await?;
 
         // 6. Return run detail
         self.get_run(&create_response.name).await

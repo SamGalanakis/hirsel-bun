@@ -268,17 +268,16 @@ export const ProjectSettings: Component = () => {
     if (!confirmed) return;
 
     setDeleting(true);
+    const projectName = proj.name;
     try {
       await invoke('delete_project', { projectId: proj.id });
-      // Fire event first (before closing modal) to trigger cleanup in proper order
-      window.dispatchEvent(new CustomEvent('project-deleted'));
-      // Close modal after event handlers have run
+      // Close modal immediately, then notify for cleanup
       project.setShowProjectSettings(false);
-      window.toast?.success(`Project "${proj.name}" deleted`);
+      window.dispatchEvent(new CustomEvent('project-deleted'));
+      window.toast?.success(`Project "${projectName}" deleted`);
     } catch (e) {
       console.error('Failed to delete project:', e);
       window.toast?.error(`Failed to delete project: ${e}`);
-    } finally {
       setDeleting(false);
     }
   };

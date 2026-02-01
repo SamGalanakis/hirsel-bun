@@ -17,9 +17,13 @@ cargo build --manifest-path "$SCRIPT_DIR/src-tauri/Cargo.toml" --features dev ||
 export PATH="$SCRIPT_DIR/src-tauri/target/debug:$PATH"
 echo "Added hirsel to PATH"
 
-# Always restart daemon with fresh code (kill old, start new)
-hirsel daemon stop >/dev/null 2>&1
-hirsel daemon start
+# Kill any existing daemon (forcefully, regardless of which binary started it)
+pkill -9 -f "hirsel.*__daemon" 2>/dev/null && echo "Killed old daemon" || true
+rm -f ~/.hirsel/hirsel.pid 2>/dev/null
+
+# Start daemon with freshly built binary
+"$SCRIPT_DIR/src-tauri/target/debug/hirsel" daemon start
+echo "Started daemon with fresh binary"
 
 echo "=== Dev server started at $(date) ===" > "$LOG_FILE"
 echo "Logging to: $LOG_FILE (RUST_LOG=$RUST_LOG)"

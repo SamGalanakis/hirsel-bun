@@ -91,7 +91,7 @@ export const GypMessenger: Component = () => {
     }
   });
 
-  // Reset chat when project changes (each project has its own conversation)
+  // Reconnect chat when project changes (each project has its own conversation in database)
   createEffect(
     on(
       () => project.selectedProjectId(),
@@ -100,8 +100,13 @@ export const GypMessenger: Component = () => {
         if (prevProjectId === undefined) return;
         if (projectId === prevProjectId) return;
 
-        // Reset chat for the new project context
-        chat.reset();
+        // Reconnect without clearing - history is per-project in database
+        chat.disconnect().then(() => {
+          // Only reconnect if switching to another project (not during deletion)
+          if (projectId !== null) {
+            chat.connect();
+          }
+        });
       }
     )
   );

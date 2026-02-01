@@ -332,8 +332,12 @@ impl Orchestrator for DaemonOrchestrator {
         &self,
         run_name: &str,
         count: u32,
+        assigned_task_id: Option<String>,
     ) -> OrchestratorResult<SpawnWorkersResponse> {
-        let request = SpawnWorkersRequest { count };
+        let request = SpawnWorkersRequest {
+            count,
+            assigned_task_id,
+        };
         self.client
             .post(&format!("/api/runs/{}/spawn", run_name), request)
             .await

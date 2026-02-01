@@ -427,6 +427,7 @@ impl Orchestrator for LocalOrchestrator {
                 LifecycleAction::SpawnWorker {
                     worker_name,
                     work_dir,
+                    assigned_task_id: _,
                 } => {
                     tracing::info!("Spawning worker '{}' for run '{}'", worker_name, name);
 
@@ -832,6 +833,51 @@ impl Orchestrator for LocalOrchestrator {
             .ok_or_else(|| OrchestratorError::TaskNotFound(request.task_id.clone()))?;
 
         Ok(self.convert_task(&task))
+    }
+
+    async fn add_delta_tasks_batch(
+        &self,
+        run: &str,
+        requests: Vec<super::AddDeltaTaskRequest>,
+    ) -> OrchestratorResult<Vec<Task>> {
+        use crate::core::state::types::{DeltaTaskInput, TaskType};
+
+        let state = self.get_state(run)?;
+
+        // Convert requests to DeltaTaskInput
+        let tasks: Vec<DeltaTaskInput> = requests
+            .iter()
+            .map(|req| {
+                let task_type = match req.task_type.as_str() {
+                    "eval" => TaskType::Eval,
+                    _ => TaskType::Work,
+                };
+                DeltaTaskInput {
+                    task_id: req.task_id.clone(),
+                    name: req.name.clone(),
+                    parent_id: req.parent_id.clone(),
+                    blocked_by: req.blocked_by.clone(),
+                    task_type,
+                    validates: req.validates.clone(),
+                    board_task_id: req.board_task_id.clone(),
+                }
+            })
+            .collect();
+
+        // Add all tasks in a single batch with deferred FK constraints
+        state
+            .add_tasks_batch(&tasks)
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+        // Fetch and return all created tasks
+        let mut result = Vec::new();
+        for req in &requests {
+            if let Ok(Some(task)) = state.get_task(&req.task_id) {
+                result.push(self.convert_task(&task));
+            }
+        }
+
+        Ok(result)
     }
 
     // -------------------------------------------------------------------------
@@ -1329,6 +1375,7 @@ impl Orchestrator for LocalOrchestrator {
         &self,
         run_name: &str,
         count: u32,
+        assigned_task_id: Option<String>,
     ) -> OrchestratorResult<SpawnWorkersResponse> {
         use crate::cli::config::get_agent_command;
         use crate::core::chats::{create_default_group_chat, create_worker_chat};
@@ -1434,7 +1481,38 @@ impl Orchestrator for LocalOrchestrator {
         // Spawn workers
         let mut spawned_workers = Vec::new();
 
-        for worker_name in &new_worker_names {
+        for (i, worker_name) in new_worker_names.iter().enumerate() {
+            // First worker gets the provided task (if any)
+            let task_for_worker = if i == 0 {
+                assigned_task_id.clone()
+            } else {
+                None
+            };
+
+            // Claim task and set assigned_task_id if provided
+            if let Some(ref task_id) = task_for_worker {
+                if let Err(e) = sqlite_state.claim_task(task_id, worker_name) {
+                    tracing::warn!(
+                        "Failed to claim task {} for worker {}: {}",
+                        task_id,
+                        worker_name,
+                        e
+                    );
+                }
+                if let Err(e) = sqlite_state.update_worker(
+                    worker_name,
+                    WorkerUpdate {
+                        assigned_task_id: Some(Some(task_id.clone())),
+                        ..Default::default()
+                    },
+                ) {
+                    tracing::warn!(
+                        "Failed to set assigned_task_id for worker {}: {}",
+                        worker_name,
+                        e
+                    );
+                }
+            }
             // Create worker chat
             let _ = create_worker_chat(&chats_dir, worker_name);
 
@@ -1510,7 +1588,7 @@ impl Orchestrator for LocalOrchestrator {
                 run_dir: run_dir.clone(),
                 spec_path: spec_path.clone(),
                 agent_command: agent_command.clone(),
-                is_leader: false, // Only first worker is leader
+                is_leader: i == 0 && existing_workers.is_empty(), // First new worker is leader if no existing workers
                 leader_name: leader_name.clone(),
                 teammates,
                 resume_session_id: None,
@@ -1518,7 +1596,7 @@ impl Orchestrator for LocalOrchestrator {
                 coordinator_url,
                 tailscale_authkey,
                 credentials: None,
-                assigned_task_id: None,
+                assigned_task_id: task_for_worker.clone(),
             };
 
             match runner.spawn(&spawn_config).await {
@@ -1537,10 +1615,11 @@ impl Orchestrator for LocalOrchestrator {
                     );
                     spawned_workers.push(worker_name.clone());
                     tracing::info!(
-                        "Spawned worker '{}' (runner_id: {}, runner_type: {})",
+                        "Spawned worker '{}' (runner_id: {}, runner_type: {}, task: {:?})",
                         worker_name,
                         result.handle.runner_id,
-                        result.handle.runner_type
+                        result.handle.runner_type,
+                        task_for_worker
                     );
                 }
                 Err(e) => {
@@ -1754,7 +1833,16 @@ impl Orchestrator for LocalOrchestrator {
             }
         }
 
-        // Add initial scope task
+        // 6. Parse worker scale and generate worker names
+        // Always start with 1, autoscaling will add more based on scale_max
+        let initial_count = 1u32;
+        let worker_names = get_available_names(initial_count, &[]);
+
+        // Determine if multi-worker mode (current or potential via autoscale)
+        let (is_multi_worker, leader_name) = compute_multi_worker_config(&worker_names, scale_max);
+        let first_worker = &worker_names[0];
+
+        // Always create scope task - this is the first task workers claim
         if let Err(e) = state.add_task("scope", "Read spec, create exploration tasks", None, None) {
             return Err(OrchestratorError::Other(format!(
                 "Failed to create scope task: {}",
@@ -1763,9 +1851,10 @@ impl Orchestrator for LocalOrchestrator {
         }
 
         // Block all root tasks by scope (event-driven scaling will unblock when scope completes)
-        if let Ok(claimable) = state.get_claimable_tasks() {
-            for task in claimable {
-                if task.id != "scope" && task.parent_id.is_none() && task.blocked_by.is_empty() {
+        // This prevents autoscale from spawning workers for other tasks until scope is done
+        if let Ok(tasks) = state.get_tasks() {
+            for task in tasks {
+                if task.id != "scope" && task.blocked_by.is_empty() {
                     if let Err(e) = state.add_blocker(&task.id, "scope") {
                         tracing::warn!("Failed to block task '{}' by scope: {}", task.id, e);
                     }
@@ -1773,16 +1862,7 @@ impl Orchestrator for LocalOrchestrator {
             }
         }
 
-        // 6. Parse worker scale and generate worker names
-        // Always start with 1, autoscaling will add more based on scale_max
-        let initial_count = 1u32;
-        let worker_names = get_available_names(initial_count, &[]);
-
-        // Determine if multi-worker mode (current or potential via autoscale)
-        let (is_multi_worker, leader_name) = compute_multi_worker_config(&worker_names, scale_max);
-
         // Pre-claim scope for first worker and set assigned_task_id
-        let first_worker = &worker_names[0];
         if let Err(e) = state.claim_task("scope", first_worker) {
             tracing::warn!("Failed to pre-claim scope task for {}: {}", first_worker, e);
         }
@@ -1821,15 +1901,8 @@ impl Orchestrator for LocalOrchestrator {
         register_workers(&state, &setup_result.worker_dirs, worker_location)
             .map_err(|e| OrchestratorError::Other(format!("Failed to register workers: {}", e)))?;
 
-        // 9. Handle draft mode vs normal mode
-        if request.draft {
-            // Draft mode: set status to Draft, don't spawn workers
-            state
-                .set_status(Status::Draft)
-                .map_err(|e| OrchestratorError::State(e.to_string()))?;
-            tracing::info!("Created draft run '{}' (workers not spawned)", run_name);
-        } else {
-            // Normal mode: spawn workers and set to Working
+        // 9. Spawn workers and set to Working
+        {
             let agent_command = get_agent_command();
             let spec_path = files.spec();
 

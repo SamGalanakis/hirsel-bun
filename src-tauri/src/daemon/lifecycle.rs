@@ -355,11 +355,13 @@ async fn handle_lifecycle_actions(
             LifecycleAction::SpawnWorker {
                 worker_name,
                 work_dir,
+                assigned_task_id,
             } => {
                 tracing::info!(
-                    "[Daemon] Spawning worker '{}' for run '{}' via orchestrator",
+                    "[Daemon] Spawning worker '{}' for run '{}' via orchestrator (task: {:?})",
                     worker_name,
-                    run_name
+                    run_name,
+                    assigned_task_id
                 );
 
                 match orchestrator
@@ -557,10 +559,13 @@ async fn sync_task_statuses_to_live_nodes(
         // Determine expected status from task
         use crate::core::api_types::TaskStatus;
         let expected_status = match task.status {
-            TaskStatus::Done | TaskStatus::Validated => LiveNodeStatus::Done,
+            // Work complete (with or without validation)
+            TaskStatus::Done | TaskStatus::Validated | TaskStatus::AwaitingEval => {
+                LiveNodeStatus::Done
+            }
             TaskStatus::NeedsRepair => LiveNodeStatus::Failed,
             TaskStatus::Doing => LiveNodeStatus::Working,
-            _ => LiveNodeStatus::Pending,
+            TaskStatus::Todo => LiveNodeStatus::Pending,
         };
 
         // Update if changed (and not going backwards)

@@ -497,7 +497,6 @@ fn run_remote(
         runner: args.runner.clone(),
         worker_runners: None,
         tailscale_oauth,
-        draft: args.draft,
     };
 
     // Create remote orchestrator and start run
@@ -630,7 +629,6 @@ pub fn run(args: &GoArgs) -> GoResult<GoOutput> {
         runner: args.runner.clone(),
         worker_runners: None,
         tailscale_oauth: None,
-        draft: args.draft,
     };
 
     let rt = tokio::runtime::Runtime::new().map_err(GoError::Io)?;

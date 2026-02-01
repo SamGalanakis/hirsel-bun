@@ -113,6 +113,8 @@ pub enum LifecycleAction {
         worker_name: String,
         /// Work directory for the worker.
         work_dir: PathBuf,
+        /// Task ID to assign to this worker (already claimed in DB).
+        assigned_task_id: Option<String>,
     },
 
     /// Request to resume a paused/awaiting worker.

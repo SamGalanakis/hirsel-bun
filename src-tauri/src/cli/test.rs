@@ -227,7 +227,6 @@ pub fn run_scenario(
             .as_ref()
             .map(|p| p.to_str().unwrap_or("").to_string()),
         pause_mode: None,
-        draft: false,
         assets: None,
         runner: runner.map(|s| s.to_string()),
     };

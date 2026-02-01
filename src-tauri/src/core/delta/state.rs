@@ -5,7 +5,6 @@
 use rusqlite::{params, Connection, Row as SqliteRow};
 use std::collections::HashMap;
 use std::sync::Once;
-use uuid::Uuid;
 
 use super::types::*;
 use crate::core::config::global_db_path;
@@ -34,7 +33,7 @@ CREATE TABLE IF NOT EXISTS draft_node_validates (
     eval_id TEXT NOT NULL,
     task_id TEXT NOT NULL,
     project_id INTEGER NOT NULL,
-    PRIMARY KEY (eval_id, task_id)
+    PRIMARY KEY (project_id, eval_id, task_id)
 );
 CREATE INDEX IF NOT EXISTS idx_draft_validates_eval ON draft_node_validates(eval_id);
 CREATE INDEX IF NOT EXISTS idx_draft_validates_task ON draft_node_validates(task_id);
@@ -43,7 +42,7 @@ CREATE TABLE IF NOT EXISTS draft_node_blocked_by (
     node_id TEXT NOT NULL,
     blocker_id TEXT NOT NULL,
     project_id INTEGER NOT NULL,
-    PRIMARY KEY (node_id, blocker_id)
+    PRIMARY KEY (project_id, node_id, blocker_id)
 );
 CREATE INDEX IF NOT EXISTS idx_draft_blocked_node ON draft_node_blocked_by(node_id);
 CREATE INDEX IF NOT EXISTS idx_draft_blocked_blocker ON draft_node_blocked_by(blocker_id);
@@ -73,7 +72,7 @@ CREATE TABLE IF NOT EXISTS live_node_validates (
     eval_id TEXT NOT NULL,
     task_id TEXT NOT NULL,
     project_id INTEGER NOT NULL,
-    PRIMARY KEY (eval_id, task_id)
+    PRIMARY KEY (project_id, eval_id, task_id)
 );
 CREATE INDEX IF NOT EXISTS idx_live_validates_eval ON live_node_validates(eval_id);
 CREATE INDEX IF NOT EXISTS idx_live_validates_task ON live_node_validates(task_id);
@@ -82,7 +81,7 @@ CREATE TABLE IF NOT EXISTS live_node_blocked_by (
     node_id TEXT NOT NULL,
     blocker_id TEXT NOT NULL,
     project_id INTEGER NOT NULL,
-    PRIMARY KEY (node_id, blocker_id)
+    PRIMARY KEY (project_id, node_id, blocker_id)
 );
 CREATE INDEX IF NOT EXISTS idx_live_blocked_node ON live_node_blocked_by(node_id);
 CREATE INDEX IF NOT EXISTS idx_live_blocked_blocker ON live_node_blocked_by(blocker_id);
@@ -222,11 +221,6 @@ impl DeltaState {
         chrono::Utc::now()
             .format("%Y-%m-%dT%H:%M:%S%.6fZ")
             .to_string()
-    }
-
-    #[allow(dead_code)]
-    fn new_id(&self) -> String {
-        Uuid::new_v4().to_string()
     }
 
     /// Generate a unique slug ID
@@ -1107,18 +1101,18 @@ impl DeltaState {
             ],
         )?;
 
-        // Insert validates relationships
+        // Insert validates relationships (OR IGNORE handles duplicates)
         for task_id in &draft.validates {
             db.execute(
-                "INSERT INTO live_node_validates (eval_id, task_id, project_id) VALUES (?1, ?2, ?3)",
+                "INSERT OR IGNORE INTO live_node_validates (eval_id, task_id, project_id) VALUES (?1, ?2, ?3)",
                 params![&draft.id, task_id, self.project_id],
             )?;
         }
 
-        // Insert blocked_by relationships
+        // Insert blocked_by relationships (OR IGNORE handles duplicates)
         for blocker_id in &draft.blocked_by {
             db.execute(
-                "INSERT INTO live_node_blocked_by (node_id, blocker_id, project_id) VALUES (?1, ?2, ?3)",
+                "INSERT OR IGNORE INTO live_node_blocked_by (node_id, blocker_id, project_id) VALUES (?1, ?2, ?3)",
                 params![&draft.id, blocker_id, self.project_id],
             )?;
         }
@@ -1168,26 +1162,26 @@ impl DeltaState {
             ],
         )?;
 
-        // Replace validates relationships
+        // Replace validates relationships (OR IGNORE handles duplicates in list)
         db.execute(
             "DELETE FROM live_node_validates WHERE eval_id = ?1 AND project_id = ?2",
             params![&draft.id, self.project_id],
         )?;
         for task_id in &draft.validates {
             db.execute(
-                "INSERT INTO live_node_validates (eval_id, task_id, project_id) VALUES (?1, ?2, ?3)",
+                "INSERT OR IGNORE INTO live_node_validates (eval_id, task_id, project_id) VALUES (?1, ?2, ?3)",
                 params![&draft.id, task_id, self.project_id],
             )?;
         }
 
-        // Replace blocked_by relationships
+        // Replace blocked_by relationships (OR IGNORE handles duplicates in list)
         db.execute(
             "DELETE FROM live_node_blocked_by WHERE node_id = ?1 AND project_id = ?2",
             params![&draft.id, self.project_id],
         )?;
         for blocker_id in &draft.blocked_by {
             db.execute(
-                "INSERT INTO live_node_blocked_by (node_id, blocker_id, project_id) VALUES (?1, ?2, ?3)",
+                "INSERT OR IGNORE INTO live_node_blocked_by (node_id, blocker_id, project_id) VALUES (?1, ?2, ?3)",
                 params![&draft.id, blocker_id, self.project_id],
             )?;
         }
@@ -1956,14 +1950,14 @@ mod tests {
                 eval_id TEXT NOT NULL,
                 task_id TEXT NOT NULL,
                 project_id INTEGER NOT NULL,
-                PRIMARY KEY (eval_id, task_id)
+                PRIMARY KEY (project_id, eval_id, task_id)
             );
 
             CREATE TABLE draft_node_blocked_by (
                 node_id TEXT NOT NULL,
                 blocker_id TEXT NOT NULL,
                 project_id INTEGER NOT NULL,
-                PRIMARY KEY (node_id, blocker_id)
+                PRIMARY KEY (project_id, node_id, blocker_id)
             );
 
             CREATE TABLE live_nodes (
@@ -1988,14 +1982,14 @@ mod tests {
                 eval_id TEXT NOT NULL,
                 task_id TEXT NOT NULL,
                 project_id INTEGER NOT NULL,
-                PRIMARY KEY (eval_id, task_id)
+                PRIMARY KEY (project_id, eval_id, task_id)
             );
 
             CREATE TABLE live_node_blocked_by (
                 node_id TEXT NOT NULL,
                 blocker_id TEXT NOT NULL,
                 project_id INTEGER NOT NULL,
-                PRIMARY KEY (node_id, blocker_id)
+                PRIMARY KEY (project_id, node_id, blocker_id)
             );
 
             CREATE TABLE delta_submissions (

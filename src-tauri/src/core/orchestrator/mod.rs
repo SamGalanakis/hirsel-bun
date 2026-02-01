@@ -220,6 +220,9 @@ pub struct CreateRunResponse {
 pub struct SpawnWorkersRequest {
     /// Number of workers to spawn
     pub count: u32,
+    /// Task ID to assign to the first spawned worker (for leader spawning)
+    #[serde(default)]
+    pub assigned_task_id: Option<String>,
 }
 
 /// Spawn workers response
@@ -302,9 +305,6 @@ pub struct StartRunRequest {
     pub worker_runners: Option<HashMap<String, String>>,
     /// Tailscale OAuth credentials for worker hosts to join tailnet
     pub tailscale_oauth: Option<TailscaleOAuth>,
-    /// Draft mode - setup run but don't spawn workers (default: false)
-    #[serde(default)]
-    pub draft: bool,
 }
 
 // =============================================================================
@@ -393,6 +393,21 @@ pub trait Orchestrator: Send + Sync {
         let _ = (run, request);
         Err(OrchestratorError::Other(
             "add_delta_task not implemented for this orchestrator".to_string(),
+        ))
+    }
+
+    /// Add multiple delta tasks in a batch with deferred FK constraints
+    ///
+    /// This allows tasks to reference each other as blockers without requiring
+    /// a specific insertion order. All FK constraints are checked at commit time.
+    async fn add_delta_tasks_batch(
+        &self,
+        run: &str,
+        requests: Vec<AddDeltaTaskRequest>,
+    ) -> OrchestratorResult<Vec<Task>> {
+        let _ = (run, requests);
+        Err(OrchestratorError::Other(
+            "add_delta_tasks_batch not implemented for this orchestrator".to_string(),
         ))
     }
 
@@ -508,12 +523,14 @@ pub trait Orchestrator: Send + Sync {
     ///
     /// Creates and starts the specified number of workers.
     /// The run must have files uploaded first (for remote workers).
+    /// If `assigned_task_id` is provided, the first spawned worker will be assigned that task.
     async fn spawn_workers(
         &self,
         run_name: &str,
         count: u32,
+        assigned_task_id: Option<String>,
     ) -> OrchestratorResult<SpawnWorkersResponse> {
-        let _ = (run_name, count);
+        let _ = (run_name, count, assigned_task_id);
         Err(OrchestratorError::Other(
             "spawn_workers not implemented for this orchestrator".to_string(),
         ))

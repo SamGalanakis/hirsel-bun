@@ -426,10 +426,6 @@ pub struct GoArgs {
     #[arg(long)]
     pub pause_mode: Option<String>,
 
-    /// Create a draft run (don't spawn workers until explicitly started)
-    #[arg(long)]
-    pub draft: bool,
-
     /// Path to assets folder (copies contents to run's assets/)
     #[arg(long)]
     pub assets: Option<String>,

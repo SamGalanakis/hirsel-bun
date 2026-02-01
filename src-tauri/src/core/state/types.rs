@@ -720,6 +720,18 @@ pub struct TaskSummary {
 // Worker Update Helper
 // =============================================================================
 
+/// Input for batch task insertion with deferred FK constraints
+#[derive(Debug, Clone)]
+pub struct DeltaTaskInput {
+    pub task_id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
+    pub blocked_by: Option<Vec<String>>,
+    pub task_type: TaskType,
+    pub validates: Option<Vec<String>>,
+    pub board_task_id: Option<String>,
+}
+
 /// Helper struct for partial worker updates
 #[derive(Default)]
 pub struct WorkerUpdate {

@@ -268,6 +268,7 @@ impl LocalRunManager {
             LifecycleAction::SpawnWorker {
                 worker_name,
                 work_dir,
+                assigned_task_id: _,
             } => {
                 tracing::info!(
                     "RunManager: spawning worker '{}' for run '{}'",

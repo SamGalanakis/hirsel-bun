@@ -329,6 +329,11 @@ impl ProjectStore {
             params![id],
         );
 
+        // Cascade delete gyp chat messages (in separate DB)
+        if let Ok(gyp_store) = crate::core::gyp_chat::GypChatStore::open() {
+            let _ = gyp_store.clear_project_messages(id);
+        }
+
         // Delete project data directory (board, etc.)
         let project_dir = crate::core::config::hirsel_dir()
             .join("projects")
