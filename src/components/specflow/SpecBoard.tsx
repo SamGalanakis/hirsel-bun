@@ -489,9 +489,11 @@ export const SpecBoard: Component = () => {
   let workerScrollRef: HTMLDivElement | undefined;
 
   // Build live tree with project hierarchy from draft (project nodes are UI-only)
-  const liveTreeWithProjects = createMemo(() =>
-    buildLiveTreeFromDraft(delta.draftTree(), delta.liveTree())
-  );
+  const liveTreeWithProjects = createMemo(() => {
+    // Guard: ensure we have a selected project before accessing delta state
+    if (!project.selectedProject()) return [];
+    return buildLiveTreeFromDraft(delta.draftTree(), delta.liveTree());
+  });
 
   // Layout state (computed via ELK.js in frontend)
   const [draftLayoutResult, setDraftLayoutResult] = createSignal<ElkLayoutResult | null>(null);
@@ -512,6 +514,11 @@ export const SpecBoard: Component = () => {
 
   // Compute draft layout when tree changes (using ELK.js)
   createEffect(() => {
+    // Guard: ensure we have a selected project
+    if (!project.selectedProject()) {
+      setDraftLayoutResult(null);
+      return;
+    }
     const trees = delta.draftTree();
     if (trees.length === 0) {
       setDraftLayoutResult(null);
@@ -526,6 +533,11 @@ export const SpecBoard: Component = () => {
 
   // Compute live layout when tree changes (using ELK.js)
   createEffect(() => {
+    // Guard: ensure we have a selected project
+    if (!project.selectedProject()) {
+      setLiveLayoutResult(null);
+      return;
+    }
     const trees = liveTreeWithProjects();
     if (trees.length === 0) {
       setLiveLayoutResult(null);
@@ -651,6 +663,9 @@ export const SpecBoard: Component = () => {
 
   // Compute effective run status from live tree
   const liveRunStatus = createMemo(() => {
+    // Guard: ensure we have a selected project before accessing delta state
+    if (!project.selectedProject()) return null;
+
     const run = delta.projectRun();
     if (!run) return null;
 
