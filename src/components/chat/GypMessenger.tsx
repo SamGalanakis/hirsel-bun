@@ -11,6 +11,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  on,
   onCleanup,
 } from 'solid-js';
 import { Portal } from 'solid-js/web';
@@ -89,6 +90,21 @@ export const GypMessenger: Component = () => {
       chat.connect();
     }
   });
+
+  // Reset chat when project changes (each project has its own conversation)
+  createEffect(
+    on(
+      () => project.selectedProjectId(),
+      (projectId, prevProjectId) => {
+        // Skip initial run and when both are null
+        if (prevProjectId === undefined) return;
+        if (projectId === prevProjectId) return;
+
+        // Reset chat for the new project context
+        chat.reset();
+      }
+    )
+  );
 
   // Scroll to bottom when messages change
   createEffect(() => {
