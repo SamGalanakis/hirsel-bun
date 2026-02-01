@@ -272,8 +272,8 @@ export const ProjectProvider: ParentComponent = (props) => {
   createEffect(() => {
     const handler = async () => {
       await loadProjects();
+      // deselectProject() handles setShowProjectSettings(false) internally
       deselectProject();
-      setShowProjectSettings(false);
     };
 
     window.addEventListener('project-deleted', handler);
