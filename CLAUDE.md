@@ -64,7 +64,7 @@ import { Icon } from '../shared';
 cargo build             # Build to src-tauri/target/debug/hirsel
 ```
 
-**CLI commands:** `runs`, `view <run>`, `attach <run>`, `go <run> <spec>`, `test <scenario> --yolo`, `task-add <run>`, `task-done <run> <task-id>`
+**CLI commands:** `runs`, `view <run>`, `attach <run>`, `go <run> <spec>`, `test <scenario> --yolo`, `tasks <project>`
 
 ## Debugging
 

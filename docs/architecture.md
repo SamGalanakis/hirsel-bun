@@ -16,7 +16,7 @@
 | Modify lifecycle | `src-tauri/src/core/lifecycle/mod.rs`, `src-tauri/src/core/lifecycle/local.rs` |
 | Add archive strategy | `src-tauri/src/core/snapshot/mod.rs`, new strategy impl of `ArchiveStrategy` |
 | Add service worker | `src-tauri/src/core/service_worker/scribe.rs`, `src-tauri/src/cli/service_worker.rs` |
-| Add SpecFlow island | `src-tauri/src/core/specflow/state.rs`, `src-tauri/src/gui/commands/specflow.rs` |
+| Add board task/eval | `src-tauri/src/core/board/mod.rs`, `src-tauri/src/gui/commands/specflow.rs` |
 | Modify board UI | `src/components/specflow/SpecBoard.tsx` |
 | Add orchestrator method | `src-tauri/src/core/orchestrator/mod.rs` → trait, `local.rs`, `daemon.rs`, `remote.rs` impls |
 | Modify delta dispatch | `src-tauri/src/core/delta/runner.rs`, `src-tauri/src/daemon/lifecycle.rs` |
@@ -78,13 +78,12 @@ cargo build --features s3-storage               # With S3 support
 
 | Submodule | Key Files | Purpose |
 |-----------|-----------|---------|
-| `state/` | `mod.rs`, `types.rs`, `run.rs`, `workers.rs`, `tasks.rs`, `messages.rs`, `events.rs`, `evals.rs`, `history.rs` | SQLite state management |
+| `state/` | `mod.rs`, `types.rs`, `run.rs`, `workers.rs`, `messages.rs`, `events.rs`, `evals.rs`, `history.rs`, `scribe.rs` | SQLite state management (per-run) |
 | `project/` | `mod.rs`, `types.rs`, `store.rs` | Project database (global), SpecFlow per-project configuration |
-| `specflow/` | `mod.rs`, `types.rs`, `state.rs` | SpecFlow board data (islands, rows, wires, bookmarks) |
-| `board/` | `mod.rs`, `types.rs` | Board file sync service (local/remote transparent routing) |
+| `board/` | `mod.rs`, `types.rs`, `storage.rs` | SpecFlow board data (tasks, evals, task tree, file sync) |
 | `github/` | `mod.rs` | GitHub API client (octocrab) with auth fallback (env → gh config → hirsel config) |
 | `dispatch/` | `mod.rs` | Dispatch service: creates runs from board tasks, generates spec/eval, creates work+eval tasks with validates relationship |
-| `delta/` | `mod.rs`, `runner.rs`, `dispatch.rs`, `state.rs`, `types.rs` | Delta dispatch system: draft/live tree diffs, task generation, persistent project runs |
+| `delta/` | `mod.rs`, `runner.rs`, `state.rs`, `types.rs` | Delta dispatch system: draft/live tree diffs, persistent project runs, live_nodes |
 | `delivery/` | `mod.rs` | Delivery service: three-tier delivery (push/PR/merge), conflict detection, staleness checking |
 | `orchestrator/` | `mod.rs` → `Orchestrator` trait, `local.rs`, `remote.rs`, `daemon.rs` | Run orchestration pattern |
 | `lifecycle/` | `mod.rs` → `LifecycleManager` trait, `local.rs`, `remote.rs`, `transitions.rs` | Event-driven state machine |
@@ -114,9 +113,7 @@ cargo build --features s3-storage               # With S3 support
 | `api_types.rs` | - | Shared API response types |
 | `worker_routes.rs` | - | Worker HTTP handlers |
 | `message_routes.rs` | - | Message HTTP handlers |
-| `task_routes.rs` | - | Task HTTP handlers |
 | `eval_routes.rs` | - | Eval HTTP handlers |
-| `coordinator_api.rs` | - | Coordinator API client |
 | `git_http.rs` | - | Git HTTP server for remote workers |
 | `credentials.rs` | - | Encrypted credential store |
 | `git.rs` | - | Git operations |
@@ -137,10 +134,12 @@ cargo build --features s3-storage               # With S3 support
 | `file_server.rs` | File upload server for remote workers |
 
 **MCP Worker Tools** (available to all workers):
-- Task Management: `get_task_tree`, `get_available_tasks`, `get_my_tasks`, `get_task_details`, `complete_task`, `add_task`, `add_eval`
+- Live Node Management: `get_task_tree`, `get_available_tasks`, `get_my_tasks`, `get_task_details`, `complete_task`, `add_task`, `add_eval`
 - Communication: `list_contacts`, `chat_history`, `chat_send`, `chat_unread`
 - Documentation: `scribe`, `read_docs`
 - Work Management: `work_done` (signal ready for next task), `time_status`
+
+**Note:** These tools operate on **live_nodes** in the global database (`~/.hirsel/hirsel.db`), not the old per-run SQLiteState tasks.
 
 **MCP Eval Tools** (available to eval tasks):
 - `eval_pass` - Mark eval as passed, validate all tasks in `validates[]`
@@ -155,7 +154,6 @@ cargo build --features s3-storage               # With S3 support
 | `runs.rs` | `get_runs`, `get_run_detail`, `pause_run`, `resume_run`, `delete_run`, `delete_all_runs`, `deliver_run` |
 | `drafts.rs` | `validate_repo`, `create_draft`, `clone_run`, `update_draft`, `start_draft`, `change_starting_point` |
 | `workers.rs` | `get_workers`, `attach_worker`, `open_worker_terminal`, `detach_worker`, `restart_worker` |
-| `tasks.rs` | `get_tasks`, `add_task`, `delete_task`, `complete_task`, `unclaim_task`, `reopen_task` |
 | `messages.rs` | `get_messages`, `get_threads`, `get_all_unread_notifications`, `send_message`, `mark_messages_read` |
 | `events.rs` | `get_worker_events`, `clear_worker_events`, `start_worker_event_stream`, `stop_worker_event_stream` |
 | `chat.rs` | `start_chat_session`, `send_chat_message`, `respond_chat_permission`, `stop_chat_session`, `list_chat_sessions` |
@@ -184,7 +182,7 @@ cargo build --features s3-storage               # With S3 support
 | `delete.rs` | `hirsel delete <run>` | - |
 | `deliver.rs` | `hirsel deliver <run>` | - |
 | `msg.rs` | `hirsel msg <run>` | - |
-| `tasks.rs` | `hirsel tasks <run>`, `hirsel task-add <run> <id> <desc>`, `hirsel task-done <run> <id>` | - |
+| `tasks.rs` | `hirsel tasks <project>` - View live nodes for a project | - |
 | `diff.rs` | `hirsel diff <run>` | - |
 | `summary.rs` | `hirsel summary <run>` | - |
 | `spec.rs` | `hirsel spec <run>` | - |
@@ -261,7 +259,6 @@ pub trait Orchestrator: Send + Sync {
     async fn pause_run(&self, name: &str) -> OrchestratorResult<()>;
     async fn resume_run(&self, name: &str, time_limit: Option<u32>) -> OrchestratorResult<()>;
     async fn list_workers(&self, run: &str) -> OrchestratorResult<Vec<Worker>>;
-    async fn list_tasks(&self, run: &str) -> OrchestratorResult<Vec<Task>>;
     async fn start_run(&self, request: StartRunRequest) -> OrchestratorResult<RunDetail>;
     async fn init_workspace(&self, run: &str, request: InitWorkspaceRequest) -> OrchestratorResult<InitWorkspaceResponse>;
     async fn spawn_single_worker(&self, run: &str, worker: &str, work_dir: &Path, session_id: Option<&str>) -> OrchestratorResult<()>;
@@ -269,6 +266,8 @@ pub trait Orchestrator: Send + Sync {
     // ... more methods
 }
 ```
+
+**Note:** Task management has been removed from the Orchestrator trait. Workers now interact with live_nodes directly via StateAccess methods.
 
 | Implementation | Location | Use Case |
 |----------------|----------|----------|
@@ -407,21 +406,29 @@ Workers transparently use local (SQLite) or remote (HTTP) state.
 ```rust
 #[async_trait(?Send)]
 pub trait StateAccess: Send {
+    // Run status
     async fn status(&self) -> StateAccessResult<Status>;
     async fn set_status(&self, status: Status) -> StateAccessResult<()>;
-    async fn add_task(&self, ...) -> StateAccessResult<()>;
-    async fn complete_task(&self, task_id: &str, worker_name: &str) -> StateAccessResult<()>;
-    async fn eval_pass(&self, eval_task_id: &str, worker_name: &str) -> StateAccessResult<()>;
-    async fn eval_fail(&self, eval_task_id: &str, worker_name: &str, feedback: &str) -> StateAccessResult<String>;
+
+    // Live nodes (work items from delta dispatch)
+    async fn add_live_node(&self, ...) -> StateAccessResult<()>;
+    async fn claim_live_node(&self, id: &str, worker_name: &str) -> StateAccessResult<()>;
+    async fn complete_live_node(&self, id: &str, worker_name: &str) -> StateAccessResult<()>;
+    async fn get_claimed_live_node(&self, worker_name: &str) -> StateAccessResult<Option<LiveNode>>;
+    async fn get_claimable_nodes(&self) -> StateAccessResult<Vec<LiveNode>>;
+    async fn live_node_eval_pass(&self, eval_id: &str, worker_name: &str) -> StateAccessResult<()>;
+    async fn live_node_eval_fail(&self, eval_id: &str, worker_name: &str, feedback: &str) -> StateAccessResult<String>;
+
+    // Scaling
     async fn request_scaling_check(&self) -> StateAccessResult<()>;
-    // ... task, message, worker operations
+    // ... message, worker operations
 }
 ```
 
 - Workers use `HIRSEL_API_URL` environment variable to determine mode
 - Enables same worker binary for local and remote deployment
 - `SQLiteState` for local, `HttpState` for remote
-- `eval_pass`/`eval_fail` handle unified eval workflow for both local and remote workers
+- Live nodes are stored in global database (`~/.hirsel/hirsel.db`), not per-run
 - `request_scaling_check` triggers event-driven worker scaling (via DB flag or HTTP)
 
 ### Board Service (`src-tauri/src/core/board/mod.rs`)
@@ -521,45 +528,45 @@ Draft ──start──► Working ───────────────
 | `Paused` | Stopped (run is paused) |
 | `Error` | Process died unexpectedly |
 
-### Task Status (`src-tauri/src/core/state/types.rs`)
+### Live Node Status (`src-tauri/src/core/delta/types.rs`)
+
+Live nodes are the work items in the delta dispatch system, stored in the global database.
 
 | Status | Description |
 |--------|-------------|
-| `Todo` | Not started |
-| `Doing` | Claimed by worker |
-| `Done` | Completed |
-| `AwaitingEval` | Work task done, waiting for eval |
-| `Validated` | Work task done + eval passed |
-| `NeedsRepair` | Eval failed, repair task created |
+| `Pending` | Not started, waiting to be claimed |
+| `Working` | Claimed by worker, in progress |
+| `Done` | Completed successfully |
+| `Failed` | Failed (eval failed or error) |
 
-### Task Type (`src-tauri/src/core/state/types.rs`)
+### Live Node Type (`src-tauri/src/core/delta/types.rs`)
 
 | Type | Description |
 |------|-------------|
-| `Work` | Implementation task that produces code changes |
-| `Eval` | Task that validates work tasks |
+| `Task` | Implementation task that produces code changes |
+| `Eval` | Task that validates other tasks |
 
-### Task Source (`src-tauri/src/core/state/types.rs`)
+### Live Node Source (`src-tauri/src/core/delta/types.rs`)
 
 | Source | Description |
 |--------|-------------|
-| `Spec` | From SpecFlow board (core tasks) |
+| `Spec` | From dispatch (created from draft nodes) |
 | `Worker` | Added by worker via MCP |
-| `System` | System tasks (scope) |
+| `System` | System nodes (scope) |
 
-### Task Lifecycle (Unified Eval Model)
+### Live Node Lifecycle
 
 ```
-WORK:  Todo → Doing → Done → AwaitingEval → Validated
-                               ↓ (eval fails)
-                          NeedsRepair → (repair done) → AwaitingEval
+TASK:  Pending → Working → Done
+                    ↓ (blocked by eval failure)
+                  Failed → (repaired) → Pending
 
-EVAL:  Todo → Doing → Done (pass/fail)
-                          ↓ (if failed)
-                       blocked by repair task
+EVAL:  Pending → Working → Done (pass) or Failed (fail)
+                              ↓ (if failed)
+                           creates repair task
 ```
 
-Eval tasks are regular tasks in the same worker pool with `task_type = 'eval'`. When an eval passes, its `validates` tasks are marked `Validated`. When an eval fails, a repair work task is created as a child of the eval.
+Workers claim and complete live_nodes via MCP tools. When an eval passes, its `validates` nodes are unblocked. When an eval fails, a repair task may be created.
 
 ---
 
@@ -726,11 +733,30 @@ Daemon evaluates scaling:
 | `credentials` | `key_type` | Encrypted credential storage |
 | `gyp_chat_messages` | `id` | GYP chat history |
 | `projects` | `id` | Project registry |
+| `draft_nodes` | `id` | Draft tree nodes (user's editable spec) |
+| `live_nodes` | `id` | Live tree nodes (dispatched work items) |
+| `delta_submissions` | `id` | Pending delta batches |
+| `project_runs` | `id` | Persistent project runs |
+| `board_versions` | `id` | Board version history |
+| `board_deliveries` | `id` | Board delivery tracking |
+| `project_messages` | `id` | Sheepfold messages |
 
 **config:**
 - `key` - Configuration key (e.g., "runners", "auth", "eval_timeout")
 - `value` - JSON or string value
 - `updated_at` - Last modification timestamp
+
+**live_nodes** (work items for delta dispatch):
+- `id` - Unique node ID (slug)
+- `project_id` - Parent project
+- `draft_node_id` - Corresponding draft node (if any)
+- `parent_id` - Parent live node
+- `name`, `content` - Node details
+- `node_type` - 'task' or 'eval'
+- `status` - 'pending', 'working', 'done', 'failed'
+- `source` - 'spec', 'worker', 'system'
+- `validates` - JSON array of task IDs this eval validates
+- `blocked_by` - JSON array of blocking node IDs
 
 ### Run Database (`~/.hirsel/runs/{name}/hirsel.db`)
 
@@ -738,13 +764,14 @@ Daemon evaluates scaling:
 |-------|-------------|---------|
 | `state` | `id=1` | Run metadata (singleton) |
 | `workers` | `id` | Worker processes |
-| `tasks` | `id` (text) | Work and eval items (unified task model) |
 | `messages` | `id` | Chat threads |
 | `message_reads` | `(worker_name, thread)` | Read tracking |
 | `worker_events` | `id` | Real-time output streaming |
 | `evals` | `id` | Evaluation runs |
 | `history` | `id` | Activity log |
 | `amendments` | `id` | Spec amendments |
+
+**Note:** Work items (tasks) are stored as **live_nodes** in the global database, not per-run. See Global Database section.
 
 ### Key Columns
 
@@ -758,49 +785,31 @@ Daemon evaluates scaling:
 - `name`, `pid`, `runner_id`, `runner_type`, `status`
 - `session_id`, `work_dir`, `hitl_waiting`
 - `state_handle` (JSON: WorkerStateHandle with work_dir and agent_session snapshots)
-- `assigned_task_id` - Currently assigned task (direct assignment model)
-- `last_task_id` - Last completed task (for tree-walk distance calculation)
+- `assigned_task_id` - Currently assigned live_node (direct assignment model)
+- `last_task_id` - Last completed live_node (for tree-walk distance calculation)
 
-**tasks:**
-- `id`, `name`, `status`, `claimed_by`, `claimed_at`
-- `parent_id`
-- `task_type` - 'work' or 'eval'
-- `source` - 'spec' (from SpecFlow board), 'worker' (added by worker), or 'system' (scope tasks)
-- `eval_result` - 'pass' or 'fail'
-- `eval_feedback` - Feedback if eval failed
-- `board_task_id` - Original board task ID for tracking
-- `assigned_to` - Worker this task is assigned to (direct assignment)
-- `completed_by` - Worker who completed this task (for tree distance)
+### Project Board Tables (in global DB)
 
-**task_blockers** (junction table):
-- `task_id`, `blocker_id` - FK references with CASCADE delete
-- Replaces the old comma-separated `blocked_by` column
-
-**eval_validates** (junction table):
-- `eval_id`, `task_id` - Which tasks an eval validates
-
-### Project Database (`~/.hirsel/projects/{id}/specflow.db`)
+The board module stores project-level data in the global database (`~/.hirsel/hirsel.db`):
 
 | Table | Primary Key | Purpose |
 |-------|-------------|---------|
-| `islands` | `id` | Feature containers on the canvas |
-| `rows` | `id` | Trifecta Grid rows (Spec | Task | Eval) |
-| `wires` | `id` | Dependency arrows between islands |
-| `bookmarks` | `id` | Saved viewport positions |
-| `action_history` | `id` | Undo/redo history |
+| `board_tasks` | `id` | Board tasks (spec planning tree) |
+| `board_evals` | `id` | Board evals (validation criteria) |
+| `board_bookmarks` | `id` | Saved viewport positions |
+| `task_runs` | `id` | Task-to-run junction (dispatch tracking) |
+| `board_file_baselines` | `(project_id, file_path)` | File sync change detection |
 
-**islands:**
-- `id`, `name`, `x`, `y`, `width`, `collapsed`
-- `status` - Computed from row statuses (draft, partial, dispatched, done)
-- `run_name` - Associated run (if dispatched)
-- `summary` - AI-generated summary for LOAD
+**board_tasks:**
+- `id` - Slug ID (e.g., "build-api")
+- `project_id`, `parent_id`, `position`
+- `name`, `status` (todo, doing, done, blocked)
+- `content`, `x`, `y`
 
-**rows:**
-- `id`, `island_id`, `position`
-- `spec_content`, `spec_status` (draft, approved)
-- `task_title`, `task_description`, `task_status` (todo, doing, done, blocked, deleted), `task_worker`, `task_blocked_by`
-- `eval_criterion`, `eval_status` (pending, pass, fail), `eval_result`
-- `dispatched`, `run_name` - Dispatch tracking (row-level)
+**board_evals:**
+- `id` - Slug ID
+- `project_id`, `name`, `status`
+- `content`, `validates` (JSON array of task IDs)
 
 ---
 
@@ -809,20 +818,17 @@ Daemon evaluates scaling:
 ```
 ~/.hirsel/
 ├── config.toml           # Initial config / one-time override (optional)
-├── hirsel.db             # Global DB (config, credentials, gyp_chat, projects)
+├── hirsel.db             # Global DB (config, credentials, projects, board, live_nodes)
 ├── key                   # Encryption key for credentials
 ├── hirsel.pid            # Daemon PID file
 ├── projects/{id}/        # Project-specific data
-│   ├── specflow.db       # SpecFlow board state
 │   └── board/            # Agent file sync directory
-│       ├── islands/      # JSON files for each island
-│       └── board.json    # Board metadata
+│       ├── tasks/        # JSON files for each task
+│       └── evals/        # JSON files for each eval
 └── runs/{run_name}/
-    ├── hirsel.db         # Run state (SOURCE OF TRUTH)
+    ├── hirsel.db         # Run state (workers, messages, events, evals, history)
     ├── spec.md           # Specification (input)
     ├── eval.md           # Eval criteria (input)
-    ├── tasks.md          # Generated from DB
-    ├── tasks/            # Task detail files
     ├── assets/           # Images, files for spec/eval
     ├── work/             # Git worktrees
     │   ├── leader/
@@ -831,6 +837,8 @@ Daemon evaluates scaling:
     └── tmp/
         └── eval_log.md
 ```
+
+**Note:** Work items (live_nodes) are stored in the global database, not per-run. This enables cross-run coordination and persistent project runs.
 
 ### Git Workspace Setup (`src-tauri/src/core/git.rs`, `ops/setup.rs`)
 
@@ -991,7 +999,7 @@ idle_timeout_seconds = 300        # 5 min default
 | POST | `/api/runs/{name}/resume` | `resume_run` |
 | POST | `/api/runs/{name}/deliver` | `deliver_run` |
 
-### Worker/Task/Message Endpoints
+### Worker/Message Endpoints
 
 | Method | Path | Handler |
 |--------|------|---------|
@@ -1000,12 +1008,6 @@ idle_timeout_seconds = 300        # 5 min default
 | POST | `/api/runs/{name}/workers/{w}/spawn` | `spawn_single_worker` |
 | POST | `/api/runs/{name}/workers/{w}/resume` | `resume_worker` |
 | GET | `/api/runs/{name}/workers/{w}/events` | `get_worker_events` |
-| GET/POST | `/api/runs/{name}/tasks` | `list_tasks`, `add_task` |
-| DELETE | `/api/runs/{name}/tasks/{id}` | `delete_task` |
-| POST | `/api/runs/{name}/tasks/{id}/complete` | `complete_task` |
-| POST | `/api/runs/{name}/tasks/{id}/reopen` | `reopen_task` |
-| POST | `/api/runs/{name}/delta-tasks` | `add_delta_task` |
-| POST | `/api/runs/{name}/delta-tasks-batch` | `add_delta_tasks_batch` |
 | POST | `/api/runs/{name}/scribe` | `add_scribe` |
 | GET | `/api/runs/{name}/docs` | `get_docs` |
 | POST | `/api/runs/{name}/docs/sync` | `sync_docs` |
@@ -1015,6 +1017,16 @@ idle_timeout_seconds = 300        # 5 min default
 | GET | `/api/runs/{name}/assets-path` | `get_assets_path` |
 | GET | `/api/runs/{name}/threads` | `list_threads` |
 | GET/POST | `/api/runs/{name}/threads/{t}/messages` | `get_messages`, `send_message` |
+
+### Live Node Endpoints (via project context)
+
+| Method | Path | Handler |
+|--------|------|---------|
+| GET | `/api/live-nodes` | `list_live_nodes` |
+| POST | `/api/live-nodes` | `add_live_node` |
+| POST | `/api/live-nodes/{id}/claim` | `claim_live_node` |
+| POST | `/api/live-nodes/{id}/complete` | `complete_live_node` |
+| POST | `/api/live-nodes/{id}/unclaim` | `unclaim_live_node` |
 
 ### Config Endpoints
 
@@ -1334,8 +1346,8 @@ uv run pytest --profile=fly                      # Remote orchestrator
 ### Unit Tests
 
 Inline Rust tests in source files (`#[test]`, `#[tokio::test]`).
-- `src-tauri/src/core/orchestrator/test_harness.rs` - TestHarness for integration tests
 - CLI modules have unit tests for argument parsing
+- Board module has tests for task/eval operations
 
 Run with:
 ```bash
