@@ -288,7 +288,7 @@ You are working on: **{}** (id: `{}`)"#,
 
 When working on tasks related to actual code:
 - Read/write code files from the project workspace
-- DO NOT confuse board JSON files with project source code
+- DO NOT confuse board files with project source code
 - The board directory contains only planning data"#,
                 path.display()
             ),
@@ -299,7 +299,8 @@ When working on tasks related to actual code:
             r#"## Current Scope: SpecFlow Board
 
 You're helping plan work on a SpecFlow board (project ID: {project_id}).
-Board file: `{board_dir}/board.json`
+Board directory: `{board_dir}`
+Content files: `{board_dir}/tasks/{{id}}.md`
 {focus_section}{workspace_section}"#,
             project_id = project_id,
             board_dir = board_dir.display(),
@@ -309,66 +310,58 @@ Board file: `{board_dir}/board.json`
     }
 
     fn board_data_model_section(&self) -> String {
-        r#"## Board Data Model
+        r#"## Board Tools (MCP)
 
-The board is stored in `board.json` with two sections:
+Use these hirsel MCP tools to manage board structure:
 
-### Tasks (nested tree)
-```json
-{
-  "tasks": [
-    {
-      "id": "feature-name",
-      "name": "Feature Name",
-      "content": "Description of what to build...",
-      "blocked_by": [],
-      "children": [
-        { "id": "subtask-1", "name": "Subtask 1", "content": "...", "blocked_by": ["other-task"], "children": [] }
-      ]
-    }
-  ]
-}
-```
+### `board_view`
+View the full board structure with task IDs and file paths.
+No parameters. Returns JSON with all tasks and evals.
 
-**IMPORTANT:** The project itself is the implicit root - it is NOT in this file.
-All top-level items in the `tasks` array are direct children of the project.
-Break work into granular tasks. Each task should be a single, focused unit of work.
+### `board_task`
+Create or update a task.
+- Create: `{ name, blocked_by?, parent_id?, content? }` → returns new ID and file path
+- Update: `{ id, name?, blocked_by?, parent_id? }`
 
-**Task Dependencies (`blocked_by`):**
-- Use `blocked_by` to specify tasks that must complete before this task can start
-- Example: `"blocked_by": ["setup-db", "config-env"]` means this task waits for both
-- Only use for explicit task-to-task dependencies (evals don't use blocked_by)
+### `board_eval`
+Create or update an eval (validation task).
+- Create: `{ name, validates, content? }` → returns new ID and file path
+- Update: `{ id, validates? }`
+- `validates` must reference existing task IDs
 
-### Evals
-```json
-{
-  "evals": [
-    {
-      "id": "api-works",
-      "name": "API Returns Valid Data",
-      "content": "Steps to verify this requirement...",
-      "validates": ["endpoint-get", "endpoint-post"]
-    }
-  ]
-}
-```
+### `board_delete`
+Delete a task or eval.
+- `{ id }` → removes node, deletes file, cleans up references
 
-**Eval Dependencies (`validates`):**
-- Evals are automatically blocked by the tasks they validate - no `blocked_by` needed
-- **Specific task IDs**: Eval runs after those tasks complete, validates their work
-- **Empty array `[]`**: Final project-level gate - runs after ALL tasks complete
+## Content Editing
 
-### ID Format
-IDs must be lowercase-hyphenated slugs (e.g., `build-api`, `user-auth-flow`).
-IDs must be unique across all tasks and evals."#
+Task/eval content lives in markdown files:
+- Location: `board/tasks/{id}.md`
+- Edit these files directly with Read/Write tools
+- Changes sync automatically
+
+## Task Dependencies
+
+**`blocked_by`:** Tasks that must complete before this task can start
+- Example: `["setup-db", "config-env"]` means this task waits for both
+
+**`validates`:** (Evals only) Tasks this eval validates
+- Eval runs after validated tasks complete
+- Empty array = project-level gate (runs after ALL tasks)
+
+## Workflow
+
+1. Call `board_view` to see current board structure
+2. Use `board_task`/`board_eval` to create or modify structure
+3. Edit `board/tasks/{id}.md` files for detailed content
+
+**IMPORTANT:** There is NO board.json file. Structure is managed ONLY via MCP tools."#
             .to_string()
     }
 
     fn board_workflow_section(&self, _project_id: i64) -> String {
-        r#"## Editing
-
-Read board.json first, then write complete file back after changes."#
-            .to_string()
+        // Workflow is now documented in board_data_model_section
+        String::new()
     }
 
     fn rules_section(&self) -> String {
@@ -377,7 +370,8 @@ Read board.json first, then write complete file back after changes."#
             GypScope::Run { .. } => "\n- Use hirsel MCP tools, NOT CLI commands",
             GypScope::Board { .. } => {
                 r#"
-- Edit board files with Write tool (complete rewrites)
+- Use hirsel MCP tools (board_view, board_task, board_eval, board_delete) for structure
+- Edit content files directly at board/tasks/{id}.md
 - DON'T list tasks/evals in chat - the user sees them in the board visualization
 - After editing, just confirm briefly (e.g., "Done. Added 10 tasks and 5 evals.")"#
             }
@@ -434,10 +428,13 @@ Read board.json first, then write complete file back after changes."#
                     ],
                 }]
             }
-            GypScope::Board { .. } => {
-                // Board context doesn't need MCP tools currently
-                // Could add board-specific MCP in future
-                vec![]
+            GypScope::Board { project_id, .. } => {
+                // Board context uses MCP tools for structure manipulation
+                vec![McpServerConfig {
+                    name: "hirsel".to_string(),
+                    command: vec!["hirsel".to_string(), "__board-mcp".to_string()],
+                    env: vec![("HIRSEL_PROJECT_ID".to_string(), project_id.to_string())],
+                }]
             }
         }
     }
@@ -516,7 +513,7 @@ mod tests {
         assert!(config.system_prompt.contains("SpecFlow Board"));
         assert!(config.system_prompt.contains("/home/user/myproject"));
         assert!(config.system_prompt.contains("project ID: 42"));
-        assert!(config.system_prompt.contains("board.json"));
+        assert!(config.system_prompt.contains("MCP tools"));
         // Concise data model summary
         assert!(config.system_prompt.contains("tasks"));
         assert!(config.system_prompt.contains("evals"));

@@ -84,6 +84,19 @@ pub type ChatOrchestratorResult<T> = Result<T, ChatOrchestratorError>;
 // DTOs for API communication
 // =============================================================================
 
+/// MCP server configuration for chat sessions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatMcpServer {
+    /// Server name
+    pub name: String,
+    /// Command and args (first element is command, rest are args)
+    pub command: Vec<String>,
+    /// Environment variables as key-value pairs
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
+}
+
 /// Context for starting a chat session
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -99,6 +112,9 @@ pub struct ChatContext {
     /// Credentials to forward to the agent process
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credentials: Option<ForwardedCredentials>,
+    /// MCP servers to configure for this session
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<ChatMcpServer>,
 }
 
 impl From<ChatContext> for ChatSessionConfig {
@@ -109,6 +125,7 @@ impl From<ChatContext> for ChatSessionConfig {
             run_name: ctx.run_name,
             system_prompt: ctx.system_prompt,
             credentials: ctx.credentials,
+            mcp_servers: ctx.mcp_servers,
         }
     }
 }
@@ -121,6 +138,7 @@ impl From<ChatSessionConfig> for ChatContext {
             run_name: cfg.run_name,
             system_prompt: cfg.system_prompt,
             credentials: cfg.credentials,
+            mcp_servers: cfg.mcp_servers,
         }
     }
 }

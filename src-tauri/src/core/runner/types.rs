@@ -61,8 +61,6 @@ pub struct WorkerSpawnConfig {
     pub work_dir: PathBuf,
     /// Run directory (contains state.db, chats/, logs/)
     pub run_dir: PathBuf,
-    /// Path to spec file
-    pub spec_path: PathBuf,
     /// Agent command to run (e.g., ["hirsel", "__acp-bridge"])
     pub agent_command: Vec<String>,
     /// Whether this worker is the leader

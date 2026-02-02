@@ -231,6 +231,10 @@ pub enum Commands {
     #[command(name = "__acp-bridge", hide = true)]
     AcpBridge,
 
+    /// Run board MCP server for Gyp (internal, spawned by Gyp for board context)
+    #[command(name = "__board-mcp", hide = true)]
+    BoardMcp,
+
     /// Run as daemon (internal, auto-started by CLI)
     #[cfg(feature = "server")]
     #[command(name = "__daemon", hide = true)]
@@ -273,10 +277,6 @@ pub struct InternalWorkerRunArgs {
     /// Run directory
     #[arg(long)]
     pub run_dir: String,
-
-    /// Spec file path
-    #[arg(long)]
-    pub spec: String,
 
     /// Agent command (JSON array)
     #[arg(long)]
@@ -345,10 +345,6 @@ pub struct RemoteWorkerArgs {
     /// Agent command (JSON array)
     #[arg(long)]
     pub agent_command: String,
-
-    /// Spec file path
-    #[arg(long)]
-    pub spec: String,
 
     /// Is leader
     #[arg(long, default_value = "false")]
@@ -745,6 +741,9 @@ pub enum WorkerCommands {
 }
 
 /// Worker task subcommands
+///
+/// Note: Task claiming/unclaiming is handled by the coordinator via direct assignment.
+/// Workers only work on their assigned tasks and call `work_done` when finished.
 #[derive(Subcommand, Debug)]
 pub enum TaskSubcommands {
     /// List all tasks
@@ -753,23 +752,14 @@ pub enum TaskSubcommands {
     /// Add a new task
     Add(WorkerTaskAddArgs),
 
-    /// Claim a task to work on
-    Claim(WorkerTaskIdArg),
-
     /// Mark current or specified task as done
     Done(WorkerTaskDoneArgs),
-
-    /// Release a claimed task without completing it
-    Unclaim(WorkerTaskDoneArgs),
 
     /// Reopen a completed task
     Undone(WorkerTaskIdArg),
 
     /// Delete a task
     Delete(WorkerTaskIdArg),
-
-    /// Wait for tasks to become available
-    Await,
 }
 
 /// Worker message subcommands
@@ -1318,6 +1308,12 @@ pub fn run_cli() -> anyhow::Result<bool> {
             eprintln!("ACP bridge command should be called via hirsel binary directly");
             std::process::exit(1);
         }
+        Commands::BoardMcp => {
+            // This is handled by lib.rs run_cli() for compatibility
+            // Should not reach here in normal CLI flow
+            eprintln!("Board MCP command should be called via hirsel binary directly");
+            std::process::exit(1);
+        }
 
         // Completion helpers
         Commands::CompleteRuns => {
@@ -1465,17 +1461,6 @@ mod tests {
             assert_eq!(args.parent, Some("scope".to_string()));
         } else {
             panic!("Expected TaskAdd command");
-        }
-    }
-
-    #[test]
-    fn test_worker_cli_task_claim() {
-        let cli = WorkerCli::try_parse_from(["hirsel-worker", "task", "claim", "scope"]).unwrap();
-
-        if let WorkerCommands::Task(TaskSubcommands::Claim(args)) = cli.command {
-            assert_eq!(args.task_id, "scope");
-        } else {
-            panic!("Expected Task Claim command");
         }
     }
 

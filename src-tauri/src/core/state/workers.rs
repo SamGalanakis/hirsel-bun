@@ -281,4 +281,25 @@ impl SQLiteState {
         )?;
         Ok(())
     }
+
+    /// Delete a worker from the database.
+    ///
+    /// This is used for scale-down when user reduces max_workers.
+    /// Only deletes idle workers (those with no running process).
+    pub fn delete_worker(&self, name: &str) -> StateResult<()> {
+        let affected = self.db.execute(
+            "DELETE FROM workers WHERE name = ?1",
+            rusqlite::params![name],
+        )?;
+
+        if affected == 0 {
+            return Err(super::types::StateError::NotFound(format!(
+                "Worker '{}' not found",
+                name
+            )));
+        }
+
+        self.log_history("worker_delete", Some(name))?;
+        Ok(())
+    }
 }

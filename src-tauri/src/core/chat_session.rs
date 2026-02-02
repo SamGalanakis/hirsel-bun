@@ -620,6 +620,9 @@ pub struct ChatSessionConfig {
     /// Credentials to forward to the agent process
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credentials: Option<ForwardedCredentials>,
+    /// MCP servers to configure for this session
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<super::chat_orchestrator::ChatMcpServer>,
 }
 
 /// Message sent to a chat session task
@@ -904,7 +907,7 @@ async fn run_chat_session_loop(
     // Build MCP servers list
     let mut mcp_servers = Vec::new();
 
-    // Add hirsel MCP if run is specified
+    // Add hirsel MCP if run is specified (legacy path for run context)
     if let Some(ref run_name) = config.run_name {
         let mcp_config = super::acp::create_hirsel_mcp_config(run_name, "assistant", None);
         let mut mcp_stdio =
@@ -913,6 +916,25 @@ async fn run_chat_session_loop(
             let env_vars: Vec<EnvVariable> = vars
                 .into_iter()
                 .map(|v| EnvVariable::new(&v.name, &v.value))
+                .collect();
+            mcp_stdio = mcp_stdio.env(env_vars);
+        }
+        mcp_servers.push(McpServer::Stdio(mcp_stdio));
+    }
+
+    // Add any explicitly configured MCP servers (e.g., board MCP)
+    for mcp in &config.mcp_servers {
+        if mcp.command.is_empty() {
+            continue;
+        }
+        let cmd = &mcp.command[0];
+        let args: Vec<String> = mcp.command[1..].to_vec();
+        let mut mcp_stdio = McpServerStdio::new(&mcp.name, cmd).args(args);
+        if !mcp.env.is_empty() {
+            let env_vars: Vec<EnvVariable> = mcp
+                .env
+                .iter()
+                .map(|(k, v)| EnvVariable::new(k, v))
                 .collect();
             mcp_stdio = mcp_stdio.env(env_vars);
         }

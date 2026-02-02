@@ -18,7 +18,7 @@
 | `fly-deployment.md` | Remote/Fly.io runner work |
 | `basecoatui.md` | Building UI components |
 | `design-language.md` | Visual styling, colors, typography |
-| `specflow-plan.md` | SpecFlow board features |
+| `future.md` | Planned improvements (font, git2→gix migration) |
 
 **CRITICAL:**
 1. **READ** `docs/architecture.md` before implementing - use Quick Reference to find files
@@ -48,7 +48,12 @@ Development project - no database migrations needed. Modify schema directly in `
 // Hooks: src/hooks/ (usePolling, useDebounce, useTauriEvent)
 ```
 
-**Lucide:** Call `initLucideIcons()` after dynamic DOM updates.
+**Icons:** Use the `<Icon name="icon-name" />` component from `src/components/shared`. Icons render as inline SVGs - no DOM mutation needed.
+
+```tsx
+import { Icon } from '../shared';
+<Icon name="check" class="w-4 h-4 text-sage" />
+```
 
 **Toast:** `window.toast.success('msg')` / `window.toast.error('msg')`
 

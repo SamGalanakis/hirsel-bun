@@ -31,6 +31,11 @@
     "vite-plugin-solid": "^2.11.6"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.10.1",
+    "@codemirror/lang-markdown": "^6.5.0",
+    "@codemirror/language": "^6.12.1",
+    "@codemirror/state": "^6.5.4",
+    "@codemirror/view": "^6.39.12",
     "@tailwindcss/typography": "^0.5.19",
     "@types/d3-hierarchy": "^3.1.7",
     "d3-hierarchy": "^3.1.2",
@@ -40,6 +45,7 @@
     "elkjs": "^0.11.0",
     "lucide": "^0.562.0",
     "marked": "^17.0.1",
+    "solid-codemirror": "^2.3.1",
     "solid-js": "^1.9.5"
   }
 }

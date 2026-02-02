@@ -20,6 +20,7 @@ pub mod chats;
 pub mod claude_cli;
 pub mod config;
 pub mod conflict_resolver;
+pub mod constants;
 #[cfg(feature = "server")]
 pub mod coordinator_api;
 pub mod credentials;
@@ -39,6 +40,7 @@ pub mod gyp_chat;
 pub mod gyp_context;
 pub mod http_client;
 pub mod lifecycle;
+pub mod mcp;
 pub mod metrics;
 pub mod names;
 pub mod ops;
@@ -64,9 +66,9 @@ pub use acp::{
     ACPClientConfig, ACPError, AcpChild, AcpSpawnConfig, MCPServerConfig, SessionUpdate,
 };
 pub use chat_orchestrator::{
-    create_chat_orchestrator, create_local_chat_orchestrator, ChatContext, ChatOrchestrator,
-    ChatOrchestratorError, ChatOrchestratorResult, LocalChatOrchestrator, RemoteChatOrchestrator,
-    SessionInfo,
+    create_chat_orchestrator, create_local_chat_orchestrator, ChatContext, ChatMcpServer,
+    ChatOrchestrator, ChatOrchestratorError, ChatOrchestratorResult, LocalChatOrchestrator,
+    RemoteChatOrchestrator, SessionInfo,
 };
 pub use chat_session::{
     ChatEvent, ChatSessionConfig, ChatSessionError, ChatSessionManager, PendingPermission,

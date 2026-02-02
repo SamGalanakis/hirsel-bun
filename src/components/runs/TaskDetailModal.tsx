@@ -1,10 +1,12 @@
 /**
  * TaskDetailModal - Task detail popup with blockers and actions
  */
-import { type Component, For, Show, createEffect, onCleanup } from 'solid-js';
+import { type Component, For, Show } from 'solid-js';
+import { useEscapeKey } from '../../hooks';
 import { generateSheepSvg } from '../../lib/sheep-avatar';
 import type { Task, WorkerDisplay } from '../../lib/types';
 import { formatDuration, formatRelativeTime, formatTokens } from '../../lib/utils/formatters';
+import { Icon } from '../shared';
 
 interface TaskDetailModalProps {
   task: Task;
@@ -43,16 +45,7 @@ const STATUS_BADGE_COLORS: Record<string, string> = {
 };
 
 export const TaskDetailModal: Component<TaskDetailModalProps> = (props) => {
-  // Close on escape
-  createEffect(() => {
-    const handleKeydown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        props.onClose();
-      }
-    };
-    window.addEventListener('keydown', handleKeydown);
-    onCleanup(() => window.removeEventListener('keydown', handleKeydown));
-  });
+  useEscapeKey(() => props.onClose());
 
   // Get blocker tasks
   const blockerTasks = () => {
@@ -94,7 +87,7 @@ export const TaskDetailModal: Component<TaskDetailModalProps> = (props) => {
         <div class="flex items-center justify-between p-4 border-b border-pasture-600">
           <div class="flex items-center gap-3">
             <div class={`${STATUS_COLORS[props.task.status]}`}>
-              <i data-lucide={STATUS_ICONS[props.task.status]} class="w-6 h-6" />
+              <Icon name={STATUS_ICONS[props.task.status]} class="w-6 h-6" />
             </div>
             <div>
               <span class={`px-2 py-0.5 text-xs rounded ${STATUS_BADGE_COLORS[props.task.status]}`}>
@@ -102,7 +95,7 @@ export const TaskDetailModal: Component<TaskDetailModalProps> = (props) => {
               </span>
               <Show when={isBlocked()}>
                 <span class="ml-2 px-2 py-0.5 text-xs rounded bg-terra/20 text-terra">
-                  <i data-lucide="lock" class="w-3 h-3 inline mr-1" />
+                  <Icon name="lock" class="w-3 h-3 inline mr-1" />
                   Blocked
                 </span>
               </Show>
@@ -112,7 +105,7 @@ export const TaskDetailModal: Component<TaskDetailModalProps> = (props) => {
             class="p-1.5 rounded hover:bg-pasture-700 text-wool-500 hover:text-wool-300"
             onClick={props.onClose}
           >
-            <i data-lucide="x" class="w-5 h-5" />
+            <Icon name="x" class="w-5 h-5" />
           </button>
         </div>
 
@@ -163,8 +156,8 @@ export const TaskDetailModal: Component<TaskDetailModalProps> = (props) => {
                       }}
                     >
                       <div class="flex items-center gap-2">
-                        <i
-                          data-lucide={STATUS_ICONS[blocker.status]}
+                        <Icon
+                          name={STATUS_ICONS[blocker.status]}
                           class={`w-4 h-4 ${STATUS_COLORS[blocker.status]}`}
                         />
                         <span class="text-sm text-wool-300 flex-1 truncate">
@@ -196,8 +189,8 @@ export const TaskDetailModal: Component<TaskDetailModalProps> = (props) => {
                   }}
                 >
                   <div class="flex items-center gap-2">
-                    <i
-                      data-lucide={STATUS_ICONS[parent().status]}
+                    <Icon
+                      name={STATUS_ICONS[parent().status]}
                       class={`w-4 h-4 ${STATUS_COLORS[parent().status]}`}
                     />
                     <span class="text-sm text-wool-300 truncate">{parent().description}</span>
@@ -260,26 +253,26 @@ export const TaskDetailModal: Component<TaskDetailModalProps> = (props) => {
               class="btn-ghost text-terra hover:bg-terra/10"
               onClick={props.onDelete}
             >
-              <i data-lucide="trash-2" class="w-4 h-4" />
+              <Icon name="trash-2" class="w-4 h-4" />
               Delete
             </button>
           </div>
           <div class="flex gap-2">
             <Show when={props.task.claimedBy}>
               <button class="btn-outline" onClick={props.onUnclaim}>
-                <i data-lucide="user-minus" class="w-4 h-4" />
+                <Icon name="user-minus" class="w-4 h-4" />
                 Unclaim
               </button>
             </Show>
             <Show when={props.task.status === 'done'}>
               <button class="btn-outline" onClick={props.onReopen}>
-                <i data-lucide="rotate-ccw" class="w-4 h-4" />
+                <Icon name="rotate-ccw" class="w-4 h-4" />
                 Reopen
               </button>
             </Show>
             <Show when={props.task.status !== 'done'}>
               <button class="btn" onClick={props.onComplete}>
-                <i data-lucide="check" class="w-4 h-4" />
+                <Icon name="check" class="w-4 h-4" />
                 Mark Done
               </button>
             </Show>

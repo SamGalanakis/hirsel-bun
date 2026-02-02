@@ -19,8 +19,6 @@ pub struct SpawnWorkersConfig {
     pub run_name: String,
     /// Path to the run directory
     pub run_dir: PathBuf,
-    /// Path to the spec file
-    pub spec_path: PathBuf,
     /// Agent command to run (e.g., ["hirsel", "__acp-bridge"])
     pub agent_command: Vec<String>,
     /// Whether this is a multi-worker run
@@ -95,7 +93,6 @@ pub fn spawn_local_workers(
             worker_name: worker_name.clone(),
             work_dir: work_dir.clone(),
             run_dir: config.run_dir.clone(),
-            spec_path: config.spec_path.clone(),
             agent_command: config.agent_command.clone(),
             is_leader,
             leader_name: config.leader_name.clone(),
@@ -146,7 +143,6 @@ mod tests {
         let config = SpawnWorkersConfig {
             run_name: "test-run".to_string(),
             run_dir: PathBuf::from("/runs/test-run"),
-            spec_path: PathBuf::from("/runs/test-run/spec.md"),
             agent_command: vec!["hirsel".to_string(), "__acp-bridge".to_string()],
             is_multi_worker: true,
             leader_name: Some("alpha".to_string()),

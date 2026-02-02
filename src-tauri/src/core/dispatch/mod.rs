@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use tracing::info;
 
 use crate::core::board::{BoardService, BoardSnapshot, DispatchPreview, Eval, TaskTree};
-use crate::core::state::{SQLiteState, StateError, TaskType};
+use crate::core::state::{SQLiteState, StateError, TaskSource, TaskType};
 
 /// Error type for dispatch operations
 #[derive(Debug, thiserror::Error)]
@@ -405,6 +405,7 @@ impl DispatchService {
                 TaskType::Work,
                 None,           // Work tasks don't have validates
                 Some(&task.id), // board_task_id
+                None,           // content - not used for board tasks
             )?;
             work_count += 1;
         }
@@ -432,6 +433,7 @@ impl DispatchService {
                 TaskType::Eval,
                 Some(&validates),
                 Some(&eval.id), // board_task_id
+                None,           // content - not used for board tasks
             )?;
             eval_count += 1;
         }
@@ -512,7 +514,7 @@ impl DispatchService {
 
         // Create scope task first (will block leaf tasks)
         // Don't pre-claim - let the leader claim it when ready
-        state.add_task("scope", "Scope", None, None)?;
+        state.add_task_with_source_simple("scope", "Scope", None, None, TaskSource::System)?;
 
         // Create work tasks
         let mut work_count = 0;
@@ -542,6 +544,7 @@ impl DispatchService {
                 TaskType::Work,
                 None,           // Work tasks don't have validates
                 Some(&task.id), // board_task_id
+                None,           // content - not used for board tasks
             )?;
             work_count += 1;
         }
@@ -569,6 +572,7 @@ impl DispatchService {
                 TaskType::Eval,
                 Some(&validates),
                 Some(&eval.id), // board_task_id
+                None,           // content - not used for board tasks
             )?;
             eval_count += 1;
         }

@@ -594,16 +594,6 @@ button {
   flex-shrink: 0;
 }
 
-/* Ensure Lucide icons in buttons render correctly */
-.btn i[data-lucide],
-[class*="btn-"] i[data-lucide] {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1rem;
-  height: 1rem;
-}
-
 /* ============================================
    Custom Button Variants for Basecoat
    ============================================ */
@@ -2646,6 +2636,48 @@ section.flex-1.flex.flex-col {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ============================================
+   SpecBoard Node Card Styling
+   ============================================ */
+:root {
+  /* Node card backgrounds (gradients) */
+  --node-eval-bg: linear-gradient(135deg, rgba(38, 45, 40, 0.95) 0%, rgba(32, 38, 34, 0.98) 100%);
+  --node-task-bg: linear-gradient(135deg, rgba(45, 42, 38, 0.95) 0%, rgba(38, 35, 32, 0.98) 100%);
+
+  /* Node card borders */
+  --node-eval-border: rgba(70, 100, 65, 0.5);
+  --node-eval-border-selected: rgba(100, 140, 90, 0.6);
+  --node-task-border: rgba(90, 85, 78, 0.4);
+  --node-task-border-selected: rgba(140, 130, 115, 0.5);
+
+  /* Status glow effects */
+  --glow-working: 0 0 12px color-mix(in srgb, var(--amber-500) 40%, transparent);
+  --glow-done: 0 0 8px color-mix(in srgb, var(--sage) 25%, transparent);
+  --glow-failed: 0 0 10px color-mix(in srgb, var(--terra) 35%, transparent);
+
+  /* Edge stroke colors (dependency connectors) */
+  --edge-validates: rgb(85, 115, 75);
+  --edge-blocked-by: rgb(145, 85, 70);
+
+  /* CodeMirror theme support */
+  --cm-selection-bg: color-mix(in srgb, var(--amber-500) 20%, transparent);
+  --cm-active-line-bg: rgba(255, 255, 255, 0.03);
+}
+
+/* Light theme overrides for SpecBoard */
+:root.light,
+:root[data-theme="light"],
+:root[data-theme="hirsel-light"] {
+  --node-eval-bg: linear-gradient(135deg, rgba(230, 237, 232, 0.95) 0%, rgba(220, 227, 222, 0.98) 100%);
+  --node-task-bg: linear-gradient(135deg, rgba(240, 237, 232, 0.95) 0%, rgba(230, 225, 220, 0.98) 100%);
+  --node-eval-border: rgba(74, 115, 64, 0.4);
+  --node-eval-border-selected: rgba(64, 110, 54, 0.6);
+  --node-task-border: rgba(150, 145, 138, 0.4);
+  --node-task-border-selected: rgba(120, 115, 108, 0.6);
+  --edge-validates: rgb(74, 115, 64);
+  --edge-blocked-by: rgb(184, 69, 53);
 }
 
 /* ============================================

@@ -12,11 +12,7 @@ import {
 } from 'solid-js';
 import { createStore, reconcile } from 'solid-js/store';
 import type {
-  DeliveryState,
   HistoryEntry,
-  MergeInfo,
-  PrInfo,
-  PushResult,
   RunDetail,
   RunSummary,
   Task,
@@ -59,25 +55,6 @@ interface RunsContextValue {
 
   // Subscribe/unsubscribe for polling
   subscribe: () => () => void;
-
-  // Delivery state
-  deliveryState: () => DeliveryState | null;
-  deliveryLoading: () => boolean;
-  refreshDeliveryState: (runName: string, targetBranch: string) => Promise<void>;
-
-  // Delivery actions
-  pushBranch: (runName: string) => Promise<PushResult>;
-  createPr: (runName: string, targetBranch: string, title: string, body: string) => Promise<PrInfo>;
-  autoMerge: (runName: string, targetBranch: string, title: string, body: string) => Promise<MergeInfo>;
-  abandon: (runName: string) => Promise<void>;
-  markDelivered: (runName: string) => Promise<void>;
-
-  // Delivery modal state
-  showDeliveryModal: () => boolean;
-  deliveryModalRun: () => string | null;
-  deliveryModalTargetBranch: () => string | null;
-  openDeliveryModal: (runName: string, targetBranch: string) => void;
-  closeDeliveryModal: () => void;
 }
 
 const RunsContext = createContext<RunsContextValue>();
@@ -97,15 +74,6 @@ export const RunsProvider: ParentComponent = (props) => {
   const [selectedRun, setSelectedRunSignal] = createSignal<string | null>(null);
   const [loading, setLoading] = createSignal(true);
   const [subscriberCount, setSubscriberCount] = createSignal(0);
-
-  // Delivery state
-  const [deliveryState, setDeliveryState] = createSignal<DeliveryState | null>(null);
-  const [deliveryLoading, setDeliveryLoading] = createSignal(false);
-
-  // Delivery modal state
-  const [showDeliveryModal, setShowDeliveryModal] = createSignal(false);
-  const [deliveryModalRun, setDeliveryModalRun] = createSignal<string | null>(null);
-  const [deliveryModalTargetBranch, setDeliveryModalTargetBranch] = createSignal<string | null>(null);
 
   // Fetch runs list
   const fetchRuns = async () => {
@@ -291,82 +259,6 @@ export const RunsProvider: ParentComponent = (props) => {
     return () => setSubscriberCount((c) => c - 1);
   };
 
-  // Delivery methods
-  const refreshDeliveryState = async (runName: string, targetBranch: string) => {
-    setDeliveryLoading(true);
-    try {
-      const state = await invoke<DeliveryState>('get_delivery_state', {
-        runName,
-        targetBranch,
-      });
-      setDeliveryState(state);
-    } catch (e) {
-      console.error('Failed to get delivery state:', e);
-      setDeliveryState(null);
-    } finally {
-      setDeliveryLoading(false);
-    }
-  };
-
-  const pushBranch = async (runName: string): Promise<PushResult> => {
-    const result = await invoke<PushResult>('push_run_branch', { runName });
-    return result;
-  };
-
-  const createPr = async (
-    runName: string,
-    targetBranch: string,
-    title: string,
-    body: string
-  ): Promise<PrInfo> => {
-    const result = await invoke<PrInfo>('create_run_pr', {
-      runName,
-      targetBranch,
-      title,
-      body,
-    });
-    return result;
-  };
-
-  const autoMerge = async (
-    runName: string,
-    targetBranch: string,
-    title: string,
-    body: string
-  ): Promise<MergeInfo> => {
-    const result = await invoke<MergeInfo>('auto_merge_run', {
-      runName,
-      targetBranch,
-      title,
-      body,
-    });
-    return result;
-  };
-
-  const abandon = async (runName: string): Promise<void> => {
-    // Backend command not yet available - stub for now
-    console.warn('abandon not yet implemented');
-  };
-
-  const markDelivered = async (runName: string): Promise<void> => {
-    // Backend command not yet available - stub for now
-    console.warn('markDelivered not yet implemented');
-  };
-
-  // Delivery modal controls
-  const openDeliveryModal = (runName: string, targetBranch: string) => {
-    setDeliveryModalRun(runName);
-    setDeliveryModalTargetBranch(targetBranch);
-    setShowDeliveryModal(true);
-  };
-
-  const closeDeliveryModal = () => {
-    setShowDeliveryModal(false);
-    setDeliveryModalRun(null);
-    setDeliveryModalTargetBranch(null);
-    setDeliveryState(null);
-  };
-
   const value: RunsContextValue = {
     runs: () => state.runs,
     runDetail: () => state.runDetail,
@@ -399,25 +291,6 @@ export const RunsProvider: ParentComponent = (props) => {
       return run ? fetchHistory(run) : Promise.resolve();
     },
     subscribe,
-
-    // Delivery state
-    deliveryState,
-    deliveryLoading,
-    refreshDeliveryState,
-
-    // Delivery actions
-    pushBranch,
-    createPr,
-    autoMerge,
-    abandon,
-    markDelivered,
-
-    // Delivery modal
-    showDeliveryModal,
-    deliveryModalRun,
-    deliveryModalTargetBranch,
-    openDeliveryModal,
-    closeDeliveryModal,
   };
 
   return <RunsContext.Provider value={value}>{props.children}</RunsContext.Provider>;

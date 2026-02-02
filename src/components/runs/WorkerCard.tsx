@@ -6,6 +6,7 @@ import { generateSheepSvg } from '../../lib/sheep-avatar';
 import type { WorkerDisplay } from '../../lib/types';
 import { getContextClass } from '../../lib/utils/context-class';
 import { formatElapsedTime, formatTokens } from '../../lib/utils/formatters';
+import { Icon } from '../shared';
 
 interface WorkerCardProps {
   worker: WorkerDisplay;
@@ -76,7 +77,7 @@ export const WorkerCard: Component<WorkerCardProps> = (props) => {
               class="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-golden flex items-center justify-center"
               title="Leader"
             >
-              <i data-lucide="star" class="w-2 h-2 text-pasture-900" />
+              <Icon name="star" class="w-2 h-2 text-pasture-900" />
             </div>
           </Show>
         </div>
@@ -138,7 +139,7 @@ export const WorkerCard: Component<WorkerCardProps> = (props) => {
               class="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-golden flex items-center justify-center"
               title="Leader"
             >
-              <i data-lucide="star" class="w-2.5 h-2.5 text-pasture-900" />
+              <Icon name="star" class="w-2.5 h-2.5 text-pasture-900" />
             </div>
           </Show>
         </div>
@@ -158,11 +159,11 @@ export const WorkerCard: Component<WorkerCardProps> = (props) => {
           <Show when={props.metricsAvailable && (props.worker.inputTokens || props.worker.outputTokens)}>
             <div class="flex items-center gap-2 mt-1 text-xs text-wool-500">
               <span title="Input tokens">
-                <i data-lucide="arrow-down" class="w-3 h-3 inline" />
+                <Icon name="arrow-down" class="w-3 h-3 inline" />
                 {formatTokens(props.worker.inputTokens)}
               </span>
               <span title="Output tokens">
-                <i data-lucide="arrow-up" class="w-3 h-3 inline" />
+                <Icon name="arrow-up" class="w-3 h-3 inline" />
                 {formatTokens(props.worker.outputTokens)}
               </span>
             </div>
@@ -202,7 +203,7 @@ export const WorkerCard: Component<WorkerCardProps> = (props) => {
           {/* HITL waiting indicator */}
           <Show when={props.worker.hitlWaiting}>
             <div class="flex items-center gap-1 mt-1.5 text-xs text-golden">
-              <i data-lucide="user" class="w-3 h-3" />
+              <Icon name="user" class="w-3 h-3" />
               <span>Awaiting input</span>
             </div>
           </Show>

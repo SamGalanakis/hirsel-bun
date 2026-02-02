@@ -5,7 +5,7 @@
 
 use anyhow::{anyhow, Result};
 use axum::{
-    routing::{delete, get, post},
+    routing::{get, post},
     Router,
 };
 use std::path::Path;
@@ -75,12 +75,22 @@ pub async fn start_daemon(config: DaemonConfig) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
 
-    // Write PID file with binary path for mismatch detection
+    // Write PID file with binary path and mtime for mismatch detection
     let pid = std::process::id();
     let exe_path = std::env::current_exe()
         .map(|p| p.display().to_string())
         .unwrap_or_default();
-    std::fs::write(&pid_path, format!("{}\n{}", pid, exe_path))?;
+
+    // Get mtime of the binary for identity checking (catches same-path rebuilds)
+    let mtime = std::fs::metadata(&exe_path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    // Format: pid\npath\nmtime
+    std::fs::write(&pid_path, format!("{}\n{}\n{}", pid, exe_path, mtime))?;
 
     // Create cleanup handler for graceful shutdown
     let pid_path_clone = pid_path.clone();
@@ -152,94 +162,15 @@ pub async fn start_daemon(config: DaemonConfig) -> Result<()> {
 
 /// Build the axum router with all routes
 fn build_router(state: Arc<AppState>, gyp_state: Arc<gyp::GypState>) -> Router {
-    use crate::core::server::routes;
+    use crate::core::server::shared_routes;
 
-    // Build Gyp chat routes with separate state
-    let gyp_routes = Router::new()
-        .route(
-            "/api/gyp/sessions",
-            get(gyp::list_sessions).post(gyp::start_session),
-        )
-        .route("/api/gyp/sessions/{id}", delete(gyp::stop_session))
-        .route("/api/gyp/sessions/{id}/messages", post(gyp::send_message))
-        .route(
-            "/api/gyp/sessions/{id}/permission",
-            post(gyp::respond_permission),
-        )
-        .route("/api/gyp/sessions/{id}/events", get(gyp::session_events))
-        .with_state(gyp_state);
-
-    // Build the main router (no auth layer for local daemon - localhost only)
-    Router::new()
-        // Health check
-        .route("/health", get(routes::health))
+    // Build the router using shared route builders
+    // Daemon gets: shared routes + daemon-specific routes + gyp routes
+    // No auth layer for local daemon - localhost only
+    shared_routes::build_shared_routes()
         // Daemon-specific routes
         .route("/daemon/stop", post(daemon_stop))
         .route("/daemon/status", get(daemon_status))
-        // Run management
-        .route("/api/runs", get(routes::list_runs).post(routes::create_run))
-        .route(
-            "/api/runs/{name}",
-            get(routes::get_run).delete(routes::delete_run),
-        )
-        .route(
-            "/api/runs/{name}/files",
-            get(routes::download_files).post(routes::upload_files),
-        )
-        .route("/api/runs/{name}/spawn", post(routes::spawn_workers))
-        .route("/api/runs/{name}/pause", post(routes::pause_run))
-        .route("/api/runs/{name}/resume", post(routes::resume_run))
-        .route("/api/runs/{name}/deliver", post(routes::deliver_run))
-        // Workers
-        .route("/api/runs/{name}/workers", get(routes::list_workers))
-        .route(
-            "/api/runs/{name}/workers/{worker}/restart",
-            post(routes::restart_worker),
-        )
-        .route(
-            "/api/runs/{name}/workers/{worker}/spawn",
-            post(routes::spawn_single_worker),
-        )
-        .route(
-            "/api/runs/{name}/workers/{worker}/resume",
-            post(routes::resume_worker),
-        )
-        .route(
-            "/api/runs/{name}/workers/{worker}/events",
-            get(routes::get_worker_events),
-        )
-        // Tasks
-        .route(
-            "/api/runs/{name}/tasks",
-            get(routes::list_tasks).post(routes::add_task),
-        )
-        .route(
-            "/api/runs/{name}/tasks/{task_id}",
-            delete(routes::delete_task),
-        )
-        .route(
-            "/api/runs/{name}/tasks/{task_id}/complete",
-            post(routes::complete_task),
-        )
-        .route(
-            "/api/runs/{name}/tasks/{task_id}/reopen",
-            post(routes::reopen_task),
-        )
-        // Threads and messages
-        .route("/api/runs/{name}/threads", get(routes::list_threads))
-        .route(
-            "/api/runs/{name}/threads/{thread}/messages",
-            get(routes::get_messages).post(routes::send_message),
-        )
-        // Evals
-        .route("/api/runs/{name}/evals", get(routes::list_evals))
-        // History
-        .route("/api/runs/{name}/history", get(routes::get_history))
-        // Assets
-        .route("/api/runs/{name}/assets", post(gyp::upload_asset))
-        .route("/api/runs/{name}/assets-path", get(gyp::get_assets_path))
-        // Config
-        .route("/api/config", get(routes::get_config))
         // Per-run config endpoints for workers
         .route(
             "/api/runs/{run}/config/human_in_the_loop",
@@ -272,8 +203,9 @@ fn build_router(state: Arc<AppState>, gyp_state: Arc<gyp::GypState>) -> Router {
             "/api/runs/{run}/workers/{worker}/claimed_task",
             get(get_worker_claimed_task),
         )
-        // Merge Gyp routes
-        .merge(gyp_routes)
+        .with_state(state)
+        // Merge Gyp routes (with separate state)
+        .merge(shared_routes::build_gyp_routes().with_state(gyp_state))
         // CORS for browser-based clients
         .layer(
             CorsLayer::new()
@@ -281,7 +213,6 @@ fn build_router(state: Arc<AppState>, gyp_state: Arc<gyp::GypState>) -> Router {
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
-        .with_state(state)
 }
 
 /// Clean up PID file

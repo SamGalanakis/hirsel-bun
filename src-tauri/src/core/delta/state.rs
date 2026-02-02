@@ -489,32 +489,18 @@ impl DeltaState {
             return Err(DeltaStateError::EvalValidatesEmpty);
         }
 
-        // Determine parent_id with auto-assignment to root
-        let parent_id = match &req.parent_id {
-            Some(pid) => {
-                // Validate that parent exists
-                let exists: bool = db.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM draft_nodes WHERE id = ?1 AND project_id = ?2)",
-                    params![pid, self.project_id],
-                    |row| row.get(0),
-                )?;
-                if !exists {
-                    return Err(DeltaStateError::ParentNodeNotFound(pid.clone()));
-                }
-                Some(pid.clone())
+        // Validate parent_id if provided
+        if let Some(pid) = &req.parent_id {
+            let exists: bool = db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM draft_nodes WHERE id = ?1 AND project_id = ?2)",
+                params![pid, self.project_id],
+                |row| row.get(0),
+            )?;
+            if !exists {
+                return Err(DeltaStateError::ParentNodeNotFound(pid.clone()));
             }
-            None => {
-                // Check if a root node already exists - if so, auto-assign to it
-                let root_id: Option<String> = db
-                    .query_row(
-                        "SELECT id FROM draft_nodes WHERE parent_id IS NULL AND project_id = ?1 ORDER BY position LIMIT 1",
-                        [self.project_id],
-                        |row| row.get(0),
-                    )
-                    .ok();
-                root_id // None means this will be the first root node
-            }
-        };
+        }
+        let parent_id = req.parent_id.clone();
 
         let id = self.generate_slug(&db, "draft_nodes", &req.name)?;
         let now = self.now();

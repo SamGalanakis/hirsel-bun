@@ -13,12 +13,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 
+use crate::core::constants::FLY_API_BASE;
+
 use super::setup;
 use super::{
     FlyHostConfig, Runner, RunnerError, RunnerResult, SpawnResult, WorkerHandle, WorkerSpawnConfig,
 };
-
-const FLY_API_BASE: &str = "https://api.machines.dev/v1";
 
 /// Fly.io runner - spawns workers as ephemeral Fly Machines.
 pub struct FlyRunner {

@@ -333,7 +333,6 @@ fn run_command(
                 worker_name: args.worker,
                 work_dir: PathBuf::from(args.work_dir),
                 run_dir: PathBuf::from(args.run_dir),
-                spec_path: PathBuf::from(args.spec),
                 agent_command,
                 is_leader: args.is_leader,
                 leader_name: args.leader_name,
@@ -446,7 +445,6 @@ fn run_command(
                             run_name: &args.run_name,
                             worker_name: &args.worker_name,
                             work_dir: &args.work_dir,
-                            spec_path: &args.spec,
                             agent_command: &agent_command,
                             is_leader: args.is_leader,
                             leader_name: args.leader_name.as_deref(),
@@ -464,6 +462,15 @@ fn run_command(
         Commands::AcpBridge => {
             // Run ACP bridge server for Claude CLI
             cli::acp_bridge::run_acp_bridge().map_err(|e| format!("ACP bridge error: {}", e))?;
+        }
+        Commands::BoardMcp => {
+            // Run board MCP server for Gyp
+            let project_id: i64 = std::env::var("HIRSEL_PROJECT_ID")
+                .map_err(|_| "HIRSEL_PROJECT_ID environment variable required")?
+                .parse()
+                .map_err(|_| "Invalid HIRSEL_PROJECT_ID")?;
+            core::board::mcp::run_board_mcp_server(project_id)
+                .map_err(|e| format!("Board MCP error: {}", e))?;
         }
         #[cfg(feature = "cli")]
         Commands::Test(args) => {

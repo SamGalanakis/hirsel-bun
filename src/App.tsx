@@ -5,7 +5,6 @@ import { type Component, createEffect, onCleanup } from 'solid-js';
 import { emit, listen } from '@tauri-apps/api/event';
 
 import { Layout } from './components/layout/Layout';
-import { initLucideIcons } from './lib/icons';
 import './lib/toast';
 import { initDevLogger } from './lib/dev-logger';
 import { initTheme } from './lib/theme';
@@ -25,10 +24,6 @@ const App: Component = () => {
   createEffect(() => {
     // Initialize theme
     initTheme();
-
-    // Initialize Lucide icons
-    initLucideIcons();
-
 
     // Right-click to dismiss toasts
     const contextMenuHandler = (e: MouseEvent) => {

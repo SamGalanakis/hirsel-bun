@@ -24,98 +24,10 @@ import {
   bindingFromEvent,
   findConflict,
 } from '../../lib/shortcuts';
-import { initLucideIcons } from '../../lib/icons';
+import { Icon, Dropdown, type DropdownOption } from '../shared';
 
 type SettingsTab = 'appearance' | 'shortcuts' | 'profiles' | 'about';
 type ProfileTab = 'connection' | 'agents' | 'runners' | 'defaults' | 'git' | 'data' | 'services';
-
-// Dropdown option type
-interface DropdownOption {
-  value: string;
-  label: string;
-}
-
-// Basecoat-style Dropdown component
-const Dropdown: Component<{
-  value: string;
-  options: DropdownOption[];
-  onChange: (value: string) => void;
-  placeholder?: string;
-  class?: string;
-}> = (props) => {
-  const [open, setOpen] = createSignal(false);
-  let containerRef: HTMLDivElement | undefined;
-
-  const selectedLabel = () => {
-    const option = props.options.find((o) => o.value === props.value);
-    return option?.label || props.placeholder || 'Select...';
-  };
-
-  // Close on click outside
-  createEffect(() => {
-    if (open()) {
-      const handler = (e: MouseEvent) => {
-        if (containerRef && !containerRef.contains(e.target as Node)) {
-          setOpen(false);
-        }
-      };
-      document.addEventListener('click', handler);
-      onCleanup(() => document.removeEventListener('click', handler));
-    }
-  });
-
-  // Reinit icons when dropdown opens
-  createEffect(() => {
-    if (open()) {
-      queueMicrotask(() => initLucideIcons());
-    }
-  });
-
-  return (
-    <div ref={containerRef} class={`dropdown relative ${props.class || ''}`}>
-      <button
-        type="button"
-        class="btn-outline w-full justify-between"
-        onClick={() => setOpen(!open())}
-        aria-haspopup="listbox"
-        aria-expanded={open()}
-      >
-        <span class="truncate flex-1 text-left" classList={{ 'text-muted-foreground': !props.value }}>
-          {selectedLabel()}
-        </span>
-        <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0" />
-      </button>
-      <Show when={open()}>
-        <div
-          data-popover
-          class="absolute z-50 mt-1 w-full bg-popover border border-border rounded-md shadow-md py-1 max-h-60 overflow-auto"
-        >
-          <div role="listbox" aria-orientation="vertical">
-            <For each={props.options}>
-              {(option) => (
-                <div
-                  role="option"
-                  aria-selected={props.value === option.value}
-                  class="px-3 py-2 text-sm cursor-pointer hover:bg-accent flex items-center justify-between"
-                  classList={{ 'bg-accent/50': props.value === option.value }}
-                  onClick={() => {
-                    props.onChange(option.value);
-                    setOpen(false);
-                  }}
-                >
-                  <span>{option.label}</span>
-                  <Show when={props.value === option.value}>
-                    <i data-lucide="check" class="w-4 h-4 text-primary" />
-                  </Show>
-                </div>
-              )}
-            </For>
-          </div>
-        </div>
-      </Show>
-    </div>
-  );
-};
 
 // Basecoat-style Switch component
 const Switch: Component<{
@@ -126,7 +38,7 @@ const Switch: Component<{
   description?: string;
 }> = (props) => {
   return (
-    <div class="flex items-start justify-between rounded-lg border p-4">
+    <div role="group" class="field flex items-start justify-between rounded-lg border p-4">
       <div class="flex flex-col gap-0.5">
         <label for={props.id} class="font-medium leading-normal">{props.label}</label>
         <Show when={props.description}>
@@ -315,13 +227,6 @@ export const SettingsModal: Component = () => {
     if (app.showSettings()) {
       loadSettings();
     }
-  });
-
-  // Reinit icons when tab changes
-  createEffect(() => {
-    void activeTab();
-    void profileTab();
-    queueMicrotask(() => initLucideIcons());
   });
 
   // Check profile health when settings load or profile changes
@@ -865,7 +770,7 @@ export const SettingsModal: Component = () => {
                     'text-wool-400 hover:bg-pasture-700/50': activeTab() !== 'appearance',
                   }}
                 >
-                  <i data-lucide="palette" class="w-4 h-4" />
+                  <Icon name="palette" class="w-4 h-4" />
                   Theme
                 </button>
                 <button
@@ -876,7 +781,7 @@ export const SettingsModal: Component = () => {
                     'text-wool-400 hover:bg-pasture-700/50': activeTab() !== 'shortcuts',
                   }}
                 >
-                  <i data-lucide="keyboard" class="w-4 h-4" />
+                  <Icon name="keyboard" class="w-4 h-4" />
                   Shortcuts
                 </button>
               </nav>
@@ -899,7 +804,7 @@ export const SettingsModal: Component = () => {
                     'text-wool-400 hover:bg-pasture-700/50': !(activeTab() === 'profiles' && selectedProfile() === 'local'),
                   }}
                 >
-                  <i data-lucide="laptop" class="w-4 h-4 text-sage" />
+                  <Icon name="laptop" class="w-4 h-4 text-sage" />
                   <span class="flex-1">local</span>
                   <Show when={settings.defaultProfile === 'local'}>
                     <span class="text-amber-400 text-xs">●</span>
@@ -917,7 +822,7 @@ export const SettingsModal: Component = () => {
                         'text-wool-400 hover:bg-pasture-700/50': !(activeTab() === 'profiles' && selectedProfile() === name),
                       }}
                     >
-                      <i data-lucide="server" class="w-4 h-4 text-sage" />
+                      <Icon name="server" class="w-4 h-4 text-sage" />
                       <span class="flex-1 truncate">{name}</span>
                       <Show when={settings.defaultProfile === name}>
                         <span class="text-amber-400 text-xs">●</span>
@@ -942,7 +847,7 @@ export const SettingsModal: Component = () => {
                   onClick={() => setAddingProfile(true)}
                   class="w-full px-3 py-2 text-left text-sm rounded flex items-center gap-2 text-wool-500 hover:text-wool-300 hover:bg-pasture-700/50"
                 >
-                  <i data-lucide="plus" class="w-4 h-4" />
+                  <Icon name="plus" class="w-4 h-4" />
                   Add Profile
                 </button>
               </nav>
@@ -959,7 +864,7 @@ export const SettingsModal: Component = () => {
                 'text-wool-400 hover:bg-pasture-700/50': activeTab() !== 'about',
               }}
             >
-              <i data-lucide="info" class="w-4 h-4" />
+              <Icon name="info" class="w-4 h-4" />
               About
             </button>
           </div>
@@ -972,7 +877,7 @@ export const SettingsModal: Component = () => {
                 onClick={() => app.setShowSettings(false)}
                 class="p-1 rounded hover:bg-pasture-700 text-wool-500"
               >
-                <i data-lucide="x" class="w-5 h-5" />
+                <Icon name="x" class="w-5 h-5" />
               </button>
             </div>
 
@@ -1018,7 +923,7 @@ export const SettingsModal: Component = () => {
                           </span>
                           <span class="text-wool-200">{currentThemeDisplay()}</span>
                         </span>
-                        <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50" />
+                        <Icon name="chevrons-up-down" class="w-4 h-4 opacity-50" />
                       </button>
 
                       <Show when={themeSelectorOpen()}>
@@ -1050,7 +955,7 @@ export const SettingsModal: Component = () => {
                                     <span class="text-wool-200">{theme.name}</span>
                                   </span>
                                   <Show when={app.currentTheme() === theme.id}>
-                                    <i data-lucide="check" class="w-4 h-4 text-primary" />
+                                    <Icon name="check" class="w-4 h-4 text-primary" />
                                   </Show>
                                 </div>
                               )}
@@ -1075,14 +980,14 @@ export const SettingsModal: Component = () => {
                       <p class="text-sm text-wool-500">Click any shortcut to rebind. Press Escape to cancel.</p>
                     </div>
                     <button onClick={resetAllShortcuts} class="btn btn-ghost btn-sm">
-                      <i data-lucide="rotate-ccw" class="w-4 h-4 mr-1" />
+                      <Icon name="rotate-ccw" class="w-4 h-4 mr-1" />
                       Reset
                     </button>
                   </div>
 
                   <Show when={shortcutConflict()}>
                     <div class="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-sm text-amber-400 flex items-center gap-2">
-                      <i data-lucide="alert-triangle" class="w-4 h-4" />
+                      <Icon name="alert-triangle" class="w-4 h-4" />
                       <span>{shortcutConflict()}</span>
                     </div>
                   </Show>
@@ -1183,10 +1088,10 @@ export const SettingsModal: Component = () => {
                   <div class="flex items-center justify-between mb-4">
                     <div class="flex items-center gap-3">
                       <Show when={isLocalProfile()}>
-                        <i data-lucide="laptop" class="w-5 h-5 text-sage" />
+                        <Icon name="laptop" class="w-5 h-5 text-sage" />
                       </Show>
                       <Show when={!isLocalProfile()}>
-                        <i data-lucide="server" class="w-5 h-5 text-sage" />
+                        <Icon name="server" class="w-5 h-5 text-sage" />
                       </Show>
                       <h3 class="text-lg font-medium text-wool-100">{selectedProfile()}</h3>
                       <span class="badge-secondary">{isLocalProfile() ? 'Built-in' : 'Remote'}</span>
@@ -1232,7 +1137,7 @@ export const SettingsModal: Component = () => {
                           onClick={() => deleteProfile(selectedProfile())}
                           class="btn btn-ghost btn-sm text-terra hover:text-terra"
                         >
-                          <i data-lucide="trash-2" class="w-4 h-4" />
+                          <Icon name="trash-2" class="w-4 h-4" />
                         </button>
                       </Show>
                     </div>
@@ -1482,7 +1387,7 @@ export const SettingsModal: Component = () => {
                           <div class="flex items-center justify-between">
                             <h4 class="text-sm font-medium text-wool-200">Configured Runners</h4>
                             <button type="button" onClick={startAddRunner} class="btn btn-ghost btn-sm">
-                              <i data-lucide="plus" class="w-4 h-4 mr-1" />
+                              <Icon name="plus" class="w-4 h-4 mr-1" />
                               Add Runner
                             </button>
                           </div>
@@ -1492,10 +1397,10 @@ export const SettingsModal: Component = () => {
                             <div class="flex items-center justify-between">
                               <div class="flex items-center gap-2">
                                 <Show when={isLocalProfile()}>
-                                  <i data-lucide="laptop" class="w-4 h-4 text-sage" />
+                                  <Icon name="laptop" class="w-4 h-4 text-sage" />
                                 </Show>
                                 <Show when={!isLocalProfile()}>
-                                  <i data-lucide="server" class="w-4 h-4 text-sage" />
+                                  <Icon name="server" class="w-4 h-4 text-sage" />
                                 </Show>
                                 <span class="font-medium text-wool-200">{getLocalRunnerName()}</span>
                                 <span class="badge-secondary">{getLocalRunnerBadge()}</span>
@@ -1525,19 +1430,19 @@ export const SettingsModal: Component = () => {
                                 <div class="flex items-center justify-between">
                                   <div class="flex items-center gap-2">
                                     <Show when={getRunner(name)?.container}>
-                                      <i data-lucide="container" class="w-4 h-4 text-sage" />
+                                      <Icon name="container" class="w-4 h-4 text-sage" />
                                     </Show>
                                     <Show when={getRunner(name)?.host?.type === 'ssh' && !getRunner(name)?.container}>
-                                      <i data-lucide="server" class="w-4 h-4 text-sage" />
+                                      <Icon name="server" class="w-4 h-4 text-sage" />
                                     </Show>
                                     <Show when={getRunner(name)?.host?.type === 'fly' && !getRunner(name)?.container}>
-                                      <i data-lucide="cloud" class="w-4 h-4 text-sage" />
+                                      <Icon name="cloud" class="w-4 h-4 text-sage" />
                                     </Show>
                                     <Show when={getRunner(name)?.host?.type === 'local' && !getRunner(name)?.container}>
-                                      <i data-lucide="laptop" class="w-4 h-4 text-sage" />
+                                      <Icon name="laptop" class="w-4 h-4 text-sage" />
                                     </Show>
                                     <Show when={getRunner(name)?.host?.type === 'client' && !getRunner(name)?.container}>
-                                      <i data-lucide="monitor" class="w-4 h-4 text-sage" />
+                                      <Icon name="monitor" class="w-4 h-4 text-sage" />
                                     </Show>
                                     <span class="font-medium text-wool-200">{name}</span>
                                     <span class="badge-secondary">{getHostTypeLabel(getRunner(name)?.host?.type)}</span>
@@ -1573,14 +1478,14 @@ export const SettingsModal: Component = () => {
                                       onClick={() => deleteRunner(name)}
                                       class="btn btn-ghost btn-sm text-wool-400 hover:text-terra"
                                     >
-                                      <i data-lucide="trash-2" class="w-4 h-4" />
+                                      <Icon name="trash-2" class="w-4 h-4" />
                                     </button>
                                     <button
                                       type="button"
                                       onClick={() => startEditRunner(name)}
                                       class="btn btn-ghost btn-sm"
                                     >
-                                      <i data-lucide="pencil" class="w-4 h-4 mr-1" />
+                                      <Icon name="pencil" class="w-4 h-4 mr-1" />
                                       Edit
                                     </button>
                                   </div>
@@ -1685,7 +1590,7 @@ export const SettingsModal: Component = () => {
                             </div>
                             <Show when={settings.git?.configuredProviders?.includes('github')}>
                               <span class="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded flex items-center gap-1">
-                                <i data-lucide="check" class="w-3 h-3" />
+                                <Icon name="check" class="w-3 h-3" />
                                 Configured
                               </span>
                             </Show>
@@ -1753,7 +1658,7 @@ export const SettingsModal: Component = () => {
                                 <p class="text-xs text-wool-500">S3-compatible storage for snapshots and files.</p>
                               </div>
                               <button type="button" onClick={startAddStorage} class="btn btn-sm">
-                                <i data-lucide="plus" class="w-4 h-4 mr-1" />
+                                <Icon name="plus" class="w-4 h-4 mr-1" />
                                 Add Storage
                               </button>
                             </div>
@@ -1764,7 +1669,7 @@ export const SettingsModal: Component = () => {
                                   {(name) => (
                                     <div class="flex items-center justify-between p-3 bg-pasture-700/30 rounded-lg">
                                       <div class="flex items-center gap-3">
-                                        <i data-lucide="database" class="w-4 h-4 text-sage" />
+                                        <Icon name="database" class="w-4 h-4 text-sage" />
                                         <div>
                                           <div class="flex items-center gap-2">
                                             <span class="font-medium text-wool-200">{name}</span>
@@ -1785,7 +1690,7 @@ export const SettingsModal: Component = () => {
                                             class="btn btn-ghost btn-sm"
                                             title="Set as default"
                                           >
-                                            <i data-lucide="star" class="w-4 h-4" />
+                                            <Icon name="star" class="w-4 h-4" />
                                           </button>
                                         </Show>
                                         <button
@@ -1794,7 +1699,7 @@ export const SettingsModal: Component = () => {
                                           class="btn btn-ghost btn-sm"
                                           title="Edit"
                                         >
-                                          <i data-lucide="pencil" class="w-4 h-4" />
+                                          <Icon name="pencil" class="w-4 h-4" />
                                         </button>
                                         <button
                                           type="button"
@@ -1802,7 +1707,7 @@ export const SettingsModal: Component = () => {
                                           class="btn btn-ghost btn-sm text-wool-400 hover:text-terra"
                                           title="Delete"
                                         >
-                                          <i data-lucide="trash-2" class="w-4 h-4" />
+                                          <Icon name="trash-2" class="w-4 h-4" />
                                         </button>
                                       </div>
                                     </div>
@@ -1864,7 +1769,7 @@ export const SettingsModal: Component = () => {
                         <div class="rounded-lg border border-pasture-600 p-4">
                           <div class="flex items-center gap-3 mb-4">
                             <span class="flex items-center justify-center w-8 h-8 rounded-lg bg-sage/20">
-                              <i data-lucide="book-open" class="w-4 h-4 text-sage" />
+                              <Icon name="book-open" class="w-4 h-4 text-sage" />
                             </span>
                             <div>
                               <h3 class="font-medium text-wool-200">Scribe</h3>
@@ -1913,7 +1818,7 @@ export const SettingsModal: Component = () => {
                         <div class="rounded-lg border border-pasture-600 p-4">
                           <div class="flex items-center gap-3 mb-4">
                             <span class="flex items-center justify-center w-8 h-8 rounded-lg bg-amber-500/20">
-                              <i data-lucide="message-circle" class="w-4 h-4 text-amber-400" />
+                              <Icon name="message-circle" class="w-4 h-4 text-amber-400" />
                             </span>
                             <div>
                               <h3 class="font-medium text-wool-200">Gyp</h3>

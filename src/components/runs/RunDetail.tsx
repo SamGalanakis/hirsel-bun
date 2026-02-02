@@ -31,6 +31,7 @@ import {
   formatTimeRemaining,
 } from '../../lib/utils/formatters';
 import { useRuns, useSelection } from '../../stores';
+import { Icon } from '../shared';
 import { ActivityLog } from './ActivityLog';
 import { TaskDetailModal } from './TaskDetailModal';
 import { TaskTreeView } from './TaskTreeView';
@@ -89,7 +90,7 @@ const TabButton: Component<{
     onClick={props.onClick}
     class="px-3 py-2 text-sm flex items-center gap-1.5"
   >
-    <i data-lucide={props.icon} class="w-4 h-4" />
+    <Icon name={props.icon} class="w-4 h-4" />
     {props.label}
     <Show when={props.badge && props.badge > 0}>
       <span
@@ -155,6 +156,7 @@ export const RunDetail: Component = () => {
   const [selectedTaskId, setSelectedTaskId] = createSignal<string | null>(null);
   const [showTaskModal, setShowTaskModal] = createSignal(false);
   const [collapsedTasks, setCollapsedTasks] = createSignal<Set<string>>(new Set());
+  const [showAllTasks, setShowAllTasks] = createSignal(true); // Toggle for task source filter
 
   // Run actions menu
   const [showRunMenu, setShowRunMenu] = createSignal(false);
@@ -478,7 +480,7 @@ export const RunDetail: Component = () => {
                 class="text-xs text-amber-400 flex items-center gap-1"
                 data-tooltip="Human in the Loop"
               >
-                <i data-lucide="user" class="w-3 h-3" /> HITL
+                <Icon name="user" class="w-3 h-3" /> HITL
               </span>
             </Show>
           </div>
@@ -489,7 +491,7 @@ export const RunDetail: Component = () => {
               onClick={() => setShowRunMenu(!showRunMenu())}
               title="Run actions"
             >
-              <i data-lucide="more-horizontal" class="w-5 h-5" />
+              <Icon name="more-horizontal" class="w-5 h-5" />
             </button>
 
             <Show when={showRunMenu()}>
@@ -507,7 +509,7 @@ export const RunDetail: Component = () => {
                       pauseRun();
                     }}
                   >
-                    <i data-lucide="pause" class="w-4 h-4 text-golden" />
+                    <Icon name="pause" class="w-4 h-4 text-golden" />
                     <span>Pause</span>
                   </button>
                 </Show>
@@ -521,7 +523,7 @@ export const RunDetail: Component = () => {
                       resumeRun();
                     }}
                   >
-                    <i data-lucide="play" class="w-4 h-4 text-sage" />
+                    <Icon name="play" class="w-4 h-4 text-sage" />
                     <span>Resume</span>
                   </button>
                 </Show>
@@ -535,7 +537,7 @@ export const RunDetail: Component = () => {
                       setShowDeliverModal(true);
                     }}
                   >
-                    <i data-lucide="git-pull-request" class="w-4 h-4 text-amber-400" />
+                    <Icon name="git-pull-request" class="w-4 h-4 text-amber-400" />
                     <span>Deliver</span>
                   </button>
                 </Show>
@@ -551,7 +553,7 @@ export const RunDetail: Component = () => {
                     deleteRun();
                   }}
                 >
-                  <i data-lucide="trash-2" class="w-4 h-4" />
+                  <Icon name="trash-2" class="w-4 h-4" />
                   <span>Delete run</span>
                 </button>
               </div>
@@ -589,7 +591,7 @@ export const RunDetail: Component = () => {
             <span>{formatElapsed(detail()?.elapsedMinutes)} elapsed</span>
             <span class="text-wool-600">·</span>
             <span class="flex items-center gap-1 text-wool-600">
-              <i data-lucide="infinity" class="w-3 h-3" /> no limit
+              <Icon name="infinity" class="w-3 h-3" /> no limit
             </span>
           </div>
         </Show>
@@ -643,7 +645,7 @@ export const RunDetail: Component = () => {
             {/* Stats row - compact inline */}
             <div class="flex items-center gap-4 text-sm flex-shrink-0">
               <div class="flex items-center gap-1.5">
-                <i data-lucide="users" class="w-3.5 h-3.5 text-wool-500" />
+                <Icon name="users" class="w-3.5 h-3.5 text-wool-500" />
                 <span class="text-wool-500">Workers</span>
                 <span class="font-semibold tabular-nums">
                   <span class="text-amber-400">{detail()?.workersActive}</span>
@@ -653,7 +655,7 @@ export const RunDetail: Component = () => {
               </div>
               <span class="text-wool-700">·</span>
               <div class="flex items-center gap-1.5">
-                <i data-lucide="list-checks" class="w-3.5 h-3.5 text-wool-500" />
+                <Icon name="list-checks" class="w-3.5 h-3.5 text-wool-500" />
                 <span class="text-wool-500">Tasks</span>
                 <span class="font-semibold tabular-nums">
                   <span class="text-sage">{detail()?.tasksDone}</span>
@@ -663,7 +665,7 @@ export const RunDetail: Component = () => {
               </div>
               <span class="text-wool-700">·</span>
               <div class="flex items-center gap-1.5">
-                <i data-lucide="clock" class="w-3.5 h-3.5 text-wool-500" />
+                <Icon name="clock" class="w-3.5 h-3.5 text-wool-500" />
                 <span class="font-semibold text-wool-300 tabular-nums">
                   {Math.round(detail()?.elapsedMinutes || 0)}m
                   <Show when={detail()?.timeLimitMinutes}>
@@ -674,7 +676,7 @@ export const RunDetail: Component = () => {
               <Show when={diffStats()}>
                 <span class="text-wool-700">·</span>
                 <div class="flex items-center gap-1.5">
-                  <i data-lucide="file-diff" class="w-3.5 h-3.5 text-wool-500" />
+                  <Icon name="file-diff" class="w-3.5 h-3.5 text-wool-500" />
                   <span class="text-wool-300 tabular-nums">{diffStats()?.filesChanged} files</span>
                   <span class="text-xs tabular-nums">
                     <span class="text-sage">+{diffStats()?.insertions}</span>
@@ -689,7 +691,7 @@ export const RunDetail: Component = () => {
             <div class="flex-shrink-0">
               <Show when={workers().length === 0}>
                 <div class="flex items-center gap-2 py-2 text-xs text-wool-600">
-                  <i data-lucide="users" class="w-4 h-4" />
+                  <Icon name="users" class="w-4 h-4" />
                   <span>No workers yet</span>
                 </div>
               </Show>
@@ -719,7 +721,7 @@ export const RunDetail: Component = () => {
             {/* Activity panel - takes remaining space */}
             <div class="flex-1 flex flex-col min-h-0 bg-pasture-800/50 rounded-lg border border-pasture-600 overflow-hidden">
               <div class="flex items-center gap-2 px-3 py-2 border-b border-pasture-600">
-                <i data-lucide="activity" class="w-4 h-4 text-wool-500" />
+                <Icon name="activity" class="w-4 h-4 text-wool-500" />
                 <h3 class="text-xs font-semibold text-wool-400 uppercase tracking-wide">Activity</h3>
               </div>
               <div class="flex-1 overflow-auto">
@@ -739,7 +741,7 @@ export const RunDetail: Component = () => {
                 <Show when={tasks().length === 0 && evals().length === 0}>
                   <div class="work-empty-state h-full">
                     <div class="work-empty-icon">
-                      <i data-lucide="git-branch" class="w-7 h-7" />
+                      <Icon name="git-branch" class="w-7 h-7" />
                     </div>
                     <p class="work-empty-text">No work items yet</p>
                     <p class="text-xs text-wool-600">Tasks will appear as the run progresses</p>
@@ -750,10 +752,17 @@ export const RunDetail: Component = () => {
                 <Show when={tasks().length > 0}>
                   <div class="work-group-header">
                     <div class="work-group-header-icon">
-                      <i data-lucide="git-branch" class="w-3 h-3" />
+                      <Icon name="git-branch" class="w-3 h-3" />
                     </div>
                     <span class="work-group-header-text">Tasks</span>
                     <div class="work-group-header-line" />
+                    <button
+                      class="ml-2 p-1 rounded hover:bg-pasture-700 text-wool-500 hover:text-wool-300"
+                      onClick={() => setShowAllTasks(v => !v)}
+                      title={showAllTasks() ? "Hide worker-added tasks" : "Show all tasks"}
+                    >
+                      <Icon name={showAllTasks() ? "layers" : "git-branch"} class="w-3.5 h-3.5" />
+                    </button>
                   </div>
 
                   <TaskTreeView
@@ -761,6 +770,7 @@ export const RunDetail: Component = () => {
                     workers={workers()}
                     selectedTaskId={selectedTaskId()}
                     onSelectTask={setSelectedTaskId}
+                    showAllTasks={showAllTasks()}
                   />
                 </Show>
 
@@ -768,7 +778,7 @@ export const RunDetail: Component = () => {
                 <Show when={evals().length > 0}>
                   <div class="work-group-header mt-4">
                     <div class="work-group-header-icon" style="background: rgba(125,153,112,0.2)">
-                      <i data-lucide="shield-check" class="w-3 h-3 text-sage" />
+                      <Icon name="shield-check" class="w-3 h-3 text-sage" />
                     </div>
                     <span class="work-group-header-text text-sage/60">Evaluations</span>
                     <div class="work-group-header-line" />
@@ -802,7 +812,7 @@ export const RunDetail: Component = () => {
                             </div>
                             <div class="work-node-meta">
                               <span class="work-node-type eval">
-                                <i data-lucide="shield-check" class="w-2 h-2" />
+                                <Icon name="shield-check" class="w-2 h-2" />
                                 eval
                               </span>
                               <Show when={evalItem.status === 'running'}>
@@ -840,7 +850,7 @@ export const RunDetail: Component = () => {
               <Show when={!selectedTaskId()}>
                 <div class="work-empty-state h-full">
                   <div class="work-empty-icon">
-                    <i data-lucide="mouse-pointer-click" class="w-7 h-7" />
+                    <Icon name="mouse-pointer-click" class="w-7 h-7" />
                   </div>
                   <p class="work-empty-text">Select a task to view details</p>
                   <p class="text-xs text-wool-600">Click any item in the list</p>
@@ -866,7 +876,7 @@ export const RunDetail: Component = () => {
                             <StatusBadge status={task()!.status} />
                             <Show when={isBlocked()}>
                               <span class="text-xs text-terra flex items-center gap-1">
-                                <i data-lucide="lock" class="w-3 h-3" />
+                                <Icon name="lock" class="w-3 h-3" />
                                 Blocked
                               </span>
                             </Show>
@@ -880,19 +890,19 @@ export const RunDetail: Component = () => {
                         <div class="work-actions">
                           <Show when={task()!.status !== 'done'}>
                             <button class="btn btn-success" onClick={() => completeTask(task()!.id)}>
-                              <i data-lucide="check" class="w-4 h-4" />
+                              <Icon name="check" class="w-4 h-4" />
                               Complete
                             </button>
                           </Show>
                           <Show when={task()!.status === 'done'}>
                             <button class="btn-outline" onClick={() => reopenTask(task()!.id)}>
-                              <i data-lucide="rotate-ccw" class="w-4 h-4" />
+                              <Icon name="rotate-ccw" class="w-4 h-4" />
                               Reopen
                             </button>
                           </Show>
                           <Show when={task()!.claimedBy}>
                             <button class="btn-outline" onClick={() => unclaimTask(task()!.id)}>
-                              <i data-lucide="user-minus" class="w-4 h-4" />
+                              <Icon name="user-minus" class="w-4 h-4" />
                               Unclaim
                             </button>
                           </Show>
@@ -902,7 +912,7 @@ export const RunDetail: Component = () => {
                             onClick={() => deleteTask(task()!.id)}
                             title="Delete task"
                           >
-                            <i data-lucide="trash-2" class="w-4 h-4" />
+                            <Icon name="trash-2" class="w-4 h-4" />
                           </button>
                         </div>
 
@@ -1013,7 +1023,7 @@ export const RunDetail: Component = () => {
                               {evalItem()!.status}
                             </span>
                             <span class="work-node-type eval">
-                              <i data-lucide="shield-check" class="w-2.5 h-2.5" />
+                              <Icon name="shield-check" class="w-2.5 h-2.5" />
                               evaluation
                             </span>
                           </div>
@@ -1030,10 +1040,10 @@ export const RunDetail: Component = () => {
                           {/* Status hero */}
                           <div class={`work-eval-hero ${heroClass()}`}>
                             <Show when={evalItem()!.status === 'passed'}>
-                              <i data-lucide="check" class="w-10 h-10 text-sage" />
+                              <Icon name="check" class="w-10 h-10 text-sage" />
                             </Show>
                             <Show when={evalItem()!.status === 'failed'}>
-                              <i data-lucide="x" class="w-10 h-10 text-terra" />
+                              <Icon name="x" class="w-10 h-10 text-terra" />
                             </Show>
                             <Show when={evalItem()!.status === 'running'}>
                               <div class="spinner w-8 h-8" />
@@ -1045,7 +1055,7 @@ export const RunDetail: Component = () => {
                                 evalItem()!.status !== 'running'
                               }
                             >
-                              <i data-lucide="clock" class="w-10 h-10 text-wool-500" />
+                              <Icon name="clock" class="w-10 h-10 text-wool-500" />
                             </Show>
                           </div>
 
@@ -1078,7 +1088,7 @@ export const RunDetail: Component = () => {
                                 );
                               }}
                             >
-                              <i data-lucide="terminal" class="w-4 h-4" />
+                              <Icon name="terminal" class="w-4 h-4" />
                               View Full Output
                             </button>
                           </div>
@@ -1416,7 +1426,7 @@ export const RunDetail: Component = () => {
             {/* Execution Card */}
             <div class="bg-pasture-800 border border-pasture-600 rounded-lg p-4">
               <h3 class="text-sm font-semibold text-wool-200 mb-4 flex items-center gap-2">
-                <i data-lucide="cpu" class="w-4 h-4 text-amber-500/70" />
+                <Icon name="cpu" class="w-4 h-4 text-amber-500/70" />
                 Execution
               </h3>
 
@@ -1431,7 +1441,7 @@ export const RunDetail: Component = () => {
                 <ConfigRow label="Time Limit">
                   <Show when={detail()?.timeLimitMinutes} fallback={
                     <span class="text-xs text-wool-500 flex items-center gap-1">
-                      <i data-lucide="infinity" class="w-3 h-3" /> Unlimited
+                      <Icon name="infinity" class="w-3 h-3" /> Unlimited
                     </span>
                   }>
                     <span class="text-wool-100 font-medium tabular-nums">
@@ -1454,7 +1464,7 @@ export const RunDetail: Component = () => {
             {/* Repository Card */}
             <div class="bg-pasture-800 border border-pasture-600 rounded-lg p-4">
               <h3 class="text-sm font-semibold text-wool-200 mb-4 flex items-center gap-2">
-                <i data-lucide="git-branch" class="w-4 h-4 text-amber-500/70" />
+                <Icon name="git-branch" class="w-4 h-4 text-amber-500/70" />
                 Repository
               </h3>
 
@@ -1466,7 +1476,7 @@ export const RunDetail: Component = () => {
                 </ConfigRow>
                 <ConfigRow label="Branch">
                   <span class="flex items-center gap-1.5">
-                    <i data-lucide="git-branch" class="w-3 h-3 text-wool-500" />
+                    <Icon name="git-branch" class="w-3 h-3 text-wool-500" />
                     <span class="text-wool-100 font-medium">{detail()?.branch || 'main'}</span>
                   </span>
                 </ConfigRow>
@@ -1568,7 +1578,7 @@ export const RunDetail: Component = () => {
                   <span class="spinner w-4 h-4" />
                 </Show>
                 <Show when={!delivering()}>
-                  <i data-lucide="git-pull-request" class="w-4 h-4" />
+                  <Icon name="git-pull-request" class="w-4 h-4" />
                 </Show>
                 Deliver
               </button>

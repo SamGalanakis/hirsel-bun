@@ -25,7 +25,6 @@ pub struct RemoteWorkerConfig<'a> {
     pub run_name: &'a str,
     pub worker_name: &'a str,
     pub work_dir: &'a str,
-    pub spec_path: &'a str,
     pub agent_command: &'a [String],
     pub is_leader: bool,
     pub leader_name: Option<&'a str>,
@@ -49,7 +48,6 @@ pub async fn run_remote_worker(
     run_name: &str,
     worker_name: &str,
     work_dir: &str,
-    spec_path: &str,
     agent_command: &[String],
     is_leader: bool,
     leader_name: Option<&str>,
@@ -60,7 +58,6 @@ pub async fn run_remote_worker(
         run_name,
         worker_name,
         work_dir,
-        spec_path,
         agent_command,
         is_leader,
         leader_name,
@@ -142,7 +139,6 @@ pub async fn run_remote_worker_with_config(
 
     // Create paths for the worker
     let work_path = PathBuf::from(config.work_dir);
-    let spec_file = PathBuf::from(config.spec_path);
 
     // For remote workers, we use work_dir as both work_dir and run_dir
     // The actual run state is managed by the coordinator via HTTP
@@ -154,7 +150,6 @@ pub async fn run_remote_worker_with_config(
         worker_name: config.worker_name.to_string(),
         work_dir: work_path,
         run_dir,
-        spec_path: spec_file,
         agent_command: config.agent_command.to_vec(),
         is_leader: config.is_leader,
         leader_name: config.leader_name.map(String::from),

@@ -2,19 +2,12 @@
  * Notifications dropdown component
  */
 import { invoke } from '@tauri-apps/api/core';
-import {
-  type Component,
-  For,
-  Show,
-  createEffect,
-  createSignal,
-  onCleanup,
-  onMount,
-} from 'solid-js';
+import { type Component, For, Show, createEffect, createSignal, onCleanup } from 'solid-js';
+import { useClickOutside, useEscapeKey } from '../../hooks';
 import type { UnreadNotification } from '../../lib/types';
-import { initLucideIcons } from '../../lib/icons';
 import { formatTimeShort } from '../../lib/utils/formatters';
 import { useRuns } from '../../stores';
+import { Icon } from '../shared';
 
 export const NotificationsDropdown: Component = () => {
   const runs = useRuns();
@@ -71,27 +64,14 @@ export const NotificationsDropdown: Component = () => {
     setOpen(!open());
   };
 
-  // Initialize icons
-  onMount(() => initLucideIcons());
-
-  createEffect(() => {
-    if (open()) {
-      queueMicrotask(initLucideIcons);
-    }
-  });
-
-  // Close on click outside
+  // Close on click outside or escape
   let containerRef: HTMLDivElement | undefined;
 
-  const handleClickOutside = (e: MouseEvent) => {
-    if (open() && containerRef && !containerRef.contains(e.target as Node)) {
-      setOpen(false);
-    }
-  };
-
-  createEffect(() => {
-    document.addEventListener('mousedown', handleClickOutside);
-    onCleanup(() => document.removeEventListener('mousedown', handleClickOutside));
+  useClickOutside(() => containerRef, () => {
+    if (open()) setOpen(false);
+  });
+  useEscapeKey(() => {
+    if (open()) setOpen(false);
   });
 
   return (
@@ -102,7 +82,7 @@ export const NotificationsDropdown: Component = () => {
         class="p-2 rounded-md text-wool-500 hover:text-wool-300 hover:bg-pasture-800 transition-colors relative"
         title="Notifications"
       >
-        <i data-lucide="bell" class="w-4 h-4" />
+        <Icon name="bell" class="w-4 h-4" />
         <Show when={totalUnread() > 0}>
           <span class="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-terra rounded-full text-[10px] text-white font-bold flex items-center justify-center px-1">
             {totalUnread() > 99 ? '99+' : totalUnread()}
@@ -165,7 +145,7 @@ export const NotificationsDropdown: Component = () => {
                         class="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-pasture-600 text-wool-500 hover:text-wool-300 transition-opacity"
                         title="Mark as read"
                       >
-                        <i data-lucide="x" class="w-3 h-3" />
+                        <Icon name="x" class="w-3 h-3" />
                       </button>
                     </Show>
                     <Show when={notif.read}>
@@ -190,7 +170,7 @@ export const NotificationsDropdown: Component = () => {
 
             <Show when={notifications().length === 0}>
               <div class="p-6 text-center text-wool-500">
-                <i data-lucide="bell-off" class="w-8 h-8 mx-auto mb-2 text-wool-600" />
+                <Icon name="bell-off" class="w-8 h-8 mx-auto mb-2 text-wool-600" />
                 <p class="text-sm">No notifications</p>
               </div>
             </Show>

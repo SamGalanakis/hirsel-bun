@@ -63,6 +63,14 @@ interface ProjectContextValue {
   activeProjectView: () => 'board' | 'runs';
   setActiveProjectView: (view: 'board' | 'runs') => void;
 
+  // Docs panel state
+  docsOpen: () => boolean;
+  setDocsOpen: (open: boolean) => void;
+  selectedDocFile: () => string | null;
+  setSelectedDocFile: (file: string | null) => void;
+  docsFullScreen: () => boolean;
+  setDocsFullScreen: (fullScreen: boolean) => void;
+
   // Project selector dropdown
   projectSelectorOpen: () => boolean;
   setProjectSelectorOpen: (open: boolean) => void;
@@ -94,6 +102,9 @@ export const ProjectProvider: ParentComponent = (props) => {
   const [activeProjectView, setActiveProjectView] = createSignal<'board' | 'runs'>('board');
   const [projectSelectorOpen, setProjectSelectorOpen] = createSignal(false);
   const [projectSearchQuery, setProjectSearchQuery] = createSignal('');
+  const [docsOpen, setDocsOpen] = createSignal(false);
+  const [selectedDocFile, setSelectedDocFile] = createSignal<string | null>(null);
+  const [docsFullScreen, setDocsFullScreen] = createSignal(false);
 
   const selectedProjectId = () => selectedProject()?.id ?? null;
 
@@ -175,15 +186,18 @@ export const ProjectProvider: ParentComponent = (props) => {
   };
 
   const removeProject = async (projectId: number) => {
+    // Delete the project - this is the critical operation
+    await invoke('delete_project', { projectId });
+
+    // Cleanup: reload projects and deselect if needed
+    // These shouldn't fail, but don't let cleanup errors mask successful delete
     try {
-      await invoke('delete_project', { projectId });
       await loadProjects();
       if (selectedProjectId() === projectId) {
         deselectProject();
       }
     } catch (e) {
-      console.error('Failed to remove project:', e);
-      window.toast?.error('Failed to remove project');
+      console.error('Project deleted but cleanup failed:', e);
     }
   };
 
@@ -268,18 +282,6 @@ export const ProjectProvider: ParentComponent = (props) => {
     onCleanup(() => window.removeEventListener('cancel-project-setup', handler));
   });
 
-  // Listen for project deleted
-  createEffect(() => {
-    const handler = async () => {
-      await loadProjects();
-      // deselectProject() handles setShowProjectSettings(false) internally
-      deselectProject();
-    };
-
-    window.addEventListener('project-deleted', handler);
-    onCleanup(() => window.removeEventListener('project-deleted', handler));
-  });
-
   const value: ProjectContextValue = {
     projects,
     loading,
@@ -309,6 +311,12 @@ export const ProjectProvider: ParentComponent = (props) => {
     removeProject,
     updateProjectPosition,
     updateProjectSettings,
+    docsOpen,
+    setDocsOpen,
+    selectedDocFile,
+    setSelectedDocFile,
+    docsFullScreen,
+    setDocsFullScreen,
   };
 
   return <ProjectContext.Provider value={value}>{props.children}</ProjectContext.Provider>;

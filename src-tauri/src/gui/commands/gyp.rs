@@ -15,6 +15,8 @@ use crate::core::gyp::{GypContextBuilder, GypScope, TaskFocus};
 use crate::core::{ChatContext, GypChatStore, ProjectStore};
 use crate::gui::commands::chat::ChatOrchestratorManager;
 
+use super::err_string;
+
 /// Request to start a Gyp session
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -79,8 +81,8 @@ pub async fn start_gyp_session(
         }
 
         StartGypSessionRequest::Board { project_id } => {
-            let store = ProjectStore::open().map_err(|e| e.to_string())?;
-            let project = store.get_project(*project_id).map_err(|e| e.to_string())?;
+            let store = ProjectStore::open().map_err(err_string)?;
+            let project = store.get_project(*project_id).map_err(err_string)?;
 
             // Export draft tree to board.json for agent access
             let mut exporter = DeltaExporter::new(*project_id);
@@ -99,8 +101,8 @@ pub async fn start_gyp_session(
             task_id,
             task_name,
         } => {
-            let store = ProjectStore::open().map_err(|e| e.to_string())?;
-            let project = store.get_project(*project_id).map_err(|e| e.to_string())?;
+            let store = ProjectStore::open().map_err(err_string)?;
+            let project = store.get_project(*project_id).map_err(err_string)?;
 
             // Export draft tree to board.json for agent access
             let mut exporter = DeltaExporter::new(*project_id);
@@ -128,6 +130,17 @@ pub async fn start_gyp_session(
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| "hirsel".to_string());
 
+    // Convert MCP server configs to chat format
+    let mcp_servers: Vec<crate::core::ChatMcpServer> = config
+        .mcp_servers
+        .iter()
+        .map(|mcp| crate::core::ChatMcpServer {
+            name: mcp.name.clone(),
+            command: mcp.command.clone(),
+            env: mcp.env.clone(),
+        })
+        .collect();
+
     let chat_context = ChatContext {
         agent_command: vec![exe_path, "__acp-bridge".to_string()],
         working_dir: Some(config.working_dir.to_string_lossy().to_string()),
@@ -138,6 +151,7 @@ pub async fn start_gyp_session(
         },
         system_prompt: Some(config.system_prompt),
         credentials: None,
+        mcp_servers,
     };
 
     // Get orchestrator (always local for Gyp)
@@ -223,8 +237,8 @@ pub async fn send_gyp_message(
             focus: None,
             ..
         } => {
-            let store = ProjectStore::open().map_err(|e| e.to_string())?;
-            let project = store.get_project(*project_id).map_err(|e| e.to_string())?;
+            let store = ProjectStore::open().map_err(err_string)?;
+            let project = store.get_project(*project_id).map_err(err_string)?;
             GypContextBuilder::for_board(*project_id, &project.starting_point)
         }
         GypScope::Board {
@@ -232,8 +246,8 @@ pub async fn send_gyp_message(
             focus: Some(f),
             ..
         } => {
-            let store = ProjectStore::open().map_err(|e| e.to_string())?;
-            let project = store.get_project(*project_id).map_err(|e| e.to_string())?;
+            let store = ProjectStore::open().map_err(err_string)?;
+            let project = store.get_project(*project_id).map_err(err_string)?;
             GypContextBuilder::for_board_focused(
                 *project_id,
                 &project.starting_point,
@@ -272,7 +286,7 @@ pub async fn get_gyp_history(
     scope: GypScope,
     limit: usize,
 ) -> Result<Vec<crate::core::GypChatMessage>, String> {
-    let store = GypChatStore::open().map_err(|e| e.to_string())?;
+    let store = GypChatStore::open().map_err(err_string)?;
 
     let messages = match &scope {
         // Note: get_messages doesn't support limit, returns all messages
@@ -280,7 +294,7 @@ pub async fn get_gyp_history(
         GypScope::Run { run_name, .. } => store.get_messages(Some(run_name)),
         GypScope::Board { project_id, .. } => store.get_board_messages(*project_id, limit),
     }
-    .map_err(|e| e.to_string())?;
+    .map_err(err_string)?;
 
     // Apply limit for non-board scopes (board already has limit in query)
     let messages = match &scope {
@@ -294,14 +308,14 @@ pub async fn get_gyp_history(
 /// Clear Gyp chat history for a scope
 #[tauri::command]
 pub async fn clear_gyp_history(scope: GypScope) -> Result<(), String> {
-    let store = GypChatStore::open().map_err(|e| e.to_string())?;
+    let store = GypChatStore::open().map_err(err_string)?;
 
     match scope {
         GypScope::General => store.clear_messages(None),
         GypScope::Run { run_name, .. } => store.clear_messages(Some(&run_name)),
         GypScope::Board { project_id, .. } => store.clear_board_messages(project_id),
     }
-    .map_err(|e| e.to_string())?;
+    .map_err(err_string)?;
 
     Ok(())
 }
@@ -315,7 +329,7 @@ pub async fn save_gyp_message(
     role: String,
     chunks_json: String,
 ) -> Result<i64, String> {
-    let store = GypChatStore::open().map_err(|e| e.to_string())?;
+    let store = GypChatStore::open().map_err(err_string)?;
 
     match &scope {
         GypScope::Board { project_id, .. } => {
@@ -324,7 +338,7 @@ pub async fn save_gyp_message(
         GypScope::Run { run_name, .. } => store.save_message(Some(run_name), &role, &chunks_json),
         GypScope::General => store.save_message(None, &role, &chunks_json),
     }
-    .map_err(|e| e.to_string())
+    .map_err(err_string)
 }
 
 /// Stop a Gyp session

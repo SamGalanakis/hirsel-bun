@@ -3,6 +3,7 @@
  */
 import { type Component, Show } from 'solid-js';
 import { useApp, useRuns } from '../../stores';
+import { Icon } from '../shared';
 import { GypMessengerBar } from '../chat/GypMessenger';
 
 export const StatusBar: Component = () => {
@@ -48,7 +49,7 @@ export const StatusBar: Component = () => {
             data-tooltip={detail()?.remoteUrl}
             data-side="top"
           >
-            <i data-lucide="cloud" class="w-3 h-3 flex-shrink-0" />
+            <Icon name="cloud" class="w-3 h-3 flex-shrink-0" />
             <span class="truncate max-w-[200px]">{remoteDisplay()}</span>
           </span>
         </Show>
@@ -60,7 +61,7 @@ export const StatusBar: Component = () => {
             data-tooltip={detail()?.projectPath}
             data-side="top"
           >
-            <i data-lucide="folder" class="w-3 h-3 flex-shrink-0" />
+            <Icon name="folder" class="w-3 h-3 flex-shrink-0" />
             <span class="truncate">{pathDisplay()}</span>
           </span>
         </Show>
@@ -68,7 +69,7 @@ export const StatusBar: Component = () => {
         {/* Git branch hint */}
         <Show when={detail()?.name}>
           <span class="flex items-center gap-1.5">
-            <i data-lucide="git-branch" class="w-3 h-3 flex-shrink-0" />
+            <Icon name="git-branch" class="w-3 h-3 flex-shrink-0" />
             <span>hirsel/{detail()?.name}</span>
           </span>
         </Show>

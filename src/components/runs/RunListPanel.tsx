@@ -23,6 +23,7 @@ import {
   getStatusLabel,
 } from '../../lib/utils/status';
 import { useApp, useRuns } from '../../stores';
+import { Icon } from '../shared';
 import { RunListItem } from './RunListItem';
 
 export const RunListPanel: Component = () => {
@@ -244,7 +245,7 @@ export const RunListPanel: Component = () => {
             data-tooltip="Expand runs panel"
             data-side="right"
           >
-            <i data-lucide="chevrons-right" class="w-4 h-4" />
+            <Icon name="chevrons-right" class="w-4 h-4" />
           </button>
           <div class="w-6 border-t border-pasture-600 my-2" />
           <div class="flex-1 flex flex-col gap-2 overflow-y-auto px-2">
@@ -306,7 +307,7 @@ export const RunListPanel: Component = () => {
                 data-side="bottom"
                 data-test="new-run-btn"
               >
-                <i data-lucide="plus" class="w-3.5 h-3.5" />
+                <Icon name="plus" class="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={() => app.toggleSidebar()}
@@ -314,7 +315,7 @@ export const RunListPanel: Component = () => {
                 data-tooltip="Collapse runs panel"
                 data-side="bottom"
               >
-                <i data-lucide="chevrons-left" class="w-3.5 h-3.5" />
+                <Icon name="chevrons-left" class="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
@@ -390,7 +391,7 @@ export const RunListPanel: Component = () => {
               onClick={contextPause}
               class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600 flex items-center gap-2"
             >
-              <i data-lucide="pause" class="w-3.5 h-3.5" /> Pause
+              <Icon name="pause" class="w-3.5 h-3.5" /> Pause
             </button>
           </Show>
           <Show when={canResume()}>
@@ -398,7 +399,7 @@ export const RunListPanel: Component = () => {
               onClick={contextResume}
               class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600 flex items-center gap-2"
             >
-              <i data-lucide="play" class="w-3.5 h-3.5" /> Resume
+              <Icon name="play" class="w-3.5 h-3.5" /> Resume
             </button>
           </Show>
           <Show when={canPause() || canResume()}>
@@ -408,14 +409,14 @@ export const RunListPanel: Component = () => {
             onClick={showCloneDialog}
             class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600 flex items-center gap-2"
           >
-            <i data-lucide="copy" class="w-3.5 h-3.5" /> Clone
+            <Icon name="copy" class="w-3.5 h-3.5" /> Clone
           </button>
           <Show when={canDeliver()}>
             <button
               onClick={contextDeliver}
               class="w-full px-3 py-1.5 text-left text-sm text-wool-200 hover:bg-pasture-600 flex items-center gap-2"
             >
-              <i data-lucide="git-branch" class="w-3.5 h-3.5" /> Deliver
+              <Icon name="git-branch" class="w-3.5 h-3.5" /> Deliver
             </button>
           </Show>
           <div class="border-t border-pasture-600 my-1" />
@@ -423,7 +424,7 @@ export const RunListPanel: Component = () => {
             onClick={contextDelete}
             class="w-full px-3 py-1.5 text-left text-sm text-terra hover:bg-pasture-600 flex items-center gap-2"
           >
-            <i data-lucide="trash-2" class="w-3.5 h-3.5" /> Delete
+            <Icon name="trash-2" class="w-3.5 h-3.5" /> Delete
           </button>
         </div>
       </Show>

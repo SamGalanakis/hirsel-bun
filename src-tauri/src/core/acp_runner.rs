@@ -28,6 +28,7 @@ use agent_client_protocol::{
 };
 
 use crate::core::acp::{AcpChild, AcpSpawnConfig};
+use crate::core::constants::DEFAULT_ACP_TIMEOUT_SECS;
 
 /// Error type for ACP agent operations
 #[derive(Error, Debug)]
@@ -41,9 +42,6 @@ pub enum AcpRunnerError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
-
-/// Default timeout for agent operations (5 minutes)
-const DEFAULT_TIMEOUT_SECS: u64 = 300;
 
 /// Unified ACP agent runner
 ///
@@ -71,7 +69,7 @@ impl AcpAgentRunner {
             agent_command,
             work_dir: work_dir.as_ref().to_path_buf(),
             name: name.into(),
-            timeout_secs: DEFAULT_TIMEOUT_SECS,
+            timeout_secs: DEFAULT_ACP_TIMEOUT_SECS,
         }
     }
 

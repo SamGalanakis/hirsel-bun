@@ -87,8 +87,6 @@ impl LocalRunner {
             config.work_dir.to_string_lossy().to_string(),
             "--run-dir".to_string(),
             config.run_dir.to_string_lossy().to_string(),
-            "--spec".to_string(),
-            config.spec_path.to_string_lossy().to_string(),
             "--agent-command".to_string(),
             agent_command_json,
         ];
@@ -225,7 +223,6 @@ impl LocalRunner {
             format!("--worker '{}'", config.worker_name),
             "--work-dir '/work'".to_string(),
             "--run-dir '/hirsel'".to_string(),
-            "--spec '/hirsel/spec.md'".to_string(),
             format!(
                 "--agent-command '{}'",
                 agent_command_json.replace('\'', "'\\''")

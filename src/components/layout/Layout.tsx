@@ -5,15 +5,13 @@
  * - Draft tree (editable) with visual diff indicators
  * - Live tree (read-only) after first dispatch
  */
-import { type Component, Show, createEffect, onCleanup, onMount } from 'solid-js';
+import { type Component, Show, createEffect, onCleanup } from 'solid-js';
 import { useApp, useProject, useRuns, useSelection } from '../../stores';
-import { initLucideIcons } from '../../lib/icons';
 import { TitleBar } from './TitleBar';
 import { StatusBar } from './StatusBar';
 import { SvgDefinitions } from './SvgDefinitions';
 import { RunListPanel } from '../runs/RunListPanel';
 import { RunDetail } from '../runs/RunDetail';
-import { DraftEditor } from '../runs/DraftEditor';
 import { ProjectSetup } from '../projects/ProjectSetup';
 import { ProjectSettings } from '../projects/ProjectSettings';
 import { SpecBoard } from '../specflow/SpecBoard';
@@ -26,6 +24,7 @@ import { SheepClicker } from '../fun/SheepClicker';
 import { ConfirmDialog } from '../modals/ConfirmDialog';
 import { Toaster } from '../shared/Toaster';
 import { DebugPanel } from '../shared/DebugPanel';
+import { DocsPanel, DocsFullView } from '../docs';
 
 export const Layout: Component = () => {
   const app = useApp();
@@ -39,31 +38,7 @@ export const Layout: Component = () => {
     onCleanup(unsubscribe);
   });
 
-  // Reinitialize Lucide icons after renders
-  onMount(() => {
-    initLucideIcons();
-  });
-
-  createEffect(() => {
-    // Re-run icons when key state changes
-    void runs.selectedRun();
-    void project.selectedProjectId();
-    void app.showHelp();
-    void app.showSettings();
-    void app.aiChatOpen();
-
-    // Delay to ensure DOM is updated
-    queueMicrotask(() => {
-      initLucideIcons();
-    });
-  });
-
   // Determine what content to show
-  const showDraftEditor = () => {
-    const detail = runs.runDetail();
-    return runs.selectedRun() && detail?.status === 'draft';
-  };
-
   const showRunDetail = () => {
     const detail = runs.runDetail();
     return runs.selectedRun() && detail?.status !== 'draft';
@@ -72,7 +47,6 @@ export const Layout: Component = () => {
   // Show SpecBoard as base when not viewing run details
   const showSpecBoard = () =>
     !project.showProjectSettings() &&
-    !showDraftEditor() &&
     !showRunDetail();
 
   return (
@@ -85,16 +59,20 @@ export const Layout: Component = () => {
       <main class="flex-1 flex overflow-hidden bg-pasture-900 relative">
         {/* SpecBoard - Primary canvas view (always rendered as base layer) */}
         <Show when={showSpecBoard()}>
-          <SpecBoard />
+          <div class="flex-1 flex overflow-hidden">
+            <div class="flex-1 flex flex-col overflow-hidden">
+              <SpecBoard />
+            </div>
+            {/* Docs Panel - side panel overlay */}
+            <Show when={project.docsOpen() && !project.docsFullScreen()}>
+              <DocsPanel />
+            </Show>
+          </div>
         </Show>
 
         {/* Full-screen overlays (replace OneBoard) */}
         <Show when={project.showProjectSettings()}>
           <ProjectSettings />
-        </Show>
-
-        <Show when={showDraftEditor()}>
-          <DraftEditor />
         </Show>
 
         <Show when={showRunDetail()}>
@@ -104,6 +82,11 @@ export const Layout: Component = () => {
         {/* Modal overlays (float above SpecBoard) */}
         <Show when={project.showProjectSetup()}>
           <ProjectSetup />
+        </Show>
+
+        {/* Docs Full Screen View */}
+        <Show when={project.docsFullScreen()}>
+          <DocsFullView />
         </Show>
       </main>
 

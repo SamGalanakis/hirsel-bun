@@ -134,6 +134,8 @@ pub struct Task {
     pub created_at: String,
     /// Link to the board task ID (for delta dispatch system)
     pub board_task_id: Option<String>,
+    /// Source of the task (spec, worker, system)
+    pub source: String,
 }
 
 /// Sheep avatar configuration

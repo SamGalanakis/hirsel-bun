@@ -1154,8 +1154,20 @@ async fn send_notification(
 ///
 /// 3. **Complete event coverage**: All BridgeEvent variants are handled, matching
 ///    the zed-industries message processing.
+///
+/// ## Worker Termination
+///
+/// When the worker calls `work_done()` via MCP, it sets its status to Awaiting.
+/// A background status monitor detects this and kills the Claude process, allowing
+/// the worker to exit cleanly. This is necessary because:
+/// - The MCP server exits after work_done (should_exit=true)
+/// - But Claude/conn.prompt() keeps blocking waiting for the next turn
+/// - So we need to forcefully terminate when entering awaiting mode
 pub async fn run_claude_worker(config: ClaudeWorkerConfig) -> Result<WorkerResult> {
+    use crate::core::state::WorkerStatus;
     use crate::worker::acp_client::HirselClient;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
     use tracing::error;
 
     info!(
@@ -1207,203 +1219,289 @@ pub async fn run_claude_worker(config: ClaudeWorkerConfig) -> Result<WorkerResul
     let mut active_tools: HashMap<String, ToolInfo> = HashMap::new();
     let mut result = WorkerResult::default();
 
-    // Main event loop (like zed-industries prompt() method)
-    while let Some(event) = events.recv().await {
-        match &event {
-            // Permission handling (like canUseTool callback)
-            // Always approve with "allowAlways" - this tells Claude CLI to remember
-            // the approval for the rest of the session, reducing repeated prompts
-            BridgeEvent::PermissionRequest {
-                request_id,
-                tool_name,
-                server_name,
-                ..
-            } => {
+    // Flag to signal when we should exit (shared between event loop and status monitor)
+    let should_exit = Arc::new(AtomicBool::new(false));
+
+    // Spawn a background status monitor that watches for Awaiting status
+    // This runs in a separate thread to avoid blocking the async event loop
+    let monitor_db_path = db_path.clone();
+    let monitor_worker_name = config.worker_name.clone();
+    let monitor_should_exit = should_exit.clone();
+    let monitor_handle = std::thread::spawn(move || {
+        loop {
+            // Check every second
+            std::thread::sleep(Duration::from_secs(1));
+
+            // Check if we've been signaled to exit
+            if monitor_should_exit.load(Ordering::Relaxed) {
                 debug!(
-                    "[{}] Auto-approving (allowAlways): {}:{}",
-                    config.worker_name,
-                    server_name.as_deref().unwrap_or("builtin"),
-                    tool_name
+                    "[{}] Status monitor: exit flag set, stopping",
+                    monitor_worker_name
                 );
-                if let Err(e) = bridge.respond_permission_always(request_id).await {
-                    error!(
-                        "[{}] Failed to respond to permission request: {}",
-                        config.worker_name, e
-                    );
-                }
+                return false;
             }
 
-            // Text streaming
-            BridgeEvent::TextDelta { text } => {
-                let update = SessionUpdate::AgentMessageChunk(ContentChunk::new(
-                    AcpContentBlock::Text(TextContent::new(text.clone())),
-                ));
-                send_notification(&client, &session_id, update).await;
-            }
-
-            // Thinking/reasoning streaming
-            BridgeEvent::ThinkingDelta { thinking } => {
-                let update = SessionUpdate::AgentThoughtChunk(ContentChunk::new(
-                    AcpContentBlock::Text(TextContent::new(thinking.clone())),
-                ));
-                send_notification(&client, &session_id, update).await;
-            }
-
-            // Tool call started (like content_block_start with tool_use)
-            BridgeEvent::ToolCallStart {
-                tool_call_id,
-                tool_name,
-                input,
-            } => {
-                let kind = tool_name_to_acp_kind(tool_name);
-                active_tools.insert(
-                    tool_call_id.clone(),
-                    ToolInfo {
-                        id: tool_call_id.clone(),
-                        name: tool_name.clone(),
-                        kind,
-                        input: if input.is_null() {
-                            None
-                        } else {
-                            Some(input.clone())
-                        },
-                    },
-                );
-
-                let raw_input = if input.is_null() {
-                    None
-                } else {
-                    Some(input.clone())
-                };
-
-                let update = SessionUpdate::ToolCall(
-                    AcpToolCall::new(ToolCallId::new(tool_call_id.clone()), tool_name.clone())
-                        .kind(kind)
-                        .status(AcpToolCallStatus::InProgress)
-                        .raw_input(raw_input),
-                );
-                send_notification(&client, &session_id, update).await;
-            }
-
-            // Tool call completed (like tool_result in message)
-            BridgeEvent::ToolCallComplete {
-                tool_call_id,
-                output,
-            } => {
-                active_tools.remove(tool_call_id);
-
-                let mut fields = ToolCallUpdateFields::new().status(AcpToolCallStatus::Completed);
-                if let Some(out) = output {
-                    fields = fields.raw_output(serde_json::Value::String(out.clone()));
-                }
-
-                let update = SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
-                    ToolCallId::new(tool_call_id.clone()),
-                    fields,
-                ));
-                send_notification(&client, &session_id, update).await;
-            }
-
-            // Hook callbacks (for pre/post tool hooks if needed)
-            BridgeEvent::HookCallback {
-                request_id,
-                hook_type,
-                ..
-            } => {
-                debug!("[{}] Hook callback: {}", config.worker_name, hook_type);
-                if let Err(e) = bridge.respond_hook(request_id, serde_json::json!({})).await {
-                    error!(
-                        "[{}] Failed to respond to hook callback: {}",
-                        config.worker_name, e
-                    );
-                }
-            }
-
-            // Session complete with metrics
-            BridgeEvent::MessageComplete {
-                stop_reason,
-                input_tokens,
-                output_tokens,
-                cost_usd,
-                duration_ms,
-                ..
-            } => {
-                info!(
-                    "[{}] Complete: reason={:?}, cost=${:?}",
-                    config.worker_name, stop_reason, cost_usd
-                );
-                result = WorkerResult {
-                    stop_reason: stop_reason.clone(),
-                    input_tokens: *input_tokens,
-                    output_tokens: *output_tokens,
-                    cost_usd: *cost_usd,
-                    duration_ms: *duration_ms,
-                };
-            }
-
-            // Process exited
-            BridgeEvent::ProcessExited { code } => {
-                info!("[{}] Process exited: {:?}", config.worker_name, code);
-                break;
-            }
-
-            // Error from CLI
-            BridgeEvent::Error { message } => {
-                error!("[{}] CLI error: {}", config.worker_name, message);
-            }
-
-            // Session init - save the session ID for pause/resume support
-            BridgeEvent::SessionInit { session_id: sid } => {
-                debug!("[{}] Session initialized: {}", config.worker_name, sid);
-                // Save session_id to database so it can be used for resume
-                match crate::core::state::SQLiteState::new(db_path.clone()) {
-                    Ok(state) => {
-                        use crate::core::state::WorkerUpdate;
-                        let update = WorkerUpdate {
-                            session_id: Some(sid.clone()),
-                            ..Default::default()
-                        };
-                        if let Err(e) = state.update_worker(&config.worker_name, update) {
-                            warn!(
-                                "[{}] Failed to save session_id to database: {}",
-                                config.worker_name, e
-                            );
-                        } else {
+            // Check worker status in database
+            match crate::core::state::SQLiteState::new(monitor_db_path.clone()) {
+                Ok(state) => {
+                    if let Ok(Some(worker)) = state.get_worker(&monitor_worker_name) {
+                        if worker.status == WorkerStatus::Awaiting {
                             info!(
-                                "[{}] Saved session_id '{}' to database for pause/resume",
-                                config.worker_name, sid
+                                "[{}] Status monitor: worker entered Awaiting status, signaling termination",
+                                monitor_worker_name
                             );
+                            return true; // Signal to kill the process
                         }
                     }
-                    Err(e) => {
-                        warn!(
-                            "[{}] Failed to open database at {:?}: {}",
-                            config.worker_name, db_path, e
-                        );
+                }
+                Err(e) => {
+                    warn!(
+                        "[{}] Status monitor: failed to open database: {}",
+                        monitor_worker_name, e
+                    );
+                }
+            }
+        }
+    });
+
+    // Main event loop (like zed-industries prompt() method)
+    // We poll both the event receiver and periodically check if the monitor signaled exit
+    loop {
+        // Use tokio::select! to race between event processing and a timeout
+        // The timeout lets us check if the status monitor has signaled termination
+        tokio::select! {
+            event = events.recv() => {
+                match event {
+                    Some(event) => {
+                        match &event {
+                            // Permission handling (like canUseTool callback)
+                            // Always approve with "allowAlways" - this tells Claude CLI to remember
+                            // the approval for the rest of the session, reducing repeated prompts
+                            BridgeEvent::PermissionRequest {
+                                request_id,
+                                tool_name,
+                                server_name,
+                                ..
+                            } => {
+                                debug!(
+                                    "[{}] Auto-approving (allowAlways): {}:{}",
+                                    config.worker_name,
+                                    server_name.as_deref().unwrap_or("builtin"),
+                                    tool_name
+                                );
+                                if let Err(e) = bridge.respond_permission_always(request_id).await {
+                                    error!(
+                                        "[{}] Failed to respond to permission request: {}",
+                                        config.worker_name, e
+                                    );
+                                }
+                            }
+
+                            // Text streaming
+                            BridgeEvent::TextDelta { text } => {
+                                let update = SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                                    AcpContentBlock::Text(TextContent::new(text.clone())),
+                                ));
+                                send_notification(&client, &session_id, update).await;
+                            }
+
+                            // Thinking/reasoning streaming
+                            BridgeEvent::ThinkingDelta { thinking } => {
+                                let update = SessionUpdate::AgentThoughtChunk(ContentChunk::new(
+                                    AcpContentBlock::Text(TextContent::new(thinking.clone())),
+                                ));
+                                send_notification(&client, &session_id, update).await;
+                            }
+
+                            // Tool call started (like content_block_start with tool_use)
+                            BridgeEvent::ToolCallStart {
+                                tool_call_id,
+                                tool_name,
+                                input,
+                            } => {
+                                let kind = tool_name_to_acp_kind(tool_name);
+                                active_tools.insert(
+                                    tool_call_id.clone(),
+                                    ToolInfo {
+                                        id: tool_call_id.clone(),
+                                        name: tool_name.clone(),
+                                        kind,
+                                        input: if input.is_null() {
+                                            None
+                                        } else {
+                                            Some(input.clone())
+                                        },
+                                    },
+                                );
+
+                                let raw_input = if input.is_null() {
+                                    None
+                                } else {
+                                    Some(input.clone())
+                                };
+
+                                let update = SessionUpdate::ToolCall(
+                                    AcpToolCall::new(ToolCallId::new(tool_call_id.clone()), tool_name.clone())
+                                        .kind(kind)
+                                        .status(AcpToolCallStatus::InProgress)
+                                        .raw_input(raw_input),
+                                );
+                                send_notification(&client, &session_id, update).await;
+                            }
+
+                            // Tool call completed (like tool_result in message)
+                            BridgeEvent::ToolCallComplete {
+                                tool_call_id,
+                                output,
+                            } => {
+                                active_tools.remove(tool_call_id);
+
+                                let mut fields = ToolCallUpdateFields::new().status(AcpToolCallStatus::Completed);
+                                if let Some(out) = output {
+                                    fields = fields.raw_output(serde_json::Value::String(out.clone()));
+                                }
+
+                                let update = SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                                    ToolCallId::new(tool_call_id.clone()),
+                                    fields,
+                                ));
+                                send_notification(&client, &session_id, update).await;
+                            }
+
+                            // Hook callbacks (for pre/post tool hooks if needed)
+                            BridgeEvent::HookCallback {
+                                request_id,
+                                hook_type,
+                                ..
+                            } => {
+                                debug!("[{}] Hook callback: {}", config.worker_name, hook_type);
+                                if let Err(e) = bridge.respond_hook(request_id, serde_json::json!({})).await {
+                                    error!(
+                                        "[{}] Failed to respond to hook callback: {}",
+                                        config.worker_name, e
+                                    );
+                                }
+                            }
+
+                            // Session complete with metrics
+                            BridgeEvent::MessageComplete {
+                                stop_reason,
+                                input_tokens,
+                                output_tokens,
+                                cost_usd,
+                                duration_ms,
+                                ..
+                            } => {
+                                info!(
+                                    "[{}] Complete: reason={:?}, cost=${:?}",
+                                    config.worker_name, stop_reason, cost_usd
+                                );
+                                result = WorkerResult {
+                                    stop_reason: stop_reason.clone(),
+                                    input_tokens: *input_tokens,
+                                    output_tokens: *output_tokens,
+                                    cost_usd: *cost_usd,
+                                    duration_ms: *duration_ms,
+                                };
+                            }
+
+                            // Process exited
+                            BridgeEvent::ProcessExited { code } => {
+                                info!("[{}] Process exited: {:?}", config.worker_name, code);
+                                break;
+                            }
+
+                            // Error from CLI
+                            BridgeEvent::Error { message } => {
+                                error!("[{}] CLI error: {}", config.worker_name, message);
+                            }
+
+                            // Session init - save the session ID for pause/resume support
+                            BridgeEvent::SessionInit { session_id: sid } => {
+                                debug!("[{}] Session initialized: {}", config.worker_name, sid);
+                                // Save session_id to database so it can be used for resume
+                                match crate::core::state::SQLiteState::new(db_path.clone()) {
+                                    Ok(state) => {
+                                        use crate::core::state::WorkerUpdate;
+                                        let update = WorkerUpdate {
+                                            session_id: Some(sid.clone()),
+                                            ..Default::default()
+                                        };
+                                        if let Err(e) = state.update_worker(&config.worker_name, update) {
+                                            warn!(
+                                                "[{}] Failed to save session_id to database: {}",
+                                                config.worker_name, e
+                                            );
+                                        } else {
+                                            info!(
+                                                "[{}] Saved session_id '{}' to database for pause/resume",
+                                                config.worker_name, sid
+                                            );
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "[{}] Failed to open database at {:?}: {}",
+                                            config.worker_name, db_path, e
+                                        );
+                                    }
+                                }
+                            }
+
+                            // Input streaming (partial JSON)
+                            BridgeEvent::ToolCallInputDelta { tool_call_id, .. } => {
+                                // Update tool status to show input is being streamed
+                                if let Some(tool_info) = active_tools.get(tool_call_id) {
+                                    let title = format!("{} (streaming input...)", tool_info.name);
+                                    let fields = ToolCallUpdateFields::new().title(title);
+                                    let update = SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                                        ToolCallId::new(tool_call_id.clone()),
+                                        fields,
+                                    ));
+                                    send_notification(&client, &session_id, update).await;
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        // Event channel closed
+                        info!("[{}] Event channel closed", config.worker_name);
+                        break;
                     }
                 }
             }
-
-            // Input streaming (partial JSON)
-            BridgeEvent::ToolCallInputDelta { tool_call_id, .. } => {
-                // Update tool status to show input is being streamed
-                if let Some(tool_info) = active_tools.get(tool_call_id) {
-                    let title = format!("{} (streaming input...)", tool_info.name);
-                    let fields = ToolCallUpdateFields::new().title(title);
-                    let update = SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
-                        ToolCallId::new(tool_call_id.clone()),
-                        fields,
-                    ));
-                    send_notification(&client, &session_id, update).await;
+            // Check periodically if the status monitor has signaled termination
+            _ = tokio::time::sleep(Duration::from_millis(500)) => {
+                // Check if monitor thread has finished (signaling Awaiting status)
+                if monitor_handle.is_finished() {
+                    info!(
+                        "[{}] Status monitor signaled termination, killing Claude process",
+                        config.worker_name
+                    );
+                    bridge.cleanup();
+                    break;
                 }
             }
         }
     }
 
+    // Signal monitor thread to exit if it's still running
+    should_exit.store(true, Ordering::Relaxed);
+
     // Cleanup
     bridge.cleanup();
 
-    info!("[{}] Worker finished", config.worker_name);
+    // Wait for monitor thread to finish
+    if let Ok(triggered_by_awaiting) = monitor_handle.join() {
+        if triggered_by_awaiting {
+            info!(
+                "[{}] Worker finished (terminated due to Awaiting status)",
+                config.worker_name
+            );
+        } else {
+            info!("[{}] Worker finished", config.worker_name);
+        }
+    }
 
     Ok(result)
 }

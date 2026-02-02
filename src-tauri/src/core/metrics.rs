@@ -6,15 +6,13 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use serde::Deserialize;
 use tracing::debug;
 
 use crate::core::config::{get_context_window, AgentType, Config};
-
-/// Cache time-to-live for session metrics (5 seconds)
-const METRICS_CACHE_TTL: Duration = Duration::from_secs(5);
+use crate::core::constants::METRICS_CACHE_TTL;
 
 lazy_static::lazy_static! {
     static ref METRICS_CACHE: Mutex<HashMap<String, (Instant, SessionMetrics)>> = Mutex::new(HashMap::new());

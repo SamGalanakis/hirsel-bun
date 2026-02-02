@@ -9,7 +9,7 @@ use crate::core::config::{self, Config};
 use crate::core::gyp_chat::GypChatStore;
 use crate::core::lifecycle::LocalLifecycleManager;
 use crate::core::snapshot::{create_archive_strategy, ArchiveHandle, WorkerStateHandle};
-use crate::core::state::SQLiteState;
+use crate::core::state::{SQLiteState, TaskSource};
 use crate::core::Files;
 
 use super::types::{CloneRunConfig, CloneRunResult, DeleteRunConfig, DeleteRunResult};
@@ -294,7 +294,7 @@ pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
     // Write initial tasks.md
     fs::write(
         new_dir.join("tasks.md"),
-        "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n| scope | TODO | | Read spec, create exploration tasks |\n",
+        "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n| scope | TODO | | Scope |\n",
     )?;
 
     // Initialize database
@@ -322,7 +322,9 @@ pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
     }
 
     // Add initial scope task
-    if let Err(e) = new_state.add_task("scope", "Read spec, create exploration tasks", None, None) {
+    if let Err(e) =
+        new_state.add_task_with_source_simple("scope", "Scope", None, None, TaskSource::System)
+    {
         tracing::warn!("Failed to create scope task for cloned run: {}", e);
     }
 

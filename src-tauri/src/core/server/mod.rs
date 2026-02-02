@@ -8,6 +8,7 @@
 //! - `message_routes` - Message/thread API endpoints
 //! - `task_routes` - Task API endpoints
 //! - `worker_routes` - Worker API endpoints
+//! - `shared_routes` - Route builders shared with daemon
 
 mod auth;
 pub mod board;
@@ -15,13 +16,10 @@ pub mod eval_routes;
 pub mod gyp;
 pub mod message_routes;
 pub mod routes;
+pub mod shared_routes;
 pub mod task_routes;
 pub mod worker_routes;
 
-use axum::{
-    routing::{delete, get, patch, post},
-    Router,
-};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -63,148 +61,14 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
     });
     let gyp_state = Arc::new(gyp::GypState::new());
 
-    // Build Gyp chat routes with separate state
-    let gyp_routes = Router::new()
-        .route(
-            "/api/gyp/sessions",
-            get(gyp::list_sessions).post(gyp::start_session),
-        )
-        .route("/api/gyp/sessions/{id}", delete(gyp::stop_session))
-        .route("/api/gyp/sessions/{id}/messages", post(gyp::send_message))
-        .route(
-            "/api/gyp/sessions/{id}/permission",
-            post(gyp::respond_permission),
-        )
-        .route("/api/gyp/sessions/{id}/events", get(gyp::session_events))
-        .with_state(gyp_state);
-
-    // Build the main router
-    let app = Router::new()
-        // Health check (no auth required)
-        .route("/health", get(routes::health))
-        // Run management
-        .route("/api/runs", get(routes::list_runs).post(routes::create_run))
-        .route(
-            "/api/runs/{name}",
-            get(routes::get_run).delete(routes::delete_run),
-        )
-        .route(
-            "/api/runs/{name}/files",
-            get(routes::download_files).post(routes::upload_files),
-        )
-        .route("/api/runs/{name}/workspace", post(routes::init_workspace))
-        .route("/api/runs/{name}/spawn", post(routes::spawn_workers))
-        .route("/api/runs/{name}/pause", post(routes::pause_run))
-        .route("/api/runs/{name}/resume", post(routes::resume_run))
-        .route("/api/runs/{name}/deliver", post(routes::deliver_run))
-        // Workers
-        .route("/api/runs/{name}/workers", get(routes::list_workers))
-        .route(
-            "/api/runs/{name}/workers/{worker}/restart",
-            post(routes::restart_worker),
-        )
-        .route(
-            "/api/runs/{name}/workers/{worker}/spawn",
-            post(routes::spawn_single_worker),
-        )
-        .route(
-            "/api/runs/{name}/workers/{worker}/resume",
-            post(routes::resume_worker),
-        )
-        .route(
-            "/api/runs/{name}/workers/{worker}/events",
-            get(routes::get_worker_events),
-        )
-        // Tasks
-        .route(
-            "/api/runs/{name}/tasks",
-            get(routes::list_tasks).post(routes::add_task),
-        )
-        .route("/api/runs/{name}/delta-tasks", post(routes::add_delta_task))
-        .route(
-            "/api/runs/{name}/tasks/{task_id}",
-            delete(routes::delete_task),
-        )
-        .route(
-            "/api/runs/{name}/tasks/{task_id}/complete",
-            post(routes::complete_task),
-        )
-        .route(
-            "/api/runs/{name}/tasks/{task_id}/reopen",
-            post(routes::reopen_task),
-        )
-        // Threads and messages
-        .route("/api/runs/{name}/threads", get(routes::list_threads))
-        .route(
-            "/api/runs/{name}/threads/{thread}/messages",
-            get(routes::get_messages).post(routes::send_message),
-        )
-        // Scribe - documentation
-        .route("/api/runs/{name}/scribe", post(routes::add_scribe))
-        .route("/api/runs/{name}/docs", get(routes::get_docs))
-        .route("/api/runs/{name}/docs/sync", post(routes::sync_docs))
-        // Evals
-        .route("/api/runs/{name}/evals", get(routes::list_evals))
-        // History
-        .route("/api/runs/{name}/history", get(routes::get_history))
-        // Assets
-        .route("/api/runs/{name}/assets", post(gyp::upload_asset))
-        .route("/api/runs/{name}/assets-path", get(gyp::get_assets_path))
-        // Config - read and update
-        .route(
-            "/api/config",
-            get(routes::get_config)
-                .put(routes::put_config)
-                .patch(routes::patch_config),
-        )
-        // Config - granular updates
-        .route("/api/config/general", patch(routes::patch_general_config))
-        .route("/api/config/agent", patch(routes::patch_agent_config))
-        .route("/api/config/auth", get(routes::get_auth_config))
-        .route(
-            "/api/config/auth/{agent}",
-            patch(routes::patch_agent_auth).delete(routes::delete_agent_auth),
-        )
-        .route("/api/config/runners", get(routes::list_runners))
-        .route(
-            "/api/config/runners/{name}",
-            get(routes::get_runner)
-                .put(routes::put_runner)
-                .delete(routes::delete_runner),
-        )
-        .route("/api/config/profiles", get(routes::list_profiles))
-        .route(
-            "/api/config/profiles/{name}",
-            get(routes::get_profile)
-                .put(routes::put_profile)
-                .delete(routes::delete_profile),
-        )
-        .route("/api/config/git", patch(routes::patch_git_config))
-        // Credentials
-        .route(
-            "/api/credentials/{key}",
-            post(routes::store_credential)
-                .get(routes::get_credential)
-                .delete(routes::delete_credential),
-        )
-        // Board sync routes
-        .route("/api/board/{project_id}/export", post(board::export_board))
-        .route("/api/board/{project_id}/import", post(board::import_board))
-        .route(
-            "/api/board/{project_id}/directory",
-            get(board::get_board_directory),
-        )
-        // Per-task file routes
-        .route("/api/board/{project_id}/tasks", get(board::list_task_files))
-        .route(
-            "/api/board/{project_id}/tasks/{slug}",
-            get(board::get_task_file)
-                .post(board::write_task_file)
-                .delete(board::delete_task_file),
-        )
-        // Merge Gyp routes
-        .merge(gyp_routes)
-        // Apply auth middleware and state
+    // Build the router using shared route builders
+    // Remote server gets: shared routes + config routes + board routes + gyp routes
+    let app = shared_routes::build_shared_routes()
+        .merge(shared_routes::build_config_routes())
+        .merge(shared_routes::build_board_routes())
+        .with_state(state)
+        .merge(shared_routes::build_gyp_routes().with_state(gyp_state))
+        // Apply auth middleware
         .layer(axum::middleware::from_fn_with_state(
             api_key.clone(),
             auth::api_key_auth,
@@ -215,8 +79,7 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
                 .allow_origin(Any)
                 .allow_methods(Any)
                 .allow_headers(Any),
-        )
-        .with_state(state);
+        );
 
     // Bind and serve
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;

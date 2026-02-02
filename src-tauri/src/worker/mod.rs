@@ -27,13 +27,12 @@ pub mod remote_runner;
 pub mod runner;
 
 pub use acp_client::{
-    build_worker_prompt, run_acp_worker, run_claude_cli_worker, run_worker, HirselClient,
-    WorkerRunConfig,
+    build_worker_prompt, run_acp_worker, run_worker, HirselClient, WorkerRunConfig,
 };
 pub use eval_mcp::{run_eval_mcp_server, EvalMcpServer};
 #[cfg(any(feature = "server", feature = "worker"))]
 pub use file_server::{start_file_server, FileServerHandle, FILE_RECEIVER_PORT};
-pub use mcp::{run_mcp_server, McpServer};
+pub use mcp::{run_mcp_server_main as run_mcp_server, McpServer};
 pub use msg::{execute_inbox, execute_list, execute_read, execute_send};
 pub use msg::{inbox, list, read, send, MsgError, MsgResult};
 pub use remote_runner::{run_remote_worker, run_remote_worker_with_config, RemoteWorkerConfig};

@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     pending_done_at TEXT,
     tokens_used INTEGER,
     parent_id TEXT,
+    content TEXT,                        -- Task specification/details
     -- Eval system columns
     task_type TEXT DEFAULT 'work',      -- 'work' | 'eval'
     eval_result TEXT,                    -- 'pass' | 'fail' | null
@@ -135,7 +136,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     refs TEXT,                           -- JSON array of references for context
     -- Direct task assignment columns
     assigned_to TEXT,                    -- Worker this task is assigned to
-    completed_by TEXT                    -- Worker who completed this task (for tree distance)
+    completed_by TEXT,                   -- Worker who completed this task (for tree distance)
+    -- Source tracking
+    source TEXT NOT NULL DEFAULT 'spec' -- 'spec' | 'worker' | 'system'
 );
 
 -- Normalized task blocking relationship (which tasks block another task)

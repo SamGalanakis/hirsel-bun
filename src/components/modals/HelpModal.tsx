@@ -2,7 +2,9 @@
  * Help modal showing keyboard shortcuts and documentation
  */
 import { type Component, For, Show } from 'solid-js';
+import { useEscapeKey } from '../../hooks';
 import { useApp } from '../../stores';
+import { Icon } from '../shared';
 import {
   type ShortcutCategory,
   getCategoryLabel,
@@ -11,6 +13,7 @@ import {
 
 export const HelpModal: Component = () => {
   const app = useApp();
+  useEscapeKey(() => app.setShowHelp(false));
 
   const shortcutsByCategory = () => getShortcutsByCategory(app.shortcuts());
   const categories: ShortcutCategory[] = [
@@ -27,9 +30,6 @@ export const HelpModal: Component = () => {
         onClick={(e) => {
           if (e.target === e.currentTarget) app.setShowHelp(false);
         }}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') app.setShowHelp(false);
-        }}
       >
         <div class="bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl w-[600px] max-h-[80vh] overflow-hidden">
           <div class="p-4 border-b border-pasture-600 flex items-center justify-between">
@@ -38,7 +38,7 @@ export const HelpModal: Component = () => {
               onClick={() => app.setShowHelp(false)}
               class="p-1 rounded hover:bg-pasture-700 text-wool-500"
             >
-              <i data-lucide="x" class="w-4 h-4" />
+              <Icon name="x" class="w-4 h-4" />
             </button>
           </div>
 

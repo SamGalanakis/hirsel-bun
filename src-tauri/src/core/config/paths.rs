@@ -57,3 +57,11 @@ pub fn run_exists(run_name: &str) -> bool {
 pub fn global_db_path() -> PathBuf {
     hirsel_dir().join("hirsel.db")
 }
+
+/// Get the assets directory for a project (~/.hirsel/projects/{project_id}/assets)
+pub fn project_assets_dir(project_id: i64) -> PathBuf {
+    hirsel_dir()
+        .join("projects")
+        .join(project_id.to_string())
+        .join("assets")
+}

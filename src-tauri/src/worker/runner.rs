@@ -443,6 +443,11 @@ impl WorkerRunner {
             output["blocked_by"] = serde_json::json!(&task.blocked_by);
         }
 
+        // Task content is stored in the database
+        if let Some(ref content) = task.content {
+            output["content"] = serde_json::json!(content);
+        }
+
         if task.task_type == crate::core::state::TaskType::Eval {
             if let Ok(validates) = self.run_async(self.state().get_validated_tasks(&task.id)) {
                 if !validates.is_empty() {
@@ -459,37 +464,6 @@ impl WorkerRunner {
 
         serde_json::to_string_pretty(&output)
             .map_err(|e| WorkerError::Config(format!("Serialization error: {}", e)))
-    }
-
-    /// Claim a task with detailed rejection info.
-    pub fn task_claim(&self, task_id: &str) -> WorkerResult<String> {
-        use crate::core::state::ClaimTaskResult;
-
-        let worker_name = self.config.worker_name.clone();
-        let result = self.run_async(self.state().try_claim_task(task_id, &worker_name))?;
-
-        match result {
-            ClaimTaskResult::Success { task } => Ok(serde_json::json!({
-                "success": true,
-                "task_id": task.id,
-                "task_name": task.name,
-                "claimed_by": self.config.worker_name,
-            })
-            .to_string()),
-            ClaimTaskResult::Rejected {
-                reason,
-                alternatives,
-            } => {
-                let message = format_claim_rejection(&reason);
-                Ok(serde_json::json!({
-                    "success": false,
-                    "message": message,
-                    "reason": reason,
-                    "alternatives": alternatives,
-                })
-                .to_string())
-            }
-        }
     }
 
     /// Mark a task as done.
@@ -509,31 +483,6 @@ impl WorkerRunner {
         self.run_async(self.state().complete_task(&tid, &worker_name))?;
 
         // Completing a task might unblock other tasks, so wake awaiting workers
-        self.try_resume_awaiting_workers();
-
-        Ok(serde_json::json!({
-            "success": true,
-            "task_id": tid,
-        })
-        .to_string())
-    }
-
-    /// Unclaim a task.
-    pub fn task_unclaim(&self, task_id: Option<&str>) -> WorkerResult<String> {
-        let worker_name = self.config.worker_name.clone();
-        let tid = match task_id {
-            Some(id) => id.to_string(),
-            None => {
-                let task = self
-                    .run_async(self.state().get_claimed_task(&worker_name))?
-                    .ok_or(WorkerError::NoTaskClaimed)?;
-                task.id
-            }
-        };
-
-        self.run_async(self.state().unclaim_task(&tid, &worker_name))?;
-
-        // Unclaiming a task makes it available, so wake awaiting workers
         self.try_resume_awaiting_workers();
 
         Ok(serde_json::json!({
@@ -595,6 +544,7 @@ impl WorkerRunner {
             TaskType::Eval,                  // Eval type
             Some(validates_refs.as_slice()), // Validates relationship
             None,                            // No board_task_id
+            None,                            // No content for eval tasks
         ))?;
 
         Ok(serde_json::json!({
@@ -639,28 +589,6 @@ impl WorkerRunner {
         Ok(serde_json::json!({
             "success": true,
             "task_id": task_id,
-        })
-        .to_string())
-    }
-
-    /// Wait for tasks to become available.
-    ///
-    /// Returns the current list of claimable tasks. If empty, the worker should
-    /// call `work_done` to signal completion - the orchestrator will restart
-    /// the worker (with session resume) when new tasks become available.
-    pub fn task_await(&self) -> WorkerResult<String> {
-        // Set worker status to awaiting
-        self.set_status(WorkerStatus::Awaiting)?;
-
-        // Check for available tasks
-        let claimable = self.run_async(self.state().get_claimable_tasks())?;
-
-        Ok(serde_json::json!({
-            "available_tasks": claimable.len(),
-            "tasks": claimable.iter().map(|t| serde_json::json!({
-                "id": t.id,
-                "name": t.name,
-            })).collect::<Vec<_>>(),
         })
         .to_string())
     }
@@ -895,34 +823,50 @@ impl WorkerRunner {
     // Work Done
     // =========================================================================
 
-    /// Signal that worker has no more work to do.
+    /// Signal that worker has completed its task and is ready for new work.
     ///
-    /// This sets the worker to Awaiting status. The daemon will detect this
-    /// on its next polling cycle and handle eval triggering if all workers
-    /// are inactive.
+    /// This:
+    /// 1. Auto-completes the currently assigned task (if any)
+    /// 2. Sets the worker to Awaiting status
+    /// 3. Triggers a scaling check (daemon may respawn with new task)
+    ///
+    /// The worker process will be terminated shortly after this call - the
+    /// status monitor in run_claude_worker detects Awaiting status and kills
+    /// the Claude process.
     ///
     /// Workers are "dumb" - they just do tasks and report status.
     /// The daemon handles all lifecycle management.
     pub fn work_done(&self) -> WorkerResult<String> {
-        use crate::core::state::WorkerUpdate;
+        // Get our assigned task (if any) and complete it
+        let worker = self
+            .run_async(self.state().get_worker(&self.config.worker_name))?
+            .ok_or_else(|| WorkerError::WorkerNotRegistered(self.config.worker_name.clone()))?;
 
-        // Set status to Awaiting
+        let completed_task_id = if let Some(task_id) = worker.assigned_task_id {
+            // task_done handles: mark DONE, update last_task_id, clear assigned_task_id
+            self.task_done(Some(&task_id))?;
+            tracing::info!(
+                "[{}] work_done: auto-completed assigned task '{}'",
+                self.config.worker_name,
+                task_id
+            );
+            Some(task_id)
+        } else {
+            tracing::debug!(
+                "[{}] work_done: no assigned task to complete",
+                self.config.worker_name
+            );
+            None
+        };
+
+        // Set status to Awaiting - this triggers worker termination
         self.set_status(WorkerStatus::Awaiting)?;
 
-        // Clear assigned task (signals we're ready for a new assignment)
-        self.run_async(self.state().update_worker(
-            &self.config.worker_name,
-            WorkerUpdate {
-                assigned_task_id: Some(None),
-                ..Default::default()
-            },
-        ))?;
-
-        // Trigger scaling check - daemon might spawn us again with a new task
+        // Trigger scaling check - daemon may spawn us again with a new task
         self.run_async(self.state().request_scaling_check())?;
 
         tracing::info!(
-            "[{}] work_done: status set to Awaiting, daemon will handle lifecycle",
+            "[{}] work_done: status set to Awaiting, worker will exit",
             self.config.worker_name
         );
 
@@ -930,6 +874,7 @@ impl WorkerRunner {
             "success": true,
             "worker": self.config.worker_name,
             "status": "awaiting",
+            "completed_task": completed_task_id,
             "message": "Work complete. Exiting - will be respawned if more tasks available.",
         })
         .to_string())
@@ -1071,12 +1016,9 @@ impl WorkerRunner {
                     args.parent.as_deref(),
                     &args.blocked_by,
                 ),
-                TaskSubcommands::Claim(args) => self.task_claim(&args.task_id),
                 TaskSubcommands::Done(args) => self.task_done(args.task_id.as_deref()),
-                TaskSubcommands::Unclaim(args) => self.task_unclaim(args.task_id.as_deref()),
                 TaskSubcommands::Undone(args) => self.task_undone(&args.task_id),
                 TaskSubcommands::Delete(args) => self.task_delete(&args.task_id),
-                TaskSubcommands::Await => self.task_await(),
             },
 
             WorkerCommands::Msg(msg_cmd) => match msg_cmd {
@@ -1085,64 +1027,6 @@ impl WorkerRunner {
                 MsgSubcommands::List => self.msg_list(),
                 MsgSubcommands::Inbox => self.msg_inbox(),
             },
-        }
-    }
-}
-
-/// Format a claim rejection reason into a human-readable message
-fn format_claim_rejection(reason: &crate::core::state::ClaimRejectReason) -> String {
-    use crate::core::state::ClaimRejectReason;
-
-    match reason {
-        ClaimRejectReason::NotFound { task_id } => {
-            format!("Task '{}' not found", task_id)
-        }
-        ClaimRejectReason::AlreadyComplete { task_id, status } => {
-            format!("Task '{}' is already {} - no work needed", task_id, status)
-        }
-        ClaimRejectReason::Blocked { task_id, blockers } => {
-            let blocker_names: Vec<String> = blockers
-                .iter()
-                .map(|b| format!("{} ({})", b.task_id, b.status))
-                .collect();
-            format!(
-                "Task '{}' is blocked by: {}. Complete those first.",
-                task_id,
-                blocker_names.join(", ")
-            )
-        }
-        ClaimRejectReason::ClaimedByOther {
-            task_id,
-            claimed_by,
-        } => {
-            format!(
-                "Task '{}' is already claimed by {}. Pick a different task.",
-                task_id, claimed_by
-            )
-        }
-        ClaimRejectReason::WorkerBusy { existing_task_id } => {
-            format!(
-                "You already have task '{}' claimed. Complete or unclaim it first.",
-                existing_task_id
-            )
-        }
-        ClaimRejectReason::HasChildren { task_id, children } => {
-            format!(
-                "Task '{}' has children ({}). Claim and complete child tasks instead.",
-                task_id,
-                children.join(", ")
-            )
-        }
-        ClaimRejectReason::EvalNotReady {
-            task_id,
-            pending_tasks,
-        } => {
-            let pending_names: Vec<String> = pending_tasks.iter().map(|t| t.id.clone()).collect();
-            format!(
-                "Eval '{}' cannot be claimed yet. These tasks must be done first: {}",
-                task_id,
-                pending_names.join(", ")
-            )
         }
     }
 }

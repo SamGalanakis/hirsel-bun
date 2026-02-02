@@ -18,7 +18,7 @@ import { Portal } from 'solid-js/web';
 import type { ChatMessage, ChatToolCall, PendingPermission } from '../../lib/types';
 import { useApp, useProject, useRuns } from '../../stores';
 import { useGypChat, type GypChatContext } from '../../hooks/use-gyp-chat';
-import { initLucideIcons } from '../../lib/icons';
+import { Icon, ToolCard } from '../shared';
 
 const PANEL_WIDTH = 440;
 const PANEL_HEIGHT = 520;
@@ -84,9 +84,12 @@ export const GypMessenger: Component = () => {
     },
   });
 
-  // Auto-connect when expanded
+  // Track if we're in the middle of a project switch to prevent auto-connect race
+  let projectSwitchInProgress = false;
+
+  // Auto-connect when expanded (only if not mid-project-switch)
   createEffect(() => {
-    if (app.aiChatOpen() && !chat.connected() && !chat.connecting()) {
+    if (app.aiChatOpen() && !chat.connected() && !chat.connecting() && !projectSwitchInProgress) {
       chat.connect();
     }
   });
@@ -100,11 +103,18 @@ export const GypMessenger: Component = () => {
         if (prevProjectId === undefined) return;
         if (projectId === prevProjectId) return;
 
-        // Reconnect without clearing - history is per-project in database
+        // Mark that we're switching projects to prevent auto-connect from racing
+        projectSwitchInProgress = true;
+
+        // Disconnect and reconnect with new project context
         chat.disconnect().then(() => {
           // Only reconnect if switching to another project (not during deletion)
           if (projectId !== null) {
-            chat.connect();
+            chat.connect().finally(() => {
+              projectSwitchInProgress = false;
+            });
+          } else {
+            projectSwitchInProgress = false;
           }
         });
       }
@@ -124,18 +134,6 @@ export const GypMessenger: Component = () => {
   createEffect(() => {
     if (app.aiChatOpen()) {
       setTimeout(() => inputRef?.focus(), 100);
-    }
-  });
-
-  // Initialize icons when expanded or menu opens
-  createEffect(() => {
-    if (app.aiChatOpen()) {
-      queueMicrotask(() => initLucideIcons());
-    }
-  });
-  createEffect(() => {
-    if (menuOpen()) {
-      queueMicrotask(() => initLucideIcons());
     }
   });
 
@@ -271,13 +269,13 @@ export const GypMessenger: Component = () => {
                 {/* Focus node indicator */}
                 <Show when={chat.context().focusNodeName}>
                   <div class="gyp-focus-indicator max-w-[140px] mr-2">
-                    <i data-lucide="crosshair" class="w-3 h-3" />
+                    <Icon name="crosshair" class="w-3 h-3" />
                     <span class="truncate">{chat.context().focusNodeName}</span>
                     <button
                       onClick={() => chat.setFocusNode(null, null)}
                       class="text-wool-600 hover:text-wool-400 ml-1"
                     >
-                      <i data-lucide="x" class="w-3 h-3" />
+                      <Icon name="x" class="w-3 h-3" />
                     </button>
                   </div>
                 </Show>
@@ -293,7 +291,7 @@ export const GypMessenger: Component = () => {
                     aria-haspopup="listbox"
                     aria-expanded={menuOpen()}
                   >
-                    <i data-lucide="more-vertical" class="w-4 h-4" />
+                    <Icon name="more-vertical" class="w-4 h-4" />
                   </button>
 
                   <Show when={menuOpen()}>
@@ -305,7 +303,6 @@ export const GypMessenger: Component = () => {
                       <div
                         class="fixed z-[1002] w-44 bg-popover border border-border rounded-md shadow-md py-1"
                         style={menuPosition()}
-                        ref={() => queueMicrotask(() => initLucideIcons())}
                       >
                         <div role="listbox">
                           <div
@@ -317,7 +314,7 @@ export const GypMessenger: Component = () => {
                               window.toast?.success('Chat reset');
                             }}
                           >
-                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5" />
+                            <Icon name="refresh-cw" class="w-3.5 h-3.5" />
                             <span>Reset chat</span>
                           </div>
                         </div>
@@ -330,7 +327,7 @@ export const GypMessenger: Component = () => {
                   onClick={() => app.setAiChatOpen(false)}
                   class="gyp-options-btn"
                 >
-                  <i data-lucide="chevron-down" class="w-4 h-4" />
+                  <Icon name="chevron-down" class="w-4 h-4" />
                 </button>
               </div>
             </div>
@@ -463,7 +460,7 @@ export const GypMessenger: Component = () => {
                   <div class="w-4 h-4 border-2 border-amber-200 border-t-transparent rounded-full animate-spin" />
                 </Show>
                 <Show when={!sending()}>
-                  <i data-lucide="send" class="w-4 h-4 text-white" />
+                  <Icon name="send" class="w-4 h-4 text-white" />
                 </Show>
               </button>
             </div>
@@ -534,8 +531,8 @@ export const GypMessengerBar: Component = () => {
 
       {/* Expand/collapse chevron */}
       <div class="ml-auto flex items-center gap-2">
-        <i
-          data-lucide={app.aiChatOpen() ? 'chevron-down' : 'chevron-up'}
+        <Icon
+          name={app.aiChatOpen() ? 'chevron-down' : 'chevron-up'}
           class="w-3.5 h-3.5 text-wool-600"
         />
       </div>
@@ -578,8 +575,12 @@ const MessageBubble: Component<{
           <div class="mt-2 flex flex-wrap gap-1.5">
             <For each={props.message.toolCalls}>
               {(tc) => (
-                <ToolCallCard
-                  toolCall={tc}
+                <ToolCard
+                  title={tc.title}
+                  kind={tc.kind}
+                  status={tc.status}
+                  input={tc.input}
+                  output={tc.output}
                   expanded={props.expandedTools.has(tc.id)}
                   onToggle={() => props.onToggleTool(tc.id)}
                 />
@@ -602,10 +603,10 @@ const ThinkingBlock: Component<{ thinking: string }> = (props) => {
       onClick={() => setExpanded(!expanded())}
     >
       <div class="flex items-center gap-1.5 text-amber-500/70 text-xs mb-1">
-        <i data-lucide="brain" class="w-3 h-3" />
+        <Icon name="brain" class="w-3 h-3" />
         <span class="italic" style="font-family: 'ET Book', serif;">Thinking</span>
-        <i
-          data-lucide={expanded() ? 'chevron-up' : 'chevron-down'}
+        <Icon
+          name={expanded() ? 'chevron-up' : 'chevron-down'}
           class="w-3 h-3 ml-auto"
         />
       </div>
@@ -619,127 +620,11 @@ const ThinkingBlock: Component<{ thinking: string }> = (props) => {
   );
 };
 
-// Tool call card - craft aesthetic with working indicator
-const ToolCallCard: Component<{
-  toolCall: ChatToolCall;
-  expanded: boolean;
-  onToggle: () => void;
-}> = (props) => {
-  // Get icon based on tool kind
-  const getIcon = () => {
-    switch (props.toolCall.kind) {
-      case 'read':
-        return 'file-text';
-      case 'write':
-      case 'edit':
-        return 'pencil';
-      case 'execute':
-        return 'terminal';
-      case 'search':
-        return 'search';
-      default:
-        return 'wrench';
-    }
-  };
-
-  // Get short label from title
-  const shortLabel = () => {
-    const title = props.toolCall.title;
-    const firstWord = title.split(/[\s:(]/)[0];
-    return firstWord || title;
-  };
-
-  const isWorking = () =>
-    props.toolCall.status === 'pending' || props.toolCall.status === 'in_progress';
-
-  const statusClass = () => {
-    if (isWorking()) return 'working';
-    if (props.toolCall.status === 'completed') return 'completed';
-    if (props.toolCall.status === 'failed') return 'failed';
-    return '';
-  };
-
-  return (
-    <div class="relative">
-      {/* Card */}
-      <button
-        onClick={props.onToggle}
-        class={`gyp-tool-card ${statusClass()}`}
-        classList={{
-          'text-amber-400': isWorking(),
-          'text-wool-400': props.toolCall.status === 'completed',
-          'text-terra': props.toolCall.status === 'failed',
-        }}
-      >
-        <Show when={isWorking()}>
-          <span class="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
-        </Show>
-        <Show when={!isWorking()}>
-          <i data-lucide={getIcon()} class="w-3 h-3" />
-        </Show>
-        <span>{shortLabel()}</span>
-        <Show when={props.toolCall.status === 'completed'}>
-          <i data-lucide="check" class="w-3 h-3 text-sage" />
-        </Show>
-        <Show when={props.toolCall.status === 'failed'}>
-          <i data-lucide="x" class="w-3 h-3" />
-        </Show>
-      </button>
-
-      {/* Expanded drawer */}
-      <Show when={props.expanded}>
-        <div class="gyp-tool-drawer absolute left-0 top-full mt-1 z-50 w-72 bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl overflow-hidden">
-          {/* Header */}
-          <div class="px-2.5 py-1.5 bg-pasture-700 border-b border-pasture-600 flex items-center justify-between">
-            <span class="text-[11px] font-medium text-wool-200 truncate flex-1">
-              {props.toolCall.title}
-            </span>
-            <button
-              onClick={props.onToggle}
-              class="p-0.5 rounded hover:bg-pasture-600 text-wool-500"
-            >
-              <i data-lucide="x" class="w-3 h-3" />
-            </button>
-          </div>
-
-          {/* Content */}
-          <div class="p-2 space-y-2 max-h-48 overflow-y-auto">
-            <Show when={props.toolCall.input}>
-              <div>
-                <p class="text-[10px] text-wool-500 mb-0.5 uppercase tracking-wide">Input</p>
-                <pre class="text-[10px] text-wool-300 bg-pasture-900 p-1.5 rounded overflow-x-auto whitespace-pre-wrap break-all">
-                  {props.toolCall.input}
-                </pre>
-              </div>
-            </Show>
-            <Show when={props.toolCall.output}>
-              <div>
-                <p class="text-[10px] text-wool-500 mb-0.5 uppercase tracking-wide">Output</p>
-                <pre class="text-[10px] text-wool-300 bg-pasture-900 p-1.5 rounded overflow-x-auto whitespace-pre-wrap break-all max-h-24 overflow-y-auto">
-                  {props.toolCall.output}
-                </pre>
-              </div>
-            </Show>
-            <Show when={!props.toolCall.input && !props.toolCall.output}>
-              <p class="text-[10px] text-wool-600 italic">No details available</p>
-            </Show>
-          </div>
-        </div>
-      </Show>
-    </div>
-  );
-};
-
 // Permission modal - parchment-style request card
 const PermissionModal: Component<{
   permission: PendingPermission;
   onRespond: (optionId: string) => void;
 }> = (props) => {
-  // Reinitialize icons when modal appears
-  createEffect(() => {
-    queueMicrotask(() => initLucideIcons());
-  });
-
   return (
     <div class="gyp-permission-overlay absolute inset-0 flex items-center justify-center p-4">
       <div class="gyp-permission-modal w-full max-w-sm">

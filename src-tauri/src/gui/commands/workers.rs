@@ -6,14 +6,14 @@ use crate::core::api_types::{SheepConfig, Worker, WorkerLocation, WorkerStatus};
 use crate::core::orchestrator::create_orchestrator;
 use crate::core::{config, state::SQLiteState};
 
+use super::err_string;
+
 /// Get all workers for a run
 /// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn get_workers(run_name: String) -> Result<Vec<Worker>, String> {
-    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
-    orch.list_workers(&run_name)
-        .await
-        .map_err(|e| e.to_string())
+    let orch = create_orchestrator(None).map_err(err_string)?;
+    orch.list_workers(&run_name).await.map_err(err_string)
 }
 
 /// Attach a new worker to a run
@@ -87,7 +87,6 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
         worker_name: worker_name.clone(),
         work_dir: worker_dir.clone(),
         run_dir: run_dir.clone(),
-        spec_path: files.spec(),
         agent_command,
         is_leader: false,
         leader_name,
@@ -282,13 +281,10 @@ pub async fn detach_worker(run_name: String, worker_id: u32) -> Result<(), Strin
 /// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn restart_worker(run_name: String, worker_id: u32) -> Result<(), String> {
-    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
+    let orch = create_orchestrator(None).map_err(err_string)?;
 
     // Get workers to find the worker name from the ID
-    let workers = orch
-        .list_workers(&run_name)
-        .await
-        .map_err(|e| e.to_string())?;
+    let workers = orch.list_workers(&run_name).await.map_err(err_string)?;
 
     let worker = workers
         .iter()
@@ -298,5 +294,5 @@ pub async fn restart_worker(run_name: String, worker_id: u32) -> Result<(), Stri
     // Call restart_worker with the worker name
     orch.restart_worker(&run_name, &worker.name)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(err_string)
 }

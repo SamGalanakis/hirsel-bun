@@ -1,23 +1,16 @@
 /**
  * Application title bar with project selector breadcrumbs
  */
-import { type Component, Show, createEffect, createSignal, onMount } from 'solid-js';
+import { type Component, Show } from 'solid-js';
 import { useApp, useProject, useRuns } from '../../stores';
 import { NotificationsDropdown } from './Notifications';
 import { ProjectSelector } from './ProjectSelector';
-import { initLucideIcons } from '../../lib/icons';
+import { Icon } from '../shared';
 
 export const TitleBar: Component = () => {
   const app = useApp();
   const project = useProject();
   const runs = useRuns();
-
-  onMount(() => initLucideIcons());
-  createEffect(() => {
-    project.selectedProjectId();
-    runs.selectedRun();
-    queueMicrotask(initLucideIcons);
-  });
 
   return (
     <header class="flex items-center justify-between px-4 py-2 border-b border-pasture-600/50 bg-pasture-900/50 backdrop-blur-sm select-none relative z-50">
@@ -32,7 +25,7 @@ export const TitleBar: Component = () => {
           {/* Board/Runs crumb - only show when project is selected */}
           <Show when={project.selectedProject()}>
             <li class="text-wool-700" aria-hidden="true">
-              <i data-lucide="chevron-right" class="w-4 h-4" />
+              <Icon name="chevron-right" class="w-4 h-4" />
             </li>
             <li>
               <button
@@ -47,7 +40,7 @@ export const TitleBar: Component = () => {
                   'text-wool-500 hover:text-wool-300 hover:bg-pasture-800': project.activeProjectView() !== 'board' || !!runs.selectedRun(),
                 }}
               >
-                <i data-lucide="layout-grid" class="w-3.5 h-3.5" />
+                <Icon name="layout-grid" class="w-3.5 h-3.5" />
                 <span>Board</span>
               </button>
             </li>
@@ -56,14 +49,14 @@ export const TitleBar: Component = () => {
           {/* Runs crumb */}
           <Show when={project.selectedProject() && (project.activeProjectView() === 'runs' || runs.selectedRun())}>
             <li class="text-wool-700" aria-hidden="true">
-              <i data-lucide="chevron-right" class="w-4 h-4" />
+              <Icon name="chevron-right" class="w-4 h-4" />
             </li>
             <li>
               <Show
                 when={runs.selectedRun()}
                 fallback={
                   <span class="flex items-center gap-1.5 px-2 py-1 text-wool-100 bg-pasture-700/50 rounded-md">
-                    <i data-lucide="play" class="w-3.5 h-3.5" />
+                    <Icon name="play" class="w-3.5 h-3.5" />
                     <span>Runs</span>
                   </span>
                 }
@@ -73,7 +66,7 @@ export const TitleBar: Component = () => {
                   onClick={() => runs.setSelectedRun(null)}
                   class="flex items-center gap-1.5 px-2 py-1 rounded-md text-wool-500 hover:text-wool-300 hover:bg-pasture-800 transition-colors"
                 >
-                  <i data-lucide="play" class="w-3.5 h-3.5" />
+                  <Icon name="play" class="w-3.5 h-3.5" />
                   <span>Runs</span>
                 </button>
               </Show>
@@ -83,7 +76,7 @@ export const TitleBar: Component = () => {
           {/* Selected run crumb */}
           <Show when={runs.selectedRun()}>
             <li class="text-wool-700" aria-hidden="true">
-              <i data-lucide="chevron-right" class="w-4 h-4" />
+              <Icon name="chevron-right" class="w-4 h-4" />
             </li>
             <li>
               <span class="flex items-center gap-1.5 px-2 py-1 text-wool-100 bg-pasture-700/50 rounded-md">
@@ -98,6 +91,22 @@ export const TitleBar: Component = () => {
       <div class="flex items-center gap-1">
         <NotificationsDropdown />
 
+        {/* Docs panel toggle - only show when project selected */}
+        <Show when={project.selectedProject()}>
+          <button
+            type="button"
+            onClick={() => project.setDocsOpen(!project.docsOpen())}
+            class="p-2 rounded-md transition-colors"
+            classList={{
+              'text-sage-400 bg-pasture-700/50': project.docsOpen(),
+              'text-wool-500 hover:text-wool-300 hover:bg-pasture-800': !project.docsOpen(),
+            }}
+            title="Project documentation"
+          >
+            <Icon name="book-open" class="w-4 h-4" />
+          </button>
+        </Show>
+
         {/* Project settings - only show when project selected */}
         <Show when={project.selectedProject()}>
           <button
@@ -106,7 +115,7 @@ export const TitleBar: Component = () => {
             class="p-2 rounded-md text-wool-500 hover:text-wool-300 hover:bg-pasture-800 transition-colors"
             title={`${project.selectedProject()?.name} settings`}
           >
-            <i data-lucide="folder-cog" class="w-4 h-4" />
+            <Icon name="folder-cog" class="w-4 h-4" />
           </button>
         </Show>
 
@@ -116,7 +125,7 @@ export const TitleBar: Component = () => {
           class="p-2 rounded-md text-wool-500 hover:text-wool-300 hover:bg-pasture-800 transition-colors"
           title="Help"
         >
-          <i data-lucide="help-circle" class="w-4 h-4" />
+          <Icon name="help-circle" class="w-4 h-4" />
         </button>
 
         <button
@@ -125,7 +134,7 @@ export const TitleBar: Component = () => {
           class="p-2 rounded-md text-wool-500 hover:text-wool-300 hover:bg-pasture-800 transition-colors"
           title="Settings"
         >
-          <i data-lucide="settings" class="w-4 h-4" />
+          <Icon name="settings" class="w-4 h-4" />
         </button>
       </div>
     </header>

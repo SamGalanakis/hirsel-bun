@@ -32,7 +32,7 @@ use super::server::DaemonConfig;
 
 /// Run the lifecycle polling loop
 pub async fn run_polling_loop(state: Arc<AppState>, config: DaemonConfig) {
-    let mut tick = interval(Duration::from_secs(5));
+    let mut tick = interval(Duration::from_secs(2));
     let mut last_active = Instant::now();
 
     tracing::info!("[Daemon] Starting lifecycle polling loop");

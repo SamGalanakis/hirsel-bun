@@ -238,6 +238,17 @@ pub async fn spawn_workers(
     Ok(Json(response))
 }
 
+/// Start a run (unified entry point for CLI and GUI)
+///
+/// This creates the run directory, workspace, and optionally spawns workers.
+pub async fn start_run(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<crate::core::orchestrator::StartRunRequest>,
+) -> Result<Json<RunDetail>> {
+    let detail = state.orchestrator.start_run(body).await?;
+    Ok(Json(detail))
+}
+
 // =============================================================================
 // Workers
 // =============================================================================
@@ -365,6 +376,24 @@ pub async fn add_delta_task(
 ) -> Result<Json<Task>> {
     let task = state.orchestrator.add_delta_task(&name, request).await?;
     Ok(Json(task))
+}
+
+/// Add multiple delta tasks in a batch (for delta dispatch system)
+///
+/// POST /api/runs/{name}/delta-tasks-batch
+///
+/// Uses deferred FK constraints so tasks can reference each other as blockers
+/// without requiring a specific insertion order.
+pub async fn add_delta_tasks_batch(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Json(requests): Json<Vec<AddDeltaTaskRequest>>,
+) -> Result<Json<Vec<Task>>> {
+    let tasks = state
+        .orchestrator
+        .add_delta_tasks_batch(&name, requests)
+        .await?;
+    Ok(Json(tasks))
 }
 
 // =============================================================================

@@ -10,8 +10,6 @@
 //! ```text
 //! {work_dir}/
 //! ├── .git/              # Git repo with coordinator as remote
-//! ├── spec.md            # Task specification
-//! ├── eval.md            # Evaluation criteria (optional)
 //! ├── chats/             # Synced chat files
 //! └── ... project files from tarball
 //! ```
@@ -114,7 +112,6 @@ pub fn generate_worker_start_script(
     api_url: &str,
     run_name: &str,
     worker_name: &str,
-    spec_path: &str,
     agent_command_json: &str,
     is_leader: bool,
     leader_name: Option<&str>,
@@ -164,7 +161,6 @@ nohup hirsel __remote-worker \
     --run-name '{run_name}' \
     --worker-name '{worker_name}' \
     --work-dir '{work_dir}' \
-    --spec '{spec_path}' \
     --agent-command '{agent_command}' \
     {leader_arg} {leader_name_arg} {teammates_arg} \
     > worker.log 2>&1 &
@@ -175,7 +171,6 @@ echo $!
         api_url = api_url,
         run_name = run_name,
         worker_name = worker_name,
-        spec_path = spec_path,
         agent_command = agent_command_escaped,
         leader_arg = leader_arg,
         leader_name_arg = leader_name_arg,
@@ -193,7 +188,6 @@ pub fn generate_docker_worker_script(
     api_url: &str,
     run_name: &str,
     worker_name: &str,
-    _spec_path: &str,
     agent_command_json: &str,
     is_leader: bool,
     leader_name: Option<&str>,
@@ -258,7 +252,6 @@ exec hirsel __remote-worker \
     --run-name '{run_name}' \
     --worker-name '{worker_name}' \
     --work-dir '/work' \
-    --spec '/work/spec.md' \
     --agent-command '{agent_command}' \
     {leader_arg} {leader_name_arg} {teammates_arg}
 "#,
@@ -444,7 +437,6 @@ exec hirsel __remote-worker \
     --run-name '{run_name}' \
     --worker-name '{worker_name}' \
     --work-dir '{work_dir}' \
-    --spec '{work_dir}/spec.md' \
     --agent-command '{agent_command}' \
     {leader_arg} {leader_name_arg} {teammates_arg} {assigned_task_arg}
 "#,
@@ -507,7 +499,6 @@ mod tests {
             "http://localhost:19700",
             "my-run",
             "worker-1",
-            "/workspaces/project/spec.md",
             "[\"claude\"]",
             true,
             None,

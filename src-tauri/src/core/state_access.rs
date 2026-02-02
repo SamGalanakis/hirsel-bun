@@ -89,6 +89,7 @@ pub trait StateAccess: Send {
         task_type: crate::core::state::TaskType,
         validates: Option<&[&str]>,
         board_task_id: Option<&str>,
+        content: Option<&str>,
     ) -> StateAccessResult<()>;
 
     async fn get_tasks(&self) -> StateAccessResult<Vec<Task>>;
@@ -369,6 +370,7 @@ impl StateAccess for SQLiteState {
         task_type: crate::core::state::TaskType,
         validates: Option<&[&str]>,
         board_task_id: Option<&str>,
+        content: Option<&str>,
     ) -> StateAccessResult<()> {
         SQLiteState::add_task_with_type(
             self,
@@ -379,6 +381,7 @@ impl StateAccess for SQLiteState {
             task_type,
             validates,
             board_task_id,
+            content,
         )?;
         Ok(())
     }

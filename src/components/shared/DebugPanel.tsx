@@ -2,6 +2,7 @@
  * Debug panel component - only shown in development via Ctrl+D
  */
 import { type Component, Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
+import { Icon } from './Icon';
 
 export const DebugPanel: Component = () => {
   const [visible, setVisible] = createSignal(false);
@@ -43,14 +44,14 @@ export const DebugPanel: Component = () => {
         <div class="bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl p-4 w-96">
           <div class="flex items-center justify-between mb-3">
             <h3 class="text-sm font-medium text-wool-300 flex items-center gap-2">
-              <i data-lucide="bug" class="w-4 h-4" />
+              <Icon name="bug" class="w-4 h-4" />
               Debug Panel
             </h3>
             <button
               onClick={() => setVisible(false)}
               class="p-1 rounded hover:bg-pasture-700 text-wool-500"
             >
-              <i data-lucide="x" class="w-4 h-4" />
+              <Icon name="x" class="w-4 h-4" />
             </button>
           </div>
           <div class="text-xs text-wool-500 space-y-2">

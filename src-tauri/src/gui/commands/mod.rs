@@ -11,6 +11,7 @@ mod credentials;
 mod debug;
 mod delivery;
 mod delta;
+mod docs;
 mod drafts;
 mod events;
 mod files;
@@ -29,6 +30,11 @@ pub use types::*;
 
 // Re-export the event stream manager for state management
 pub use events::WorkerEventStreamManager;
+
+/// Helper to convert any error to String for Tauri command results
+pub fn err_string<E: ToString>(e: E) -> String {
+    e.to_string()
+}
 
 // Re-export the chat orchestrator manager for state management
 pub use chat::ChatOrchestratorManager;
@@ -58,11 +64,15 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         files::write_spec_file,
         files::read_eval_file,
         files::write_eval_file,
-        // Asset commands
+        // Asset commands (run-level)
         files::save_asset,
         files::import_asset_from_path,
         files::open_assets_folder,
         files::get_assets_path,
+        // Asset commands (project-level)
+        files::save_project_asset,
+        files::get_project_assets_path,
+        files::open_project_assets_folder,
         // Task commands
         tasks::get_tasks,
         tasks::add_task,
@@ -175,5 +185,7 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         delta::complete_revert,
         delta::get_dual_trees,
         delta::sync_gyp_changes,
+        // Docs commands
+        docs::get_project_docs,
     ]
 }

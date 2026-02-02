@@ -144,8 +144,13 @@ pub fn get_agent_command() -> Vec<String> {
             }
         }
     }
-    // Default to hirsel ACP bridge which wraps claude CLI
-    vec!["hirsel".to_string(), "__acp-bridge".to_string()]
+    // Default to hirsel ACP bridge using our own executable path
+    // This handles both production (installed) and development (debug build) cases
+    let hirsel_path = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.to_str().map(String::from))
+        .unwrap_or_else(|| "hirsel".to_string());
+    vec![hirsel_path, "__acp-bridge".to_string()]
 }
 
 /// Check if a command is available in PATH

@@ -18,7 +18,7 @@
 use rusqlite::{params, Row};
 
 use super::types::{
-    DeltaTaskInput, EvalResult, StateError, StateResult, Task, TaskStatus, TaskType,
+    DeltaTaskInput, EvalResult, StateError, StateResult, Task, TaskSource, TaskStatus, TaskType,
 };
 use super::SQLiteState;
 
@@ -41,6 +41,7 @@ impl SQLiteState {
             pending_done_at: row.get("pending_done_at")?,
             tokens_used: row.get("tokens_used")?,
             parent_id: row.get("parent_id")?,
+            content: row.get("content")?,
             blocked_by: vec![], // Will be populated by caller
             task_type: row
                 .get::<_, Option<String>>("task_type")?
@@ -53,6 +54,10 @@ impl SQLiteState {
             board_task_id: row.get("board_task_id")?,
             assigned_to: row.get("assigned_to")?,
             completed_by: row.get("completed_by")?,
+            source: row
+                .get::<_, Option<String>>("source")?
+                .and_then(|s| TaskSource::from_str(&s))
+                .unwrap_or(TaskSource::Spec),
         })
     }
 
@@ -132,7 +137,7 @@ impl SQLiteState {
     /// Get children of a task
     pub fn get_children(&self, task_id: &str) -> StateResult<Vec<Task>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, task_type, eval_result, eval_feedback, board_task_id, assigned_to, completed_by FROM tasks WHERE parent_id = ?1 ORDER BY created_at"
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, content, task_type, eval_result, eval_feedback, board_task_id, assigned_to, completed_by, source FROM tasks WHERE parent_id = ?1 ORDER BY created_at"
         )?;
         let mut tasks: Vec<Task> = stmt
             .query_map(params![task_id], Self::task_from_row)?
@@ -155,7 +160,7 @@ impl SQLiteState {
         Ok(count > 0)
     }
 
-    /// Add a new task
+    /// Add a new task (defaults to Worker source since this is used by workers via MCP)
     pub fn add_task(
         &self,
         task_id: &str,
@@ -163,7 +168,7 @@ impl SQLiteState {
         parent_id: Option<&str>,
         blocked_by: Option<&[&str]>,
     ) -> StateResult<()> {
-        self.add_task_with_type(
+        self.add_task_with_source(
             task_id,
             name,
             parent_id,
@@ -171,10 +176,34 @@ impl SQLiteState {
             TaskType::Work,
             None,
             None,
+            None,
+            TaskSource::Worker,
         )
     }
 
-    /// Add a new task with explicit type and validates
+    /// Add a new task with explicit source (for system tasks like scope)
+    pub fn add_task_with_source_simple(
+        &self,
+        task_id: &str,
+        name: &str,
+        parent_id: Option<&str>,
+        blocked_by: Option<&[&str]>,
+        source: TaskSource,
+    ) -> StateResult<()> {
+        self.add_task_with_source(
+            task_id,
+            name,
+            parent_id,
+            blocked_by,
+            TaskType::Work,
+            None,
+            None,
+            None,
+            source,
+        )
+    }
+
+    /// Add a new task with explicit type and validates (defaults to Spec source)
     pub fn add_task_with_type(
         &self,
         task_id: &str,
@@ -184,6 +213,33 @@ impl SQLiteState {
         task_type: TaskType,
         validates: Option<&[&str]>,
         board_task_id: Option<&str>,
+        content: Option<&str>,
+    ) -> StateResult<()> {
+        self.add_task_with_source(
+            task_id,
+            name,
+            parent_id,
+            blocked_by,
+            task_type,
+            validates,
+            board_task_id,
+            content,
+            TaskSource::Spec,
+        )
+    }
+
+    /// Add a new task with explicit type, validates, and source
+    pub fn add_task_with_source(
+        &self,
+        task_id: &str,
+        name: &str,
+        parent_id: Option<&str>,
+        blocked_by: Option<&[&str]>,
+        task_type: TaskType,
+        validates: Option<&[&str]>,
+        board_task_id: Option<&str>,
+        content: Option<&str>,
+        source: TaskSource,
     ) -> StateResult<()> {
         // Check hierarchy depth limit (max 3 levels)
         if let Some(pid) = parent_id {
@@ -203,8 +259,8 @@ impl SQLiteState {
         }
 
         match self.db.execute(
-            "INSERT INTO tasks (id, name, status, created_at, parent_id, task_type, board_task_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![task_id, name, TaskStatus::Todo.as_str(), self.now(), parent_id, task_type.as_str(), board_task_id],
+            "INSERT INTO tasks (id, name, status, created_at, parent_id, content, task_type, board_task_id, source) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![task_id, name, TaskStatus::Todo.as_str(), self.now(), parent_id, content, task_type.as_str(), board_task_id, source.as_str()],
         ) {
             Ok(_) => {
                 // Insert task_blockers relationships
@@ -283,8 +339,8 @@ impl SQLiteState {
 
                 // Insert task (use INSERT OR IGNORE to skip duplicates gracefully)
                 self.db.execute(
-                "INSERT OR IGNORE INTO tasks (id, name, status, created_at, parent_id, task_type, board_task_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![&task.task_id, &task.name, TaskStatus::Todo.as_str(), self.now(), task.parent_id.as_deref(), task.task_type.as_str(), task.board_task_id.as_deref()],
+                "INSERT OR IGNORE INTO tasks (id, name, status, created_at, parent_id, content, task_type, board_task_id, source) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![&task.task_id, &task.name, TaskStatus::Todo.as_str(), self.now(), task.parent_id.as_deref(), task.content.as_deref(), task.task_type.as_str(), task.board_task_id.as_deref(), task.source.as_str()],
             )?;
 
                 // Insert task_blockers relationships (ignore duplicates)
@@ -342,7 +398,7 @@ impl SQLiteState {
     /// Get all tasks
     pub fn get_tasks(&self) -> StateResult<Vec<Task>> {
         let mut stmt = self.db.prepare(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, task_type, eval_result, eval_feedback, board_task_id, assigned_to, completed_by FROM tasks ORDER BY created_at"
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, content, task_type, eval_result, eval_feedback, board_task_id, assigned_to, completed_by, source FROM tasks ORDER BY created_at"
         )?;
         let mut tasks: Vec<Task> = stmt
             .query_map([], Self::task_from_row)?
@@ -358,7 +414,7 @@ impl SQLiteState {
     /// Get a specific task
     pub fn get_task(&self, task_id: &str) -> StateResult<Option<Task>> {
         let result = self.db.query_row(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, task_type, eval_result, eval_feedback, board_task_id, assigned_to, completed_by FROM tasks WHERE id = ?1",
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, content, task_type, eval_result, eval_feedback, board_task_id, assigned_to, completed_by, source FROM tasks WHERE id = ?1",
             params![task_id],
             Self::task_from_row,
         );
@@ -451,12 +507,17 @@ impl SQLiteState {
     /// - Work tasks blocked_by other tasks require those tasks to be Validated
     ///   (or Done if they have no validating eval)
     /// - Eval tasks are unblocked when all tasks in validates are done/awaiting_eval
+    /// - Tasks with children cannot be claimed (work on leaf tasks instead)
     pub fn get_claimable_tasks(&self) -> StateResult<Vec<Task>> {
         let tasks = self.get_tasks()?;
 
         // Build maps for O(1) lookups
         let status_map: std::collections::HashMap<String, TaskStatus> =
             tasks.iter().map(|t| (t.id.clone(), t.status)).collect();
+
+        // Build set of tasks that have children (parent_id references)
+        let tasks_with_children: std::collections::HashSet<String> =
+            tasks.iter().filter_map(|t| t.parent_id.clone()).collect();
 
         // Build set of tasks that have validating evals (from eval_validates table)
         let mut has_validating_eval: std::collections::HashSet<String> =
@@ -491,6 +552,10 @@ impl SQLiteState {
                 continue;
             }
             if task.claimed_by.is_some() {
+                continue;
+            }
+            // Skip tasks that have children - work on leaf tasks instead
+            if tasks_with_children.contains(&task.id) {
                 continue;
             }
 
@@ -875,6 +940,17 @@ impl SQLiteState {
             params![worker_name, task_id],
         )?;
 
+        // Update worker's last_task_id (for tree distance) and clear assigned_task_id
+        // This must happen so evaluate_scaling() knows this worker is ready for new work
+        self.update_worker(
+            worker_name,
+            super::types::WorkerUpdate {
+                last_task_id: Some(Some(task_id.to_string())),
+                assigned_task_id: Some(None), // Clear assigned task
+                ..Default::default()
+            },
+        )?;
+
         // Auto-complete parent if all siblings are done
         if let Some(parent_id) = &task.parent_id {
             self.maybe_complete_parent(parent_id)?;
@@ -976,6 +1052,16 @@ impl SQLiteState {
             Some(&format!("{} by {}", eval_task_id, worker_name)),
         )?;
 
+        // Update worker's last_task_id (for tree distance) and clear assigned_task_id
+        self.update_worker(
+            worker_name,
+            super::types::WorkerUpdate {
+                last_task_id: Some(Some(eval_task_id.to_string())),
+                assigned_task_id: Some(None), // Clear assigned task
+                ..Default::default()
+            },
+        )?;
+
         // Trigger scaling check - validation may unblock other tasks
         self.request_scaling_check()?;
 
@@ -1025,7 +1111,7 @@ impl SQLiteState {
         let repair_name = format!("Repair: {}", feedback.chars().take(50).collect::<String>());
 
         self.db.execute(
-            "INSERT INTO tasks (id, name, status, created_at, parent_id, task_type, board_task_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO tasks (id, name, status, created_at, parent_id, task_type, board_task_id, source) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 repair_id,
                 repair_name,
@@ -1033,7 +1119,8 @@ impl SQLiteState {
                 self.now(),
                 eval_task_id,
                 TaskType::Work.as_str(),
-                task.board_task_id
+                task.board_task_id,
+                TaskSource::Worker.as_str()
             ],
         )?;
 
@@ -1084,6 +1171,17 @@ impl SQLiteState {
                 "{} by {} - {}",
                 eval_task_id, worker_name, feedback
             )),
+        )?;
+
+        // Update worker's last_task_id (for tree distance) and clear assigned_task_id
+        // Even though eval failed, the worker is done with this task
+        self.update_worker(
+            worker_name,
+            super::types::WorkerUpdate {
+                last_task_id: Some(Some(eval_task_id.to_string())),
+                assigned_task_id: Some(None), // Clear assigned task
+                ..Default::default()
+            },
         )?;
 
         // Trigger scaling check - repair task created
@@ -1246,7 +1344,7 @@ impl SQLiteState {
     /// Get claimed task for a worker
     pub fn get_claimed_task(&self, worker_name: &str) -> StateResult<Option<Task>> {
         let result = self.db.query_row(
-            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, task_type, eval_result, eval_feedback, board_task_id, assigned_to, completed_by FROM tasks WHERE claimed_by = ?1 AND status = ?2",
+            "SELECT id, name, status, created_at, completed_at, claimed_by, claimed_at, pending_done_at, tokens_used, parent_id, content, task_type, eval_result, eval_feedback, board_task_id, assigned_to, completed_by, source FROM tasks WHERE claimed_by = ?1 AND status = ?2",
             params![worker_name, TaskStatus::Doing.as_str()],
             Self::task_from_row,
         );

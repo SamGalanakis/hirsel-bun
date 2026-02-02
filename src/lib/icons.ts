@@ -1,42 +1,10 @@
 /**
  * Lucide icon utilities for Hirsel
  *
- * Provides icon SVG strings for use in Alpine.js templates
- * and initializes Lucide icon replacement in the DOM.
+ * Provides icon SVG strings for use in SolidJS components via the Icon component.
  */
 
-import { createIcons, icons } from 'lucide';
-
-// Re-export createIcons for initialization
-export { createIcons, icons };
-
-/**
- * Initialize Lucide icons - call this after DOM is ready
- * Replaces all <i data-lucide="icon-name"></i> elements with SVG icons
- * Also sets up a MutationObserver to handle dynamically added elements
- */
-export function initLucideIcons(): void {
-  // Initial icon replacement - inTemplates: true handles Alpine x-for templates
-  createIcons({ icons, inTemplates: true });
-
-  // Debounced re-initialization for Alpine-rendered icons
-  let pendingRefresh = false;
-  const refreshIcons = () => {
-    if (pendingRefresh) return;
-    pendingRefresh = true;
-    requestAnimationFrame(() => {
-      createIcons({ icons, inTemplates: true });
-      pendingRefresh = false;
-    });
-  };
-
-  // Listen for Alpine updates to refresh icons
-  document.addEventListener('alpine:initialized', refreshIcons);
-
-  // Also refresh after a short delay to catch initial Alpine render
-  setTimeout(refreshIcons, 100);
-  setTimeout(refreshIcons, 500);
-}
+import { icons } from 'lucide';
 
 /**
  * Convert kebab-case to PascalCase for Lucide icon lookup

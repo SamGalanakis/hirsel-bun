@@ -34,6 +34,7 @@ use agent_client_protocol::{
 
 use crate::core::acp_runner::{AcpAgentRunner, AcpRunnerError};
 use crate::core::config::Config;
+use crate::core::constants::{SCRIBE_PROMPT, SCRIBE_TIMEOUT_SECS};
 use crate::core::files::Files;
 use crate::core::state::{SQLiteState, ScribeSubmission, StateError};
 
@@ -71,51 +72,6 @@ pub struct ScribeBatchResult {
     pub submissions_processed: usize,
     pub success: bool,
 }
-
-/// Prompt template for the Scribe agent
-const SCRIBE_PROMPT: &str = r#"You are a documentation scribe maintaining developer reference docs.
-
-## First: Adopt Existing Structure
-
-Read docs/ first. If the project has its own documentation structure, adopt it.
-Maintain consistency with what exists.
-
-## Documentation Style
-
-Write **developer reference** docs - help someone understand the system and find what they need.
-
-**Good content:**
-- High-level feature descriptions (what the system does)
-- Technology stack and why each piece is used
-- Quick reference tables (Task → Files to Modify)
-- Module/component maps with purposes
-- Key abstractions (traits, interfaces, patterns)
-- State machines and status flows
-- Architecture diagrams (ASCII)
-- Configuration options
-- Data flow descriptions
-- Gotchas, pitfalls, non-obvious constraints
-- Style conventions (especially frontend: components, patterns, naming)
-
-**Avoid:**
-- Prose explanations (use tables and bullets)
-- Implementation details that change often
-- Code snippets or examples
-- Tutorials or how-to guides
-- Anything obvious from reading code
-
-## Principles
-
-- Structure over prose
-- Help devs find the right place to look
-- Document the shape of the system, not the details
-- New info wins over old (update, don't duplicate)
-
-Learnings to process:
-"#;
-
-/// Default timeout for scribe agent (120 seconds)
-const SCRIBE_TIMEOUT_SECS: u64 = 120;
 
 /// Check if a scribe batch should be processed.
 ///

@@ -25,8 +25,83 @@ use crate::core::ops::{
 };
 use crate::core::project::ProjectStore;
 use crate::core::runner::{create_runner, Runner, WorkerSpawnConfig as RunnerSpawnConfig};
-use crate::core::state::{SQLiteState, Status, WorkerUpdate};
+use crate::core::state::{SQLiteState, Status, TaskSource, WorkerUpdate};
 use crate::core::Files;
+
+/// Generate the content for the scope task.
+///
+/// This is written to `tasks/scope.md` and includes all leader responsibilities
+/// and task planning guidance. Only the worker who gets the scope task sees this.
+fn generate_scope_task_content(is_multi_worker: bool) -> String {
+    let mut content = String::new();
+
+    content.push_str("# Scope Task\n\n");
+    content.push_str("You are the **leader** for this run. Your job is to review the task tree, understand the work, and unblock other tasks.\n\n");
+
+    // Main approaches
+    content.push_str("## Your Approach\n\n");
+    content.push_str("Review the task tree with `get_task_tree()` and decide:\n\n");
+
+    content.push_str("**1. Explore first** - If unfamiliar with codebase:\n");
+    content.push_str("   - Create exploration tasks to understand the code\n");
+    content.push_str("   - Use `scribe()` to record findings\n");
+    content.push_str("   - Create implementation tasks after exploration\n\n");
+
+    content.push_str("**2. Plan more** - If tasks need breakdown:\n");
+    content.push_str("   - Create subtasks for large tasks\n");
+    content.push_str("   - Add blocking relationships where needed\n\n");
+
+    content.push_str("**3. Start directly** - If tasks are well-defined:\n");
+    content.push_str("   - Complete this scope task to unblock other tasks\n");
+    content.push_str("   - Begin working on available tasks\n\n");
+
+    content.push_str("When you complete this task, blocked tasks become available for you (and teammates if multi-worker).\n\n");
+
+    // Task design principles
+    content.push_str("## Task Design Principles\n\n");
+    content.push_str("**Parallel execution:**\n");
+    content.push_str("- Minimize dependencies between tasks\n");
+    content.push_str("- Prefer vertical slices (complete features) over horizontal layers\n");
+    content.push_str("- Tasks touching same files = conflicts. Structure to minimize overlap.\n\n");
+    content.push_str("**Task ordering:**\n");
+    content.push_str("- Tackle unknowns (spikes) before mechanical work\n");
+    content.push_str("- A failed spike might restructure the whole plan\n\n");
+    content.push_str("**Dependencies (blocked_by):**\n");
+    content.push_str("When in doubt, add the dependency. Better slow than broken:\n");
+    content.push_str("- Task reads files another writes? → Add dependency\n");
+    content.push_str("- Task calls functions another creates? → Add dependency\n");
+    content.push_str("- Task tests code another implements? → Add dependency\n\n");
+
+    // Multi-worker coordination
+    if is_multi_worker {
+        content.push_str("## Team Leadership\n\n");
+        content
+            .push_str("You are leading a team. Check `list_contacts()` to see your teammates.\n\n");
+
+        content.push_str("**Your responsibilities:**\n");
+        content.push_str("- Design tasks to minimize conflicts (different files per task)\n");
+        content.push_str("- Use `group` thread to coordinate with teammates\n");
+        content.push_str("- Announce major decisions in group chat\n");
+        content.push_str("- When creating tasks, consider which can be parallelized\n\n");
+
+        content.push_str("**Group Chat:**\n");
+        content.push_str("Use `chat_send(\"group\", ...)` to coordinate:\n");
+        content.push_str("- When tasks are ready for claiming\n");
+        content.push_str("- When changing shared code (utils, models, configs)\n");
+        content.push_str("- When discovering patterns others should follow\n\n");
+    }
+
+    // Completion
+    content.push_str("## Completing This Task\n\n");
+    content.push_str("When you've:\n");
+    content.push_str("1. Reviewed the existing task tree\n");
+    content.push_str("2. Created any needed exploration/planning tasks\n");
+    content.push_str("3. Set up proper blocking relationships\n\n");
+    content
+        .push_str("Call `work_done()` to complete the scope task and unblock dependent tasks.\n");
+
+    content
+}
 
 /// Get the coordinator's Tailscale hostname if connected to a tailnet.
 ///
@@ -159,6 +234,7 @@ impl LocalOrchestrator {
             tokens_used: t.tokens_used.map(|n| n as u64),
             created_at: t.created_at.clone(),
             board_task_id: t.board_task_id.clone(),
+            source: t.source.as_str().to_string(),
         }
     }
 
@@ -642,14 +718,12 @@ impl Orchestrator for LocalOrchestrator {
             .collect();
 
         // Spawn the worker
-        let files = Files::new(&run_dir);
         let agent_command = get_agent_command();
         let config = WorkerSpawnConfig {
             run_name: run.to_string(),
             worker_name: worker_data.name.clone(),
             work_dir,
             run_dir: run_dir.clone(),
-            spec_path: files.spec(),
             agent_command,
             is_leader: worker_data.id == 1,
             leader_name,
@@ -815,6 +889,13 @@ impl Orchestrator for LocalOrchestrator {
             Some(validates.as_slice())
         };
 
+        // Content is stored in the database
+        let content_opt = if request.content.is_empty() {
+            None
+        } else {
+            Some(request.content.as_str())
+        };
+
         state
             .add_task_with_type(
                 &request.task_id,
@@ -824,6 +905,7 @@ impl Orchestrator for LocalOrchestrator {
                 task_type,
                 validates_opt,
                 request.board_task_id.as_deref(),
+                content_opt,
             )
             .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
@@ -844,13 +926,18 @@ impl Orchestrator for LocalOrchestrator {
 
         let state = self.get_state(run)?;
 
-        // Convert requests to DeltaTaskInput
+        // Convert requests to DeltaTaskInput (content is stored in the database)
         let tasks: Vec<DeltaTaskInput> = requests
             .iter()
             .map(|req| {
                 let task_type = match req.task_type.as_str() {
                     "eval" => TaskType::Eval,
                     _ => TaskType::Work,
+                };
+                let content = if req.content.is_empty() {
+                    None
+                } else {
+                    Some(req.content.clone())
                 };
                 DeltaTaskInput {
                     task_id: req.task_id.clone(),
@@ -860,6 +947,8 @@ impl Orchestrator for LocalOrchestrator {
                     task_type,
                     validates: req.validates.clone(),
                     board_task_id: req.board_task_id.clone(),
+                    content,
+                    source: TaskSource::Worker, // Batch tasks added by workers
                 }
             })
             .collect();
@@ -1124,14 +1213,18 @@ impl Orchestrator for LocalOrchestrator {
         // Initialize bootstrap tasks.md
         std::fs::write(
             run_dir.join("tasks.md"),
-            "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n| scope | TODO | | Read spec, create exploration tasks |\n",
+            "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n| scope | TODO | | Scope |\n",
         ).map_err(|e| OrchestratorError::Other(format!("Failed to write tasks.md: {}", e)))?;
 
         // Create tasks detail folder
         let tasks_dir = run_dir.join("tasks");
         std::fs::create_dir_all(&tasks_dir)
             .map_err(|e| OrchestratorError::Other(format!("Failed to create tasks dir: {}", e)))?;
-        std::fs::write(tasks_dir.join("scope.md"), "")
+
+        // Write scope task content (leader guidance)
+        let is_multi_worker = request.worker_scale.map(|n| n > 1).unwrap_or(false);
+        let scope_content = generate_scope_task_content(is_multi_worker);
+        std::fs::write(tasks_dir.join("scope.md"), scope_content)
             .map_err(|e| OrchestratorError::Other(format!("Failed to write scope.md: {}", e)))?;
 
         // Initialize workspace from starting_point if provided
@@ -1196,10 +1289,14 @@ impl Orchestrator for LocalOrchestrator {
                 .map_err(|e| OrchestratorError::Other(format!("Failed to set HITL: {}", e)))?;
         }
 
-        // Add initial scope task
-        if let Err(e) =
-            sqlite_state.add_task("scope", "Read spec, create exploration tasks", None, None)
-        {
+        // Add initial scope task (System source - created by system, not spec or worker)
+        if let Err(e) = sqlite_state.add_task_with_source_simple(
+            "scope",
+            "Scope",
+            None,
+            None,
+            TaskSource::System,
+        ) {
             return Err(OrchestratorError::Other(format!(
                 "Failed to create scope task: {}",
                 e
@@ -1454,7 +1551,6 @@ impl Orchestrator for LocalOrchestrator {
         // Get agent command
         let agent_command = get_agent_command();
         let files = Files::new(run_dir.clone());
-        let spec_path = files.spec();
         let chats_dir = files.chats_dir();
 
         // Read tailscale OAuth credentials if present
@@ -1586,7 +1682,6 @@ impl Orchestrator for LocalOrchestrator {
                 worker_name: worker_name.clone(),
                 work_dir: work_dir.clone(),
                 run_dir: run_dir.clone(),
-                spec_path: spec_path.clone(),
                 agent_command: agent_command.clone(),
                 is_leader: i == 0 && existing_workers.is_empty(), // First new worker is leader if no existing workers
                 leader_name: leader_name.clone(),
@@ -1701,14 +1796,18 @@ impl Orchestrator for LocalOrchestrator {
         // Initialize bootstrap tasks.md
         std::fs::write(
             run_dir.join("tasks.md"),
-            "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n| scope | TODO | | Read spec, create exploration tasks |\n",
+            "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n| scope | TODO | | Scope |\n",
         ).map_err(|e| OrchestratorError::Other(format!("Failed to write tasks.md: {}", e)))?;
 
         // Create tasks detail folder
         let tasks_dir = run_dir.join("tasks");
         std::fs::create_dir_all(&tasks_dir)
             .map_err(|e| OrchestratorError::Other(format!("Failed to create tasks dir: {}", e)))?;
-        std::fs::write(tasks_dir.join("scope.md"), "")
+
+        // Write scope task content (leader guidance)
+        let is_multi_worker = request.worker_scale.map(|n| n > 1).unwrap_or(false);
+        let scope_content = generate_scope_task_content(is_multi_worker);
+        std::fs::write(tasks_dir.join("scope.md"), scope_content)
             .map_err(|e| OrchestratorError::Other(format!("Failed to write scope.md: {}", e)))?;
 
         // 3.5. Load project and resolve starting_point
@@ -1843,7 +1942,9 @@ impl Orchestrator for LocalOrchestrator {
         let first_worker = &worker_names[0];
 
         // Always create scope task - this is the first task workers claim
-        if let Err(e) = state.add_task("scope", "Read spec, create exploration tasks", None, None) {
+        if let Err(e) =
+            state.add_task_with_source_simple("scope", "Scope", None, None, TaskSource::System)
+        {
             return Err(OrchestratorError::Other(format!(
                 "Failed to create scope task: {}",
                 e
@@ -1904,7 +2005,6 @@ impl Orchestrator for LocalOrchestrator {
         // 9. Spawn workers and set to Working
         {
             let agent_command = get_agent_command();
-            let spec_path = files.spec();
 
             // Collect API keys from environment for Docker/remote runners
             let env_vars: HashMap<String, String> = std::env::vars()
@@ -2001,7 +2101,6 @@ impl Orchestrator for LocalOrchestrator {
                     worker_name: worker_name.clone(),
                     work_dir: work_dir.clone(),
                     run_dir: run_dir.clone(),
-                    spec_path: spec_path.clone(),
                     agent_command: agent_command.clone(),
                     is_leader,
                     leader_name: leader_name.clone(),
@@ -2176,7 +2275,6 @@ impl Orchestrator for LocalOrchestrator {
 
         // Build spawn config
         let agent_command = get_agent_command();
-        let files = Files::new(&run_dir);
 
         // Collect API keys from environment for Docker/remote runners
         let env_vars: HashMap<String, String> = std::env::vars()
@@ -2197,7 +2295,6 @@ impl Orchestrator for LocalOrchestrator {
             worker_name: worker_name.to_string(),
             work_dir: work_dir.to_path_buf(),
             run_dir: run_dir.clone(),
-            spec_path: files.spec(),
             agent_command,
             is_leader: false, // Scaled/resumed workers are never leader
             leader_name,
@@ -2215,21 +2312,28 @@ impl Orchestrator for LocalOrchestrator {
             Ok(result) => {
                 // Update worker with PID and runner info
                 let pid = result.pid.map(|p| p as i64);
-                state
-                    .update_worker(
+                let update_result = state.update_worker(
+                    worker_name,
+                    WorkerUpdate {
+                        pid,
+                        runner_id: Some(result.handle.runner_id.clone()),
+                        runner_type: Some(result.handle.runner_type.clone()),
+                        status: Some(crate::core::state::WorkerStatus::Working),
+                        ..Default::default()
+                    },
+                );
+
+                if let Err(ref e) = update_result {
+                    tracing::error!(
+                        "spawn_single_worker: FAILED to update worker '{}' status to Working: {}",
                         worker_name,
-                        WorkerUpdate {
-                            pid,
-                            runner_id: Some(result.handle.runner_id.clone()),
-                            runner_type: Some(result.handle.runner_type.clone()),
-                            status: Some(crate::core::state::WorkerStatus::Working),
-                            ..Default::default()
-                        },
-                    )
-                    .map_err(|e| OrchestratorError::State(e.to_string()))?;
+                        e
+                    );
+                }
+                update_result.map_err(|e| OrchestratorError::State(e.to_string()))?;
 
                 tracing::info!(
-                    "spawn_single_worker: spawned '{}' (runner_id: {}, runner_type: {})",
+                    "spawn_single_worker: spawned '{}' with status=Working (runner_id: {}, runner_type: {})",
                     worker_name,
                     result.handle.runner_id,
                     result.handle.runner_type
@@ -2459,7 +2563,6 @@ impl Orchestrator for LocalOrchestrator {
 
         // 6. Spawn worker
         let agent_command = get_agent_command();
-        let files = Files::new(&run_dir);
 
         // Collect API keys from environment for Docker/remote runners
         let env_vars: HashMap<String, String> = std::env::vars()
@@ -2517,7 +2620,6 @@ impl Orchestrator for LocalOrchestrator {
             worker_name: worker_name.to_string(),
             work_dir: work_dir.to_path_buf(),
             run_dir: run_dir.clone(),
-            spec_path: files.spec(),
             agent_command,
             is_leader: false, // Resumed workers are never leader
             leader_name,

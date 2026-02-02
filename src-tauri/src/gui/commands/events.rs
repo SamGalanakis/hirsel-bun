@@ -231,6 +231,7 @@ pub async fn start_worker_event_stream(
             run_name_clone, worker_name_clone
         );
         let mut last_id: Option<i64> = None;
+        let mut last_status: Option<String> = None;
         let poll_interval = tokio::time::Duration::from_millis(200);
         let mut first_poll = true;
 
@@ -276,7 +277,16 @@ pub async fn start_worker_event_stream(
                 .map(|w| w.status.as_str().to_string());
 
             if !events.is_empty() {
+                let old_last_id = last_id;
                 last_id = events.last().map(|e| e.id);
+
+                info!(
+                    "[WorkerStream] {} got {} new events, last_id: {:?} -> {:?}",
+                    worker_name_clone,
+                    events.len(),
+                    old_last_id,
+                    last_id
+                );
 
                 let responses: Vec<WorkerEventResponse> = events
                     .into_iter()
@@ -341,20 +351,37 @@ pub async fn start_worker_event_stream(
                 first_poll = false;
             }
 
-            // Check if worker is done (not actively working)
-            let is_done = worker_status
-                .as_ref()
-                .map(|s| !matches!(s.as_str(), "working" | "waiting" | "awaiting"))
-                .unwrap_or(false);
-
-            if is_done && !first_poll {
-                // Send status update and end stream for completed workers
+            // Emit status event if status changed (e.g., awaiting -> working when respawned)
+            let status_changed = last_status.as_ref() != worker_status.as_ref();
+            if status_changed && !first_poll {
+                info!(
+                    "[WorkerStream] Worker {} status changed: {:?} -> {:?}",
+                    worker_name_clone, last_status, worker_status
+                );
                 let status_event = WorkerStreamEvent::Status {
                     run_name: run_name_clone.clone(),
                     worker_name: worker_name_clone.clone(),
-                    worker_status,
+                    worker_status: worker_status.clone(),
                 };
                 let _ = app.emit("worker-event", &status_event);
+            }
+            last_status = worker_status.clone();
+
+            // Check if worker is done (not actively working)
+            // Continue streaming while worker is working, awaiting, or paused
+            // Only end stream for error status or if worker is removed
+            let is_done = worker_status
+                .as_ref()
+                .map(|s| matches!(s.as_str(), "error"))
+                .unwrap_or(false);
+
+            if is_done && !first_poll {
+                // Send status update and end stream for error status
+                info!(
+                    "[WorkerStream] Worker {} status is '{}', ending stream",
+                    worker_name_clone,
+                    worker_status.as_deref().unwrap_or("unknown")
+                );
                 break;
             }
 

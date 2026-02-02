@@ -366,6 +366,7 @@ mod tests {
             pending_done_at: None,
             tokens_used: None,
             parent_id: None,
+            content: None,
             blocked_by: vec!["other".to_string()],
             task_type: crate::core::state::TaskType::Work,
             eval_result: None,
@@ -373,6 +374,7 @@ mod tests {
             board_task_id: None,
             assigned_to: None,
             completed_by: None,
+            source: crate::core::state::TaskSource::Spec,
         };
 
         let display = TaskDisplay::from_task(&task, 2);

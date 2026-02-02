@@ -660,11 +660,6 @@ impl LocalLifecycleManager {
             .get_claimable_tasks()
             .map_err(|e| LifecycleError::State(e.to_string()))?;
 
-        if claimable.is_empty() {
-            debug!("evaluate_scaling: no claimable tasks");
-            return Ok(vec![]);
-        }
-
         let workers = self
             .state
             .get_workers()
@@ -675,30 +670,145 @@ impl LocalLifecycleManager {
             .filter(|w| w.status == WorkerStatus::Working)
             .count();
 
-        let idle_workers: Vec<_> = workers
+        let mut idle_workers: Vec<_> = workers
             .iter()
             .filter(|w| w.status == WorkerStatus::Awaiting && !w.hitl_waiting)
             .collect();
 
-        // Calculate how many workers we need
+        let mut actions = vec![];
+
+        // Scale down: if we have more workers than max_workers, delete excess idle workers
+        // Only delete idle workers (Awaiting, not hitl_waiting, no assigned task)
+        // Never kill working workers
+        let total_workers = workers.len();
+        if total_workers > max_workers {
+            let excess = total_workers - max_workers;
+            let mut deleted_names: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+
+            // Find idle workers without assigned tasks that we can delete
+            for worker in &idle_workers {
+                if deleted_names.len() >= excess {
+                    break;
+                }
+                // Only delete workers that have no assigned task
+                if worker.assigned_task_id.is_none() {
+                    // Delete the worker from the database
+                    // Note: We don't need to kill the process since idle workers have no process
+                    if let Err(e) = self.state.delete_worker(&worker.name) {
+                        warn!(
+                            "evaluate_scaling: failed to delete excess worker {}: {}",
+                            worker.name, e
+                        );
+                    } else {
+                        info!(
+                            "evaluate_scaling: deleted excess idle worker {} (scaling down to {})",
+                            worker.name, max_workers
+                        );
+                        deleted_names.insert(worker.name.clone());
+                    }
+                }
+            }
+
+            // Filter out deleted workers from idle_workers list
+            if !deleted_names.is_empty() {
+                idle_workers.retain(|w| !deleted_names.contains(&w.name));
+            }
+        }
+
+        // First: check for idle workers that ALREADY have an assigned task (status=doing)
+        // These need to be respawned immediately without claiming a new task
+        for worker in &idle_workers {
+            if let Some(ref assigned_task_id) = worker.assigned_task_id {
+                // Worker has an assigned task - verify it's still in "doing" status
+                let task_still_doing = self
+                    .state
+                    .get_tasks()
+                    .map(|tasks| {
+                        tasks.iter().any(|t| {
+                            t.id == *assigned_task_id
+                                && t.status == crate::core::state::TaskStatus::Doing
+                        })
+                    })
+                    .unwrap_or(false);
+
+                if task_still_doing {
+                    // Get work_dir from database, fallback to standard location
+                    let work_dir = worker
+                        .work_dir
+                        .as_ref()
+                        .filter(|s| !s.is_empty())
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| self.context.run_dir.join("work").join(&worker.name));
+
+                    actions.push(LifecycleAction::ResumeWorker {
+                        worker_name: worker.name.clone(),
+                        work_dir,
+                        resume_session_id: worker.session_id.clone(),
+                        state_handle: worker
+                            .state_handle
+                            .as_ref()
+                            .and_then(|json| serde_json::from_str::<WorkerStateHandle>(json).ok()),
+                    });
+
+                    info!(
+                        "evaluate_scaling: respawning worker {} with existing assigned task {}",
+                        worker.name, assigned_task_id
+                    );
+                }
+            }
+        }
+
+        // If no claimable tasks, return any actions from existing assignments
+        if claimable.is_empty() {
+            debug!(
+                "evaluate_scaling: no claimable tasks, {} actions from existing assignments",
+                actions.len()
+            );
+            return Ok(actions);
+        }
+
+        // Calculate how many workers we need for claimable tasks
         let needed = claimable
             .len()
             .min(max_workers)
             .saturating_sub(active_count);
-        if needed == 0 {
+
+        // Track count of workers already handled (with existing assignments)
+        let existing_actions_count = actions.len();
+
+        // Filter out workers that already have actions (from existing assignments above)
+        // Build a set of worker names that already have actions
+        let workers_with_actions: std::collections::HashSet<String> = actions
+            .iter()
+            .filter_map(|a| match a {
+                LifecycleAction::ResumeWorker { worker_name, .. } => Some(worker_name.clone()),
+                _ => None,
+            })
+            .collect();
+
+        let available_idle_workers: Vec<_> = idle_workers
+            .iter()
+            .filter(|w| !workers_with_actions.contains(&w.name))
+            .collect();
+
+        // Drop the HashSet so we can mutate actions again
+        drop(workers_with_actions);
+
+        if needed == 0 && available_idle_workers.is_empty() {
             debug!("evaluate_scaling: no additional workers needed");
-            return Ok(vec![]);
+            return Ok(actions);
         }
 
-        let mut actions = vec![];
         let mut tasks_to_assign: Vec<_> = claimable.clone();
         let all_tasks = self
             .state
             .get_tasks()
             .map_err(|e| LifecycleError::State(e.to_string()))?;
 
-        // First: wake idle workers with assigned tasks
-        for worker in idle_workers.iter().take(needed) {
+        // Second: wake available idle workers with NEW tasks from claimable
+        let workers_to_wake = needed.min(available_idle_workers.len());
+        for worker in available_idle_workers.iter().take(workers_to_wake) {
             if let Some(task) = self.pick_task_for_worker(&tasks_to_assign, worker, &all_tasks) {
                 tasks_to_assign.retain(|t| t.id != task.id);
 
@@ -751,7 +861,8 @@ impl LocalLifecycleManager {
         }
 
         // Then: spawn new workers for remaining tasks
-        let remaining = needed - actions.len();
+        let spawned_count = actions.len() - existing_actions_count; // Count of newly assigned workers
+        let remaining = needed.saturating_sub(spawned_count);
         if remaining > 0 {
             let project_path_str = match self
                 .state

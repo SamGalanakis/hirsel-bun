@@ -110,7 +110,14 @@ impl Client for HirselClient {
                 if let ContentBlock::Text(text) = &chunk.content {
                     // Write to database for streaming
                     if let Some(state) = self.get_state() {
-                        let _ = state.insert_text_event(&self.worker_name, &text.text);
+                        match state.insert_text_event(&self.worker_name, &text.text) {
+                            Ok(id) => {
+                                debug!("[{}] Inserted text event id={}", self.worker_name, id)
+                            }
+                            Err(e) => {
+                                error!("[{}] Failed to insert text event: {}", self.worker_name, e)
+                            }
+                        }
                     }
                 }
             }
@@ -118,7 +125,15 @@ impl Client for HirselClient {
                 if let ContentBlock::Text(text) = &chunk.content {
                     // Write thought to database
                     if let Some(state) = self.get_state() {
-                        let _ = state.insert_thought_event(&self.worker_name, &text.text);
+                        match state.insert_thought_event(&self.worker_name, &text.text) {
+                            Ok(id) => {
+                                debug!("[{}] Inserted thought event id={}", self.worker_name, id)
+                            }
+                            Err(e) => error!(
+                                "[{}] Failed to insert thought event: {}",
+                                self.worker_name, e
+                            ),
+                        }
                     }
                 }
             }
@@ -154,14 +169,23 @@ impl Client for HirselClient {
 
                 // Write to database
                 if let Some(state) = self.get_state() {
-                    let _ = state.insert_tool_start_event(
+                    match state.insert_tool_start_event(
                         &self.worker_name,
                         &tc.tool_call_id.to_string(),
                         &tc.title,
                         kind,
                         status,
                         input.as_deref(),
-                    );
+                    ) {
+                        Ok(id) => debug!(
+                            "[{}] Inserted tool_start event id={} for {}",
+                            self.worker_name, id, tc.title
+                        ),
+                        Err(e) => error!(
+                            "[{}] Failed to insert tool_start event for {}: {}",
+                            self.worker_name, tc.title, e
+                        ),
+                    }
                 }
             }
             SessionUpdate::ToolCallUpdate(update) => {
@@ -179,13 +203,22 @@ impl Client for HirselClient {
 
                 // Write to database
                 if let Some(state) = self.get_state() {
-                    let _ = state.insert_tool_update_event(
+                    match state.insert_tool_update_event(
                         &self.worker_name,
                         &update.tool_call_id.to_string(),
                         update.fields.title.as_deref(),
                         status,
                         output.as_deref(),
-                    );
+                    ) {
+                        Ok(id) => debug!(
+                            "[{}] Inserted tool_update event id={} for {}",
+                            self.worker_name, id, update.tool_call_id
+                        ),
+                        Err(e) => error!(
+                            "[{}] Failed to insert tool_update event for {}: {}",
+                            self.worker_name, update.tool_call_id, e
+                        ),
+                    }
                 }
             }
             _ => {}
@@ -323,7 +356,6 @@ pub struct WorkerRunConfig {
     pub worker_name: String,
     pub work_dir: PathBuf,
     pub run_dir: PathBuf,
-    pub spec_path: PathBuf,
     pub agent_command: Vec<String>,
     pub is_leader: bool,
     pub leader_name: Option<String>,
@@ -435,17 +467,10 @@ pub async fn run_acp_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
     let mode_request = SetSessionModeRequest::new(session_id.clone(), "bypassPermissions");
     conn.set_session_mode(mode_request).await?;
 
-    // Read the spec
-    let spec_content =
-        std::fs::read_to_string(&config.spec_path).unwrap_or_else(|_| "No spec found.".to_string());
-
     // Build the prompt
     let prompt = build_worker_prompt(
         &config.worker_name,
         &config.run_name,
-        &spec_content,
-        config.is_leader,
-        config.leader_name.as_deref(),
         config.teammates.as_deref(),
         &config.work_dir,
         &config.run_dir,
@@ -483,13 +508,10 @@ pub async fn run_acp_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
 /// Build the worker prompt with all context.
 ///
 /// This is used by both the ACP worker and Claude CLI worker implementations.
-#[allow(clippy::too_many_arguments)]
+/// Workers access task details via MCP tools (get_task_tree, get_task_details, etc.)
 pub fn build_worker_prompt(
     worker_name: &str,
     run_name: &str,
-    _spec_content: &str, // No longer embedded - workers use MCP tools to access tasks
-    is_leader: bool,
-    leader_name: Option<&str>,
     teammates: Option<&[String]>,
     work_dir: &Path,
     run_dir: &Path,
@@ -523,10 +545,12 @@ pub fn build_worker_prompt(
     // Your Task - Direct assignment
     prompt.push_str("## Your Assigned Task\n\n");
     if let Some(task_id) = assigned_task_id {
-        prompt.push_str(&format!(
-            "You have been assigned task `{}`. Use `get_task_details(\"{}\")` to see the full content.\n\n",
-            task_id, task_id
-        ));
+        let task_file = run_dir.join("tasks").join(format!("{}.md", task_id));
+        prompt.push_str(&format!("**Task:** `{}`\n", task_id));
+        prompt.push_str(&format!("**Details file:** `{}`\n\n", task_file.display()));
+        prompt.push_str(
+            "Read your task details with `get_task_details()` or by reading the file directly.\n\n",
+        );
     } else {
         prompt.push_str("Check `get_my_tasks()` to see your assigned work.\n\n");
     }
@@ -628,7 +652,9 @@ pub fn build_worker_prompt(
     prompt.push_str("  - Omit `file` to get all docs, or specify e.g. `patterns.md`\n\n");
 
     prompt.push_str("### Completion\n");
-    prompt.push_str("- `work_done` - Signal all work is complete (triggers eval)\n");
+    prompt.push_str("- `work_done` - Signal task complete and ready for new assignment\n");
+    prompt.push_str("  - Auto-completes your currently assigned task\n");
+    prompt.push_str("  - You'll exit and be respawned with a new task if available\n");
     prompt.push_str("- `time_status` - Check time limit status\n\n");
 
     prompt.push_str("### Eval Operations\n");
@@ -646,46 +672,12 @@ pub fn build_worker_prompt(
     prompt.push_str("- Your task is **pre-assigned** when you spawn - no need to claim\n");
     prompt.push_str("- Use `get_task_details(task_id)` to see full task content\n");
     prompt.push_str("- Complete the work in your git workspace\n");
-    prompt.push_str("- Call `complete_task()` when done (no task_id needed)\n");
-    prompt.push_str("- Call `work_done()` to signal you're ready for next assignment\n");
-    prompt.push_str("- You'll exit and be respawned with a new task if one is available\n\n");
+    prompt.push_str("- Call `work_done()` when your task is complete\n");
+    prompt.push_str("  - This marks your task done and exits\n");
+    prompt.push_str("  - You'll be respawned with a new task if one is available\n\n");
     prompt.push_str("**Creating subtasks:**\n");
     prompt.push_str("- You can still use `add_task()` to break down work\n");
     prompt.push_str("- Subtasks go into the pool and may be assigned to you or other workers\n\n");
-
-    // The scope task
-    prompt.push_str("## The \"scope\" Task\n\n");
-    prompt.push_str("You start with a \"scope\" task already claimed. Review the task tree and decide your approach:\n\n");
-
-    prompt.push_str("**1. Explore first** - If unfamiliar with codebase:\n");
-    prompt.push_str("   - Create exploration tasks to understand the code\n");
-    prompt.push_str("   - Use `scribe()` to record findings\n");
-    prompt.push_str("   - Create implementation tasks after exploration\n\n");
-
-    prompt.push_str("**2. Plan more** - If tasks need breakdown:\n");
-    prompt.push_str("   - Create subtasks for large tasks\n");
-    prompt.push_str("   - Add blocking relationships where needed\n\n");
-
-    prompt.push_str("**3. Start directly** - If tasks are well-defined:\n");
-    prompt.push_str("   - Complete the scope task to unblock other tasks\n");
-    prompt.push_str("   - Begin working on available tasks\n\n");
-
-    prompt.push_str("When you complete the scope task, blocked tasks become available.\n\n");
-
-    // Task design principles
-    prompt.push_str("## Task Design Principles\n\n");
-    prompt.push_str("**Parallel execution:**\n");
-    prompt.push_str("- Minimize dependencies between tasks\n");
-    prompt.push_str("- Prefer vertical slices (complete features) over horizontal layers\n");
-    prompt.push_str("- Tasks touching same files = conflicts. Structure to minimize overlap.\n\n");
-    prompt.push_str("**Task ordering:**\n");
-    prompt.push_str("- Tackle unknowns (spikes) before mechanical work\n");
-    prompt.push_str("- A failed spike might restructure the whole plan\n\n");
-    prompt.push_str("**Dependencies (blocked_by):**\n");
-    prompt.push_str("When in doubt, add the dependency. Better slow than broken:\n");
-    prompt.push_str("- Task reads files another writes? → Add dependency\n");
-    prompt.push_str("- Task calls functions another creates? → Add dependency\n");
-    prompt.push_str("- Task tests code another implements? → Add dependency\n\n");
 
     // Messaging section
     prompt.push_str("## Messaging the User\n\n");
@@ -712,59 +704,12 @@ pub fn build_worker_prompt(
     prompt.push_str("**At task start:** Call `read_docs()` to check accumulated knowledge.\n");
     prompt.push_str("**During work:** Call `scribe()` when you discover something useful.\n\n");
 
-    // Role-specific section
-    if is_multi_worker {
-        let teammates_str = teammates.map(|t| t.join(", ")).unwrap_or_default();
-        if is_leader {
-            prompt.push_str("## Your Role: LEADER\n\n");
-            prompt.push_str(&format!(
-                "You are the team leader. Teammates: {}\n\n",
-                teammates_str
-            ));
-            prompt.push_str("**Your responsibilities:**\n");
-            prompt
-                .push_str("- Claim the `scope` task and create exploration/implementation tasks\n");
-            prompt.push_str("- Design tasks to minimize conflicts (different files per task)\n");
-            prompt.push_str("- Use `group` thread to coordinate with teammates\n");
-            prompt.push_str("- Announce major decisions in group chat\n\n");
-        } else {
-            prompt.push_str("## Your Role: TEAM MEMBER\n\n");
-            prompt.push_str(&format!(
-                "Leader: **{}**. Teammates: {}\n\n",
-                leader_name.unwrap_or("unknown"),
-                teammates_str
-            ));
-            prompt.push_str("**Your workflow:**\n");
-            prompt.push_str("1. Check `chat_unread()` for team updates\n");
-            prompt.push_str("2. If no tasks available, wait for leader to complete scoping\n");
-            prompt.push_str("3. **Announce intent in `group` before claiming** ambiguous tasks\n");
-            prompt.push_str("4. Claim task, work on it, push, mark done\n\n");
-            prompt.push_str("**Do NOT call `work_done` just because no tasks yet** - leader may still be scoping.\n\n");
-        }
-
-        prompt.push_str("## Group Chat Coordination\n\n");
-        prompt.push_str("Use `chat_send(\"group\", ...)` to coordinate with teammates:\n\n");
-        prompt.push_str("**When to message the group:**\n");
-        prompt.push_str("- Before claiming ambiguous tasks (announce intent)\n");
-        prompt.push_str("- When changing shared code (utils, models, configs)\n");
-        prompt.push_str("- When discovering patterns others should follow\n");
-        prompt.push_str("- When changing interfaces (function signatures, schemas)\n");
-        prompt.push_str("- When finding surprises or gotchas\n\n");
-        prompt.push_str("**Examples:**\n");
-        prompt.push_str("```\n");
-        prompt.push_str("chat_send(\"group\", \"I'm taking auth_setup - will use JWT tokens\")\n");
-        prompt.push_str("chat_send(\"group\", \"Changed User model - added 'role' field\")\n");
-        prompt.push_str("chat_send(\"group\", \"FYI: tests require REDIS_URL env var\")\n");
-        prompt.push_str("```\n\n");
-    }
-
     // Getting started
     prompt.push_str("## Getting Started\n\n");
     prompt.push_str("1. Use `get_task_details(your_assigned_task)` to see your task\n");
     prompt.push_str("2. Work on the task in your git workspace\n");
     prompt.push_str("3. Commit your changes\n");
-    prompt.push_str("4. Call `complete_task()` when done\n");
-    prompt.push_str("5. Call `work_done()` - you'll be respawned with a new task if available\n\n");
+    prompt.push_str("4. Call `work_done()` - your task is auto-completed and you'll be respawned with a new task if available\n\n");
 
     // When stuck
     prompt.push_str("## When Stuck\n\n");
@@ -778,81 +723,12 @@ pub fn build_worker_prompt(
     prompt
 }
 
-// =============================================================================
-// Claude CLI Worker (native Rust, no Node.js dependency)
-// =============================================================================
-
-/// Run a worker using the native Claude CLI bridge.
+/// Run a worker using the ACP protocol.
 ///
-/// This is an alternative to `run_acp_worker` that communicates directly with
-/// the Claude CLI using its JSON streaming protocol.
-pub async fn run_claude_cli_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
-    use crate::core::claude_cli::{run_claude_worker, ClaudeWorkerConfig};
-
-    info!(
-        "[{}] Starting Claude CLI worker for run={}",
-        config.worker_name, config.run_name
-    );
-
-    // Read the spec
-    let spec_content =
-        std::fs::read_to_string(&config.spec_path).unwrap_or_else(|_| "No spec found.".to_string());
-
-    // Build the prompt
-    let prompt = build_worker_prompt(
-        &config.worker_name,
-        &config.run_name,
-        &spec_content,
-        config.is_leader,
-        config.leader_name.as_deref(),
-        config.teammates.as_deref(),
-        &config.work_dir,
-        &config.run_dir,
-        config.assigned_task_id.as_deref(),
-    );
-
-    // Create Claude worker config
-    let worker_config = ClaudeWorkerConfig {
-        run_name: config.run_name,
-        worker_name: config.worker_name,
-        work_dir: config.work_dir,
-        run_dir: config.run_dir,
-        prompt,
-        resume_session_id: config.resume_session_id,
-    };
-
-    // Run the worker
-    let result = run_claude_worker(worker_config).await?;
-
-    info!(
-        "Worker completed: stop_reason={:?}, tokens={:?}/{:?}, cost=${:?}",
-        result.stop_reason, result.input_tokens, result.output_tokens, result.cost_usd
-    );
-
-    Ok(())
-}
-
-/// Run a worker, automatically selecting the best backend.
-///
-/// If the agent command indicates Claude or our built-in ACP bridge, uses the
-/// native Claude Agent SDK. Otherwise falls back to the ACP adapter for external
-/// agents.
+/// All workers now use `run_acp_worker` which communicates via the ACP protocol
+/// using `ClientSideConnection`. This gives us proper tool title handling -
+/// the ACP protocol populates `tc.title` correctly, fixing the "Tool" label
+/// issue in the spectate view.
 pub async fn run_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
-    // Check if we should use the native Claude Agent SDK
-    // This includes:
-    // - Empty command (default to Claude)
-    // - "claude" or path ending in "/claude"
-    // - "hirsel __acp-bridge" (our built-in bridge, now uses SDK)
-    let use_sdk = config.agent_command.is_empty()
-        || config.agent_command.first().is_some_and(|cmd| {
-            cmd == "claude" || cmd.ends_with("/claude") || cmd.contains("claude-code")
-        })
-        || config.agent_command.iter().any(|arg| arg == "__acp-bridge");
-
-    if use_sdk {
-        return run_claude_cli_worker(config).await;
-    }
-
-    // Fall back to ACP adapter for external agents
     run_acp_worker(config).await
 }

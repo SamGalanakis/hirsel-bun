@@ -15,7 +15,7 @@ import {
 } from 'solid-js';
 import type { RepoValidation, StartingPoint } from '../../lib/types';
 import { useProject } from '../../stores';
-import { initLucideIcons } from '../../lib/icons';
+import { Icon } from '../shared';
 
 type StartingPointType = 'greenfield' | 'localFolder' | 'gitRepo';
 
@@ -42,7 +42,6 @@ export const ProjectSetup: Component = () => {
   // Focus name input on mount
   onMount(() => {
     nameInputRef?.focus();
-    initLucideIcons();
   });
 
   // Load path suggestions on mount
@@ -50,13 +49,6 @@ export const ProjectSetup: Component = () => {
     invoke<string[]>('suggest_paths')
       .then((paths) => setSuggestions(paths || []))
       .catch(() => setSuggestions([]));
-  });
-
-  // Re-init icons when content changes
-  createEffect(() => {
-    void startingPointType();
-    void validation();
-    queueMicrotask(initLucideIcons);
   });
 
   // Debounced path validation
@@ -351,13 +343,9 @@ export const ProjectSetup: Component = () => {
                 }}
                 onClick={() => setStartingPointType('localFolder')}
               >
-                <i
-                  data-lucide="folder"
-                  class="w-5 h-5 mb-2"
-                  classList={{
-                    'text-amber-400': startingPointType() === 'localFolder',
-                    'text-wool-500 group-hover:text-wool-400': startingPointType() !== 'localFolder',
-                  }}
+                <Icon
+                  name="folder"
+                  class={`w-5 h-5 mb-2 ${startingPointType() === 'localFolder' ? 'text-amber-400' : 'text-wool-500 group-hover:text-wool-400'}`}
                 />
                 <div
                   class="text-sm font-medium"
@@ -388,13 +376,9 @@ export const ProjectSetup: Component = () => {
                 }}
                 onClick={() => setStartingPointType('gitRepo')}
               >
-                <i
-                  data-lucide="git-branch"
-                  class="w-5 h-5 mb-2"
-                  classList={{
-                    'text-amber-400': startingPointType() === 'gitRepo',
-                    'text-wool-500 group-hover:text-wool-400': startingPointType() !== 'gitRepo',
-                  }}
+                <Icon
+                  name="git-branch"
+                  class={`w-5 h-5 mb-2 ${startingPointType() === 'gitRepo' ? 'text-amber-400' : 'text-wool-500 group-hover:text-wool-400'}`}
                 />
                 <div
                   class="text-sm font-medium"
@@ -425,13 +409,9 @@ export const ProjectSetup: Component = () => {
                 }}
                 onClick={() => setStartingPointType('greenfield')}
               >
-                <i
-                  data-lucide="sprout"
-                  class="w-5 h-5 mb-2"
-                  classList={{
-                    'text-amber-400': startingPointType() === 'greenfield',
-                    'text-wool-500 group-hover:text-wool-400': startingPointType() !== 'greenfield',
-                  }}
+                <Icon
+                  name="sprout"
+                  class={`w-5 h-5 mb-2 ${startingPointType() === 'greenfield' ? 'text-amber-400' : 'text-wool-500 group-hover:text-wool-400'}`}
                 />
                 <div
                   class="text-sm font-medium"
@@ -486,7 +466,7 @@ export const ProjectSetup: Component = () => {
                               }`}
                               onMouseDown={() => selectSuggestion(suggestion)}
                             >
-                              <i data-lucide="folder" class="w-3.5 h-3.5 inline-block mr-2 text-wool-500" />
+                              <Icon name="folder" class="w-3.5 h-3.5 inline-block mr-2 text-wool-500" />
                               {suggestion}
                             </button>
                           )}
@@ -500,7 +480,7 @@ export const ProjectSetup: Component = () => {
                     onClick={handleBrowse}
                     title="Browse folders"
                   >
-                    <i data-lucide="folder-open" class="w-4 h-4" />
+                    <Icon name="folder-open" class="w-4 h-4" />
                   </button>
                 </div>
               </div>
@@ -514,7 +494,7 @@ export const ProjectSetup: Component = () => {
               <Show when={!validating() && validation()}>
                 <Show when={validation()?.valid}>
                   <p class="text-xs text-sage flex items-center gap-2">
-                    <i data-lucide="check" class="w-3.5 h-3.5" />
+                    <Icon name="check" class="w-3.5 h-3.5" />
                     {validation()?.needsGitInit
                       ? 'Folder exists (Git will be initialized)'
                       : validation()?.needsDirCreate
@@ -524,7 +504,7 @@ export const ProjectSetup: Component = () => {
                 </Show>
                 <Show when={!validation()?.valid && validation()?.error}>
                   <p class="text-xs text-terra flex items-center gap-2">
-                    <i data-lucide="alert-circle" class="w-3.5 h-3.5" />
+                    <Icon name="alert-circle" class="w-3.5 h-3.5" />
                     {validation()?.error}
                   </p>
                 </Show>
@@ -556,13 +536,13 @@ export const ProjectSetup: Component = () => {
               <Show when={!validating() && validation()}>
                 <Show when={validation()?.valid}>
                   <p class="text-xs text-sage flex items-center gap-2">
-                    <i data-lucide="check" class="w-3.5 h-3.5" />
+                    <Icon name="check" class="w-3.5 h-3.5" />
                     Valid repository
                   </p>
                 </Show>
                 <Show when={!validation()?.valid && validation()?.error}>
                   <p class="text-xs text-terra flex items-center gap-2">
-                    <i data-lucide="alert-circle" class="w-3.5 h-3.5" />
+                    <Icon name="alert-circle" class="w-3.5 h-3.5" />
                     {validation()?.error}
                   </p>
                 </Show>
@@ -593,7 +573,7 @@ export const ProjectSetup: Component = () => {
           <Show when={startingPointType() === 'greenfield'}>
             <div class="p-4 rounded-lg bg-amber-500/5 border border-amber-500/15">
               <div class="flex items-start gap-3">
-                <i data-lucide="info" class="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                <Icon name="info" class="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
                 <p class="text-sm text-wool-400">
                   A new empty workspace will be created for your project.
                   Perfect for brand new projects without existing code.

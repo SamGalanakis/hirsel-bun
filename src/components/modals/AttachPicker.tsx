@@ -3,6 +3,7 @@
  */
 import { type Component, For, Show } from 'solid-js';
 import { useSelection } from '../../stores';
+import { Icon } from '../shared';
 
 export const AttachPicker: Component = () => {
   const selection = useSelection();
@@ -24,7 +25,7 @@ export const AttachPicker: Component = () => {
               onClick={() => selection.closeAttachPicker()}
               class="p-1 rounded hover:bg-pasture-700 text-wool-500"
             >
-              <i data-lucide="x" class="w-4 h-4" />
+              <Icon name="x" class="w-4 h-4" />
             </button>
           </div>
 
@@ -45,7 +46,7 @@ export const AttachPicker: Component = () => {
                         class="w-full px-3 py-2 text-left text-sm rounded hover:bg-pasture-700 flex items-center justify-between gap-2"
                       >
                         <span class="flex items-center gap-2">
-                          <i data-lucide="terminal" class="w-4 h-4 text-wool-500" />
+                          <Icon name="terminal" class="w-4 h-4 text-wool-500" />
                           <span class="text-wool-200">{worker.name}</span>
                         </span>
                         <span
@@ -82,7 +83,7 @@ export const AttachPicker: Component = () => {
                         class="w-full px-3 py-2 text-left text-sm rounded hover:bg-pasture-700 flex items-center justify-between gap-2"
                       >
                         <span class="flex items-center gap-2">
-                          <i data-lucide="flask-conical" class="w-4 h-4 text-wool-500" />
+                          <Icon name="flask-conical" class="w-4 h-4 text-wool-500" />
                           <span class="text-wool-200">{evalItem.evalName}</span>
                         </span>
                         <span
@@ -108,7 +109,7 @@ export const AttachPicker: Component = () => {
               when={picker().workers.length === 0 && picker().evals.length === 0}
             >
               <div class="text-center py-8 text-wool-500">
-                <i data-lucide="inbox" class="w-8 h-8 mx-auto mb-2 text-wool-600" />
+                <Icon name="inbox" class="w-8 h-8 mx-auto mb-2 text-wool-600" />
                 <p class="text-sm">No workers or evals available</p>
               </div>
             </Show>

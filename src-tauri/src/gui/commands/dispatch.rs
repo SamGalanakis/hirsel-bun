@@ -15,16 +15,18 @@ use crate::core::runner::{create_runner, WorkerSpawnConfig as RunnerSpawnConfig}
 use crate::core::state::{SQLiteState, WorkerUpdate};
 use crate::core::{config, Files, ProjectStore};
 
+use super::err_string;
+
 /// Preview what will be dispatched from a task
 #[tauri::command]
 pub async fn preview_dispatch(project_id: i64, task_id: String) -> Result<DispatchPreview, String> {
-    let store = ProjectStore::open().map_err(|e| e.to_string())?;
-    let _ = store.get_project(project_id).map_err(|e| e.to_string())?;
+    let store = ProjectStore::open().map_err(err_string)?;
+    let _ = store.get_project(project_id).map_err(err_string)?;
 
     let service = DispatchService::new(project_id);
     service
         .preview_dispatch(&task_id)
-        .map_err(|e| e.to_string())
+        .map_err(err_string)
 }
 
 /// Prepare a dispatch (generates spec/eval content) without creating the run
@@ -37,8 +39,8 @@ pub async fn prepare_dispatch(
     worker_scale: Option<String>,
     time_limit_minutes: Option<i64>,
 ) -> Result<DispatchInfo, String> {
-    let store = ProjectStore::open().map_err(|e| e.to_string())?;
-    let _ = store.get_project(project_id).map_err(|e| e.to_string())?;
+    let store = ProjectStore::open().map_err(err_string)?;
+    let _ = store.get_project(project_id).map_err(err_string)?;
 
     let config = DispatchConfig {
         run_name,
@@ -50,7 +52,7 @@ pub async fn prepare_dispatch(
     let service = DispatchService::new(project_id);
     service
         .prepare_dispatch(&task_id, &config)
-        .map_err(|e| e.to_string())
+        .map_err(err_string)
 }
 
 /// Record that a run was dispatched from a task
@@ -63,21 +65,21 @@ pub async fn record_dispatch(
     let service = DispatchService::new(project_id);
     service
         .record_dispatch(&task_id, &run_name)
-        .map_err(|e| e.to_string())
+        .map_err(err_string)
 }
 
 /// Get all runs dispatched from a specific task
 #[tauri::command]
 pub async fn get_task_runs(project_id: i64, task_id: String) -> Result<Vec<TaskRun>, String> {
     let service = DispatchService::new(project_id);
-    service.get_task_runs(&task_id).map_err(|e| e.to_string())
+    service.get_task_runs(&task_id).map_err(err_string)
 }
 
 /// Get all task runs for a project
 #[tauri::command]
 pub async fn get_all_task_runs(project_id: i64) -> Result<Vec<TaskRun>, String> {
     let service = DispatchService::new(project_id);
-    service.get_all_task_runs().map_err(|e| e.to_string())
+    service.get_all_task_runs().map_err(err_string)
 }
 
 /// Create a board snapshot for a dispatch
@@ -89,7 +91,7 @@ pub async fn create_dispatch_snapshot(
     let service = DispatchService::new(project_id);
     service
         .create_snapshot(&task_ids)
-        .map_err(|e| e.to_string())
+        .map_err(err_string)
 }
 
 /// Get the dispatch scope for multiple root tasks
@@ -101,7 +103,7 @@ pub async fn get_multi_dispatch_scope(
     let service = DispatchService::new(project_id);
     service
         .get_multi_dispatch_scope(&root_task_ids)
-        .map_err(|e| e.to_string())
+        .map_err(err_string)
 }
 
 /// Prepare a multi-root dispatch
@@ -114,8 +116,8 @@ pub async fn prepare_multi_dispatch(
     worker_scale: Option<String>,
     time_limit_minutes: Option<i64>,
 ) -> Result<DispatchInfo, String> {
-    let store = ProjectStore::open().map_err(|e| e.to_string())?;
-    let _ = store.get_project(project_id).map_err(|e| e.to_string())?;
+    let store = ProjectStore::open().map_err(err_string)?;
+    let _ = store.get_project(project_id).map_err(err_string)?;
 
     let config = DispatchConfig {
         run_name,
@@ -127,7 +129,7 @@ pub async fn prepare_multi_dispatch(
     let service = DispatchService::new(project_id);
     service
         .prepare_multi_dispatch(&root_task_ids, &config)
-        .map_err(|e| e.to_string())
+        .map_err(err_string)
 }
 
 /// Dispatch and start a run from board tasks
@@ -150,8 +152,8 @@ pub async fn dispatch_board_run(
     use std::fs;
 
     // Get project from store
-    let store = ProjectStore::open().map_err(|e| e.to_string())?;
-    let project = store.get_project(project_id).map_err(|e| e.to_string())?;
+    let store = ProjectStore::open().map_err(err_string)?;
+    let project = store.get_project(project_id).map_err(err_string)?;
 
     // Prepare dispatch config
     let dispatch_config = DispatchConfig {
@@ -167,7 +169,7 @@ pub async fn dispatch_board_run(
     let service = DispatchService::new(project_id);
     let dispatch_info = service
         .prepare_multi_dispatch(&root_task_ids, &dispatch_config)
-        .map_err(|e| e.to_string())?;
+        .map_err(err_string)?;
 
     let run_name = dispatch_info.run_name.clone();
     let run_dir = config::run_dir(&run_name);
@@ -299,7 +301,7 @@ pub async fn dispatch_board_run(
         docs_path: project.docs_path.clone(),
     };
 
-    let setup_result = setup_run_workspace(&setup_config).map_err(|e| e.to_string())?;
+    let setup_result = setup_run_workspace(&setup_config).map_err(err_string)?;
 
     // Register workers in state
     for (worker_name, work_dir) in &setup_result.worker_dirs {
@@ -331,7 +333,6 @@ pub async fn dispatch_board_run(
 
     // Get agent command
     let agent_command = get_agent_command();
-    let spec_path = run_dir.join("spec.md");
 
     // Spawn workers
     for (i, (worker_name, work_dir)) in setup_result.worker_dirs.iter().enumerate() {
@@ -370,7 +371,6 @@ pub async fn dispatch_board_run(
             worker_name: worker_name.clone(),
             work_dir: work_dir.clone(),
             run_dir: run_dir.clone(),
-            spec_path: spec_path.clone(),
             agent_command: agent_command.clone(),
             is_leader,
             leader_name: leader.clone(),

@@ -4,8 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-/// Claude's session directory name.
-const CLAUDE_SESSION_DIR: &str = ".claude";
+use crate::core::constants::CLAUDE_SESSION_DIR;
 
 /// Get the path where Claude stores its session data.
 ///

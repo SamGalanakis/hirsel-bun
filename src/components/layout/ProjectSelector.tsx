@@ -11,10 +11,10 @@ import {
   createEffect,
   createSignal,
   onCleanup,
-  onMount,
 } from 'solid-js';
+import { useClickOutside } from '../../hooks';
 import { useProject } from '../../stores';
-import { initLucideIcons } from '../../lib/icons';
+import { Icon } from '../shared';
 
 export const ProjectSelector: Component = () => {
   const project = useProject();
@@ -49,7 +49,6 @@ export const ProjectSelector: Component = () => {
     setHighlightedIndex(0);
     setTimeout(() => {
       inputRef?.focus();
-      initLucideIcons();
     }, 10);
   };
 
@@ -142,28 +141,14 @@ export const ProjectSelector: Component = () => {
   });
 
   // Click outside to close
-  createEffect(() => {
-    if (!project.projectSelectorOpen()) return;
+  let containerRef: HTMLDivElement | undefined;
 
-    const handler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest('[data-project-selector]')) {
-        close();
-      }
-    };
-
-    // Delay to avoid immediate close
-    setTimeout(() => {
-      document.addEventListener('click', handler);
-    }, 10);
-
-    onCleanup(() => document.removeEventListener('click', handler));
+  useClickOutside(() => containerRef, () => {
+    if (project.projectSelectorOpen()) close();
   });
 
-  onMount(() => initLucideIcons());
-
   return (
-    <div class="relative" data-project-selector>
+    <div class="relative" data-project-selector ref={containerRef}>
       {/* Trigger button */}
       <button
         ref={triggerRef}
@@ -183,15 +168,14 @@ export const ProjectSelector: Component = () => {
             <span class="text-wool-500 italic text-sm">No project</span>
           }
         >
-          <i data-lucide="folder" class="w-4 h-4 text-amber-500/80" />
+          <Icon name="folder" class="w-4 h-4 text-amber-500/80" />
           <span class="text-sm font-medium max-w-[180px] truncate">
             {currentProjectName()}
           </span>
         </Show>
-        <i
-          data-lucide="chevron-down"
-          class="w-3.5 h-3.5 text-wool-500 transition-transform"
-          classList={{ 'rotate-180': project.projectSelectorOpen() }}
+        <Icon
+          name="chevron-down"
+          class={`w-3.5 h-3.5 text-wool-500 transition-transform ${project.projectSelectorOpen() ? 'rotate-180' : ''}`}
         />
       </button>
 
@@ -209,8 +193,8 @@ export const ProjectSelector: Component = () => {
           {/* Search input */}
           <div class="p-2 border-b border-white/5">
             <div class="relative">
-              <i
-                data-lucide="search"
+              <Icon
+                name="search"
                 class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-wool-600"
               />
               <input
@@ -240,7 +224,7 @@ export const ProjectSelector: Component = () => {
               when={items().length > 1 || items()[0]?.type === 'action'}
               fallback={
                 <div class="px-4 py-8 text-center">
-                  <i data-lucide="search-x" class="w-8 h-8 mx-auto mb-2 text-wool-700" />
+                  <Icon name="search-x" class="w-8 h-8 mx-auto mb-2 text-wool-700" />
                   <p class="text-sm text-wool-500">No projects found</p>
                 </div>
               }
@@ -274,7 +258,7 @@ export const ProjectSelector: Component = () => {
                               border: '1px solid rgba(251,191,36,0.2)',
                             }}
                           >
-                            <i data-lucide="plus" class="w-4 h-4" />
+                            <Icon name="plus" class="w-4 h-4" />
                           </div>
                           <div>
                             <div class="text-sm font-medium">New Project</div>
@@ -305,7 +289,7 @@ export const ProjectSelector: Component = () => {
                           border: '1px solid rgba(251,191,36,0.15)',
                         }}
                       >
-                        <i data-lucide="folder" class="w-4 h-4 text-amber-500/70" />
+                        <Icon name="folder" class="w-4 h-4 text-amber-500/70" />
                       </div>
                       <div class="flex-1 min-w-0">
                         <div class="text-sm font-medium text-wool-200 truncate">
@@ -318,7 +302,7 @@ export const ProjectSelector: Component = () => {
                         </Show>
                       </div>
                       <Show when={project.selectedProjectId() === (item as { type: 'project'; project: { id: number } }).project.id}>
-                        <i data-lucide="check" class="w-4 h-4 text-amber-500 shrink-0" />
+                        <Icon name="check" class="w-4 h-4 text-amber-500 shrink-0" />
                       </Show>
                     </button>
                   </Show>

@@ -313,6 +313,7 @@ impl HttpState {
         task_type: &str,
         validates: Option<Vec<&str>>,
         board_task_id: Option<&str>,
+        content: Option<&str>,
     ) -> HttpStateResult<()> {
         #[derive(Serialize)]
         struct TaskWithTypeRequest {
@@ -323,6 +324,7 @@ impl HttpState {
             task_type: String,
             validates: Option<Vec<String>>,
             board_task_id: Option<String>,
+            content: Option<String>,
         }
         let _: SuccessResponse = self
             .post(
@@ -335,6 +337,7 @@ impl HttpState {
                     task_type: task_type.to_string(),
                     validates: validates.map(|v| v.iter().map(|s| s.to_string()).collect()),
                     board_task_id: board_task_id.map(|s| s.to_string()),
+                    content: content.map(|s| s.to_string()),
                 },
             )
             .await?;
@@ -937,6 +940,7 @@ impl StateAccess for HttpState {
         task_type: crate::core::state::TaskType,
         validates: Option<&[&str]>,
         board_task_id: Option<&str>,
+        content: Option<&str>,
     ) -> StateAccessResult<()> {
         let blocked_by_vec = blocked_by.map(|b| b.to_vec());
         let validates_vec = validates.map(|v| v.to_vec());
@@ -949,6 +953,7 @@ impl StateAccess for HttpState {
             task_type.as_str(),
             validates_vec,
             board_task_id,
+            content,
         )
         .await?)
     }

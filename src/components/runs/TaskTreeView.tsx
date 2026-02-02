@@ -13,6 +13,7 @@ interface TaskTreeViewProps {
   workers: WorkerDisplay[];
   selectedTaskId: string | null;
   onSelectTask: (taskId: string) => void;
+  showAllTasks?: boolean; // default true - when false, only show spec tasks
 }
 
 interface TreeNode extends TaskDisplay {
@@ -291,9 +292,18 @@ function getStatusClass(task: TaskDisplay, isEval: boolean): string {
 }
 
 export const TaskTreeView: Component<TaskTreeViewProps> = (props) => {
+  // Filter tasks based on showAllTasks prop
+  const filteredTasks = createMemo(() => {
+    if (props.showAllTasks !== false) {
+      return props.tasks;
+    }
+    // When filtering, only show spec tasks (core tasks from SpecFlow board)
+    return props.tasks.filter(t => t.source === 'spec');
+  });
+
   // Build tree structure and calculate layout
   const treeData = createMemo(() => {
-    const { treeRoots, orphanTasks, evalTasks } = buildTree(props.tasks);
+    const { treeRoots, orphanTasks, evalTasks } = buildTree(filteredTasks());
     const taskMap = new Map<string, TreeNode>();
     const layout = calculateLayout(treeRoots, evalTasks, taskMap);
     return { layout, orphanTasks };

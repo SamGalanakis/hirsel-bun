@@ -96,7 +96,7 @@ cargo build --features s3-storage               # With S3 support
 | `config/` | `mod.rs`, `store.rs`, `loader.rs`, `saver.rs`, `types.rs`, `agent.rs`, `storage.rs`, `orchestrator.rs`, `paths.rs` | Config struct, DB storage, profiles, runners |
 | `ops/` | `mod.rs`, `run.rs`, `setup.rs`, `spawn.rs`, `project.rs`, `docs.rs`, `types.rs` | Shared CLI/GUI operations |
 | `server/` | `mod.rs` → `start_server()`, `routes.rs`, `auth.rs`, `gyp.rs`, `board.rs` | HTTP server for remote mode |
-| `eval/` | `mod.rs` | Eval runner and management |
+| `eval/` | `mod.rs`, `acp.rs`, `context.rs`, `parser.rs`, `script.rs`, `types.rs` | Eval runner: ACP eval agent, context building, script parsing |
 | `storage/` | `mod.rs` | File storage abstraction (local/S3) |
 | `service_worker/` | `mod.rs`, `scribe.rs`, `conflict_resolver.rs`, `types.rs` | Service workers: ScribeService for documentation, ConflictResolverServiceWrapper for merge conflicts |
 | `conflict_resolver/` | `mod.rs`, `client.rs`, `state.rs` | Git conflict resolution with AI agent |
@@ -136,11 +136,10 @@ cargo build --features s3-storage               # With S3 support
 | `file_server.rs` | File upload server for remote workers |
 
 **MCP Worker Tools** (available to all workers):
-- `add_task` - Create subtasks (go to pool for assignment)
-- `complete_task` - Mark assigned task as done
-- `work_done` - Signal ready for next assignment (triggers scaling check, worker exits)
-- `get_task_details` - Get full task content
-- `send_message` / `get_messages` - Team communication
+- Task Management: `get_task_tree`, `get_available_tasks`, `get_my_tasks`, `get_task_details`, `complete_task`, `add_task`, `add_eval`
+- Communication: `list_contacts`, `chat_history`, `chat_send`, `chat_unread`
+- Documentation: `scribe`, `read_docs`
+- Work Management: `work_done` (signal ready for next task), `time_status`
 
 **MCP Eval Tools** (available to eval tasks):
 - `eval_pass` - Mark eval as passed, validate all tasks in `validates[]`
@@ -219,11 +218,11 @@ cargo build --features s3-storage               # With S3 support
 | Directory | Purpose |
 |-----------|---------|
 | `components/layout/` | Layout, TitleBar, StatusBar |
-| `components/runs/` | RunListPanel, RunDetail, DraftEditor, WorkerCard |
+| `components/runs/` | RunListPanel, RunDetail, WorkerCard, TaskTreeView |
 | `components/specflow/` | SpecBoard (unified canvas component with delta dispatch, node rendering, context menus) |
 | `components/modals/` | SettingsModal, HelpModal, ConfirmDialog |
 | `components/chat/` | GypMessenger |
-| `stores/` | AppProvider, ProjectProvider, RunsProvider, SelectionProvider, DeltaProvider, DispatchProvider |
+| `stores/` | AppProvider, ProjectProvider, RunsProvider, SelectionProvider, DeltaProvider |
 | `hooks/` | usePolling, useDebounce, useTauriEvent |
 | `lib/` | Icons, theme, toast, dev-logger, utils |
 | `lib/elk-layout.ts` | ELK.js wrapper for hierarchical graph layout with orthogonal edge routing |
@@ -539,6 +538,14 @@ Draft ──start──► Working ───────────────
 | `Work` | Implementation task that produces code changes |
 | `Eval` | Task that validates work tasks |
 
+### Task Source (`src-tauri/src/core/state/types.rs`)
+
+| Source | Description |
+|--------|-------------|
+| `Spec` | From SpecFlow board (core tasks) |
+| `Worker` | Added by worker via MCP |
+| `System` | System tasks (scope) |
+
 ### Task Lifecycle (Unified Eval Model)
 
 ```
@@ -757,6 +764,7 @@ Daemon evaluates scaling:
 - `id`, `name`, `status`, `claimed_by`, `claimed_at`
 - `parent_id`
 - `task_type` - 'work' or 'eval'
+- `source` - 'spec' (from SpecFlow board), 'worker' (added by worker), or 'system' (scope tasks)
 - `eval_result` - 'pass' or 'fail'
 - `eval_feedback` - Feedback if eval failed
 - `board_task_id` - Original board task ID for tracking
@@ -884,8 +892,6 @@ When a config file exists, its values are loaded into the database. This enables
 | `agent` | `AgentConfig` | - | Agent command configuration |
 | `eval_timeout` | `u32` | `1800` | Eval timeout in seconds |
 | `human_in_the_loop` | `bool` | `true` | HITL mode default |
-| `compaction_enabled` | `bool` | `true` | Enable context compaction |
-| `compaction_threshold` | `Option<u32>` | `10000` | Token threshold |
 | `runners` | `HashMap<String, RunnerConfig>` | `{}` | Named runner configs |
 | `default_runner` | `Option<String>` | `None` | Default runner name |
 | `profiles` | `HashMap<String, OrchestratorProfile>` | local | Orchestrator profiles |
@@ -995,10 +1001,17 @@ idle_timeout_seconds = 300        # 5 min default
 | GET | `/api/runs/{name}/workers/{w}/events` | `get_worker_events` |
 | GET/POST | `/api/runs/{name}/tasks` | `list_tasks`, `add_task` |
 | DELETE | `/api/runs/{name}/tasks/{id}` | `delete_task` |
+| POST | `/api/runs/{name}/tasks/{id}/complete` | `complete_task` |
+| POST | `/api/runs/{name}/tasks/{id}/reopen` | `reopen_task` |
 | POST | `/api/runs/{name}/delta-tasks` | `add_delta_task` |
+| POST | `/api/runs/{name}/delta-tasks-batch` | `add_delta_tasks_batch` |
 | POST | `/api/runs/{name}/scribe` | `add_scribe` |
 | GET | `/api/runs/{name}/docs` | `get_docs` |
 | POST | `/api/runs/{name}/docs/sync` | `sync_docs` |
+| GET | `/api/runs/{name}/evals` | `list_evals` |
+| GET | `/api/runs/{name}/history` | `get_history` |
+| POST | `/api/runs/{name}/assets` | `upload_asset` |
+| GET | `/api/runs/{name}/assets-path` | `get_assets_path` |
 | GET | `/api/runs/{name}/threads` | `list_threads` |
 | GET/POST | `/api/runs/{name}/threads/{t}/messages` | `get_messages`, `send_message` |
 
@@ -1037,6 +1050,29 @@ idle_timeout_seconds = 300        # 5 min default
 | POST | `/api/gyp/sessions/{id}/messages` | `send_message` |
 | POST | `/api/gyp/sessions/{id}/permission` | `respond_permission` |
 | GET | `/api/gyp/sessions/{id}/events` | `session_events` (SSE) |
+
+### Adding a REST Endpoint
+
+Routes are shared between daemon and remote server via `shared_routes.rs` to avoid duplication:
+
+| Builder | Used By | Description |
+|---------|---------|-------------|
+| `build_shared_routes()` | Both | Run ops, workers, tasks, messages, evals, history, assets |
+| `build_gyp_routes()` | Both | Gyp chat sessions (requires `GypState`) |
+| `build_config_routes()` | Remote only | Config CRUD, credentials |
+| `build_board_routes()` | Remote only | Board sync for SpecFlow |
+| Inline routes in `daemon/server.rs` | Daemon only | `/daemon/*`, worker internal API |
+
+**To add a shared endpoint:**
+1. Add handler in `routes.rs` (or appropriate module like `gyp.rs`, `board.rs`)
+2. Add route to the appropriate builder in `shared_routes.rs`
+3. Both servers automatically get the new route
+
+**To add a daemon-only endpoint:**
+Add the route inline in `daemon/server.rs` after the `build_shared_routes()` call.
+
+**To add a remote-server-only endpoint:**
+Add a new builder function or extend `build_config_routes()`/`build_board_routes()`.
 
 ---
 

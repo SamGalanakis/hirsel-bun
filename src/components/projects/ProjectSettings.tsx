@@ -4,104 +4,14 @@
 import { invoke } from '@tauri-apps/api/core';
 import {
   type Component,
-  For,
   Show,
   createEffect,
   createSignal,
   onCleanup,
-  onMount,
 } from 'solid-js';
 import type { ConfigDefaults, StartingPoint } from '../../lib/types';
 import { useProject } from '../../stores';
-import { initLucideIcons } from '../../lib/icons';
-
-// Dropdown option type
-interface DropdownOption {
-  value: string;
-  label: string;
-}
-
-// Basecoat-style Dropdown component (matches SettingsModal)
-const Dropdown: Component<{
-  value: string;
-  options: DropdownOption[];
-  onChange: (value: string) => void;
-  placeholder?: string;
-  class?: string;
-}> = (props) => {
-  const [open, setOpen] = createSignal(false);
-  let containerRef: HTMLDivElement | undefined;
-
-  const selectedLabel = () => {
-    const option = props.options.find((o) => o.value === props.value);
-    return option?.label || props.placeholder || 'Select...';
-  };
-
-  // Close on click outside
-  createEffect(() => {
-    if (open()) {
-      const handler = (e: MouseEvent) => {
-        if (containerRef && !containerRef.contains(e.target as Node)) {
-          setOpen(false);
-        }
-      };
-      document.addEventListener('click', handler);
-      onCleanup(() => document.removeEventListener('click', handler));
-    }
-  });
-
-  // Reinit icons when dropdown opens
-  createEffect(() => {
-    if (open()) {
-      queueMicrotask(() => initLucideIcons());
-    }
-  });
-
-  return (
-    <div ref={containerRef} class={`dropdown relative ${props.class || ''}`}>
-      <button
-        type="button"
-        class="btn-outline w-full justify-between"
-        onClick={() => setOpen(!open())}
-        aria-haspopup="listbox"
-        aria-expanded={open()}
-      >
-        <span class="truncate flex-1 text-left" classList={{ 'text-muted-foreground': !props.value }}>
-          {selectedLabel()}
-        </span>
-        <i data-lucide="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0" />
-      </button>
-      <Show when={open()}>
-        <div
-          data-popover
-          class="absolute z-50 mt-1 w-full bg-popover border border-border rounded-md shadow-md py-1 max-h-60 overflow-auto"
-        >
-          <div role="listbox" aria-orientation="vertical">
-            <For each={props.options}>
-              {(option) => (
-                <div
-                  role="option"
-                  aria-selected={props.value === option.value}
-                  class="px-3 py-2 text-sm cursor-pointer hover:bg-accent flex items-center justify-between"
-                  classList={{ 'bg-accent/50': props.value === option.value }}
-                  onClick={() => {
-                    props.onChange(option.value);
-                    setOpen(false);
-                  }}
-                >
-                  <span>{option.label}</span>
-                  <Show when={props.value === option.value}>
-                    <i data-lucide="check" class="w-4 h-4 text-primary" />
-                  </Show>
-                </div>
-              )}
-            </For>
-          </div>
-        </div>
-      </Show>
-    </div>
-  );
-};
+import { Icon, Dropdown, type DropdownOption } from '../shared';
 
 export const ProjectSettings: Component = () => {
   const project = useProject();
@@ -127,16 +37,10 @@ export const ProjectSettings: Component = () => {
 
   const selectedProject = () => project.selectedProject();
 
-  // Initialize icons on mount and when content changes
-  onMount(() => {
-    initLucideIcons();
-  });
-
   // Load config defaults when modal opens
   createEffect(() => {
     if (project.showProjectSettings()) {
       loadConfigDefaults();
-      queueMicrotask(initLucideIcons);
     }
   });
 
@@ -264,19 +168,26 @@ export const ProjectSettings: Component = () => {
     const proj = selectedProject();
     if (!proj) return;
 
-    const confirmed = await window.confirmDialog?.delete(proj.name, 'project');
+    let confirmed: boolean | undefined;
+    try {
+      confirmed = await window.confirmDialog?.delete(proj.name, 'project');
+    } catch (e) {
+      console.error('[ProjectSettings] Confirm dialog error:', e);
+      return;
+    }
     if (!confirmed) return;
 
     setDeleting(true);
+    const projectId = proj.id;
     const projectName = proj.name;
+
+    // Use project context's removeProject which handles cleanup properly
     try {
-      await invoke('delete_project', { projectId: proj.id });
-      // Close modal immediately, then notify for cleanup
+      await project.removeProject(projectId);
       project.setShowProjectSettings(false);
-      window.dispatchEvent(new CustomEvent('project-deleted'));
       window.toast?.success(`Project "${projectName}" deleted`);
     } catch (e) {
-      console.error('Failed to delete project:', e);
+      console.error('[ProjectSettings] Delete failed:', e);
       window.toast?.error(`Failed to delete project: ${e}`);
       setDeleting(false);
     }
@@ -315,7 +226,7 @@ export const ProjectSettings: Component = () => {
           <div class="px-6 py-4 border-b border-pasture-600 flex items-center justify-between shrink-0">
             <div class="flex items-center gap-3 flex-1 min-w-0">
               <div class="w-10 h-10 rounded-lg bg-pasture-700 flex items-center justify-center shrink-0">
-                <i data-lucide="folder-cog" class="w-5 h-5 text-wool-400" />
+                <Icon name="folder-cog" class="w-5 h-5 text-wool-400" />
               </div>
 
               {/* Editable project name */}
@@ -327,7 +238,7 @@ export const ProjectSettings: Component = () => {
                   <h2 class="text-lg font-semibold text-wool-100 truncate">
                     {selectedProject()?.name}
                   </h2>
-                  <i data-lucide="pencil" class="w-3.5 h-3.5 text-wool-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                  <Icon name="pencil" class="w-3.5 h-3.5 text-wool-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
                 </button>
               </Show>
               <Show when={editingName()}>
@@ -368,7 +279,7 @@ export const ProjectSettings: Component = () => {
                   <span class="spinner w-4 h-4" />
                 </Show>
                 <Show when={!deleting()}>
-                  <i data-lucide="trash-2" class="w-4 h-4" />
+                  <Icon name="trash-2" class="w-4 h-4" />
                 </Show>
               </button>
               <button
@@ -377,7 +288,7 @@ export const ProjectSettings: Component = () => {
                 onClick={handleClose}
                 disabled={deleting() || saving()}
               >
-                <i data-lucide="x" class="w-5 h-5" />
+                <Icon name="x" class="w-5 h-5" />
               </button>
             </div>
           </div>
@@ -390,8 +301,8 @@ export const ProjectSettings: Component = () => {
                 <h4 class="text-sm font-medium text-wool-200 mb-3">Starting Point</h4>
                 <div class="bg-pasture-900 rounded-lg p-3 border border-pasture-700">
                   <div class="flex items-center gap-2 mb-1">
-                    <i
-                      data-lucide={startingPointInfo()?.icon}
+                    <Icon
+                      name={startingPointInfo()?.icon || 'folder'}
                       class="w-4 h-4 text-amber-400/70"
                     />
                     <span class="text-sm font-medium text-wool-200">
@@ -410,7 +321,7 @@ export const ProjectSettings: Component = () => {
             {/* Run Configuration Section */}
             <div>
               <h4 class="text-sm font-medium text-wool-200 mb-3 flex items-center gap-2">
-                <i data-lucide="play" class="w-4 h-4 text-wool-500" />
+                <Icon name="play" class="w-4 h-4 text-wool-500" />
                 Run Configuration
               </h4>
 
@@ -470,7 +381,7 @@ export const ProjectSettings: Component = () => {
                 </div>
 
                 {/* Human in the Loop Toggle - Basecoat Switch pattern */}
-                <div class="flex items-start justify-between rounded-lg border border-border p-4">
+                <div role="group" class="field flex items-start justify-between rounded-lg border border-border p-4">
                   <div class="flex flex-col gap-0.5">
                     <label for="hitl-switch" class="font-medium leading-normal">Human in the Loop</label>
                     <p class="text-muted-foreground text-sm">Workers pause for approval on critical actions</p>
@@ -493,7 +404,7 @@ export const ProjectSettings: Component = () => {
             {/* Delivery Section */}
             <div>
               <h4 class="text-sm font-medium text-wool-200 mb-3 flex items-center gap-2">
-                <i data-lucide="git-merge" class="w-4 h-4 text-wool-500" />
+                <Icon name="git-merge" class="w-4 h-4 text-wool-500" />
                 Delivery
               </h4>
 

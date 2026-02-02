@@ -9,6 +9,7 @@ use super::{
     AddTaskRequest, CreateRunRequest, CreateRunResponse, DeliverRunRequest, HealthResponse,
     Orchestrator, OrchestratorError, OrchestratorResult, ResumeRunRequest, ResumeWorkerRequest,
     SendMessageRequest, SpawnSingleWorkerRequest, SpawnWorkersRequest, SpawnWorkersResponse,
+    StartRunRequest,
 };
 use crate::core::api_types::{
     ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, Task, ThreadSummary,
@@ -215,6 +216,17 @@ impl Orchestrator for DaemonOrchestrator {
             .map_err(|e| OrchestratorError::Other(e.to_string()))
     }
 
+    async fn add_delta_tasks_batch(
+        &self,
+        run: &str,
+        requests: Vec<super::AddDeltaTaskRequest>,
+    ) -> OrchestratorResult<Vec<Task>> {
+        self.client
+            .post(&format!("/api/runs/{}/delta-tasks-batch", run), requests)
+            .await
+            .map_err(|e| OrchestratorError::Other(e.to_string()))
+    }
+
     // -------------------------------------------------------------------------
     // Messages
     // -------------------------------------------------------------------------
@@ -306,6 +318,13 @@ impl Orchestrator for DaemonOrchestrator {
     async fn create_run(&self, request: CreateRunRequest) -> OrchestratorResult<CreateRunResponse> {
         self.client
             .post("/api/runs", request)
+            .await
+            .map_err(|e| OrchestratorError::Other(e.to_string()))
+    }
+
+    async fn start_run(&self, request: StartRunRequest) -> OrchestratorResult<RunDetail> {
+        self.client
+            .post("/api/runs/start", request)
             .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))
     }

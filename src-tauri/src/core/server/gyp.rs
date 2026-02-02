@@ -128,6 +128,7 @@ pub async fn start_session(
         run_name: body.context.run_name,
         system_prompt: body.context.system_prompt,
         credentials,
+        mcp_servers: body.context.mcp_servers,
     };
 
     let (session_id, event_rx) = state

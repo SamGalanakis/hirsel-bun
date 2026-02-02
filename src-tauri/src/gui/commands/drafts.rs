@@ -10,7 +10,10 @@ use crate::core::draft::{create_workspace_provider, StartingPoint};
 use crate::core::git;
 use crate::core::names::generate_run_name;
 use crate::core::ops::{clone_run as ops_clone_run, CloneRunConfig};
-use crate::core::{config, state::SQLiteState};
+use crate::core::{
+    config,
+    state::{SQLiteState, TaskSource},
+};
 
 /// Validate a repository path or URL
 ///
@@ -192,7 +195,7 @@ pub async fn create_draft() -> Result<RunDetail, String> {
     // Create empty tasks.md
     fs::write(
         run_dir.join("tasks.md"),
-        "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n| scope | TODO | | Read spec, create exploration tasks |\n",
+        "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n| scope | TODO | | Scope |\n",
     ).map_err(|e| format!("Failed to create tasks file: {}", e))?;
 
     // Initialize database - NO workspace path yet
@@ -216,8 +219,8 @@ pub async fn create_draft() -> Result<RunDetail, String> {
         .set_human_in_the_loop(true)
         .map_err(|e| format!("Failed to set HITL: {}", e))?;
 
-    // Add scope task
-    let _ = state.add_task("scope", "Read spec, create exploration tasks", None, None);
+    // Add scope task (System source)
+    let _ = state.add_task_with_source_simple("scope", "Scope", None, None, TaskSource::System);
 
     // Return the run detail
     let created_at = chrono::Utc::now().to_rfc3339();
@@ -684,7 +687,6 @@ pub async fn start_draft(
             worker_name: worker_name.clone(),
             work_dir: work_dir.clone(),
             run_dir: run_dir.clone(),
-            spec_path: spec_path.clone(),
             agent_command: agent_command.clone(),
             is_leader,
             leader_name: leader.clone(),

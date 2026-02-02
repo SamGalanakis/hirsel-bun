@@ -192,6 +192,9 @@ export interface RunState {
 /** Task type - work (implementation) or eval (validation) */
 export type TaskType = 'work' | 'eval';
 
+/** Task source - where the task originated from */
+export type TaskSource = 'spec' | 'worker' | 'system';
+
 /** Eval result values */
 export type EvalResult = 'pass' | 'fail';
 
@@ -222,6 +225,8 @@ export interface Task {
   evalResult: EvalResult | null;
   evalFeedback: string | null;
   boardTaskId: string | null; // Original board task ID for tracking
+  // Source tracking
+  source: TaskSource; // Where the task originated (spec, worker, system)
 }
 
 /** Task with computed display properties */

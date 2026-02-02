@@ -12,11 +12,12 @@
 //!
 //! ## Agent Access
 //!
-//! Each top-level task is stored as a separate JSON file:
-//! `~/.hirsel/projects/{project_id}/board/{task-slug}.json`
+//! Board structure is exposed via MCP tools (board_view, board_task, etc.)
+//! Content files live at: `~/.hirsel/projects/{project_id}/board/tasks/{id}.md`
 //!
-//! The agent can list files in the directory to see all tasks.
+//! The agent uses MCP tools for structure, direct file edits for content.
 
+pub mod mcp;
 pub mod storage;
 mod types;
 

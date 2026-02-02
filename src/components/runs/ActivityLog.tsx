@@ -20,6 +20,7 @@ import {
   getActionIcon,
 } from '../../lib/utils/activity';
 import { formatTime } from '../../lib/utils/formatters';
+import { Icon } from '../shared';
 
 interface ActivityLogProps {
   history: HistoryEntry[];
@@ -118,8 +119,8 @@ export const ActivityLog: Component<ActivityLogProps> = (props) => {
                 onClick={toggleSort}
                 title={sortDirection() === 'desc' ? 'Showing newest first' : 'Showing oldest first'}
               >
-                <i
-                  data-lucide={sortDirection() === 'desc' ? 'arrow-down' : 'arrow-up'}
+                <Icon
+                  name={sortDirection() === 'desc' ? 'arrow-down' : 'arrow-up'}
                   class="w-4 h-4"
                 />
               </button>
@@ -128,7 +129,7 @@ export const ActivityLog: Component<ActivityLogProps> = (props) => {
                 onClick={() => setIsFullscreen(false)}
                 title="Exit fullscreen"
               >
-                <i data-lucide="minimize-2" class="w-4 h-4" />
+                <Icon name="minimize-2" class="w-4 h-4" />
               </button>
             </div>
           </div>
@@ -159,7 +160,7 @@ export const ActivityLog: Component<ActivityLogProps> = (props) => {
               when={workerConfig()}
               fallback={
                 <div class={`w-5 h-5 ${getActionColor(entryProps.entry.action)}`}>
-                  <i data-lucide={getActionIcon(entryProps.entry.action)} class="w-5 h-5" />
+                  <Icon name={getActionIcon(entryProps.entry.action)} class="w-5 h-5" />
                 </div>
               }
             >
@@ -262,8 +263,8 @@ export const ActivityLog: Component<ActivityLogProps> = (props) => {
               onClick={toggleSort}
               title={sortDirection() === 'desc' ? 'Showing newest first' : 'Showing oldest first'}
             >
-              <i
-                data-lucide={sortDirection() === 'desc' ? 'arrow-down' : 'arrow-up'}
+              <Icon
+                name={sortDirection() === 'desc' ? 'arrow-down' : 'arrow-up'}
                 class="w-3.5 h-3.5"
               />
             </button>
@@ -272,7 +273,7 @@ export const ActivityLog: Component<ActivityLogProps> = (props) => {
               onClick={() => setIsFullscreen(true)}
               title="Fullscreen"
             >
-              <i data-lucide="maximize-2" class="w-3.5 h-3.5" />
+              <Icon name="maximize-2" class="w-3.5 h-3.5" />
             </button>
           </div>
         </div>

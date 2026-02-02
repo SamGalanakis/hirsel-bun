@@ -28,26 +28,16 @@ use thiserror::Error;
 pub use agent::AgentConfig;
 pub use git::{GitConfig, GitProvider};
 pub use orchestrator::{OrchestratorAccess, OrchestratorMode, OrchestratorProfile};
-pub use paths::{global_db_path, hirsel_dir, list_runs, run_dir, run_exists, runs_dir};
+pub use paths::{
+    global_db_path, hirsel_dir, list_runs, project_assets_dir, run_dir, run_exists, runs_dir,
+};
 pub use storage::{S3Config, StorageBackend, StorageConfig, StorageProvider};
 pub use store::{ConfigStore, ConfigStoreError, PartialConfig};
 pub use types::{get_agent_env_vars, AgentAuth, AgentType, AuthConfig, AuthMethod};
 pub use workers::WorkerScale;
 
-/// Context window sizes per model (in tokens)
-pub const CONTEXT_WINDOWS: &[(&str, u32)] = &[
-    ("claude-opus-4-5-20251101", 200_000),
-    ("claude-sonnet-4-5-20251101", 200_000),
-    ("claude-sonnet-4-20250514", 200_000),
-    ("claude-3-5-sonnet-20241022", 200_000),
-    ("claude-3-5-haiku-20241022", 200_000),
-    ("claude-3-opus-20240229", 200_000),
-    ("claude-3-sonnet-20240229", 200_000),
-    ("claude-3-haiku-20240307", 200_000),
-];
-
-/// Default context window size for unknown models
-pub const DEFAULT_CONTEXT_WINDOW: u32 = 200_000;
+// Re-export model context window constants
+pub use super::constants::{CONTEXT_WINDOWS, DEFAULT_CONTEXT_WINDOW};
 
 /// Get context window size for a model
 pub fn get_context_window(model: &str) -> u32 {

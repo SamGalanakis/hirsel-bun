@@ -226,6 +226,41 @@ impl std::fmt::Display for TaskType {
     }
 }
 
+/// Task source - where the task originated from
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskSource {
+    #[default]
+    Spec, // From SpecFlow board (core tasks)
+    Worker, // Added by worker via MCP
+    System, // System tasks (scope)
+}
+
+impl TaskSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TaskSource::Spec => "spec",
+            TaskSource::Worker => "worker",
+            TaskSource::System => "system",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "spec" => Some(TaskSource::Spec),
+            "worker" => Some(TaskSource::Worker),
+            "system" => Some(TaskSource::System),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for TaskSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
 /// Eval result - pass or fail
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -483,6 +518,7 @@ pub struct Task {
     pub pending_done_at: Option<String>,
     pub tokens_used: Option<i64>,
     pub parent_id: Option<String>,
+    pub content: Option<String>,
     pub blocked_by: Vec<String>,
     // Eval system fields
     pub task_type: TaskType,
@@ -492,6 +528,8 @@ pub struct Task {
     // Direct task assignment fields
     pub assigned_to: Option<String>, // Worker this task is assigned to
     pub completed_by: Option<String>, // Worker who completed this task (for tree distance)
+    // Source tracking
+    pub source: TaskSource, // Where the task originated (spec, worker, system)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -730,6 +768,8 @@ pub struct DeltaTaskInput {
     pub task_type: TaskType,
     pub validates: Option<Vec<String>>,
     pub board_task_id: Option<String>,
+    pub content: Option<String>,
+    pub source: TaskSource,
 }
 
 /// Helper struct for partial worker updates

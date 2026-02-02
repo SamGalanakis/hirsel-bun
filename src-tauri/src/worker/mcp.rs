@@ -18,72 +18,10 @@
 //! HIRSEL_RUN=myrun HIRSEL_WORKER=achilles hirsel-worker mcp
 //! ```
 
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::io::{self, BufRead, Write};
 
 use super::{WorkerConfig, WorkerError, WorkerRunner};
-
-/// JSON-RPC 2.0 request structure.
-#[derive(Debug, Deserialize)]
-struct JsonRpcRequest {
-    #[allow(dead_code)]
-    jsonrpc: String,
-    method: String,
-    #[serde(default)]
-    params: Value,
-    id: Option<Value>,
-}
-
-/// JSON-RPC 2.0 response structure.
-#[derive(Debug, Serialize)]
-struct JsonRpcResponse {
-    jsonrpc: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<JsonRpcError>,
-    id: Option<Value>,
-}
-
-/// JSON-RPC 2.0 error structure.
-#[derive(Debug, Serialize)]
-struct JsonRpcError {
-    code: i32,
-    message: String,
-}
-
-impl JsonRpcResponse {
-    fn success(id: Option<Value>, result: Value) -> Self {
-        Self {
-            jsonrpc: "2.0",
-            result: Some(result),
-            error: None,
-            id,
-        }
-    }
-
-    fn error(id: Option<Value>, code: i32, message: impl Into<String>) -> Self {
-        Self {
-            jsonrpc: "2.0",
-            result: None,
-            error: Some(JsonRpcError {
-                code,
-                message: message.into(),
-            }),
-            id,
-        }
-    }
-}
-
-/// MCP tool definition.
-#[derive(Debug, Serialize)]
-struct Tool {
-    name: &'static str,
-    description: &'static str,
-    #[serde(rename = "inputSchema")]
-    input_schema: Value,
-}
+use crate::core::mcp::{run_mcp_server, McpToolServer, Tool};
 
 /// Get the list of available MCP tools.
 fn get_tools() -> Vec<Tool> {
@@ -286,7 +224,7 @@ fn get_tools() -> Vec<Tool> {
         // ==========================================================================
         Tool {
             name: "work_done",
-            description: "Signal that all assigned work is complete. Only call this when you have no more tasks to do.",
+            description: "Signal task complete and ready for new assignment. Auto-completes your assigned task, then exits. You'll be respawned with a new task if available.",
             input_schema: json!({
                 "type": "object",
                 "properties": {}
@@ -331,8 +269,6 @@ fn get_tools() -> Vec<Tool> {
 /// MCP Server for hirsel workers.
 pub struct McpServer {
     runner: WorkerRunner,
-    /// Flag to indicate the server should exit after current request
-    exit_after_response: bool,
 }
 
 impl McpServer {
@@ -340,214 +276,16 @@ impl McpServer {
     pub fn from_env() -> Result<Self, WorkerError> {
         let config = WorkerConfig::from_env()?;
         let runner = WorkerRunner::new(config)?;
-        Ok(Self {
-            runner,
-            exit_after_response: false,
-        })
+        Ok(Self { runner })
     }
 
     /// Create a new MCP server with explicit configuration.
     pub fn new(runner: WorkerRunner) -> Self {
-        Self {
-            runner,
-            exit_after_response: false,
-        }
-    }
-
-    /// Handle a JSON-RPC request and return a response.
-    fn handle_request(&mut self, request: JsonRpcRequest) -> Option<JsonRpcResponse> {
-        let id = request.id.clone();
-
-        // Notifications (no id) don't need a response
-        id.as_ref()?;
-
-        let response = match request.method.as_str() {
-            "initialize" => self.handle_initialize(id),
-            "tools/list" => self.handle_tools_list(id),
-            "tools/call" => self.handle_tools_call(id, request.params),
-            _ => {
-                JsonRpcResponse::error(id, -32601, format!("Method not found: {}", request.method))
-            }
-        };
-
-        Some(response)
-    }
-
-    fn handle_initialize(&self, id: Option<Value>) -> JsonRpcResponse {
-        JsonRpcResponse::success(
-            id,
-            json!({
-                "protocolVersion": "2024-11-05",
-                "serverInfo": {
-                    "name": "hirsel-mcp",
-                    "version": env!("CARGO_PKG_VERSION")
-                },
-                "capabilities": {
-                    "tools": {}
-                }
-            }),
-        )
-    }
-
-    fn handle_tools_list(&self, id: Option<Value>) -> JsonRpcResponse {
-        JsonRpcResponse::success(id, json!({ "tools": get_tools() }))
-    }
-
-    fn handle_tools_call(&mut self, id: Option<Value>, params: Value) -> JsonRpcResponse {
-        let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
-
-        let result = self.execute_tool(tool_name, arguments);
-
-        match result {
-            Ok(output) => {
-                // Parse output as JSON if possible, otherwise wrap as text
-                let content = match serde_json::from_str::<Value>(&output) {
-                    Ok(json_output) => json!({
-                        "content": [{
-                            "type": "text",
-                            "text": serde_json::to_string_pretty(&json_output).unwrap_or(output)
-                        }]
-                    }),
-                    Err(_) => json!({
-                        "content": [{
-                            "type": "text",
-                            "text": output
-                        }]
-                    }),
-                };
-                JsonRpcResponse::success(id, content)
-            }
-            Err(e) => JsonRpcResponse::error(id, -32000, e.to_string()),
-        }
-    }
-
-    fn execute_tool(&mut self, name: &str, args: Value) -> Result<String, WorkerError> {
-        match name {
-            // Task Management
-            "get_task_tree" => self.runner.get_task_tree(),
-            "get_available_tasks" => self.runner.get_available_tasks(),
-            "get_my_tasks" => self.runner.get_my_tasks(),
-            "get_task_details" => {
-                let task_id = args
-                    .get("task_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("task_id is required".into()))?;
-                self.runner.get_task_details(task_id)
-            }
-            "complete_task" => {
-                let task_id = args.get("task_id").and_then(|v| v.as_str());
-                self.runner.task_done(task_id)
-            }
-            "add_task" => {
-                let task_id = args
-                    .get("task_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("task_id is required".into()))?;
-                let task_name = args
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("name is required".into()))?;
-                let parent = args.get("parent").and_then(|v| v.as_str());
-                let blocked_by: Vec<String> = args
-                    .get("blocked_by")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                self.runner
-                    .task_add(task_id, task_name, parent, &blocked_by)
-            }
-            "add_eval" => {
-                let eval_id = args
-                    .get("eval_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("eval_id is required".into()))?;
-                let eval_name = args
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("name is required".into()))?;
-                let validates: Vec<String> = args
-                    .get("validates")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .ok_or_else(|| WorkerError::Config("validates is required".into()))?;
-
-                self.runner.add_eval(eval_id, eval_name, &validates)
-            }
-
-            // Communication
-            "list_contacts" => self.runner.list_contacts(),
-            "chat_history" => {
-                let with = args.get("with").and_then(|v| v.as_str());
-                let limit = args
-                    .get("limit")
-                    .and_then(|v| v.as_i64())
-                    .map(|l| l as usize);
-                self.runner.chat_history(with, limit)
-            }
-            "chat_send" => {
-                let to = args
-                    .get("to")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("to is required".into()))?;
-                let message = args
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("message is required".into()))?;
-                self.runner.chat_send(to, message)
-            }
-            "chat_unread" => {
-                let with = args.get("with").and_then(|v| v.as_str());
-                self.runner.chat_unread(with)
-            }
-
-            // Documentation
-            "scribe" => {
-                let content = args
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("content is required".into()))?;
-                self.runner.scribe(content)
-            }
-            "read_docs" => {
-                let file = args.get("file").and_then(|v| v.as_str());
-                self.runner.read_docs(file)
-            }
-
-            // Work Management
-            "work_done" => {
-                // Signal to exit after response - worker is done
-                self.exit_after_response = true;
-                self.runner.work_done()
-            }
-            "time_status" => self.time_status(),
-
-            // Eval Operations
-            "eval_pass" => self.runner.eval_pass(),
-            "eval_fail" => {
-                let feedback = args
-                    .get("feedback")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("feedback is required".into()))?;
-                self.runner.eval_fail(feedback)
-            }
-
-            _ => Err(WorkerError::Config(format!("Unknown tool: {}", name))),
-        }
+        Self { runner }
     }
 
     /// Get time status for the run.
     fn time_status(&self) -> Result<String, WorkerError> {
-        // Get time info from state
         let time_info = self.runner.get_time_info()?;
 
         match time_info {
@@ -576,61 +314,154 @@ impl McpServer {
             .to_string()),
         }
     }
+}
 
-    /// Run the MCP server loop, reading from stdin and writing to stdout.
-    pub fn run(&mut self) -> Result<(), WorkerError> {
-        let stdin = io::stdin();
-        let stdout = io::stdout();
-        let mut stdout = stdout.lock();
+impl McpServer {
+    /// Execute a tool and return the result.
+    /// Returns `Ok((output, should_exit))` or `Err(error_message)`.
+    fn execute_tool(&mut self, name: &str, args: Value) -> Result<(String, bool), WorkerError> {
+        match name {
+            // Task Management
+            "get_task_tree" => self.runner.get_task_tree().map(|s| (s, false)),
+            "get_available_tasks" => self.runner.get_available_tasks().map(|s| (s, false)),
+            "get_my_tasks" => self.runner.get_my_tasks().map(|s| (s, false)),
+            "get_task_details" => {
+                let task_id = args
+                    .get("task_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("task_id is required".into()))?;
+                self.runner.get_task_details(task_id).map(|s| (s, false))
+            }
+            "complete_task" => {
+                let task_id = args.get("task_id").and_then(|v| v.as_str());
+                self.runner.task_done(task_id).map(|s| (s, false))
+            }
+            "add_task" => {
+                let task_id = args
+                    .get("task_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("task_id is required".into()))?;
+                let task_name = args
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("name is required".into()))?;
+                let parent = args.get("parent").and_then(|v| v.as_str());
+                let blocked_by: Vec<String> = args
+                    .get("blocked_by")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
 
-        for line in stdin.lock().lines() {
-            let line = match line {
-                Ok(l) => l,
-                Err(_) => continue,
-            };
+                self.runner
+                    .task_add(task_id, task_name, parent, &blocked_by)
+                    .map(|s| (s, false))
+            }
+            "add_eval" => {
+                let eval_id = args
+                    .get("eval_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("eval_id is required".into()))?;
+                let eval_name = args
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("name is required".into()))?;
+                let validates: Vec<String> = args
+                    .get("validates")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .ok_or_else(|| WorkerError::Config("validates is required".into()))?;
 
-            if line.trim().is_empty() {
-                continue;
+                self.runner
+                    .add_eval(eval_id, eval_name, &validates)
+                    .map(|s| (s, false))
             }
 
-            let request: JsonRpcRequest = match serde_json::from_str(&line) {
-                Ok(r) => r,
-                Err(e) => {
-                    let error_response =
-                        JsonRpcResponse::error(None, -32700, format!("Parse error: {}", e));
-                    if let Ok(json) = serde_json::to_string(&error_response) {
-                        let _ = writeln!(stdout, "{}", json);
-                        let _ = stdout.flush();
-                    }
-                    continue;
-                }
-            };
-
-            if let Some(response) = self.handle_request(request) {
-                if let Ok(json) = serde_json::to_string(&response) {
-                    let _ = writeln!(stdout, "{}", json);
-                    let _ = stdout.flush();
-                }
+            // Communication
+            "list_contacts" => self.runner.list_contacts().map(|s| (s, false)),
+            "chat_history" => {
+                let with = args.get("with").and_then(|v| v.as_str());
+                let limit = args
+                    .get("limit")
+                    .and_then(|v| v.as_i64())
+                    .map(|l| l as usize);
+                self.runner.chat_history(with, limit).map(|s| (s, false))
+            }
+            "chat_send" => {
+                let to = args
+                    .get("to")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("to is required".into()))?;
+                let message = args
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("message is required".into()))?;
+                self.runner.chat_send(to, message).map(|s| (s, false))
+            }
+            "chat_unread" => {
+                let with = args.get("with").and_then(|v| v.as_str());
+                self.runner.chat_unread(with).map(|s| (s, false))
             }
 
-            // Exit after work_done to signal agent to stop
-            if self.exit_after_response {
-                // Give Claude CLI time to read the response before we exit
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                break;
+            // Documentation
+            "scribe" => {
+                let content = args
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("content is required".into()))?;
+                self.runner.scribe(content).map(|s| (s, false))
             }
+            "read_docs" => {
+                let file = args.get("file").and_then(|v| v.as_str());
+                self.runner.read_docs(file).map(|s| (s, false))
+            }
+
+            // Work Management
+            "work_done" => self.runner.work_done().map(|s| (s, true)), // Exit after work_done
+            "time_status" => self.time_status().map(|s| (s, false)),
+
+            // Eval Operations
+            "eval_pass" => self.runner.eval_pass().map(|s| (s, false)),
+            "eval_fail" => {
+                let feedback = args
+                    .get("feedback")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("feedback is required".into()))?;
+                self.runner.eval_fail(feedback).map(|s| (s, false))
+            }
+
+            _ => Err(WorkerError::Config(format!("Unknown tool: {}", name))),
         }
+    }
+}
 
-        Ok(())
+impl McpToolServer for McpServer {
+    fn server_name(&self) -> &'static str {
+        "hirsel-mcp"
+    }
+
+    fn tools(&self) -> Vec<Tool> {
+        get_tools()
+    }
+
+    fn execute(&mut self, name: &str, args: Value) -> Result<(String, bool), String> {
+        self.execute_tool(name, args).map_err(|e| e.to_string())
     }
 }
 
 /// Run the MCP server from environment configuration.
 ///
 /// This is the main entry point for the MCP server binary.
-pub fn run_mcp_server() -> Result<(), WorkerError> {
+pub fn run_mcp_server_main() -> Result<(), WorkerError> {
     let mut server = McpServer::from_env()?;
-    server.run()
+    run_mcp_server(&mut server).map_err(WorkerError::Io)
 }
 
 #[cfg(test)]
@@ -660,23 +491,6 @@ mod tests {
         assert!(names.contains(&"time_status"));
         assert!(names.contains(&"eval_pass"));
         assert!(names.contains(&"eval_fail"));
-    }
-
-    #[test]
-    fn test_json_rpc_response_success() {
-        let response = JsonRpcResponse::success(Some(json!(1)), json!({"result": "ok"}));
-        assert_eq!(response.jsonrpc, "2.0");
-        assert!(response.result.is_some());
-        assert!(response.error.is_none());
-    }
-
-    #[test]
-    fn test_json_rpc_response_error() {
-        let response = JsonRpcResponse::error(Some(json!(1)), -32000, "Test error");
-        assert_eq!(response.jsonrpc, "2.0");
-        assert!(response.result.is_none());
-        assert!(response.error.is_some());
-        assert_eq!(response.error.as_ref().unwrap().code, -32000);
     }
 
     #[test]

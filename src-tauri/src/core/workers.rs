@@ -10,6 +10,7 @@
 //! have been moved to the `lifecycle` module for centralized management.
 
 use crate::cli::AgentPreset;
+use crate::core::constants::TIME_NOTIFICATION_THRESHOLDS;
 use crate::core::state::{SQLiteState, StateError, Status, WorkerStatus, WorkerUpdate};
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
@@ -102,7 +103,7 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
         env.insert("HIRSEL_AGENT_COMMAND".to_string(), agent_cmd_json);
     }
 
-    // Get the current executable path
+    // Get the executable path
     let hirsel_exe = std::env::current_exe().map_err(|e| {
         let err = WorkerError::SpawnFailed(format!("Failed to get current exe: {}", e));
         // Mark worker as error state on failure
@@ -140,8 +141,6 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
         config.work_dir.to_string_lossy().to_string(),
         "--run-dir".to_string(),
         config.run_dir.to_string_lossy().to_string(),
-        "--spec".to_string(),
-        config.spec_path.to_string_lossy().to_string(),
         "--agent-command".to_string(),
         agent_command_json,
     ];
@@ -285,17 +284,44 @@ pub fn check_worker_heartbeats(
         // Check if process is still alive
         if let Some(pid) = worker.pid {
             if !is_pid_alive(pid as u32) {
-                // Process died - mark as error
+                // Process died - mark as error and unclaim any assigned task
+                warn!("Worker {} process died (PID {})", worker.name, pid);
+
+                // Unclaim the task if worker had one assigned (so it can be picked up by another worker)
+                if let Some(ref task_id) = worker.assigned_task_id {
+                    if let Err(e) = state.admin_unclaim_task(task_id) {
+                        warn!(
+                            "Failed to unclaim task {} from dead worker {}: {}",
+                            task_id, worker.name, e
+                        );
+                    } else {
+                        info!(
+                            "Unclaimed task {} from dead worker {} - available for reassignment",
+                            task_id, worker.name
+                        );
+                    }
+                }
+
+                // Mark worker as error and clear assigned_task_id
                 state.update_worker(
                     &worker.name,
                     WorkerUpdate {
                         pid: None,
                         status: Some(WorkerStatus::Error),
+                        assigned_task_id: Some(None), // Clear assigned task
                         ..Default::default()
                     },
                 )?;
+
+                // Trigger scaling check - unclaimed task needs a worker
+                if let Err(e) = state.request_scaling_check() {
+                    warn!(
+                        "Failed to request scaling check after worker {} death: {}",
+                        worker.name, e
+                    );
+                }
+
                 stale.push(worker.name.clone());
-                warn!("Worker {} process died (PID {})", worker.name, pid);
                 continue;
             }
         }
@@ -349,9 +375,6 @@ pub fn get_agent_command(preset: &AgentPreset) -> Vec<String> {
 // =============================================================================
 // Time Limit Notifications and Timeout Handling
 // =============================================================================
-
-/// Time notification thresholds (accelerating frequency)
-const TIME_NOTIFICATION_THRESHOLDS: &[i64] = &[25, 50, 75, 85, 90, 95, 98];
 
 /// Get message for a time notification threshold
 fn get_time_notification_message(threshold: i64) -> &'static str {
@@ -510,12 +533,28 @@ pub fn reconcile_stale_workers() -> Vec<(String, String)> {
                         worker.name, run_name, pid
                     );
 
+                    // Unclaim any assigned task so it can be picked up by another worker
+                    if let Some(ref task_id) = worker.assigned_task_id {
+                        if let Err(e) = state.admin_unclaim_task(task_id) {
+                            warn!(
+                                "[reconcile] Failed to unclaim task {} from stale worker {}: {}",
+                                task_id, worker.name, e
+                            );
+                        } else {
+                            info!(
+                                "[reconcile] Unclaimed task {} from stale worker {}",
+                                task_id, worker.name
+                            );
+                        }
+                    }
+
                     if let Err(e) = state.update_worker(
                         &worker.name,
                         WorkerUpdate {
                             pid: None,
                             status: Some(WorkerStatus::Paused),
                             hitl_waiting: Some(false),
+                            assigned_task_id: Some(None), // Clear assigned task
                             ..Default::default()
                         },
                     ) {
@@ -548,10 +587,26 @@ pub fn reconcile_stale_workers() -> Vec<(String, String)> {
                     worker.name, run_name
                 );
 
+                // Unclaim any assigned task so it can be picked up by another worker
+                if let Some(ref task_id) = worker.assigned_task_id {
+                    if let Err(e) = state.admin_unclaim_task(task_id) {
+                        warn!(
+                            "[reconcile] Failed to unclaim task {} from stale worker {}: {}",
+                            task_id, worker.name, e
+                        );
+                    } else {
+                        info!(
+                            "[reconcile] Unclaimed task {} from stale worker {}",
+                            task_id, worker.name
+                        );
+                    }
+                }
+
                 if let Err(e) = state.update_worker(
                     &worker.name,
                     WorkerUpdate {
                         status: Some(WorkerStatus::Paused),
+                        assigned_task_id: Some(None), // Clear assigned task
                         ..Default::default()
                     },
                 ) {
@@ -606,7 +661,6 @@ mod tests {
             worker_name: "worker1".to_string(),
             work_dir: PathBuf::from("/tmp/work"),
             run_dir: PathBuf::from("/tmp/run"),
-            spec_path: PathBuf::from("/tmp/run/spec.md"),
             agent_command: vec!["test-agent".to_string()],
             is_leader: true,
             leader_name: Some("worker1".to_string()),

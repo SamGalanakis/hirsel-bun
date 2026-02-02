@@ -135,8 +135,18 @@ impl DeltaRunner {
             // Determine task type based on delta node type
             let task_type = self.get_task_type_for_submission(submission)?;
 
-            // Build blocked_by list from the live node (orchestrator handles scope blocking)
-            let blocked_by = self.get_blocked_by_for_submission(submission)?;
+            // Build blocked_by list from the live node
+            let mut blocked_by = self.get_blocked_by_for_submission(submission)?;
+
+            // On first dispatch, root work tasks should be blocked by scope
+            // This prevents autoscale from spawning workers before leader explores the spec
+            // (Eval tasks are already implicitly blocked by their validates targets)
+            if is_first_dispatch
+                && task_type == "work"
+                && blocked_by.as_ref().map(|v| v.is_empty()).unwrap_or(true)
+            {
+                blocked_by = Some(vec!["scope".to_string()]);
+            }
 
             // Build validates list for eval tasks
             let validates = self.get_validates_for_submission(submission)?;

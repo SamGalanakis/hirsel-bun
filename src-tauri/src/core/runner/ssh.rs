@@ -243,7 +243,6 @@ fi
         let agent_command_json =
             serde_json::to_string(&config.agent_command).unwrap_or_else(|_| "[]".to_string());
         let env_vars: Vec<(String, String)> = config.collect_env_vars().into_iter().collect();
-        let spec_path = format!("{}/spec.md", work_dir);
 
         // Dispatch based on container config
         if let Some(ref container) = self.container {
@@ -253,7 +252,6 @@ fi
                 &api_url,
                 &config.run_name,
                 &config.worker_name,
-                &spec_path,
                 &agent_command_json,
                 config.is_leader,
                 config.leader_name.as_deref(),
@@ -287,7 +285,6 @@ fi
                 &api_url,
                 &config.run_name,
                 &config.worker_name,
-                &spec_path,
                 &agent_command_json,
                 config.is_leader,
                 config.leader_name.as_deref(),

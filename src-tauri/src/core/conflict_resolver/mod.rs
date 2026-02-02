@@ -22,6 +22,7 @@ use thiserror::Error;
 use tracing::{info, warn};
 
 use crate::core::acp_runner::{AcpAgentRunner, AcpRunnerError};
+use crate::core::constants::{RESOLUTION_TIMEOUT_SECS, RESOLVER_PROMPT};
 pub use client::ConflictResolverClient;
 pub use state::{ConflictResolution, ConflictResolutionStatus, ConflictResolverState};
 
@@ -60,42 +61,6 @@ pub struct ResolutionResult {
     pub files_resolved: usize,
     pub success: bool,
 }
-
-/// Default timeout for conflict resolution agent (5 minutes)
-const RESOLUTION_TIMEOUT_SECS: u64 = 300;
-
-/// Prompt template for the conflict resolver agent
-const RESOLVER_PROMPT: &str = r#"You are resolving git merge conflicts.
-
-## Context
-
-The following files have merge conflicts with conflict markers (<<<<<<, =======, >>>>>>>):
-
-{files}
-
-## Task Context
-
-{context}
-
-## Instructions
-
-1. Read each conflicting file
-2. Understand both versions of the changes
-3. Make a semantic choice about how to combine or resolve the conflicts
-4. Remove ALL conflict markers (<<<<<<, =======, >>>>>>>) from each file
-5. Write the resolved version back to each file
-6. Use `git add <file>` for each resolved file
-
-## Important Rules
-
-- NEVER leave conflict markers in files
-- If unsure, prefer the incoming changes (after =======) as they are newer
-- Keep all meaningful changes from both sides when possible
-- After resolving all files, verify with `git status` that there are no unmerged files
-
-## Conflicting Files
-
-"#;
 
 /// Service for resolving merge conflicts via AI agent
 pub struct ConflictResolverService {

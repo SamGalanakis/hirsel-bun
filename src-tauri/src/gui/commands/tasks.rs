@@ -6,12 +6,14 @@ use crate::core::api_types::{Task, TaskStatus};
 use crate::core::orchestrator::create_orchestrator;
 use crate::core::{config, state::SQLiteState};
 
+use super::err_string;
+
 /// Get all tasks for a run
 /// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn get_tasks(run_name: String) -> Result<Vec<Task>, String> {
-    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
-    orch.list_tasks(&run_name).await.map_err(|e| e.to_string())
+    let orch = create_orchestrator(None).map_err(err_string)?;
+    orch.list_tasks(&run_name).await.map_err(err_string)
 }
 
 /// Add a new task
@@ -78,6 +80,7 @@ pub async fn add_task(
         tokens_used: task.tokens_used.map(|t| t as u64),
         created_at: task.created_at,
         board_task_id: task.board_task_id,
+        source: task.source.as_str().to_string(),
     })
 }
 
@@ -85,20 +88,20 @@ pub async fn add_task(
 /// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn delete_task(run_name: String, task_id: String) -> Result<(), String> {
-    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
+    let orch = create_orchestrator(None).map_err(err_string)?;
     orch.delete_task(&run_name, &task_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(err_string)
 }
 
 /// Mark a task as complete (from UI - uses "user" as worker name)
 /// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn complete_task(run_name: String, task_id: String) -> Result<(), String> {
-    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
+    let orch = create_orchestrator(None).map_err(err_string)?;
     orch.complete_task(&run_name, &task_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(err_string)
 }
 
 /// Unclaim a task (release it back to the pool)
@@ -130,8 +133,8 @@ pub async fn unclaim_task(run_name: String, task_id: String) -> Result<(), Strin
 /// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn reopen_task(run_name: String, task_id: String) -> Result<(), String> {
-    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
+    let orch = create_orchestrator(None).map_err(err_string)?;
     orch.reopen_task(&run_name, &task_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(err_string)
 }

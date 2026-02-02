@@ -21,6 +21,7 @@ import { useProject } from '../../stores';
 import { useDelta } from '../../stores/delta-context';
 import { generateSheepSvg } from '../../lib/sheep-avatar';
 import { WorkerDetailModal } from '../runs/WorkerDetailModal';
+import { TaskEditorModal } from './TaskEditorModal';
 import { computeElkLayout, type LayoutInputNode, type ElkLayoutResult } from '../../lib/elk-layout';
 import type {
   DraftNodeTree,
@@ -139,8 +140,8 @@ const DraftNodeCard: Component<{
 
   // EVAL: The gate/checkpoint - DASHED border, sage-tinted (green) to match validates edges
   const evalStyles = () => ({
-    bg: 'linear-gradient(135deg, rgba(38, 45, 40, 0.95) 0%, rgba(32, 38, 34, 0.98) 100%)',
-    border: props.selected ? 'rgba(100, 140, 90, 0.6)' : 'rgba(70, 100, 65, 0.5)',
+    bg: 'var(--node-eval-bg)',
+    border: props.selected ? 'var(--node-eval-border-selected)' : 'var(--node-eval-border)',
     borderWidth: '1px',
     borderStyle: 'dashed',
     textColor: 'var(--wool-300)',
@@ -152,8 +153,8 @@ const DraftNodeCard: Component<{
 
   // TASK: The sheep - warmer, more grounded gradient
   const taskStyles = () => ({
-    bg: 'linear-gradient(135deg, rgba(45, 42, 38, 0.95) 0%, rgba(38, 35, 32, 0.98) 100%)',
-    border: props.selected ? 'rgba(140, 130, 115, 0.5)' : 'rgba(90, 85, 78, 0.4)',
+    bg: 'var(--node-task-bg)',
+    border: props.selected ? 'var(--node-task-border-selected)' : 'var(--node-task-border)',
     borderWidth: '1px',
     borderStyle: 'solid',
     textColor: 'var(--wool-300)',
@@ -231,8 +232,8 @@ const LiveNodeCard: Component<{
 
   // EVAL: The gate/checkpoint - DASHED border, sage-tinted (green) to match validates edges
   const evalStyles = () => ({
-    bg: 'linear-gradient(135deg, rgba(38, 45, 40, 0.95) 0%, rgba(32, 38, 34, 0.98) 100%)',
-    border: props.selected ? 'rgba(100, 140, 90, 0.6)' : 'rgba(70, 100, 65, 0.5)',
+    bg: 'var(--node-eval-bg)',
+    border: props.selected ? 'var(--node-eval-border-selected)' : 'var(--node-eval-border)',
     borderWidth: '1px',
     borderStyle: 'dashed',
     textColor: 'var(--wool-300)',
@@ -244,8 +245,8 @@ const LiveNodeCard: Component<{
 
   // TASK: The sheep - warmer, more grounded gradient
   const taskStyles = () => ({
-    bg: 'linear-gradient(135deg, rgba(45, 42, 38, 0.95) 0%, rgba(38, 35, 32, 0.98) 100%)',
-    border: props.selected ? 'rgba(140, 130, 115, 0.5)' : 'rgba(90, 85, 78, 0.4)',
+    bg: 'var(--node-task-bg)',
+    border: props.selected ? 'var(--node-task-border-selected)' : 'var(--node-task-border)',
     borderWidth: '1px',
     borderStyle: 'solid',
     textColor: 'var(--wool-300)',
@@ -259,9 +260,9 @@ const LiveNodeCard: Component<{
 
   // Status glow - external indicator that doesn't affect card dimensions
   const statusGlow = () => {
-    if (isWorking()) return '0 0 12px rgba(212, 165, 116, 0.4)';  // amber glow
-    if (isDone()) return '0 0 8px rgba(125, 153, 112, 0.25)';     // subtle sage
-    if (isFailed()) return '0 0 10px rgba(196, 92, 74, 0.35)';    // terra
+    if (isWorking()) return 'var(--glow-working)';
+    if (isDone()) return 'var(--glow-done)';
+    if (isFailed()) return 'var(--glow-failed)';
     return undefined;  // pending = no glow
   };
 
@@ -377,8 +378,8 @@ const DependencyConnectors: Component<{
           // BlockedBy: terra/red lines (task depends on task)
           // Validates: sage/green lines (eval validates task)
           const strokeColor = isValidates
-            ? 'rgb(85, 115, 75)'     // Sage/green for validates
-            : 'rgb(145, 85, 70)';    // Terra/red for blockedBy
+            ? 'var(--edge-validates)'
+            : 'var(--edge-blocked-by)';
           const strokeWidth = isValidates ? 1 : 1.25;
 
           return (
@@ -456,7 +457,6 @@ export const SpecBoard: Component = () => {
   // Edit modal state
   const [editingNode, setEditingNode] = createSignal<DraftNodeTree | null>(null);
   const [viewingLiveNode, setViewingLiveNode] = createSignal<LiveNodeTree | null>(null);
-  const [editForm, setEditForm] = createSignal({ name: '', content: '', validates: '', blockedBy: '' });
 
   // New node prompt
   const [showNewPrompt, setShowNewPrompt] = createSignal(false);
@@ -758,32 +758,19 @@ export const SpecBoard: Component = () => {
   // ==========================================================================
 
   const handleDoubleClick = (node: DraftNodeTree) => {
-    setEditForm({
-      name: node.name,
-      content: node.content,
-      validates: node.validates.join(', '),
-      blockedBy: node.blockedBy.join(', '),
-    });
     setEditingNode(node);
   };
 
-  const handleSaveEdit = async () => {
+  const handleSaveEdit = async (updates: {
+    name: string;
+    content: string;
+    validates: string[];
+    blockedBy: string[];
+  }) => {
     const node = editingNode();
     if (!node) return;
 
-    const form = editForm();
-    await delta.updateDraftNode(node.id, {
-      name: form.name,
-      content: form.content,
-      validates: form.validates
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
-      blockedBy: form.blockedBy
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
-    });
+    await delta.updateDraftNode(node.id, updates);
     setEditingNode(null);
   };
 
@@ -1668,169 +1655,16 @@ export const SpecBoard: Component = () => {
           })()}
         </Show>
 
-        {/* Edit Modal */}
+        {/* Edit Modal (CodeMirror-based) */}
         <Show when={editingNode()}>
-          {(node) => {
-            const nodeType = () => node().nodeType;
-            const isEval = () => nodeType() === 'eval';
-            const typeLabel = () => (isEval() ? 'Eval' : 'Task');
-
-            return (
-              <div
-                class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-                onClick={(e) => { if (e.target === e.currentTarget) setEditingNode(null); }}
-              >
-                <div
-                  class="w-[420px] rounded-lg shadow-xl"
-                  style={{
-                    background: 'var(--pasture-800)',
-                    border: '1px solid var(--pasture-600)',
-                  }}
-                >
-                  {/* Header */}
-                  <div class="p-4 border-b border-pasture-600 flex items-start justify-between">
-                    <div class="flex items-center gap-3">
-                      <div
-                        class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
-                        style={{
-                          background: isEval() ? 'rgba(125, 153, 112, 0.15)' : 'rgba(212, 165, 116, 0.12)',
-                          border: `1px solid ${isEval() ? 'rgba(125, 153, 112, 0.25)' : 'rgba(212, 165, 116, 0.2)'}`,
-                        }}
-                      >
-                        <Show when={isEval()} fallback={
-                          <svg class="w-5 h-5" style={{ color: 'var(--amber-500)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                          </svg>
-                        }>
-                          <svg class="w-5 h-5" style={{ color: 'var(--sage)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                        </Show>
-                      </div>
-                      <div>
-                        <span
-                          class="text-[10px] font-medium uppercase tracking-wider"
-                          style={{ color: isEval() ? 'var(--sage)' : 'var(--amber-500)', opacity: 0.8 }}
-                        >
-                          {typeLabel()}
-                        </span>
-                        <h2 class="text-sm font-semibold text-wool-100 -mt-0.5">
-                          {editForm().name || 'Untitled'}
-                        </h2>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => setEditingNode(null)}
-                      class="p-1 rounded text-wool-500 hover:text-wool-300 hover:bg-white/5"
-                    >
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-
-                  {/* Content */}
-                  <div class="p-4 space-y-4">
-                    {/* Name field */}
-                    <div class="space-y-1.5">
-                      <label for="edit-name" class="text-xs font-medium text-wool-300">Name</label>
-                      <input
-                        id="edit-name"
-                        type="text"
-                        value={editForm().name}
-                        onInput={(e) => setEditForm((f) => ({ ...f, name: e.currentTarget.value }))}
-                        placeholder={`${typeLabel()} name...`}
-                        class="w-full px-3 py-2 rounded-md text-sm bg-pasture-900 border border-pasture-600 text-wool-100 placeholder-wool-600 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
-                        style={{ 'font-family': 'system-ui, -apple-system, sans-serif' }}
-                      />
-                    </div>
-
-                    {/* Content field */}
-                    <div class="space-y-1.5">
-                      <label for="edit-content" class="text-xs font-medium text-wool-300">
-                        {isEval() ? 'Acceptance Criteria' : 'Description'}
-                      </label>
-                      <textarea
-                        id="edit-content"
-                        value={editForm().content}
-                        onInput={(e) => setEditForm((f) => ({ ...f, content: e.currentTarget.value }))}
-                        rows={4}
-                        placeholder={isEval() ? 'What conditions must be met?' : 'What needs to be done?'}
-                        class="w-full px-3 py-2 rounded-md text-sm bg-pasture-900 border border-pasture-600 text-wool-100 placeholder-wool-600 focus:outline-none focus:ring-2 focus:ring-amber-500/30 resize-none"
-                        style={{ 'font-family': 'system-ui, -apple-system, sans-serif' }}
-                      />
-                      <p class="text-[11px] text-wool-500">
-                        {isEval() ? 'Describe how to verify this requirement.' : 'Markdown supported.'}
-                      </p>
-                    </div>
-
-                    {/* Validates field (eval only) */}
-                    <Show when={isEval()}>
-                      <div class="space-y-1.5">
-                        <label for="edit-validates" class="text-xs font-medium" style={{ color: 'var(--sage)' }}>
-                          Validates Tasks
-                        </label>
-                        <input
-                          id="edit-validates"
-                          type="text"
-                          value={editForm().validates}
-                          onInput={(e) => setEditForm((f) => ({ ...f, validates: e.currentTarget.value }))}
-                          placeholder="task-id-1, task-id-2"
-                          class="w-full px-3 py-2 rounded-md text-sm font-mono bg-pasture-900 text-wool-100 placeholder-wool-600 focus:outline-none focus:ring-2 focus:ring-sage/30"
-                          style={{ 'border': '1px solid rgba(125, 153, 112, 0.4)' }}
-                        />
-                        <p class="text-[11px] text-wool-500">
-                          Comma-separated task IDs this eval validates.
-                        </p>
-                      </div>
-                    </Show>
-
-                    {/* Blocked By field (task only) */}
-                    <Show when={!isEval()}>
-                      <div class="space-y-1.5">
-                        <label for="edit-blocked-by" class="text-xs font-medium" style={{ color: 'var(--amber-500)' }}>
-                          Blocked By
-                        </label>
-                        <input
-                          id="edit-blocked-by"
-                          type="text"
-                          value={editForm().blockedBy}
-                          onInput={(e) => setEditForm((f) => ({ ...f, blockedBy: e.currentTarget.value }))}
-                          placeholder="task-id-1, task-id-2"
-                          class="w-full px-3 py-2 rounded-md text-sm font-mono bg-pasture-900 text-wool-100 placeholder-wool-600 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
-                          style={{ 'border': '1px solid rgba(212, 165, 116, 0.4)' }}
-                        />
-                        <p class="text-[11px] text-wool-500">
-                          Comma-separated task IDs that must complete before this task.
-                        </p>
-                      </div>
-                    </Show>
-                  </div>
-
-                  {/* Footer */}
-                  <div class="px-4 py-3 border-t border-pasture-600 flex justify-end gap-2">
-                    <button
-                      onClick={() => setEditingNode(null)}
-                      class="px-3 py-1.5 rounded-md text-xs font-medium text-wool-400 hover:text-wool-200 hover:bg-white/5"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleSaveEdit}
-                      class="px-3 py-1.5 rounded-md text-xs font-medium"
-                      style={{
-                        background: isEval() ? 'rgba(125, 153, 112, 0.2)' : 'var(--amber-500)',
-                        color: isEval() ? 'var(--sage)' : 'var(--pasture-900)',
-                        border: isEval() ? '1px solid rgba(125, 153, 112, 0.3)' : 'none',
-                      }}
-                    >
-                      Save Changes
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          }}
+          {(node) => (
+            <TaskEditorModal
+              node={node()}
+              projectId={project.selectedProject()!.id}
+              onSave={handleSaveEdit}
+              onClose={() => setEditingNode(null)}
+            />
+          )}
         </Show>
 
         {/* Live Node Detail Modal (Read-only) */}

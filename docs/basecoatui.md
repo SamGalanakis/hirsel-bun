@@ -416,8 +416,10 @@ Uses native `<details>` element:
 - Add `role="status"` to spinners
 
 ### 4. Icons (Lucide)
-- Call `initLucideIcons()` after dynamic DOM updates
+- Use the `<Icon name="icon-name" />` component from `src/components/shared`
+- Icons render as inline SVGs via SolidJS - no DOM mutation needed
 - Standard sizes: `w-4 h-4` (16px), `w-5 h-5` (20px)
+- Example: `<Icon name="check" class="w-4 h-4 text-sage" />`
 
 ### 5. Colors (Hirsel theme)
 - Primary actions: `btn` (amber)

@@ -34,9 +34,7 @@ pub mod types;
 
 pub use diff::DiffService;
 pub use dispatch::{DeltaDispatchResult, DeltaDispatchService, DispatchError, DispatchPreview};
-pub use export::{
-    BoardEval, BoardFile, BoardTask, DeltaExporter, ExportError, ExportResult, SyncResult,
-};
+pub use export::{DeltaExporter, ExportError, ExportResult, SyncResult};
 pub use generator::{
     build_llm_prompt, parse_llm_response, DeltaGenerator, GeneratorError, GeneratorResult,
 };

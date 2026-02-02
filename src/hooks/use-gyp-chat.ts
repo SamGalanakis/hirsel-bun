@@ -462,6 +462,8 @@ export function useGypChat(
     setEditingIslands(new Set<string>());
     toolsById.clear();
     lastChunkType = null;
+    // Clear messages to prevent stale UI during project transitions
+    setMessages([]);
   };
 
   // Send message

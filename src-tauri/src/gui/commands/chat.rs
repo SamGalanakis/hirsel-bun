@@ -106,6 +106,7 @@ pub async fn start_chat_session(
         run_name,
         system_prompt,
         credentials,
+        mcp_servers: vec![],
     };
 
     // Get the appropriate orchestrator
