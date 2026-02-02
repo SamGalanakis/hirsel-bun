@@ -186,57 +186,6 @@ export interface RunState {
 }
 
 // =============================================================================
-// Task Types
-// =============================================================================
-
-/** Task type - work (implementation) or eval (validation) */
-export type TaskType = 'work' | 'eval';
-
-/** Task source - where the task originated from */
-export type TaskSource = 'spec' | 'worker' | 'system';
-
-/** Eval result values */
-export type EvalResult = 'pass' | 'fail';
-
-/** Task status values */
-export type TaskStatus =
-  | 'todo'
-  | 'doing'
-  | 'done'
-  | 'awaiting_eval' // Work task done, waiting for eval
-  | 'validated' // Work task done + eval passed
-  | 'needs_repair'; // Eval failed, repair task created
-
-/** Task from the database */
-export interface Task {
-  id: string;
-  description: string;
-  status: TaskStatus;
-  claimedBy: string | null;
-  claimedAt: string | null;
-  completedAt: string | null;
-  parentId: string | null;
-  blockedBy: string[] | null;
-  tokensUsed: number | null;
-  createdAt: string;
-  // Eval system fields
-  taskType: TaskType;
-  validates: string[] | null; // Task IDs this eval validates (eval tasks only)
-  evalResult: EvalResult | null;
-  evalFeedback: string | null;
-  boardTaskId: string | null; // Original board task ID for tracking
-  // Source tracking
-  source: TaskSource; // Where the task originated (spec, worker, system)
-}
-
-/** Task with computed display properties */
-export interface TaskDisplay extends Task {
-  isBlocked: boolean;
-  children: TaskDisplay[];
-  depth: number;
-}
-
-// =============================================================================
 // Worker Types
 // =============================================================================
 
@@ -548,16 +497,6 @@ export const STATUS_COLORS: Record<RunStatus, string> = {
   runaway: 'terra',
   timed_out: 'terra',
   eval_failed: 'terra',
-};
-
-/** Task status icons */
-export const TASK_ICONS: Record<TaskStatus, string> = {
-  todo: '\u25cb', // ○
-  doing: '\u25cf', // ●
-  done: '\u2713', // ✓
-  awaiting_eval: '\u25d4', // ◔ (half circle - waiting)
-  validated: '\u2714', // ✔ (heavy check - validated)
-  needs_repair: '\u2692', // ⚒ (hammer and pick - repair needed)
 };
 
 /** Worker status icons */
@@ -1114,6 +1053,9 @@ export type NodeType = 'task' | 'eval';
 /** Status of a live node */
 export type LiveNodeStatus = 'pending' | 'working' | 'done' | 'failed';
 
+/** Source of a live node - where it originated */
+export type LiveNodeSource = 'spec' | 'worker' | 'system';
+
 /** Type of delta operation */
 export type DeltaType = 'implement' | 'modify' | 'revert';
 
@@ -1164,6 +1106,7 @@ export interface LiveNode {
   nodeType: NodeType;
   content: string;
   status: LiveNodeStatus;
+  source: LiveNodeSource;
   validates: string[];
   blockedBy: string[];
   x: number | null;
@@ -1182,6 +1125,7 @@ export interface LiveNodeTree {
   nodeType: NodeType;
   content: string;
   status: LiveNodeStatus;
+  source: LiveNodeSource;
   validates: string[];
   blockedBy: string[]; // Computed inverse of validates - tasks blocked by evals
   children: LiveNodeTree[];

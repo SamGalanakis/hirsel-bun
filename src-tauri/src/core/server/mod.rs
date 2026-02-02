@@ -6,7 +6,6 @@
 //! Route handlers for state operations are in submodules:
 //! - `eval_routes` - Eval API endpoints
 //! - `message_routes` - Message/thread API endpoints
-//! - `task_routes` - Task API endpoints
 //! - `worker_routes` - Worker API endpoints
 //! - `shared_routes` - Route builders shared with daemon
 
@@ -17,7 +16,6 @@ pub mod gyp;
 pub mod message_routes;
 pub mod routes;
 pub mod shared_routes;
-pub mod task_routes;
 pub mod worker_routes;
 
 use std::sync::Arc;

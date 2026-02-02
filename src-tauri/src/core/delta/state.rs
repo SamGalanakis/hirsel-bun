@@ -57,12 +57,20 @@ CREATE TABLE IF NOT EXISTS live_nodes (
     node_type TEXT NOT NULL DEFAULT 'task',
     content TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'pending',
+    source TEXT NOT NULL DEFAULT 'spec',
     x REAL,
     y REAL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     completed_at TEXT,
-    last_commit_sha TEXT
+    last_commit_sha TEXT,
+    -- Orchestration fields
+    claimed_by TEXT,
+    claimed_at TEXT,
+    completed_by TEXT,
+    eval_result TEXT,
+    eval_feedback TEXT,
+    tokens_used INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_live_nodes_project ON live_nodes(project_id);
@@ -979,7 +987,7 @@ impl DeltaState {
         let blocked_by_map = self.load_live_blocked_by(&db)?;
 
         let mut stmt = db.prepare(
-            "SELECT id, project_id, draft_node_id, parent_id, position, name, node_type, content, status, x, y, created_at, updated_at, completed_at, last_commit_sha
+            "SELECT id, project_id, draft_node_id, parent_id, position, name, node_type, content, status, source, x, y, created_at, updated_at, completed_at, last_commit_sha, claimed_by, claimed_at, completed_by, eval_result, eval_feedback, tokens_used
              FROM live_nodes
              WHERE project_id = ?1
              ORDER BY parent_id NULLS FIRST, position",
@@ -1002,6 +1010,9 @@ impl DeltaState {
                     status: LiveNodeStatus::from_str(
                         &row.get::<_, String>("status").unwrap_or_default(),
                     ),
+                    source: LiveNodeSource::from_str(
+                        &row.get::<_, String>("source").unwrap_or_default(),
+                    ),
                     validates: validates_map.get(&id).cloned().unwrap_or_default(),
                     blocked_by: blocked_by_map.get(&id).cloned().unwrap_or_default(),
                     x: row.get("x")?,
@@ -1010,6 +1021,14 @@ impl DeltaState {
                     updated_at: row.get("updated_at")?,
                     completed_at: row.get("completed_at")?,
                     last_commit_sha: row.get("last_commit_sha")?,
+                    claimed_by: row.get("claimed_by")?,
+                    claimed_at: row.get("claimed_at")?,
+                    completed_by: row.get("completed_by")?,
+                    eval_result: row
+                        .get::<_, Option<String>>("eval_result")?
+                        .and_then(|s| EvalResult::from_str(&s)),
+                    eval_feedback: row.get("eval_feedback")?,
+                    tokens_used: row.get("tokens_used")?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -1025,7 +1044,7 @@ impl DeltaState {
         let blocked_by = self.load_live_node_blocked_by(&db, id)?;
 
         let mut stmt = db.prepare(
-            "SELECT id, project_id, draft_node_id, parent_id, position, name, node_type, content, status, x, y, created_at, updated_at, completed_at, last_commit_sha
+            "SELECT id, project_id, draft_node_id, parent_id, position, name, node_type, content, status, source, x, y, created_at, updated_at, completed_at, last_commit_sha, claimed_by, claimed_at, completed_by, eval_result, eval_feedback, tokens_used
              FROM live_nodes
              WHERE id = ?1 AND project_id = ?2",
         )?;
@@ -1045,6 +1064,9 @@ impl DeltaState {
                 status: LiveNodeStatus::from_str(
                     &row.get::<_, String>("status").unwrap_or_default(),
                 ),
+                source: LiveNodeSource::from_str(
+                    &row.get::<_, String>("source").unwrap_or_default(),
+                ),
                 validates,
                 blocked_by,
                 x: row.get("x")?,
@@ -1053,6 +1075,14 @@ impl DeltaState {
                 updated_at: row.get("updated_at")?,
                 completed_at: row.get("completed_at")?,
                 last_commit_sha: row.get("last_commit_sha")?,
+                claimed_by: row.get("claimed_by")?,
+                claimed_at: row.get("claimed_at")?,
+                completed_by: row.get("completed_by")?,
+                eval_result: row
+                    .get::<_, Option<String>>("eval_result")?
+                    .and_then(|s| EvalResult::from_str(&s)),
+                eval_feedback: row.get("eval_feedback")?,
+                tokens_used: row.get("tokens_used")?,
             })
         })
         .map_err(|e| match e {
@@ -1069,8 +1099,8 @@ impl DeltaState {
         let now = self.now();
 
         db.execute(
-            "INSERT INTO live_nodes (id, project_id, draft_node_id, parent_id, position, name, node_type, content, status, x, y, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending', ?9, ?10, ?11, ?12)",
+            "INSERT INTO live_nodes (id, project_id, draft_node_id, parent_id, position, name, node_type, content, status, source, x, y, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending', 'spec', ?9, ?10, ?11, ?12)",
             params![
                 &draft.id,
                 self.project_id,
@@ -1106,6 +1136,71 @@ impl DeltaState {
         self.get_live_node(&draft.id)
     }
 
+    /// Create a live node added by a worker (not from draft)
+    ///
+    /// These nodes have no draft_node_id and source='worker'.
+    /// Used when workers call add_task MCP to add tasks during execution.
+    pub fn create_live_node_from_worker(
+        &self,
+        id: &str,
+        name: &str,
+        parent_id: Option<&str>,
+        blocked_by: Option<&[&str]>,
+        node_type: NodeType,
+        content: &str,
+    ) -> DeltaStateResult<LiveNode> {
+        let db = self.open_db()?;
+        let now = self.now();
+
+        // Get position (append after siblings)
+        let position: i32 = match parent_id {
+            Some(pid) => db
+                .query_row(
+                    "SELECT COALESCE(MAX(position), -1) FROM live_nodes WHERE parent_id = ?1 AND project_id = ?2",
+                    params![pid, self.project_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(-1)
+                + 1,
+            None => db
+                .query_row(
+                    "SELECT COALESCE(MAX(position), -1) FROM live_nodes WHERE parent_id IS NULL AND project_id = ?1",
+                    [self.project_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(-1)
+                + 1,
+        };
+
+        db.execute(
+            "INSERT INTO live_nodes (id, project_id, draft_node_id, parent_id, position, name, node_type, content, status, source, created_at, updated_at)
+             VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, 'pending', 'worker', ?8, ?9)",
+            params![
+                id,
+                self.project_id,
+                parent_id,
+                position,
+                name,
+                node_type.as_str(),
+                content,
+                &now,
+                &now
+            ],
+        )?;
+
+        // Insert blocked_by relationships
+        if let Some(blockers) = blocked_by {
+            for blocker_id in blockers {
+                db.execute(
+                    "INSERT OR IGNORE INTO live_node_blocked_by (node_id, blocker_id, project_id) VALUES (?1, ?2, ?3)",
+                    params![id, blocker_id, self.project_id],
+                )?;
+            }
+        }
+
+        self.get_live_node(id)
+    }
+
     /// Update live node status
     pub fn update_live_node_status(
         &self,
@@ -1116,7 +1211,11 @@ impl DeltaState {
         let db = self.open_db()?;
         let now = self.now();
 
-        let completed_at = if status == LiveNodeStatus::Done || status == LiveNodeStatus::Failed {
+        // Set completed_at on terminal statuses
+        let completed_at = if matches!(
+            status,
+            LiveNodeStatus::Done | LiveNodeStatus::Failed | LiveNodeStatus::Validated
+        ) {
             Some(now.clone())
         } else {
             None
@@ -1255,7 +1354,8 @@ impl DeltaState {
                 name: node.name.clone(),
                 node_type: node.node_type.clone(),
                 content: node.content.clone(),
-                status: node.status.clone(),
+                status: node.status,
+                source: node.source,
                 validates: node.validates.clone(),
                 blocked_by: node.blocked_by.clone(),
                 completed_at: node.completed_at.clone(),
@@ -1263,6 +1363,12 @@ impl DeltaState {
                 children,
                 x: node.x,
                 y: node.y,
+                claimed_by: node.claimed_by.clone(),
+                claimed_at: node.claimed_at.clone(),
+                completed_by: node.completed_by.clone(),
+                eval_result: node.eval_result,
+                eval_feedback: node.eval_feedback.clone(),
+                tokens_used: node.tokens_used,
             }
         }
 
@@ -1900,6 +2006,480 @@ impl DeltaState {
 
         Ok(deliveries)
     }
+
+    // =========================================================================
+    // Orchestration Operations (Task Claiming, Completion, Eval)
+    // =========================================================================
+
+    /// Claim a live node for a worker
+    pub fn claim_live_node(&self, id: &str, worker_name: &str) -> DeltaStateResult<LiveNode> {
+        let db = self.open_db()?;
+        let now = self.now();
+
+        // Verify node exists and is claimable
+        let node = self.get_live_node(id)?;
+        if node.status != LiveNodeStatus::Pending {
+            return Err(DeltaStateError::LiveNodeNotFound(format!(
+                "Node '{}' is not in pending status (current: {:?})",
+                id, node.status
+            )));
+        }
+        if node.claimed_by.is_some() {
+            return Err(DeltaStateError::LiveNodeNotFound(format!(
+                "Node '{}' is already claimed by {:?}",
+                id, node.claimed_by
+            )));
+        }
+
+        db.execute(
+            "UPDATE live_nodes SET status = ?1, claimed_by = ?2, claimed_at = ?3, updated_at = ?4 WHERE id = ?5 AND project_id = ?6",
+            params![LiveNodeStatus::Working.as_str(), worker_name, &now, &now, id, self.project_id],
+        )?;
+
+        self.get_live_node(id)
+    }
+
+    /// Unclaim a live node (worker gives up the task)
+    pub fn unclaim_live_node(&self, id: &str) -> DeltaStateResult<()> {
+        let db = self.open_db()?;
+        let now = self.now();
+
+        db.execute(
+            "UPDATE live_nodes SET status = ?1, claimed_by = NULL, claimed_at = NULL, updated_at = ?2 WHERE id = ?3 AND project_id = ?4",
+            params![LiveNodeStatus::Pending.as_str(), &now, id, self.project_id],
+        )?;
+
+        Ok(())
+    }
+
+    /// Complete a live node (mark as done by worker)
+    ///
+    /// For work tasks: sets status to Done (or AwaitingEval if it has a validating eval)
+    /// For eval tasks: use eval_pass or eval_fail instead
+    pub fn complete_live_node(&self, id: &str, worker_name: &str) -> DeltaStateResult<LiveNode> {
+        let db = self.open_db()?;
+        let now = self.now();
+
+        let node = self.get_live_node(id)?;
+
+        // Verify claimed by this worker
+        if node.claimed_by.as_deref() != Some(worker_name) {
+            return Err(DeltaStateError::LiveNodeNotFound(format!(
+                "Node '{}' is not claimed by {}",
+                id, worker_name
+            )));
+        }
+
+        // Determine new status based on whether there's a validating eval
+        let new_status = if node.node_type == NodeType::Task && self.has_validating_eval(id)? {
+            LiveNodeStatus::AwaitingEval
+        } else {
+            LiveNodeStatus::Done
+        };
+
+        db.execute(
+            "UPDATE live_nodes SET status = ?1, completed_at = ?2, completed_by = ?3, updated_at = ?4 WHERE id = ?5 AND project_id = ?6",
+            params![new_status.as_str(), &now, worker_name, &now, id, self.project_id],
+        )?;
+
+        self.get_live_node(id)
+    }
+
+    /// Check if a node has a validating eval
+    pub fn has_validating_eval(&self, node_id: &str) -> DeltaStateResult<bool> {
+        let db = self.open_db()?;
+        let count: i64 = db.query_row(
+            "SELECT COUNT(*) FROM live_node_validates WHERE task_id = ?1 AND project_id = ?2",
+            params![node_id, self.project_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    /// Get all node IDs validated by an eval
+    pub fn get_validated_nodes(&self, eval_id: &str) -> DeltaStateResult<Vec<String>> {
+        let db = self.open_db()?;
+        let mut stmt = db.prepare(
+            "SELECT task_id FROM live_node_validates WHERE eval_id = ?1 AND project_id = ?2",
+        )?;
+        let node_ids = stmt
+            .query_map(params![eval_id, self.project_id], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(node_ids)
+    }
+
+    /// Handle eval pass - validates all nodes in the validates list
+    pub fn eval_pass(&self, eval_id: &str, worker_name: &str) -> DeltaStateResult<()> {
+        let db = self.open_db()?;
+        let now = self.now();
+
+        let node = self.get_live_node(eval_id)?;
+
+        // Verify it's an eval node
+        if node.node_type != NodeType::Eval {
+            return Err(DeltaStateError::LiveNodeNotFound(format!(
+                "Node '{}' is not an eval node",
+                eval_id
+            )));
+        }
+
+        // Verify claimed by this worker
+        if node.claimed_by.as_deref() != Some(worker_name) {
+            return Err(DeltaStateError::LiveNodeNotFound(format!(
+                "Eval '{}' is not claimed by {}",
+                eval_id, worker_name
+            )));
+        }
+
+        // Get validated nodes before updating eval status
+        let validated_node_ids = self.get_validated_nodes(eval_id)?;
+
+        // Mark eval as done with pass result
+        db.execute(
+            "UPDATE live_nodes SET status = ?1, completed_at = ?2, completed_by = ?3, eval_result = ?4, updated_at = ?5 WHERE id = ?6 AND project_id = ?7",
+            params![LiveNodeStatus::Done.as_str(), &now, worker_name, EvalResult::Pass.as_str(), &now, eval_id, self.project_id],
+        )?;
+
+        // Validate all nodes in the validates list
+        for node_id in &validated_node_ids {
+            db.execute(
+                "UPDATE live_nodes SET status = ?1, updated_at = ?2 WHERE id = ?3 AND project_id = ?4 AND status IN (?5, ?6)",
+                params![
+                    LiveNodeStatus::Validated.as_str(),
+                    &now,
+                    node_id,
+                    self.project_id,
+                    LiveNodeStatus::Done.as_str(),
+                    LiveNodeStatus::AwaitingEval.as_str()
+                ],
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Handle eval fail - creates a repair node as child of the eval
+    ///
+    /// Returns the repair node ID
+    pub fn eval_fail(
+        &self,
+        eval_id: &str,
+        worker_name: &str,
+        feedback: &str,
+    ) -> DeltaStateResult<String> {
+        let db = self.open_db()?;
+        let now = self.now();
+
+        let node = self.get_live_node(eval_id)?;
+
+        // Verify it's an eval node
+        if node.node_type != NodeType::Eval {
+            return Err(DeltaStateError::LiveNodeNotFound(format!(
+                "Node '{}' is not an eval node",
+                eval_id
+            )));
+        }
+
+        // Verify claimed by this worker
+        if node.claimed_by.as_deref() != Some(worker_name) {
+            return Err(DeltaStateError::LiveNodeNotFound(format!(
+                "Eval '{}' is not claimed by {}",
+                eval_id, worker_name
+            )));
+        }
+
+        // Get validated nodes before creating repair
+        let validated_node_ids = self.get_validated_nodes(eval_id)?;
+
+        // Create repair node as child of eval
+        let repair_id = format!("{}-repair-{}", eval_id, now.replace([':', '-', '.'], ""));
+        let repair_name = format!("Repair: {}", feedback.chars().take(50).collect::<String>());
+
+        db.execute(
+            "INSERT INTO live_nodes (id, project_id, parent_id, position, name, node_type, content, status, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 0, ?4, 'task', ?5, 'pending', 'system', ?6, ?7)",
+            params![
+                &repair_id,
+                self.project_id,
+                eval_id,
+                &repair_name,
+                feedback,
+                &now,
+                &now
+            ],
+        )?;
+
+        // Mark eval as pending (blocked by repair), set feedback
+        // Reset claimed_by so it can be reclaimed after repair
+        db.execute(
+            "UPDATE live_nodes SET status = ?1, eval_result = ?2, eval_feedback = ?3, claimed_by = NULL, claimed_at = NULL, updated_at = ?4 WHERE id = ?5 AND project_id = ?6",
+            params![
+                LiveNodeStatus::Pending.as_str(),
+                EvalResult::Fail.as_str(),
+                feedback,
+                &now,
+                eval_id,
+                self.project_id
+            ],
+        )?;
+
+        // Add blocking relationship (eval is now blocked by repair node)
+        db.execute(
+            "INSERT OR IGNORE INTO live_node_blocked_by (node_id, blocker_id, project_id) VALUES (?1, ?2, ?3)",
+            params![eval_id, &repair_id, self.project_id],
+        )?;
+
+        // Mark validated nodes as needs_repair
+        for node_id in &validated_node_ids {
+            db.execute(
+                "UPDATE live_nodes SET status = ?1, updated_at = ?2 WHERE id = ?3 AND project_id = ?4 AND status IN (?5, ?6)",
+                params![
+                    LiveNodeStatus::NeedsRepair.as_str(),
+                    &now,
+                    node_id,
+                    self.project_id,
+                    LiveNodeStatus::Done.as_str(),
+                    LiveNodeStatus::AwaitingEval.as_str()
+                ],
+            )?;
+        }
+
+        Ok(repair_id)
+    }
+
+    /// Check if a node is blocked
+    ///
+    /// For work nodes: blockers must be Validated (or Done if no validating eval)
+    /// For eval nodes: validated nodes must be Done/AwaitingEval/Validated
+    pub fn is_node_blocked(&self, node_id: &str) -> DeltaStateResult<bool> {
+        let node = self.get_live_node(node_id)?;
+
+        match node.node_type {
+            NodeType::Task => {
+                // Check blocked_by relationships
+                if node.blocked_by.is_empty() {
+                    return Ok(false);
+                }
+
+                for blocker_id in &node.blocked_by {
+                    if let Ok(blocker) = self.get_live_node(blocker_id) {
+                        let is_blocking = if self.has_validating_eval(blocker_id)? {
+                            blocker.status != LiveNodeStatus::Validated
+                        } else {
+                            !blocker.status.is_complete()
+                        };
+                        if is_blocking {
+                            return Ok(true);
+                        }
+                    }
+                }
+                Ok(false)
+            }
+            NodeType::Eval => {
+                // Check if validated nodes are ready
+                let validates = self.get_validated_nodes(node_id)?;
+                if validates.is_empty() {
+                    return Ok(true); // Eval with no validates is blocked
+                }
+
+                for task_id in &validates {
+                    if let Ok(task) = self.get_live_node(task_id) {
+                        let is_ready = matches!(
+                            task.status,
+                            LiveNodeStatus::Done
+                                | LiveNodeStatus::AwaitingEval
+                                | LiveNodeStatus::Validated
+                        );
+                        if !is_ready {
+                            return Ok(true);
+                        }
+                    }
+                }
+
+                // Also check blocked_by (for repair flow)
+                for blocker_id in &node.blocked_by {
+                    if let Ok(blocker) = self.get_live_node(blocker_id) {
+                        if !blocker.status.is_complete() {
+                            return Ok(true);
+                        }
+                    }
+                }
+
+                Ok(false)
+            }
+        }
+    }
+
+    /// Get nodes that can be claimed (unblocked, unclaimed, pending status, no children)
+    ///
+    /// Priority order:
+    /// 1. Eval nodes whose validated nodes are all done/awaiting_eval
+    /// 2. Work nodes that are unblocked
+    pub fn get_claimable_nodes(&self) -> DeltaStateResult<Vec<LiveNode>> {
+        let nodes = self.get_live_nodes()?;
+
+        // Build set of nodes that have children
+        let nodes_with_children: std::collections::HashSet<String> =
+            nodes.iter().filter_map(|n| n.parent_id.clone()).collect();
+
+        let mut eval_nodes = vec![];
+        let mut work_nodes = vec![];
+
+        for node in nodes {
+            // Must be pending and unclaimed
+            if node.status != LiveNodeStatus::Pending || node.claimed_by.is_some() {
+                continue;
+            }
+
+            // Skip nodes that have children - work on leaf nodes instead
+            if nodes_with_children.contains(&node.id) {
+                continue;
+            }
+
+            // Check if blocked
+            if self.is_node_blocked(&node.id)? {
+                continue;
+            }
+
+            match node.node_type {
+                NodeType::Eval => eval_nodes.push(node),
+                NodeType::Task => work_nodes.push(node),
+            }
+        }
+
+        // Return eval nodes first (higher priority), then work nodes
+        eval_nodes.extend(work_nodes);
+        Ok(eval_nodes)
+    }
+
+    /// Set tokens used on a node
+    pub fn set_node_tokens(&self, id: &str, tokens: i64) -> DeltaStateResult<()> {
+        let db = self.open_db()?;
+
+        db.execute(
+            "UPDATE live_nodes SET tokens_used = ?1 WHERE id = ?2 AND project_id = ?3",
+            params![tokens, id, self.project_id],
+        )?;
+
+        Ok(())
+    }
+
+    /// Get the node currently claimed by a worker
+    pub fn get_claimed_node_for_worker(
+        &self,
+        worker_name: &str,
+    ) -> DeltaStateResult<Option<LiveNode>> {
+        let db = self.open_db()?;
+
+        let id: Option<String> = db
+            .query_row(
+                "SELECT id FROM live_nodes WHERE claimed_by = ?1 AND project_id = ?2 AND status = 'working'",
+                params![worker_name, self.project_id],
+                |row| row.get(0),
+            )
+            .ok();
+
+        match id {
+            Some(id) => Ok(Some(self.get_live_node(&id)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Reopen a completed or failed live node (reset to pending)
+    pub fn reopen_live_node(&self, id: &str) -> DeltaStateResult<()> {
+        let db = self.open_db()?;
+        let now = self.now();
+
+        db.execute(
+            "UPDATE live_nodes SET status = 'pending', claimed_by = NULL, claimed_at = NULL, completed_at = NULL, completed_by = NULL, eval_result = NULL, eval_feedback = NULL, updated_at = ?1 WHERE id = ?2 AND project_id = ?3",
+            params![&now, id, self.project_id],
+        )?;
+
+        Ok(())
+    }
+
+    /// Get blocker node IDs for a node
+    pub fn get_blockers(&self, id: &str) -> DeltaStateResult<Vec<String>> {
+        let db = self.open_db()?;
+        self.load_live_node_blocked_by(&db, id)
+    }
+
+    /// Check if a node has children
+    pub fn has_children(&self, id: &str) -> DeltaStateResult<bool> {
+        let db = self.open_db()?;
+        let count: i64 = db.query_row(
+            "SELECT COUNT(*) FROM live_nodes WHERE parent_id = ?1 AND project_id = ?2",
+            params![id, self.project_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    /// Get direct children of a live node
+    pub fn get_children(&self, id: &str) -> DeltaStateResult<Vec<LiveNode>> {
+        let db = self.open_db()?;
+
+        // Load relationships
+        let validates_map = self.load_live_validates(&db)?;
+        let blocked_by_map = self.load_live_blocked_by(&db)?;
+
+        let mut stmt = db.prepare(
+            "SELECT id, project_id, draft_node_id, parent_id, position, name, node_type, content, status, source, x, y, created_at, updated_at, completed_at, last_commit_sha, claimed_by, claimed_at, completed_by, eval_result, eval_feedback, tokens_used
+             FROM live_nodes
+             WHERE parent_id = ?1 AND project_id = ?2
+             ORDER BY position",
+        )?;
+
+        let nodes = stmt
+            .query_map(params![id, self.project_id], |row| {
+                let node_id: String = row.get("id")?;
+                Ok(LiveNode {
+                    id: node_id.clone(),
+                    project_id: row.get("project_id")?,
+                    draft_node_id: row.get("draft_node_id")?,
+                    parent_id: row.get("parent_id")?,
+                    position: row.get("position")?,
+                    name: row.get("name")?,
+                    node_type: NodeType::from_str(
+                        &row.get::<_, String>("node_type").unwrap_or_default(),
+                    ),
+                    content: row.get("content")?,
+                    status: LiveNodeStatus::from_str(
+                        &row.get::<_, String>("status").unwrap_or_default(),
+                    ),
+                    source: LiveNodeSource::from_str(
+                        &row.get::<_, String>("source").unwrap_or_default(),
+                    ),
+                    validates: validates_map.get(&node_id).cloned().unwrap_or_default(),
+                    blocked_by: blocked_by_map.get(&node_id).cloned().unwrap_or_default(),
+                    x: row.get("x")?,
+                    y: row.get("y")?,
+                    created_at: row.get("created_at")?,
+                    updated_at: row.get("updated_at")?,
+                    completed_at: row.get("completed_at")?,
+                    last_commit_sha: row.get("last_commit_sha")?,
+                    claimed_by: row.get("claimed_by")?,
+                    claimed_at: row.get("claimed_at")?,
+                    completed_by: row.get("completed_by")?,
+                    eval_result: row
+                        .get::<_, Option<String>>("eval_result")?
+                        .and_then(|s| EvalResult::from_str(&s)),
+                    eval_feedback: row.get("eval_feedback")?,
+                    tokens_used: row.get("tokens_used")?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(nodes)
+    }
+
+    /// Delete a live node by ID
+    ///
+    /// This is used for task deletion from workers - removes the node
+    /// and cleans up relationships.
+    pub fn delete_live_node_by_id(&self, id: &str) -> DeltaStateResult<()> {
+        self.delete_live_node(id)
+    }
 }
 
 #[cfg(test)]
@@ -1956,6 +2536,7 @@ mod tests {
                 node_type TEXT NOT NULL DEFAULT 'task',
                 content TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'pending',
+                source TEXT NOT NULL DEFAULT 'spec',
                 x REAL,
                 y REAL,
                 created_at TEXT NOT NULL,

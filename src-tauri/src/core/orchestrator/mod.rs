@@ -34,8 +34,6 @@
 mod daemon;
 mod local;
 mod remote;
-#[cfg(test)]
-pub mod test_harness;
 
 #[cfg(feature = "server")]
 pub use daemon::DaemonOrchestrator;
@@ -49,8 +47,8 @@ use thiserror::Error;
 use std::collections::HashMap;
 
 use crate::core::api_types::{
-    ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, Task, ThreadSummary,
-    Worker, WorkerEventsResponse,
+    ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, ThreadSummary, Worker,
+    WorkerEventsResponse,
 };
 use crate::core::config::{self, Config};
 use crate::core::draft::StartingPoint;
@@ -67,9 +65,6 @@ pub enum OrchestratorError {
 
     #[error("Worker not found: {0}")]
     WorkerNotFound(String),
-
-    #[error("Task not found: {0}")]
-    TaskNotFound(String),
 
     #[error("State error: {0}")]
     State(String),
@@ -120,39 +115,6 @@ pub struct ResumeRunRequest {
 #[serde(rename_all = "camelCase")]
 pub struct DeliverRunRequest {
     pub branch: Option<String>,
-}
-
-/// Add task request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AddTaskRequest {
-    pub content: String,
-}
-
-/// Add delta task request (for delta dispatch system)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AddDeltaTaskRequest {
-    /// Task ID (from live_node.id)
-    pub task_id: String,
-    /// Task name
-    pub name: String,
-    /// Task content/spec
-    pub content: String,
-    /// Parent task ID (for subtasks)
-    pub parent_id: Option<String>,
-    /// Task IDs this task is blocked by
-    pub blocked_by: Option<Vec<String>>,
-    /// Task type: 'work' or 'eval'
-    pub task_type: String,
-    /// For eval tasks: task IDs this eval validates
-    pub validates: Option<Vec<String>>,
-    /// Link to the original board task ID
-    pub board_task_id: Option<String>,
-    /// Delta type: 'implement', 'modify', 'revert'
-    pub delta_type: Option<String>,
-    /// Reference context
-    pub refs: Option<String>,
 }
 
 /// Send message request
@@ -361,55 +323,6 @@ pub trait Orchestrator: Send + Sync {
         after_id: Option<i64>,
         limit: Option<i64>,
     ) -> OrchestratorResult<WorkerEventsResponse>;
-
-    // -------------------------------------------------------------------------
-    // Tasks
-    // -------------------------------------------------------------------------
-
-    /// List tasks for a run
-    async fn list_tasks(&self, run: &str) -> OrchestratorResult<Vec<Task>>;
-
-    /// Add a new task
-    async fn add_task(&self, run: &str, content: &str) -> OrchestratorResult<Task>;
-
-    /// Delete a task
-    async fn delete_task(&self, run: &str, task_id: &str) -> OrchestratorResult<()>;
-
-    /// Mark a task as complete
-    async fn complete_task(&self, run: &str, task_id: &str) -> OrchestratorResult<()>;
-
-    /// Reopen a completed task
-    async fn reopen_task(&self, run: &str, task_id: &str) -> OrchestratorResult<()>;
-
-    /// Add a delta task (for delta dispatch system)
-    ///
-    /// Creates a task with full control over task_id, type, blocking, and validation.
-    /// Used by the delta dispatch system to add tasks from the board.
-    async fn add_delta_task(
-        &self,
-        run: &str,
-        request: AddDeltaTaskRequest,
-    ) -> OrchestratorResult<Task> {
-        let _ = (run, request);
-        Err(OrchestratorError::Other(
-            "add_delta_task not implemented for this orchestrator".to_string(),
-        ))
-    }
-
-    /// Add multiple delta tasks in a batch with deferred FK constraints
-    ///
-    /// This allows tasks to reference each other as blockers without requiring
-    /// a specific insertion order. All FK constraints are checked at commit time.
-    async fn add_delta_tasks_batch(
-        &self,
-        run: &str,
-        requests: Vec<AddDeltaTaskRequest>,
-    ) -> OrchestratorResult<Vec<Task>> {
-        let _ = (run, requests);
-        Err(OrchestratorError::Other(
-            "add_delta_tasks_batch not implemented for this orchestrator".to_string(),
-        ))
-    }
 
     // -------------------------------------------------------------------------
     // Messages

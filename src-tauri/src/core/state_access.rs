@@ -26,9 +26,7 @@
 
 use async_trait::async_trait;
 
-use crate::core::state::{
-    ClaimTaskResult, Eval, Message, Status, Task, TimeInfo, Worker, WorkerStatus, WorkerUpdate,
-};
+use crate::core::state::{Eval, Message, Status, TimeInfo, Worker, WorkerStatus, WorkerUpdate};
 
 /// Error type for state access operations
 #[derive(Debug, thiserror::Error)]
@@ -67,84 +65,6 @@ pub trait StateAccess: Send {
 
     async fn status(&self) -> StateAccessResult<Status>;
     async fn set_status(&self, status: Status) -> StateAccessResult<()>;
-
-    // =========================================================================
-    // Task operations
-    // =========================================================================
-
-    async fn add_task(
-        &self,
-        task_id: &str,
-        name: &str,
-        parent_id: Option<&str>,
-        blocked_by: Option<&[&str]>,
-    ) -> StateAccessResult<()>;
-
-    async fn add_task_with_type(
-        &self,
-        task_id: &str,
-        name: &str,
-        parent_id: Option<&str>,
-        blocked_by: Option<&[&str]>,
-        task_type: crate::core::state::TaskType,
-        validates: Option<&[&str]>,
-        board_task_id: Option<&str>,
-        content: Option<&str>,
-    ) -> StateAccessResult<()>;
-
-    async fn get_tasks(&self) -> StateAccessResult<Vec<Task>>;
-
-    async fn get_task(&self, task_id: &str) -> StateAccessResult<Option<Task>>;
-
-    async fn claim_task(&self, task_id: &str, worker_name: &str) -> StateAccessResult<bool>;
-
-    /// Try to claim a task with detailed rejection info
-    async fn try_claim_task(
-        &self,
-        task_id: &str,
-        worker_name: &str,
-    ) -> StateAccessResult<ClaimTaskResult>;
-
-    async fn complete_task(&self, task_id: &str, worker_name: &str) -> StateAccessResult<bool>;
-
-    async fn unclaim_task(&self, task_id: &str, worker_name: &str) -> StateAccessResult<bool>;
-
-    async fn get_claimed_task(&self, worker_name: &str) -> StateAccessResult<Option<Task>>;
-
-    async fn get_claimable_tasks(&self) -> StateAccessResult<Vec<Task>>;
-
-    async fn delete_task(&self, task_id: &str) -> StateAccessResult<()>;
-
-    async fn is_task_blocked(&self, task_id: &str) -> StateAccessResult<bool>;
-
-    async fn get_blockers(&self, task_id: &str) -> StateAccessResult<Vec<String>>;
-
-    async fn has_children(&self, task_id: &str) -> StateAccessResult<bool>;
-
-    async fn get_children(&self, task_id: &str) -> StateAccessResult<Vec<Task>>;
-
-    async fn set_task_pending_done(&self, task_id: &str) -> StateAccessResult<()>;
-
-    async fn clear_task_pending_done(&self, task_id: &str) -> StateAccessResult<()>;
-
-    async fn reopen_task(&self, task_id: &str) -> StateAccessResult<bool>;
-
-    async fn set_task_tokens(&self, task_id: &str, tokens: i64) -> StateAccessResult<()>;
-
-    /// Handle eval pass - validates all tasks in the validates list
-    async fn eval_pass(&self, eval_task_id: &str, worker_name: &str) -> StateAccessResult<()>;
-
-    /// Handle eval fail - creates a repair task as child of the eval
-    /// Returns the repair task ID
-    async fn eval_fail(
-        &self,
-        eval_task_id: &str,
-        worker_name: &str,
-        feedback: &str,
-    ) -> StateAccessResult<String>;
-
-    /// Get all task IDs validated by an eval task
-    async fn get_validated_tasks(&self, eval_id: &str) -> StateAccessResult<Vec<String>>;
 
     // =========================================================================
     // Worker operations
@@ -326,6 +246,76 @@ pub trait StateAccess: Send {
 
     /// Request a scaling check (triggers event-driven worker scaling)
     async fn request_scaling_check(&self) -> StateAccessResult<()>;
+
+    // =========================================================================
+    // Board Integration (Delta Dispatch)
+    // =========================================================================
+
+    /// Get the project ID if this run is linked to a board project
+    async fn get_project_id(&self) -> StateAccessResult<Option<i64>>;
+
+    /// Add a live node to the board (for worker-added tasks in board runs)
+    ///
+    /// This creates a live_node in the global database with source='worker'.
+    /// Only works if the run has a project_id set (is linked to a board).
+    async fn add_live_node(
+        &self,
+        id: &str,
+        name: &str,
+        parent_id: Option<&str>,
+        blocked_by: Option<&[&str]>,
+        node_type: &str, // "task" or "eval"
+        content: &str,
+    ) -> StateAccessResult<()>;
+
+    /// Claim a live node for a worker
+    async fn claim_live_node(
+        &self,
+        id: &str,
+        worker_name: &str,
+    ) -> StateAccessResult<crate::core::delta::LiveNode>;
+
+    /// Complete a live node
+    async fn complete_live_node(
+        &self,
+        id: &str,
+        worker_name: &str,
+    ) -> StateAccessResult<crate::core::delta::LiveNode>;
+
+    /// Unclaim a live node
+    async fn unclaim_live_node(&self, id: &str) -> StateAccessResult<()>;
+
+    /// Get the live node currently claimed by a worker
+    async fn get_claimed_live_node(
+        &self,
+        worker_name: &str,
+    ) -> StateAccessResult<Option<crate::core::delta::LiveNode>>;
+
+    /// Get claimable live nodes
+    async fn get_claimable_nodes(&self) -> StateAccessResult<Vec<crate::core::delta::LiveNode>>;
+
+    /// Get all live nodes
+    async fn get_live_nodes(&self) -> StateAccessResult<Vec<crate::core::delta::LiveNode>>;
+
+    /// Check if a live node is blocked
+    async fn is_live_node_blocked(&self, id: &str) -> StateAccessResult<bool>;
+
+    /// Eval pass - validates all nodes
+    async fn live_node_eval_pass(&self, eval_id: &str, worker_name: &str) -> StateAccessResult<()>;
+
+    /// Eval fail - creates repair node, returns repair node ID
+    async fn live_node_eval_fail(
+        &self,
+        eval_id: &str,
+        worker_name: &str,
+        feedback: &str,
+    ) -> StateAccessResult<String>;
+
+    /// Set tokens used on a live node
+    async fn set_live_node_tokens(&self, id: &str, tokens: i64) -> StateAccessResult<()>;
+
+    /// Get all node IDs validated by an eval node
+    async fn get_validated_nodes(&self, eval_id: &str) -> StateAccessResult<Vec<String>>;
 }
 
 // =============================================================================
@@ -348,148 +338,6 @@ impl StateAccess for SQLiteState {
 
     async fn set_status(&self, status: Status) -> StateAccessResult<()> {
         Ok(SQLiteState::set_status(self, status)?)
-    }
-
-    async fn add_task(
-        &self,
-        task_id: &str,
-        name: &str,
-        parent_id: Option<&str>,
-        blocked_by: Option<&[&str]>,
-    ) -> StateAccessResult<()> {
-        SQLiteState::add_task(self, task_id, name, parent_id, blocked_by)?;
-        Ok(())
-    }
-
-    async fn add_task_with_type(
-        &self,
-        task_id: &str,
-        name: &str,
-        parent_id: Option<&str>,
-        blocked_by: Option<&[&str]>,
-        task_type: crate::core::state::TaskType,
-        validates: Option<&[&str]>,
-        board_task_id: Option<&str>,
-        content: Option<&str>,
-    ) -> StateAccessResult<()> {
-        SQLiteState::add_task_with_type(
-            self,
-            task_id,
-            name,
-            parent_id,
-            blocked_by,
-            task_type,
-            validates,
-            board_task_id,
-            content,
-        )?;
-        Ok(())
-    }
-
-    async fn get_tasks(&self) -> StateAccessResult<Vec<Task>> {
-        Ok(SQLiteState::get_tasks(self)?)
-    }
-
-    async fn get_task(&self, task_id: &str) -> StateAccessResult<Option<Task>> {
-        Ok(SQLiteState::get_task(self, task_id)?)
-    }
-
-    async fn claim_task(&self, task_id: &str, worker_name: &str) -> StateAccessResult<bool> {
-        match SQLiteState::claim_task(self, task_id, worker_name) {
-            Ok(()) => Ok(true),
-            Err(_) => Ok(false),
-        }
-    }
-
-    async fn try_claim_task(
-        &self,
-        task_id: &str,
-        worker_name: &str,
-    ) -> StateAccessResult<ClaimTaskResult> {
-        Ok(SQLiteState::try_claim_task(self, task_id, worker_name)?)
-    }
-
-    async fn complete_task(&self, task_id: &str, worker_name: &str) -> StateAccessResult<bool> {
-        match SQLiteState::complete_task(self, task_id, worker_name) {
-            Ok(()) => Ok(true),
-            Err(_) => Ok(false),
-        }
-    }
-
-    async fn unclaim_task(&self, task_id: &str, worker_name: &str) -> StateAccessResult<bool> {
-        match SQLiteState::unclaim_task(self, task_id, worker_name) {
-            Ok(()) => Ok(true),
-            Err(_) => Ok(false),
-        }
-    }
-
-    async fn get_claimed_task(&self, worker_name: &str) -> StateAccessResult<Option<Task>> {
-        Ok(SQLiteState::get_claimed_task(self, worker_name)?)
-    }
-
-    async fn get_claimable_tasks(&self) -> StateAccessResult<Vec<Task>> {
-        Ok(SQLiteState::get_claimable_tasks(self)?)
-    }
-
-    async fn delete_task(&self, task_id: &str) -> StateAccessResult<()> {
-        Ok(SQLiteState::delete_task(self, task_id)?)
-    }
-
-    async fn is_task_blocked(&self, task_id: &str) -> StateAccessResult<bool> {
-        Ok(SQLiteState::is_task_blocked(self, task_id)?)
-    }
-
-    async fn get_blockers(&self, task_id: &str) -> StateAccessResult<Vec<String>> {
-        Ok(SQLiteState::get_blockers(self, task_id)?)
-    }
-
-    async fn has_children(&self, task_id: &str) -> StateAccessResult<bool> {
-        Ok(SQLiteState::has_children(self, task_id)?)
-    }
-
-    async fn get_children(&self, task_id: &str) -> StateAccessResult<Vec<Task>> {
-        Ok(SQLiteState::get_children(self, task_id)?)
-    }
-
-    async fn set_task_pending_done(&self, task_id: &str) -> StateAccessResult<()> {
-        Ok(SQLiteState::set_task_pending_done(self, task_id)?)
-    }
-
-    async fn clear_task_pending_done(&self, task_id: &str) -> StateAccessResult<()> {
-        Ok(SQLiteState::clear_task_pending_done(self, task_id)?)
-    }
-
-    async fn reopen_task(&self, task_id: &str) -> StateAccessResult<bool> {
-        match SQLiteState::reopen_task(self, task_id) {
-            Ok(()) => Ok(true),
-            Err(_) => Ok(false),
-        }
-    }
-
-    async fn set_task_tokens(&self, task_id: &str, tokens: i64) -> StateAccessResult<()> {
-        Ok(SQLiteState::set_task_tokens(self, task_id, tokens)?)
-    }
-
-    async fn eval_pass(&self, eval_task_id: &str, worker_name: &str) -> StateAccessResult<()> {
-        Ok(SQLiteState::eval_pass(self, eval_task_id, worker_name)?)
-    }
-
-    async fn eval_fail(
-        &self,
-        eval_task_id: &str,
-        worker_name: &str,
-        feedback: &str,
-    ) -> StateAccessResult<String> {
-        Ok(SQLiteState::eval_fail(
-            self,
-            eval_task_id,
-            worker_name,
-            feedback,
-        )?)
-    }
-
-    async fn get_validated_tasks(&self, eval_id: &str) -> StateAccessResult<Vec<String>> {
-        Ok(SQLiteState::get_validated_tasks(self, eval_id)?)
     }
 
     async fn add_worker(
@@ -750,5 +598,226 @@ impl StateAccess for SQLiteState {
 
     async fn request_scaling_check(&self) -> StateAccessResult<()> {
         Ok(SQLiteState::request_scaling_check(self)?)
+    }
+
+    async fn get_project_id(&self) -> StateAccessResult<Option<i64>> {
+        Ok(SQLiteState::get_project_id(self)?)
+    }
+
+    async fn add_live_node(
+        &self,
+        id: &str,
+        name: &str,
+        parent_id: Option<&str>,
+        blocked_by: Option<&[&str]>,
+        node_type: &str,
+        content: &str,
+    ) -> StateAccessResult<()> {
+        use crate::core::delta::{DeltaState, NodeType};
+
+        // Get project_id from run state
+        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+            StateAccessError::InvalidOperation(
+                "Cannot add live node: run is not linked to a board project".to_string(),
+            )
+        })?;
+
+        // Create delta state for this project
+        let delta_state = DeltaState::new(project_id);
+
+        // Parse node type
+        let node_type = NodeType::from_str(node_type);
+
+        // Create the live node
+        delta_state
+            .create_live_node_from_worker(id, name, parent_id, blocked_by, node_type, content)
+            .map_err(|e| {
+                StateAccessError::Database(format!("Failed to create live node: {}", e))
+            })?;
+
+        Ok(())
+    }
+
+    async fn claim_live_node(
+        &self,
+        id: &str,
+        worker_name: &str,
+    ) -> StateAccessResult<crate::core::delta::LiveNode> {
+        use crate::core::delta::DeltaState;
+
+        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+            StateAccessError::InvalidOperation(
+                "Cannot claim live node: run is not linked to a board project".to_string(),
+            )
+        })?;
+
+        let delta_state = DeltaState::new(project_id);
+        delta_state
+            .claim_live_node(id, worker_name)
+            .map_err(|e| StateAccessError::Database(format!("Failed to claim live node: {}", e)))
+    }
+
+    async fn complete_live_node(
+        &self,
+        id: &str,
+        worker_name: &str,
+    ) -> StateAccessResult<crate::core::delta::LiveNode> {
+        use crate::core::delta::DeltaState;
+
+        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+            StateAccessError::InvalidOperation(
+                "Cannot complete live node: run is not linked to a board project".to_string(),
+            )
+        })?;
+
+        let delta_state = DeltaState::new(project_id);
+        delta_state
+            .complete_live_node(id, worker_name)
+            .map_err(|e| StateAccessError::Database(format!("Failed to complete live node: {}", e)))
+    }
+
+    async fn unclaim_live_node(&self, id: &str) -> StateAccessResult<()> {
+        use crate::core::delta::DeltaState;
+
+        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+            StateAccessError::InvalidOperation(
+                "Cannot unclaim live node: run is not linked to a board project".to_string(),
+            )
+        })?;
+
+        let delta_state = DeltaState::new(project_id);
+        delta_state
+            .unclaim_live_node(id)
+            .map_err(|e| StateAccessError::Database(format!("Failed to unclaim live node: {}", e)))
+    }
+
+    async fn get_claimed_live_node(
+        &self,
+        worker_name: &str,
+    ) -> StateAccessResult<Option<crate::core::delta::LiveNode>> {
+        use crate::core::delta::DeltaState;
+
+        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+            StateAccessError::InvalidOperation(
+                "Cannot get claimed live node: run is not linked to a board project".to_string(),
+            )
+        })?;
+
+        let delta_state = DeltaState::new(project_id);
+        delta_state
+            .get_claimed_node_for_worker(worker_name)
+            .map_err(|e| {
+                StateAccessError::Database(format!("Failed to get claimed live node: {}", e))
+            })
+    }
+
+    async fn get_claimable_nodes(&self) -> StateAccessResult<Vec<crate::core::delta::LiveNode>> {
+        use crate::core::delta::DeltaState;
+
+        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+            StateAccessError::InvalidOperation(
+                "Cannot get claimable nodes: run is not linked to a board project".to_string(),
+            )
+        })?;
+
+        let delta_state = DeltaState::new(project_id);
+        delta_state.get_claimable_nodes().map_err(|e| {
+            StateAccessError::Database(format!("Failed to get claimable nodes: {}", e))
+        })
+    }
+
+    async fn get_live_nodes(&self) -> StateAccessResult<Vec<crate::core::delta::LiveNode>> {
+        use crate::core::delta::DeltaState;
+
+        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+            StateAccessError::InvalidOperation(
+                "Cannot get live nodes: run is not linked to a board project".to_string(),
+            )
+        })?;
+
+        let delta_state = DeltaState::new(project_id);
+        delta_state
+            .get_live_nodes()
+            .map_err(|e| StateAccessError::Database(format!("Failed to get live nodes: {}", e)))
+    }
+
+    async fn is_live_node_blocked(&self, id: &str) -> StateAccessResult<bool> {
+        use crate::core::delta::DeltaState;
+
+        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+            StateAccessError::InvalidOperation(
+                "Cannot check live node blocked: run is not linked to a board project".to_string(),
+            )
+        })?;
+
+        let delta_state = DeltaState::new(project_id);
+        delta_state.is_node_blocked(id).map_err(|e| {
+            StateAccessError::Database(format!("Failed to check live node blocked: {}", e))
+        })
+    }
+
+    async fn live_node_eval_pass(&self, eval_id: &str, worker_name: &str) -> StateAccessResult<()> {
+        use crate::core::delta::DeltaState;
+
+        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+            StateAccessError::InvalidOperation(
+                "Cannot eval pass: run is not linked to a board project".to_string(),
+            )
+        })?;
+
+        let delta_state = DeltaState::new(project_id);
+        delta_state
+            .eval_pass(eval_id, worker_name)
+            .map_err(|e| StateAccessError::Database(format!("Failed to eval pass: {}", e)))
+    }
+
+    async fn live_node_eval_fail(
+        &self,
+        eval_id: &str,
+        worker_name: &str,
+        feedback: &str,
+    ) -> StateAccessResult<String> {
+        use crate::core::delta::DeltaState;
+
+        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+            StateAccessError::InvalidOperation(
+                "Cannot eval fail: run is not linked to a board project".to_string(),
+            )
+        })?;
+
+        let delta_state = DeltaState::new(project_id);
+        delta_state
+            .eval_fail(eval_id, worker_name, feedback)
+            .map_err(|e| StateAccessError::Database(format!("Failed to eval fail: {}", e)))
+    }
+
+    async fn set_live_node_tokens(&self, id: &str, tokens: i64) -> StateAccessResult<()> {
+        use crate::core::delta::DeltaState;
+
+        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+            StateAccessError::InvalidOperation(
+                "Cannot set live node tokens: run is not linked to a board project".to_string(),
+            )
+        })?;
+
+        let delta_state = DeltaState::new(project_id);
+        delta_state.set_node_tokens(id, tokens).map_err(|e| {
+            StateAccessError::Database(format!("Failed to set live node tokens: {}", e))
+        })
+    }
+
+    async fn get_validated_nodes(&self, eval_id: &str) -> StateAccessResult<Vec<String>> {
+        use crate::core::delta::DeltaState;
+
+        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+            StateAccessError::InvalidOperation(
+                "Cannot get validated nodes: run is not linked to a board project".to_string(),
+            )
+        })?;
+
+        let delta_state = DeltaState::new(project_id);
+        delta_state.get_validated_nodes(eval_id).map_err(|e| {
+            StateAccessError::Database(format!("Failed to get validated nodes: {}", e))
+        })
     }
 }

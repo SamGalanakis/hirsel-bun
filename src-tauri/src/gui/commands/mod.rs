@@ -22,7 +22,6 @@ mod messages;
 mod project_messages;
 mod projects;
 mod runs;
-mod tasks;
 pub mod types;
 mod workers;
 
@@ -84,13 +83,6 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         files::save_project_asset,
         files::get_project_assets_path,
         files::open_project_assets_folder,
-        // Task commands
-        tasks::get_tasks,
-        tasks::add_task,
-        tasks::delete_task,
-        tasks::complete_task,
-        tasks::unclaim_task,
-        tasks::reopen_task,
         // Worker commands
         workers::get_workers,
         workers::attach_worker,

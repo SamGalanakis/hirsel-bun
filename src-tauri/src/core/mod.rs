@@ -21,8 +21,6 @@ pub mod claude_cli;
 pub mod config;
 pub mod conflict_resolver;
 pub mod constants;
-#[cfg(feature = "server")]
-pub mod coordinator_api;
 pub mod credentials;
 pub mod delivery;
 pub mod delta;
@@ -55,7 +53,6 @@ pub mod scribe;
 pub mod server;
 pub mod service_worker;
 pub mod snapshot;
-pub mod specflow;
 pub mod state;
 pub mod state_access;
 pub mod storage;
@@ -179,14 +176,6 @@ pub use dispatch::{
 
 // Delivery service
 pub use delivery::{DeliveryError, DeliveryResult, DeliveryService, DeliveryState, PushResult};
-
-// SpecFlow
-pub use specflow::{
-    Bookmark as SpecFlowBookmark, CreateIslandRequest, CreateRowRequest, DispatchResult,
-    InitialTask, Island, Row as SpecFlowRow, RowEvalStatus, SpecFlowError, SpecFlowResult,
-    SpecFlowState, SpecStatus, TaskStatus as SpecFlowTaskStatus, UpdateIslandRequest,
-    UpdateRowRequest, Wire,
-};
 
 // Board service (tree operations and agent file sync)
 pub use board::{

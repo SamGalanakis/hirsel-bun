@@ -7,8 +7,8 @@ use async_trait::async_trait;
 
 use super::{RunManager, RunManagerError, RunManagerResult};
 use crate::core::api_types::{
-    ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, Task, ThreadSummary,
-    Worker, WorkerEventsResponse,
+    ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, ThreadSummary, Worker,
+    WorkerEventsResponse,
 };
 use crate::core::orchestrator::{HealthResponse, Orchestrator, RemoteOrchestrator};
 
@@ -108,45 +108,6 @@ impl RunManager for RemoteRunManager {
     ) -> RunManagerResult<WorkerEventsResponse> {
         self.orchestrator
             .get_worker_events(run, worker, after_id, limit)
-            .await
-            .map_err(|e| RunManagerError::Http(e.to_string()))
-    }
-
-    // =========================================================================
-    // Tasks
-    // =========================================================================
-
-    async fn list_tasks(&self, run: &str) -> RunManagerResult<Vec<Task>> {
-        self.orchestrator
-            .list_tasks(run)
-            .await
-            .map_err(|e| RunManagerError::Http(e.to_string()))
-    }
-
-    async fn add_task(&self, run: &str, content: &str) -> RunManagerResult<Task> {
-        self.orchestrator
-            .add_task(run, content)
-            .await
-            .map_err(|e| RunManagerError::Http(e.to_string()))
-    }
-
-    async fn delete_task(&self, run: &str, task_id: &str) -> RunManagerResult<()> {
-        self.orchestrator
-            .delete_task(run, task_id)
-            .await
-            .map_err(|e| RunManagerError::Http(e.to_string()))
-    }
-
-    async fn complete_task(&self, run: &str, task_id: &str) -> RunManagerResult<()> {
-        self.orchestrator
-            .complete_task(run, task_id)
-            .await
-            .map_err(|e| RunManagerError::Http(e.to_string()))
-    }
-
-    async fn reopen_task(&self, run: &str, task_id: &str) -> RunManagerResult<()> {
-        self.orchestrator
-            .reopen_task(run, task_id)
             .await
             .map_err(|e| RunManagerError::Http(e.to_string()))
     }

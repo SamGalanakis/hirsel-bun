@@ -44,6 +44,9 @@ pub enum LiveNodeStatus {
     Pending,
     Working,
     Done,
+    AwaitingEval, // Work done, waiting for eval
+    Validated,    // Eval passed
+    NeedsRepair,  // Eval failed, needs fix
     Failed,
 }
 
@@ -53,6 +56,9 @@ impl LiveNodeStatus {
             Self::Pending => "pending",
             Self::Working => "working",
             Self::Done => "done",
+            Self::AwaitingEval => "awaiting_eval",
+            Self::Validated => "validated",
+            Self::NeedsRepair => "needs_repair",
             Self::Failed => "failed",
         }
     }
@@ -61,8 +67,72 @@ impl LiveNodeStatus {
         match s {
             "working" => Self::Working,
             "done" => Self::Done,
+            "awaiting_eval" => Self::AwaitingEval,
+            "validated" => Self::Validated,
+            "needs_repair" => Self::NeedsRepair,
             "failed" => Self::Failed,
             _ => Self::Pending,
+        }
+    }
+
+    /// Check if status represents completion (Done or Validated)
+    pub fn is_complete(&self) -> bool {
+        matches!(self, Self::Done | Self::Validated)
+    }
+}
+
+/// Eval result for eval nodes
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalResult {
+    Pass,
+    Fail,
+}
+
+impl EvalResult {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Fail => "fail",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "pass" => Some(Self::Pass),
+            "fail" => Some(Self::Fail),
+            _ => None,
+        }
+    }
+}
+
+/// Source of a live node - where it originated from
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LiveNodeSource {
+    /// Created from draft node (has draft_node_id)
+    #[default]
+    Spec,
+    /// Added by worker during execution
+    Worker,
+    /// System-generated (e.g., repair tasks)
+    System,
+}
+
+impl LiveNodeSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Spec => "spec",
+            Self::Worker => "worker",
+            Self::System => "system",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "worker" => Self::Worker,
+            "system" => Self::System,
+            _ => Self::Spec,
         }
     }
 }
@@ -125,13 +195,14 @@ impl From<DraftNode> for DraftNodeTree {
 pub struct LiveNode {
     pub id: String,
     pub project_id: i64,
-    pub draft_node_id: Option<String>, // Link to draft (null if deleted from draft)
+    pub draft_node_id: Option<String>, // Link to draft (null if deleted from draft or worker-added)
     pub parent_id: Option<String>,
     pub position: i32,
     pub name: String,
     pub node_type: NodeType,
     pub content: String,
     pub status: LiveNodeStatus,
+    pub source: LiveNodeSource, // Where this node originated (spec, worker, system)
     pub validates: Vec<String>, // For eval nodes: tasks this eval validates
     pub blocked_by: Vec<String>, // For task nodes: tasks/evals that must complete first
     pub x: Option<f64>,
@@ -140,6 +211,13 @@ pub struct LiveNode {
     pub updated_at: String,
     pub completed_at: Option<String>,
     pub last_commit_sha: Option<String>,
+    // Orchestration fields
+    pub claimed_by: Option<String>, // Worker currently working on this
+    pub claimed_at: Option<String>, // When claimed
+    pub completed_by: Option<String>, // Worker who completed it
+    pub eval_result: Option<EvalResult>, // Pass or Fail (for eval nodes)
+    pub eval_feedback: Option<String>, // Feedback on eval failure
+    pub tokens_used: Option<i64>,   // Token tracking
 }
 
 /// Live node tree (nested for frontend)
@@ -152,6 +230,7 @@ pub struct LiveNodeTree {
     pub node_type: NodeType,
     pub content: String,
     pub status: LiveNodeStatus,
+    pub source: LiveNodeSource, // Where this node originated (spec, worker, system)
     pub validates: Vec<String>,
     /// Computed inverse of validates - tasks blocked by evals
     #[serde(default)]
@@ -161,6 +240,13 @@ pub struct LiveNodeTree {
     pub y: Option<f64>,
     pub completed_at: Option<String>,
     pub last_commit_sha: Option<String>,
+    // Orchestration fields
+    pub claimed_by: Option<String>,
+    pub claimed_at: Option<String>,
+    pub completed_by: Option<String>,
+    pub eval_result: Option<EvalResult>,
+    pub eval_feedback: Option<String>,
+    pub tokens_used: Option<i64>,
 }
 
 impl From<LiveNode> for LiveNodeTree {
@@ -172,6 +258,7 @@ impl From<LiveNode> for LiveNodeTree {
             node_type: node.node_type,
             content: node.content,
             status: node.status,
+            source: node.source,
             validates: node.validates,
             blocked_by: node.blocked_by, // Now stored, not computed
             children: vec![],
@@ -179,6 +266,12 @@ impl From<LiveNode> for LiveNodeTree {
             y: node.y,
             completed_at: node.completed_at,
             last_commit_sha: node.last_commit_sha,
+            claimed_by: node.claimed_by,
+            claimed_at: node.claimed_at,
+            completed_by: node.completed_by,
+            eval_result: node.eval_result,
+            eval_feedback: node.eval_feedback,
+            tokens_used: node.tokens_used,
         }
     }
 }

@@ -15,9 +15,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::core::lifecycle::{LifecycleEvent, LifecycleManager};
-use crate::core::state::{
-    SQLiteState, StateResult, Status, Task, Worker, WorkerStatus, WorkerUpdate,
-};
+use crate::core::state::{SQLiteState, StateResult, Status, Worker, WorkerStatus, WorkerUpdate};
 
 // =============================================================================
 // Response Types
@@ -64,11 +62,6 @@ pub struct AllDoneResponse {
 #[derive(Serialize)]
 pub struct HeartbeatResponse {
     pub status: String,
-}
-
-#[derive(Serialize)]
-pub struct ClaimedTaskResponse {
-    pub task: Option<Task>,
 }
 
 // =============================================================================
@@ -191,11 +184,6 @@ pub fn worker_heartbeat(state: &SQLiteState, name: &str) -> StateResult<Status> 
     };
     state.update_worker(name, update)?;
     state.status()
-}
-
-/// Get the task claimed by a worker
-pub fn get_claimed_task(state: &SQLiteState, name: &str) -> StateResult<Option<Task>> {
-    state.get_claimed_task(name)
 }
 
 /// Create a new worker

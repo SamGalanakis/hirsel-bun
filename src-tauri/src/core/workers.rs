@@ -284,23 +284,8 @@ pub fn check_worker_heartbeats(
         // Check if process is still alive
         if let Some(pid) = worker.pid {
             if !is_pid_alive(pid as u32) {
-                // Process died - mark as error and unclaim any assigned task
+                // Process died - mark as error
                 warn!("Worker {} process died (PID {})", worker.name, pid);
-
-                // Unclaim the task if worker had one assigned (so it can be picked up by another worker)
-                if let Some(ref task_id) = worker.assigned_task_id {
-                    if let Err(e) = state.admin_unclaim_task(task_id) {
-                        warn!(
-                            "Failed to unclaim task {} from dead worker {}: {}",
-                            task_id, worker.name, e
-                        );
-                    } else {
-                        info!(
-                            "Unclaimed task {} from dead worker {} - available for reassignment",
-                            task_id, worker.name
-                        );
-                    }
-                }
 
                 // Mark worker as error and clear assigned_task_id
                 state.update_worker(
@@ -533,21 +518,6 @@ pub fn reconcile_stale_workers() -> Vec<(String, String)> {
                         worker.name, run_name, pid
                     );
 
-                    // Unclaim any assigned task so it can be picked up by another worker
-                    if let Some(ref task_id) = worker.assigned_task_id {
-                        if let Err(e) = state.admin_unclaim_task(task_id) {
-                            warn!(
-                                "[reconcile] Failed to unclaim task {} from stale worker {}: {}",
-                                task_id, worker.name, e
-                            );
-                        } else {
-                            info!(
-                                "[reconcile] Unclaimed task {} from stale worker {}",
-                                task_id, worker.name
-                            );
-                        }
-                    }
-
                     if let Err(e) = state.update_worker(
                         &worker.name,
                         WorkerUpdate {
@@ -586,21 +556,6 @@ pub fn reconcile_stale_workers() -> Vec<(String, String)> {
                     "[reconcile] Marking stale worker {} in run {} as Paused (no PID)",
                     worker.name, run_name
                 );
-
-                // Unclaim any assigned task so it can be picked up by another worker
-                if let Some(ref task_id) = worker.assigned_task_id {
-                    if let Err(e) = state.admin_unclaim_task(task_id) {
-                        warn!(
-                            "[reconcile] Failed to unclaim task {} from stale worker {}: {}",
-                            task_id, worker.name, e
-                        );
-                    } else {
-                        info!(
-                            "[reconcile] Unclaimed task {} from stale worker {}",
-                            task_id, worker.name
-                        );
-                    }
-                }
 
                 if let Err(e) = state.update_worker(
                     &worker.name,

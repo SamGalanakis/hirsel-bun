@@ -14,10 +14,10 @@ use super::{
 use crate::core::api_types::{
     calculate_duration_minutes, convert_status, is_completed_status, parse_elapsed_minutes,
     ConfigResponse, Eval, EvalStatus, HistoryEntry, Message, RunDetail, RunSummary, SheepConfig,
-    Task, TaskStatus, ThreadSummary, Worker, WorkerEventResponse, WorkerEventsResponse,
-    WorkerLocation, WorkerStatus,
+    ThreadSummary, Worker, WorkerEventResponse, WorkerEventsResponse, WorkerLocation, WorkerStatus,
 };
 use crate::core::config::{self, Config};
+use crate::core::delta::{DeltaState, LiveNodeStatus, NodeType};
 use crate::core::draft::create_workspace_provider;
 use crate::core::names::{get_available_names, slugify};
 use crate::core::ops::{
@@ -25,7 +25,7 @@ use crate::core::ops::{
 };
 use crate::core::project::ProjectStore;
 use crate::core::runner::{create_runner, Runner, WorkerSpawnConfig as RunnerSpawnConfig};
-use crate::core::state::{SQLiteState, Status, TaskSource, WorkerUpdate};
+use crate::core::state::{SQLiteState, Status, WorkerUpdate};
 use crate::core::Files;
 
 /// Generate the content for the scope task.
@@ -149,7 +149,7 @@ impl LocalOrchestrator {
     fn convert_worker(
         &self,
         w: &crate::core::state::Worker,
-        tasks: &[crate::core::state::Task],
+        live_nodes: &[crate::core::delta::LiveNode],
     ) -> Worker {
         use crate::core::metrics;
 
@@ -165,14 +165,13 @@ impl LocalOrchestrator {
             _ => WorkerLocation::Local,
         };
 
-        // Find current task for this worker
-        let current_task = tasks
+        // Find current task for this worker from live nodes
+        let current_task = live_nodes
             .iter()
-            .find(|t| {
-                t.claimed_by.as_deref() == Some(&w.name)
-                    && t.status == crate::core::state::TaskStatus::Doing
+            .find(|n| {
+                n.claimed_by.as_deref() == Some(&w.name) && n.status == LiveNodeStatus::Working
             })
-            .map(|t| t.name.clone());
+            .map(|n| n.name.clone());
 
         let is_leader = w.id == 1;
 
@@ -201,40 +200,6 @@ impl LocalOrchestrator {
             turns: Some(session_metrics.turns),
             current_task,
             sheep_config: SheepConfig::from_name(&w.name, is_leader),
-        }
-    }
-
-    /// Convert core task to GUI task type
-    fn convert_task(&self, t: &crate::core::state::Task) -> Task {
-        let status = match t.status {
-            crate::core::state::TaskStatus::Todo => TaskStatus::Todo,
-            crate::core::state::TaskStatus::Doing => TaskStatus::Doing,
-            crate::core::state::TaskStatus::Done => TaskStatus::Done,
-            crate::core::state::TaskStatus::AwaitingEval => TaskStatus::AwaitingEval,
-            crate::core::state::TaskStatus::Validated => TaskStatus::Validated,
-            crate::core::state::TaskStatus::NeedsRepair => TaskStatus::NeedsRepair,
-        };
-
-        // blocked_by is already Vec<String>, convert to Option<Vec<String>> for API
-        let blocked_by = if t.blocked_by.is_empty() {
-            None
-        } else {
-            Some(t.blocked_by.clone())
-        };
-
-        Task {
-            id: t.id.clone(),
-            description: t.name.clone(),
-            status,
-            claimed_by: t.claimed_by.clone(),
-            claimed_at: t.claimed_at.clone(),
-            completed_at: t.completed_at.clone(),
-            parent_id: t.parent_id.clone(),
-            blocked_by,
-            tokens_used: t.tokens_used.map(|n| n as u64),
-            created_at: t.created_at.clone(),
-            board_task_id: t.board_task_id.clone(),
-            source: t.source.as_str().to_string(),
         }
     }
 
@@ -355,15 +320,21 @@ impl Orchestrator for LocalOrchestrator {
         let waiting_reason = state.get_waiting_reason().ok().flatten();
         let unread_count = state.get_unread_count().unwrap_or(0) as u32;
 
-        // Get tasks and workers for counts
-        let tasks = state.get_tasks().unwrap_or_default();
-        let workers = state.get_workers().unwrap_or_default();
+        // Get task counts from live nodes (project runs)
+        let (tasks_done, tasks_total) =
+            if let Some(project_id) = state.get_project_id().ok().flatten() {
+                let delta_state = DeltaState::new(project_id);
+                if let Ok(nodes) = delta_state.get_live_nodes() {
+                    let done = nodes.iter().filter(|n| n.status.is_complete()).count() as u32;
+                    (done, nodes.len() as u32)
+                } else {
+                    (0, 0)
+                }
+            } else {
+                (0, 0)
+            };
 
-        let tasks_done = tasks
-            .iter()
-            .filter(|t| t.status == crate::core::state::TaskStatus::Done)
-            .count() as u32;
-        let tasks_total = tasks.len() as u32;
+        let workers = state.get_workers().unwrap_or_default();
         let workers_active = workers
             .iter()
             .filter(|w| w.status == crate::core::state::WorkerStatus::Working)
@@ -650,11 +621,18 @@ impl Orchestrator for LocalOrchestrator {
             .get_workers()
             .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
-        let tasks = state.get_tasks().unwrap_or_default();
+        // Get live nodes from project if available
+        let live_nodes = if let Some(project_id) = state.get_project_id().ok().flatten() {
+            DeltaState::new(project_id)
+                .get_live_nodes()
+                .unwrap_or_default()
+        } else {
+            vec![]
+        };
 
         let workers = core_workers
             .iter()
-            .map(|w| self.convert_worker(w, &tasks))
+            .map(|w| self.convert_worker(w, &live_nodes))
             .collect();
 
         Ok(workers)
@@ -790,183 +768,6 @@ impl Orchestrator for LocalOrchestrator {
             last_id,
             worker_status,
         })
-    }
-
-    // -------------------------------------------------------------------------
-    // Tasks
-    // -------------------------------------------------------------------------
-
-    async fn list_tasks(&self, run: &str) -> OrchestratorResult<Vec<Task>> {
-        let state = self.get_state(run)?;
-
-        let core_tasks = state
-            .get_tasks()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-        let tasks = core_tasks.iter().map(|t| self.convert_task(t)).collect();
-
-        Ok(tasks)
-    }
-
-    async fn add_task(&self, run: &str, content: &str) -> OrchestratorResult<Task> {
-        let state = self.get_state(run)?;
-
-        // Generate a unique task ID
-        let task_id = uuid::Uuid::new_v4().to_string();
-
-        state
-            .add_task(&task_id, content, None, None)
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-        let task = state
-            .get_task(&task_id)
-            .map_err(|e| OrchestratorError::State(e.to_string()))?
-            .ok_or_else(|| OrchestratorError::TaskNotFound(task_id.clone()))?;
-
-        Ok(self.convert_task(&task))
-    }
-
-    async fn delete_task(&self, run: &str, task_id: &str) -> OrchestratorResult<()> {
-        let state = self.get_state(run)?;
-
-        state
-            .delete_task(task_id)
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-        Ok(())
-    }
-
-    async fn complete_task(&self, run: &str, task_id: &str) -> OrchestratorResult<()> {
-        let state = self.get_state(run)?;
-
-        state
-            .complete_task(task_id, "user")
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-        Ok(())
-    }
-
-    async fn reopen_task(&self, run: &str, task_id: &str) -> OrchestratorResult<()> {
-        let state = self.get_state(run)?;
-
-        state
-            .reopen_task(task_id)
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-        Ok(())
-    }
-
-    async fn add_delta_task(
-        &self,
-        run: &str,
-        request: super::AddDeltaTaskRequest,
-    ) -> OrchestratorResult<Task> {
-        use crate::core::state::types::TaskType;
-
-        let state = self.get_state(run)?;
-
-        // Parse task type
-        let task_type = match request.task_type.as_str() {
-            "eval" => TaskType::Eval,
-            _ => TaskType::Work,
-        };
-
-        // Build blocked_by slice
-        let blocked_by_vec = request.blocked_by.unwrap_or_default();
-        let blocked_by: Vec<&str> = blocked_by_vec.iter().map(|s| s.as_str()).collect();
-        let blocked_by_opt = if blocked_by.is_empty() {
-            None
-        } else {
-            Some(blocked_by.as_slice())
-        };
-
-        // Build validates slice
-        let validates_vec = request.validates.unwrap_or_default();
-        let validates: Vec<&str> = validates_vec.iter().map(|s| s.as_str()).collect();
-        let validates_opt = if validates.is_empty() {
-            None
-        } else {
-            Some(validates.as_slice())
-        };
-
-        // Content is stored in the database
-        let content_opt = if request.content.is_empty() {
-            None
-        } else {
-            Some(request.content.as_str())
-        };
-
-        state
-            .add_task_with_type(
-                &request.task_id,
-                &request.name,
-                request.parent_id.as_deref(),
-                blocked_by_opt,
-                task_type,
-                validates_opt,
-                request.board_task_id.as_deref(),
-                content_opt,
-            )
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-        let task = state
-            .get_task(&request.task_id)
-            .map_err(|e| OrchestratorError::State(e.to_string()))?
-            .ok_or_else(|| OrchestratorError::TaskNotFound(request.task_id.clone()))?;
-
-        Ok(self.convert_task(&task))
-    }
-
-    async fn add_delta_tasks_batch(
-        &self,
-        run: &str,
-        requests: Vec<super::AddDeltaTaskRequest>,
-    ) -> OrchestratorResult<Vec<Task>> {
-        use crate::core::state::types::{DeltaTaskInput, TaskType};
-
-        let state = self.get_state(run)?;
-
-        // Convert requests to DeltaTaskInput (content is stored in the database)
-        let tasks: Vec<DeltaTaskInput> = requests
-            .iter()
-            .map(|req| {
-                let task_type = match req.task_type.as_str() {
-                    "eval" => TaskType::Eval,
-                    _ => TaskType::Work,
-                };
-                let content = if req.content.is_empty() {
-                    None
-                } else {
-                    Some(req.content.clone())
-                };
-                DeltaTaskInput {
-                    task_id: req.task_id.clone(),
-                    name: req.name.clone(),
-                    parent_id: req.parent_id.clone(),
-                    blocked_by: req.blocked_by.clone(),
-                    task_type,
-                    validates: req.validates.clone(),
-                    board_task_id: req.board_task_id.clone(),
-                    content,
-                    source: TaskSource::Worker, // Batch tasks added by workers
-                }
-            })
-            .collect();
-
-        // Add all tasks in a single batch with deferred FK constraints
-        state
-            .add_tasks_batch(&tasks)
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-        // Fetch and return all created tasks
-        let mut result = Vec::new();
-        for req in &requests {
-            if let Ok(Some(task)) = state.get_task(&req.task_id) {
-                result.push(self.convert_task(&task));
-            }
-        }
-
-        Ok(result)
     }
 
     // -------------------------------------------------------------------------
@@ -1289,34 +1090,13 @@ impl Orchestrator for LocalOrchestrator {
                 .map_err(|e| OrchestratorError::Other(format!("Failed to set HITL: {}", e)))?;
         }
 
-        // Add initial scope task (System source - created by system, not spec or worker)
-        if let Err(e) = sqlite_state.add_task_with_source_simple(
-            "scope",
-            "Scope",
-            None,
-            None,
-            TaskSource::System,
-        ) {
-            return Err(OrchestratorError::Other(format!(
-                "Failed to create scope task: {}",
-                e
-            )));
-        }
-
         // Set status to Draft (not spawning workers yet)
         sqlite_state
             .set_status(Status::Draft)
             .map_err(|e| OrchestratorError::Other(format!("Failed to set status: {}", e)))?;
 
-        // Create initial worker name (for pre-claiming scope task)
+        // Create initial worker name
         let first_worker_name = names::generate_worker_name();
-        if let Err(e) = sqlite_state.claim_task("scope", &first_worker_name) {
-            tracing::warn!(
-                "Failed to pre-claim scope task for {}: {}",
-                first_worker_name,
-                e
-            );
-        }
 
         // Determine multi-worker mode from scale
         let max_scale = request.worker_scale.unwrap_or(1);
@@ -1587,13 +1367,17 @@ impl Orchestrator for LocalOrchestrator {
 
             // Claim task and set assigned_task_id if provided
             if let Some(ref task_id) = task_for_worker {
-                if let Err(e) = sqlite_state.claim_task(task_id, worker_name) {
-                    tracing::warn!(
-                        "Failed to claim task {} for worker {}: {}",
-                        task_id,
-                        worker_name,
-                        e
-                    );
+                // Use live nodes for project runs
+                if let Some(project_id) = sqlite_state.get_project_id().ok().flatten() {
+                    let delta_state = DeltaState::new(project_id);
+                    if let Err(e) = delta_state.claim_live_node(task_id, worker_name) {
+                        tracing::warn!(
+                            "Failed to claim live node {} for worker {}: {}",
+                            task_id,
+                            worker_name,
+                            e
+                        );
+                    }
                 }
                 if let Err(e) = sqlite_state.update_worker(
                     worker_name,
@@ -1941,35 +1725,31 @@ impl Orchestrator for LocalOrchestrator {
         let (is_multi_worker, leader_name) = compute_multi_worker_config(&worker_names, scale_max);
         let first_worker = &worker_names[0];
 
-        // Always create scope task - this is the first task workers claim
-        if let Err(e) =
-            state.add_task_with_source_simple("scope", "Scope", None, None, TaskSource::System)
-        {
+        // Create delta state for live node operations
+        let delta_state = DeltaState::new(project.id);
+
+        // Always create scope task as a live node - this is the first task workers claim
+        if let Err(e) = delta_state.create_live_node_from_worker(
+            "scope",
+            "Scope",
+            None, // No parent
+            None, // No blockers
+            NodeType::Task,
+            "", // No content initially
+        ) {
             return Err(OrchestratorError::Other(format!(
-                "Failed to create scope task: {}",
+                "Failed to create scope live node: {}",
                 e
             )));
         }
 
-        // Block all root tasks by scope (event-driven scaling will unblock when scope completes)
-        // This prevents autoscale from spawning workers for other tasks until scope is done
-        if let Ok(tasks) = state.get_tasks() {
-            for task in tasks {
-                if task.id != "scope" && task.blocked_by.is_empty() {
-                    if let Err(e) = state.add_blocker(&task.id, "scope") {
-                        tracing::warn!("Failed to block task '{}' by scope: {}", task.id, e);
-                    }
-                }
-            }
-        }
-
-        // Pre-claim scope for first worker and set assigned_task_id
-        if let Err(e) = state.claim_task("scope", first_worker) {
-            tracing::warn!("Failed to pre-claim scope task for {}: {}", first_worker, e);
-        }
-        // Set assigned_task_id on scope task
-        if let Err(e) = state.set_task_assigned_to("scope", Some(first_worker)) {
-            tracing::warn!("Failed to set assigned_to for scope task: {}", e);
+        // Pre-claim scope for first worker
+        if let Err(e) = delta_state.claim_live_node("scope", first_worker) {
+            tracing::warn!(
+                "Failed to pre-claim scope live node for {}: {}",
+                first_worker,
+                e
+            );
         }
 
         // Store docs config from global settings

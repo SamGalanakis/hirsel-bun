@@ -4,14 +4,14 @@
 //! - Overall status and timing
 //! - Project path and request
 //! - Worker status with claimed tasks
-//! - Task list with progress
+//! - Task progress
 //! - Recent activity history
 //! - Summary (for completed runs)
 //!
 //! Uses the Orchestrator trait to support both local and remote modes.
 
 use crate::cli::helpers::{block_on, get_orchestrator};
-use crate::core::api_types::{HistoryEntry, RunDetail, Task, TaskStatus, Worker, WorkerStatus};
+use crate::core::api_types::{HistoryEntry, RunDetail, Worker, WorkerStatus};
 use std::io::{self, Write};
 
 /// Execute the view command for a run
@@ -27,16 +27,15 @@ pub fn execute_with_profile(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let orch = get_orchestrator(profile)?;
 
-    // Fetch run details, tasks, workers, and history in sequence
+    // Fetch run details, workers, and history
     let run_detail = block_on(orch.get_run(run_name))?;
-    let tasks = block_on(orch.list_tasks(run_name))?;
     let workers = block_on(orch.list_workers(run_name))?;
     let history = block_on(orch.get_history(run_name, Some(10)))?;
 
     if json {
-        print_json(&run_detail, &tasks, &workers, &history)?;
+        print_json(&run_detail, &workers, &history)?;
     } else {
-        print_text(&run_detail, &tasks, &workers, &history)?;
+        print_text(&run_detail, &workers, &history)?;
     }
 
     Ok(())
@@ -45,7 +44,6 @@ pub fn execute_with_profile(
 /// Print run status as JSON
 fn print_json(
     run: &RunDetail,
-    tasks: &[Task],
     workers: &[Worker],
     history: &[HistoryEntry],
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -53,27 +51,11 @@ fn print_json(
     let worker_data: Vec<_> = workers
         .iter()
         .map(|w| {
-            let claimed_task = tasks
-                .iter()
-                .find(|t| t.claimed_by.as_ref() == Some(&w.name));
             serde_json::json!({
                 "name": w.name,
                 "status": format!("{:?}", w.status).to_lowercase(),
                 "pid": w.pid,
-                "claimed_task": claimed_task.map(|t| &t.id),
-            })
-        })
-        .collect();
-
-    // Build task data
-    let task_data: Vec<_> = tasks
-        .iter()
-        .map(|t| {
-            serde_json::json!({
-                "id": t.id,
-                "name": t.description,
-                "status": format!("{:?}", t.status).to_lowercase(),
-                "claimed_by": t.claimed_by,
+                "current_task": w.current_task,
             })
         })
         .collect();
@@ -90,15 +72,6 @@ fn print_json(
             })
         })
         .collect();
-
-    let tasks_done = tasks
-        .iter()
-        .filter(|t| t.status == TaskStatus::Done)
-        .count();
-    let tasks_doing = tasks
-        .iter()
-        .filter(|t| t.status == TaskStatus::Doing)
-        .count();
 
     let workers_active = workers
         .iter()
@@ -128,11 +101,9 @@ fn print_json(
         "project_path": run.project_path,
         "request": run.request,
         "tasks": {
-            "total": tasks.len(),
-            "done": tasks_done,
-            "doing": tasks_doing,
-            "todo": tasks.len() - tasks_done - tasks_doing,
-            "list": task_data,
+            "total": run.tasks_total,
+            "done": run.tasks_done,
+            "doing": run.tasks_total - run.tasks_done,
         },
         "workers": {
             "total": run.workers_total,
@@ -151,7 +122,6 @@ fn print_json(
 /// Print run status as formatted text
 fn print_text(
     run: &RunDetail,
-    tasks: &[Task],
     workers: &[Worker],
     history: &[HistoryEntry],
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -192,19 +162,17 @@ fn print_text(
     println!("  mode     {}", mode);
     println!();
 
-    // Workers with claimed tasks
+    // Workers with current tasks
     if !workers.is_empty() {
         println!("  workers");
 
         for worker in workers {
             let status_icon = format_worker_status_icon(&worker.status);
-            let claimed_task = tasks
-                .iter()
-                .find(|t| t.claimed_by.as_ref() == Some(&worker.name));
-            let task_str = claimed_task
+            let task_str = worker
+                .current_task
+                .as_ref()
                 .map(|t| {
-                    let desc = &t.description;
-                    let name = if desc.len() > 25 { &desc[..25] } else { desc };
+                    let name = if t.len() > 25 { &t[..25] } else { t };
                     format!(" -> {}", name)
                 })
                 .unwrap_or_default();
@@ -229,36 +197,10 @@ fn print_text(
         println!();
     }
 
-    // Tasks with progress
-    if !tasks.is_empty() {
-        let tasks_done = tasks
-            .iter()
-            .filter(|t| t.status == TaskStatus::Done)
-            .count();
-        let total = tasks.len();
-
-        // Progress bar
-        let bar = format_progress(tasks_done, total, 20);
+    // Tasks progress
+    if run.tasks_total > 0 {
+        let bar = format_progress(run.tasks_done as usize, run.tasks_total as usize, 20);
         println!("  tasks    {}", bar);
-        println!();
-
-        // List tasks in two columns
-        let mut task_iter = tasks.iter().enumerate().peekable();
-        while let Some((i, t)) = task_iter.next() {
-            let icon = format_task_status_icon(&t.status);
-            let desc = &t.description;
-            let name = if desc.len() > 20 { &desc[..20] } else { desc };
-            let task_text = format!("{} {:<20}", icon, name);
-
-            if i % 2 == 0 {
-                print!("    {}", task_text);
-                if task_iter.peek().is_none() {
-                    println!();
-                }
-            } else {
-                println!("  {}", task_text);
-            }
-        }
         println!();
     }
 
@@ -291,7 +233,6 @@ fn print_text(
     }
 
     println!();
-
     io::stdout().flush()?;
     Ok(())
 }
@@ -317,18 +258,6 @@ fn format_worker_status_icon(status: &WorkerStatus) -> &'static str {
         WorkerStatus::Awaiting => "◌",
         WorkerStatus::Paused => "◫",
         WorkerStatus::Error => "✗",
-    }
-}
-
-/// Format task status icon
-fn format_task_status_icon(status: &TaskStatus) -> &'static str {
-    match status {
-        TaskStatus::Todo => "○",
-        TaskStatus::Doing => "●",
-        TaskStatus::Done => "✓",
-        TaskStatus::AwaitingEval => "◔",
-        TaskStatus::Validated => "✔",
-        TaskStatus::NeedsRepair => "⚒",
     }
 }
 
@@ -383,16 +312,9 @@ mod tests {
     }
 
     #[test]
-    fn test_format_status_badge() {
+    fn test_status_badge() {
+        assert_eq!(format_status_badge(&RunStatus::Draft), "[DRAFT]");
         assert_eq!(format_status_badge(&RunStatus::Working), "[WORKING]");
         assert_eq!(format_status_badge(&RunStatus::Done), "[DONE]");
-        assert_eq!(format_status_badge(&RunStatus::Paused), "[PAUSED]");
-    }
-
-    #[test]
-    fn test_format_task_status_icon() {
-        assert_eq!(format_task_status_icon(&TaskStatus::Todo), "○");
-        assert_eq!(format_task_status_icon(&TaskStatus::Doing), "●");
-        assert_eq!(format_task_status_icon(&TaskStatus::Done), "✓");
     }
 }

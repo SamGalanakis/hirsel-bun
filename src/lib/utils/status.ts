@@ -5,36 +5,7 @@
  * All components should import from here instead of defining their own mappings.
  */
 
-import type { RunStatus, TaskStatus, WorkerStatus } from '../types';
-
-// =============================================================================
-// Task Status Configuration
-// =============================================================================
-
-export const TASK_STATUS_CONFIG = {
-  todo: {
-    icon: 'circle',
-    color: 'text-wool-500',
-    label: 'To Do',
-    badgeClass: 'bg-wool-500/20 text-wool-400',
-  },
-  doing: {
-    icon: 'loader',
-    color: 'text-amber-500',
-    label: 'In Progress',
-    badgeClass: 'bg-amber-500/20 text-amber-400',
-  },
-  done: {
-    icon: 'check-circle',
-    color: 'text-sage',
-    label: 'Done',
-    badgeClass: 'bg-sage/20 text-sage',
-  },
-} as const;
-
-export function getTaskStatusConfig(status: string | null | undefined) {
-  return TASK_STATUS_CONFIG[status as keyof typeof TASK_STATUS_CONFIG] ?? TASK_STATUS_CONFIG.todo;
-}
+import type { RunStatus, WorkerStatus } from '../types';
 
 // =============================================================================
 // Worker Status Configuration
@@ -232,14 +203,6 @@ export function getWorkerStatusClass(status: WorkerStatus | null | undefined): s
     error: 'status-error',
   };
   return classes[status || 'idle'] || 'status-idle';
-}
-
-/**
- * Get CSS class for task status
- */
-export function getTaskStatusClass(status: TaskStatus | null | undefined): string {
-  const config = getTaskStatusConfig(status);
-  return config.color;
 }
 
 /**

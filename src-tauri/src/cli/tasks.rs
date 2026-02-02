@@ -7,9 +7,12 @@
 //! - `hirsel task-done <run> <id>` - Mark task as done (admin)
 //! - `hirsel task-reopen <run> <id>` - Reopen a completed task
 //! - `hirsel task-unclaim <run> <id>` - Unclaim a task
+//!
+//! All commands use live_nodes from the DeltaState (global database).
 
 use crate::cli::config::hirsel_root;
-use crate::core::state::{SQLiteState, StateError, Task, TaskStatus};
+use crate::core::delta::{DeltaState, DeltaStateError, LiveNode, LiveNodeStatus, NodeType};
+use crate::core::state::{SQLiteState, StateError};
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -22,8 +25,14 @@ pub enum TaskError {
     #[error("Task '{0}' not found")]
     TaskNotFound(String),
 
+    #[error("Run is not linked to a project")]
+    NotProjectRun,
+
     #[error("State error: {0}")]
     State(#[from] StateError),
+
+    #[error("Delta state error: {0}")]
+    DeltaState(#[from] DeltaStateError),
 
     #[error("Failed to serialize: {0}")]
     Serialization(String),
@@ -42,14 +51,14 @@ pub struct TaskDisplay {
 }
 
 impl TaskDisplay {
-    fn from_task(task: &Task, depth: usize) -> Self {
+    fn from_node(node: &LiveNode, depth: usize) -> Self {
         Self {
-            id: task.id.clone(),
-            name: task.name.clone(),
-            status: task.status.to_string(),
-            claimed_by: task.claimed_by.clone(),
-            parent_id: task.parent_id.clone(),
-            blocked_by: task.blocked_by.clone(),
+            id: node.id.clone(),
+            name: node.name.clone(),
+            status: node.status.as_str().to_string(),
+            claimed_by: node.claimed_by.clone(),
+            parent_id: node.parent_id.clone(),
+            blocked_by: node.blocked_by.clone(),
             depth,
         }
     }
@@ -64,26 +73,46 @@ fn get_run_dir(run_name: &str) -> Result<PathBuf, TaskError> {
     Ok(run_dir)
 }
 
-/// Get the state for a run.
-fn get_state(run_name: &str) -> Result<SQLiteState, TaskError> {
+/// Get the SQLiteState and project_id for a run.
+fn get_project_state(run_name: &str) -> Result<(SQLiteState, i64), TaskError> {
     let run_dir = get_run_dir(run_name)?;
     let db_path = run_dir.join("hirsel.db");
-    SQLiteState::new(db_path).map_err(TaskError::State)
+    let state = SQLiteState::new(db_path).map_err(TaskError::State)?;
+
+    let project_id = state
+        .get_project_id()
+        .map_err(TaskError::State)?
+        .ok_or(TaskError::NotProjectRun)?;
+
+    Ok((state, project_id))
+}
+
+/// Calculate depth of a node in the tree.
+fn get_node_depth(nodes: &[LiveNode], node_id: &str) -> usize {
+    let node = nodes.iter().find(|n| n.id == node_id);
+    match node {
+        Some(n) => match &n.parent_id {
+            Some(pid) => 1 + get_node_depth(nodes, pid),
+            None => 0,
+        },
+        None => 0,
+    }
 }
 
 /// Execute the `hirsel tasks` command.
 ///
 /// Lists all tasks in a run with their status, hierarchy, and assignments.
 pub fn run_tasks(run_name: &str, json_output: bool) -> Result<String, TaskError> {
-    let state = get_state(run_name)?;
-    let tasks = state.get_tasks().map_err(TaskError::State)?;
+    let (_, project_id) = get_project_state(run_name)?;
+    let delta_state = DeltaState::new(project_id);
+    let nodes = delta_state.get_live_nodes()?;
 
     if json_output {
-        let displays: Vec<TaskDisplay> = tasks
+        let displays: Vec<TaskDisplay> = nodes
             .iter()
-            .map(|t| {
-                let depth = state.get_task_depth(&t.id).unwrap_or(0);
-                TaskDisplay::from_task(t, depth)
+            .map(|n| {
+                let depth = get_node_depth(&nodes, &n.id);
+                TaskDisplay::from_node(n, depth)
             })
             .collect();
 
@@ -94,45 +123,46 @@ pub fn run_tasks(run_name: &str, json_output: bool) -> Result<String, TaskError>
         .map_err(|e| TaskError::Serialization(e.to_string()));
     }
 
-    if tasks.is_empty() {
+    if nodes.is_empty() {
         return Ok(format!("No tasks in run '{}'\n", run_name));
     }
 
     let mut output = format!("Tasks in '{}'\n\n", run_name);
 
     // Build task hierarchy for display
-    fn format_task_tree(
-        state: &SQLiteState,
-        tasks: &[Task],
+    fn format_node_tree(
+        delta_state: &DeltaState,
+        nodes: &[LiveNode],
         parent_id: Option<&str>,
         depth: usize,
         output: &mut String,
     ) {
-        let children: Vec<&Task> = tasks
+        let children: Vec<&LiveNode> = nodes
             .iter()
-            .filter(|t| t.parent_id.as_deref() == parent_id)
+            .filter(|n| n.parent_id.as_deref() == parent_id)
             .collect();
 
-        for task in children {
+        for node in children {
             let indent = "  ".repeat(depth);
-            let status_icon = match task.status {
-                TaskStatus::Todo => "○",
-                TaskStatus::Doing => "◐",
-                TaskStatus::Done => "●",
-                TaskStatus::AwaitingEval => "◔",
-                TaskStatus::Validated => "✔",
-                TaskStatus::NeedsRepair => "⚒",
+            let status_icon = match node.status {
+                LiveNodeStatus::Pending => "○",
+                LiveNodeStatus::Working => "◐",
+                LiveNodeStatus::Done => "●",
+                LiveNodeStatus::AwaitingEval => "◔",
+                LiveNodeStatus::Validated => "✔",
+                LiveNodeStatus::NeedsRepair => "⚒",
+                LiveNodeStatus::Failed => "✗",
             };
 
-            let claimed = task
+            let claimed = node
                 .claimed_by
                 .as_ref()
                 .map(|c| format!(" ({})", c))
                 .unwrap_or_default();
 
-            let blocked = if !task.blocked_by.is_empty() {
+            let blocked = if !node.blocked_by.is_empty() {
                 // Check if actually blocked
-                if let Ok(true) = state.is_task_blocked(&task.id) {
+                if let Ok(true) = delta_state.is_node_blocked(&node.id) {
                     " [blocked]".to_string()
                 } else {
                     String::new()
@@ -143,33 +173,33 @@ pub fn run_tasks(run_name: &str, json_output: bool) -> Result<String, TaskError>
 
             output.push_str(&format!(
                 "{}{} {} - {}{}{}\n",
-                indent, status_icon, task.id, task.name, claimed, blocked
+                indent, status_icon, node.id, node.name, claimed, blocked
             ));
 
             // Recurse for children
-            format_task_tree(state, tasks, Some(&task.id), depth + 1, output);
+            format_node_tree(delta_state, nodes, Some(&node.id), depth + 1, output);
         }
     }
 
-    format_task_tree(&state, &tasks, None, 0, &mut output);
+    format_node_tree(&delta_state, &nodes, None, 0, &mut output);
 
     // Summary
-    let todo_count = tasks
+    let pending_count = nodes
         .iter()
-        .filter(|t| t.status == TaskStatus::Todo)
+        .filter(|n| n.status == LiveNodeStatus::Pending)
         .count();
-    let doing_count = tasks
+    let working_count = nodes
         .iter()
-        .filter(|t| t.status == TaskStatus::Doing)
+        .filter(|n| n.status == LiveNodeStatus::Working)
         .count();
-    let done_count = tasks
+    let done_count = nodes
         .iter()
-        .filter(|t| t.status == TaskStatus::Done)
+        .filter(|n| matches!(n.status, LiveNodeStatus::Done | LiveNodeStatus::Validated))
         .count();
 
     output.push_str(&format!(
-        "\n{} todo, {} in progress, {} done\n",
-        todo_count, doing_count, done_count
+        "\n{} pending, {} in progress, {} done\n",
+        pending_count, working_count, done_count
     ));
 
     Ok(output)
@@ -177,7 +207,7 @@ pub fn run_tasks(run_name: &str, json_output: bool) -> Result<String, TaskError>
 
 /// Execute the `hirsel task-add` command.
 ///
-/// Adds a new task to a run.
+/// Adds a new task to a run as a live_node.
 pub fn run_task_add(
     run_name: &str,
     task_id: &str,
@@ -186,23 +216,24 @@ pub fn run_task_add(
     blocked_by: &[String],
     json_output: bool,
 ) -> Result<String, TaskError> {
-    let state = get_state(run_name)?;
+    let (_, project_id) = get_project_state(run_name)?;
+    let delta_state = DeltaState::new(project_id);
 
     // Convert Vec<String> to Vec<&str> for the API
     let blocked_by_refs: Vec<&str> = blocked_by.iter().map(|s| s.as_str()).collect();
 
-    state
-        .add_task(
-            task_id,
-            description,
-            parent,
-            if blocked_by_refs.is_empty() {
-                None
-            } else {
-                Some(blocked_by_refs.as_slice())
-            },
-        )
-        .map_err(TaskError::State)?;
+    delta_state.create_live_node_from_worker(
+        task_id,
+        description,
+        parent,
+        if blocked_by_refs.is_empty() {
+            None
+        } else {
+            Some(blocked_by_refs.as_slice())
+        },
+        NodeType::Task,
+        "", // content - empty for CLI-added tasks
+    )?;
 
     if json_output {
         return serde_json::to_string_pretty(&serde_json::json!({
@@ -224,9 +255,10 @@ pub fn run_task_delete(
     task_id: &str,
     json_output: bool,
 ) -> Result<String, TaskError> {
-    let state = get_state(run_name)?;
+    let (_, project_id) = get_project_state(run_name)?;
+    let delta_state = DeltaState::new(project_id);
 
-    state.delete_task(task_id).map_err(TaskError::State)?;
+    delta_state.delete_live_node(task_id)?;
 
     if json_output {
         return serde_json::to_string_pretty(&serde_json::json!({
@@ -248,19 +280,22 @@ pub fn run_task_done(
     task_id: &str,
     json_output: bool,
 ) -> Result<String, TaskError> {
-    let state = get_state(run_name)?;
+    let (_, project_id) = get_project_state(run_name)?;
+    let delta_state = DeltaState::new(project_id);
 
-    // Get the task first
-    let task = state
-        .get_task(task_id)
-        .map_err(TaskError::State)?
-        .ok_or_else(|| TaskError::TaskNotFound(task_id.to_string()))?;
+    // Get the node first
+    let node = match delta_state.get_live_node(task_id) {
+        Ok(n) => n,
+        Err(DeltaStateError::LiveNodeNotFound(_)) => {
+            return Err(TaskError::TaskNotFound(task_id.to_string()))
+        }
+        Err(e) => return Err(TaskError::DeltaState(e)),
+    };
 
-    // Admin override: directly set status to done
-    // This bypasses the normal claim check
-    state
-        .admin_complete_task(task_id)
-        .map_err(TaskError::State)?;
+    let claimed_by = node.claimed_by.clone();
+
+    // Admin override: directly update status to done
+    delta_state.update_live_node_status(task_id, LiveNodeStatus::Done, None)?;
 
     if json_output {
         return serde_json::to_string_pretty(&serde_json::json!({
@@ -271,15 +306,12 @@ pub fn run_task_done(
         .map_err(|e| TaskError::Serialization(e.to_string()));
     }
 
-    let was_claimed = task.claimed_by.is_some();
-    if was_claimed {
-        Ok(format!(
+    match claimed_by {
+        Some(owner) => Ok(format!(
             "Task '{}' marked as done (was claimed by {})\n",
-            task_id,
-            task.claimed_by.unwrap_or_default()
-        ))
-    } else {
-        Ok(format!("Task '{}' marked as done\n", task_id))
+            task_id, owner
+        )),
+        None => Ok(format!("Task '{}' marked as done\n", task_id)),
     }
 }
 
@@ -291,9 +323,20 @@ pub fn run_task_reopen(
     task_id: &str,
     json_output: bool,
 ) -> Result<String, TaskError> {
-    let state = get_state(run_name)?;
+    let (_, project_id) = get_project_state(run_name)?;
+    let delta_state = DeltaState::new(project_id);
 
-    state.reopen_task(task_id).map_err(TaskError::State)?;
+    // Verify task exists
+    match delta_state.get_live_node(task_id) {
+        Ok(_) => {}
+        Err(DeltaStateError::LiveNodeNotFound(_)) => {
+            return Err(TaskError::TaskNotFound(task_id.to_string()))
+        }
+        Err(e) => return Err(TaskError::DeltaState(e)),
+    };
+
+    // Reopen by setting status back to Pending
+    delta_state.update_live_node_status(task_id, LiveNodeStatus::Pending, None)?;
 
     if json_output {
         return serde_json::to_string_pretty(&serde_json::json!({
@@ -315,20 +358,22 @@ pub fn run_task_unclaim(
     task_id: &str,
     json_output: bool,
 ) -> Result<String, TaskError> {
-    let state = get_state(run_name)?;
+    let (_, project_id) = get_project_state(run_name)?;
+    let delta_state = DeltaState::new(project_id);
 
-    // Get the task first
-    let task = state
-        .get_task(task_id)
-        .map_err(TaskError::State)?
-        .ok_or_else(|| TaskError::TaskNotFound(task_id.to_string()))?;
+    // Get the node first
+    let node = match delta_state.get_live_node(task_id) {
+        Ok(n) => n,
+        Err(DeltaStateError::LiveNodeNotFound(_)) => {
+            return Err(TaskError::TaskNotFound(task_id.to_string()))
+        }
+        Err(e) => return Err(TaskError::DeltaState(e)),
+    };
 
-    let claimed_by = task.claimed_by.clone();
+    let claimed_by = node.claimed_by.clone();
 
-    // Admin override: directly unclaim
-    state
-        .admin_unclaim_task(task_id)
-        .map_err(TaskError::State)?;
+    // Unclaim the node
+    delta_state.unclaim_live_node(task_id)?;
 
     if json_output {
         return serde_json::to_string_pretty(&serde_json::json!({
@@ -352,37 +397,6 @@ pub fn run_task_unclaim(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_task_display_from_task() {
-        let task = Task {
-            id: "test".to_string(),
-            name: "Test task".to_string(),
-            status: TaskStatus::Todo,
-            created_at: "2024-01-01".to_string(),
-            completed_at: None,
-            claimed_by: Some("worker1".to_string()),
-            claimed_at: None,
-            pending_done_at: None,
-            tokens_used: None,
-            parent_id: None,
-            content: None,
-            blocked_by: vec!["other".to_string()],
-            task_type: crate::core::state::TaskType::Work,
-            eval_result: None,
-            eval_feedback: None,
-            board_task_id: None,
-            assigned_to: None,
-            completed_by: None,
-            source: crate::core::state::TaskSource::Spec,
-        };
-
-        let display = TaskDisplay::from_task(&task, 2);
-        assert_eq!(display.id, "test");
-        assert_eq!(display.status, "todo");
-        assert_eq!(display.claimed_by, Some("worker1".to_string()));
-        assert_eq!(display.depth, 2);
-    }
 
     #[test]
     fn test_get_run_dir_not_found() {

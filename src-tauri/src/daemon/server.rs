@@ -199,10 +199,6 @@ fn build_router(state: Arc<AppState>, gyp_state: Arc<gyp::GypState>) -> Router {
             "/api/runs/{run}/workers/{worker}/heartbeat",
             post(worker_heartbeat),
         )
-        .route(
-            "/api/runs/{run}/workers/{worker}/claimed_task",
-            get(get_worker_claimed_task),
-        )
         .with_state(state)
         // Merge Gyp routes (with separate state)
         .merge(shared_routes::build_gyp_routes().with_state(gyp_state))
@@ -420,8 +416,8 @@ async fn set_run_waiting_reason(
 // =============================================================================
 
 use crate::core::server::worker_routes::{
-    self, AllDoneResponse, ClaimedTaskResponse, HeartbeatResponse, SuccessResponse,
-    UpdateWorkerRequest, WorkerResponse, WorkersResponse,
+    self, AllDoneResponse, HeartbeatResponse, SuccessResponse, UpdateWorkerRequest, WorkerResponse,
+    WorkersResponse,
 };
 
 /// Helper to create lifecycle manager for a run
@@ -541,22 +537,6 @@ async fn worker_heartbeat(
             status: status.to_string(),
         })
         .into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-    }
-}
-
-/// Get the task claimed by a worker
-async fn get_worker_claimed_task(
-    axum::extract::Path((run, worker)): axum::extract::Path<(String, String)>,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    let sqlite_state = match get_run_state(&state, &run).await {
-        Ok(s) => s,
-        Err((status, msg)) => return (status, msg).into_response(),
-    };
-
-    match worker_routes::get_claimed_task(&sqlite_state, &worker) {
-        Ok(task) => Json(ClaimedTaskResponse { task }).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }

@@ -1,1 +1,1 @@
-export { SheepfoldDrawer } from './SheepfoldDrawer';
+export { SheepfoldPopover } from './SheepfoldPopover';

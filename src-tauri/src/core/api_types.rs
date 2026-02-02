@@ -24,18 +24,6 @@ pub enum RunStatus {
     Delivered,
 }
 
-/// Task status values
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskStatus {
-    Todo,
-    Doing,
-    Done,
-    AwaitingEval,
-    Validated,
-    NeedsRepair,
-}
-
 /// Worker status values
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -116,26 +104,6 @@ pub struct RunDetail {
     pub worker_runners: Option<std::collections::HashMap<String, String>>,
     pub project_id: Option<i64>,
     pub project_name: Option<String>,
-}
-
-/// Task from the database
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Task {
-    pub id: String,
-    pub description: String,
-    pub status: TaskStatus,
-    pub claimed_by: Option<String>,
-    pub claimed_at: Option<String>,
-    pub completed_at: Option<String>,
-    pub parent_id: Option<String>,
-    pub blocked_by: Option<Vec<String>>,
-    pub tokens_used: Option<u64>,
-    pub created_at: String,
-    /// Link to the board task ID (for delta dispatch system)
-    pub board_task_id: Option<String>,
-    /// Source of the task (spec, worker, system)
-    pub source: String,
 }
 
 /// Sheep avatar configuration

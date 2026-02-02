@@ -5,7 +5,8 @@
 //! - Regenerate summary with --regenerate flag
 //! - JSON output for scripting
 
-use crate::core::state::{SQLiteState, StateError, TaskStatus};
+use crate::core::delta::{DeltaState, LiveNodeStatus};
+use crate::core::state::{SQLiteState, StateError};
 use crate::core::{config, Files};
 use serde::Serialize;
 
@@ -68,20 +69,30 @@ pub fn run_summary(
 
     // Get stats for output
     let status = state.status().map_err(SummaryError::State)?;
-    let tasks = state.get_tasks().map_err(SummaryError::State)?;
     let workers = state.get_workers().map_err(SummaryError::State)?;
 
-    let tasks_completed = tasks
-        .iter()
-        .filter(|t| t.status == TaskStatus::Done)
-        .count();
+    // Get task stats from live_nodes if available (project run), otherwise fallback to empty
+    let (tasks_completed, tasks_total) = if let Ok(Some(project_id)) = state.get_project_id() {
+        let delta_state = DeltaState::new(project_id);
+        if let Ok(nodes) = delta_state.get_live_nodes() {
+            let completed = nodes
+                .iter()
+                .filter(|n| matches!(n.status, LiveNodeStatus::Done | LiveNodeStatus::Validated))
+                .count();
+            (completed, nodes.len())
+        } else {
+            (0, 0)
+        }
+    } else {
+        (0, 0)
+    };
 
     if json_output {
         let summary = RunSummary {
             run_name: run_name.to_string(),
             status: status.to_string(),
             tasks_completed,
-            tasks_total: tasks.len(),
+            tasks_total,
             workers_used: workers.len(),
             summary_text: summary_text.clone(),
             has_summary: summary_text.is_some(),
@@ -98,8 +109,7 @@ pub fn run_summary(
     output.push_str(&format!("Status: {}\n", status));
     output.push_str(&format!(
         "Tasks: {}/{} completed\n",
-        tasks_completed,
-        tasks.len()
+        tasks_completed, tasks_total
     ));
     output.push_str(&format!("Workers: {}\n\n", workers.len()));
 
@@ -120,11 +130,20 @@ pub fn run_summary(
 
 /// Generate a summary of the run's work.
 fn generate_summary(state: &SQLiteState, run_name: &str) -> Result<String, SummaryError> {
+    use crate::core::delta::LiveNode;
+
     let status = state.status().map_err(SummaryError::State)?;
-    let tasks = state.get_tasks().map_err(SummaryError::State)?;
     let workers = state.get_workers().map_err(SummaryError::State)?;
     let history = state.get_history(100).map_err(SummaryError::State)?;
     let request = state.get_request().map_err(SummaryError::State)?;
+
+    // Get nodes from live_nodes if available
+    let nodes: Vec<LiveNode> = if let Ok(Some(project_id)) = state.get_project_id() {
+        let delta_state = DeltaState::new(project_id);
+        delta_state.get_live_nodes().unwrap_or_default()
+    } else {
+        vec![]
+    };
 
     let mut summary = String::new();
 
@@ -142,41 +161,41 @@ fn generate_summary(state: &SQLiteState, run_name: &str) -> Result<String, Summa
     summary.push_str("## Status\n");
     summary.push_str(&format!("Final status: {}\n\n", status));
 
-    // Task summary
-    let tasks_done: Vec<_> = tasks
+    // Task summary using live_nodes
+    let nodes_done: Vec<_> = nodes
         .iter()
-        .filter(|t| t.status == TaskStatus::Done)
+        .filter(|n| matches!(n.status, LiveNodeStatus::Done | LiveNodeStatus::Validated))
         .collect();
-    let tasks_todo: Vec<_> = tasks
+    let nodes_pending: Vec<_> = nodes
         .iter()
-        .filter(|t| t.status == TaskStatus::Todo)
+        .filter(|n| n.status == LiveNodeStatus::Pending)
         .collect();
 
     summary.push_str("## Tasks Completed\n");
-    if tasks_done.is_empty() {
+    if nodes_done.is_empty() {
         summary.push_str("No tasks completed.\n");
     } else {
-        for task in &tasks_done {
-            let worker = task
+        for node in &nodes_done {
+            let worker = node
                 .claimed_by
                 .as_ref()
                 .map(|w| format!(" (by {})", w))
                 .unwrap_or_default();
-            summary.push_str(&format!("- {} - {}{}\n", task.id, task.name, worker));
+            summary.push_str(&format!("- {} - {}{}\n", node.id, node.name, worker));
         }
     }
     summary.push('\n');
 
     // Remaining tasks (if any)
-    if !tasks_todo.is_empty() {
+    if !nodes_pending.is_empty() {
         summary.push_str("## Tasks Remaining\n");
-        for task in &tasks_todo {
-            let blocked = if !task.blocked_by.is_empty() {
-                format!(" [blocked by: {}]", task.blocked_by.join(", "))
+        for node in &nodes_pending {
+            let blocked = if !node.blocked_by.is_empty() {
+                format!(" [blocked by: {}]", node.blocked_by.join(", "))
             } else {
                 String::new()
             };
-            summary.push_str(&format!("- {} - {}{}\n", task.id, task.name, blocked));
+            summary.push_str(&format!("- {} - {}{}\n", node.id, node.name, blocked));
         }
         summary.push('\n');
     }

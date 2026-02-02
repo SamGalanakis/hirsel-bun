@@ -11,7 +11,6 @@ mod history;
 mod messages;
 mod run;
 mod scribe;
-mod tasks;
 pub mod types;
 mod workers;
 
@@ -112,54 +111,6 @@ CREATE TABLE IF NOT EXISTS history (
     action TEXT NOT NULL,
     detail TEXT
 );
-
-CREATE TABLE IF NOT EXISTS tasks (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'todo',
-    created_at TEXT NOT NULL,
-    completed_at TEXT,
-    claimed_by TEXT,
-    claimed_at TEXT,
-    pending_done_at TEXT,
-    tokens_used INTEGER,
-    parent_id TEXT,
-    content TEXT,                        -- Task specification/details
-    -- Eval system columns
-    task_type TEXT DEFAULT 'work',      -- 'work' | 'eval'
-    eval_result TEXT,                    -- 'pass' | 'fail' | null
-    eval_feedback TEXT,                  -- Feedback if eval failed
-    board_task_id TEXT,                  -- Original board task ID for tracking
-    -- Delta dispatch columns
-    delta_submission_id INTEGER,         -- Link to delta_submissions table
-    delta_type TEXT,                     -- 'implement' | 'modify' | 'revert'
-    refs TEXT,                           -- JSON array of references for context
-    -- Direct task assignment columns
-    assigned_to TEXT,                    -- Worker this task is assigned to
-    completed_by TEXT,                   -- Worker who completed this task (for tree distance)
-    -- Source tracking
-    source TEXT NOT NULL DEFAULT 'spec' -- 'spec' | 'worker' | 'system'
-);
-
--- Normalized task blocking relationship (which tasks block another task)
-CREATE TABLE IF NOT EXISTS task_blockers (
-    task_id TEXT NOT NULL,
-    blocker_id TEXT NOT NULL,
-    PRIMARY KEY (task_id, blocker_id),
-    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-    FOREIGN KEY (blocker_id) REFERENCES tasks(id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_task_blockers_blocker ON task_blockers(blocker_id);
-
--- Normalized eval-validates relationship (which tasks an eval validates)
-CREATE TABLE IF NOT EXISTS eval_validates (
-    eval_id TEXT NOT NULL,
-    task_id TEXT NOT NULL,
-    PRIMARY KEY (eval_id, task_id),
-    FOREIGN KEY (eval_id) REFERENCES tasks(id) ON DELETE CASCADE,
-    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_eval_validates_task ON eval_validates(task_id);
 
 CREATE TABLE IF NOT EXISTS evals (
     id INTEGER PRIMARY KEY,

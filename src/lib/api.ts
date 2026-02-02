@@ -22,7 +22,6 @@ import type {
   RunDetail,
   RunSummary,
   StartingPoint,
-  Task,
   ThreadSummary,
   UIContext,
   Worker,
@@ -287,66 +286,6 @@ export async function pruneRuns(): Promise<number> {
  */
 export async function getRunSummary(name: string): Promise<string> {
   return invoke<string>('get_run_summary', { name });
-}
-
-// =============================================================================
-// Task Management API
-// =============================================================================
-
-/**
- * Get all tasks for a run
- */
-export async function getTasks(runName: string): Promise<Task[]> {
-  return invoke<Task[]>('get_tasks', { runName: runName });
-}
-
-/**
- * Add a new task to a run
- */
-export async function addTask(
-  runName: string,
-  taskId: string,
-  description: string,
-  options?: {
-    parentId?: string;
-    blockedBy?: string[];
-  },
-): Promise<void> {
-  return invoke('add_task', {
-    runName: runName,
-    taskId: taskId,
-    description,
-    parentId: options?.parentId,
-    blockedBy: options?.blockedBy,
-  });
-}
-
-/**
- * Delete a task from a run
- */
-export async function deleteTask(runName: string, taskId: string): Promise<void> {
-  return invoke('delete_task', { runName: runName, taskId: taskId });
-}
-
-/**
- * Mark a task as done
- */
-export async function completeTask(runName: string, taskId: string): Promise<void> {
-  return invoke('complete_task', { runName: runName, taskId: taskId });
-}
-
-/**
- * Reopen a completed task
- */
-export async function reopenTask(runName: string, taskId: string): Promise<void> {
-  return invoke('reopen_task', { runName: runName, taskId: taskId });
-}
-
-/**
- * Unclaim a task (release it back to todo)
- */
-export async function unclaimTask(runName: string, taskId: string): Promise<void> {
-  return invoke('unclaim_task', { runName: runName, taskId: taskId });
 }
 
 // =============================================================================

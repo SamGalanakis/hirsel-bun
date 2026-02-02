@@ -40,14 +40,20 @@ pub fn run_attach(run_name: &str, target: Option<&str>, json: bool) -> anyhow::R
         return Ok(());
     }
 
-    // Determine leader (who has "scope" task or first worker)
-    let tasks = state.get_tasks()?;
+    // Determine leader (who has "scope" node or first worker)
+    // Use live_nodes from the delta state if available
     let mut leader: Option<String> = None;
-    for task in &tasks {
-        if task.id == "scope" {
-            if let Some(ref claimed_by) = task.claimed_by {
-                leader = Some(claimed_by.clone());
-                break;
+    if let Ok(Some(project_id)) = state.get_project_id() {
+        use crate::core::delta::DeltaState;
+        let delta_state = DeltaState::new(project_id);
+        if let Ok(nodes) = delta_state.get_live_nodes() {
+            for node in &nodes {
+                if node.id == "scope" {
+                    if let Some(ref claimed_by) = node.claimed_by {
+                        leader = Some(claimed_by.clone());
+                        break;
+                    }
+                }
             }
         }
     }

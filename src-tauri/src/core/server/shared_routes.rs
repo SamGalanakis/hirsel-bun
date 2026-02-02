@@ -62,28 +62,6 @@ pub fn build_shared_routes() -> Router<Arc<AppState>> {
             "/api/runs/{name}/workers/{worker}/events",
             get(routes::get_worker_events),
         )
-        // Tasks
-        .route(
-            "/api/runs/{name}/tasks",
-            get(routes::list_tasks).post(routes::add_task),
-        )
-        .route("/api/runs/{name}/delta-tasks", post(routes::add_delta_task))
-        .route(
-            "/api/runs/{name}/delta-tasks-batch",
-            post(routes::add_delta_tasks_batch),
-        )
-        .route(
-            "/api/runs/{name}/tasks/{task_id}",
-            delete(routes::delete_task),
-        )
-        .route(
-            "/api/runs/{name}/tasks/{task_id}/complete",
-            post(routes::complete_task),
-        )
-        .route(
-            "/api/runs/{name}/tasks/{task_id}/reopen",
-            post(routes::reopen_task),
-        )
         // Threads and messages
         .route("/api/runs/{name}/threads", get(routes::list_threads))
         .route(
@@ -103,6 +81,52 @@ pub fn build_shared_routes() -> Router<Arc<AppState>> {
         .route("/api/runs/{name}/assets-path", get(gyp::get_assets_path))
         // Config - read only (both servers can read)
         .route("/api/config", get(routes::get_config))
+        // Board integration - for workers in board runs
+        .route(
+            "/api/runs/{name}/config/project_id",
+            get(routes::get_project_id),
+        )
+        // Live nodes - unified task system
+        .route(
+            "/api/runs/{name}/live-nodes",
+            get(routes::get_live_nodes).post(routes::add_live_node),
+        )
+        .route(
+            "/api/runs/{name}/live-nodes/claimable",
+            get(routes::get_claimable_live_nodes),
+        )
+        .route(
+            "/api/runs/{name}/live-nodes/{id}/claim",
+            post(routes::claim_live_node),
+        )
+        .route(
+            "/api/runs/{name}/live-nodes/{id}/complete",
+            post(routes::complete_live_node),
+        )
+        .route(
+            "/api/runs/{name}/live-nodes/{id}/unclaim",
+            post(routes::unclaim_live_node),
+        )
+        .route(
+            "/api/runs/{name}/live-nodes/{id}/blocked",
+            get(routes::is_live_node_blocked),
+        )
+        .route(
+            "/api/runs/{name}/live-nodes/{id}/eval-pass",
+            post(routes::live_node_eval_pass),
+        )
+        .route(
+            "/api/runs/{name}/live-nodes/{id}/eval-fail",
+            post(routes::live_node_eval_fail),
+        )
+        .route(
+            "/api/runs/{name}/live-nodes/{id}/tokens",
+            post(routes::set_live_node_tokens),
+        )
+        .route(
+            "/api/runs/{name}/live-nodes/{id}/validated",
+            get(routes::get_validated_nodes),
+        )
 }
 
 /// Gyp chat routes (requires separate GypState)

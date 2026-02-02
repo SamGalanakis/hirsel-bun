@@ -10,10 +10,7 @@ use crate::core::draft::{create_workspace_provider, StartingPoint};
 use crate::core::git;
 use crate::core::names::generate_run_name;
 use crate::core::ops::{clone_run as ops_clone_run, CloneRunConfig};
-use crate::core::{
-    config,
-    state::{SQLiteState, TaskSource},
-};
+use crate::core::{config, state::SQLiteState};
 
 /// Validate a repository path or URL
 ///
@@ -218,9 +215,6 @@ pub async fn create_draft() -> Result<RunDetail, String> {
     state
         .set_human_in_the_loop(true)
         .map_err(|e| format!("Failed to set HITL: {}", e))?;
-
-    // Add scope task (System source)
-    let _ = state.add_task_with_source_simple("scope", "Scope", None, None, TaskSource::System);
 
     // Return the run detail
     let created_at = chrono::Utc::now().to_rfc3339();
@@ -613,10 +607,6 @@ pub async fn start_draft(
             .add_worker(worker_name, work_dir.to_str().unwrap_or("."), &runner)
             .map_err(|e| format!("Failed to register worker {}: {}", worker_name, e))?;
     }
-
-    // Pre-claim scope for first worker
-    let first_worker = &worker_names[0];
-    let _ = state.claim_task("scope", first_worker);
 
     // Set status to working and start time tracking
     state

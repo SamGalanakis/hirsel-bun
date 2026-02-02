@@ -6,14 +6,14 @@
 use async_trait::async_trait;
 
 use super::{
-    AddTaskRequest, CreateRunRequest, CreateRunResponse, DeliverRunRequest, HealthResponse,
-    Orchestrator, OrchestratorError, OrchestratorResult, ResumeRunRequest, ResumeWorkerRequest,
+    CreateRunRequest, CreateRunResponse, DeliverRunRequest, HealthResponse, Orchestrator,
+    OrchestratorError, OrchestratorResult, ResumeRunRequest, ResumeWorkerRequest,
     SendMessageRequest, SpawnSingleWorkerRequest, SpawnWorkersRequest, SpawnWorkersResponse,
     StartRunRequest,
 };
 use crate::core::api_types::{
-    ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, Task, ThreadSummary,
-    Worker, WorkerEventsResponse,
+    ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, ThreadSummary, Worker,
+    WorkerEventsResponse,
 };
 use crate::core::snapshot::WorkerStateHandle;
 use crate::daemon::DaemonClient;
@@ -153,76 +153,6 @@ impl Orchestrator for DaemonOrchestrator {
 
         self.client
             .get(&path)
-            .await
-            .map_err(|e| OrchestratorError::Other(e.to_string()))
-    }
-
-    // -------------------------------------------------------------------------
-    // Tasks
-    // -------------------------------------------------------------------------
-
-    async fn list_tasks(&self, run: &str) -> OrchestratorResult<Vec<Task>> {
-        self.client
-            .get(&format!("/api/runs/{}/tasks", run))
-            .await
-            .map_err(|e| OrchestratorError::Other(e.to_string()))
-    }
-
-    async fn add_task(&self, run: &str, content: &str) -> OrchestratorResult<Task> {
-        let request = AddTaskRequest {
-            content: content.to_string(),
-        };
-        self.client
-            .post(&format!("/api/runs/{}/tasks", run), request)
-            .await
-            .map_err(|e| OrchestratorError::Other(e.to_string()))
-    }
-
-    async fn delete_task(&self, run: &str, task_id: &str) -> OrchestratorResult<()> {
-        let _: serde_json::Value = self
-            .client
-            .delete(&format!("/api/runs/{}/tasks/{}", run, task_id))
-            .await
-            .map_err(|e| OrchestratorError::Other(e.to_string()))?;
-        Ok(())
-    }
-
-    async fn complete_task(&self, run: &str, task_id: &str) -> OrchestratorResult<()> {
-        let _: serde_json::Value = self
-            .client
-            .post_empty(&format!("/api/runs/{}/tasks/{}/complete", run, task_id))
-            .await
-            .map_err(|e| OrchestratorError::Other(e.to_string()))?;
-        Ok(())
-    }
-
-    async fn reopen_task(&self, run: &str, task_id: &str) -> OrchestratorResult<()> {
-        let _: serde_json::Value = self
-            .client
-            .post_empty(&format!("/api/runs/{}/tasks/{}/reopen", run, task_id))
-            .await
-            .map_err(|e| OrchestratorError::Other(e.to_string()))?;
-        Ok(())
-    }
-
-    async fn add_delta_task(
-        &self,
-        run: &str,
-        request: super::AddDeltaTaskRequest,
-    ) -> OrchestratorResult<crate::core::api_types::Task> {
-        self.client
-            .post(&format!("/api/runs/{}/delta-tasks", run), request)
-            .await
-            .map_err(|e| OrchestratorError::Other(e.to_string()))
-    }
-
-    async fn add_delta_tasks_batch(
-        &self,
-        run: &str,
-        requests: Vec<super::AddDeltaTaskRequest>,
-    ) -> OrchestratorResult<Vec<Task>> {
-        self.client
-            .post(&format!("/api/runs/{}/delta-tasks-batch", run), requests)
             .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))
     }

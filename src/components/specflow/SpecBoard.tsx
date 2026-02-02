@@ -22,7 +22,7 @@ import { useDelta } from '../../stores/delta-context';
 import { Icon, SheepAvatar } from '../shared';
 import { WorkerDetailModal } from '../runs/WorkerDetailModal';
 import { TaskEditorModal } from './TaskEditorModal';
-import { SheepfoldDrawer } from '../messaging';
+import { SheepfoldPopover } from '../messaging';
 import { computeElkLayout, type LayoutInputNode, type ElkLayoutResult } from '../../lib/elk-layout';
 import type {
   DraftNodeTree,
@@ -406,7 +406,7 @@ const DependencyConnectors: Component<{
 
 /**
  * Build live tree structure from draft tree, matching live nodes to their draft IDs.
- * Also includes worker-added tasks (nodes without draftNodeId) as children of their parent.
+ * Also includes worker-added tasks (nodes with source !== 'spec') as children of their parent.
  */
 function buildLiveTreeFromDraft(
   draftTree: DraftNodeTree[],
@@ -445,9 +445,9 @@ function buildLiveTreeFromDraft(
       .map(child => buildNode(child))
       .filter((n): n is LiveNodeTree => n !== null);
 
-    // Also include worker-added children (live nodes without draftNodeId whose parent is this node)
+    // Also include worker/system-added children (live nodes with source !== 'spec')
     const originalChildren = childrenByParentId.get(live.id) || [];
-    const workerAddedChildren = originalChildren.filter(child => !child.draftNodeId);
+    const workerAddedChildren = originalChildren.filter(child => child.source !== 'spec');
 
     return {
       ...live,
@@ -508,7 +508,10 @@ export const SpecBoard: Component = () => {
   // Worker state
   const [workers, setWorkers] = createSignal<WorkerDisplay[]>([]);
   const [selectedWorker, setSelectedWorker] = createSignal<WorkerDisplay | null>(null);
+  const [hoveredWorker, setHoveredWorker] = createSignal<WorkerDisplay | null>(null);
+  const [workerPopoverPos, setWorkerPopoverPos] = createSignal<{ x: number; y: number } | null>(null);
   let workerScrollRef: HTMLDivElement | undefined;
+  let flockPillRef: HTMLDivElement | undefined;
 
   // Live task filter: true = show all tasks, false = only show spec tasks (tasks with draftNodeId)
   const [showAllLiveTasks, setShowAllLiveTasks] = createSignal(true);
@@ -525,15 +528,15 @@ export const SpecBoard: Component = () => {
     const trees = liveTreeWithProjects();
     if (showAllLiveTasks()) return trees;
 
-    // Filter recursively: keep only nodes with draftNodeId (from spec)
+    // Filter recursively: keep only nodes with source='spec' (from spec)
     const filterTree = (node: LiveNodeTree): LiveNodeTree | null => {
-      // Always include nodes that came from the spec (have a draftNodeId)
+      // Always include nodes that came from the spec (source === 'spec')
       const filteredChildren = node.children
         .map(filterTree)
         .filter((n): n is LiveNodeTree => n !== null);
 
-      // Include this node if it has a draftNodeId OR has children that passed the filter
-      if (node.draftNodeId !== null || filteredChildren.length > 0) {
+      // Include this node if it has source='spec' OR has children that passed the filter
+      if (node.source === 'spec' || filteredChildren.length > 0) {
         return { ...node, children: filteredChildren };
       }
       return null;
@@ -1163,36 +1166,51 @@ export const SpecBoard: Component = () => {
           class="flex items-center justify-between px-3 py-2"
           style={{ 'border-bottom': '1px solid rgba(51, 51, 51, 0.5)' }}
         >
-          {/* Left side: Sheepfold button */}
-          <div class="flex-1 flex items-center gap-2">
-            <button
-              onClick={() => project.setSheepfoldOpen(true)}
-              class="relative p-1.5 rounded transition-colors"
-              style={{
-                background: project.sheepfoldOpen() ? 'rgba(212, 165, 116, 0.15)' : 'transparent',
-                color: project.sheepfoldOpen() ? 'var(--amber-400)' : 'var(--wool-500)',
-              }}
-              title="Sheepfold - Project messaging"
-            >
-              <Icon name="messages-square" class="w-4 h-4" />
-              <Show when={project.projectUnreadCount() > 0}>
-                <span
-                  class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full animate-pulse"
-                  style={{ background: 'var(--amber-500)' }}
-                />
-              </Show>
-            </button>
-          </div>
+          {/* Left side: empty for balance */}
+          <div class="flex-1" />
 
-          {/* Center: Worker Carousel */}
+          {/* Center: Flock Pill with integrated Sheepfold */}
           <Show when={workers().length > 0}>
             <div
-              class="flex items-center gap-2 px-2.5 py-1.5 rounded-full"
+              ref={flockPillRef}
+              class="relative flex items-center gap-2 px-2.5 py-1.5 rounded-full"
               style={{
                 background: 'rgba(36, 36, 36, 0.5)',
                 border: '1px solid rgba(64, 64, 64, 0.4)',
               }}
             >
+              {/* Meadow button (group chat) */}
+              <button
+                onClick={() => {
+                  project.setActiveThread('meadow');
+                  project.setSheepfoldOpen(true);
+                }}
+                class="relative flex items-center justify-center w-7 h-7 rounded-full transition-all hover:scale-110"
+                style={{
+                  background: project.sheepfoldOpen() && project.activeThread() === 'meadow'
+                    ? 'rgba(212, 165, 116, 0.25)'
+                    : 'rgba(64, 64, 64, 0.4)',
+                  border: project.sheepfoldOpen() && project.activeThread() === 'meadow'
+                    ? '1px solid rgba(212, 165, 116, 0.4)'
+                    : '1px solid transparent',
+                }}
+                title="Meadow - Group chat"
+              >
+                <Icon name="users" class="w-3.5 h-3.5 text-wool-400" />
+                {/* Unread badge on Meadow */}
+                <Show when={project.projectUnreadCount() > 0}>
+                  <span
+                    class="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold flex items-center justify-center"
+                    style={{ background: 'var(--amber-500)', color: 'var(--pasture-900)' }}
+                  >
+                    {project.projectUnreadCount() > 99 ? '99+' : project.projectUnreadCount()}
+                  </span>
+                </Show>
+              </button>
+
+              {/* Divider */}
+              <div class="w-px h-5 bg-pasture-600/50" />
+
               {/* Flock label */}
               <span class="text-[9px] text-wool-500 font-medium uppercase tracking-wider">
                 Flock
@@ -1202,7 +1220,7 @@ export const SpecBoard: Component = () => {
               <div
                 ref={workerScrollRef}
                 class="flex items-center gap-1.5 overflow-x-auto scrollbar-none"
-                style={{ 'max-width': 'min(320px, 40vw)' }}
+                style={{ 'max-width': 'min(280px, 35vw)' }}
               >
                 <For each={workers()}>
                   {(worker) => {
@@ -1210,8 +1228,27 @@ export const SpecBoard: Component = () => {
                     const isError = () => worker.status === 'error';
                     const isHitl = () => worker.hitlWaiting;
 
+                    const handleMouseEnter = (e: MouseEvent) => {
+                      const btn = e.currentTarget as HTMLElement;
+                      const rect = btn.getBoundingClientRect();
+                      setWorkerPopoverPos({ x: rect.left + rect.width / 2, y: rect.bottom + 8 });
+                      setHoveredWorker(worker);
+                    };
+
+                    const handleMouseLeave = () => {
+                      // Delay to allow moving to popover
+                      setTimeout(() => {
+                        const popover = document.querySelector('.worker-hover-popover');
+                        if (!popover?.matches(':hover')) {
+                          setHoveredWorker(null);
+                        }
+                      }, 100);
+                    };
+
                     return (
                       <button
+                        onMouseEnter={handleMouseEnter}
+                        onMouseLeave={handleMouseLeave}
                         onClick={() => setSelectedWorker(worker)}
                         class="relative flex-shrink-0 rounded-full transition-all hover:scale-110 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
                         style={{
@@ -1225,7 +1262,7 @@ export const SpecBoard: Component = () => {
                             ? '0 0 10px rgba(201, 162, 39, 0.5)'
                             : undefined,
                         }}
-                        title={`${worker.name} · ${worker.status}${worker.currentTask ? ` · ${worker.currentTask}` : ''}`}
+                        title={worker.name}
                       >
                         <SheepAvatar
                           config={worker.sheepConfig}
@@ -1294,6 +1331,77 @@ export const SpecBoard: Component = () => {
                   </span>
                 </div>
               </Show>
+            </div>
+          </Show>
+
+          {/* Worker Hover Popover */}
+          <Show when={hoveredWorker() && workerPopoverPos()}>
+            <div
+              class="worker-hover-popover fixed z-50 rounded-lg shadow-xl"
+              style={{
+                left: `${workerPopoverPos()!.x}px`,
+                top: `${workerPopoverPos()!.y}px`,
+                transform: 'translateX(-50%)',
+                background: 'linear-gradient(180deg, #2d2d2d 0%, #262626 100%)',
+                border: '1px solid rgba(64, 64, 64, 0.6)',
+                'box-shadow': '0 8px 24px rgba(0,0,0,0.4)',
+              }}
+              onMouseLeave={() => setHoveredWorker(null)}
+            >
+              {/* Arrow */}
+              <div
+                class="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 rotate-45"
+                style={{
+                  background: '#2d2d2d',
+                  border: '1px solid rgba(64, 64, 64, 0.6)',
+                  'border-bottom': 'none',
+                  'border-right': 'none',
+                }}
+              />
+              <div class="relative px-3 py-2.5">
+                {/* Worker name */}
+                <p class="text-xs font-medium text-wool-200 text-center mb-2">
+                  {hoveredWorker()!.name}
+                </p>
+                {/* Quick action buttons */}
+                <div class="flex items-center gap-1.5">
+                  <button
+                    onClick={() => {
+                      project.openWorkerDM(hoveredWorker()!.name);
+                      setHoveredWorker(null);
+                    }}
+                    class="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[10px] font-medium transition-colors"
+                    style={{
+                      background: 'rgba(212, 165, 116, 0.15)',
+                      border: '1px solid rgba(212, 165, 116, 0.25)',
+                      color: 'var(--amber-400)',
+                    }}
+                  >
+                    <Icon name="message-circle" class="w-3 h-3" />
+                    Message
+                  </button>
+                  <button
+                    onClick={() => {
+                      const worker = hoveredWorker();
+                      const run = delta.projectRun();
+                      if (worker && run) {
+                        window.dispatchEvent(new CustomEvent('show-worker-output', {
+                          detail: { runName: run.runName, workerName: worker.name }
+                        }));
+                      }
+                      setHoveredWorker(null);
+                    }}
+                    class="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[10px] font-medium transition-colors hover:bg-pasture-700"
+                    style={{
+                      background: 'rgba(64, 64, 64, 0.4)',
+                      color: 'var(--wool-400)',
+                    }}
+                  >
+                    <Icon name="eye" class="w-3 h-3" />
+                    Spectate
+                  </button>
+                </div>
+              </div>
             </div>
           </Show>
 
@@ -1948,10 +2056,11 @@ export const SpecBoard: Component = () => {
         </Show>
         </div>
 
-        {/* Sheepfold Drawer */}
+        {/* Sheepfold Popover */}
         <Show when={project.sheepfoldOpen()}>
-          <SheepfoldDrawer
+          <SheepfoldPopover
             workers={workers()}
+            anchorRef={flockPillRef}
             onClose={() => project.setSheepfoldOpen(false)}
           />
         </Show>

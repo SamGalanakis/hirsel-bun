@@ -9,7 +9,7 @@ use crate::core::config::{self, Config};
 use crate::core::gyp_chat::GypChatStore;
 use crate::core::lifecycle::LocalLifecycleManager;
 use crate::core::snapshot::{create_archive_strategy, ArchiveHandle, WorkerStateHandle};
-use crate::core::state::{SQLiteState, TaskSource};
+use crate::core::state::SQLiteState;
 use crate::core::Files;
 
 use super::types::{CloneRunConfig, CloneRunResult, DeleteRunConfig, DeleteRunResult};
@@ -319,13 +319,6 @@ pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
     // Copy starting_point from source (if exists)
     if let Some(ref sp_json) = starting_point_json {
         new_state.set_starting_point(Some(sp_json))?;
-    }
-
-    // Add initial scope task
-    if let Err(e) =
-        new_state.add_task_with_source_simple("scope", "Scope", None, None, TaskSource::System)
-    {
-        tracing::warn!("Failed to create scope task for cloned run: {}", e);
     }
 
     tracing::info!("Cloned '{}' to '{}' (draft)", config.source_run, new_name);

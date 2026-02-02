@@ -9,6 +9,7 @@ use super::{
     LifecycleResult, RunStateMachine,
 };
 use crate::core::config::Config;
+use crate::core::delta::{DeltaState, LiveNode, LiveNodeStatus};
 use crate::core::files::Files;
 use crate::core::runner::{create_lifecycle_runner_for_handle, WorkerHandle};
 use crate::core::snapshot::{
@@ -70,6 +71,138 @@ impl LocalLifecycleManager {
     /// Get a reference to the Files helper.
     pub fn files(&self) -> &Files {
         &self.files
+    }
+
+    /// Get DeltaState for this run's project, if linked to a project.
+    fn get_delta_state(&self) -> Option<DeltaState> {
+        self.state
+            .get_project_id()
+            .ok()
+            .flatten()
+            .map(DeltaState::new)
+    }
+
+    /// Get claimable nodes (live nodes that can be claimed).
+    /// Uses live nodes from the project's delta state.
+    fn get_claimable_nodes(&self) -> LifecycleResult<Vec<LiveNode>> {
+        if let Some(delta_state) = self.get_delta_state() {
+            delta_state
+                .get_claimable_nodes()
+                .map_err(|e| LifecycleError::State(e.to_string()))
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    /// Get all live nodes from the project's delta state.
+    fn get_all_nodes(&self) -> LifecycleResult<Vec<LiveNode>> {
+        if let Some(delta_state) = self.get_delta_state() {
+            delta_state
+                .get_live_nodes()
+                .map_err(|e| LifecycleError::State(e.to_string()))
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    /// Claim a live node for a worker.
+    fn claim_node(&self, node_id: &str, worker_name: &str) -> LifecycleResult<LiveNode> {
+        let delta_state = self
+            .get_delta_state()
+            .ok_or_else(|| LifecycleError::State("Run not linked to project".into()))?;
+        delta_state
+            .claim_live_node(node_id, worker_name)
+            .map_err(|e| LifecycleError::State(e.to_string()))
+    }
+
+    /// Pick the best node for a worker based on tree-walk distance.
+    ///
+    /// For work nodes: prefer nodes CLOSE to the worker's last completed task
+    /// For eval nodes: prefer nodes FAR from the worker's last completed task
+    fn pick_node_for_worker(
+        &self,
+        claimable: &[LiveNode],
+        worker: &crate::core::state::Worker,
+        all_nodes: &[LiveNode],
+    ) -> Option<LiveNode> {
+        use crate::core::delta::NodeType;
+
+        if claimable.is_empty() {
+            return None;
+        }
+
+        // If no history, just return first node
+        let last_task_id = match &worker.last_task_id {
+            Some(id) => id,
+            None => return Some(claimable[0].clone()),
+        };
+
+        // Calculate tree distances from last_task_id using BFS
+        let distances = self.calculate_node_distances(all_nodes, last_task_id);
+
+        // Score each claimable node
+        let mut scored: Vec<_> = claimable
+            .iter()
+            .map(|n| {
+                let dist = distances.get(&n.id).copied().unwrap_or(usize::MAX);
+                let score = match n.node_type {
+                    NodeType::Eval => {
+                        // Eval: prefer FAR (high distance = high score = pick first)
+                        dist
+                    }
+                    NodeType::Task => {
+                        // Work: prefer CLOSE (low distance = high score)
+                        usize::MAX.saturating_sub(dist)
+                    }
+                };
+                (n, score)
+            })
+            .collect();
+
+        // Sort by score descending (highest score first)
+        scored.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
+        scored.first().map(|(n, _)| (*n).clone())
+    }
+
+    /// Calculate tree distances from a given node using BFS.
+    fn calculate_node_distances(
+        &self,
+        nodes: &[LiveNode],
+        from_id: &str,
+    ) -> std::collections::HashMap<String, usize> {
+        use std::collections::{HashMap, VecDeque};
+
+        let mut distances: HashMap<String, usize> = HashMap::new();
+        let mut queue: VecDeque<(String, usize)> = VecDeque::new();
+
+        distances.insert(from_id.to_string(), 0);
+        queue.push_back((from_id.to_string(), 0));
+
+        while let Some((id, dist)) = queue.pop_front() {
+            // Find the current node
+            let node = match nodes.iter().find(|n| n.id == id) {
+                Some(n) => n,
+                None => continue,
+            };
+
+            // Parent edge
+            if let Some(ref parent) = node.parent_id {
+                if !distances.contains_key(parent) {
+                    distances.insert(parent.clone(), dist + 1);
+                    queue.push_back((parent.clone(), dist + 1));
+                }
+            }
+
+            // Child edges
+            for child in nodes.iter().filter(|c| c.parent_id.as_ref() == Some(&id)) {
+                if !distances.contains_key(&child.id) {
+                    distances.insert(child.id.clone(), dist + 1);
+                    queue.push_back((child.id.clone(), dist + 1));
+                }
+            }
+        }
+
+        distances
     }
 
     /// Kill all workers in the run.
@@ -398,11 +531,8 @@ impl LocalLifecycleManager {
     /// spawning via the orchestrator using resume_worker(). The orchestrator
     /// will restore snapshots for ephemeral runners.
     fn resume_awaiting_workers_internal(&self) -> LifecycleResult<Vec<LifecycleAction>> {
-        // Get claimable tasks (needed for awaiting workers)
-        let claimable = self
-            .state
-            .get_claimable_tasks()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        // Get claimable nodes (needed for awaiting workers)
+        let claimable = self.get_claimable_nodes()?;
 
         // Get workers that need to be resumed
         let workers = self
@@ -515,20 +645,17 @@ impl LocalLifecycleManager {
             return Ok(None);
         }
 
-        // Get current workers and claimable tasks
+        // Get current workers and claimable nodes
         let workers = self
             .state
             .get_workers()
             .map_err(|e| LifecycleError::State(e.to_string()))?;
         let current_count = workers.len();
-        let claimable = self
-            .state
-            .get_claimable_tasks()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let claimable = self.get_claimable_nodes()?;
         let claimable_count = claimable.len();
 
         debug!(
-            "maybe_scale_up: {} claimable tasks, {} workers, max {}",
+            "maybe_scale_up: {} claimable nodes, {} workers, max {}",
             claimable_count, current_count, scale.max
         );
 
@@ -654,11 +781,8 @@ impl LocalLifecycleManager {
         };
         let max_workers = scale.max as usize;
 
-        // Get claimable tasks and workers
-        let claimable = self
-            .state
-            .get_claimable_tasks()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        // Get claimable nodes and workers
+        let claimable = self.get_claimable_nodes()?;
 
         let workers = self
             .state
@@ -716,21 +840,15 @@ impl LocalLifecycleManager {
             }
         }
 
-        // First: check for idle workers that ALREADY have an assigned task (status=doing)
+        // First: check for idle workers that ALREADY have an assigned task (status=working)
         // These need to be respawned immediately without claiming a new task
         for worker in &idle_workers {
             if let Some(ref assigned_task_id) = worker.assigned_task_id {
-                // Worker has an assigned task - verify it's still in "doing" status
-                let task_still_doing = self
-                    .state
-                    .get_tasks()
-                    .map(|tasks| {
-                        tasks.iter().any(|t| {
-                            t.id == *assigned_task_id
-                                && t.status == crate::core::state::TaskStatus::Doing
-                        })
-                    })
-                    .unwrap_or(false);
+                // Worker has an assigned task - verify it's still in "working" status
+                let all_nodes = self.get_all_nodes().unwrap_or_default();
+                let task_still_doing = all_nodes
+                    .iter()
+                    .any(|n| n.id == *assigned_task_id && n.status == LiveNodeStatus::Working);
 
                 if task_still_doing {
                     // Get work_dir from database, fallback to standard location
@@ -800,23 +918,20 @@ impl LocalLifecycleManager {
             return Ok(actions);
         }
 
-        let mut tasks_to_assign: Vec<_> = claimable.clone();
-        let all_tasks = self
-            .state
-            .get_tasks()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let mut nodes_to_assign: Vec<_> = claimable.clone();
+        let all_nodes = self.get_all_nodes()?;
 
-        // Second: wake available idle workers with NEW tasks from claimable
+        // Second: wake available idle workers with NEW nodes from claimable
         let workers_to_wake = needed.min(available_idle_workers.len());
         for worker in available_idle_workers.iter().take(workers_to_wake) {
-            if let Some(task) = self.pick_task_for_worker(&tasks_to_assign, worker, &all_tasks) {
-                tasks_to_assign.retain(|t| t.id != task.id);
+            if let Some(node) = self.pick_node_for_worker(&nodes_to_assign, worker, &all_nodes) {
+                nodes_to_assign.retain(|n| n.id != node.id);
 
-                // Assign task to worker in database
-                if let Err(e) = self.state.claim_task(&task.id, &worker.name) {
+                // Assign node to worker in database
+                if let Err(e) = self.claim_node(&node.id, &worker.name) {
                     warn!(
-                        "evaluate_scaling: failed to claim task {} for worker {}: {}",
-                        task.id, worker.name, e
+                        "evaluate_scaling: failed to claim node {} for worker {}: {}",
+                        node.id, worker.name, e
                     );
                     continue;
                 }
@@ -825,7 +940,7 @@ impl LocalLifecycleManager {
                 if let Err(e) = self.state.update_worker(
                     &worker.name,
                     WorkerUpdate {
-                        assigned_task_id: Some(Some(task.id.clone())),
+                        assigned_task_id: Some(Some(node.id.clone())),
                         ..Default::default()
                     },
                 ) {
@@ -854,13 +969,13 @@ impl LocalLifecycleManager {
                 });
 
                 info!(
-                    "evaluate_scaling: waking idle worker {} with task {}",
-                    worker.name, task.id
+                    "evaluate_scaling: waking idle worker {} with node {}",
+                    worker.name, node.id
                 );
             }
         }
 
-        // Then: spawn new workers for remaining tasks
+        // Then: spawn new workers for remaining nodes
         let spawned_count = actions.len() - existing_actions_count; // Count of newly assigned workers
         let remaining = needed.saturating_sub(spawned_count);
         if remaining > 0 {
@@ -881,12 +996,12 @@ impl LocalLifecycleManager {
             let existing_names: Vec<String> = workers.iter().map(|w| w.name.clone()).collect();
 
             for _ in 0..remaining {
-                if tasks_to_assign.is_empty() {
+                if nodes_to_assign.is_empty() {
                     break;
                 }
 
-                // Get task to assign (just take first available for new workers)
-                let task = tasks_to_assign.remove(0);
+                // Get node to assign (just take first available for new workers)
+                let node = nodes_to_assign.remove(0);
 
                 // Generate new worker name
                 let new_name = crate::core::names::get_available_name(&existing_names);
@@ -925,11 +1040,11 @@ impl LocalLifecycleManager {
                     continue;
                 }
 
-                // Claim task for new worker
-                if let Err(e) = self.state.claim_task(&task.id, &new_name) {
+                // Claim node for new worker
+                if let Err(e) = self.claim_node(&node.id, &new_name) {
                     warn!(
-                        "evaluate_scaling: failed to claim task {} for new worker {}: {}",
-                        task.id, new_name, e
+                        "evaluate_scaling: failed to claim node {} for new worker {}: {}",
+                        node.id, new_name, e
                     );
                     continue;
                 }
@@ -938,7 +1053,7 @@ impl LocalLifecycleManager {
                 if let Err(e) = self.state.update_worker(
                     &new_name,
                     WorkerUpdate {
-                        assigned_task_id: Some(Some(task.id.clone())),
+                        assigned_task_id: Some(Some(node.id.clone())),
                         ..Default::default()
                     },
                 ) {
@@ -963,7 +1078,7 @@ impl LocalLifecycleManager {
                     "System",
                     &format!(
                         "New worker **{}** has joined and is assigned task **{}**.",
-                        new_name, task.id
+                        new_name, node.id
                     ),
                     false,
                 );
@@ -971,112 +1086,17 @@ impl LocalLifecycleManager {
                 actions.push(LifecycleAction::SpawnWorker {
                     worker_name: new_name.clone(),
                     work_dir: worker_dir,
-                    assigned_task_id: Some(task.id.clone()),
+                    assigned_task_id: Some(node.id.clone()),
                 });
 
                 info!(
-                    "evaluate_scaling: spawning new worker {} with task {}",
-                    new_name, task.id
+                    "evaluate_scaling: spawning new worker {} with node {}",
+                    new_name, node.id
                 );
             }
         }
 
         Ok(actions)
-    }
-
-    /// Pick the best task for a worker based on tree-walk distance.
-    ///
-    /// For work tasks: prefer tasks CLOSE to the worker's last completed task
-    /// For eval tasks: prefer tasks FAR from the worker's last completed task
-    ///   (so eval is done by a different worker than who did the work)
-    fn pick_task_for_worker(
-        &self,
-        claimable: &[crate::core::state::Task],
-        worker: &crate::core::state::Worker,
-        all_tasks: &[crate::core::state::Task],
-    ) -> Option<crate::core::state::Task> {
-        use crate::core::state::TaskType;
-
-        if claimable.is_empty() {
-            return None;
-        }
-
-        // If no history, just return first task
-        let last_task_id = match &worker.last_task_id {
-            Some(id) => id,
-            None => return Some(claimable[0].clone()),
-        };
-
-        // Calculate tree distances from last_task_id using BFS
-        let distances = self.calculate_tree_distances(all_tasks, last_task_id);
-
-        // Score each claimable task
-        let mut scored: Vec<_> = claimable
-            .iter()
-            .map(|t| {
-                let dist = distances.get(&t.id).copied().unwrap_or(usize::MAX);
-                let score = match t.task_type {
-                    TaskType::Eval => {
-                        // Eval: prefer FAR (high distance = high score = pick first)
-                        dist
-                    }
-                    TaskType::Work => {
-                        // Work: prefer CLOSE (low distance = high score)
-                        usize::MAX.saturating_sub(dist)
-                    }
-                };
-                (t, score)
-            })
-            .collect();
-
-        // Sort by score descending (highest score first)
-        scored.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
-        scored.first().map(|(t, _)| (*t).clone())
-    }
-
-    /// Calculate tree distances from a given task using BFS.
-    ///
-    /// Distance is measured as the number of parent/child edges to traverse.
-    fn calculate_tree_distances(
-        &self,
-        tasks: &[crate::core::state::Task],
-        from_id: &str,
-    ) -> std::collections::HashMap<String, usize> {
-        use std::collections::{HashMap, VecDeque};
-
-        let mut distances: HashMap<String, usize> = HashMap::new();
-        let mut queue: VecDeque<(String, usize)> = VecDeque::new();
-
-        distances.insert(from_id.to_string(), 0);
-        queue.push_back((from_id.to_string(), 0));
-
-        while let Some((id, dist)) = queue.pop_front() {
-            // Find the current task
-            let task = match tasks.iter().find(|t| t.id == id) {
-                Some(t) => t,
-                None => continue,
-            };
-
-            // Parent edge
-            if let Some(ref parent) = task.parent_id {
-                if !distances.contains_key(parent) {
-                    distances.insert(parent.clone(), dist + 1);
-                    queue.push_back((parent.clone(), dist + 1));
-                }
-            }
-
-            // Child edges
-            for child in tasks.iter().filter(|c| c.parent_id.as_ref() == Some(&id)) {
-                if !distances.contains_key(&child.id) {
-                    distances.insert(child.id.clone(), dist + 1);
-                    queue.push_back((child.id.clone(), dist + 1));
-                }
-            }
-
-            // Sibling edges (through parent) are covered transitively via parent traversal
-        }
-
-        distances
     }
 
     /// Spawn the eval agent as a background process.
@@ -1197,17 +1217,14 @@ impl LocalLifecycleManager {
             return Ok(false);
         }
 
-        // Check if there are still claimable tasks
-        let claimable = self
-            .state
-            .get_claimable_tasks()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        // Check if there are still claimable nodes
+        let claimable = self.get_claimable_nodes()?;
 
         if !claimable.is_empty() {
-            // There are still tasks to do - don't trigger eval or mark done
+            // There are still nodes to do - don't trigger eval or mark done
             // The daemon will try to resume/scale workers on the next poll
             debug!(
-                "maybe_trigger_eval: {} claimable tasks remain, not triggering eval",
+                "maybe_trigger_eval: {} claimable nodes remain, not triggering eval",
                 claimable.len()
             );
             return Ok(false);
@@ -1216,41 +1233,36 @@ impl LocalLifecycleManager {
         // Check if there's an eval script configured
         let eval_path = self.files.eval_spec();
         if !eval_path.exists() {
-            // No eval script and no claimable tasks - check if ALL tasks are done
-            let tasks = self
-                .state
-                .get_tasks()
-                .map_err(|e| LifecycleError::State(e.to_string()))?;
+            // No eval script and no claimable nodes - check if ALL nodes are done
+            let nodes = self.get_all_nodes()?;
 
-            // Tasks are complete if:
-            // - Work tasks: Done or Validated
-            // - Eval tasks: Done
-            let incomplete_tasks: Vec<_> = tasks
+            // Nodes are complete if:
+            // - Work nodes: Done or Validated
+            // - Eval nodes: Done
+            let incomplete_nodes: Vec<_> = nodes
                 .iter()
-                .filter(|t| {
-                    let status = t.status;
-                    match t.task_type {
-                        crate::core::state::TaskType::Work => {
-                            status != crate::core::state::TaskStatus::Done
-                                && status != crate::core::state::TaskStatus::Validated
+                .filter(|n| {
+                    use crate::core::delta::NodeType;
+                    match n.node_type {
+                        NodeType::Task => {
+                            n.status != LiveNodeStatus::Done
+                                && n.status != LiveNodeStatus::Validated
                         }
-                        crate::core::state::TaskType::Eval => {
-                            status != crate::core::state::TaskStatus::Done
-                        }
+                        NodeType::Eval => n.status != LiveNodeStatus::Done,
                     }
                 })
                 .collect();
 
-            if !incomplete_tasks.is_empty() {
-                // There are still incomplete tasks (blocked, doing, etc.)
+            if !incomplete_nodes.is_empty() {
+                // There are still incomplete nodes (blocked, working, etc.)
                 debug!(
-                    "maybe_trigger_eval: {} incomplete tasks remain (not claimable), waiting",
-                    incomplete_tasks.len()
+                    "maybe_trigger_eval: {} incomplete nodes remain (not claimable), waiting",
+                    incomplete_nodes.len()
                 );
                 return Ok(false);
             }
 
-            // All tasks done - kill any remaining workers and set run to Done status
+            // All nodes done - kill any remaining workers and set run to Done status
             let killed = self.kill_all_workers_internal()?;
             if !killed.is_empty() {
                 info!(
@@ -1260,7 +1272,7 @@ impl LocalLifecycleManager {
                 );
             }
 
-            info!("maybe_trigger_eval: all workers inactive, all tasks done, no eval script, marking run as Done");
+            info!("maybe_trigger_eval: all workers inactive, all nodes done, no eval script, marking run as Done");
             self.state
                 .set_status(Status::Done)
                 .map_err(|e| LifecycleError::State(e.to_string()))?;
@@ -1633,11 +1645,8 @@ impl LifecycleManager for LocalLifecycleManager {
             .get_workers()
             .map_err(|e| LifecycleError::State(e.to_string()))?;
 
-        // Check if we have claimable tasks
-        let claimable = self
-            .state
-            .get_claimable_tasks()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        // Check if we have claimable nodes
+        let claimable = self.get_claimable_nodes()?;
 
         Ok(!claimable.is_empty() && scale.can_scale_up(workers.len()))
     }

@@ -15,7 +15,6 @@ import type {
   HistoryEntry,
   RunDetail,
   RunSummary,
-  Task,
   ThreadSummary,
   WorkerDisplay,
 } from '../lib/types';
@@ -24,7 +23,6 @@ interface RunsState {
   runs: RunSummary[];
   runDetail: RunDetail | null;
   workers: WorkerDisplay[];
-  tasks: Task[];
   threads: ThreadSummary[];
   history: HistoryEntry[];
 }
@@ -34,7 +32,6 @@ interface RunsContextValue {
   runs: () => RunSummary[];
   runDetail: () => RunDetail | null;
   workers: () => WorkerDisplay[];
-  tasks: () => Task[];
   threads: () => ThreadSummary[];
   history: () => HistoryEntry[];
 
@@ -49,7 +46,6 @@ interface RunsContextValue {
   invalidateRuns: () => Promise<void>;
   invalidateRunDetail: () => Promise<void>;
   invalidateWorkers: () => Promise<void>;
-  invalidateTasks: () => Promise<void>;
   invalidateThreads: () => Promise<void>;
   invalidateHistory: () => Promise<void>;
 
@@ -66,7 +62,6 @@ export const RunsProvider: ParentComponent = (props) => {
     runs: [],
     runDetail: null,
     workers: [],
-    tasks: [],
     threads: [],
     history: [],
   });
@@ -117,18 +112,6 @@ export const RunsProvider: ParentComponent = (props) => {
     }
   };
 
-  const fetchTasks = async (runName: string) => {
-    try {
-      const tasks = await invoke<Task[]>('get_tasks', { runName });
-      if (selectedRun() === runName) {
-        const filtered = (tasks || []).filter((t): t is Task => t != null);
-        setState('tasks', reconcile(filtered));
-      }
-    } catch {
-      // Errors likely because run was deleted
-    }
-  };
-
   const fetchThreads = async (runName: string) => {
     try {
       const threads = await invoke<ThreadSummary[]>('get_threads', { runName });
@@ -157,7 +140,6 @@ export const RunsProvider: ParentComponent = (props) => {
     await Promise.all([
       fetchRunDetail(runName),
       fetchWorkers(runName),
-      fetchTasks(runName),
       fetchThreads(runName),
       fetchHistory(runName),
     ]);
@@ -169,7 +151,6 @@ export const RunsProvider: ParentComponent = (props) => {
     setState({
       runDetail: null,
       workers: [],
-      tasks: [],
       threads: [],
       history: [],
     });
@@ -187,7 +168,6 @@ export const RunsProvider: ParentComponent = (props) => {
     setState({
       runDetail: null,
       workers: [],
-      tasks: [],
       threads: [],
       history: [],
     });
@@ -242,7 +222,6 @@ export const RunsProvider: ParentComponent = (props) => {
           setState({
             runDetail: null,
             workers: [],
-            tasks: [],
             threads: [],
             history: [],
           });
@@ -263,7 +242,6 @@ export const RunsProvider: ParentComponent = (props) => {
     runs: () => state.runs,
     runDetail: () => state.runDetail,
     workers: () => state.workers,
-    tasks: () => state.tasks,
     threads: () => state.threads,
     history: () => state.history,
     selectedRun,
@@ -277,10 +255,6 @@ export const RunsProvider: ParentComponent = (props) => {
     invalidateWorkers: () => {
       const run = selectedRun();
       return run ? fetchWorkers(run) : Promise.resolve();
-    },
-    invalidateTasks: () => {
-      const run = selectedRun();
-      return run ? fetchTasks(run) : Promise.resolve();
     },
     invalidateThreads: () => {
       const run = selectedRun();

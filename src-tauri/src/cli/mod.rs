@@ -754,12 +754,6 @@ pub enum TaskSubcommands {
 
     /// Mark current or specified task as done
     Done(WorkerTaskDoneArgs),
-
-    /// Reopen a completed task
-    Undone(WorkerTaskIdArg),
-
-    /// Delete a task
-    Delete(WorkerTaskIdArg),
 }
 
 /// Worker message subcommands
@@ -794,13 +788,6 @@ pub struct WorkerTaskAddArgs {
     /// Tasks that must complete before this one
     #[arg(long)]
     pub blocked_by: Vec<String>,
-}
-
-/// Simple task ID argument for workers
-#[derive(Args, Debug)]
-pub struct WorkerTaskIdArg {
-    /// Task ID
-    pub task_id: String,
 }
 
 /// Arguments for worker task done/unclaim (task_id is optional)

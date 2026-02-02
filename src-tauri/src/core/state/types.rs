@@ -195,72 +195,6 @@ impl std::fmt::Display for WorkerStatus {
     }
 }
 
-/// Task type - work (implementation) or eval (validation)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskType {
-    #[default]
-    Work,
-    Eval,
-}
-
-impl TaskType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            TaskType::Work => "work",
-            TaskType::Eval => "eval",
-        }
-    }
-
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "eval" => TaskType::Eval,
-            _ => TaskType::Work,
-        }
-    }
-}
-
-impl std::fmt::Display for TaskType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-/// Task source - where the task originated from
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskSource {
-    #[default]
-    Spec, // From SpecFlow board (core tasks)
-    Worker, // Added by worker via MCP
-    System, // System tasks (scope)
-}
-
-impl TaskSource {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            TaskSource::Spec => "spec",
-            TaskSource::Worker => "worker",
-            TaskSource::System => "system",
-        }
-    }
-
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "spec" => Some(TaskSource::Spec),
-            "worker" => Some(TaskSource::Worker),
-            "system" => Some(TaskSource::System),
-            _ => None,
-        }
-    }
-}
-
-impl std::fmt::Display for TaskSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
 /// Eval result - pass or fail
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -287,59 +221,6 @@ impl EvalResult {
 }
 
 impl std::fmt::Display for EvalResult {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-/// Task status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskStatus {
-    Todo,
-    Doing,
-    Done,
-    AwaitingEval, // Work task done, waiting for eval
-    Validated,    // Work task done + eval passed
-    NeedsRepair,  // Eval failed, repair task created
-}
-
-impl TaskStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            TaskStatus::Todo => "todo",
-            TaskStatus::Doing => "doing",
-            TaskStatus::Done => "done",
-            TaskStatus::AwaitingEval => "awaiting_eval",
-            TaskStatus::Validated => "validated",
-            TaskStatus::NeedsRepair => "needs_repair",
-        }
-    }
-
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "todo" => Some(TaskStatus::Todo),
-            "doing" => Some(TaskStatus::Doing),
-            "done" => Some(TaskStatus::Done),
-            "awaiting_eval" => Some(TaskStatus::AwaitingEval),
-            "validated" => Some(TaskStatus::Validated),
-            "needs_repair" => Some(TaskStatus::NeedsRepair),
-            _ => None,
-        }
-    }
-
-    /// Check if this status represents a completed state (for blocking purposes)
-    pub fn is_complete(&self) -> bool {
-        matches!(self, TaskStatus::Done | TaskStatus::Validated)
-    }
-
-    /// Check if this status represents a validated state
-    pub fn is_validated(&self) -> bool {
-        matches!(self, TaskStatus::Validated)
-    }
-}
-
-impl std::fmt::Display for TaskStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_str())
     }
@@ -507,32 +388,6 @@ impl ToolCallStatus {
 // =============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Task {
-    pub id: String,
-    pub name: String,
-    pub status: TaskStatus,
-    pub created_at: String,
-    pub completed_at: Option<String>,
-    pub claimed_by: Option<String>,
-    pub claimed_at: Option<String>,
-    pub pending_done_at: Option<String>,
-    pub tokens_used: Option<i64>,
-    pub parent_id: Option<String>,
-    pub content: Option<String>,
-    pub blocked_by: Vec<String>,
-    // Eval system fields
-    pub task_type: TaskType,
-    pub eval_result: Option<EvalResult>,
-    pub eval_feedback: Option<String>,
-    pub board_task_id: Option<String>,
-    // Direct task assignment fields
-    pub assigned_to: Option<String>, // Worker this task is assigned to
-    pub completed_by: Option<String>, // Worker who completed this task (for tree distance)
-    // Source tracking
-    pub source: TaskSource, // Where the task originated (spec, worker, system)
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Worker {
     pub id: i64,
     pub name: String,
@@ -687,90 +542,6 @@ pub type StateResult<T> = Result<T, StateError>;
 // =============================================================================
 // Worker Update Helper
 // =============================================================================
-
-// =============================================================================
-// Task Claim Result Types
-// =============================================================================
-
-/// Result of attempting to claim a task
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "result", rename_all = "snake_case")]
-pub enum ClaimTaskResult {
-    Success {
-        task: Task,
-    },
-    Rejected {
-        reason: ClaimRejectReason,
-        alternatives: Vec<TaskSummary>,
-    },
-}
-
-/// Reason why a task claim was rejected
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ClaimRejectReason {
-    NotFound {
-        task_id: String,
-    },
-    AlreadyComplete {
-        task_id: String,
-        status: TaskStatus,
-    },
-    Blocked {
-        task_id: String,
-        blockers: Vec<BlockerInfo>,
-    },
-    ClaimedByOther {
-        task_id: String,
-        claimed_by: String,
-    },
-    WorkerBusy {
-        existing_task_id: String,
-    },
-    HasChildren {
-        task_id: String,
-        children: Vec<String>,
-    },
-    EvalNotReady {
-        task_id: String,
-        pending_tasks: Vec<TaskSummary>,
-    },
-}
-
-/// Information about a blocking task
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlockerInfo {
-    pub task_id: String,
-    pub name: String,
-    pub status: TaskStatus,
-    pub claimed_by: Option<String>,
-}
-
-/// Summary of a task for alternatives list
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskSummary {
-    pub id: String,
-    pub name: String,
-    pub task_type: TaskType,
-}
-
-// =============================================================================
-// Worker Update Helper
-// =============================================================================
-
-/// Input for batch task insertion with deferred FK constraints
-#[derive(Debug, Clone)]
-pub struct DeltaTaskInput {
-    pub task_id: String,
-    pub name: String,
-    pub parent_id: Option<String>,
-    pub blocked_by: Option<Vec<String>>,
-    pub task_type: TaskType,
-    pub validates: Option<Vec<String>>,
-    pub board_task_id: Option<String>,
-    pub content: Option<String>,
-    pub source: TaskSource,
-}
 
 /// Helper struct for partial worker updates
 #[derive(Default)]

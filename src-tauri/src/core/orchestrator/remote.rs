@@ -7,14 +7,14 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use super::{
-    AddTaskRequest, CreateRunRequest, CreateRunResponse, DeliverRunRequest, HealthResponse,
-    Orchestrator, OrchestratorError, OrchestratorResult, ResumeRunRequest, ResumeWorkerRequest,
+    CreateRunRequest, CreateRunResponse, DeliverRunRequest, HealthResponse, Orchestrator,
+    OrchestratorError, OrchestratorResult, ResumeRunRequest, ResumeWorkerRequest,
     SendMessageRequest, SpawnSingleWorkerRequest, SpawnWorkersRequest, SpawnWorkersResponse,
     StartRunRequest,
 };
 use crate::core::api_types::{
-    ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, Task, ThreadSummary,
-    Worker, WorkerEventsResponse,
+    ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, ThreadSummary, Worker,
+    WorkerEventsResponse,
 };
 use crate::core::draft::StartingPoint;
 use crate::core::http_client::{AuthenticatedClient, HttpError};
@@ -205,71 +205,6 @@ impl Orchestrator for RemoteOrchestrator {
         );
 
         self.get(&path).await
-    }
-
-    // -------------------------------------------------------------------------
-    // Tasks
-    // -------------------------------------------------------------------------
-
-    async fn list_tasks(&self, run: &str) -> OrchestratorResult<Vec<Task>> {
-        self.get(&format!("/api/runs/{}/tasks", urlencoding::encode(run)))
-            .await
-    }
-
-    async fn add_task(&self, run: &str, content: &str) -> OrchestratorResult<Task> {
-        let body = AddTaskRequest {
-            content: content.to_string(),
-        };
-        self.post(
-            &format!("/api/runs/{}/tasks", urlencoding::encode(run)),
-            &body,
-        )
-        .await
-    }
-
-    async fn delete_task(&self, run: &str, task_id: &str) -> OrchestratorResult<()> {
-        self.delete(&format!(
-            "/api/runs/{}/tasks/{}",
-            urlencoding::encode(run),
-            urlencoding::encode(task_id)
-        ))
-        .await
-    }
-
-    async fn complete_task(&self, run: &str, task_id: &str) -> OrchestratorResult<()> {
-        self.post_empty(
-            &format!(
-                "/api/runs/{}/tasks/{}/complete",
-                urlencoding::encode(run),
-                urlencoding::encode(task_id)
-            ),
-            &(),
-        )
-        .await
-    }
-
-    async fn reopen_task(&self, run: &str, task_id: &str) -> OrchestratorResult<()> {
-        self.post_empty(
-            &format!(
-                "/api/runs/{}/tasks/{}/reopen",
-                urlencoding::encode(run),
-                urlencoding::encode(task_id)
-            ),
-            &(),
-        )
-        .await
-    }
-
-    async fn add_delta_task(
-        &self,
-        run: &str,
-        request: super::AddDeltaTaskRequest,
-    ) -> OrchestratorResult<Task> {
-        self.post(
-            &format!("/api/runs/{}/delta-tasks", urlencoding::encode(run)),
-            &request,
-        )
-        .await
     }
 
     // -------------------------------------------------------------------------

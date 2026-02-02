@@ -24,8 +24,8 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::core::api_types::{
-    ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, Task, ThreadSummary,
-    Worker, WorkerEventsResponse,
+    ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, ThreadSummary, Worker,
+    WorkerEventsResponse,
 };
 use crate::core::config::Config;
 use crate::core::orchestrator::HealthResponse;
@@ -41,9 +41,6 @@ pub enum RunManagerError {
 
     #[error("Worker not found: {0}")]
     WorkerNotFound(String),
-
-    #[error("Task not found: {0}")]
-    TaskNotFound(String),
 
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
@@ -109,16 +106,6 @@ pub trait RunManager: Send + Sync {
         after_id: Option<i64>,
         limit: Option<i64>,
     ) -> RunManagerResult<WorkerEventsResponse>;
-
-    // =========================================================================
-    // Tasks
-    // =========================================================================
-
-    async fn list_tasks(&self, run: &str) -> RunManagerResult<Vec<Task>>;
-    async fn add_task(&self, run: &str, content: &str) -> RunManagerResult<Task>;
-    async fn delete_task(&self, run: &str, task_id: &str) -> RunManagerResult<()>;
-    async fn complete_task(&self, run: &str, task_id: &str) -> RunManagerResult<()>;
-    async fn reopen_task(&self, run: &str, task_id: &str) -> RunManagerResult<()>;
 
     // =========================================================================
     // Messages
