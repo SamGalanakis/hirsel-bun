@@ -19,6 +19,7 @@ mod filesystem;
 mod gyp;
 mod logs;
 mod messages;
+mod project_messages;
 mod projects;
 mod runs;
 mod tasks;
@@ -34,6 +35,16 @@ pub use events::WorkerEventStreamManager;
 /// Helper to convert any error to String for Tauri command results
 pub fn err_string<E: ToString>(e: E) -> String {
     e.to_string()
+}
+
+/// Helper to get SQLiteState for a run, with standard error handling
+pub fn get_run_state(run_name: &str) -> Result<crate::core::state::SQLiteState, String> {
+    let db_path = crate::core::config::run_dir(run_name).join("hirsel.db");
+    if !db_path.exists() {
+        return Err(format!("Run '{}' not found", run_name));
+    }
+    crate::core::state::SQLiteState::new(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))
 }
 
 // Re-export the chat orchestrator manager for state management
@@ -187,5 +198,11 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         delta::sync_gyp_changes,
         // Docs commands
         docs::get_project_docs,
+        // Project Messages (Sheepfold) commands
+        project_messages::get_project_messages,
+        project_messages::get_project_threads,
+        project_messages::send_project_message,
+        project_messages::mark_project_messages_read,
+        project_messages::get_project_unread_count,
     ]
 }

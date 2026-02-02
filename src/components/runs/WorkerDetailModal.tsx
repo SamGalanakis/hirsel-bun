@@ -4,13 +4,13 @@
  * Uses Basecoat dialog patterns with the Hirsel design language.
  * Compact, information-dense layout respecting the "Highland Craft" aesthetic.
  */
-import { type Component, Show, createEffect, createSignal, onCleanup } from 'solid-js';
-import { useEscapeKey } from '../../hooks';
-import { generateSheepSvg } from '../../lib/sheep-avatar';
+import { type Component, Show } from 'solid-js';
+import { useElapsedTime } from '../../hooks';
 import type { WorkerDisplay } from '../../lib/types';
 import { getContextBarClass, getContextClass, getContextStatus } from '../../lib/utils/context-class';
-import { formatElapsedTime, formatTokens } from '../../lib/utils/formatters';
-import { Icon } from '../shared';
+import { formatTokens } from '../../lib/utils/formatters';
+import { getWorkerStatusConfig } from '../../lib/utils/status';
+import { BaseModal, Icon, SheepAvatar } from '../shared';
 
 interface WorkerDetailModalProps {
   worker: WorkerDisplay;
@@ -18,71 +18,20 @@ interface WorkerDetailModalProps {
   runName: string;
   onClose: () => void;
   onAttach: () => void;
+  onOpenDM?: () => void;
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  idle: 'Idle',
-  working: 'Working',
-  waiting: 'Waiting',
-  awaiting: 'Awaiting',
-  paused: 'Paused',
-  error: 'Error',
-};
-
-const STATUS_COLORS: Record<string, string> = {
-  idle: 'text-wool-400',
-  working: 'text-amber-500',
-  waiting: 'text-golden',
-  awaiting: 'text-sky-500',
-  paused: 'text-golden',
-  error: 'text-terra',
-};
-
-const STATUS_DOT_CLASSES: Record<string, string> = {
-  idle: 'bg-wool-500',
-  working: 'bg-amber-500 animate-pulse',
-  waiting: 'bg-golden',
-  awaiting: 'bg-sky-500',
-  paused: 'bg-golden',
-  error: 'bg-terra animate-pulse',
-};
-
 export const WorkerDetailModal: Component<WorkerDetailModalProps> = (props) => {
-  const [elapsedTime, setElapsedTime] = createSignal('');
-
-  // Update elapsed time every second
-  createEffect(() => {
-    const sessionStart = props.worker.sessionStartedAt;
-    if (!sessionStart) {
-      setElapsedTime('');
-      return;
-    }
-
-    setElapsedTime(formatElapsedTime(sessionStart));
-
-    const interval = setInterval(() => {
-      setElapsedTime(formatElapsedTime(sessionStart));
-    }, 1000);
-
-    onCleanup(() => clearInterval(interval));
-  });
-
-  useEscapeKey(() => props.onClose());
-
-  const sheepSvg = () => generateSheepSvg(props.worker.sheepConfig, 56, props.worker.status);
+  const elapsedTime = useElapsedTime(() => props.worker.sessionStartedAt);
 
   return (
-    <div
-      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) props.onClose();
-      }}
+    <BaseModal
+      onClose={props.onClose}
+      overlayClass="p-4 bg-black/70 backdrop-blur-sm"
+      class="bg-pasture-800 border border-pasture-600 shadow-2xl w-full max-w-sm flex flex-col animate-in fade-in zoom-in-95 duration-200"
+      style={{ 'max-height': 'min(90vh, 600px)' }}
     >
-      <div
-        class="bg-pasture-800 border border-pasture-600 rounded-lg shadow-2xl w-full max-w-sm flex flex-col animate-in fade-in zoom-in-95 duration-200"
-        style={{ 'max-height': 'min(90vh, 600px)' }}
-      >
-        {/* Header with sheep avatar and name */}
+      {/* Header with sheep avatar and name */}
         <header class="relative px-5 pt-5 pb-4">
           {/* Close button */}
           <button
@@ -95,16 +44,18 @@ export const WorkerDetailModal: Component<WorkerDetailModalProps> = (props) => {
 
           {/* Avatar and identity */}
           <div class="flex items-center gap-4">
-            <div
+            <SheepAvatar
+              config={props.worker.sheepConfig}
+              size={56}
+              status={props.worker.status}
               class="flex-shrink-0 p-2 bg-pasture-700/50 rounded-lg border border-pasture-600/50"
-              innerHTML={sheepSvg()}
             />
             <div class="min-w-0 flex-1">
               <h2 class="text-lg font-semibold text-wool-100 truncate">{props.worker.name}</h2>
               <div class="flex items-center gap-2 mt-1">
-                <span class={`w-2 h-2 rounded-full ${STATUS_DOT_CLASSES[props.worker.status]}`} />
-                <span class={`text-sm font-medium ${STATUS_COLORS[props.worker.status]}`}>
-                  {STATUS_LABELS[props.worker.status] || props.worker.status}
+                <span class={`w-2 h-2 rounded-full ${getWorkerStatusConfig(props.worker.status).dotClass}`} />
+                <span class={`text-sm font-medium ${getWorkerStatusConfig(props.worker.status).color}`}>
+                  {getWorkerStatusConfig(props.worker.status).label}
                 </span>
                 <Show when={elapsedTime()}>
                   <span class="text-wool-500 text-sm">· {elapsedTime()}</span>
@@ -225,12 +176,17 @@ export const WorkerDetailModal: Component<WorkerDetailModalProps> = (props) => {
           <button class="btn-ghost btn-sm" onClick={props.onClose}>
             Close
           </button>
+          <Show when={props.onOpenDM}>
+            <button class="btn-ghost btn-sm" onClick={props.onOpenDM}>
+              <Icon name="message-circle" class="w-4 h-4" />
+              Message
+            </button>
+          </Show>
           <button class="btn btn-sm" onClick={props.onAttach}>
             <Icon name="eye" class="w-4 h-4" />
             Spectate
           </button>
         </footer>
-      </div>
-    </div>
+    </BaseModal>
   );
 };

@@ -3,10 +3,10 @@
 //! Commands for managing workers: listing, attaching, detaching, opening terminal, and restarting.
 
 use crate::core::api_types::{SheepConfig, Worker, WorkerLocation, WorkerStatus};
+use crate::core::config;
 use crate::core::orchestrator::create_orchestrator;
-use crate::core::{config, state::SQLiteState};
 
-use super::err_string;
+use super::{err_string, get_run_state};
 
 /// Get all workers for a run
 /// Uses the orchestrator to support both local and remote modes
@@ -28,13 +28,7 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
     use crate::core::Files;
 
     let run_dir = config::run_dir(&run_name);
-    let db_path = run_dir.join("hirsel.db");
-
-    if !db_path.exists() {
-        return Err(format!("Run '{}' not found", run_name));
-    }
-
-    let state = SQLiteState::new(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
+    let state = get_run_state(&run_name)?;
 
     // Check if worker already exists
     if state.get_worker(&worker_name).ok().flatten().is_some() {
@@ -154,14 +148,7 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
 pub async fn open_worker_terminal(run_name: String, worker_name: String) -> Result<(), String> {
     use std::process::Command;
 
-    let run_dir = config::run_dir(&run_name);
-    let db_path = run_dir.join("hirsel.db");
-
-    if !db_path.exists() {
-        return Err(format!("Run '{}' not found", run_name));
-    }
-
-    let state = SQLiteState::new(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
+    let state = get_run_state(&run_name)?;
 
     // Verify worker exists
     let workers = state
@@ -229,14 +216,7 @@ pub async fn detach_worker(run_name: String, worker_id: u32) -> Result<(), Strin
     use crate::core::state::WorkerUpdate;
     use crate::core::workers::is_pid_alive;
 
-    let run_dir = config::run_dir(&run_name);
-    let db_path = run_dir.join("hirsel.db");
-
-    if !db_path.exists() {
-        return Err(format!("Run '{}' not found", run_name));
-    }
-
-    let state = SQLiteState::new(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
+    let state = get_run_state(&run_name)?;
 
     // Find the worker by ID
     let workers = state

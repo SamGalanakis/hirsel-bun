@@ -10,8 +10,8 @@ import {
   createSignal,
   onCleanup,
 } from 'solid-js';
-import { generateSheepSvg } from '../../lib/sheep-avatar';
 import type { HistoryEntry, SheepConfig, WorkerDisplay } from '../../lib/types';
+import { SheepAvatar } from '../shared';
 import {
   extractWorkerName,
   formatActionLabel,
@@ -164,10 +164,7 @@ export const ActivityLog: Component<ActivityLogProps> = (props) => {
                 </div>
               }
             >
-              <div
-                innerHTML={generateSheepSvg(workerConfig()!, 20)}
-                class="w-5 h-5"
-              />
+              <SheepAvatar config={workerConfig()!} size={20} class="w-5 h-5" />
             </Show>
           </div>
 

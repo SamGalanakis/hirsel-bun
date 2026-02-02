@@ -121,15 +121,6 @@ export const TitleBar: Component = () => {
 
         <button
           type="button"
-          onClick={() => app.setShowHelp(true)}
-          class="p-2 rounded-md text-wool-500 hover:text-wool-300 hover:bg-pasture-800 transition-colors"
-          title="Help"
-        >
-          <Icon name="help-circle" class="w-4 h-4" />
-        </button>
-
-        <button
-          type="button"
           onClick={() => app.setShowSettings(true)}
           class="p-2 rounded-md text-wool-500 hover:text-wool-300 hover:bg-pasture-800 transition-colors"
           title="Settings"

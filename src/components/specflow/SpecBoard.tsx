@@ -19,9 +19,10 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 import { useProject } from '../../stores';
 import { useDelta } from '../../stores/delta-context';
-import { generateSheepSvg } from '../../lib/sheep-avatar';
+import { Icon, SheepAvatar } from '../shared';
 import { WorkerDetailModal } from '../runs/WorkerDetailModal';
 import { TaskEditorModal } from './TaskEditorModal';
+import { SheepfoldDrawer } from '../messaging';
 import { computeElkLayout, type LayoutInputNode, type ElkLayoutResult } from '../../lib/elk-layout';
 import type {
   DraftNodeTree,
@@ -405,31 +406,52 @@ const DependencyConnectors: Component<{
 
 /**
  * Build live tree structure from draft tree, matching live nodes to their draft IDs.
+ * Also includes worker-added tasks (nodes without draftNodeId) as children of their parent.
  */
 function buildLiveTreeFromDraft(
   draftTree: DraftNodeTree[],
   liveNodes: LiveNodeTree[]
 ): LiveNodeTree[] {
-  // Create a map of live nodes by their ID for quick lookup
+  // Recursively flatten all live nodes into a map by draftNodeId
+  const liveByDraftId = new Map<string, LiveNodeTree>();
+  // Also track all live nodes by their own ID for finding worker-added children
   const liveById = new Map<string, LiveNodeTree>();
-  for (const node of liveNodes) {
-    liveById.set(node.id, node);
-  }
+  // Track children by parent live node ID (for worker-added tasks)
+  const childrenByParentId = new Map<string, LiveNodeTree[]>();
+
+  const flattenLive = (nodes: LiveNodeTree[]) => {
+    for (const node of nodes) {
+      liveById.set(node.id, node);
+      if (node.draftNodeId) {
+        liveByDraftId.set(node.draftNodeId, node);
+      }
+      // Track original children by parent ID
+      if (node.children.length > 0) {
+        childrenByParentId.set(node.id, node.children);
+        flattenLive(node.children);
+      }
+    }
+  };
+  flattenLive(liveNodes);
 
   // Recursively build tree using draft structure
   const buildNode = (draft: DraftNodeTree): LiveNodeTree | null => {
-    // Look up corresponding live node
-    const live = liveById.get(draft.id);
+    // Look up corresponding live node by draft ID
+    const live = liveByDraftId.get(draft.id);
     if (!live) return null; // Not dispatched yet
 
     // Recursively build children from draft structure
-    const children = draft.children
+    const draftChildren = draft.children
       .map(child => buildNode(child))
       .filter((n): n is LiveNodeTree => n !== null);
 
+    // Also include worker-added children (live nodes without draftNodeId whose parent is this node)
+    const originalChildren = childrenByParentId.get(live.id) || [];
+    const workerAddedChildren = originalChildren.filter(child => !child.draftNodeId);
+
     return {
       ...live,
-      children,
+      children: [...draftChildren, ...workerAddedChildren],
     };
   };
 
@@ -488,11 +510,36 @@ export const SpecBoard: Component = () => {
   const [selectedWorker, setSelectedWorker] = createSignal<WorkerDisplay | null>(null);
   let workerScrollRef: HTMLDivElement | undefined;
 
+  // Live task filter: true = show all tasks, false = only show spec tasks (tasks with draftNodeId)
+  const [showAllLiveTasks, setShowAllLiveTasks] = createSignal(true);
+
   // Build live tree with project hierarchy from draft (project nodes are UI-only)
   const liveTreeWithProjects = createMemo(() => {
     // Guard: ensure we have a selected project before accessing delta state
     if (!project.selectedProject()) return [];
     return buildLiveTreeFromDraft(delta.draftTree(), delta.liveTree());
+  });
+
+  // Filter live tree to only show spec tasks when showAllLiveTasks is false
+  const filteredLiveTree = createMemo(() => {
+    const trees = liveTreeWithProjects();
+    if (showAllLiveTasks()) return trees;
+
+    // Filter recursively: keep only nodes with draftNodeId (from spec)
+    const filterTree = (node: LiveNodeTree): LiveNodeTree | null => {
+      // Always include nodes that came from the spec (have a draftNodeId)
+      const filteredChildren = node.children
+        .map(filterTree)
+        .filter((n): n is LiveNodeTree => n !== null);
+
+      // Include this node if it has a draftNodeId OR has children that passed the filter
+      if (node.draftNodeId !== null || filteredChildren.length > 0) {
+        return { ...node, children: filteredChildren };
+      }
+      return null;
+    };
+
+    return trees.map(filterTree).filter((n): n is LiveNodeTree => n !== null);
   });
 
   // Layout state (computed via ELK.js in frontend)
@@ -538,7 +585,7 @@ export const SpecBoard: Component = () => {
       setLiveLayoutResult(null);
       return;
     }
-    const trees = liveTreeWithProjects();
+    const trees = filteredLiveTree();
     if (trees.length === 0) {
       setLiveLayoutResult(null);
       return;
@@ -655,7 +702,7 @@ export const SpecBoard: Component = () => {
   );
 
   const liveLayout = createMemo(() =>
-    transformLayout(liveLayoutResult(), liveTreeWithProjects())
+    transformLayout(liveLayoutResult(), filteredLiveTree())
   );
 
   // Check if we have a live tree (post-dispatch)
@@ -1109,14 +1156,33 @@ export const SpecBoard: Component = () => {
 
   return (
     <Show when={project.selectedProject()} fallback={<NoProjectSelected />}>
-      <div class="flex-1 flex flex-col overflow-hidden bg-pasture-900">
+      <div class="flex-1 flex overflow-hidden">
+        <div class="flex-1 flex flex-col overflow-hidden bg-pasture-900">
         {/* Header - minimal */}
         <div
           class="flex items-center justify-between px-3 py-2"
           style={{ 'border-bottom': '1px solid rgba(51, 51, 51, 0.5)' }}
         >
-          {/* Left spacer for balance */}
-          <div class="flex-1" />
+          {/* Left side: Sheepfold button */}
+          <div class="flex-1 flex items-center gap-2">
+            <button
+              onClick={() => project.setSheepfoldOpen(true)}
+              class="relative p-1.5 rounded transition-colors"
+              style={{
+                background: project.sheepfoldOpen() ? 'rgba(212, 165, 116, 0.15)' : 'transparent',
+                color: project.sheepfoldOpen() ? 'var(--amber-400)' : 'var(--wool-500)',
+              }}
+              title="Sheepfold - Project messaging"
+            >
+              <Icon name="messages-square" class="w-4 h-4" />
+              <Show when={project.projectUnreadCount() > 0}>
+                <span
+                  class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full animate-pulse"
+                  style={{ background: 'var(--amber-500)' }}
+                />
+              </Show>
+            </button>
+          </div>
 
           {/* Center: Worker Carousel */}
           <Show when={workers().length > 0}>
@@ -1161,8 +1227,10 @@ export const SpecBoard: Component = () => {
                         }}
                         title={`${worker.name} · ${worker.status}${worker.currentTask ? ` · ${worker.currentTask}` : ''}`}
                       >
-                        <div
-                          innerHTML={generateSheepSvg(worker.sheepConfig, 32, worker.status)}
+                        <SheepAvatar
+                          config={worker.sheepConfig}
+                          size={32}
+                          status={worker.status}
                           class="w-full h-full"
                         />
                         {/* HITL indicator dot */}
@@ -1250,6 +1318,21 @@ export const SpecBoard: Component = () => {
                 />
               </svg>
             </button>
+
+            {/* Live task filter toggle - only show when live tree is visible */}
+            <Show when={hasLiveTree()}>
+              <button
+                onClick={() => setShowAllLiveTasks((v) => !v)}
+                class="p-1 rounded"
+                style={{
+                  background: showAllLiveTasks() ? 'transparent' : 'rgba(212, 165, 116, 0.15)',
+                  color: showAllLiveTasks() ? 'var(--wool-600)' : 'var(--amber-400)',
+                }}
+                title={showAllLiveTasks() ? 'Hide worker-added tasks' : 'Show all tasks'}
+              >
+                <Icon name={showAllLiveTasks() ? 'layers' : 'git-branch'} class="w-3.5 h-3.5" />
+              </button>
+            </Show>
 
             {/* Diff summary */}
             <Show when={delta.hasDiff()}>
@@ -1478,7 +1561,7 @@ export const SpecBoard: Component = () => {
                     <div class="relative" style={{ width: `${liveLayout().width}px`, height: `${liveLayout().height}px` }}>
                       {/* Dependency connectors (blocked_by and validates relationships) */}
                       <DependencyConnectors edgeRoutes={liveLayout().edgeRoutes} />
-                      <For each={flattenLiveTree(liveTreeWithProjects())}>
+                      <For each={flattenLiveTree(filteredLiveTree())}>
                         {(node) => {
                           const pos = () => liveLayout().positions.get(node.id);
                           return (
@@ -1846,6 +1929,10 @@ export const SpecBoard: Component = () => {
               runName={delta.projectRun()?.runName || ''}
               onClose={() => setSelectedWorker(null)}
               onAttach={handleAttachWorker}
+              onOpenDM={() => {
+                project.openWorkerDM(worker().name);
+                setSelectedWorker(null);
+              }}
             />
           )}
         </Show>
@@ -1858,6 +1945,15 @@ export const SpecBoard: Component = () => {
               style={{ border: '2px solid rgba(212, 165, 116, 0.2)', 'border-top-color': 'var(--amber-500)' }}
             />
           </div>
+        </Show>
+        </div>
+
+        {/* Sheepfold Drawer */}
+        <Show when={project.sheepfoldOpen()}>
+          <SheepfoldDrawer
+            workers={workers()}
+            onClose={() => project.setSheepfoldOpen(false)}
+          />
         </Show>
       </div>
     </Show>

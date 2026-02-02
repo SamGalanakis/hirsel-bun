@@ -1,12 +1,13 @@
 /**
  * WorkerCard - Displays a worker with sheep avatar and metrics
  */
-import { type Component, Show, createEffect, createSignal, onCleanup } from 'solid-js';
-import { generateSheepSvg } from '../../lib/sheep-avatar';
+import { type Component, Show } from 'solid-js';
+import { useElapsedTime } from '../../hooks';
 import type { WorkerDisplay } from '../../lib/types';
 import { getContextClass } from '../../lib/utils/context-class';
-import { formatElapsedTime, formatTokens } from '../../lib/utils/formatters';
-import { Icon } from '../shared';
+import { formatTokens } from '../../lib/utils/formatters';
+import { getWorkerStatusConfig } from '../../lib/utils/status';
+import { Icon, SheepAvatar } from '../shared';
 
 interface WorkerCardProps {
   worker: WorkerDisplay;
@@ -17,61 +18,25 @@ interface WorkerCardProps {
   onDoubleClick: () => void;
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  idle: 'border-wool-600',
-  working: 'border-amber-500',
-  waiting: 'border-golden',
-  awaiting: 'border-sky-500',
-  paused: 'border-golden',
-  error: 'border-terra',
-};
-
-const STATUS_DOT_COLORS: Record<string, string> = {
-  idle: 'bg-wool-500',
-  working: 'bg-amber-500',
-  waiting: 'bg-golden',
-  awaiting: 'bg-sky-500',
-  paused: 'bg-golden',
-  error: 'bg-terra',
-};
-
 export const WorkerCard: Component<WorkerCardProps> = (props) => {
-  const [elapsedTime, setElapsedTime] = createSignal('');
+  const elapsedTime = useElapsedTime(() => props.worker.sessionStartedAt);
 
-  // Update elapsed time every second
-  createEffect(() => {
-    const sessionStart = props.worker.sessionStartedAt;
-    if (!sessionStart) {
-      setElapsedTime('');
-      return;
-    }
-
-    // Initial update
-    setElapsedTime(formatElapsedTime(sessionStart));
-
-    // Update every second
-    const interval = setInterval(() => {
-      setElapsedTime(formatElapsedTime(sessionStart));
-    }, 1000);
-
-    onCleanup(() => clearInterval(interval));
-  });
-
-  const sheepSvg = () => generateSheepSvg(props.worker.sheepConfig, props.compact ? 28 : 40, props.worker.status);
+  const sheepSize = () => (props.compact ? 28 : 40);
 
   // Compact mode for horizontal strip
   if (props.compact) {
+    const config = () => getWorkerStatusConfig(props.worker.status);
     return (
       <button
         class={`relative flex items-center gap-2 px-3 py-2 rounded-lg border bg-pasture-800 hover:bg-pasture-700 transition-all text-left flex-shrink-0 ${
-          STATUS_COLORS[props.worker.status] || 'border-pasture-600'
+          config().borderColor
         } ${props.selected ? 'ring-2 ring-amber-500' : ''}`}
         onClick={props.onClick}
         onDblClick={props.onDoubleClick}
       >
         {/* Sheep avatar */}
         <div class="relative flex-shrink-0">
-          <div innerHTML={sheepSvg()} />
+          <SheepAvatar config={props.worker.sheepConfig} size={sheepSize()} status={props.worker.status} />
           <Show when={props.worker.isLeader}>
             <div
               class="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-golden flex items-center justify-center"
@@ -103,9 +68,7 @@ export const WorkerCard: Component<WorkerCardProps> = (props) => {
 
         {/* Status dot */}
         <div
-          class={`absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full ${
-            STATUS_DOT_COLORS[props.worker.status] || 'bg-wool-500'
-          }`}
+          class={`absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full ${config().dotColor}`}
           title={props.worker.status}
         />
       </button>
@@ -113,26 +76,25 @@ export const WorkerCard: Component<WorkerCardProps> = (props) => {
   }
 
   // Full mode for modals/detail views
+  const config = () => getWorkerStatusConfig(props.worker.status);
   return (
     <button
       class={`relative p-3 rounded-lg border-2 bg-pasture-800 hover:bg-pasture-700 transition-all text-left ${
-        STATUS_COLORS[props.worker.status] || 'border-pasture-600'
+        config().borderColor
       } ${props.selected ? 'ring-2 ring-amber-500 ring-offset-2 ring-offset-pasture-900' : ''}`}
       onClick={props.onClick}
       onDblClick={props.onDoubleClick}
     >
       {/* Status dot */}
       <div
-        class={`absolute top-2 right-2 w-2 h-2 rounded-full ${
-          STATUS_DOT_COLORS[props.worker.status] || 'bg-wool-500'
-        }`}
+        class={`absolute top-2 right-2 w-2 h-2 rounded-full ${config().dotColor}`}
         title={props.worker.status}
       />
 
       <div class="flex items-start gap-3">
         {/* Sheep avatar */}
         <div class="relative flex-shrink-0">
-          <div innerHTML={sheepSvg()} />
+          <SheepAvatar config={props.worker.sheepConfig} size={sheepSize()} status={props.worker.status} />
           {/* Leader badge */}
           <Show when={props.worker.isLeader}>
             <div

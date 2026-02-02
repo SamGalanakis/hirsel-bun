@@ -11,6 +11,8 @@ use tracing::info;
 use crate::core::api_types::{WorkerEventResponse, WorkerEventsResponse};
 use crate::core::{config, state::SQLiteState};
 
+use super::get_run_state;
+
 /// Manages active worker event streams
 pub struct WorkerEventStreamManager {
     /// Active streams: (run_name, worker_name) -> cancel sender
@@ -116,16 +118,17 @@ pub async fn get_worker_events(
     after_id: Option<i64>,
     limit: Option<i64>,
 ) -> Result<WorkerEventsResponse, String> {
-    let db_path = config::run_dir(&run_name).join("hirsel.db");
-    if !db_path.exists() {
-        return Ok(WorkerEventsResponse {
-            events: Vec::new(),
-            last_id: None,
-            worker_status: None,
-        });
-    }
-
-    let state = SQLiteState::new(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
+    // Return empty response if run doesn't exist (graceful handling)
+    let state = match get_run_state(&run_name) {
+        Ok(s) => s,
+        Err(_) => {
+            return Ok(WorkerEventsResponse {
+                events: Vec::new(),
+                last_id: None,
+                worker_status: None,
+            });
+        }
+    };
 
     let limit = limit.unwrap_or(1000);
     let events = state
@@ -168,12 +171,11 @@ pub async fn get_worker_events(
 /// Clear worker events (for cleanup when attaching/detaching)
 #[tauri::command]
 pub async fn clear_worker_events(run_name: String, worker_name: String) -> Result<(), String> {
-    let db_path = config::run_dir(&run_name).join("hirsel.db");
-    if !db_path.exists() {
-        return Ok(());
-    }
-
-    let state = SQLiteState::new(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
+    // Return Ok if run doesn't exist (graceful handling)
+    let state = match get_run_state(&run_name) {
+        Ok(s) => s,
+        Err(_) => return Ok(()),
+    };
 
     state
         .clear_worker_events(&worker_name)

@@ -110,6 +110,7 @@ cargo build --features s3-storage               # With S3 support
 | `chats.rs` | - | GypChat message storage |
 | `gyp_chat.rs` | - | Project-level chat history |
 | `gyp_context.rs` | - | Gyp context building |
+| `project_messages.rs` | - | Sheepfold: project-scoped messaging (Meadow group chat + worker DMs) |
 | `api_types.rs` | - | Shared API response types |
 | `worker_routes.rs` | - | Worker HTTP handlers |
 | `message_routes.rs` | - | Message HTTP handlers |

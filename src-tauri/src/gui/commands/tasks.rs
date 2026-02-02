@@ -4,9 +4,8 @@
 
 use crate::core::api_types::{Task, TaskStatus};
 use crate::core::orchestrator::create_orchestrator;
-use crate::core::{config, state::SQLiteState};
 
-use super::err_string;
+use super::{err_string, get_run_state};
 
 /// Get all tasks for a run
 /// Uses the orchestrator to support both local and remote modes
@@ -25,12 +24,7 @@ pub async fn add_task(
     parent_id: Option<String>,
     blocked_by: Option<Vec<String>>,
 ) -> Result<Task, String> {
-    let db_path = config::run_dir(&run_name).join("hirsel.db");
-    if !db_path.exists() {
-        return Err(format!("Run '{}' not found", run_name));
-    }
-
-    let state = SQLiteState::new(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
+    let state = get_run_state(&run_name)?;
 
     // Convert blocked_by from Vec<String> to Vec<&str> for state.add_task
     let blocked_by_refs: Option<Vec<&str>> = blocked_by
@@ -107,12 +101,7 @@ pub async fn complete_task(run_name: String, task_id: String) -> Result<(), Stri
 /// Unclaim a task (release it back to the pool)
 #[tauri::command]
 pub async fn unclaim_task(run_name: String, task_id: String) -> Result<(), String> {
-    let db_path = config::run_dir(&run_name).join("hirsel.db");
-    if !db_path.exists() {
-        return Err(format!("Run '{}' not found", run_name));
-    }
-
-    let state = SQLiteState::new(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
+    let state = get_run_state(&run_name)?;
 
     // Get the task to find who claimed it
     let task = state

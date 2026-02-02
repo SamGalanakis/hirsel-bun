@@ -71,6 +71,14 @@ interface ProjectContextValue {
   docsFullScreen: () => boolean;
   setDocsFullScreen: (fullScreen: boolean) => void;
 
+  // Sheepfold (project messaging) state
+  sheepfoldOpen: () => boolean;
+  setSheepfoldOpen: (open: boolean) => void;
+  activeThread: () => string; // 'meadow' or worker name
+  setActiveThread: (thread: string) => void;
+  projectUnreadCount: () => number;
+  openWorkerDM: (workerName: string) => void; // Opens drawer + selects thread
+
   // Project selector dropdown
   projectSelectorOpen: () => boolean;
   setProjectSelectorOpen: (open: boolean) => void;
@@ -105,6 +113,11 @@ export const ProjectProvider: ParentComponent = (props) => {
   const [docsOpen, setDocsOpen] = createSignal(false);
   const [selectedDocFile, setSelectedDocFile] = createSignal<string | null>(null);
   const [docsFullScreen, setDocsFullScreen] = createSignal(false);
+
+  // Sheepfold state
+  const [sheepfoldOpen, setSheepfoldOpen] = createSignal(false);
+  const [activeThread, setActiveThread] = createSignal('meadow');
+  const [projectUnreadCount, setProjectUnreadCount] = createSignal(0);
 
   const selectedProjectId = () => selectedProject()?.id ?? null;
 
@@ -251,6 +264,11 @@ export const ProjectProvider: ParentComponent = (props) => {
     return projects().filter((p) => p.name.toLowerCase().includes(query));
   };
 
+  const openWorkerDM = (workerName: string) => {
+    setActiveThread(workerName);
+    setSheepfoldOpen(true);
+  };
+
   // Initialize
   createEffect(() => {
     loadProjects().then(restoreProjectSelection);
@@ -280,6 +298,31 @@ export const ProjectProvider: ParentComponent = (props) => {
     };
     window.addEventListener('cancel-project-setup', handler);
     onCleanup(() => window.removeEventListener('cancel-project-setup', handler));
+  });
+
+  // Poll for unread count when project is selected
+  createEffect(() => {
+    const projectId = selectedProjectId();
+    if (!projectId) {
+      setProjectUnreadCount(0);
+      return;
+    }
+
+    const fetchUnread = async () => {
+      try {
+        const count = await invoke<number>('get_project_unread_count', { projectId });
+        setProjectUnreadCount(count);
+      } catch (e) {
+        console.error('Failed to fetch unread count:', e);
+      }
+    };
+
+    // Initial fetch
+    fetchUnread();
+
+    // Poll every 5 seconds
+    const interval = setInterval(fetchUnread, 5000);
+    onCleanup(() => clearInterval(interval));
   });
 
   const value: ProjectContextValue = {
@@ -317,6 +360,12 @@ export const ProjectProvider: ParentComponent = (props) => {
     setSelectedDocFile,
     docsFullScreen,
     setDocsFullScreen,
+    sheepfoldOpen,
+    setSheepfoldOpen,
+    activeThread,
+    setActiveThread,
+    projectUnreadCount,
+    openWorkerDM,
   };
 
   return <ProjectContext.Provider value={value}>{props.children}</ProjectContext.Provider>;

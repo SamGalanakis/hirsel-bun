@@ -6,19 +6,16 @@
  * - Live tree (read-only) after first dispatch
  */
 import { type Component, Show, createEffect, onCleanup } from 'solid-js';
-import { useApp, useProject, useRuns, useSelection } from '../../stores';
+import { useProject, useRuns } from '../../stores';
 import { TitleBar } from './TitleBar';
 import { StatusBar } from './StatusBar';
 import { SvgDefinitions } from './SvgDefinitions';
-import { RunListPanel } from '../runs/RunListPanel';
-import { RunDetail } from '../runs/RunDetail';
 import { ProjectSetup } from '../projects/ProjectSetup';
 import { ProjectSettings } from '../projects/ProjectSettings';
 import { SpecBoard } from '../specflow/SpecBoard';
 import { GypMessenger } from '../chat/GypMessenger';
 import { WorkerOutputViewer } from '../workers/WorkerOutputViewer';
 import { AttachPicker } from '../modals/AttachPicker';
-import { HelpModal } from '../modals/HelpModal';
 import { SettingsModal } from '../modals/SettingsModal';
 import { SheepClicker } from '../fun/SheepClicker';
 import { ConfirmDialog } from '../modals/ConfirmDialog';
@@ -27,10 +24,8 @@ import { DebugPanel } from '../shared/DebugPanel';
 import { DocsPanel, DocsFullView } from '../docs';
 
 export const Layout: Component = () => {
-  const app = useApp();
   const project = useProject();
   const runs = useRuns();
-  const selection = useSelection();
 
   // Subscribe to runs polling
   createEffect(() => {
@@ -38,16 +33,8 @@ export const Layout: Component = () => {
     onCleanup(unsubscribe);
   });
 
-  // Determine what content to show
-  const showRunDetail = () => {
-    const detail = runs.runDetail();
-    return runs.selectedRun() && detail?.status !== 'draft';
-  };
-
-  // Show SpecBoard as base when not viewing run details
-  const showSpecBoard = () =>
-    !project.showProjectSettings() &&
-    !showRunDetail();
+  // Show SpecBoard as base (always, unless project settings open)
+  const showSpecBoard = () => !project.showProjectSettings();
 
   return (
     <>
@@ -75,10 +62,6 @@ export const Layout: Component = () => {
           <ProjectSettings />
         </Show>
 
-        <Show when={showRunDetail()}>
-          <RunDetail />
-        </Show>
-
         {/* Modal overlays (float above SpecBoard) */}
         <Show when={project.showProjectSetup()}>
           <ProjectSetup />
@@ -98,7 +81,6 @@ export const Layout: Component = () => {
       {/* Modals and overlays */}
       <WorkerOutputViewer />
       <AttachPicker />
-      <HelpModal />
       <SettingsModal />
       <SheepClicker />
       <ConfirmDialog />

@@ -54,9 +54,6 @@ interface AppContextValue {
   setAiChatOpen: (open: boolean) => void;
   toggleAiChat: () => void;
 
-  showHelp: () => boolean;
-  setShowHelp: (show: boolean) => void;
-
   showSettings: () => boolean;
   setShowSettings: (show: boolean) => void;
 
@@ -88,7 +85,6 @@ export const AppProvider: ParentComponent = (props) => {
 
   // UI State
   const [aiChatOpen, setAiChatOpen] = createSignal(false);
-  const [showHelp, setShowHelp] = createSignal(false);
   const [showSettings, setShowSettings] = createSignal(false);
   const [notificationsOpen, setNotificationsOpen] = createSignal(false);
   const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
@@ -182,10 +178,10 @@ export const AppProvider: ParentComponent = (props) => {
         handleToggleTheme();
         break;
       case 'show-help':
-        setShowHelp(true);
+        // Help is now in Settings > Shortcuts
+        setShowSettings(true);
         break;
       case 'close-panel':
-        setShowHelp(false);
         setShowSettings(false);
         setNotificationsOpen(false);
         setAiChatOpen(false);
@@ -219,8 +215,6 @@ export const AppProvider: ParentComponent = (props) => {
     aiChatOpen,
     setAiChatOpen,
     toggleAiChat: () => setAiChatOpen((c) => !c),
-    showHelp,
-    setShowHelp,
     showSettings,
     setShowSettings,
     notificationsOpen,

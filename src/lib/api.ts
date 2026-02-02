@@ -957,3 +957,52 @@ export async function saveGypMessage(
 export async function clearGypChatHistory(runName: string | null): Promise<void> {
   return invoke('clear_gyp_chat_history', { runName });
 }
+
+// =============================================================================
+// Project Messages API (Sheepfold)
+// =============================================================================
+
+import type { ProjectMessage, ProjectThreadSummary } from './types';
+
+/**
+ * Get messages for a project thread (Meadow or worker DM)
+ */
+export async function getProjectMessages(
+  projectId: number,
+  thread: string,
+  limit?: number,
+): Promise<ProjectMessage[]> {
+  return invoke<ProjectMessage[]>('get_project_messages', { projectId, thread, limit });
+}
+
+/**
+ * Get all threads for a project with unread counts
+ */
+export async function getProjectThreads(projectId: number): Promise<ProjectThreadSummary[]> {
+  return invoke<ProjectThreadSummary[]>('get_project_threads', { projectId });
+}
+
+/**
+ * Send a message to a project thread
+ */
+export async function sendProjectMessage(
+  projectId: number,
+  thread: string,
+  content: string,
+): Promise<ProjectMessage> {
+  return invoke<ProjectMessage>('send_project_message', { projectId, thread, content });
+}
+
+/**
+ * Mark messages in a thread as read
+ */
+export async function markProjectMessagesRead(projectId: number, thread: string): Promise<void> {
+  return invoke('mark_project_messages_read', { projectId, thread });
+}
+
+/**
+ * Get total unread count for a project
+ */
+export async function getProjectUnreadCount(projectId: number): Promise<number> {
+  return invoke<number>('get_project_unread_count', { projectId });
+}

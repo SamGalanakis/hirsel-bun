@@ -1,3 +1,4 @@
+export { BaseModal } from './BaseModal';
 export { Icon } from './Icon';
 export { Toaster } from './Toaster';
 export { DebugPanel } from './DebugPanel';
@@ -7,3 +8,4 @@ export { Dropdown } from './Dropdown';
 export type { DropdownOption, DropdownProps } from './Dropdown';
 export { StatusBadge } from './StatusBadge';
 export type { StatusBadgeProps } from './StatusBadge';
+export { SheepAvatar } from './SheepAvatar';

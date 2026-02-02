@@ -2,11 +2,10 @@
  * TaskDetailModal - Task detail popup with blockers and actions
  */
 import { type Component, For, Show } from 'solid-js';
-import { useEscapeKey } from '../../hooks';
-import { generateSheepSvg } from '../../lib/sheep-avatar';
 import type { Task, WorkerDisplay } from '../../lib/types';
 import { formatDuration, formatRelativeTime, formatTokens } from '../../lib/utils/formatters';
-import { Icon } from '../shared';
+import { getTaskStatusConfig } from '../../lib/utils/status';
+import { BaseModal, Icon, SheepAvatar } from '../shared';
 
 interface TaskDetailModalProps {
   task: Task;
@@ -20,33 +19,7 @@ interface TaskDetailModalProps {
   onTaskClick: (taskId: string) => void;
 }
 
-const STATUS_ICONS: Record<string, string> = {
-  todo: 'circle',
-  doing: 'loader',
-  done: 'check-circle',
-};
-
-const STATUS_COLORS: Record<string, string> = {
-  todo: 'text-wool-500',
-  doing: 'text-amber-500',
-  done: 'text-sage',
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  todo: 'To Do',
-  doing: 'In Progress',
-  done: 'Done',
-};
-
-const STATUS_BADGE_COLORS: Record<string, string> = {
-  todo: 'bg-wool-500/20 text-wool-400',
-  doing: 'bg-amber-500/20 text-amber-400',
-  done: 'bg-sage/20 text-sage',
-};
-
 export const TaskDetailModal: Component<TaskDetailModalProps> = (props) => {
-  useEscapeKey(() => props.onClose());
-
   // Get blocker tasks
   const blockerTasks = () => {
     const blockerIds = props.task.blockedBy || [];
@@ -76,22 +49,20 @@ export const TaskDetailModal: Component<TaskDetailModalProps> = (props) => {
   const isBlocked = () => (props.task.blockedBy || []).length > 0;
 
   return (
-    <div
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) props.onClose();
-      }}
+    <BaseModal
+      onClose={props.onClose}
+      overlayClass="bg-black/80"
+      class="bg-pasture-800 border border-pasture-600 w-full max-w-lg"
     >
-      <div class="bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl w-full max-w-lg">
-        {/* Header */}
+      {/* Header */}
         <div class="flex items-center justify-between p-4 border-b border-pasture-600">
           <div class="flex items-center gap-3">
-            <div class={`${STATUS_COLORS[props.task.status]}`}>
-              <Icon name={STATUS_ICONS[props.task.status]} class="w-6 h-6" />
+            <div class={getTaskStatusConfig(props.task.status).color}>
+              <Icon name={getTaskStatusConfig(props.task.status).icon} class="w-6 h-6" />
             </div>
             <div>
-              <span class={`px-2 py-0.5 text-xs rounded ${STATUS_BADGE_COLORS[props.task.status]}`}>
-                {STATUS_LABELS[props.task.status]}
+              <span class={`px-2 py-0.5 text-xs rounded ${getTaskStatusConfig(props.task.status).badgeClass}`}>
+                {getTaskStatusConfig(props.task.status).label}
               </span>
               <Show when={isBlocked()}>
                 <span class="ml-2 px-2 py-0.5 text-xs rounded bg-terra/20 text-terra">
@@ -122,9 +93,7 @@ export const TaskDetailModal: Component<TaskDetailModalProps> = (props) => {
               <div class="card p-3">
                 <p class="text-xs text-wool-500 mb-2">Assigned Worker</p>
                 <div class="flex items-center gap-3">
-                  <div
-                    innerHTML={generateSheepSvg(worker().sheepConfig, 32, worker().status)}
-                  />
+                  <SheepAvatar config={worker().sheepConfig} size={32} status={worker().status} />
                   <div>
                     <p class="text-sm font-medium text-wool-200">{worker().name}</p>
                     <p class="text-xs text-wool-500">{worker().status}</p>
@@ -157,16 +126,16 @@ export const TaskDetailModal: Component<TaskDetailModalProps> = (props) => {
                     >
                       <div class="flex items-center gap-2">
                         <Icon
-                          name={STATUS_ICONS[blocker.status]}
-                          class={`w-4 h-4 ${STATUS_COLORS[blocker.status]}`}
+                          name={getTaskStatusConfig(blocker.status).icon}
+                          class={`w-4 h-4 ${getTaskStatusConfig(blocker.status).color}`}
                         />
                         <span class="text-sm text-wool-300 flex-1 truncate">
                           {blocker.description}
                         </span>
                         <span
-                          class={`px-1.5 py-0.5 text-xs rounded ${STATUS_BADGE_COLORS[blocker.status]}`}
+                          class={`px-1.5 py-0.5 text-xs rounded ${getTaskStatusConfig(blocker.status).badgeClass}`}
                         >
-                          {STATUS_LABELS[blocker.status]}
+                          {getTaskStatusConfig(blocker.status).label}
                         </span>
                       </div>
                     </button>
@@ -190,8 +159,8 @@ export const TaskDetailModal: Component<TaskDetailModalProps> = (props) => {
                 >
                   <div class="flex items-center gap-2">
                     <Icon
-                      name={STATUS_ICONS[parent().status]}
-                      class={`w-4 h-4 ${STATUS_COLORS[parent().status]}`}
+                      name={getTaskStatusConfig(parent().status).icon}
+                      class={`w-4 h-4 ${getTaskStatusConfig(parent().status).color}`}
                     />
                     <span class="text-sm text-wool-300 truncate">{parent().description}</span>
                   </div>
@@ -278,7 +247,6 @@ export const TaskDetailModal: Component<TaskDetailModalProps> = (props) => {
             </Show>
           </div>
         </div>
-      </div>
-    </div>
+    </BaseModal>
   );
 };

@@ -1381,3 +1381,27 @@ export const BOARD_DELIVERY_STATUS_ICONS: Record<BoardDeliveryStatus, string> = 
   failed: '\u2717', // ✗
   abandoned: '\u2205', // ∅
 };
+
+// =============================================================================
+// Project Messages Types (Sheepfold)
+// =============================================================================
+
+/** Project message (Meadow or worker DM) */
+export interface ProjectMessage {
+  id: number;
+  projectId: number;
+  thread: string; // 'meadow' or worker_name
+  sender: string; // 'user' or worker_name
+  content: string;
+  waiting: boolean;
+  timestamp: string;
+}
+
+/** Project thread summary with unread count */
+export interface ProjectThreadSummary {
+  thread: string;
+  messageCount: number;
+  unreadCount: number;
+  lastMessage: string | null;
+  lastTimestamp: string | null;
+}
