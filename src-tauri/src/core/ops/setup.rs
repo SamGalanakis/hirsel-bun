@@ -203,13 +203,15 @@ pub fn setup_run_workspace(config: &RunSetupConfig) -> Result<RunSetupResult, Op
 ///
 /// * `Ok(())` - If all workers were registered successfully
 /// * `Err(OpsError)` - If registration failed
-pub fn register_workers(
+pub async fn register_workers(
     state: &SQLiteState,
     worker_dirs: &[(String, PathBuf)],
     location: &str,
 ) -> Result<(), OpsError> {
     for (worker_name, work_dir) in worker_dirs {
-        state.add_worker(worker_name, work_dir.to_str().unwrap_or("."), location)?;
+        state
+            .add_worker(worker_name, work_dir.to_str().unwrap_or("."), location)
+            .await?;
     }
     Ok(())
 }

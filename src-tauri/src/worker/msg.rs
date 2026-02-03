@@ -4,7 +4,7 @@
 //! to communicate with the user and other workers via message threads.
 
 use crate::core::state::{WorkerStatus, WorkerUpdate};
-use crate::core::{Files, SQLiteState};
+use crate::core::SQLiteState;
 use serde_json::json;
 use std::path::PathBuf;
 use thiserror::Error;
@@ -40,6 +40,15 @@ fn get_run_dir() -> MsgResult<PathBuf> {
     Ok(run_dir)
 }
 
+/// Extract run_name from run_dir path (last component)
+fn get_run_name(run_dir: &std::path::Path) -> MsgResult<String> {
+    run_dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| MsgError::RunDirNotFound(run_dir.to_path_buf()))
+}
+
 /// Get the worker name from environment
 fn get_worker_name() -> MsgResult<String> {
     std::env::var("HIRSEL_WORKER_NAME").map_err(|_| MsgError::NoWorkerName)
@@ -56,11 +65,11 @@ fn get_worker_name() -> MsgResult<String> {
 /// - The function polls for a reply and returns immediately when one arrives
 ///
 /// For other threads (group chat), messages are sent without waiting.
-pub fn send(thread: &str, message: &str) -> MsgResult<serde_json::Value> {
+pub async fn send(thread: &str, message: &str) -> MsgResult<serde_json::Value> {
     let run_dir = get_run_dir()?;
+    let run_name = get_run_name(&run_dir)?;
     let worker_name = get_worker_name()?;
-    let files = Files::new(&run_dir);
-    let state = SQLiteState::new(files.db_path())?;
+    let state = SQLiteState::new(&run_name).await?;
 
     let is_user_dm = thread == "user";
 
@@ -72,34 +81,41 @@ pub fn send(thread: &str, message: &str) -> MsgResult<serde_json::Value> {
     };
 
     // Add the message (waiting flag set for user DMs)
-    let msg_id = state.add_message(actual_thread, &worker_name, message, is_user_dm)?;
+    let msg_id = state
+        .add_message(actual_thread, &worker_name, message, is_user_dm)
+        .await?;
 
     // Only wait for reply when messaging the user
     if is_user_dm {
-        let hitl_enabled = state.get_human_in_the_loop().unwrap_or(true);
+        let hitl_enabled = state.get_human_in_the_loop().await.unwrap_or(true);
 
         if hitl_enabled {
             // HITL mode: Set worker as waiting and optionally pause others
-            state.update_worker(
-                &worker_name,
-                WorkerUpdate {
-                    status: Some(WorkerStatus::Awaiting),
-                    hitl_waiting: Some(true),
-                    waiting_thread: Some(actual_thread.to_string()),
-                    ..Default::default()
-                },
-            )?;
+            state
+                .update_worker(
+                    &worker_name,
+                    WorkerUpdate {
+                        status: Some(WorkerStatus::Awaiting),
+                        hitl_waiting: Some(true),
+                        waiting_thread: Some(actual_thread.to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await?;
 
             // Check pause_mode to determine if we should pause all workers
             let pause_mode = state
                 .get_pause_mode()
+                .await
                 .unwrap_or_else(|_| "sender".to_string());
             if pause_mode == "all" {
-                state.pause_all_workers("Worker requested human input")?;
+                state
+                    .pause_all_workers("Worker requested human input")
+                    .await?;
             }
 
             // Poll until hitl_waiting is cleared (by user resume action)
-            let reply = poll_for_hitl_resume(&state, actual_thread, &worker_name, msg_id)?;
+            let reply = poll_for_hitl_resume(&state, actual_thread, &worker_name, msg_id).await?;
             Ok(json!({
                 "success": true,
                 "message_id": msg_id,
@@ -107,7 +123,7 @@ pub fn send(thread: &str, message: &str) -> MsgResult<serde_json::Value> {
             }))
         } else {
             // YOLO mode: Just poll for reply without pausing
-            let reply = poll_for_reply(&state, actual_thread, &worker_name, msg_id)?;
+            let reply = poll_for_reply(&state, actual_thread, &worker_name, msg_id).await?;
             Ok(json!({
                 "success": true,
                 "message_id": msg_id,
@@ -123,21 +139,21 @@ pub fn send(thread: &str, message: &str) -> MsgResult<serde_json::Value> {
 }
 
 /// Poll for a reply to a waiting message (YOLO mode - no HITL)
-fn poll_for_reply(
+async fn poll_for_reply(
     state: &SQLiteState,
     thread: &str,
     worker_name: &str,
     sent_msg_id: i64,
 ) -> MsgResult<Option<serde_json::Value>> {
-    use std::thread::sleep;
     use std::time::Duration;
+    use tokio::time::sleep;
 
     let poll_interval = Duration::from_secs(2);
     let max_polls = 900; // 30 minutes max wait
 
     for _ in 0..max_polls {
         // Check for messages after our sent message that aren't from us
-        let messages = state.get_messages(thread, 100)?;
+        let messages = state.get_messages(thread, 100).await?;
         for msg in messages {
             if msg.id > sent_msg_id && msg.sender != worker_name {
                 // Found a reply
@@ -150,7 +166,7 @@ fn poll_for_reply(
             }
         }
 
-        sleep(poll_interval);
+        sleep(poll_interval).await;
     }
 
     // Timeout - no reply received
@@ -162,14 +178,14 @@ fn poll_for_reply(
 /// In HITL mode, workers don't automatically wake up when a reply arrives.
 /// Instead, they wait until the user explicitly resumes them (clearing hitl_waiting).
 /// Once resumed, this function returns any reply that was received.
-fn poll_for_hitl_resume(
+async fn poll_for_hitl_resume(
     state: &SQLiteState,
     thread: &str,
     worker_name: &str,
     sent_msg_id: i64,
 ) -> MsgResult<Option<serde_json::Value>> {
-    use std::thread::sleep;
     use std::time::Duration;
+    use tokio::time::sleep;
 
     let poll_interval = Duration::from_secs(2);
     // No timeout for HITL - wait indefinitely until resumed
@@ -177,10 +193,10 @@ fn poll_for_hitl_resume(
 
     loop {
         // Check if hitl_waiting has been cleared (by user resume action)
-        if let Ok(Some(worker)) = state.get_worker(worker_name) {
+        if let Ok(Some(worker)) = state.get_worker(worker_name).await {
             if !worker.hitl_waiting {
                 // Worker has been resumed - check for any reply
-                let messages = state.get_messages(thread, 100)?;
+                let messages = state.get_messages(thread, 100).await?;
                 for msg in messages {
                     if msg.id > sent_msg_id && msg.sender != worker_name {
                         // Found a reply
@@ -197,25 +213,27 @@ fn poll_for_hitl_resume(
             }
         }
 
-        sleep(poll_interval);
+        sleep(poll_interval).await;
     }
 }
 
 /// Read messages from a thread (or all threads if none specified)
-pub fn read(thread: Option<&str>) -> MsgResult<serde_json::Value> {
+pub async fn read(thread: Option<&str>) -> MsgResult<serde_json::Value> {
     let run_dir = get_run_dir()?;
+    let run_name = get_run_name(&run_dir)?;
     let worker_name = get_worker_name()?;
-    let files = Files::new(&run_dir);
-    let state = SQLiteState::new(files.db_path())?;
+    let state = SQLiteState::new(&run_name).await?;
 
     if let Some(thread_name) = thread {
         // Read from specific thread
-        let messages = state.get_unread_messages(thread_name, &worker_name)?;
+        let messages = state.get_unread_messages(thread_name, &worker_name).await?;
 
         // Mark as read
         if !messages.is_empty() {
             let max_id = messages.iter().map(|m| m.id).max();
-            state.mark_messages_read(thread_name, &worker_name, max_id)?;
+            state
+                .mark_messages_read(thread_name, &worker_name, max_id)
+                .await?;
         }
 
         let formatted: Vec<_> = messages
@@ -239,15 +257,17 @@ pub fn read(thread: Option<&str>) -> MsgResult<serde_json::Value> {
         }))
     } else {
         // Read from all threads
-        let threads = state.get_threads()?;
+        let threads = state.get_threads().await?;
         let mut all_messages = Vec::new();
 
         for thread_name in &threads {
-            let messages = state.get_unread_messages(thread_name, &worker_name)?;
+            let messages = state.get_unread_messages(thread_name, &worker_name).await?;
 
             if !messages.is_empty() {
                 let max_id = messages.iter().map(|m| m.id).max();
-                state.mark_messages_read(thread_name, &worker_name, max_id)?;
+                state
+                    .mark_messages_read(thread_name, &worker_name, max_id)
+                    .await?;
 
                 for m in messages {
                     all_messages.push(json!({
@@ -271,18 +291,18 @@ pub fn read(thread: Option<&str>) -> MsgResult<serde_json::Value> {
 }
 
 /// List available message threads
-pub fn list() -> MsgResult<serde_json::Value> {
+pub async fn list() -> MsgResult<serde_json::Value> {
     let run_dir = get_run_dir()?;
+    let run_name = get_run_name(&run_dir)?;
     let worker_name = get_worker_name()?;
-    let files = Files::new(&run_dir);
-    let state = SQLiteState::new(files.db_path())?;
+    let state = SQLiteState::new(&run_name).await?;
 
-    let threads = state.get_threads()?;
+    let threads = state.get_threads().await?;
 
     let mut thread_info = Vec::new();
     for thread_name in &threads {
-        let message_count = state.get_thread_message_count(thread_name)?;
-        let unread = state.get_unread_messages(thread_name, &worker_name)?;
+        let message_count = state.get_thread_message_count(thread_name).await?;
+        let unread = state.get_unread_messages(thread_name, &worker_name).await?;
 
         thread_info.push(json!({
             "name": thread_name,
@@ -300,13 +320,13 @@ pub fn list() -> MsgResult<serde_json::Value> {
 /// Check inbox for new messages since session started
 ///
 /// Returns unread messages from all threads without marking them as read.
-pub fn inbox() -> MsgResult<serde_json::Value> {
+pub async fn inbox() -> MsgResult<serde_json::Value> {
     let run_dir = get_run_dir()?;
+    let run_name = get_run_name(&run_dir)?;
     let worker_name = get_worker_name()?;
-    let files = Files::new(&run_dir);
-    let state = SQLiteState::new(files.db_path())?;
+    let state = SQLiteState::new(&run_name).await?;
 
-    let messages = state.get_all_unread_messages(&worker_name)?;
+    let messages = state.get_all_unread_messages(&worker_name).await?;
 
     let formatted: Vec<_> = messages
         .iter()
@@ -331,7 +351,8 @@ pub fn inbox() -> MsgResult<serde_json::Value> {
 
 /// Execute a worker message command and print JSON output
 pub fn execute_send(thread: &str, message: &str) {
-    match send(thread, message) {
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+    match rt.block_on(send(thread, message)) {
         Ok(result) => println!("{}", serde_json::to_string_pretty(&result).unwrap()),
         Err(e) => {
             let error = json!({
@@ -346,7 +367,8 @@ pub fn execute_send(thread: &str, message: &str) {
 
 /// Execute a worker message read command and print JSON output
 pub fn execute_read(thread: Option<&str>) {
-    match read(thread) {
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+    match rt.block_on(read(thread)) {
         Ok(result) => println!("{}", serde_json::to_string_pretty(&result).unwrap()),
         Err(e) => {
             let error = json!({
@@ -361,7 +383,8 @@ pub fn execute_read(thread: Option<&str>) {
 
 /// Execute a worker message list command and print JSON output
 pub fn execute_list() {
-    match list() {
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+    match rt.block_on(list()) {
         Ok(result) => println!("{}", serde_json::to_string_pretty(&result).unwrap()),
         Err(e) => {
             let error = json!({
@@ -376,7 +399,8 @@ pub fn execute_list() {
 
 /// Execute a worker inbox command and print JSON output
 pub fn execute_inbox() {
-    match inbox() {
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+    match rt.block_on(inbox()) {
         Ok(result) => println!("{}", serde_json::to_string_pretty(&result).unwrap()),
         Err(e) => {
             let error = json!({

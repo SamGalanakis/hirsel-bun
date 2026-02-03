@@ -73,16 +73,16 @@ pub struct MarkReadRequest {
 // =============================================================================
 
 /// List all thread names
-pub fn list_threads(state: &SQLiteState) -> StateResult<Vec<String>> {
-    state.get_threads()
+pub async fn list_threads(state: &SQLiteState) -> StateResult<Vec<String>> {
+    state.get_threads().await
 }
 
 /// List threads with message counts
-pub fn list_threads_with_counts(state: &SQLiteState) -> StateResult<Vec<ThreadSummary>> {
-    let threads = state.get_threads()?;
+pub async fn list_threads_with_counts(state: &SQLiteState) -> StateResult<Vec<ThreadSummary>> {
+    let threads = state.get_threads().await?;
     let mut result = Vec::with_capacity(threads.len());
     for thread in threads {
-        let count = state.get_thread_message_count(&thread)?;
+        let count = state.get_thread_message_count(&thread).await?;
         result.push(ThreadSummary {
             name: thread,
             message_count: count,
@@ -92,61 +92,65 @@ pub fn list_threads_with_counts(state: &SQLiteState) -> StateResult<Vec<ThreadSu
 }
 
 /// Create a new message
-pub fn create_message(
+pub async fn create_message(
     state: &SQLiteState,
     thread: &str,
     sender: &str,
     content: &str,
     waiting: bool,
 ) -> StateResult<i64> {
-    state.add_message(thread, sender, content, waiting)
+    state.add_message(thread, sender, content, waiting).await
 }
 
 /// Get messages from a thread
-pub fn get_messages(state: &SQLiteState, thread: &str, limit: i64) -> StateResult<Vec<Message>> {
-    state.get_messages(thread, limit)
+pub async fn get_messages(
+    state: &SQLiteState,
+    thread: &str,
+    limit: i64,
+) -> StateResult<Vec<Message>> {
+    state.get_messages(thread, limit).await
 }
 
 /// Get unread messages for a reader in a thread
-pub fn get_unread_messages(
+pub async fn get_unread_messages(
     state: &SQLiteState,
     thread: &str,
     reader: &str,
 ) -> StateResult<Vec<Message>> {
-    state.get_unread_messages(thread, reader)
+    state.get_unread_messages(thread, reader).await
 }
 
 /// Get all unread messages for a reader across all threads
-pub fn get_all_unread(state: &SQLiteState, reader: &str) -> StateResult<Vec<Message>> {
-    state.get_all_unread_messages(reader)
+pub async fn get_all_unread(state: &SQLiteState, reader: &str) -> StateResult<Vec<Message>> {
+    state.get_all_unread_messages(reader).await
 }
 
 /// Mark messages as read
-pub fn mark_messages_read(
+pub async fn mark_messages_read(
     state: &SQLiteState,
     thread: &str,
     reader: &str,
     up_to_id: Option<i64>,
 ) -> StateResult<()> {
-    state.mark_messages_read(thread, reader, up_to_id)
+    state.mark_messages_read(thread, reader, up_to_id).await
 }
 
 /// Get unread count for notifications
-pub fn get_unread_count(state: &SQLiteState) -> StateResult<i64> {
-    state.get_unread_count()
+pub async fn get_unread_count(state: &SQLiteState) -> StateResult<i64> {
+    state.get_unread_count().await
 }
 
 /// Clear unread count
-pub fn clear_unread(state: &SQLiteState) -> StateResult<()> {
-    state.clear_unread()
+pub async fn clear_unread(state: &SQLiteState) -> StateResult<()> {
+    state.clear_unread().await
 }
 
 /// Increment unread count
-pub fn increment_unread(state: &SQLiteState) -> StateResult<()> {
-    state.increment_unread()
+pub async fn increment_unread(state: &SQLiteState) -> StateResult<()> {
+    state.increment_unread().await
 }
 
 /// Get message count for a specific thread
-pub fn get_thread_message_count(state: &SQLiteState, thread: &str) -> StateResult<i64> {
-    state.get_thread_message_count(thread)
+pub async fn get_thread_message_count(state: &SQLiteState, thread: &str) -> StateResult<i64> {
+    state.get_thread_message_count(thread).await
 }

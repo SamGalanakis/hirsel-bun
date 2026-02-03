@@ -37,13 +37,27 @@ pub fn err_string<E: ToString>(e: E) -> String {
 }
 
 /// Helper to get SQLiteState for a run, with standard error handling
-pub fn get_run_state(run_name: &str) -> Result<crate::core::state::SQLiteState, String> {
+pub async fn get_run_state(run_name: &str) -> Result<crate::core::state::SQLiteState, String> {
     let db_path = crate::core::config::run_dir(run_name).join("hirsel.db");
     if !db_path.exists() {
         return Err(format!("Run '{}' not found", run_name));
     }
-    crate::core::state::SQLiteState::new(db_path)
+    crate::core::state::SQLiteState::new(run_name)
+        .await
         .map_err(|e| format!("Failed to open database: {}", e))
+}
+
+/// Helper to get the work directory for a run, with validation
+pub fn get_run_work_dir(run_name: &str) -> Result<std::path::PathBuf, String> {
+    let run_path = crate::core::hirsel_dir().join("runs").join(run_name);
+    if !run_path.exists() {
+        return Err(format!("Run not found: {}", run_name));
+    }
+    let work_dir = run_path.join("work");
+    if !work_dir.exists() {
+        return Err(format!("Run work directory not found: {}", run_name));
+    }
+    Ok(work_dir)
 }
 
 // Re-export the chat orchestrator manager for state management
@@ -132,6 +146,8 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         debug::get_version,
         debug::get_process_counts,
         debug::kill_orphaned_acp_processes,
+        debug::get_daemon_health,
+        debug::ensure_daemon_running,
         // Filesystem commands
         filesystem::pick_folder,
         filesystem::suggest_paths,

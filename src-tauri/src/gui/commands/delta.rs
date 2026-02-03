@@ -18,14 +18,14 @@ use crate::core::orchestrator::DaemonOrchestrator;
 #[tauri::command]
 pub async fn get_draft_tree(project_id: i64) -> Result<Vec<DraftNodeTree>, String> {
     let state = DeltaState::new(project_id);
-    state.get_draft_tree().map_err(|e| e.to_string())
+    state.get_draft_tree().await.map_err(|e| e.to_string())
 }
 
 /// Get the live tree for a project
 #[tauri::command]
 pub async fn get_live_tree(project_id: i64) -> Result<Vec<LiveNodeTree>, String> {
     let state = DeltaState::new(project_id);
-    state.get_live_tree().map_err(|e| e.to_string())
+    state.get_live_tree().await.map_err(|e| e.to_string())
 }
 
 /// Create a new draft node
@@ -35,7 +35,10 @@ pub async fn create_draft_node(
     request: CreateDraftNodeRequest,
 ) -> Result<crate::core::delta::DraftNode, String> {
     let state = DeltaState::new(project_id);
-    state.create_draft_node(&request).map_err(|e| e.to_string())
+    state
+        .create_draft_node(&request)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Update a draft node
@@ -48,6 +51,7 @@ pub async fn update_draft_node(
     let state = DeltaState::new(project_id);
     state
         .update_draft_node(&node_id, &request)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -55,7 +59,10 @@ pub async fn update_draft_node(
 #[tauri::command]
 pub async fn delete_draft_node(project_id: i64, node_id: String) -> Result<(), String> {
     let state = DeltaState::new(project_id);
-    state.delete_draft_node(&node_id).map_err(|e| e.to_string())
+    state
+        .delete_draft_node(&node_id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Move a draft node to a new parent/position
@@ -69,6 +76,7 @@ pub async fn move_draft_node(
     let state = DeltaState::new(project_id);
     state
         .move_draft_node(&node_id, new_parent_id.as_deref(), new_position)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -76,7 +84,7 @@ pub async fn move_draft_node(
 #[tauri::command]
 pub async fn reset_project_tree(project_id: i64) -> Result<(), String> {
     let state = DeltaState::new(project_id);
-    state.reset_tree().map_err(|e| e.to_string())
+    state.reset_tree().await.map_err(|e| e.to_string())
 }
 
 // =============================================================================
@@ -87,14 +95,14 @@ pub async fn reset_project_tree(project_id: i64) -> Result<(), String> {
 #[tauri::command]
 pub async fn compute_tree_diff(project_id: i64) -> Result<TreeDiff, String> {
     let service = DeltaDispatchService::new(project_id);
-    service.get_diff().map_err(|e| e.to_string())
+    service.get_diff().await.map_err(|e| e.to_string())
 }
 
 /// Get a human-readable diff summary
 #[tauri::command]
 pub async fn get_diff_summary(project_id: i64) -> Result<String, String> {
     let service = DeltaDispatchService::new(project_id);
-    service.get_diff_summary().map_err(|e| e.to_string())
+    service.get_diff_summary().await.map_err(|e| e.to_string())
 }
 
 // =============================================================================
@@ -123,7 +131,7 @@ pub struct DispatchResponse {
 pub async fn dispatch_deltas(project_id: i64) -> Result<DispatchResponse, String> {
     // 1. Dispatch creates global DB records (delta_submissions, live_nodes)
     let service = DeltaDispatchService::new(project_id);
-    let result = service.dispatch().map_err(|e| e.to_string())?;
+    let result = service.dispatch().await.map_err(|e| e.to_string())?;
 
     // 2. Use DeltaRunner to process pending submissions via orchestrator
     let runner = DeltaRunner::new(project_id);
@@ -149,7 +157,7 @@ pub async fn preview_delta_dispatch(
     project_id: i64,
 ) -> Result<DeltaDispatchPreviewResponse, String> {
     let service = DeltaDispatchService::new(project_id);
-    let preview = service.preview().map_err(|e| e.to_string())?;
+    let preview = service.preview().await.map_err(|e| e.to_string())?;
 
     Ok(DeltaDispatchPreviewResponse {
         diff: preview.diff,
@@ -175,7 +183,7 @@ pub struct DeltaDispatchPreviewResponse {
 #[tauri::command]
 pub async fn get_project_run(project_id: i64) -> Result<Option<ProjectRun>, String> {
     let service = DeltaDispatchService::new(project_id);
-    service.get_project_run().map_err(|e| e.to_string())
+    service.get_project_run().await.map_err(|e| e.to_string())
 }
 
 /// Complete a live node (mark as done/failed)
@@ -189,6 +197,7 @@ pub async fn complete_live_node(
     let service = DeltaDispatchService::new(project_id);
     service
         .complete_live_node(&node_id, success, commit_sha.as_deref())
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -196,7 +205,10 @@ pub async fn complete_live_node(
 #[tauri::command]
 pub async fn complete_revert(project_id: i64, node_id: String) -> Result<(), String> {
     let service = DeltaDispatchService::new(project_id);
-    service.complete_revert(&node_id).map_err(|e| e.to_string())
+    service
+        .complete_revert(&node_id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // =============================================================================
@@ -218,16 +230,17 @@ pub struct DualTreeResponse {
 pub async fn get_dual_trees(project_id: i64) -> Result<DualTreeResponse, String> {
     let service = DeltaDispatchService::new(project_id);
 
-    let draft = service.get_draft_tree().map_err(|e| e.to_string())?;
+    let draft = service.get_draft_tree().await.map_err(|e| e.to_string())?;
     // Return flat live nodes - frontend builds tree structure using draft hierarchy
     // (project nodes are UI-only and don't exist in live_nodes table)
     let live_nodes = service
         .state()
         .get_live_nodes()
+        .await
         .map_err(|e| e.to_string())?;
     let live: Vec<LiveNodeTree> = live_nodes.into_iter().map(|n| n.into()).collect();
-    let diff = service.get_diff().map_err(|e| e.to_string())?;
-    let project_run = service.get_project_run().map_err(|e| e.to_string())?;
+    let diff = service.get_diff().await.map_err(|e| e.to_string())?;
+    let project_run = service.get_project_run().await.map_err(|e| e.to_string())?;
 
     Ok(DualTreeResponse {
         draft,

@@ -60,7 +60,7 @@ pub struct SpawnWorkersResult {
 /// # Returns
 ///
 /// * `SpawnWorkersResult` - Details about spawned workers and any failures
-pub fn spawn_local_workers(
+pub async fn spawn_local_workers(
     config: &SpawnWorkersConfig,
     worker_dirs: &[(String, PathBuf)],
     state: &SQLiteState,
@@ -105,7 +105,7 @@ pub fn spawn_local_workers(
             assigned_task_id: None,
         };
 
-        match spawn_worker(spawn_config, state) {
+        match spawn_worker(spawn_config, state).await {
             Ok(spawn_result) => {
                 info!(
                     "Spawned worker {} (PID {})",

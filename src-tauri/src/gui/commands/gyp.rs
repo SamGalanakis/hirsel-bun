@@ -66,7 +66,7 @@ pub async fn start_gyp_session(
     orchestrator_manager: tauri::State<'_, Arc<ChatOrchestratorManager>>,
     request: StartGypSessionRequest,
 ) -> Result<StartGypSessionResponse, String> {
-    tracing::info!("[gyp] Starting session with request: {:?}", request);
+    tracing::info!("[gyp] Starting session: {:?}", request);
 
     // Build context based on request type
     let (builder, _board_export) = match &request {
@@ -81,8 +81,8 @@ pub async fn start_gyp_session(
         }
 
         StartGypSessionRequest::Board { project_id } => {
-            let store = ProjectStore::open().map_err(err_string)?;
-            let project = store.get_project(*project_id).map_err(err_string)?;
+            let store = ProjectStore::open().await.map_err(err_string)?;
+            let project = store.get_project(*project_id).await.map_err(err_string)?;
 
             // Export draft tree to board.json for agent access
             let mut exporter = DeltaExporter::new(*project_id);
@@ -101,8 +101,8 @@ pub async fn start_gyp_session(
             task_id,
             task_name,
         } => {
-            let store = ProjectStore::open().map_err(err_string)?;
-            let project = store.get_project(*project_id).map_err(err_string)?;
+            let store = ProjectStore::open().await.map_err(err_string)?;
+            let project = store.get_project(*project_id).await.map_err(err_string)?;
 
             // Export draft tree to board.json for agent access
             let mut exporter = DeltaExporter::new(*project_id);
@@ -237,8 +237,8 @@ pub async fn send_gyp_message(
             focus: None,
             ..
         } => {
-            let store = ProjectStore::open().map_err(err_string)?;
-            let project = store.get_project(*project_id).map_err(err_string)?;
+            let store = ProjectStore::open().await.map_err(err_string)?;
+            let project = store.get_project(*project_id).await.map_err(err_string)?;
             GypContextBuilder::for_board(*project_id, &project.starting_point)
         }
         GypScope::Board {
@@ -246,8 +246,8 @@ pub async fn send_gyp_message(
             focus: Some(f),
             ..
         } => {
-            let store = ProjectStore::open().map_err(err_string)?;
-            let project = store.get_project(*project_id).map_err(err_string)?;
+            let store = ProjectStore::open().await.map_err(err_string)?;
+            let project = store.get_project(*project_id).await.map_err(err_string)?;
             GypContextBuilder::for_board_focused(
                 *project_id,
                 &project.starting_point,
@@ -261,12 +261,12 @@ pub async fn send_gyp_message(
     let history_scope = builder.build().history_scope;
 
     // Save user message to history
-    if let Ok(store) = GypChatStore::open() {
+    if let Ok(store) = GypChatStore::open().await {
         let chunks_json = serde_json::json!([{"type": "text", "content": content}]).to_string();
         let _ = match (&history_scope.project_id, &history_scope.run_name) {
-            (Some(pid), None) => store.save_board_message(*pid, "user", &chunks_json),
-            (_, Some(run)) => store.save_message(Some(run), "user", &chunks_json),
-            _ => store.save_message(None, "user", &chunks_json),
+            (Some(pid), None) => store.save_board_message(*pid, "user", &chunks_json).await,
+            (_, Some(run)) => store.save_message(Some(run), "user", &chunks_json).await,
+            _ => store.save_message(None, "user", &chunks_json).await,
         };
     }
 
@@ -286,13 +286,14 @@ pub async fn get_gyp_history(
     scope: GypScope,
     limit: usize,
 ) -> Result<Vec<crate::core::GypChatMessage>, String> {
-    let store = GypChatStore::open().map_err(err_string)?;
+    tracing::debug!("[gyp] get_gyp_history scope={:?}", scope);
+    let store = GypChatStore::open().await.map_err(err_string)?;
 
     let messages = match &scope {
         // Note: get_messages doesn't support limit, returns all messages
-        GypScope::General => store.get_messages(None),
-        GypScope::Run { run_name, .. } => store.get_messages(Some(run_name)),
-        GypScope::Board { project_id, .. } => store.get_board_messages(*project_id, limit),
+        GypScope::General => store.get_messages(None).await,
+        GypScope::Run { run_name, .. } => store.get_messages(Some(run_name)).await,
+        GypScope::Board { project_id, .. } => store.get_board_messages(*project_id, limit).await,
     }
     .map_err(err_string)?;
 
@@ -308,12 +309,12 @@ pub async fn get_gyp_history(
 /// Clear Gyp chat history for a scope
 #[tauri::command]
 pub async fn clear_gyp_history(scope: GypScope) -> Result<(), String> {
-    let store = GypChatStore::open().map_err(err_string)?;
+    let store = GypChatStore::open().await.map_err(err_string)?;
 
     match scope {
-        GypScope::General => store.clear_messages(None),
-        GypScope::Run { run_name, .. } => store.clear_messages(Some(&run_name)),
-        GypScope::Board { project_id, .. } => store.clear_board_messages(project_id),
+        GypScope::General => store.clear_messages(None).await,
+        GypScope::Run { run_name, .. } => store.clear_messages(Some(&run_name)).await,
+        GypScope::Board { project_id, .. } => store.clear_board_messages(project_id).await,
     }
     .map_err(err_string)?;
 
@@ -329,14 +330,20 @@ pub async fn save_gyp_message(
     role: String,
     chunks_json: String,
 ) -> Result<i64, String> {
-    let store = GypChatStore::open().map_err(err_string)?;
+    let store = GypChatStore::open().await.map_err(err_string)?;
 
     match &scope {
         GypScope::Board { project_id, .. } => {
-            store.save_board_message(*project_id, &role, &chunks_json)
+            store
+                .save_board_message(*project_id, &role, &chunks_json)
+                .await
         }
-        GypScope::Run { run_name, .. } => store.save_message(Some(run_name), &role, &chunks_json),
-        GypScope::General => store.save_message(None, &role, &chunks_json),
+        GypScope::Run { run_name, .. } => {
+            store
+                .save_message(Some(run_name), &role, &chunks_json)
+                .await
+        }
+        GypScope::General => store.save_message(None, &role, &chunks_json).await,
     }
     .map_err(err_string)
 }

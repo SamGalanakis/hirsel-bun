@@ -65,6 +65,14 @@ impl Files {
         &self.run_dir
     }
 
+    /// Get the run name (extracted from the run directory path).
+    pub fn run_name(&self) -> Option<String> {
+        self.run_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|s| s.to_string())
+    }
+
     /// Path to spec.md - the run specification file.
     pub fn spec(&self) -> PathBuf {
         self.run_dir.join("spec.md")

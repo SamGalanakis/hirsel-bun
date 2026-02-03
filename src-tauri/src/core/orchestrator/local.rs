@@ -12,12 +12,12 @@ use super::{
     OrchestratorResult, SpawnWorkersResponse, StartRunRequest, TailscaleOAuth, WorkerStateHandle,
 };
 use crate::core::api_types::{
-    calculate_duration_minutes, convert_status, is_completed_status, parse_elapsed_minutes,
-    ConfigResponse, Eval, EvalStatus, HistoryEntry, Message, RunDetail, RunSummary, SheepConfig,
-    ThreadSummary, Worker, WorkerEventResponse, WorkerEventsResponse, WorkerLocation, WorkerStatus,
+    convert_status, parse_elapsed_minutes, ConfigResponse, Eval, EvalStatus, HistoryEntry, Message,
+    RunDetail, RunSummary, SheepConfig, ThreadSummary, Worker, WorkerEventResponse,
+    WorkerEventsResponse, WorkerLocation, WorkerStatus,
 };
 use crate::core::config::{self, Config};
-use crate::core::delta::{DeltaState, LiveNodeStatus, NodeType};
+use crate::core::delta::{DeltaState, LiveNodeStatus, ProjectRunStatus};
 use crate::core::draft::create_workspace_provider;
 use crate::core::names::{get_available_names, slugify};
 use crate::core::ops::{
@@ -27,81 +27,6 @@ use crate::core::project::ProjectStore;
 use crate::core::runner::{create_runner, Runner, WorkerSpawnConfig as RunnerSpawnConfig};
 use crate::core::state::{SQLiteState, Status, WorkerUpdate};
 use crate::core::Files;
-
-/// Generate the content for the scope task.
-///
-/// This is written to `tasks/scope.md` and includes all leader responsibilities
-/// and task planning guidance. Only the worker who gets the scope task sees this.
-fn generate_scope_task_content(is_multi_worker: bool) -> String {
-    let mut content = String::new();
-
-    content.push_str("# Scope Task\n\n");
-    content.push_str("You are the **leader** for this run. Your job is to review the task tree, understand the work, and unblock other tasks.\n\n");
-
-    // Main approaches
-    content.push_str("## Your Approach\n\n");
-    content.push_str("Review the task tree with `get_task_tree()` and decide:\n\n");
-
-    content.push_str("**1. Explore first** - If unfamiliar with codebase:\n");
-    content.push_str("   - Create exploration tasks to understand the code\n");
-    content.push_str("   - Use `scribe()` to record findings\n");
-    content.push_str("   - Create implementation tasks after exploration\n\n");
-
-    content.push_str("**2. Plan more** - If tasks need breakdown:\n");
-    content.push_str("   - Create subtasks for large tasks\n");
-    content.push_str("   - Add blocking relationships where needed\n\n");
-
-    content.push_str("**3. Start directly** - If tasks are well-defined:\n");
-    content.push_str("   - Complete this scope task to unblock other tasks\n");
-    content.push_str("   - Begin working on available tasks\n\n");
-
-    content.push_str("When you complete this task, blocked tasks become available for you (and teammates if multi-worker).\n\n");
-
-    // Task design principles
-    content.push_str("## Task Design Principles\n\n");
-    content.push_str("**Parallel execution:**\n");
-    content.push_str("- Minimize dependencies between tasks\n");
-    content.push_str("- Prefer vertical slices (complete features) over horizontal layers\n");
-    content.push_str("- Tasks touching same files = conflicts. Structure to minimize overlap.\n\n");
-    content.push_str("**Task ordering:**\n");
-    content.push_str("- Tackle unknowns (spikes) before mechanical work\n");
-    content.push_str("- A failed spike might restructure the whole plan\n\n");
-    content.push_str("**Dependencies (blocked_by):**\n");
-    content.push_str("When in doubt, add the dependency. Better slow than broken:\n");
-    content.push_str("- Task reads files another writes? → Add dependency\n");
-    content.push_str("- Task calls functions another creates? → Add dependency\n");
-    content.push_str("- Task tests code another implements? → Add dependency\n\n");
-
-    // Multi-worker coordination
-    if is_multi_worker {
-        content.push_str("## Team Leadership\n\n");
-        content
-            .push_str("You are leading a team. Check `list_contacts()` to see your teammates.\n\n");
-
-        content.push_str("**Your responsibilities:**\n");
-        content.push_str("- Design tasks to minimize conflicts (different files per task)\n");
-        content.push_str("- Use `group` thread to coordinate with teammates\n");
-        content.push_str("- Announce major decisions in group chat\n");
-        content.push_str("- When creating tasks, consider which can be parallelized\n\n");
-
-        content.push_str("**Group Chat:**\n");
-        content.push_str("Use `chat_send(\"group\", ...)` to coordinate:\n");
-        content.push_str("- When tasks are ready for claiming\n");
-        content.push_str("- When changing shared code (utils, models, configs)\n");
-        content.push_str("- When discovering patterns others should follow\n\n");
-    }
-
-    // Completion
-    content.push_str("## Completing This Task\n\n");
-    content.push_str("When you've:\n");
-    content.push_str("1. Reviewed the existing task tree\n");
-    content.push_str("2. Created any needed exploration/planning tasks\n");
-    content.push_str("3. Set up proper blocking relationships\n\n");
-    content
-        .push_str("Call `work_done()` to complete the scope task and unblock dependent tasks.\n");
-
-    content
-}
 
 /// Get the coordinator's Tailscale hostname if connected to a tailnet.
 ///
@@ -137,19 +62,37 @@ impl LocalOrchestrator {
     }
 
     /// Get state for a run, opening the SQLite database
-    fn get_state(&self, run_name: &str) -> OrchestratorResult<SQLiteState> {
+    async fn get_state(&self, run_name: &str) -> OrchestratorResult<SQLiteState> {
         let db_path = self.config.runs_dir().join(run_name).join("hirsel.db");
         if !db_path.exists() {
             return Err(OrchestratorError::RunNotFound(run_name.to_string()));
         }
-        SQLiteState::new(db_path).map_err(|e| OrchestratorError::State(e.to_string()))
+        SQLiteState::new(run_name)
+            .await
+            .map_err(|e| OrchestratorError::State(e.to_string()))
+    }
+
+    /// Build a map from worker name to their currently claimed task name.
+    /// This pre-indexes live_nodes to avoid O(n) lookups per worker.
+    fn build_claimed_task_map(
+        live_nodes: &[crate::core::delta::LiveNode],
+    ) -> HashMap<String, String> {
+        live_nodes
+            .iter()
+            .filter(|n| n.status == LiveNodeStatus::Working)
+            .filter_map(|n| {
+                n.claimed_by
+                    .as_ref()
+                    .map(|worker| (worker.clone(), n.name.clone()))
+            })
+            .collect()
     }
 
     /// Convert core worker to GUI worker type
     fn convert_worker(
         &self,
         w: &crate::core::state::Worker,
-        live_nodes: &[crate::core::delta::LiveNode],
+        claimed_task_map: &HashMap<String, String>,
     ) -> Worker {
         use crate::core::metrics;
 
@@ -165,13 +108,8 @@ impl LocalOrchestrator {
             _ => WorkerLocation::Local,
         };
 
-        // Find current task for this worker from live nodes
-        let current_task = live_nodes
-            .iter()
-            .find(|n| {
-                n.claimed_by.as_deref() == Some(&w.name) && n.status == LiveNodeStatus::Working
-            })
-            .map(|n| n.name.clone());
+        // Get current task from pre-built map (O(1) instead of O(n))
+        let current_task = claimed_task_map.get(&w.name).cloned();
 
         let is_leader = w.id == 1;
 
@@ -232,99 +170,117 @@ impl Orchestrator for LocalOrchestrator {
     // -------------------------------------------------------------------------
 
     async fn list_runs(&self) -> OrchestratorResult<Vec<RunSummary>> {
-        let run_names = config::list_runs().map_err(|e| OrchestratorError::Other(e.to_string()))?;
+        // Use project_runs table as source of truth (one run per project)
+        let project_runs = DeltaState::list_all_project_runs()
+            .await
+            .map_err(|e| OrchestratorError::Other(format!("Failed to list project runs: {}", e)))?;
+
+        let runs_dir = self.config.runs_dir();
         let mut runs = Vec::new();
 
-        for name in run_names {
-            let db_path = self.config.runs_dir().join(&name).join("hirsel.db");
-            if !db_path.exists() {
-                continue;
-            }
+        for (project_run, project_name) in project_runs {
+            let run_name = &project_run.run_name;
+            let project_id = project_run.project_id;
 
-            let state = match SQLiteState::new(db_path) {
-                Ok(s) => s,
-                Err(_) => continue,
+            // Convert project run status to API status
+            let status = match project_run.status {
+                ProjectRunStatus::Working => crate::core::api_types::RunStatus::Working,
+                ProjectRunStatus::Paused => crate::core::api_types::RunStatus::Paused,
+                ProjectRunStatus::Failed => crate::core::api_types::RunStatus::Failed,
             };
 
-            let summary = match state.get_run_summary() {
-                Ok(s) => s,
-                Err(_) => continue,
+            // Get task counts from live_nodes
+            let delta_state = DeltaState::new(project_id);
+            let (tasks_done, tasks_total) = if let Ok(nodes) = delta_state.get_live_nodes().await {
+                let done = nodes.iter().filter(|n| n.status.is_complete()).count() as u32;
+                (done, nodes.len() as u32)
+            } else {
+                (0, 0)
             };
 
-            let run_status = convert_status(summary.status);
-
-            // For completed runs, recalculate elapsed as duration
-            let elapsed_minutes = if is_completed_status(&run_status) {
-                let start = summary
-                    .started_at
-                    .as_deref()
-                    .or(summary.created_at.as_deref());
-                if let (Some(start), Some(end)) = (start, summary.updated_at.as_deref()) {
-                    calculate_duration_minutes(start, end)
+            // Get worker counts and other data from per-run DB if available
+            let db_path = runs_dir.join(run_name).join("hirsel.db");
+            let (
+                workers_active,
+                workers_total,
+                elapsed_minutes,
+                time_limit_minutes,
+                has_unread_messages,
+            ) = if db_path.exists() {
+                if let Ok(state) = SQLiteState::new(run_name).await {
+                    if let Ok(summary) = state.get_run_summary().await {
+                        (
+                            summary.workers_active,
+                            summary.workers_total,
+                            summary.elapsed_minutes,
+                            summary.time_limit_minutes.map(|m| m as u32),
+                            summary.unread_count > 0,
+                        )
+                    } else {
+                        (0, 0, 0.0, None, false)
+                    }
                 } else {
-                    summary.elapsed_minutes
+                    (0, 0, 0.0, None, false)
                 }
             } else {
-                summary.elapsed_minutes
+                (0, 0, 0.0, None, false)
             };
 
-            let created_at = summary
-                .created_at
-                .unwrap_or_else(|| Utc::now().to_rfc3339());
-
             runs.push(RunSummary {
-                name,
-                status: run_status,
-                tasks_done: summary.tasks_done,
-                tasks_total: summary.tasks_total,
-                workers_active: summary.workers_active,
-                workers_total: summary.workers_total,
+                name: run_name.clone(),
+                status,
+                tasks_done,
+                tasks_total,
+                workers_active,
+                workers_total,
                 elapsed_minutes,
-                time_limit_minutes: summary.time_limit_minutes.map(|m| m as u32),
-                has_unread_messages: summary.unread_count > 0,
-                created_at,
-                project_id: state.get_project_id().ok().flatten(),
-                project_name: state.get_project_name().ok().flatten(),
+                time_limit_minutes,
+                has_unread_messages,
+                created_at: project_run.created_at,
+                project_id: Some(project_id),
+                project_name: Some(project_name),
             });
         }
-
-        // Sort by created_at descending (newest first)
-        runs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
         Ok(runs)
     }
 
     async fn get_run(&self, name: &str) -> OrchestratorResult<RunDetail> {
-        let state = self.get_state(name)?;
+        let state = self.get_state(name).await?;
 
-        let status = state.status().unwrap_or(crate::core::state::Status::Draft);
+        let status = state
+            .status()
+            .await
+            .unwrap_or(crate::core::state::Status::Draft);
         let run_status = convert_status(status);
 
-        let request = state.get_request().ok().flatten();
-        let project_path = state.get_project_path().ok().flatten();
-        let worker_scale = state.get_worker_scale().ok().flatten();
+        let request = state.get_request().await.ok().flatten();
+        let project_path = state.get_project_path().await.ok().flatten();
+        let worker_scale = state.get_worker_scale().await.ok().flatten();
         let time_limit_minutes = state
             .get_time_limit_minutes()
+            .await
             .ok()
             .flatten()
             .map(|m| m as u32);
-        let started_at = state.get_started_at().ok().flatten();
-        let summary = state.get_summary().ok().flatten();
+        let started_at = state.get_started_at().await.ok().flatten();
+        let summary = state.get_summary().await.ok().flatten();
         let created_at = state
             .get_created_at()
+            .await
             .ok()
             .flatten()
             .unwrap_or_else(|| Utc::now().to_rfc3339());
-        let iteration_count = state.get_iteration_count().unwrap_or(0) as u32;
-        let human_in_the_loop = state.get_human_in_the_loop().unwrap_or(true);
-        let waiting_reason = state.get_waiting_reason().ok().flatten();
-        let unread_count = state.get_unread_count().unwrap_or(0) as u32;
+        let iteration_count = state.get_iteration_count().await.unwrap_or(0) as u32;
+        let human_in_the_loop = state.get_human_in_the_loop().await.unwrap_or(true);
+        let waiting_reason = state.get_waiting_reason().await.ok().flatten();
+        let unread_count = state.get_unread_count().await.unwrap_or(0) as u32;
 
         // Get task counts from live nodes (project runs)
         let (tasks_done, tasks_total) =
-            if let Some(project_id) = state.get_project_id().ok().flatten() {
+            if let Some(project_id) = state.get_project_id().await.ok().flatten() {
                 let delta_state = DeltaState::new(project_id);
-                if let Ok(nodes) = delta_state.get_live_nodes() {
+                if let Ok(nodes) = delta_state.get_live_nodes().await {
                     let done = nodes.iter().filter(|n| n.status.is_complete()).count() as u32;
                     (done, nodes.len() as u32)
                 } else {
@@ -334,7 +290,17 @@ impl Orchestrator for LocalOrchestrator {
                 (0, 0)
             };
 
-        let workers = state.get_workers().unwrap_or_default();
+        let workers = match state.get_workers().await {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::debug!(
+                    "[Orchestrator] Failed to get workers for run '{}': {} - using empty list",
+                    name,
+                    e
+                );
+                Vec::new()
+            }
+        };
         let workers_active = workers
             .iter()
             .filter(|w| w.status == crate::core::state::WorkerStatus::Working)
@@ -346,7 +312,7 @@ impl Orchestrator for LocalOrchestrator {
             .unwrap_or(workers.len() as u32);
 
         // Calculate elapsed minutes
-        let elapsed_minutes = if let Ok(Some(time_info)) = state.get_time_info() {
+        let elapsed_minutes = if let Ok(Some(time_info)) = state.get_time_info().await {
             time_info.elapsed_minutes
         } else if let Some(ref sa) = started_at {
             parse_elapsed_minutes(sa)
@@ -354,15 +320,15 @@ impl Orchestrator for LocalOrchestrator {
             parse_elapsed_minutes(&created_at)
         };
 
-        let remote_url = state.get_remote_url().ok().flatten();
-        let branch = state.get_branch().ok().flatten();
+        let remote_url = state.get_remote_url().await.ok().flatten();
+        let branch = state.get_branch().await.ok().flatten();
 
         let agent_type = self.config.agent.agent_type();
         let metrics_available = agent_type.supports_context_tracking();
 
         // Get runner configuration
-        let runner = state.get_default_runner().ok().flatten();
-        let worker_runners = state.get_worker_runners().ok().flatten();
+        let runner = state.get_default_runner().await.ok().flatten();
+        let worker_runners = state.get_worker_runners().await.ok().flatten();
 
         Ok(RunDetail {
             name: name.to_string(),
@@ -390,8 +356,8 @@ impl Orchestrator for LocalOrchestrator {
             metrics_available,
             runner,
             worker_runners,
-            project_id: state.get_project_id().ok().flatten(),
-            project_name: state.get_project_name().ok().flatten(),
+            project_id: state.get_project_id().await.ok().flatten(),
+            project_name: state.get_project_name().await.ok().flatten(),
         })
     }
 
@@ -414,10 +380,12 @@ impl Orchestrator for LocalOrchestrator {
 
         // Create lifecycle manager and delegate
         let lifecycle = LocalLifecycleManager::new(name, run_dir, agent_command)
+            .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))?;
 
         lifecycle
             .pause_run("User requested pause")
+            .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))?;
 
         Ok(())
@@ -436,10 +404,12 @@ impl Orchestrator for LocalOrchestrator {
 
         // Create lifecycle manager and delegate
         let lifecycle = LocalLifecycleManager::new(name, run_dir.clone(), agent_command)
+            .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))?;
 
         let actions = lifecycle
             .resume_run()
+            .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))?;
 
         // Process the returned actions to actually resume workers
@@ -501,18 +471,21 @@ impl Orchestrator for LocalOrchestrator {
         use crate::core::git;
 
         let run_dir = config::run_dir(name);
-        let state = self.get_state(name)?;
+        let state = self.get_state(name).await?;
+
+        // Validate run is in a deliverable state
+        let status = state.status().await?;
+        if !matches!(status, Status::Done | Status::Delivered) {
+            return Err(OrchestratorError::InvalidOperation(format!(
+                "Cannot deliver run in '{}' state. Run must be 'Done' first.",
+                status
+            )));
+        }
 
         // Get project path and remote URL
-        let project_path_str = state
-            .get_project_path()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-        let remote_url = state
-            .get_remote_url()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-        let saved_branch = state
-            .get_branch()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let project_path_str = state.get_project_path().await?;
+        let remote_url = state.get_remote_url().await?;
+        let saved_branch = state.get_branch().await?;
 
         let project_path = project_path_str
             .as_ref()
@@ -547,14 +520,12 @@ impl Orchestrator for LocalOrchestrator {
         // Deliver docs (restore or persist based on settings)
         let docs_path = state
             .get_docs_path()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?
+            .await?
             .unwrap_or_else(|| "docs".to_string());
-        let persist_docs = state
-            .get_persist_docs_changes()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let persist_docs = state.get_persist_docs_changes().await?;
 
         let docs_config = crate::core::ops::DocsDeliveryConfig {
-            workspace_dir: &work_dir,
+            workspace_dir: &project_path,
             run_dir: &run_dir,
             docs_path: &docs_path,
             persist: persist_docs,
@@ -605,7 +576,7 @@ impl Orchestrator for LocalOrchestrator {
         // Update run status to delivered
         state
             .set_status(crate::core::state::Status::Delivered)
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+            .await?;
 
         Ok(branch)
     }
@@ -615,24 +586,25 @@ impl Orchestrator for LocalOrchestrator {
     // -------------------------------------------------------------------------
 
     async fn list_workers(&self, run: &str) -> OrchestratorResult<Vec<Worker>> {
-        let state = self.get_state(run)?;
+        let state = self.get_state(run).await?;
 
-        let core_workers = state
-            .get_workers()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let core_workers = state.get_workers().await?;
 
-        // Get live nodes from project if available
-        let live_nodes = if let Some(project_id) = state.get_project_id().ok().flatten() {
-            DeltaState::new(project_id)
+        // Get live nodes from project and build claimed task map
+        let claimed_task_map = if let Some(project_id) = state.get_project_id().await.ok().flatten()
+        {
+            let live_nodes = DeltaState::new(project_id)
                 .get_live_nodes()
-                .unwrap_or_default()
+                .await
+                .unwrap_or_default();
+            Self::build_claimed_task_map(&live_nodes)
         } else {
-            vec![]
+            HashMap::new()
         };
 
         let workers = core_workers
             .iter()
-            .map(|w| self.convert_worker(w, &live_nodes))
+            .map(|w| self.convert_worker(w, &claimed_task_map))
             .collect();
 
         Ok(workers)
@@ -644,12 +616,10 @@ impl Orchestrator for LocalOrchestrator {
         use crate::core::workers::{is_pid_alive, spawn_worker, WorkerSpawnConfig};
 
         let run_dir = config::run_dir(run);
-        let state = self.get_state(run)?;
+        let state = self.get_state(run).await?;
 
         // Find the worker by name
-        let workers = state
-            .get_workers()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let workers = state.get_workers().await?;
 
         let worker_data = workers
             .iter()
@@ -677,7 +647,7 @@ impl Orchestrator for LocalOrchestrator {
                     ..Default::default()
                 },
             )
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+            .await?;
 
         // Get work directory
         let work_dir = worker_data
@@ -718,7 +688,9 @@ impl Orchestrator for LocalOrchestrator {
             assigned_task_id: worker_data.assigned_task_id.clone(),
         };
 
-        spawn_worker(config, &state).map_err(|e| OrchestratorError::Other(e.to_string()))?;
+        spawn_worker(config, &state)
+            .await
+            .map_err(|e| OrchestratorError::Other(e.to_string()))?;
 
         Ok(())
     }
@@ -730,18 +702,17 @@ impl Orchestrator for LocalOrchestrator {
         after_id: Option<i64>,
         limit: Option<i64>,
     ) -> OrchestratorResult<WorkerEventsResponse> {
-        let state = self.get_state(run)?;
+        let state = self.get_state(run).await?;
 
         let limit = limit.unwrap_or(1000);
-        let events = state
-            .get_worker_events(worker, after_id, limit)
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let events = state.get_worker_events(worker, after_id, limit).await?;
 
         let last_id = events.last().map(|e| e.id);
 
         // Get worker status to determine if still streaming
         let worker_status = state
             .get_worker(worker)
+            .await
             .ok()
             .flatten()
             .map(|w| w.status.as_str().to_string());
@@ -775,16 +746,14 @@ impl Orchestrator for LocalOrchestrator {
     // -------------------------------------------------------------------------
 
     async fn list_threads(&self, run: &str) -> OrchestratorResult<Vec<ThreadSummary>> {
-        let state = self.get_state(run)?;
+        let state = self.get_state(run).await?;
 
-        let thread_names = state
-            .get_threads()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let thread_names = state.get_threads().await?;
 
         let mut threads = Vec::new();
         for name in thread_names {
-            let message_count = state.get_thread_message_count(&name).unwrap_or(0) as u32;
-            let messages = state.get_messages(&name, 1).unwrap_or_default();
+            let message_count = state.get_thread_message_count(&name).await.unwrap_or(0) as u32;
+            let messages = state.get_messages(&name, 1).await.unwrap_or_default();
             let last_message = messages.first().map(|m| m.content.clone());
             let last_timestamp = messages.first().map(|m| m.timestamp.clone());
 
@@ -801,11 +770,9 @@ impl Orchestrator for LocalOrchestrator {
     }
 
     async fn get_messages(&self, run: &str, thread: &str) -> OrchestratorResult<Vec<Message>> {
-        let state = self.get_state(run)?;
+        let state = self.get_state(run).await?;
 
-        let core_messages = state
-            .get_messages(thread, 100)
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let core_messages = state.get_messages(thread, 100).await?;
 
         let messages = core_messages
             .into_iter()
@@ -829,11 +796,9 @@ impl Orchestrator for LocalOrchestrator {
         thread: &str,
         content: &str,
     ) -> OrchestratorResult<Message> {
-        let state = self.get_state(run)?;
+        let state = self.get_state(run).await?;
 
-        let message_id = state
-            .add_message(thread, "user", content, false)
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let message_id = state.add_message(thread, "user", content, false).await?;
 
         Ok(Message {
             id: message_id as u32,
@@ -851,11 +816,9 @@ impl Orchestrator for LocalOrchestrator {
     // -------------------------------------------------------------------------
 
     async fn list_evals(&self, run: &str) -> OrchestratorResult<Vec<Eval>> {
-        let state = self.get_state(run)?;
+        let state = self.get_state(run).await?;
 
-        let core_evals = state
-            .get_evals(100)
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let core_evals = state.get_evals(100).await?;
 
         let evals = core_evals.iter().map(|e| self.convert_eval(e)).collect();
 
@@ -871,12 +834,10 @@ impl Orchestrator for LocalOrchestrator {
         run: &str,
         limit: Option<u32>,
     ) -> OrchestratorResult<Vec<HistoryEntry>> {
-        let state = self.get_state(run)?;
+        let state = self.get_state(run).await?;
 
         let limit = limit.unwrap_or(100) as i64;
-        let core_history = state
-            .get_history(limit)
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let core_history = state.get_history(limit).await?;
 
         let history = core_history
             .into_iter()
@@ -929,8 +890,8 @@ impl Orchestrator for LocalOrchestrator {
 
                 // Check which providers have tokens configured
                 let mut configured = Vec::new();
-                if let Ok(store) = CredentialStore::open() {
-                    if store.load("git_github_token").is_ok() {
+                if let Ok(store) = CredentialStore::open().await {
+                    if store.load("git_github_token").await.is_ok() {
                         configured.push(GitProviderResponse::Github);
                     }
                 }
@@ -975,8 +936,8 @@ impl Orchestrator for LocalOrchestrator {
         if run_dir.exists() {
             let db_path = run_dir.join("hirsel.db");
             if db_path.exists() {
-                if let Ok(existing_state) = SQLiteState::new(db_path) {
-                    if let Ok(status) = existing_state.status() {
+                if let Ok(existing_state) = SQLiteState::new(&run_name).await {
+                    if let Ok(status) = existing_state.status().await {
                         if status == Status::Working || status == Status::Eval {
                             return Err(OrchestratorError::InvalidOperation(format!(
                                 "Run '{}' already exists and is active",
@@ -1011,22 +972,8 @@ impl Orchestrator for LocalOrchestrator {
                 .map_err(|e| OrchestratorError::Other(format!("Failed to write eval: {}", e)))?;
         }
 
-        // Initialize bootstrap tasks.md
-        std::fs::write(
-            run_dir.join("tasks.md"),
-            "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n| scope | TODO | | Scope |\n",
-        ).map_err(|e| OrchestratorError::Other(format!("Failed to write tasks.md: {}", e)))?;
-
-        // Create tasks detail folder
-        let tasks_dir = run_dir.join("tasks");
-        std::fs::create_dir_all(&tasks_dir)
-            .map_err(|e| OrchestratorError::Other(format!("Failed to create tasks dir: {}", e)))?;
-
-        // Write scope task content (leader guidance)
-        let is_multi_worker = request.worker_scale.map(|n| n > 1).unwrap_or(false);
-        let scope_content = generate_scope_task_content(is_multi_worker);
-        std::fs::write(tasks_dir.join("scope.md"), scope_content)
-            .map_err(|e| OrchestratorError::Other(format!("Failed to write scope.md: {}", e)))?;
+        // Note: Task content is now stored in live nodes and accessed via MCP tools.
+        // No task files are written to disk.
 
         // Initialize workspace from starting_point if provided
         let project_path = if let Some(ref starting_point) = request.starting_point {
@@ -1044,11 +991,12 @@ impl Orchestrator for LocalOrchestrator {
         };
 
         // Initialize SQLite state
-        let db_path = run_dir.join("hirsel.db");
-        let sqlite_state = SQLiteState::new(db_path)
+        let sqlite_state = SQLiteState::new(&run_name)
+            .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to create state: {}", e)))?;
         sqlite_state
             .init_state(project_path.as_ref().and_then(|p| p.to_str()))
+            .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to init state: {}", e)))?;
 
         // Store starting_point in database for cloning
@@ -1058,6 +1006,7 @@ impl Orchestrator for LocalOrchestrator {
             })?;
             sqlite_state
                 .set_starting_point(Some(&sp_json))
+                .await
                 .map_err(|e| {
                     OrchestratorError::Other(format!("Failed to set starting_point: {}", e))
                 })?;
@@ -1066,11 +1015,13 @@ impl Orchestrator for LocalOrchestrator {
         // Set run properties
         sqlite_state
             .set_request(Some(&request.spec))
+            .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to set request: {}", e)))?;
 
         if let Some(scale) = request.worker_scale {
             sqlite_state
                 .set_worker_scale(&scale.to_string())
+                .await
                 .map_err(|e| {
                     OrchestratorError::Other(format!("Failed to set worker scale: {}", e))
                 })?;
@@ -1079,6 +1030,7 @@ impl Orchestrator for LocalOrchestrator {
         if let Some(limit) = request.time_limit_minutes {
             sqlite_state
                 .set_time_limit_minutes(Some(limit as i64))
+                .await
                 .map_err(|e| {
                     OrchestratorError::Other(format!("Failed to set time limit: {}", e))
                 })?;
@@ -1087,12 +1039,14 @@ impl Orchestrator for LocalOrchestrator {
         if let Some(hitl) = request.human_in_the_loop {
             sqlite_state
                 .set_human_in_the_loop(hitl)
+                .await
                 .map_err(|e| OrchestratorError::Other(format!("Failed to set HITL: {}", e)))?;
         }
 
         // Set status to Draft (not spawning workers yet)
         sqlite_state
             .set_status(Status::Draft)
+            .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to set status: {}", e)))?;
 
         // Create initial worker name
@@ -1125,6 +1079,7 @@ impl Orchestrator for LocalOrchestrator {
         // Register initial worker (without work_dir - will be set after files upload)
         sqlite_state
             .add_worker(&first_worker_name, "", "remote")
+            .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to register worker: {}", e)))?;
 
         // Store tailscale OAuth credentials if provided
@@ -1192,14 +1147,12 @@ impl Orchestrator for LocalOrchestrator {
         }
 
         // Open state to check status and update starting_point
-        let db_path = run_dir.join("hirsel.db");
-        let state = SQLiteState::new(db_path)
+        let state = SQLiteState::new(run_name)
+            .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to open state: {}", e)))?;
 
         // Check that no workers are active
-        let workers = state
-            .get_workers()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let workers = state.get_workers().await?;
         let has_active = workers.iter().any(|w| !w.status.is_inactive());
         if has_active {
             return Err(OrchestratorError::InvalidOperation(
@@ -1220,19 +1173,24 @@ impl Orchestrator for LocalOrchestrator {
         let sp_json = serde_json::to_string(&request.starting_point).map_err(|e| {
             OrchestratorError::Other(format!("Failed to serialize starting_point: {}", e))
         })?;
-        state.set_starting_point(Some(&sp_json)).map_err(|e| {
-            OrchestratorError::Other(format!("Failed to set starting_point: {}", e))
-        })?;
+        state
+            .set_starting_point(Some(&sp_json))
+            .await
+            .map_err(|e| {
+                OrchestratorError::Other(format!("Failed to set starting_point: {}", e))
+            })?;
 
         // Update project path
         state
             .set_project_path(workspace_info.path.to_str().unwrap_or("."))
+            .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to set project path: {}", e)))?;
 
         // Update branch if available
         if let Some(ref branch) = workspace_info.default_branch {
             state
                 .set_branch(Some(branch))
+                .await
                 .map_err(|e| OrchestratorError::Other(format!("Failed to set branch: {}", e)))?;
         }
 
@@ -1274,14 +1232,12 @@ impl Orchestrator for LocalOrchestrator {
         }
 
         // Open state
-        let db_path = run_dir.join("hirsel.db");
-        let sqlite_state = SQLiteState::new(db_path)
+        let sqlite_state = SQLiteState::new(run_name)
+            .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to open state: {}", e)))?;
 
         // Check run status
-        let status = sqlite_state
-            .status()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let status = sqlite_state.status().await?;
 
         if status != Status::Draft && status != Status::Paused {
             return Err(OrchestratorError::InvalidOperation(format!(
@@ -1291,9 +1247,7 @@ impl Orchestrator for LocalOrchestrator {
         }
 
         // Get existing workers
-        let existing_workers = sqlite_state
-            .get_workers()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let existing_workers = sqlite_state.get_workers().await?;
 
         let existing_names: Vec<String> = existing_workers.iter().map(|w| w.name.clone()).collect();
         let is_multi_worker = existing_workers.len() + count as usize > 1;
@@ -1368,9 +1322,9 @@ impl Orchestrator for LocalOrchestrator {
             // Claim task and set assigned_task_id if provided
             if let Some(ref task_id) = task_for_worker {
                 // Use live nodes for project runs
-                if let Some(project_id) = sqlite_state.get_project_id().ok().flatten() {
+                if let Some(project_id) = sqlite_state.get_project_id().await.ok().flatten() {
                     let delta_state = DeltaState::new(project_id);
-                    if let Err(e) = delta_state.claim_live_node(task_id, worker_name) {
+                    if let Err(e) = delta_state.claim_live_node(task_id, worker_name).await {
                         tracing::warn!(
                             "Failed to claim live node {} for worker {}: {}",
                             task_id,
@@ -1379,13 +1333,16 @@ impl Orchestrator for LocalOrchestrator {
                         );
                     }
                 }
-                if let Err(e) = sqlite_state.update_worker(
-                    worker_name,
-                    WorkerUpdate {
-                        assigned_task_id: Some(Some(task_id.clone())),
-                        ..Default::default()
-                    },
-                ) {
+                if let Err(e) = sqlite_state
+                    .update_worker(
+                        worker_name,
+                        WorkerUpdate {
+                            assigned_task_id: Some(Some(task_id.clone())),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                {
                     tracing::warn!(
                         "Failed to set assigned_task_id for worker {}: {}",
                         worker_name,
@@ -1399,6 +1356,7 @@ impl Orchestrator for LocalOrchestrator {
             // Register worker
             sqlite_state
                 .add_worker(worker_name, work_dir.to_str().unwrap_or("."), "remote")
+                .await
                 .map_err(|e| {
                     OrchestratorError::Other(format!("Failed to register worker: {}", e))
                 })?;
@@ -1419,6 +1377,7 @@ impl Orchestrator for LocalOrchestrator {
             // Get runner config for this worker (from stored configs)
             let runner_config = sqlite_state
                 .get_runner_config_for_worker(worker_name)
+                .await
                 .unwrap_or_default();
 
             // Check if local workers are allowed
@@ -1482,16 +1441,18 @@ impl Orchestrator for LocalOrchestrator {
                 Ok(result) => {
                     // Update worker with PID and runner info
                     let pid = result.pid.map(|p| p as i64);
-                    let _ = sqlite_state.update_worker(
-                        worker_name,
-                        WorkerUpdate {
-                            pid,
-                            runner_id: Some(result.handle.runner_id.clone()),
-                            runner_type: Some(result.handle.runner_type.clone()),
-                            status: Some(crate::core::state::WorkerStatus::Working),
-                            ..Default::default()
-                        },
-                    );
+                    let _ = sqlite_state
+                        .update_worker(
+                            worker_name,
+                            WorkerUpdate {
+                                pid,
+                                runner_id: Some(result.handle.runner_id.clone()),
+                                runner_type: Some(result.handle.runner_type.clone()),
+                                status: Some(crate::core::state::WorkerStatus::Working),
+                                ..Default::default()
+                            },
+                        )
+                        .await;
                     spawned_workers.push(worker_name.clone());
                     tracing::info!(
                         "Spawned worker '{}' (runner_id: {}, runner_type: {}, task: {:?})",
@@ -1512,12 +1473,8 @@ impl Orchestrator for LocalOrchestrator {
 
         // Update run status to Working if we spawned any workers
         if !spawned_workers.is_empty() {
-            sqlite_state
-                .set_status(Status::Working)
-                .map_err(|e| OrchestratorError::State(e.to_string()))?;
-            sqlite_state
-                .set_started_at(None)
-                .map_err(|e| OrchestratorError::State(e.to_string()))?;
+            sqlite_state.set_status(Status::Working).await?;
+            sqlite_state.set_started_at(None).await?;
         }
 
         Ok(SpawnWorkersResponse {
@@ -1542,8 +1499,8 @@ impl Orchestrator for LocalOrchestrator {
         if run_dir.exists() {
             let db_path = run_dir.join("hirsel.db");
             if db_path.exists() {
-                if let Ok(existing_state) = SQLiteState::new(db_path) {
-                    if let Ok(status) = existing_state.status() {
+                if let Ok(existing_state) = SQLiteState::new(&run_name).await {
+                    if let Ok(status) = existing_state.status().await {
                         if status == Status::Working || status == Status::Eval {
                             return Err(OrchestratorError::InvalidOperation(format!(
                                 "Run '{}' already exists and is active",
@@ -1577,27 +1534,14 @@ impl Orchestrator for LocalOrchestrator {
                 .map_err(|e| OrchestratorError::Other(format!("Failed to write eval: {}", e)))?;
         }
 
-        // Initialize bootstrap tasks.md
-        std::fs::write(
-            run_dir.join("tasks.md"),
-            "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n| scope | TODO | | Scope |\n",
-        ).map_err(|e| OrchestratorError::Other(format!("Failed to write tasks.md: {}", e)))?;
-
-        // Create tasks detail folder
-        let tasks_dir = run_dir.join("tasks");
-        std::fs::create_dir_all(&tasks_dir)
-            .map_err(|e| OrchestratorError::Other(format!("Failed to create tasks dir: {}", e)))?;
-
-        // Write scope task content (leader guidance)
-        let is_multi_worker = request.worker_scale.map(|n| n > 1).unwrap_or(false);
-        let scope_content = generate_scope_task_content(is_multi_worker);
-        std::fs::write(tasks_dir.join("scope.md"), scope_content)
-            .map_err(|e| OrchestratorError::Other(format!("Failed to write scope.md: {}", e)))?;
+        // Note: Task content is now stored in live nodes and accessed via MCP tools.
+        // No task files are written to disk.
 
         // 3.5. Load project and resolve starting_point
-        let store = ProjectStore::open().map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let store = ProjectStore::open().await?;
         let project = store
             .get_project(request.project_id)
+            .await
             .map_err(|e| OrchestratorError::State(format!("Project not found: {}", e)))?;
 
         // Resolve starting_point (request overrides project)
@@ -1617,60 +1561,73 @@ impl Orchestrator for LocalOrchestrator {
         let project_path = workspace_info.path;
 
         // 5. Initialize SQLite state
-        let db_path = run_dir.join("hirsel.db");
-        let state = SQLiteState::new(db_path.clone())
+        let state = SQLiteState::new(&run_name)
+            .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to create state: {}", e)))?;
         state
             .init_state(Some(project_path.to_str().unwrap_or(".")))
+            .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to init state: {}", e)))?;
 
         // Store project association
         state
             .set_project_id(project.id)
+            .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to set project_id: {}", e)))?;
         state
             .set_project_name(&project.name)
+            .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to set project_name: {}", e)))?;
 
         // Store starting_point in database for cloning
         let sp_json = serde_json::to_string(&starting_point).map_err(|e| {
             OrchestratorError::Other(format!("Failed to serialize starting_point: {}", e))
         })?;
-        state.set_starting_point(Some(&sp_json)).map_err(|e| {
-            OrchestratorError::Other(format!("Failed to set starting_point: {}", e))
-        })?;
+        state
+            .set_starting_point(Some(&sp_json))
+            .await
+            .map_err(|e| {
+                OrchestratorError::Other(format!("Failed to set starting_point: {}", e))
+            })?;
 
         // Set run properties
         state
             .set_request(Some(&request.spec))
+            .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to set request: {}", e)))?;
 
         // Set default branch if available from workspace init
         if let Some(ref branch) = workspace_info.default_branch {
             state
                 .set_branch(Some(branch))
+                .await
                 .map_err(|e| OrchestratorError::Other(format!("Failed to set branch: {}", e)))?;
         }
 
         let scale_max = request.worker_scale.unwrap_or(1);
         state
             .set_worker_scale(&scale_max.to_string())
+            .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to set worker scale: {}", e)))?;
 
         if let Some(limit) = request.time_limit_minutes {
-            state.set_time_limit_minutes(Some(limit)).map_err(|e| {
-                OrchestratorError::Other(format!("Failed to set time limit: {}", e))
-            })?;
+            state
+                .set_time_limit_minutes(Some(limit))
+                .await
+                .map_err(|e| {
+                    OrchestratorError::Other(format!("Failed to set time limit: {}", e))
+                })?;
         }
 
         let hitl = request.human_in_the_loop.unwrap_or(true);
         state
             .set_human_in_the_loop(hitl)
+            .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to set HITL: {}", e)))?;
 
         // Set default runner if specified
         if let Some(ref runner) = request.runner {
-            state.set_default_runner(Some(runner)).map_err(|e| {
+            state.set_default_runner(Some(runner)).await.map_err(|e| {
                 OrchestratorError::Other(format!("Failed to set default runner: {}", e))
             })?;
         }
@@ -1679,6 +1636,7 @@ impl Orchestrator for LocalOrchestrator {
         if let Some(ref worker_runners) = request.worker_runners {
             state
                 .set_worker_runners(Some(worker_runners))
+                .await
                 .map_err(|e| {
                     OrchestratorError::Other(format!("Failed to set worker runners: {}", e))
                 })?;
@@ -1710,6 +1668,7 @@ impl Orchestrator for LocalOrchestrator {
             if !runner_configs.is_empty() {
                 state
                     .set_runner_configs(Some(&runner_configs))
+                    .await
                     .map_err(|e| {
                         OrchestratorError::Other(format!("Failed to set runner configs: {}", e))
                     })?;
@@ -1728,23 +1687,8 @@ impl Orchestrator for LocalOrchestrator {
         // Create delta state for live node operations
         let delta_state = DeltaState::new(project.id);
 
-        // Always create scope task as a live node - this is the first task workers claim
-        if let Err(e) = delta_state.create_live_node_from_worker(
-            "scope",
-            "Scope",
-            None, // No parent
-            None, // No blockers
-            NodeType::Task,
-            "", // No content initially
-        ) {
-            return Err(OrchestratorError::Other(format!(
-                "Failed to create scope live node: {}",
-                e
-            )));
-        }
-
-        // Pre-claim scope for first worker
-        if let Err(e) = delta_state.claim_live_node("scope", first_worker) {
+        // Pre-claim scope for first worker (scope node created by dispatch)
+        if let Err(e) = delta_state.claim_live_node("scope", first_worker).await {
             tracing::warn!(
                 "Failed to pre-claim scope live node for {}: {}",
                 first_worker,
@@ -1755,9 +1699,11 @@ impl Orchestrator for LocalOrchestrator {
         // Store docs config from global settings
         state
             .set_docs_path(Some(&self.config.scribe_docs_path))
+            .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to set docs path: {}", e)))?;
         state
             .set_persist_docs_changes(self.config.scribe_persist_docs_changes)
+            .await
             .map_err(|e| {
                 OrchestratorError::Other(format!("Failed to set persist_docs_changes: {}", e))
             })?;
@@ -1780,6 +1726,7 @@ impl Orchestrator for LocalOrchestrator {
         // 8. Register workers in state (use runner name as location)
         let worker_location = request.runner.as_deref().unwrap_or("local");
         register_workers(&state, &setup_result.worker_dirs, worker_location)
+            .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to register workers: {}", e)))?;
 
         // 9. Spawn workers and set to Working
@@ -1823,6 +1770,7 @@ impl Orchestrator for LocalOrchestrator {
                 // Get runner config for this worker (from stored configs)
                 let runner_config = state
                     .get_runner_config_for_worker(worker_name)
+                    .await
                     .unwrap_or_default();
 
                 // Check if local workers are allowed
@@ -1897,19 +1845,21 @@ impl Orchestrator for LocalOrchestrator {
                     Ok(result) => {
                         // Update worker with PID, runner info, and assigned task
                         let pid = result.pid.map(|p| p as i64);
-                        let _ = state.update_worker(
-                            worker_name,
-                            WorkerUpdate {
-                                pid,
-                                runner_id: Some(result.handle.runner_id.clone()),
-                                runner_type: Some(result.handle.runner_type.clone()),
-                                status: Some(crate::core::state::WorkerStatus::Working),
-                                assigned_task_id: assigned_task_id
-                                    .as_ref()
-                                    .map(|t| Some(t.clone())),
-                                ..Default::default()
-                            },
-                        );
+                        let _ = state
+                            .update_worker(
+                                worker_name,
+                                WorkerUpdate {
+                                    pid,
+                                    runner_id: Some(result.handle.runner_id.clone()),
+                                    runner_type: Some(result.handle.runner_type.clone()),
+                                    status: Some(crate::core::state::WorkerStatus::Working),
+                                    assigned_task_id: assigned_task_id
+                                        .as_ref()
+                                        .map(|t| Some(t.clone())),
+                                    ..Default::default()
+                                },
+                            )
+                            .await;
                         tracing::info!(
                             "Spawned worker '{}' (runner_id: {}, runner_type: {}, task: {:?})",
                             worker_name,
@@ -1928,12 +1878,8 @@ impl Orchestrator for LocalOrchestrator {
             }
 
             // Set status to Working and start time tracking
-            state
-                .set_status(Status::Working)
-                .map_err(|e| OrchestratorError::State(e.to_string()))?;
-            state
-                .set_started_at(None)
-                .map_err(|e| OrchestratorError::State(e.to_string()))?;
+            state.set_status(Status::Working).await?;
+            state.set_started_at(None).await?;
 
             // Ensure daemon is running for lifecycle management (eval triggering, time limits)
             #[cfg(feature = "server")]
@@ -1956,12 +1902,10 @@ impl Orchestrator for LocalOrchestrator {
         use crate::cli::config::get_agent_command;
 
         let run_dir = config::run_dir(run_name);
-        let state = self.get_state(run_name)?;
+        let state = self.get_state(run_name).await?;
 
         // Check if run is paused
-        let status = state
-            .status()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let status = state.status().await?;
         if status == Status::Paused {
             return Err(OrchestratorError::InvalidOperation(
                 "Cannot spawn worker: run is paused".into(),
@@ -1969,14 +1913,13 @@ impl Orchestrator for LocalOrchestrator {
         }
 
         // Get all workers for leader/teammates info
-        let workers = state
-            .get_workers()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let workers = state.get_workers().await?;
 
         // Determine if multi-worker mode
         let is_multi_worker = workers.len() > 1
             || state
                 .get_worker_scale()
+                .await
                 .ok()
                 .flatten()
                 .and_then(|s| s.parse::<usize>().ok())
@@ -2001,6 +1944,7 @@ impl Orchestrator for LocalOrchestrator {
         // Get runner config for this worker (from stored configs)
         let runner_config = state
             .get_runner_config_for_worker(worker_name)
+            .await
             .unwrap_or_default();
 
         // Check if local workers are allowed
@@ -2066,6 +2010,7 @@ impl Orchestrator for LocalOrchestrator {
         // Get assigned task from worker record (set by evaluate_scaling before spawn)
         let assigned_task_id = state
             .get_worker(worker_name)
+            .await
             .ok()
             .flatten()
             .and_then(|w| w.assigned_task_id);
@@ -2092,16 +2037,18 @@ impl Orchestrator for LocalOrchestrator {
             Ok(result) => {
                 // Update worker with PID and runner info
                 let pid = result.pid.map(|p| p as i64);
-                let update_result = state.update_worker(
-                    worker_name,
-                    WorkerUpdate {
-                        pid,
-                        runner_id: Some(result.handle.runner_id.clone()),
-                        runner_type: Some(result.handle.runner_type.clone()),
-                        status: Some(crate::core::state::WorkerStatus::Working),
-                        ..Default::default()
-                    },
-                );
+                let update_result = state
+                    .update_worker(
+                        worker_name,
+                        WorkerUpdate {
+                            pid,
+                            runner_id: Some(result.handle.runner_id.clone()),
+                            runner_type: Some(result.handle.runner_type.clone()),
+                            status: Some(crate::core::state::WorkerStatus::Working),
+                            ..Default::default()
+                        },
+                    )
+                    .await;
 
                 if let Err(ref e) = update_result {
                     tracing::error!(
@@ -2110,7 +2057,7 @@ impl Orchestrator for LocalOrchestrator {
                         e
                     );
                 }
-                update_result.map_err(|e| OrchestratorError::State(e.to_string()))?;
+                update_result?;
 
                 tracing::info!(
                     "spawn_single_worker: spawned '{}' with status=Working (runner_id: {}, runner_type: {})",
@@ -2148,12 +2095,10 @@ impl Orchestrator for LocalOrchestrator {
         use crate::core::snapshot::{create_archive_strategy, host_session_path, ArchiveHandle};
 
         let run_dir = config::run_dir(run_name);
-        let state = self.get_state(run_name)?;
+        let state = self.get_state(run_name).await?;
 
         // Check if run is paused
-        let status = state
-            .status()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let status = state.status().await?;
         if status == Status::Paused {
             return Err(OrchestratorError::InvalidOperation(
                 "Cannot resume worker: run is paused".into(),
@@ -2163,12 +2108,13 @@ impl Orchestrator for LocalOrchestrator {
         // Get worker info
         let worker = state
             .get_worker(worker_name)
-            .map_err(|e| OrchestratorError::State(e.to_string()))?
+            .await?
             .ok_or_else(|| OrchestratorError::WorkerNotFound(worker_name.to_string()))?;
 
         // Get runner config for this worker (from stored configs)
         let runner_config = state
             .get_runner_config_for_worker(worker_name)
+            .await
             .unwrap_or_default();
 
         // Check if local workers are allowed
@@ -2180,7 +2126,8 @@ impl Orchestrator for LocalOrchestrator {
 
         let runner: Box<dyn Runner> = create_runner(&runner_config);
 
-        // 1. Check if already running
+        // 1. Kill any stale process before resuming
+        // If we're resuming, any existing process is stale and should be killed
         if let (Some(ref runner_id), Some(ref runner_type)) =
             (&worker.runner_id, &worker.runner_type)
         {
@@ -2191,10 +2138,19 @@ impl Orchestrator for LocalOrchestrator {
             };
             if runner.is_alive(&handle).await {
                 tracing::info!(
-                    "resume_worker: worker '{}' is already running, skipping spawn",
+                    "resume_worker: killing stale process {} for worker '{}'",
+                    runner_id,
                     worker_name
                 );
-                return Ok(());
+                if let Err(e) = runner.stop(&handle).await {
+                    tracing::warn!(
+                        "resume_worker: failed to stop stale process for '{}': {}",
+                        worker_name,
+                        e
+                    );
+                }
+                // Brief wait for process cleanup
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
         }
 
@@ -2302,24 +2258,25 @@ impl Orchestrator for LocalOrchestrator {
 
         // 4. Clear state handle from DB after restoration
         if state_handle.is_some() {
-            let _ = state.update_worker(
-                worker_name,
-                WorkerUpdate {
-                    state_handle: Some(None),
-                    ..Default::default()
-                },
-            );
+            let _ = state
+                .update_worker(
+                    worker_name,
+                    WorkerUpdate {
+                        state_handle: Some(None),
+                        ..Default::default()
+                    },
+                )
+                .await;
         }
 
         // 5. Get all workers for leader/teammates info
-        let workers = state
-            .get_workers()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let workers = state.get_workers().await?;
 
         // Determine if multi-worker mode
         let is_multi_worker = workers.len() > 1
             || state
                 .get_worker_scale()
+                .await
                 .ok()
                 .flatten()
                 .and_then(|s| s.parse::<usize>().ok())
@@ -2428,7 +2385,7 @@ impl Orchestrator for LocalOrchestrator {
                             ..Default::default()
                         },
                     )
-                    .map_err(|e| OrchestratorError::State(e.to_string()))?;
+                    .await?;
 
                 tracing::info!(
                     "resume_worker: spawned '{}' (runner_id: {}, runner_type: {})",
@@ -2457,17 +2414,16 @@ impl Orchestrator for LocalOrchestrator {
         &self,
         req: crate::core::project::CreateProjectRequest,
     ) -> OrchestratorResult<crate::core::project::Project> {
-        let store = crate::core::project::ProjectStore::open()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let store = crate::core::project::ProjectStore::open().await?;
         store
             .create_project(&req)
+            .await
             .map_err(|e| OrchestratorError::State(e.to_string()))
     }
 
     async fn get_project(&self, id: i64) -> OrchestratorResult<crate::core::project::Project> {
-        let store = crate::core::project::ProjectStore::open()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-        store.get_project(id).map_err(|e| match e {
+        let store = crate::core::project::ProjectStore::open().await?;
+        store.get_project(id).await.map_err(|e| match e {
             crate::core::project::ProjectError::NotFound(_) => {
                 OrchestratorError::RunNotFound(format!("Project {} not found", id))
             }
@@ -2479,18 +2435,18 @@ impl Orchestrator for LocalOrchestrator {
         &self,
         name: &str,
     ) -> OrchestratorResult<Option<crate::core::project::Project>> {
-        let store = crate::core::project::ProjectStore::open()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let store = crate::core::project::ProjectStore::open().await?;
         store
             .get_project_by_name(name)
+            .await
             .map_err(|e| OrchestratorError::State(e.to_string()))
     }
 
     async fn list_projects(&self) -> OrchestratorResult<Vec<crate::core::project::Project>> {
-        let store = crate::core::project::ProjectStore::open()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let store = crate::core::project::ProjectStore::open().await?;
         store
             .list_projects()
+            .await
             .map_err(|e| OrchestratorError::State(e.to_string()))
     }
 
@@ -2499,10 +2455,10 @@ impl Orchestrator for LocalOrchestrator {
         id: i64,
         req: crate::core::project::UpdateProjectRequest,
     ) -> OrchestratorResult<crate::core::project::Project> {
-        let store = crate::core::project::ProjectStore::open()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let store = crate::core::project::ProjectStore::open().await?;
         store
             .update_project(id, &req)
+            .await
             .map_err(|e| OrchestratorError::State(e.to_string()))
     }
 
@@ -2520,18 +2476,12 @@ impl Orchestrator for LocalOrchestrator {
         }
 
         // Delete project from DB
-        let store = crate::core::project::ProjectStore::open()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-        store
-            .delete_project(id)
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let store = crate::core::project::ProjectStore::open().await?;
+        store.delete_project(id).await?;
 
         // Clear gyp chat messages for this project
-        let gyp_store = crate::core::gyp_chat::GypChatStore::open()
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-        gyp_store
-            .clear_project_messages(id)
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        let gyp_store = crate::core::gyp_chat::GypChatStore::open().await?;
+        gyp_store.clear_project_messages(id).await?;
 
         Ok(())
     }

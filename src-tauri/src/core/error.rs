@@ -189,7 +189,7 @@ pub enum HirselError {
     // State/Database variants
     // =========================================================================
     #[error("Database error: {0}")]
-    Database(#[from] rusqlite::Error),
+    Database(#[from] sqlx::Error),
 
     #[error("State error: {0}")]
     State(String),
@@ -345,7 +345,7 @@ impl HirselError {
 impl From<crate::core::state::StateError> for HirselError {
     fn from(err: crate::core::state::StateError) -> Self {
         match err {
-            crate::core::state::StateError::Sqlite(e) => HirselError::Database(e),
+            crate::core::state::StateError::Database(e) => HirselError::Database(e),
             crate::core::state::StateError::NotFound(msg) => {
                 // Try to parse the message to determine specific type
                 if msg.contains("Task") {

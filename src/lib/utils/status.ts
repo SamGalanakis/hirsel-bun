@@ -5,7 +5,7 @@
  * All components should import from here instead of defining their own mappings.
  */
 
-import type { RunStatus, WorkerStatus } from '../types';
+import type { RunStatus } from '../types';
 
 // =============================================================================
 // Worker Status Configuration
@@ -153,20 +153,6 @@ export function getStatusLabel(status: RunStatus | string | null | undefined): s
 }
 
 /**
- * Get CSS class for status dot indicator
- */
-export function getStatusDotClass(status: RunStatus | null | undefined): Record<string, boolean> {
-  return {
-    'status-draft': status === 'draft',
-    'status-working': status === 'working',
-    'status-waiting': status === 'waiting' || status === 'paused',
-    'status-done': status === 'done' || status === 'delivered' || status === 'merged',
-    'status-error': status === 'runaway' || status === 'timed_out' || status === 'eval_failed',
-    'status-idle': !status || status === 'idle',
-  };
-}
-
-/**
  * Get CSS class for progress bar based on status
  */
 export function getProgressBarClass(
@@ -188,40 +174,4 @@ export function getProgressBarClass(
   }
   // Working: amber
   return 'bg-amber-500';
-}
-
-/**
- * Get CSS class for worker status
- */
-export function getWorkerStatusClass(status: WorkerStatus | null | undefined): string {
-  const classes: Record<string, string> = {
-    idle: 'status-idle',
-    working: 'status-working',
-    waiting: 'status-waiting',
-    awaiting: 'status-waiting',
-    paused: 'status-waiting',
-    error: 'status-error',
-  };
-  return classes[status || 'idle'] || 'status-idle';
-}
-
-/**
- * Check if run can be paused
- */
-export function canPause(status: RunStatus | null | undefined): boolean {
-  return status === 'working' || status === 'eval' || status === 'waiting';
-}
-
-/**
- * Check if run can be resumed
- */
-export function canResume(status: RunStatus | null | undefined): boolean {
-  return status === 'paused' || status === 'timed_out' || status === 'runaway';
-}
-
-/**
- * Check if run can be delivered
- */
-export function canDeliver(status: RunStatus | null | undefined): boolean {
-  return status === 'done' || status === 'paused' || status === 'timed_out';
 }

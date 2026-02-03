@@ -65,61 +65,61 @@ pub struct ReasonRequest {
 // =============================================================================
 
 /// List all evals
-pub fn list_evals(state: &SQLiteState, limit: i64) -> StateResult<Vec<Eval>> {
-    state.get_evals(limit)
+pub async fn list_evals(state: &SQLiteState, limit: i64) -> StateResult<Vec<Eval>> {
+    state.get_evals(limit).await
 }
 
 /// Get a specific eval by ID
-pub fn get_eval(state: &SQLiteState, eval_id: i64) -> StateResult<Option<Eval>> {
-    state.get_eval(eval_id)
+pub async fn get_eval(state: &SQLiteState, eval_id: i64) -> StateResult<Option<Eval>> {
+    state.get_eval(eval_id).await
 }
 
 /// Get eval by name
-pub fn get_eval_by_name(state: &SQLiteState, eval_name: &str) -> StateResult<Option<Eval>> {
-    state.get_eval_by_name(eval_name)
+pub async fn get_eval_by_name(state: &SQLiteState, eval_name: &str) -> StateResult<Option<Eval>> {
+    state.get_eval_by_name(eval_name).await
 }
 
 /// Get currently running eval
-pub fn get_running_eval(state: &SQLiteState) -> StateResult<Option<Eval>> {
-    state.get_running_eval()
+pub async fn get_running_eval(state: &SQLiteState) -> StateResult<Option<Eval>> {
+    state.get_running_eval().await
 }
 
 /// Start a new eval
-pub fn start_eval(
+pub async fn start_eval(
     state: &SQLiteState,
     branch: &str,
     eval_name: Option<&str>,
     log_file: Option<&str>,
 ) -> StateResult<i64> {
-    state.start_eval(branch, eval_name, log_file)
+    state.start_eval(branch, eval_name, log_file).await
 }
 
 /// Complete an eval with success/failure status
-pub fn complete_eval(
+pub async fn complete_eval(
     state: &SQLiteState,
     eval_id: i64,
     success: bool,
     feedback: &str,
 ) -> StateResult<()> {
-    state.complete_eval(eval_id, success, feedback)
+    state.complete_eval(eval_id, success, feedback).await
 }
 
 /// Cancel all running evals with a reason
-pub fn cancel_running_evals(state: &SQLiteState, reason: &str) -> StateResult<i64> {
-    state.cancel_running_evals(reason)
+pub async fn cancel_running_evals(state: &SQLiteState, reason: &str) -> StateResult<i64> {
+    state.cancel_running_evals(reason).await
 }
 
 /// Set the PID of a running eval
-pub fn set_eval_pid(state: &SQLiteState, eval_id: i64, pid: u32) -> StateResult<()> {
-    state.set_eval_pid(eval_id, pid)
+pub async fn set_eval_pid(state: &SQLiteState, eval_id: i64, pid: u32) -> StateResult<()> {
+    state.set_eval_pid(eval_id, pid).await
 }
 
 /// Check if there's a paused eval
-pub fn has_paused_eval(state: &SQLiteState) -> StateResult<bool> {
-    state.has_paused_eval()
+pub async fn has_paused_eval(state: &SQLiteState) -> StateResult<bool> {
+    state.has_paused_eval().await
 }
 
 /// Clear paused eval markers (after resume)
-pub fn clear_paused_evals(state: &SQLiteState) -> StateResult<()> {
-    state.clear_paused_evals()
+pub async fn clear_paused_evals(state: &SQLiteState) -> StateResult<()> {
+    state.clear_paused_evals().await
 }

@@ -28,16 +28,23 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
     use crate::core::Files;
 
     let run_dir = config::run_dir(&run_name);
-    let state = get_run_state(&run_name)?;
+    let state = get_run_state(&run_name).await?;
 
     // Check if worker already exists
-    if state.get_worker(&worker_name).ok().flatten().is_some() {
+    if state
+        .get_worker(&worker_name)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+    {
         return Err(format!("Worker '{}' already exists", worker_name));
     }
 
     // Get project path
     let project_path_str = state
         .get_project_path()
+        .await
         .map_err(|e| format!("Failed to get project path: {}", e))?
         .ok_or_else(|| "No project path configured".to_string())?;
     let project_path = std::path::PathBuf::from(&project_path_str);
@@ -45,6 +52,7 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
     // Get existing workers to determine if multi-worker
     let workers = state
         .get_workers()
+        .await
         .map_err(|e| format!("Failed to get workers: {}", e))?;
     let is_multi_worker = !workers.is_empty();
 
@@ -63,6 +71,7 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
     // Add worker to state
     state
         .add_worker(&worker_name, worker_dir.to_str().unwrap_or("."), "local")
+        .await
         .map_err(|e| format!("Failed to add worker: {}", e))?;
 
     // Create worker chat file
@@ -97,7 +106,7 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
         assigned_task_id: None,
     };
 
-    match spawn_worker(config, &state) {
+    match spawn_worker(config, &state).await {
         Ok(result) => {
             tracing::info!("Attached worker {} (PID {})", worker_name, result.pid);
         }
@@ -109,6 +118,7 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
     // Return the created worker
     let worker = state
         .get_worker(&worker_name)
+        .await
         .map_err(|e| format!("Failed to get worker: {}", e))?
         .ok_or_else(|| "Worker not found after creation".to_string())?;
 
@@ -148,11 +158,12 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
 pub async fn open_worker_terminal(run_name: String, worker_name: String) -> Result<(), String> {
     use std::process::Command;
 
-    let state = get_run_state(&run_name)?;
+    let state = get_run_state(&run_name).await?;
 
     // Verify worker exists
     let workers = state
         .get_workers()
+        .await
         .map_err(|e| format!("Failed to get workers: {}", e))?;
 
     if !workers.iter().any(|w| w.name == worker_name) {
@@ -216,11 +227,12 @@ pub async fn detach_worker(run_name: String, worker_id: u32) -> Result<(), Strin
     use crate::core::state::WorkerUpdate;
     use crate::core::workers::is_pid_alive;
 
-    let state = get_run_state(&run_name)?;
+    let state = get_run_state(&run_name).await?;
 
     // Find the worker by ID
     let workers = state
         .get_workers()
+        .await
         .map_err(|e| format!("Failed to get workers: {}", e))?;
 
     let worker = workers
@@ -249,6 +261,7 @@ pub async fn detach_worker(run_name: String, worker_id: u32) -> Result<(), Strin
                 ..Default::default()
             },
         )
+        .await
         .map_err(|e| format!("Failed to update worker: {}", e))?;
 
     tracing::info!("Detached worker {} from run {}", worker.name, run_name);

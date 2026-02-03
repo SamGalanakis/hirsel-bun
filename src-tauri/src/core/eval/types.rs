@@ -52,6 +52,7 @@ pub struct EvalConfig {
 /// Configuration for running an ACP-based eval.
 #[derive(Debug, Clone)]
 pub struct EvalAcpConfig {
+    pub run_name: String,
     pub eval_name: String,
     pub eval_id: i64,
     pub work_dir: PathBuf,

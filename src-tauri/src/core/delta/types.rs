@@ -226,6 +226,7 @@ pub struct LiveNode {
 pub struct LiveNodeTree {
     pub id: String,
     pub draft_node_id: Option<String>,
+    pub parent_id: Option<String>,
     pub name: String,
     pub node_type: NodeType,
     pub content: String,
@@ -254,6 +255,7 @@ impl From<LiveNode> for LiveNodeTree {
         Self {
             id: node.id,
             draft_node_id: node.draft_node_id,
+            parent_id: node.parent_id,
             name: node.name,
             node_type: node.node_type,
             content: node.content,

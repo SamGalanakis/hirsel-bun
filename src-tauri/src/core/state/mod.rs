@@ -2,6 +2,8 @@
 //!
 //! This module provides the core state management functionality for tracking
 //! runs, tasks, workers, evals, and messages.
+//!
+//! All methods are async using sqlx for true non-blocking database access.
 
 #![allow(clippy::should_implement_trait)]
 
@@ -14,9 +16,9 @@ mod scribe;
 pub mod types;
 mod workers;
 
-use chrono::Utc;
-use rusqlite::{params, Connection};
-use std::path::{Path, PathBuf};
+use sqlx::sqlite::SqlitePool;
+
+use super::db::utc_now;
 
 pub use scribe::ScribeSubmission;
 pub use types::*;
@@ -193,72 +195,40 @@ CREATE INDEX IF NOT EXISTS idx_worker_events_timestamp ON worker_events(timestam
 
 /// SQLite-backed state management for a hirsel run
 pub struct SQLiteState {
-    db: Connection,
-    db_path: PathBuf,
+    run_name: String,
 }
 
 impl SQLiteState {
-    /// Create a new SQLiteState, opening or creating the database at the given path
-    pub fn new(db_path: PathBuf) -> StateResult<Self> {
-        let db = Connection::open(&db_path)?;
-        db.busy_timeout(std::time::Duration::from_secs(30))?;
-        // Enable WAL mode for better concurrent read/write performance
-        db.pragma_update(None, "journal_mode", "WAL")?;
+    /// Create a new SQLiteState for the given run, initializing the database
+    pub async fn new(run_name: &str) -> StateResult<Self> {
+        let pool = crate::core::db::run_pool(run_name).await;
 
-        let mut state = Self { db, db_path };
-        state.init_db()?;
-        Ok(state)
+        // Initialize schema
+        sqlx::raw_sql(SCHEMA).execute(&pool).await?;
+
+        Ok(Self {
+            run_name: run_name.to_string(),
+        })
     }
 
-    /// Reconnect to the database (useful for getting fresh data)
-    pub fn reconnect(&mut self) -> StateResult<()> {
-        self.db = Connection::open(&self.db_path)?;
-        self.db.busy_timeout(std::time::Duration::from_secs(30))?;
-        // Enable WAL mode for better concurrent read/write performance
-        self.db.pragma_update(None, "journal_mode", "WAL")?;
-        Ok(())
+    /// Get the run name
+    pub fn run_name(&self) -> &str {
+        &self.run_name
     }
 
-    /// Get the database path
-    pub fn db_path(&self) -> &Path {
-        &self.db_path
+    /// Get the database pool for this run
+    pub(crate) async fn pool(&self) -> SqlitePool {
+        crate::core::db::run_pool(&self.run_name).await
     }
 
-    fn init_db(&mut self) -> StateResult<()> {
-        self.db.execute_batch(SCHEMA)?;
-        self.run_migrations()?;
-        Ok(())
-    }
-
-    /// Run database migrations for schema changes
-    /// Note: In development mode, we don't need migrations - just delete ~/.hirsel/runs
-    fn run_migrations(&mut self) -> StateResult<()> {
-        // Check if project_id and project_name columns exist
-        let has_project_id: bool = self
-            .db
-            .prepare("SELECT COUNT(*) FROM pragma_table_info('state') WHERE name='project_id'")?
-            .query_row([], |row| row.get::<_, i64>(0).map(|c| c > 0))?;
-
-        if !has_project_id {
-            // Add project columns
-            self.db
-                .execute("ALTER TABLE state ADD COLUMN project_id INTEGER", [])?;
-            self.db
-                .execute("ALTER TABLE state ADD COLUMN project_name TEXT", [])?;
-        }
-
-        Ok(())
-    }
-
-    pub(crate) fn now(&self) -> String {
-        Utc::now().format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()
-    }
-
-    pub(crate) fn log_history(&self, action: &str, detail: Option<&str>) -> StateResult<()> {
-        self.db.execute(
-            "INSERT INTO history (timestamp, action, detail) VALUES (?1, ?2, ?3)",
-            params![self.now(), action, detail],
-        )?;
+    pub(crate) async fn log_history(&self, action: &str, detail: Option<&str>) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("INSERT INTO history (timestamp, action, detail) VALUES (?, ?, ?)")
+            .bind(utc_now())
+            .bind(action)
+            .bind(detail)
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 }

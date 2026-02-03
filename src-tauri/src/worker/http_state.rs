@@ -124,6 +124,17 @@ impl HttpState {
             .map_err(http_error_to_state_error)
     }
 
+    async fn delete_request(&self, endpoint: &str) -> HttpStateResult<()> {
+        let url = format!("{}{}", self.base_url, endpoint);
+        let response = self.client.delete(&url).send().await?;
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            return Err(HttpStateError::Operation { status, message });
+        }
+        Ok(())
+    }
+
     // =========================================================================
     // Health check
     // =========================================================================
@@ -680,6 +691,11 @@ impl HttpState {
         Ok(result.node_ids)
     }
 
+    pub async fn delete_live_node(&self, id: &str) -> HttpStateResult<()> {
+        let endpoint = self.run_endpoint(&format!("/live-nodes/{}", id));
+        self.delete_request(&endpoint).await
+    }
+
     // =========================================================================
     // Time tracking
     // =========================================================================
@@ -1180,5 +1196,9 @@ impl StateAccess for HttpState {
 
     async fn get_validated_nodes(&self, eval_id: &str) -> StateAccessResult<Vec<String>> {
         Ok(HttpState::get_validated_nodes(self, eval_id).await?)
+    }
+
+    async fn delete_live_node(&self, id: &str) -> StateAccessResult<()> {
+        Ok(HttpState::delete_live_node(self, id).await?)
     }
 }

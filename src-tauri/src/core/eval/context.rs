@@ -62,24 +62,44 @@ To fix: Specific actionable instructions
 }
 
 /// Build eval context from run state.
-pub fn build_eval_context(files: &Files, state: &SQLiteState) -> EvalContext {
-    // Read spec
-    let spec = fs::read_to_string(files.spec()).unwrap_or_default();
+pub async fn build_eval_context(files: &Files, state: &SQLiteState) -> EvalContext {
+    // Read spec - warn if missing (eval may fail without it)
+    let spec = match fs::read_to_string(files.spec()) {
+        Ok(content) => content,
+        Err(e) => {
+            tracing::warn!(
+                "Failed to read spec file '{}': {} - eval may lack context",
+                files.spec().display(),
+                e
+            );
+            String::new()
+        }
+    };
 
-    // Read eval spec
-    let eval_spec = fs::read_to_string(files.eval_spec()).unwrap_or_default();
+    // Read eval spec - warn if missing (eval criteria unclear)
+    let eval_spec = match fs::read_to_string(files.eval_spec()) {
+        Ok(content) => content,
+        Err(e) => {
+            tracing::warn!(
+                "Failed to read eval spec '{}': {} - eval criteria may be unclear",
+                files.eval_spec().display(),
+                e
+            );
+            String::new()
+        }
+    };
 
     // Get assets path
     let assets_path = files.assets();
 
     // Get group chat messages (NOT DMs)
-    let group_chat = match state.get_messages("group", 500) {
+    let group_chat = match state.get_messages("group", 500).await {
         Ok(msgs) => format_messages(&msgs),
         Err(_) => String::new(),
     };
 
     // Get previous failed evals
-    let previous_failures = match state.get_evals(100) {
+    let previous_failures = match state.get_evals(100).await {
         Ok(evals) => evals
             .iter()
             .filter(|e| e.status == EvalStatus::Failed)

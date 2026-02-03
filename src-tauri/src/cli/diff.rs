@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+use crate::cli::helpers::block_on;
 use crate::core::{git, Config, SQLiteState};
 
 /// Result of running the diff command
@@ -48,7 +49,6 @@ pub fn run_diff(run_name: &str, stat_only: bool) -> Result<DiffResult, DiffError
 
     let run_dir = config.runs_dir().join(run_name);
     let staging_dir = run_dir.join("work").join("staging");
-    let db_path = run_dir.join("hirsel.db");
 
     // Check if run exists
     if !run_dir.exists() {
@@ -60,7 +60,7 @@ pub fn run_diff(run_name: &str, stat_only: bool) -> Result<DiffResult, DiffError
     }
 
     // Get project path from state database
-    let project_path = get_project_path(&db_path)?;
+    let project_path = get_project_path(run_name)?;
 
     let (stat, diff) = if stat_only {
         let stat = git::get_diff_stat(&project_path, &staging_dir)
@@ -85,17 +85,12 @@ pub fn run_diff(run_name: &str, stat_only: bool) -> Result<DiffResult, DiffError
 }
 
 /// Get the project path for a run from the database
-fn get_project_path(db_path: &std::path::Path) -> Result<PathBuf, DiffError> {
-    if !db_path.exists() {
-        return Err(DiffError::NoProjectPath);
-    }
-
-    let state = SQLiteState::new(db_path.to_path_buf())
+fn get_project_path(run_name: &str) -> Result<PathBuf, DiffError> {
+    let state = block_on(SQLiteState::new(run_name))
         .map_err(|e| DiffError::DatabaseError(e.to_string()))?;
 
-    let project_path = state
-        .get_project_path()
-        .map_err(|e| DiffError::DatabaseError(e.to_string()))?;
+    let project_path =
+        block_on(state.get_project_path()).map_err(|e| DiffError::DatabaseError(e.to_string()))?;
 
     project_path
         .map(PathBuf::from)

@@ -14,7 +14,7 @@ use crate::core::{Config, EvalStatus, SQLiteState, Status};
 use super::types::{EvalConfig, EvalError, EvalResult};
 
 /// Run an eval for a run
-pub fn run_eval(
+pub async fn run_eval(
     run_name: &str,
     eval_name: Option<&str>,
     config: &EvalConfig,
@@ -35,16 +35,15 @@ pub fn run_eval(
         return Err(EvalError::ScriptNotFound(config.script_path.clone()));
     }
 
-    let db_path = run_dir.join("hirsel.db");
-    let state = SQLiteState::new(db_path)?;
+    let state = SQLiteState::new(run_name).await?;
 
     // Check if an eval is already running
-    if state.get_running_eval()?.is_some() {
+    if state.get_running_eval().await?.is_some() {
         return Err(EvalError::AlreadyRunning);
     }
 
     // Set run status to Eval
-    state.set_status(Status::Eval)?;
+    state.set_status(Status::Eval).await?;
 
     // Create log file for this eval
     let logs_dir = run_dir.join("logs");
@@ -52,11 +51,13 @@ pub fn run_eval(
     let log_file = logs_dir.join(format!("eval_{}.log", eval_name.unwrap_or("unnamed")));
 
     // Start eval in database
-    let eval_id = state.start_eval(
-        "staging", // branch being evaluated
-        eval_name,
-        Some(log_file.to_string_lossy().as_ref()),
-    )?;
+    let eval_id = state
+        .start_eval(
+            "staging", // branch being evaluated
+            eval_name,
+            Some(log_file.to_string_lossy().as_ref()),
+        )
+        .await?;
 
     // Run the eval script
     let start_time = std::time::Instant::now();
@@ -64,24 +65,28 @@ pub fn run_eval(
     let duration_secs = start_time.elapsed().as_secs();
 
     // Complete the eval in database
-    state.complete_eval(eval_id, result.passed, &result.feedback)?;
+    state
+        .complete_eval(eval_id, result.passed, &result.feedback)
+        .await?;
 
     // Update run status based on result
     // Create lifecycle manager for worker operations
-    let lifecycle = LocalLifecycleManager::new(run_name, run_dir.clone(), vec![]).map_err(|e| {
-        EvalError::ProcessFailed(format!("Failed to create lifecycle manager: {}", e))
-    })?;
+    let lifecycle = LocalLifecycleManager::new(run_name, run_dir.clone(), vec![])
+        .await
+        .map_err(|e| {
+            EvalError::ProcessFailed(format!("Failed to create lifecycle manager: {}", e))
+        })?;
 
     if result.passed {
         // Kill any remaining worker processes before marking as Done
-        if let Err(e) = lifecycle.kill_all_workers() {
+        if let Err(e) = lifecycle.kill_all_workers().await {
             tracing::warn!("Failed to kill workers after eval passed: {}", e);
         }
 
-        state.set_status(Status::Done)?;
+        state.set_status(Status::Done).await?;
     } else {
         // Check retry count
-        let evals = state.get_evals(100)?;
+        let evals = state.get_evals(100).await?;
         let failed_count = evals
             .iter()
             .filter(|e| e.status == EvalStatus::Failed)
@@ -90,14 +95,16 @@ pub fn run_eval(
         // After 3 failed evals, mark as Failed with EvalFailed reason
         if failed_count >= 3 {
             // Kill any remaining worker processes before marking as Failed
-            if let Err(e) = lifecycle.kill_all_workers() {
+            if let Err(e) = lifecycle.kill_all_workers().await {
                 tracing::warn!("Failed to kill workers after eval failures: {}", e);
             }
 
-            state.set_failed(crate::core::state::FailureReason::EvalFailed)?;
+            state
+                .set_failed(crate::core::state::FailureReason::EvalFailed)
+                .await?;
         } else {
             // Go back to working for retry
-            state.set_status(Status::Working)?;
+            state.set_status(Status::Working).await?;
         }
     }
 

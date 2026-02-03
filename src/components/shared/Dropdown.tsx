@@ -2,7 +2,7 @@
  * Shared Dropdown component - Basecoat-style select dropdown
  */
 import { type Component, For, Show, createSignal } from 'solid-js';
-import { useClickOutside, useEscapeKey } from '../../hooks';
+import { useModalClosing } from '../../hooks';
 import { Icon } from './Icon';
 
 export interface DropdownOption {
@@ -28,12 +28,7 @@ export const Dropdown: Component<DropdownProps> = (props) => {
   };
 
   // Close on click outside or escape
-  useClickOutside(() => containerRef, () => {
-    if (open()) setOpen(false);
-  });
-  useEscapeKey(() => {
-    if (open()) setOpen(false);
-  });
+  useModalClosing(() => containerRef, open, () => setOpen(false));
 
   return (
     <div ref={containerRef} class={`dropdown relative ${props.class || ''}`}>

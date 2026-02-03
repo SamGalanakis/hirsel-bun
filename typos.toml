@@ -1,0 +1,6 @@
+# Typos configuration
+# https://github.com/crate-ci/typos
+
+[default.extend-words]
+# ratatui is the actual crate name, not ratatouille
+ratatui = "ratatui"

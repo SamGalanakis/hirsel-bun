@@ -461,6 +461,7 @@ pub struct Amendment {
 }
 
 /// Summary data for displaying a run in a list (optimized fetch)
+/// Note: Task counts come from DeltaState.live_nodes for project runs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunStateSummary {
     pub status: Status,
@@ -469,8 +470,6 @@ pub struct RunStateSummary {
     pub started_at: Option<String>,
     pub time_limit_minutes: Option<i64>,
     pub unread_count: i64,
-    pub tasks_done: u32,
-    pub tasks_total: u32,
     pub workers_active: u32,
     pub workers_total: u32,
     pub elapsed_minutes: f64,
@@ -506,7 +505,7 @@ pub struct WorkerEvent {
 
 #[derive(Debug)]
 pub enum StateError {
-    Sqlite(rusqlite::Error),
+    Database(sqlx::Error),
     NotFound(String),
     InvalidState(String),
     AlreadyExists(String),
@@ -517,7 +516,7 @@ pub enum StateError {
 impl std::fmt::Display for StateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            StateError::Sqlite(e) => write!(f, "SQLite error: {}", e),
+            StateError::Database(e) => write!(f, "Database error: {}", e),
             StateError::NotFound(s) => write!(f, "Not found: {}", s),
             StateError::InvalidState(s) => write!(f, "Invalid state: {}", s),
             StateError::AlreadyExists(s) => write!(f, "Already exists: {}", s),
@@ -531,9 +530,9 @@ impl std::fmt::Display for StateError {
 
 impl std::error::Error for StateError {}
 
-impl From<rusqlite::Error> for StateError {
-    fn from(e: rusqlite::Error) -> Self {
-        StateError::Sqlite(e)
+impl From<sqlx::Error> for StateError {
+    fn from(e: sqlx::Error) -> Self {
+        StateError::Database(e)
     }
 }
 

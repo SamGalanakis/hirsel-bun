@@ -69,7 +69,7 @@ fn get_tools() -> Vec<Tool> {
         },
         Tool {
             name: "complete_task",
-            description: "Mark a task as complete. This unblocks dependent tasks.",
+            description: "Mark task complete and exit. Unblocks dependent tasks, then worker exits and is respawned with next available task.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -128,6 +128,20 @@ fn get_tools() -> Vec<Tool> {
                     }
                 },
                 "required": ["eval_id", "name", "validates"]
+            }),
+        },
+        Tool {
+            name: "delete_task",
+            description: "Delete a worker-created task. Cannot delete spec tasks, claimed tasks, or completed tasks.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "Task ID to delete"
+                    }
+                },
+                "required": ["task_id"]
             }),
         },
         // ==========================================================================
@@ -334,7 +348,7 @@ impl McpServer {
             }
             "complete_task" => {
                 let task_id = args.get("task_id").and_then(|v| v.as_str());
-                self.runner.task_done(task_id).map(|s| (s, false))
+                self.runner.task_done(task_id).map(|s| (s, true)) // Exit after completing task
             }
             "add_task" => {
                 let task_id = args
@@ -383,6 +397,13 @@ impl McpServer {
                     .add_eval(eval_id, eval_name, &validates)
                     .map(|s| (s, false))
             }
+            "delete_task" => {
+                let task_id = args
+                    .get("task_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("task_id is required".into()))?;
+                self.runner.delete_task(task_id).map(|s| (s, false))
+            }
 
             // Communication
             "list_contacts" => self.runner.list_contacts().map(|s| (s, false)),
@@ -424,7 +445,7 @@ impl McpServer {
             }
 
             // Work Management
-            "work_done" => self.runner.work_done().map(|s| (s, true)), // Exit after work_done
+            "work_done" => self.runner.work_done().map(|s| (s, true)),
             "time_status" => self.time_status().map(|s| (s, false)),
 
             // Eval Operations
@@ -481,6 +502,7 @@ mod tests {
         assert!(names.contains(&"complete_task"));
         assert!(names.contains(&"add_task"));
         assert!(names.contains(&"add_eval"));
+        assert!(names.contains(&"delete_task"));
         assert!(names.contains(&"list_contacts"));
         assert!(names.contains(&"chat_history"));
         assert!(names.contains(&"chat_send"));

@@ -119,7 +119,7 @@ pub async fn get_worker_events(
     limit: Option<i64>,
 ) -> Result<WorkerEventsResponse, String> {
     // Return empty response if run doesn't exist (graceful handling)
-    let state = match get_run_state(&run_name) {
+    let state = match get_run_state(&run_name).await {
         Ok(s) => s,
         Err(_) => {
             return Ok(WorkerEventsResponse {
@@ -133,6 +133,7 @@ pub async fn get_worker_events(
     let limit = limit.unwrap_or(1000);
     let events = state
         .get_worker_events(&worker_name, after_id, limit)
+        .await
         .map_err(|e| format!("Failed to get worker events: {}", e))?;
 
     let last_id = events.last().map(|e| e.id);
@@ -140,6 +141,7 @@ pub async fn get_worker_events(
     // Get worker status to determine if still streaming
     let worker_status = state
         .get_worker(&worker_name)
+        .await
         .ok()
         .flatten()
         .map(|w| w.status.as_str().to_string());
@@ -155,7 +157,9 @@ pub async fn get_worker_events(
             tool_call_id: e.tool_call_id,
             tool_title: e.tool_title,
             tool_kind: e.tool_kind,
-            tool_status: e.tool_status.map(|s| s.as_str().to_string()),
+            tool_status: e
+                .tool_status
+                .map(|s: crate::core::state::ToolCallStatus| s.as_str().to_string()),
             tool_input: e.tool_input,
             tool_output: e.tool_output,
         })
@@ -172,13 +176,14 @@ pub async fn get_worker_events(
 #[tauri::command]
 pub async fn clear_worker_events(run_name: String, worker_name: String) -> Result<(), String> {
     // Return Ok if run doesn't exist (graceful handling)
-    let state = match get_run_state(&run_name) {
+    let state = match get_run_state(&run_name).await {
         Ok(s) => s,
         Err(_) => return Ok(()),
     };
 
     state
         .clear_worker_events(&worker_name)
+        .await
         .map_err(|e| format!("Failed to clear worker events: {}", e))?;
 
     Ok(())
@@ -248,7 +253,7 @@ pub async fn start_worker_event_stream(
             }
 
             // Poll for events
-            let state = match SQLiteState::new(db_path.clone()) {
+            let state = match SQLiteState::new(&run_name_clone).await {
                 Ok(s) => s,
                 Err(e) => {
                     info!("[WorkerStream] Failed to open database: {}", e);
@@ -256,7 +261,10 @@ pub async fn start_worker_event_stream(
                 }
             };
 
-            let events = match state.get_worker_events(&worker_name_clone, last_id, 1000) {
+            let events = match state
+                .get_worker_events(&worker_name_clone, last_id, 1000)
+                .await
+            {
                 Ok(e) => e,
                 Err(e) => {
                     info!("[WorkerStream] Failed to get events: {}", e);
@@ -274,6 +282,7 @@ pub async fn start_worker_event_stream(
             // Get worker status
             let worker_status = state
                 .get_worker(&worker_name_clone)
+                .await
                 .ok()
                 .flatten()
                 .map(|w| w.status.as_str().to_string());
@@ -301,7 +310,9 @@ pub async fn start_worker_event_stream(
                         tool_call_id: e.tool_call_id,
                         tool_title: e.tool_title,
                         tool_kind: e.tool_kind,
-                        tool_status: e.tool_status.map(|s| s.as_str().to_string()),
+                        tool_status: e
+                            .tool_status
+                            .map(|s: crate::core::state::ToolCallStatus| s.as_str().to_string()),
                         tool_input: e.tool_input,
                         tool_output: e.tool_output,
                     })
@@ -374,7 +385,7 @@ pub async fn start_worker_event_stream(
             // Only end stream for error status or if worker is removed
             let is_done = worker_status
                 .as_ref()
-                .map(|s| matches!(s.as_str(), "error"))
+                .map(|s: &String| matches!(s.as_str(), "error"))
                 .unwrap_or(false);
 
             if is_done && !first_poll {

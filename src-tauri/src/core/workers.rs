@@ -61,20 +61,25 @@ pub struct SpawnResult {
 /// Note: Worker status is only set to Working AFTER successful spawn and
 /// process alive verification. This prevents race conditions where the
 /// status shows Working but the process failed to start.
-pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerResult<SpawnResult> {
+pub async fn spawn_worker(
+    config: WorkerSpawnConfig,
+    state: &SQLiteState,
+) -> WorkerResult<SpawnResult> {
     // Check if run is paused before spawning
-    if state.status()? == Status::Paused {
+    if state.status().await? == Status::Paused {
         info!(
             "[{}] spawn_worker: run is paused, not spawning",
             config.worker_name
         );
-        state.update_worker(
-            &config.worker_name,
-            WorkerUpdate {
-                status: Some(WorkerStatus::Paused),
-                ..Default::default()
-            },
-        )?;
+        state
+            .update_worker(
+                &config.worker_name,
+                WorkerUpdate {
+                    status: Some(WorkerStatus::Paused),
+                    ..Default::default()
+                },
+            )
+            .await?;
         return Err(WorkerError::RunPaused);
     }
 
@@ -106,29 +111,12 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
     // Get the executable path
     let hirsel_exe = std::env::current_exe().map_err(|e| {
         let err = WorkerError::SpawnFailed(format!("Failed to get current exe: {}", e));
-        // Mark worker as error state on failure
-        let _ = state.update_worker(
-            &config.worker_name,
-            WorkerUpdate {
-                status: Some(WorkerStatus::Error),
-                ..Default::default()
-            },
-        );
         err
     })?;
 
     // Build args for hirsel __worker-run
     let agent_command_json = serde_json::to_string(&config.agent_command).map_err(|e| {
-        let err = WorkerError::SpawnFailed(format!("Failed to serialize agent command: {}", e));
-        // Mark worker as error state on failure
-        let _ = state.update_worker(
-            &config.worker_name,
-            WorkerUpdate {
-                status: Some(WorkerStatus::Error),
-                ..Default::default()
-            },
-        );
-        err
+        WorkerError::SpawnFailed(format!("Failed to serialize agent command: {}", e))
     })?;
 
     let mut args = vec![
@@ -184,18 +172,9 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
         cmd.process_group(0);
     }
 
-    let child = cmd.spawn().map_err(|e| {
-        let err = WorkerError::SpawnFailed(e.to_string());
-        // Mark worker as error state on spawn failure
-        let _ = state.update_worker(
-            &config.worker_name,
-            WorkerUpdate {
-                status: Some(WorkerStatus::Error),
-                ..Default::default()
-            },
-        );
-        err
-    })?;
+    let child = cmd
+        .spawn()
+        .map_err(|e| WorkerError::SpawnFailed(e.to_string()))?;
 
     let pid = child.id();
 
@@ -206,13 +185,15 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
             "[{}] spawn_worker: process {} died immediately after spawn",
             config.worker_name, pid
         );
-        state.update_worker(
-            &config.worker_name,
-            WorkerUpdate {
-                status: Some(WorkerStatus::Error),
-                ..Default::default()
-            },
-        )?;
+        state
+            .update_worker(
+                &config.worker_name,
+                WorkerUpdate {
+                    status: Some(WorkerStatus::Error),
+                    ..Default::default()
+                },
+            )
+            .await?;
         return Err(WorkerError::SpawnFailed(format!(
             "Process {} exited immediately after spawn",
             pid
@@ -221,16 +202,18 @@ pub fn spawn_worker(config: WorkerSpawnConfig, state: &SQLiteState) -> WorkerRes
 
     // SUCCESS: Update worker with status, PID, and runner info
     // Status is only set to Working AFTER successful spawn and alive check
-    state.update_worker(
-        &config.worker_name,
-        WorkerUpdate {
-            status: Some(WorkerStatus::Working),
-            pid: Some(pid as i64),
-            runner_id: Some(pid.to_string()),
-            runner_type: Some("local".to_string()),
-            ..Default::default()
-        },
-    )?;
+    state
+        .update_worker(
+            &config.worker_name,
+            WorkerUpdate {
+                status: Some(WorkerStatus::Working),
+                pid: Some(pid as i64),
+                runner_id: Some(pid.to_string()),
+                runner_type: Some("local".to_string()),
+                ..Default::default()
+            },
+        )
+        .await?;
 
     info!(
         "Spawned worker {} (hirsel __worker-run, PID {}, runner_type: local)",
@@ -260,16 +243,16 @@ pub fn is_pid_alive(pid: u32) -> bool {
     #[cfg(not(unix))]
     {
         // On non-Unix platforms, try to read /proc/{pid}
-        Path::new(&format!("/proc/{}", pid)).exists()
+        std::path::Path::new(&format!("/proc/{}", pid)).exists()
     }
 }
 
 /// Check worker heartbeats and mark stale workers
-pub fn check_worker_heartbeats(
+pub async fn check_worker_heartbeats(
     state: &SQLiteState,
     timeout_seconds: i64,
 ) -> WorkerResult<Vec<String>> {
-    let workers = state.get_workers()?;
+    let workers = state.get_workers().await?;
     let now = chrono::Utc::now();
     let mut stale = Vec::new();
 
@@ -288,18 +271,20 @@ pub fn check_worker_heartbeats(
                 warn!("Worker {} process died (PID {})", worker.name, pid);
 
                 // Mark worker as error and clear assigned_task_id
-                state.update_worker(
-                    &worker.name,
-                    WorkerUpdate {
-                        pid: None,
-                        status: Some(WorkerStatus::Error),
-                        assigned_task_id: Some(None), // Clear assigned task
-                        ..Default::default()
-                    },
-                )?;
+                state
+                    .update_worker(
+                        &worker.name,
+                        WorkerUpdate {
+                            pid: None,
+                            status: Some(WorkerStatus::Error),
+                            assigned_task_id: Some(None), // Clear assigned task
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
 
                 // Trigger scaling check - unclaimed task needs a worker
-                if let Err(e) = state.request_scaling_check() {
+                if let Err(e) = state.request_scaling_check().await {
                     warn!(
                         "Failed to request scaling check after worker {} death: {}",
                         worker.name, e
@@ -340,15 +325,17 @@ pub fn check_worker_heartbeats(
 }
 
 /// Update a worker's heartbeat timestamp
-pub fn update_worker_heartbeat(state: &SQLiteState, worker_name: &str) -> WorkerResult<()> {
+pub async fn update_worker_heartbeat(state: &SQLiteState, worker_name: &str) -> WorkerResult<()> {
     let timestamp = chrono::Utc::now().to_rfc3339();
-    state.update_worker(
-        worker_name,
-        WorkerUpdate {
-            last_heartbeat: Some(timestamp),
-            ..Default::default()
-        },
-    )?;
+    state
+        .update_worker(
+            worker_name,
+            WorkerUpdate {
+                last_heartbeat: Some(timestamp),
+                ..Default::default()
+            },
+        )
+        .await?;
     Ok(())
 }
 
@@ -377,18 +364,18 @@ fn get_time_notification_message(threshold: i64) -> &'static str {
 
 /// Check time limit and send notifications at threshold crossings.
 /// Returns the threshold that was notified, if any.
-pub fn check_and_send_time_notifications(
+pub async fn check_and_send_time_notifications(
     state: &SQLiteState,
     is_multi_worker: bool,
     worker_name: Option<&str>,
 ) -> WorkerResult<Option<i64>> {
-    let time_info = match state.get_time_info()? {
+    let time_info = match state.get_time_info().await? {
         Some(info) => info,
         None => return Ok(None),
     };
 
     let pct_elapsed = time_info.percent_elapsed as i64;
-    let last_notified = state.get_last_time_notification_pct()?.unwrap_or(0);
+    let last_notified = state.get_last_time_notification_pct().await?.unwrap_or(0);
 
     // Find thresholds we've crossed since last notification
     for &threshold in TIME_NOTIFICATION_THRESHOLDS {
@@ -403,10 +390,10 @@ pub fn check_and_send_time_notifications(
             };
 
             // Add message to state
-            state.add_message(&thread, "System", message, false)?;
+            state.add_message(&thread, "System", message, false).await?;
 
             info!("Time notification sent: {}% - {}", threshold, message);
-            state.set_last_time_notification_pct(threshold)?;
+            state.set_last_time_notification_pct(threshold).await?;
 
             return Ok(Some(threshold));
         }
@@ -455,7 +442,7 @@ impl WorkerScale {
 ///
 /// Workers marked as Paused can be resumed with their full context using
 /// the resume functionality (session_id is preserved).
-pub fn reconcile_stale_workers() -> Vec<(String, String)> {
+pub async fn reconcile_stale_workers() -> Vec<(String, String)> {
     let mut marked: Vec<(String, String)> = Vec::new();
 
     // Get the runs directory
@@ -481,7 +468,7 @@ pub fn reconcile_stale_workers() -> Vec<(String, String)> {
             continue;
         }
 
-        let state = match SQLiteState::new(db_path) {
+        let state = match SQLiteState::new(&run_name).await {
             Ok(s) => s,
             Err(e) => {
                 warn!(
@@ -492,7 +479,7 @@ pub fn reconcile_stale_workers() -> Vec<(String, String)> {
             }
         };
 
-        let workers = match state.get_workers() {
+        let workers = match state.get_workers().await {
             Ok(w) => w,
             Err(e) => {
                 warn!("[reconcile] Failed to get workers for {}: {}", run_name, e);
@@ -518,16 +505,19 @@ pub fn reconcile_stale_workers() -> Vec<(String, String)> {
                         worker.name, run_name, pid
                     );
 
-                    if let Err(e) = state.update_worker(
-                        &worker.name,
-                        WorkerUpdate {
-                            pid: None,
-                            status: Some(WorkerStatus::Paused),
-                            hitl_waiting: Some(false),
-                            assigned_task_id: Some(None), // Clear assigned task
-                            ..Default::default()
-                        },
-                    ) {
+                    if let Err(e) = state
+                        .update_worker(
+                            &worker.name,
+                            WorkerUpdate {
+                                pid: None,
+                                status: Some(WorkerStatus::Paused),
+                                hitl_waiting: Some(false),
+                                assigned_task_id: Some(None), // Clear assigned task
+                                ..Default::default()
+                            },
+                        )
+                        .await
+                    {
                         warn!(
                             "[reconcile] Failed to mark worker {} as paused: {}",
                             worker.name, e
@@ -557,14 +547,17 @@ pub fn reconcile_stale_workers() -> Vec<(String, String)> {
                     worker.name, run_name
                 );
 
-                if let Err(e) = state.update_worker(
-                    &worker.name,
-                    WorkerUpdate {
-                        status: Some(WorkerStatus::Paused),
-                        assigned_task_id: Some(None), // Clear assigned task
-                        ..Default::default()
-                    },
-                ) {
+                if let Err(e) = state
+                    .update_worker(
+                        &worker.name,
+                        WorkerUpdate {
+                            status: Some(WorkerStatus::Paused),
+                            assigned_task_id: Some(None), // Clear assigned task
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                {
                     warn!(
                         "[reconcile] Failed to mark worker {} as paused: {}",
                         worker.name, e

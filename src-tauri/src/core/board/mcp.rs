@@ -17,11 +17,22 @@
 //! The agent edits these files directly with Read/Write tools.
 
 use serde_json::{json, Value};
+use std::future::Future;
 use std::path::PathBuf;
 
 use crate::core::config::hirsel_dir;
 use crate::core::delta::{DeltaExporter, DeltaState, DraftNodeTree, NodeType};
 use crate::core::mcp::{run_mcp_server, McpToolServer, Tool};
+
+/// Block on an async future in a sync context
+fn block_on<F: Future>(f: F) -> F::Output {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(f)),
+        Err(_) => tokio::runtime::Runtime::new()
+            .expect("Failed to create tokio runtime")
+            .block_on(f),
+    }
+}
 
 /// Get the list of available board MCP tools
 fn get_tools() -> Vec<Tool> {
@@ -173,22 +184,9 @@ impl BoardMcpServer {
         Ok(())
     }
 
-    /// Rename content file when node is renamed
-    #[allow(dead_code)]
-    fn rename_content_file(&self, old_id: &str, new_id: &str) -> Result<(), String> {
-        let tasks_dir = self.tasks_dir();
-        let old_path = tasks_dir.join(format!("{}.md", old_id));
-        let new_path = tasks_dir.join(format!("{}.md", new_id));
-        if old_path.exists() {
-            std::fs::rename(&old_path, &new_path).map_err(|e| e.to_string())?;
-        }
-        Ok(())
-    }
-
     /// Get all valid task IDs (for error messages)
     fn get_valid_task_ids(&self) -> Vec<String> {
-        self.state
-            .get_draft_nodes()
+        block_on(self.state.get_draft_nodes())
             .map(|nodes| {
                 nodes
                     .iter()
@@ -201,8 +199,7 @@ impl BoardMcpServer {
 
     /// Get all valid node IDs (tasks and evals)
     fn get_valid_node_ids(&self) -> Vec<String> {
-        self.state
-            .get_draft_nodes()
+        block_on(self.state.get_draft_nodes())
             .map(|nodes| nodes.iter().map(|n| n.id.clone()).collect())
             .unwrap_or_default()
     }
@@ -213,8 +210,8 @@ impl BoardMcpServer {
 
     /// Handle board_view - returns full board structure
     fn handle_view(&self) -> Result<String, String> {
-        let draft_tree = self.state.get_draft_tree().map_err(|e| e.to_string())?;
-        let all_nodes = self.state.get_draft_nodes().map_err(|e| e.to_string())?;
+        let draft_tree = block_on(self.state.get_draft_tree()).map_err(|e| e.to_string())?;
+        let all_nodes = block_on(self.state.get_draft_nodes()).map_err(|e| e.to_string())?;
 
         // Convert to view format - root nodes are tasks directly (no project wrapper)
         let tasks: Vec<Value> = draft_tree
@@ -342,10 +339,7 @@ impl BoardMcpServer {
             y: None,
         };
 
-        let node = self
-            .state
-            .create_draft_node(&req)
-            .map_err(|e| e.to_string())?;
+        let node = block_on(self.state.create_draft_node(&req)).map_err(|e| e.to_string())?;
         let file_path = self.write_content_file(&node.id, content)?;
 
         // Re-export to sync board files
@@ -372,7 +366,7 @@ impl BoardMcpServer {
         use crate::core::delta::UpdateDraftNodeRequest;
 
         // Get existing node to check for rename
-        let old_node = match self.state.get_draft_node(id) {
+        let old_node = match block_on(self.state.get_draft_node(id)) {
             Ok(n) => n,
             Err(_) => {
                 return Ok(json!({
@@ -398,9 +392,7 @@ impl BoardMcpServer {
             y: None,
         };
 
-        self.state
-            .update_draft_node(id, &req)
-            .map_err(|e| e.to_string())?;
+        block_on(self.state.update_draft_node(id, &req)).map_err(|e| e.to_string())?;
 
         // Handle parent_id change if specified
         if let Some(new_parent) = parent_id {
@@ -409,9 +401,7 @@ impl BoardMcpServer {
             } else {
                 Some(new_parent)
             };
-            self.state
-                .move_draft_node(id, new_parent, 0)
-                .map_err(|e| e.to_string())?;
+            block_on(self.state.move_draft_node(id, new_parent, 0)).map_err(|e| e.to_string())?;
         }
 
         // Re-export to sync board files
@@ -503,10 +493,7 @@ impl BoardMcpServer {
             y: None,
         };
 
-        let node = self
-            .state
-            .create_draft_node(&req)
-            .map_err(|e| e.to_string())?;
+        let node = block_on(self.state.create_draft_node(&req)).map_err(|e| e.to_string())?;
         let file_path = self.write_content_file(&node.id, content)?;
 
         // Re-export to sync board files
@@ -533,7 +520,7 @@ impl BoardMcpServer {
         use crate::core::delta::UpdateDraftNodeRequest;
 
         // Verify exists
-        if self.state.get_draft_node(id).is_err() {
+        if block_on(self.state.get_draft_node(id)).is_err() {
             return Ok(json!({
                 "success": false,
                 "message": format!("Eval '{}' not found", id),
@@ -559,9 +546,7 @@ impl BoardMcpServer {
             y: None,
         };
 
-        self.state
-            .update_draft_node(id, &req)
-            .map_err(|e| e.to_string())?;
+        block_on(self.state.update_draft_node(id, &req)).map_err(|e| e.to_string())?;
 
         // Re-export to sync board files
         self.sync_export()?;
@@ -585,7 +570,7 @@ impl BoardMcpServer {
             .ok_or("'id' required")?;
 
         // Get node to check type and name
-        let node = match self.state.get_draft_node(id) {
+        let node = match block_on(self.state.get_draft_node(id)) {
             Ok(n) => n,
             Err(_) => {
                 return Ok(json!({
@@ -605,9 +590,7 @@ impl BoardMcpServer {
         let refs_cleaned = self.count_references_to(id);
 
         // Delete the node (cascade deletes children)
-        self.state
-            .delete_draft_node(id)
-            .map_err(|e| e.to_string())?;
+        block_on(self.state.delete_draft_node(id)).map_err(|e| e.to_string())?;
 
         // Delete content file
         self.delete_content_file(id)?;
@@ -628,7 +611,7 @@ impl BoardMcpServer {
 
     /// Count how many nodes reference this node (blocked_by or validates)
     fn count_references_to(&self, id: &str) -> usize {
-        let nodes = self.state.get_draft_nodes().unwrap_or_default();
+        let nodes = block_on(self.state.get_draft_nodes()).unwrap_or_default();
         nodes
             .iter()
             .filter(|n| {

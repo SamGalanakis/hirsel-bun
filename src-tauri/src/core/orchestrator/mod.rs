@@ -97,6 +97,24 @@ impl From<crate::core::state::StateError> for OrchestratorError {
     }
 }
 
+impl From<crate::core::project::ProjectError> for OrchestratorError {
+    fn from(e: crate::core::project::ProjectError) -> Self {
+        OrchestratorError::Other(e.to_string())
+    }
+}
+
+impl From<crate::core::gyp_chat::GypChatError> for OrchestratorError {
+    fn from(e: crate::core::gyp_chat::GypChatError) -> Self {
+        OrchestratorError::Other(e.to_string())
+    }
+}
+
+impl From<crate::core::delta::DeltaStateError> for OrchestratorError {
+    fn from(e: crate::core::delta::DeltaStateError) -> Self {
+        OrchestratorError::State(e.to_string())
+    }
+}
+
 pub type OrchestratorResult<T> = Result<T, OrchestratorError>;
 
 // =============================================================================
@@ -564,9 +582,15 @@ pub fn create_orchestrator(profile: Option<&str>) -> OrchestratorResult<Box<dyn 
             // Try to load API key from credential store first, fall back to config
             let key = {
                 let cred_key = format!("profile_{}_api_key", profile_name);
-                CredentialStore::open()
+                // Use a runtime for async credential store operations
+                tokio::runtime::Handle::try_current()
                     .ok()
-                    .and_then(|store| store.load(&cred_key).ok())
+                    .and_then(|handle| {
+                        handle.block_on(async {
+                            let store = CredentialStore::open().await.ok()?;
+                            store.load(&cred_key).await.ok()
+                        })
+                    })
                     .or_else(|| profile_config.api_key.clone())
             }
             .ok_or_else(|| {

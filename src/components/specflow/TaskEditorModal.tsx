@@ -423,22 +423,24 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={(e) => { e.preventDefault(); setDragOver(false); }}
         >
-          <Show when={activeTab() === 'edit'}>
-            <div ref={editorContainerRef} class="h-full overflow-auto" />
-          </Show>
+          {/* Use CSS display instead of Show to preserve CodeMirror DOM state */}
+          <div
+            ref={editorContainerRef}
+            class="h-full overflow-auto"
+            style={{ display: activeTab() === 'edit' ? 'block' : 'none' }}
+          />
 
-          <Show when={activeTab() === 'preview'}>
-            <div
-              class="h-full overflow-auto p-4 prose prose-invert prose-sm max-w-none"
-              innerHTML={renderPreview()}
-              style={{
-                '--tw-prose-body': 'var(--wool-200)',
-                '--tw-prose-headings': 'var(--wool-100)',
-                '--tw-prose-links': 'var(--sky-400)',
-                '--tw-prose-code': 'var(--amber-400)',
-              }}
-            />
-          </Show>
+          <div
+            class="h-full overflow-auto p-4 prose prose-invert prose-sm max-w-none"
+            innerHTML={renderPreview()}
+            style={{
+              display: activeTab() === 'preview' ? 'block' : 'none',
+              '--tw-prose-body': 'var(--wool-200)',
+              '--tw-prose-headings': 'var(--wool-100)',
+              '--tw-prose-links': 'var(--sky-400)',
+              '--tw-prose-code': 'var(--amber-400)',
+            }}
+          />
 
           {/* Drop overlay */}
           <Show when={dragOver()}>

@@ -316,6 +316,9 @@ pub trait StateAccess: Send {
 
     /// Get all node IDs validated by an eval node
     async fn get_validated_nodes(&self, eval_id: &str) -> StateAccessResult<Vec<String>>;
+
+    /// Delete a live node by ID (only worker-created nodes can be deleted)
+    async fn delete_live_node(&self, id: &str) -> StateAccessResult<()>;
 }
 
 // =============================================================================
@@ -333,11 +336,11 @@ impl From<crate::core::state::StateError> for StateAccessError {
 #[async_trait(?Send)]
 impl StateAccess for SQLiteState {
     async fn status(&self) -> StateAccessResult<Status> {
-        Ok(SQLiteState::status(self)?)
+        Ok(SQLiteState::status(self).await?)
     }
 
     async fn set_status(&self, status: Status) -> StateAccessResult<()> {
-        Ok(SQLiteState::set_status(self, status)?)
+        Ok(SQLiteState::set_status(self, status).await?)
     }
 
     async fn add_worker(
@@ -346,37 +349,37 @@ impl StateAccess for SQLiteState {
         work_dir: &str,
         location: &str,
     ) -> StateAccessResult<Option<Worker>> {
-        Ok(SQLiteState::add_worker(self, name, work_dir, location)?)
+        Ok(SQLiteState::add_worker(self, name, work_dir, location).await?)
     }
 
     async fn get_worker(&self, name: &str) -> StateAccessResult<Option<Worker>> {
-        Ok(SQLiteState::get_worker(self, name)?)
+        Ok(SQLiteState::get_worker(self, name).await?)
     }
 
     async fn get_workers(&self) -> StateAccessResult<Vec<Worker>> {
-        Ok(SQLiteState::get_workers(self)?)
+        Ok(SQLiteState::get_workers(self).await?)
     }
 
     async fn update_worker(&self, name: &str, updates: WorkerUpdate) -> StateAccessResult<()> {
-        Ok(SQLiteState::update_worker(self, name, updates)?)
+        Ok(SQLiteState::update_worker(self, name, updates).await?)
     }
 
     async fn get_active_workers(&self) -> StateAccessResult<Vec<Worker>> {
-        Ok(SQLiteState::get_active_workers(self)?)
+        Ok(SQLiteState::get_active_workers(self).await?)
     }
 
     async fn all_workers_done(&self) -> StateAccessResult<bool> {
         // Check if all workers are in Awaiting status
-        let workers = SQLiteState::get_workers(self)?;
+        let workers = SQLiteState::get_workers(self).await?;
         Ok(workers.iter().all(|w| w.status == WorkerStatus::Awaiting))
     }
 
     async fn pause_all_workers(&self, reason: &str) -> StateAccessResult<()> {
-        Ok(SQLiteState::pause_all_workers(self, reason)?)
+        Ok(SQLiteState::pause_all_workers(self, reason).await?)
     }
 
     async fn resume_all_workers(&self) -> StateAccessResult<()> {
-        Ok(SQLiteState::resume_all_workers(self)?)
+        Ok(SQLiteState::resume_all_workers(self).await?)
     }
 
     async fn add_message(
@@ -385,13 +388,11 @@ impl StateAccess for SQLiteState {
         sender: &str,
         content: &str,
     ) -> StateAccessResult<i64> {
-        Ok(SQLiteState::add_message(
-            self, thread, sender, content, false,
-        )?)
+        Ok(SQLiteState::add_message(self, thread, sender, content, false).await?)
     }
 
     async fn get_messages(&self, thread: &str, limit: i64) -> StateAccessResult<Vec<Message>> {
-        Ok(SQLiteState::get_messages(self, thread, limit)?)
+        Ok(SQLiteState::get_messages(self, thread, limit).await?)
     }
 
     async fn get_unread_messages(
@@ -399,11 +400,11 @@ impl StateAccess for SQLiteState {
         thread: &str,
         reader: &str,
     ) -> StateAccessResult<Vec<Message>> {
-        Ok(SQLiteState::get_unread_messages(self, thread, reader)?)
+        Ok(SQLiteState::get_unread_messages(self, thread, reader).await?)
     }
 
     async fn get_all_unread_messages(&self, reader: &str) -> StateAccessResult<Vec<Message>> {
-        Ok(SQLiteState::get_all_unread_messages(self, reader)?)
+        Ok(SQLiteState::get_all_unread_messages(self, reader).await?)
     }
 
     async fn mark_messages_read(
@@ -412,13 +413,11 @@ impl StateAccess for SQLiteState {
         reader: &str,
         up_to_id: Option<i64>,
     ) -> StateAccessResult<()> {
-        Ok(SQLiteState::mark_messages_read(
-            self, thread, reader, up_to_id,
-        )?)
+        Ok(SQLiteState::mark_messages_read(self, thread, reader, up_to_id).await?)
     }
 
     async fn get_threads(&self) -> StateAccessResult<Vec<String>> {
-        Ok(SQLiteState::get_threads(self)?)
+        Ok(SQLiteState::get_threads(self).await?)
     }
 
     async fn start_eval(
@@ -427,7 +426,7 @@ impl StateAccess for SQLiteState {
         eval_name: Option<&str>,
         log_file: Option<&str>,
     ) -> StateAccessResult<i64> {
-        Ok(SQLiteState::start_eval(self, branch, eval_name, log_file)?)
+        Ok(SQLiteState::start_eval(self, branch, eval_name, log_file).await?)
     }
 
     async fn complete_eval(
@@ -436,124 +435,122 @@ impl StateAccess for SQLiteState {
         success: bool,
         feedback: &str,
     ) -> StateAccessResult<()> {
-        Ok(SQLiteState::complete_eval(
-            self, eval_id, success, feedback,
-        )?)
+        Ok(SQLiteState::complete_eval(self, eval_id, success, feedback).await?)
     }
 
     async fn get_eval(&self, eval_id: i64) -> StateAccessResult<Option<Eval>> {
-        Ok(SQLiteState::get_eval(self, eval_id)?)
+        Ok(SQLiteState::get_eval(self, eval_id).await?)
     }
 
     async fn get_evals(&self, limit: i64) -> StateAccessResult<Vec<Eval>> {
-        Ok(SQLiteState::get_evals(self, limit)?)
+        Ok(SQLiteState::get_evals(self, limit).await?)
     }
 
     async fn get_running_eval(&self) -> StateAccessResult<Option<Eval>> {
-        Ok(SQLiteState::get_running_eval(self)?)
+        Ok(SQLiteState::get_running_eval(self).await?)
     }
 
     async fn cancel_running_evals(&self, reason: &str) -> StateAccessResult<i64> {
-        Ok(SQLiteState::cancel_running_evals(self, reason)?)
+        Ok(SQLiteState::cancel_running_evals(self, reason).await?)
     }
 
     async fn get_request(&self) -> StateAccessResult<Option<String>> {
-        Ok(SQLiteState::get_request(self)?)
+        Ok(SQLiteState::get_request(self).await?)
     }
 
     async fn set_request(&self, request: Option<&str>) -> StateAccessResult<()> {
-        Ok(SQLiteState::set_request(self, request)?)
+        Ok(SQLiteState::set_request(self, request).await?)
     }
 
     async fn get_project_path(&self) -> StateAccessResult<Option<String>> {
-        Ok(SQLiteState::get_project_path(self)?)
+        Ok(SQLiteState::get_project_path(self).await?)
     }
 
     async fn set_project_path(&self, path: &str) -> StateAccessResult<()> {
-        Ok(SQLiteState::set_project_path(self, path)?)
+        Ok(SQLiteState::set_project_path(self, path).await?)
     }
 
     async fn get_waiting_reason(&self) -> StateAccessResult<Option<String>> {
-        Ok(SQLiteState::get_waiting_reason(self)?)
+        Ok(SQLiteState::get_waiting_reason(self).await?)
     }
 
     async fn set_waiting_reason(&self, reason: Option<&str>) -> StateAccessResult<()> {
-        Ok(SQLiteState::set_waiting_reason(self, reason)?)
+        Ok(SQLiteState::set_waiting_reason(self, reason).await?)
     }
 
     async fn get_human_in_the_loop(&self) -> StateAccessResult<bool> {
-        Ok(SQLiteState::get_human_in_the_loop(self)?)
+        Ok(SQLiteState::get_human_in_the_loop(self).await?)
     }
 
     async fn set_human_in_the_loop(&self, enabled: bool) -> StateAccessResult<()> {
-        Ok(SQLiteState::set_human_in_the_loop(self, enabled)?)
+        Ok(SQLiteState::set_human_in_the_loop(self, enabled).await?)
     }
 
     async fn get_summary(&self) -> StateAccessResult<Option<String>> {
-        Ok(SQLiteState::get_summary(self)?)
+        Ok(SQLiteState::get_summary(self).await?)
     }
 
     async fn set_summary(&self, summary: &str) -> StateAccessResult<()> {
-        Ok(SQLiteState::set_summary(self, summary)?)
+        Ok(SQLiteState::set_summary(self, summary).await?)
     }
 
     async fn get_worker_scale(&self) -> StateAccessResult<Option<String>> {
-        Ok(SQLiteState::get_worker_scale(self)?)
+        Ok(SQLiteState::get_worker_scale(self).await?)
     }
 
     async fn set_worker_scale(&self, scale: &str) -> StateAccessResult<()> {
-        Ok(SQLiteState::set_worker_scale(self, scale)?)
+        Ok(SQLiteState::set_worker_scale(self, scale).await?)
     }
 
     async fn get_time_limit_minutes(&self) -> StateAccessResult<Option<i64>> {
-        Ok(SQLiteState::get_time_limit_minutes(self)?)
+        Ok(SQLiteState::get_time_limit_minutes(self).await?)
     }
 
     async fn set_time_limit_minutes(&self, minutes: Option<i64>) -> StateAccessResult<()> {
-        Ok(SQLiteState::set_time_limit_minutes(self, minutes)?)
+        Ok(SQLiteState::set_time_limit_minutes(self, minutes).await?)
     }
 
     async fn get_started_at(&self) -> StateAccessResult<Option<String>> {
-        Ok(SQLiteState::get_started_at(self)?)
+        Ok(SQLiteState::get_started_at(self).await?)
     }
 
     async fn set_started_at(&self, timestamp: Option<&str>) -> StateAccessResult<()> {
-        Ok(SQLiteState::set_started_at(self, timestamp)?)
+        Ok(SQLiteState::set_started_at(self, timestamp).await?)
     }
 
     async fn get_time_info(&self) -> StateAccessResult<Option<TimeInfo>> {
-        Ok(SQLiteState::get_time_info(self)?)
+        Ok(SQLiteState::get_time_info(self).await?)
     }
 
     async fn is_time_expired(&self) -> StateAccessResult<bool> {
-        Ok(SQLiteState::is_time_expired(self)?)
+        Ok(SQLiteState::is_time_expired(self).await?)
     }
 
     async fn get_last_time_notification_pct(&self) -> StateAccessResult<Option<i64>> {
-        Ok(SQLiteState::get_last_time_notification_pct(self)?)
+        Ok(SQLiteState::get_last_time_notification_pct(self).await?)
     }
 
     async fn set_last_time_notification_pct(&self, pct: i64) -> StateAccessResult<()> {
-        Ok(SQLiteState::set_last_time_notification_pct(self, pct)?)
+        Ok(SQLiteState::set_last_time_notification_pct(self, pct).await?)
     }
 
     async fn clear_time_tracking(&self) -> StateAccessResult<()> {
-        Ok(SQLiteState::clear_time_tracking(self)?)
+        Ok(SQLiteState::clear_time_tracking(self).await?)
     }
 
     async fn get_iteration_count(&self) -> StateAccessResult<i64> {
-        Ok(SQLiteState::get_iteration_count(self)?)
+        Ok(SQLiteState::get_iteration_count(self).await?)
     }
 
     async fn increment_iteration(&self) -> StateAccessResult<i64> {
-        Ok(SQLiteState::increment_iteration(self)?)
+        Ok(SQLiteState::increment_iteration(self).await?)
     }
 
     async fn get_history(
         &self,
         limit: i64,
     ) -> StateAccessResult<Vec<crate::core::state::HistoryEntry>> {
-        Ok(SQLiteState::get_history(self, limit)?)
+        Ok(SQLiteState::get_history(self, limit).await?)
     }
 
     async fn add_scribe_submission(
@@ -561,11 +558,7 @@ impl StateAccess for SQLiteState {
         worker_name: &str,
         content: &str,
     ) -> StateAccessResult<i64> {
-        Ok(SQLiteState::add_scribe_submission(
-            self,
-            worker_name,
-            content,
-        )?)
+        Ok(SQLiteState::add_scribe_submission(self, worker_name, content).await?)
     }
 
     async fn read_docs(
@@ -574,12 +567,9 @@ impl StateAccess for SQLiteState {
     ) -> StateAccessResult<crate::core::files::DocsContent> {
         use crate::core::Files;
 
-        // Get run_dir from db_path (db_path is run_dir/hirsel.db)
-        let run_dir = self
-            .db_path()
-            .parent()
-            .ok_or_else(|| StateAccessError::Database("Invalid db path".to_string()))?;
-        let files = Files::new(run_dir);
+        // Get run_dir from run_name
+        let run_dir = crate::core::config::run_dir(self.run_name());
+        let files = Files::new(&run_dir);
 
         files
             .read_docs(file)
@@ -587,21 +577,21 @@ impl StateAccess for SQLiteState {
     }
 
     async fn init_state(&self, project_path: Option<&str>) -> StateAccessResult<()> {
-        Ok(SQLiteState::init_state(self, project_path)?)
+        Ok(SQLiteState::init_state(self, project_path).await?)
     }
 
     async fn heartbeat(&self) -> StateAccessResult<Status> {
         // For local SQLiteState, heartbeat just returns current status
         // (no network operation needed)
-        Ok(SQLiteState::status(self)?)
+        Ok(SQLiteState::status(self).await?)
     }
 
     async fn request_scaling_check(&self) -> StateAccessResult<()> {
-        Ok(SQLiteState::request_scaling_check(self)?)
+        Ok(SQLiteState::request_scaling_check(self).await?)
     }
 
     async fn get_project_id(&self) -> StateAccessResult<Option<i64>> {
-        Ok(SQLiteState::get_project_id(self)?)
+        Ok(SQLiteState::get_project_id(self).await?)
     }
 
     async fn add_live_node(
@@ -616,7 +606,7 @@ impl StateAccess for SQLiteState {
         use crate::core::delta::{DeltaState, NodeType};
 
         // Get project_id from run state
-        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+        let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
                 "Cannot add live node: run is not linked to a board project".to_string(),
             )
@@ -631,6 +621,7 @@ impl StateAccess for SQLiteState {
         // Create the live node
         delta_state
             .create_live_node_from_worker(id, name, parent_id, blocked_by, node_type, content)
+            .await
             .map_err(|e| {
                 StateAccessError::Database(format!("Failed to create live node: {}", e))
             })?;
@@ -645,7 +636,7 @@ impl StateAccess for SQLiteState {
     ) -> StateAccessResult<crate::core::delta::LiveNode> {
         use crate::core::delta::DeltaState;
 
-        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+        let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
                 "Cannot claim live node: run is not linked to a board project".to_string(),
             )
@@ -654,6 +645,7 @@ impl StateAccess for SQLiteState {
         let delta_state = DeltaState::new(project_id);
         delta_state
             .claim_live_node(id, worker_name)
+            .await
             .map_err(|e| StateAccessError::Database(format!("Failed to claim live node: {}", e)))
     }
 
@@ -664,7 +656,7 @@ impl StateAccess for SQLiteState {
     ) -> StateAccessResult<crate::core::delta::LiveNode> {
         use crate::core::delta::DeltaState;
 
-        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+        let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
                 "Cannot complete live node: run is not linked to a board project".to_string(),
             )
@@ -673,13 +665,14 @@ impl StateAccess for SQLiteState {
         let delta_state = DeltaState::new(project_id);
         delta_state
             .complete_live_node(id, worker_name)
+            .await
             .map_err(|e| StateAccessError::Database(format!("Failed to complete live node: {}", e)))
     }
 
     async fn unclaim_live_node(&self, id: &str) -> StateAccessResult<()> {
         use crate::core::delta::DeltaState;
 
-        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+        let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
                 "Cannot unclaim live node: run is not linked to a board project".to_string(),
             )
@@ -688,6 +681,7 @@ impl StateAccess for SQLiteState {
         let delta_state = DeltaState::new(project_id);
         delta_state
             .unclaim_live_node(id)
+            .await
             .map_err(|e| StateAccessError::Database(format!("Failed to unclaim live node: {}", e)))
     }
 
@@ -697,7 +691,7 @@ impl StateAccess for SQLiteState {
     ) -> StateAccessResult<Option<crate::core::delta::LiveNode>> {
         use crate::core::delta::DeltaState;
 
-        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+        let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
                 "Cannot get claimed live node: run is not linked to a board project".to_string(),
             )
@@ -706,6 +700,7 @@ impl StateAccess for SQLiteState {
         let delta_state = DeltaState::new(project_id);
         delta_state
             .get_claimed_node_for_worker(worker_name)
+            .await
             .map_err(|e| {
                 StateAccessError::Database(format!("Failed to get claimed live node: {}", e))
             })
@@ -714,14 +709,14 @@ impl StateAccess for SQLiteState {
     async fn get_claimable_nodes(&self) -> StateAccessResult<Vec<crate::core::delta::LiveNode>> {
         use crate::core::delta::DeltaState;
 
-        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+        let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
                 "Cannot get claimable nodes: run is not linked to a board project".to_string(),
             )
         })?;
 
         let delta_state = DeltaState::new(project_id);
-        delta_state.get_claimable_nodes().map_err(|e| {
+        delta_state.get_claimable_nodes().await.map_err(|e| {
             StateAccessError::Database(format!("Failed to get claimable nodes: {}", e))
         })
     }
@@ -729,7 +724,7 @@ impl StateAccess for SQLiteState {
     async fn get_live_nodes(&self) -> StateAccessResult<Vec<crate::core::delta::LiveNode>> {
         use crate::core::delta::DeltaState;
 
-        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+        let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
                 "Cannot get live nodes: run is not linked to a board project".to_string(),
             )
@@ -738,20 +733,21 @@ impl StateAccess for SQLiteState {
         let delta_state = DeltaState::new(project_id);
         delta_state
             .get_live_nodes()
+            .await
             .map_err(|e| StateAccessError::Database(format!("Failed to get live nodes: {}", e)))
     }
 
     async fn is_live_node_blocked(&self, id: &str) -> StateAccessResult<bool> {
         use crate::core::delta::DeltaState;
 
-        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+        let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
                 "Cannot check live node blocked: run is not linked to a board project".to_string(),
             )
         })?;
 
         let delta_state = DeltaState::new(project_id);
-        delta_state.is_node_blocked(id).map_err(|e| {
+        delta_state.is_node_blocked(id).await.map_err(|e| {
             StateAccessError::Database(format!("Failed to check live node blocked: {}", e))
         })
     }
@@ -759,7 +755,7 @@ impl StateAccess for SQLiteState {
     async fn live_node_eval_pass(&self, eval_id: &str, worker_name: &str) -> StateAccessResult<()> {
         use crate::core::delta::DeltaState;
 
-        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+        let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
                 "Cannot eval pass: run is not linked to a board project".to_string(),
             )
@@ -768,6 +764,7 @@ impl StateAccess for SQLiteState {
         let delta_state = DeltaState::new(project_id);
         delta_state
             .eval_pass(eval_id, worker_name)
+            .await
             .map_err(|e| StateAccessError::Database(format!("Failed to eval pass: {}", e)))
     }
 
@@ -779,7 +776,7 @@ impl StateAccess for SQLiteState {
     ) -> StateAccessResult<String> {
         use crate::core::delta::DeltaState;
 
-        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+        let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
                 "Cannot eval fail: run is not linked to a board project".to_string(),
             )
@@ -788,20 +785,21 @@ impl StateAccess for SQLiteState {
         let delta_state = DeltaState::new(project_id);
         delta_state
             .eval_fail(eval_id, worker_name, feedback)
+            .await
             .map_err(|e| StateAccessError::Database(format!("Failed to eval fail: {}", e)))
     }
 
     async fn set_live_node_tokens(&self, id: &str, tokens: i64) -> StateAccessResult<()> {
         use crate::core::delta::DeltaState;
 
-        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+        let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
                 "Cannot set live node tokens: run is not linked to a board project".to_string(),
             )
         })?;
 
         let delta_state = DeltaState::new(project_id);
-        delta_state.set_node_tokens(id, tokens).map_err(|e| {
+        delta_state.set_node_tokens(id, tokens).await.map_err(|e| {
             StateAccessError::Database(format!("Failed to set live node tokens: {}", e))
         })
     }
@@ -809,15 +807,31 @@ impl StateAccess for SQLiteState {
     async fn get_validated_nodes(&self, eval_id: &str) -> StateAccessResult<Vec<String>> {
         use crate::core::delta::DeltaState;
 
-        let project_id = SQLiteState::get_project_id(self)?.ok_or_else(|| {
+        let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
                 "Cannot get validated nodes: run is not linked to a board project".to_string(),
             )
         })?;
 
         let delta_state = DeltaState::new(project_id);
-        delta_state.get_validated_nodes(eval_id).map_err(|e| {
+        delta_state.get_validated_nodes(eval_id).await.map_err(|e| {
             StateAccessError::Database(format!("Failed to get validated nodes: {}", e))
         })
+    }
+
+    async fn delete_live_node(&self, id: &str) -> StateAccessResult<()> {
+        use crate::core::delta::DeltaState;
+
+        let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
+            StateAccessError::InvalidOperation(
+                "Cannot delete live node: run is not linked to a board project".to_string(),
+            )
+        })?;
+
+        let delta_state = DeltaState::new(project_id);
+        delta_state
+            .delete_live_node(id)
+            .await
+            .map_err(|e| StateAccessError::Database(format!("Failed to delete live node: {}", e)))
     }
 }

@@ -167,6 +167,31 @@ const [value, setValue] = createSignal('');
 
 **Note:** Use `class="dropdown"` NOT `class="select"`. Basecoat adds checkmarks via CSS based on `aria-selected`.
 
+### MultiSelect Dropdown
+
+For multiple selections, use checkboxes and `aria-multiselectable`:
+
+```tsx
+import { MultiSelectDropdown } from '../shared';
+
+<MultiSelectDropdown
+  value={selectedFilters()}
+  options={[
+    { value: 'spec-tasks', label: 'Spec Tasks' },
+    { value: 'worker-tasks', label: 'Worker Tasks' },
+    { value: 'deleted-nodes', label: 'Deleted Nodes' },
+  ]}
+  onChange={setSelectedFilters}
+  placeholder="Filter..."
+  class="w-36 text-xs"
+/>
+```
+
+The component displays:
+- "All" when all options selected
+- First selected label when only one selected
+- First label + count (e.g., "Spec Tasks +1") for multiple selections
+
 ---
 
 ## Card

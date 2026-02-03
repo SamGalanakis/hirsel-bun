@@ -32,17 +32,17 @@ pub struct LocalLifecycleManager {
 
 impl LocalLifecycleManager {
     /// Create a new LocalLifecycleManager.
-    pub fn new(
+    pub async fn new(
         run_name: impl Into<String>,
         run_dir: PathBuf,
         agent_command: Vec<String>,
     ) -> LifecycleResult<Self> {
+        let run_name = run_name.into();
         let files = Files::new(&run_dir);
-        let state =
-            SQLiteState::new(files.db_path()).map_err(|e| LifecycleError::State(e.to_string()))?;
+        let state = SQLiteState::new(&run_name).await?;
 
         Ok(Self {
-            context: LifecycleContext::new(run_name, run_dir, agent_command),
+            context: LifecycleContext::new(&run_name, run_dir, agent_command),
             state,
             files,
         })
@@ -74,9 +74,10 @@ impl LocalLifecycleManager {
     }
 
     /// Get DeltaState for this run's project, if linked to a project.
-    fn get_delta_state(&self) -> Option<DeltaState> {
+    async fn get_delta_state(&self) -> Option<DeltaState> {
         self.state
             .get_project_id()
+            .await
             .ok()
             .flatten()
             .map(DeltaState::new)
@@ -84,35 +85,30 @@ impl LocalLifecycleManager {
 
     /// Get claimable nodes (live nodes that can be claimed).
     /// Uses live nodes from the project's delta state.
-    fn get_claimable_nodes(&self) -> LifecycleResult<Vec<LiveNode>> {
-        if let Some(delta_state) = self.get_delta_state() {
-            delta_state
-                .get_claimable_nodes()
-                .map_err(|e| LifecycleError::State(e.to_string()))
+    async fn get_claimable_nodes(&self) -> LifecycleResult<Vec<LiveNode>> {
+        if let Some(delta_state) = self.get_delta_state().await {
+            Ok(delta_state.get_claimable_nodes().await?)
         } else {
             Ok(vec![])
         }
     }
 
     /// Get all live nodes from the project's delta state.
-    fn get_all_nodes(&self) -> LifecycleResult<Vec<LiveNode>> {
-        if let Some(delta_state) = self.get_delta_state() {
-            delta_state
-                .get_live_nodes()
-                .map_err(|e| LifecycleError::State(e.to_string()))
+    async fn get_all_nodes(&self) -> LifecycleResult<Vec<LiveNode>> {
+        if let Some(delta_state) = self.get_delta_state().await {
+            Ok(delta_state.get_live_nodes().await?)
         } else {
             Ok(vec![])
         }
     }
 
     /// Claim a live node for a worker.
-    fn claim_node(&self, node_id: &str, worker_name: &str) -> LifecycleResult<LiveNode> {
+    async fn claim_node(&self, node_id: &str, worker_name: &str) -> LifecycleResult<LiveNode> {
         let delta_state = self
             .get_delta_state()
+            .await
             .ok_or_else(|| LifecycleError::State("Run not linked to project".into()))?;
-        delta_state
-            .claim_live_node(node_id, worker_name)
-            .map_err(|e| LifecycleError::State(e.to_string()))
+        Ok(delta_state.claim_live_node(node_id, worker_name).await?)
     }
 
     /// Pick the best node for a worker based on tree-walk distance.
@@ -210,16 +206,16 @@ impl LocalLifecycleManager {
     /// This is the public interface for killing workers, used when deleting runs
     /// or other cleanup operations. Uses the Runner trait to properly stop
     /// both local processes and Docker containers.
-    pub fn kill_all_workers(&self) -> LifecycleResult<Vec<String>> {
-        self.kill_all_workers_internal()
+    pub async fn kill_all_workers(&self) -> LifecycleResult<Vec<String>> {
+        self.kill_all_workers_internal().await
     }
 
     /// Resume workers that are paused, in error state, or awaiting tasks.
     ///
     /// This is the public interface for resuming workers after an eval fails
     /// or when workers need to be restarted.
-    pub fn resume_awaiting_workers(&self) -> LifecycleResult<Vec<String>> {
-        let actions = self.resume_awaiting_workers_internal()?;
+    pub async fn resume_awaiting_workers(&self) -> LifecycleResult<Vec<String>> {
+        let actions = self.resume_awaiting_workers_internal().await?;
         Ok(actions
             .into_iter()
             .filter_map(|action| {
@@ -240,43 +236,9 @@ impl LocalLifecycleManager {
     ///
     /// This handles both local processes and Docker containers based on
     /// the stored runner_type.
-    fn kill_all_workers_internal(&self) -> LifecycleResult<Vec<String>> {
-        let workers = self
-            .state
-            .get_workers()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+    async fn kill_all_workers_internal(&self) -> LifecycleResult<Vec<String>> {
+        let workers = self.state.get_workers().await?;
         let mut killed = Vec::new();
-
-        // Helper to run async code - handles being called from within a tokio runtime
-        fn run_async<F, T>(f: F) -> Result<T, String>
-        where
-            F: FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send>>
-                + Send
-                + 'static,
-            T: Send + 'static,
-        {
-            if tokio::runtime::Handle::try_current().is_ok() {
-                // Already in a tokio runtime - spawn a thread with its own runtime
-                std::thread::scope(|s| {
-                    s.spawn(|| {
-                        let rt = tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()
-                            .map_err(|e| format!("Failed to create runtime: {}", e))?;
-                        Ok(rt.block_on(f()))
-                    })
-                    .join()
-                    .unwrap()
-                })
-            } else {
-                // Not in a runtime - create one
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .map_err(|e| format!("Failed to create runtime: {}", e))?;
-                Ok(rt.block_on(f()))
-            }
-        }
 
         for worker in workers {
             // Stop using runner_id and runner_type
@@ -290,31 +252,19 @@ impl LocalLifecycleManager {
                 };
 
                 let runner = create_lifecycle_runner_for_handle(&handle);
-                let worker_name = worker.name.clone();
-                let runner_type_clone = runner_type.clone();
-                let runner_id_clone = runner_id.clone();
 
-                let stop_result =
-                    run_async(move || Box::pin(async move { runner.stop(&handle).await }));
-
-                match stop_result {
-                    Ok(Ok(())) => {
+                match runner.stop(&handle).await {
+                    Ok(()) => {
                         info!(
                             "Stopped worker {} (runner_type: {}, runner_id: {})",
-                            worker_name, runner_type_clone, runner_id_clone
+                            worker.name, runner_type, runner_id
                         );
-                        killed.push(worker_name);
-                    }
-                    Ok(Err(e)) => {
-                        warn!(
-                            "Runner stop failed for {} (runner_type: {}): {}",
-                            worker_name, runner_type_clone, e
-                        );
+                        killed.push(worker.name.clone());
                     }
                     Err(e) => {
                         warn!(
-                            "Failed to run stop for {} (runner_type: {}): {}",
-                            worker_name, runner_type_clone, e
+                            "Runner stop failed for {} (runner_type: {}): {}",
+                            worker.name, runner_type, e
                         );
                     }
                 }
@@ -324,14 +274,18 @@ impl LocalLifecycleManager {
 
             // Clear PID and runner info from database
             if worker.pid.is_some() || worker.runner_id.is_some() {
-                if let Err(e) = self.state.update_worker(
-                    &worker.name,
-                    WorkerUpdate {
-                        pid: None,
-                        runner_id: None,
-                        ..Default::default()
-                    },
-                ) {
+                if let Err(e) = self
+                    .state
+                    .update_worker(
+                        &worker.name,
+                        WorkerUpdate {
+                            pid: None,
+                            runner_id: None,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                {
                     warn!(
                         "Failed to clear worker {} state after kill: {}",
                         worker.name, e
@@ -347,29 +301,11 @@ impl LocalLifecycleManager {
     ///
     /// For ephemeral hosts (Fly), creates a snapshot of the work directory
     /// before stopping the worker so it can be restored on resume.
-    fn pause_all_workers_internal(&self) -> LifecycleResult<Vec<String>> {
-        // Helper to run async code - handles being called from within or outside a runtime
-        fn run_async<F: std::future::Future>(f: F) -> F::Output {
-            if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                // Already in a runtime - use block_in_place to avoid nesting
-                tokio::task::block_in_place(|| handle.block_on(f))
-            } else {
-                // Not in a runtime - create one
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("Failed to create runtime")
-                    .block_on(f)
-            }
-        }
-
+    async fn pause_all_workers_internal(&self) -> LifecycleResult<Vec<String>> {
         // Load config to get runner and storage settings
         let (config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
 
-        let workers = self
-            .state
-            .get_workers()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let workers = self.state.get_workers().await?;
         let mut paused = Vec::new();
 
         for worker in workers {
@@ -382,12 +318,13 @@ impl LocalLifecycleManager {
             let runner_config = self
                 .state
                 .get_runner_config_for_worker(&worker.name)
+                .await
                 .unwrap_or_default();
             let mut state_handle = WorkerStateHandle::new();
 
             // Create unified archive strategy
             let archive_strategy: Option<Box<dyn ArchiveStrategy>> =
-                match run_async(create_archive_strategy(&runner_config, &config.storage)) {
+                match create_archive_strategy(&runner_config, &config.storage).await {
                     Ok(strategy) => Some(strategy),
                     Err(e) => {
                         // No archive strategy is expected for local runners
@@ -408,7 +345,7 @@ impl LocalLifecycleManager {
                     let work_dir = PathBuf::from(work_dir_str);
                     let archive_key = format!("{}/{}/workdir", self.context.run_name, worker.name);
 
-                    match run_async(strategy.archive(&archive_key, &work_dir)) {
+                    match strategy.archive(&archive_key, &work_dir).await {
                         Ok(handle) => {
                             info!(
                                 "Archived work dir for worker {}: {} -> {}",
@@ -441,7 +378,7 @@ impl LocalLifecycleManager {
                     let session_dir = host_session_path(&self.context.run_dir, &worker.name);
                     let archive_key = format!("{}/{}/session", self.context.run_name, worker.name);
 
-                    match run_async(strategy.archive(&archive_key, &session_dir)) {
+                    match strategy.archive(&archive_key, &session_dir).await {
                         Ok(handle) => {
                             info!(
                                 "Archived agent session for worker {}: {} -> {}",
@@ -491,7 +428,7 @@ impl LocalLifecycleManager {
 
                 let runner = create_lifecycle_runner_for_handle(&handle);
 
-                if let Err(e) = run_async(runner.stop(&handle)) {
+                if let Err(e) = runner.stop(&handle).await {
                     warn!(
                         "Runner stop failed for {} (runner_type: {}): {}",
                         worker.name, runner_type, e
@@ -518,7 +455,7 @@ impl LocalLifecycleManager {
                         ..Default::default()
                     },
                 )
-                .map_err(|e| LifecycleError::State(e.to_string()))?;
+                .await?;
             paused.push(worker.name.clone());
         }
 
@@ -530,15 +467,12 @@ impl LocalLifecycleManager {
     /// Returns a list of ResumeWorker actions. The caller (daemon) handles actual
     /// spawning via the orchestrator using resume_worker(). The orchestrator
     /// will restore snapshots for ephemeral runners.
-    fn resume_awaiting_workers_internal(&self) -> LifecycleResult<Vec<LifecycleAction>> {
+    async fn resume_awaiting_workers_internal(&self) -> LifecycleResult<Vec<LifecycleAction>> {
         // Get claimable nodes (needed for awaiting workers)
-        let claimable = self.get_claimable_nodes()?;
+        let claimable = self.get_claimable_nodes().await?;
 
         // Get workers that need to be resumed
-        let workers = self
-            .state
-            .get_workers()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let workers = self.state.get_workers().await?;
 
         let to_resume: Vec<_> = workers
             .iter()
@@ -558,10 +492,7 @@ impl LocalLifecycleManager {
         }
 
         // Check if run is paused - don't resume workers if so
-        let status = self
-            .state
-            .status()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let status = self.state.status().await?;
         if status == Status::Paused {
             debug!("resume_awaiting_workers: run is paused, not resuming");
             return Ok(Vec::new());
@@ -616,16 +547,12 @@ impl LocalLifecycleManager {
     ///
     /// Returns a `SpawnWorker` action if a new worker should be spawned.
     /// The caller (daemon) handles actual spawning via the orchestrator.
-    fn maybe_scale_up_internal(&self) -> LifecycleResult<Option<LifecycleAction>> {
+    async fn maybe_scale_up_internal(&self) -> LifecycleResult<Option<LifecycleAction>> {
         use crate::core::git::create_worker_clone;
         use crate::core::workers::WorkerScale;
 
         // Check if autoscaling is enabled
-        let scale_str = match self
-            .state
-            .get_worker_scale()
-            .map_err(|e| LifecycleError::State(e.to_string()))?
-        {
+        let scale_str = match self.state.get_worker_scale().await? {
             Some(s) => s,
             None => return Ok(None),
         };
@@ -636,22 +563,16 @@ impl LocalLifecycleManager {
         };
 
         // Don't scale up if run is paused
-        let status = self
-            .state
-            .status()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let status = self.state.status().await?;
         if status == Status::Paused {
             debug!("maybe_scale_up: run is paused, not scaling");
             return Ok(None);
         }
 
         // Get current workers and claimable nodes
-        let workers = self
-            .state
-            .get_workers()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let workers = self.state.get_workers().await?;
         let current_count = workers.len();
-        let claimable = self.get_claimable_nodes()?;
+        let claimable = self.get_claimable_nodes().await?;
         let claimable_count = claimable.len();
 
         debug!(
@@ -669,11 +590,7 @@ impl LocalLifecycleManager {
         let new_name = crate::core::names::get_available_name(&existing_names);
 
         // Get project path
-        let project_path_str = match self
-            .state
-            .get_project_path()
-            .map_err(|e| LifecycleError::State(e.to_string()))?
-        {
+        let project_path_str = match self.state.get_project_path().await? {
             Some(p) => p,
             None => {
                 warn!("maybe_scale_up: no project path, cannot scale");
@@ -699,17 +616,56 @@ impl LocalLifecycleManager {
             }
         };
 
+        // Pick the first claimable node to assign to this worker
+        let node = match claimable.first() {
+            Some(n) => n,
+            None => {
+                warn!("maybe_scale_up: no claimable nodes available (race condition?)");
+                return Ok(None);
+            }
+        };
+
         // Add worker to state (status will be set to Working by spawn_single_worker)
         // Use the default runner from the run config, not hardcoded "local"
         let location = self
             .state
             .get_default_runner()
+            .await
             .ok()
             .flatten()
             .unwrap_or_else(|| "local".to_string());
         self.state
             .add_worker(&new_name, worker_dir.to_str().unwrap_or("."), &location)
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+            .await?;
+
+        // Claim node for new worker
+        if let Err(e) = self.claim_node(&node.id, &new_name).await {
+            warn!(
+                "maybe_scale_up: failed to claim node {} for worker {}: {}",
+                node.id, new_name, e
+            );
+            // Clean up the worker we just added
+            let _ = self.state.delete_worker(&new_name).await;
+            return Ok(None);
+        }
+
+        // Set assigned_task_id for new worker
+        if let Err(e) = self
+            .state
+            .update_worker(
+                &new_name,
+                WorkerUpdate {
+                    assigned_task_id: Some(Some(node.id.clone())),
+                    ..Default::default()
+                },
+            )
+            .await
+        {
+            warn!(
+                "maybe_scale_up: failed to set assigned_task_id for {}: {}",
+                new_name, e
+            );
+        }
 
         // Create worker chat file
         let chat_file = self.files.chats_dir().join(format!("{}.md", new_name));
@@ -718,33 +674,28 @@ impl LocalLifecycleManager {
         }
 
         // Announce in group chat
-        let reason = format!(
-            "Autoscaling: {} tasks available, {} workers total",
-            claimable.len(),
-            current_count + 1
-        );
         self.state
             .add_message(
                 "group",
                 "System",
                 &format!(
-                    "New worker **{}** has joined the team. {}",
-                    new_name, reason
+                    "New worker **{}** has joined and is assigned task **{}**.",
+                    new_name, node.id
                 ),
                 false,
             )
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+            .await?;
 
         info!(
-            "maybe_scale_up: prepared worker {} for spawning, returning SpawnWorker action",
-            new_name
+            "maybe_scale_up: spawning worker {} with task {}",
+            new_name, node.id
         );
 
         // Return the SpawnWorker action - daemon will handle actual spawning via orchestrator
         Ok(Some(LifecycleAction::SpawnWorker {
             worker_name: new_name,
             work_dir: worker_dir,
-            assigned_task_id: None, // maybe_scale_up doesn't assign tasks here
+            assigned_task_id: Some(node.id.clone()),
         }))
     }
 
@@ -752,26 +703,19 @@ impl LocalLifecycleManager {
     ///
     /// This is the event-driven scaling evaluation that replaces the old polling-based
     /// approach. It's called when the scaling_check_requested flag is set.
-    pub fn evaluate_scaling(&self) -> LifecycleResult<Vec<LifecycleAction>> {
+    pub async fn evaluate_scaling(&self) -> LifecycleResult<Vec<LifecycleAction>> {
         use crate::core::git::create_worker_clone;
         use crate::core::workers::WorkerScale;
 
         // Don't scale if run is paused
-        let status = self
-            .state
-            .status()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let status = self.state.status().await?;
         if status == Status::Paused {
             debug!("evaluate_scaling: run is paused, not scaling");
             return Ok(vec![]);
         }
 
         // Get scaling configuration
-        let scale_str = match self
-            .state
-            .get_worker_scale()
-            .map_err(|e| LifecycleError::State(e.to_string()))?
-        {
+        let scale_str = match self.state.get_worker_scale().await? {
             Some(s) => s,
             None => return Ok(vec![]),
         };
@@ -782,12 +726,9 @@ impl LocalLifecycleManager {
         let max_workers = scale.max as usize;
 
         // Get claimable nodes and workers
-        let claimable = self.get_claimable_nodes()?;
+        let claimable = self.get_claimable_nodes().await?;
 
-        let workers = self
-            .state
-            .get_workers()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let workers = self.state.get_workers().await?;
 
         let active_count = workers
             .iter()
@@ -819,7 +760,7 @@ impl LocalLifecycleManager {
                 if worker.assigned_task_id.is_none() {
                     // Delete the worker from the database
                     // Note: We don't need to kill the process since idle workers have no process
-                    if let Err(e) = self.state.delete_worker(&worker.name) {
+                    if let Err(e) = self.state.delete_worker(&worker.name).await {
                         warn!(
                             "evaluate_scaling: failed to delete excess worker {}: {}",
                             worker.name, e
@@ -845,7 +786,7 @@ impl LocalLifecycleManager {
         for worker in &idle_workers {
             if let Some(ref assigned_task_id) = worker.assigned_task_id {
                 // Worker has an assigned task - verify it's still in "working" status
-                let all_nodes = self.get_all_nodes().unwrap_or_default();
+                let all_nodes = self.get_all_nodes().await.unwrap_or_default();
                 let task_still_doing = all_nodes
                     .iter()
                     .any(|n| n.id == *assigned_task_id && n.status == LiveNodeStatus::Working);
@@ -919,7 +860,7 @@ impl LocalLifecycleManager {
         }
 
         let mut nodes_to_assign: Vec<_> = claimable.clone();
-        let all_nodes = self.get_all_nodes()?;
+        let all_nodes = self.get_all_nodes().await?;
 
         // Second: wake available idle workers with NEW nodes from claimable
         let workers_to_wake = needed.min(available_idle_workers.len());
@@ -928,7 +869,7 @@ impl LocalLifecycleManager {
                 nodes_to_assign.retain(|n| n.id != node.id);
 
                 // Assign node to worker in database
-                if let Err(e) = self.claim_node(&node.id, &worker.name) {
+                if let Err(e) = self.claim_node(&node.id, &worker.name).await {
                     warn!(
                         "evaluate_scaling: failed to claim node {} for worker {}: {}",
                         node.id, worker.name, e
@@ -937,13 +878,17 @@ impl LocalLifecycleManager {
                 }
 
                 // Update worker's assigned_task_id
-                if let Err(e) = self.state.update_worker(
-                    &worker.name,
-                    WorkerUpdate {
-                        assigned_task_id: Some(Some(node.id.clone())),
-                        ..Default::default()
-                    },
-                ) {
+                if let Err(e) = self
+                    .state
+                    .update_worker(
+                        &worker.name,
+                        WorkerUpdate {
+                            assigned_task_id: Some(Some(node.id.clone())),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                {
                     warn!(
                         "evaluate_scaling: failed to update assigned_task_id for worker {}: {}",
                         worker.name, e
@@ -976,14 +921,14 @@ impl LocalLifecycleManager {
         }
 
         // Then: spawn new workers for remaining nodes
-        let spawned_count = actions.len() - existing_actions_count; // Count of newly assigned workers
-        let remaining = needed.saturating_sub(spawned_count);
+        // Account for both:
+        // - existing_actions_count: workers being resumed with their existing assignments
+        // - spawned_count: idle workers woken with new assignments in the loop above
+        let spawned_count = actions.len() - existing_actions_count;
+        let total_resuming = existing_actions_count + spawned_count;
+        let remaining = needed.saturating_sub(total_resuming);
         if remaining > 0 {
-            let project_path_str = match self
-                .state
-                .get_project_path()
-                .map_err(|e| LifecycleError::State(e.to_string()))?
-            {
+            let project_path_str = match self.state.get_project_path().await? {
                 Some(p) => p,
                 None => {
                     warn!("evaluate_scaling: no project path, cannot spawn new workers");
@@ -1028,20 +973,22 @@ impl LocalLifecycleManager {
                 let location = self
                     .state
                     .get_default_runner()
+                    .await
                     .ok()
                     .flatten()
                     .unwrap_or_else(|| "local".to_string());
 
-                if let Err(e) =
-                    self.state
-                        .add_worker(&new_name, worker_dir.to_str().unwrap_or("."), &location)
+                if let Err(e) = self
+                    .state
+                    .add_worker(&new_name, worker_dir.to_str().unwrap_or("."), &location)
+                    .await
                 {
                     warn!("evaluate_scaling: failed to add worker {}: {}", new_name, e);
                     continue;
                 }
 
                 // Claim node for new worker
-                if let Err(e) = self.claim_node(&node.id, &new_name) {
+                if let Err(e) = self.claim_node(&node.id, &new_name).await {
                     warn!(
                         "evaluate_scaling: failed to claim node {} for new worker {}: {}",
                         node.id, new_name, e
@@ -1050,13 +997,17 @@ impl LocalLifecycleManager {
                 }
 
                 // Set assigned_task_id for new worker
-                if let Err(e) = self.state.update_worker(
-                    &new_name,
-                    WorkerUpdate {
-                        assigned_task_id: Some(Some(node.id.clone())),
-                        ..Default::default()
-                    },
-                ) {
+                if let Err(e) = self
+                    .state
+                    .update_worker(
+                        &new_name,
+                        WorkerUpdate {
+                            assigned_task_id: Some(Some(node.id.clone())),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                {
                     warn!(
                         "evaluate_scaling: failed to set assigned_task_id for {}: {}",
                         new_name, e
@@ -1073,15 +1024,18 @@ impl LocalLifecycleManager {
                 }
 
                 // Announce in group chat
-                let _ = self.state.add_message(
-                    "group",
-                    "System",
-                    &format!(
-                        "New worker **{}** has joined and is assigned task **{}**.",
-                        new_name, node.id
-                    ),
-                    false,
-                );
+                let _ = self
+                    .state
+                    .add_message(
+                        "group",
+                        "System",
+                        &format!(
+                            "New worker **{}** has joined and is assigned task **{}**.",
+                            new_name, node.id
+                        ),
+                        false,
+                    )
+                    .await;
 
                 actions.push(LifecycleAction::SpawnWorker {
                     worker_name: new_name.clone(),
@@ -1193,22 +1147,15 @@ impl LocalLifecycleManager {
     /// Check if eval should be triggered and trigger it.
     ///
     /// Returns true if eval was triggered, false otherwise.
-    fn maybe_trigger_eval(&self) -> LifecycleResult<bool> {
+    async fn maybe_trigger_eval(&self) -> LifecycleResult<bool> {
         // Check if all workers are inactive
-        if !self
-            .state
-            .all_workers_inactive()
-            .map_err(|e| LifecycleError::State(e.to_string()))?
-        {
+        if !self.state.all_workers_inactive().await? {
             debug!("maybe_trigger_eval: not all workers inactive, skipping");
             return Ok(false);
         }
 
         // Check if run is still in working status
-        let status = self
-            .state
-            .status()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let status = self.state.status().await?;
         if status != Status::Working {
             debug!(
                 "maybe_trigger_eval: run status is {:?}, not Working, skipping",
@@ -1218,7 +1165,7 @@ impl LocalLifecycleManager {
         }
 
         // Check if there are still claimable nodes
-        let claimable = self.get_claimable_nodes()?;
+        let claimable = self.get_claimable_nodes().await?;
 
         if !claimable.is_empty() {
             // There are still nodes to do - don't trigger eval or mark done
@@ -1234,7 +1181,7 @@ impl LocalLifecycleManager {
         let eval_path = self.files.eval_spec();
         if !eval_path.exists() {
             // No eval script and no claimable nodes - check if ALL nodes are done
-            let nodes = self.get_all_nodes()?;
+            let nodes = self.get_all_nodes().await?;
 
             // Nodes are complete if:
             // - Work nodes: Done or Validated
@@ -1263,7 +1210,7 @@ impl LocalLifecycleManager {
             }
 
             // All nodes done - kill any remaining workers and set run to Done status
-            let killed = self.kill_all_workers_internal()?;
+            let killed = self.kill_all_workers_internal().await?;
             if !killed.is_empty() {
                 info!(
                     "maybe_trigger_eval: killed {} remaining worker(s): {:?}",
@@ -1273,18 +1220,14 @@ impl LocalLifecycleManager {
             }
 
             info!("maybe_trigger_eval: all workers inactive, all nodes done, no eval script, marking run as Done");
-            self.state
-                .set_status(Status::Done)
-                .map_err(|e| LifecycleError::State(e.to_string()))?;
+            self.state.set_status(Status::Done).await?;
 
             return Ok(false);
         }
 
         // Trigger eval
         info!("maybe_trigger_eval: all workers inactive, triggering eval");
-        self.state
-            .set_status(Status::Eval)
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        self.state.set_status(Status::Eval).await?;
 
         // Spawn the eval agent in a background process
         self.spawn_eval_agent()?;
@@ -1294,13 +1237,13 @@ impl LocalLifecycleManager {
 }
 
 impl LifecycleManager for LocalLifecycleManager {
-    fn process_event(&self, event: LifecycleEvent) -> LifecycleResult<Vec<LifecycleAction>> {
+    async fn process_event(&self, event: LifecycleEvent) -> LifecycleResult<Vec<LifecycleAction>> {
         let mut actions = Vec::new();
 
         match event {
             LifecycleEvent::WorkerDone { worker_name } => {
                 debug!("Processing WorkerDone event for {}", worker_name);
-                actions.extend(self.worker_done(&worker_name)?);
+                actions.extend(self.worker_done(&worker_name).await?);
             }
 
             LifecycleEvent::WorkerStatusChanged {
@@ -1314,7 +1257,7 @@ impl LifecycleManager for LocalLifecycleManager {
                 );
                 if new == WorkerStatus::Awaiting {
                     // Worker became inactive - check if we should trigger eval
-                    if self.maybe_trigger_eval()? {
+                    if self.maybe_trigger_eval().await? {
                         actions.push(LifecycleAction::EvalTriggered);
                     }
                 }
@@ -1326,10 +1269,10 @@ impl LifecycleManager for LocalLifecycleManager {
             } => {
                 // Task completion might unblock other tasks
                 // Try to resume awaiting workers and scale up
-                let resume_actions = self.resume_awaiting_workers_internal()?;
+                let resume_actions = self.resume_awaiting_workers_internal().await?;
                 actions.extend(resume_actions);
 
-                if let Some(action) = self.maybe_scale_up_internal()? {
+                if let Some(action) = self.maybe_scale_up_internal().await? {
                     actions.push(action);
                 }
             }
@@ -1337,41 +1280,38 @@ impl LifecycleManager for LocalLifecycleManager {
             LifecycleEvent::TaskAdded { task_id: _ }
             | LifecycleEvent::TaskUnclaimed { task_id: _ } => {
                 // New or unclaimed task - try to resume awaiting workers
-                let resume_actions = self.resume_awaiting_workers_internal()?;
+                let resume_actions = self.resume_awaiting_workers_internal().await?;
                 actions.extend(resume_actions);
 
-                if let Some(action) = self.maybe_scale_up_internal()? {
+                if let Some(action) = self.maybe_scale_up_internal().await? {
                     actions.push(action);
                 }
             }
 
             LifecycleEvent::TimeCheck => {
                 // Check if time has expired
-                let expired = self
-                    .state
-                    .is_time_expired()
-                    .map_err(|e| LifecycleError::State(e.to_string()))?;
+                let expired = self.state.is_time_expired().await?;
 
                 if expired {
-                    self.handle_time_expired()?;
+                    self.handle_time_expired().await?;
                     actions.push(LifecycleAction::RunFailed {
                         reason: FailureReason::TimeLimit,
                     });
                 }
 
                 // Check if we should trigger eval (for daemon polling case)
-                if self.maybe_trigger_eval()? {
+                if self.maybe_trigger_eval().await? {
                     actions.push(LifecycleAction::EvalTriggered);
                 }
 
                 // Check if we should scale up
-                if let Some(action) = self.maybe_scale_up_internal()? {
+                if let Some(action) = self.maybe_scale_up_internal().await? {
                     actions.push(action);
                 }
             }
 
             LifecycleEvent::PauseRequested { reason } => {
-                let paused = self.pause_run(&reason)?;
+                let paused = self.pause_run(&reason).await?;
                 if !paused.is_empty() {
                     actions.push(LifecycleAction::WorkersPaused(paused));
                 }
@@ -1379,25 +1319,21 @@ impl LifecycleManager for LocalLifecycleManager {
             }
 
             LifecycleEvent::ResumeRequested => {
-                let resume_actions = self.resume_run()?;
+                let resume_actions = self.resume_run().await?;
                 actions.extend(resume_actions);
                 actions.push(LifecycleAction::RunStatusChanged(Status::Working));
             }
 
             LifecycleEvent::EvalCompleted { success, feedback } => {
                 if success {
-                    self.state
-                        .set_status(Status::Done)
-                        .map_err(|e| LifecycleError::State(e.to_string()))?;
+                    self.state.set_status(Status::Done).await?;
                     actions.push(LifecycleAction::RunCompleted);
                 } else {
                     // Eval failed - check if we should retry or fail the run
                     debug!("Eval failed with feedback: {}", feedback);
                     // Resume workers to continue working
-                    self.state
-                        .set_status(Status::Working)
-                        .map_err(|e| LifecycleError::State(e.to_string()))?;
-                    let resume_actions = self.resume_awaiting_workers_internal()?;
+                    self.state.set_status(Status::Working).await?;
+                    let resume_actions = self.resume_awaiting_workers_internal().await?;
                     actions.extend(resume_actions);
                     actions.push(LifecycleAction::RunStatusChanged(Status::Working));
                 }
@@ -1411,12 +1347,9 @@ impl LifecycleManager for LocalLifecycleManager {
         Ok(actions)
     }
 
-    fn pause_run(&self, _reason: &str) -> LifecycleResult<Vec<String>> {
+    async fn pause_run(&self, _reason: &str) -> LifecycleResult<Vec<String>> {
         // Check current status
-        let status = self
-            .state
-            .status()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let status = self.state.status().await?;
 
         if !RunStateMachine::can_transition(status, Status::Paused) {
             return Err(LifecycleError::InvalidTransition {
@@ -1426,27 +1359,22 @@ impl LifecycleManager for LocalLifecycleManager {
         }
 
         // Cancel any running evals
-        if let Err(e) = self.state.cancel_running_evals("Run paused") {
+        if let Err(e) = self.state.cancel_running_evals("Run paused").await {
             warn!("Failed to cancel running evals during pause: {}", e);
         }
 
         // Pause all workers
-        let paused = self.pause_all_workers_internal()?;
+        let paused = self.pause_all_workers_internal().await?;
 
         // Update status
-        self.state
-            .set_status(Status::Paused)
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        self.state.set_status(Status::Paused).await?;
 
         Ok(paused)
     }
 
-    fn resume_run(&self) -> LifecycleResult<Vec<LifecycleAction>> {
+    async fn resume_run(&self) -> LifecycleResult<Vec<LifecycleAction>> {
         // Check current status
-        let status = self
-            .state
-            .status()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let status = self.state.status().await?;
 
         if !RunStateMachine::can_transition(status, Status::Working) {
             return Err(LifecycleError::InvalidTransition {
@@ -1456,50 +1384,41 @@ impl LifecycleManager for LocalLifecycleManager {
         }
 
         // Check if there was an eval that was paused
-        let was_in_eval = self
-            .state
-            .has_paused_eval()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let was_in_eval = self.state.has_paused_eval().await?;
 
         if was_in_eval {
-            if let Err(e) = self.state.clear_paused_evals() {
+            if let Err(e) = self.state.clear_paused_evals().await {
                 warn!("Failed to clear paused evals on resume: {}", e);
             }
-            self.state
-                .set_status(Status::Working)
-                .map_err(|e| LifecycleError::State(e.to_string()))?;
+            self.state.set_status(Status::Working).await?;
 
-            if self.maybe_trigger_eval()? {
+            if self.maybe_trigger_eval().await? {
                 return Ok(Vec::new());
             }
         }
 
         // Clear HITL waiting flags for all workers - this allows workers
         // that were waiting for human input to continue
-        self.state
-            .clear_all_hitl_waiting()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        self.state.clear_all_hitl_waiting().await?;
 
         // Update status first
-        self.state
-            .set_status(Status::Working)
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        self.state.set_status(Status::Working).await?;
 
         // Resume existing workers (returns ResumeWorker actions)
-        let resume_actions = self.resume_awaiting_workers_internal()?;
+        let resume_actions = self.resume_awaiting_workers_internal().await?;
 
         // Note: Scaling is now handled by the daemon through SpawnWorker actions.
         // The daemon will process actions and spawn workers via the orchestrator.
 
         // Check if eval should be triggered
-        if let Err(e) = self.maybe_trigger_eval() {
+        if let Err(e) = self.maybe_trigger_eval().await {
             warn!("Failed to check eval trigger on resume: {}", e);
         }
 
         Ok(resume_actions)
     }
 
-    fn worker_done(&self, worker_name: &str) -> LifecycleResult<Vec<LifecycleAction>> {
+    async fn worker_done(&self, worker_name: &str) -> LifecycleResult<Vec<LifecycleAction>> {
         let mut actions = Vec::new();
 
         // Update worker status to awaiting
@@ -1511,32 +1430,26 @@ impl LifecycleManager for LocalLifecycleManager {
                     ..Default::default()
                 },
             )
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+            .await?;
 
         // Check if eval should be triggered
-        if self.maybe_trigger_eval()? {
+        if self.maybe_trigger_eval().await? {
             actions.push(LifecycleAction::EvalTriggered);
         }
 
         Ok(actions)
     }
 
-    fn handle_time_expired(&self) -> LifecycleResult<()> {
+    async fn handle_time_expired(&self) -> LifecycleResult<()> {
         // Only handle if not already failed
-        let status = self
-            .state
-            .status()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let status = self.state.status().await?;
         if status == Status::Failed {
             info!("Time already expired, skipping handler");
             return Ok(());
         }
 
         // Send final message
-        let workers = self
-            .state
-            .get_workers()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let workers = self.state.get_workers().await?;
         let is_multi_worker = workers.len() > 1;
 
         let message = "Time limit reached. Run failed.";
@@ -1544,19 +1457,19 @@ impl LifecycleManager for LocalLifecycleManager {
 
         self.state
             .add_message(thread, "System", message, false)
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+            .await?;
 
         // Cancel any running evals
         let cancelled = self
             .state
             .cancel_running_evals("Time limit reached")
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+            .await?;
         if cancelled > 0 {
             info!("Cancelled {} running eval(s) due to timeout", cancelled);
         }
 
         // Kill all worker processes
-        let killed = self.kill_all_workers_internal()?;
+        let killed = self.kill_all_workers_internal().await?;
         if !killed.is_empty() {
             info!("Killed {} worker(s) on timeout: {:?}", killed.len(), killed);
         }
@@ -1575,20 +1488,19 @@ impl LifecycleManager for LocalLifecycleManager {
                             ..Default::default()
                         },
                     )
-                    .map_err(|e| LifecycleError::State(e.to_string()))?;
+                    .await?;
             }
         }
 
         // Set run status to Failed with TimeLimit reason
-        self.state
-            .set_failed(FailureReason::TimeLimit)
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        self.state.set_failed(FailureReason::TimeLimit).await?;
         info!("Run status set to Failed (time_limit)");
 
         // Write timeout event to database
         if let Err(e) = self
             .state
             .insert_text_event("system", "\n[time limit reached - run timed out]")
+            .await
         {
             warn!("Failed to write timeout event to database: {}", e);
         }
@@ -1599,20 +1511,21 @@ impl LifecycleManager for LocalLifecycleManager {
         Ok(())
     }
 
-    fn all_workers_inactive(&self) -> LifecycleResult<bool> {
+    async fn all_workers_inactive(&self) -> LifecycleResult<bool> {
         self.state
             .all_workers_inactive()
+            .await
             .map_err(|e| LifecycleError::State(e.to_string()))
     }
 
-    fn should_trigger_eval(&self) -> LifecycleResult<bool> {
+    async fn should_trigger_eval(&self) -> LifecycleResult<bool> {
         // Check if all workers are inactive
-        if !self.all_workers_inactive()? {
+        if !self.all_workers_inactive().await? {
             return Ok(false);
         }
 
         // Check if run is in Working status
-        let status = self.run_status()?;
+        let status = self.run_status().await?;
         if status != Status::Working {
             return Ok(false);
         }
@@ -1621,15 +1534,11 @@ impl LifecycleManager for LocalLifecycleManager {
         Ok(self.files.eval_spec().exists())
     }
 
-    fn can_scale_up(&self) -> LifecycleResult<bool> {
+    async fn can_scale_up(&self) -> LifecycleResult<bool> {
         use crate::core::workers::WorkerScale;
 
         // Check if autoscaling is enabled
-        let scale_str = match self
-            .state
-            .get_worker_scale()
-            .map_err(|e| LifecycleError::State(e.to_string()))?
-        {
+        let scale_str = match self.state.get_worker_scale().await? {
             Some(s) => s,
             None => return Ok(false),
         };
@@ -1640,20 +1549,18 @@ impl LifecycleManager for LocalLifecycleManager {
         };
 
         // Get current count
-        let workers = self
-            .state
-            .get_workers()
-            .map_err(|e| LifecycleError::State(e.to_string()))?;
+        let workers = self.state.get_workers().await?;
 
         // Check if we have claimable nodes
-        let claimable = self.get_claimable_nodes()?;
+        let claimable = self.get_claimable_nodes().await?;
 
         Ok(!claimable.is_empty() && scale.can_scale_up(workers.len()))
     }
 
-    fn run_status(&self) -> LifecycleResult<Status> {
+    async fn run_status(&self) -> LifecycleResult<Status> {
         self.state
             .status()
+            .await
             .map_err(|e| LifecycleError::State(e.to_string()))
     }
 

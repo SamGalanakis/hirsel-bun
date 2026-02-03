@@ -1051,7 +1051,14 @@ export const MERGE_STATE_ICONS: Record<MergeState, string> = {
 export type NodeType = 'task' | 'eval';
 
 /** Status of a live node */
-export type LiveNodeStatus = 'pending' | 'working' | 'done' | 'failed';
+export type LiveNodeStatus =
+  | 'pending'
+  | 'working'
+  | 'done'
+  | 'awaiting_eval'
+  | 'validated'
+  | 'needs_repair'
+  | 'failed';
 
 /** Source of a live node - where it originated */
 export type LiveNodeSource = 'spec' | 'worker' | 'system';
@@ -1121,18 +1128,25 @@ export interface LiveNode {
 export interface LiveNodeTree {
   id: string;
   draftNodeId: string | null;
+  parentId: string | null;
   name: string;
   nodeType: NodeType;
   content: string;
   status: LiveNodeStatus;
   source: LiveNodeSource;
   validates: string[];
-  blockedBy: string[]; // Computed inverse of validates - tasks blocked by evals
+  blockedBy: string[];
   children: LiveNodeTree[];
   x: number | null;
   y: number | null;
   completedAt: string | null;
   lastCommitSha: string | null;
+  claimedBy: string | null;
+  claimedAt: string | null;
+  completedBy: string | null;
+  evalResult: 'pass' | 'fail' | null;
+  evalFeedback: string | null;
+  tokensUsed: number | null;
 }
 
 /** A reference for context in delta tasks */
@@ -1230,6 +1244,9 @@ export const LIVE_NODE_STATUS_COLORS: Record<LiveNodeStatus, string> = {
   pending: 'wool-500',
   working: 'amber-500',
   done: 'sage',
+  awaiting_eval: 'amber-400',
+  validated: 'sage',
+  needs_repair: 'terra',
   failed: 'terra',
 };
 
@@ -1238,6 +1255,9 @@ export const LIVE_NODE_STATUS_ICONS: Record<LiveNodeStatus, string> = {
   pending: '\u25cb', // ○
   working: '\u25cf', // ●
   done: '\u2713', // ✓
+  awaiting_eval: '\u25d4', // ◔
+  validated: '\u2713', // ✓
+  needs_repair: '\u26a0', // ⚠
   failed: '\u2717', // ✗
 };
 

@@ -130,7 +130,10 @@ impl WorkerConfig {
 
 /// State backend enum - either local SQLite or remote HTTP.
 enum StateBackend {
-    Local(SQLiteState),
+    Local {
+        state: SQLiteState,
+        runtime: tokio::runtime::Runtime,
+    },
     Remote {
         state: HttpState,
         runtime: tokio::runtime::Runtime,
@@ -180,17 +183,26 @@ impl WorkerRunner {
         } else {
             // Local mode - use SQLiteState
             let files = Files::new(&config.run_dir);
-            let state = SQLiteState::new(files.db_path()).map_err(WorkerError::State)?;
+
+            // Create a runtime for async operations since WorkerRunner::new is sync
+            let runtime = tokio::runtime::Runtime::new()
+                .map_err(|e| WorkerError::Config(format!("Failed to create runtime: {}", e)))?;
+
+            let state = runtime
+                .block_on(SQLiteState::new(&config.run_name))
+                .map_err(WorkerError::State)?;
 
             // Verify worker exists in database
-            let workers = state.get_workers().map_err(WorkerError::State)?;
+            let workers = runtime
+                .block_on(state.get_workers())
+                .map_err(WorkerError::State)?;
             if !workers.iter().any(|w| w.name == config.worker_name) {
                 return Err(WorkerError::WorkerNotRegistered(config.worker_name.clone()));
             }
 
             Ok(Self {
                 config,
-                backend: StateBackend::Local(state),
+                backend: StateBackend::Local { state, runtime },
                 _files: Some(files),
                 last_heartbeat: Instant::now(),
             })
@@ -211,7 +223,7 @@ impl WorkerRunner {
     /// Returns None if using remote state (HttpState).
     pub fn local_state(&self) -> Option<&SQLiteState> {
         match &self.backend {
-            StateBackend::Local(state) => Some(state),
+            StateBackend::Local { state, .. } => Some(state),
             StateBackend::Remote { .. } => None,
         }
     }
@@ -222,11 +234,7 @@ impl WorkerRunner {
         F: std::future::Future<Output = T>,
     {
         match &self.backend {
-            StateBackend::Local(_) => {
-                // For local state, we create a minimal runtime just to execute the future.
-                // Since SQLiteState's async methods are just sync wrappers, this is fast.
-                futures::executor::block_on(f)
-            }
+            StateBackend::Local { runtime, .. } => runtime.block_on(f),
             StateBackend::Remote { runtime, .. } => runtime.block_on(f),
         }
     }
@@ -234,7 +242,7 @@ impl WorkerRunner {
     /// Get a reference to the state as a trait object for async operations.
     fn state(&self) -> &dyn StateAccess {
         match &self.backend {
-            StateBackend::Local(state) => state,
+            StateBackend::Local { state, .. } => state,
             StateBackend::Remote { state, .. } => state,
         }
     }
@@ -470,33 +478,93 @@ impl WorkerRunner {
             .map_err(|e| WorkerError::Config(format!("Serialization error: {}", e)))
     }
 
-    /// Mark a task (live node) as done.
+    /// Mark a task (live node) as done and signal ready for new work.
+    ///
+    /// This:
+    /// 1. Marks the task as complete (unblocks dependent tasks) - if a task is claimed
+    /// 2. Sets worker to Awaiting status (triggers process exit)
+    /// 3. Requests scaling check (daemon will respawn with new task if available)
+    ///
+    /// Workers are "dumb" - they do one task, then exit and get respawned.
+    ///
+    /// For runs without live_nodes (e.g., CLI runs via `hirsel go`), this will
+    /// just signal completion without completing a specific task.
     pub fn task_done(&self, task_id: Option<&str>) -> WorkerResult<String> {
         let worker_name = self.config.worker_name.clone();
+
+        // Try to get the task ID - either from parameter or from claimed node
         let tid = match task_id {
-            Some(id) => id.to_string(),
+            Some(id) => Some(id.to_string()),
             None => {
-                // Get currently claimed node
-                let node = self
-                    .run_async(self.state().get_claimed_live_node(&worker_name))?
-                    .ok_or(WorkerError::NoTaskClaimed)?;
-                node.id
+                // Try to get currently claimed node - but don't fail if none
+                self.run_async(self.state().get_claimed_live_node(&worker_name))
+                    .ok()
+                    .flatten()
+                    .map(|node| node.id)
             }
         };
 
-        self.run_async(self.state().complete_live_node(&tid, &worker_name))?;
-        tracing::debug!(
-            "[{}] Completed live node '{}'",
-            self.config.worker_name,
-            tid
-        );
+        // If we have a task to complete, mark it as done
+        if let Some(ref task_id) = tid {
+            // Mark the live node as done
+            if let Err(e) = self.run_async(self.state().complete_live_node(task_id, &worker_name)) {
+                tracing::warn!(
+                    "[{}] Failed to complete live node '{}': {} (continuing with worker exit)",
+                    self.config.worker_name,
+                    task_id,
+                    e
+                );
+            }
 
-        // Completing a node might unblock other nodes, so wake awaiting workers
-        self.try_resume_awaiting_workers();
+            // Update worker: clear assigned_task_id, set last_task_id for tree distance
+            self.run_async(self.state().update_worker(
+                &worker_name,
+                WorkerUpdate {
+                    assigned_task_id: Some(None),              // Clear current assignment
+                    last_task_id: Some(Some(task_id.clone())), // Track for tree distance
+                    ..Default::default()
+                },
+            ))?;
+
+            tracing::info!(
+                "[{}] Completed task '{}', setting Awaiting for respawn",
+                self.config.worker_name,
+                task_id
+            );
+        } else {
+            // No task was claimed - this is valid for runs without live_nodes (CLI runs)
+            tracing::info!(
+                "[{}] No task claimed, setting Awaiting for respawn (CLI run mode)",
+                self.config.worker_name
+            );
+
+            // Clear any assigned task in worker record
+            self.run_async(self.state().update_worker(
+                &worker_name,
+                WorkerUpdate {
+                    assigned_task_id: Some(None),
+                    ..Default::default()
+                },
+            ))?;
+        }
+
+        // Set status to Awaiting - this triggers worker termination
+        self.set_status(WorkerStatus::Awaiting)?;
+
+        // Trigger scaling check - daemon will respawn with new task if available
+        if let Err(e) = self.run_async(self.state().request_scaling_check()) {
+            tracing::warn!(
+                "[{}] Failed to request scaling check: {} (worker will still exit)",
+                self.config.worker_name,
+                e
+            );
+        }
 
         Ok(serde_json::json!({
             "success": true,
             "task_id": tid,
+            "status": "awaiting",
+            "message": "Work complete. Worker will exit and be respawned if more tasks available.",
         })
         .to_string())
     }
@@ -530,9 +598,15 @@ impl WorkerRunner {
             task_id
         );
 
-        // New task might be claimable, so wake awaiting workers
+        // New unblocked task might be claimable - request scaling check
         if blocked_refs.is_empty() {
-            self.try_resume_awaiting_workers();
+            if let Err(e) = self.run_async(self.state().request_scaling_check()) {
+                tracing::warn!(
+                    "[{}] Failed to request scaling check: {}",
+                    self.config.worker_name,
+                    e
+                );
+            }
         }
 
         Ok(serde_json::json!({
@@ -568,20 +642,66 @@ impl WorkerRunner {
         .to_string())
     }
 
-    /// Notify that tasks may have become available.
+    /// Delete a task (live node) by ID.
     ///
-    /// Workers don't handle lifecycle management directly - the daemon polls
-    /// every 5 seconds and handles spawning/resuming workers via the orchestrator.
-    /// This method is kept for interface compatibility but is now a no-op.
-    fn try_resume_awaiting_workers(&self) {
-        // Workers are "dumb" - they just do tasks and report status.
-        // The daemon handles all lifecycle management (scaling, resume, eval triggers).
-        // This is intentionally a no-op; the daemon will detect available tasks
-        // on its next polling cycle and handle worker scaling/resuming.
+    /// Only tasks with source='worker' can be deleted (not spec tasks).
+    /// Cannot delete tasks that are currently claimed or completed.
+    pub fn delete_task(&self, task_id: &str) -> WorkerResult<String> {
+        use crate::core::delta::{LiveNodeSource, LiveNodeStatus};
+
+        // Get the node first to validate it can be deleted
+        let nodes = self.run_async(self.state().get_live_nodes())?;
+        let node = nodes
+            .iter()
+            .find(|n| n.id == task_id)
+            .ok_or_else(|| WorkerError::Config(format!("Task '{}' not found", task_id)))?;
+
+        // Check if it's a worker-created task
+        if node.source != LiveNodeSource::Worker {
+            return Ok(serde_json::json!({
+                "success": false,
+                "error": "Cannot delete spec tasks, only worker-created tasks can be deleted",
+                "task_id": task_id,
+            })
+            .to_string());
+        }
+
+        // Check if it's currently claimed
+        if node.claimed_by.is_some() {
+            return Ok(serde_json::json!({
+                "success": false,
+                "error": "Cannot delete a claimed task",
+                "task_id": task_id,
+                "claimed_by": node.claimed_by,
+            })
+            .to_string());
+        }
+
+        // Check if it's already completed
+        if node.status == LiveNodeStatus::Done {
+            return Ok(serde_json::json!({
+                "success": false,
+                "error": "Cannot delete a completed task",
+                "task_id": task_id,
+            })
+            .to_string());
+        }
+
+        // Delete the node
+        self.run_async(self.state().delete_live_node(task_id))?;
+
         tracing::debug!(
-            "[{}] Task completed - daemon will handle worker scaling on next poll",
-            self.config.worker_name
+            "[{}] Deleted live node '{}'",
+            self.config.worker_name,
+            task_id
         );
+
+        Ok(serde_json::json!({
+            "success": true,
+            "task_id": task_id,
+            "message": format!("Task '{}' deleted", task_id),
+        })
+        .to_string())
     }
 
     // =========================================================================
@@ -811,64 +931,16 @@ impl WorkerRunner {
     }
 
     // =========================================================================
-    // Work Done
+    // Work Done (alias for task_done)
     // =========================================================================
 
     /// Signal that worker has completed its task and is ready for new work.
     ///
-    /// This:
-    /// 1. Auto-completes the currently assigned task (if any)
-    /// 2. Sets the worker to Awaiting status
-    /// 3. Triggers a scaling check (daemon may respawn with new task)
-    ///
-    /// The worker process will be terminated shortly after this call - the
-    /// status monitor in run_claude_worker detects Awaiting status and kills
-    /// the Claude process.
-    ///
-    /// Workers are "dumb" - they just do tasks and report status.
-    /// The daemon handles all lifecycle management.
+    /// This is an alias for `task_done()` that auto-detects the assigned task.
+    /// Kept for backward compatibility with MCP tools.
     pub fn work_done(&self) -> WorkerResult<String> {
-        // Get our assigned task (if any) and complete it
-        let worker = self
-            .run_async(self.state().get_worker(&self.config.worker_name))?
-            .ok_or_else(|| WorkerError::WorkerNotRegistered(self.config.worker_name.clone()))?;
-
-        let completed_task_id = if let Some(task_id) = worker.assigned_task_id {
-            // task_done handles: mark DONE, update last_task_id, clear assigned_task_id
-            self.task_done(Some(&task_id))?;
-            tracing::info!(
-                "[{}] work_done: auto-completed assigned task '{}'",
-                self.config.worker_name,
-                task_id
-            );
-            Some(task_id)
-        } else {
-            tracing::debug!(
-                "[{}] work_done: no assigned task to complete",
-                self.config.worker_name
-            );
-            None
-        };
-
-        // Set status to Awaiting - this triggers worker termination
-        self.set_status(WorkerStatus::Awaiting)?;
-
-        // Trigger scaling check - daemon may spawn us again with a new task
-        self.run_async(self.state().request_scaling_check())?;
-
-        tracing::info!(
-            "[{}] work_done: status set to Awaiting, worker will exit",
-            self.config.worker_name
-        );
-
-        Ok(serde_json::json!({
-            "success": true,
-            "worker": self.config.worker_name,
-            "status": "awaiting",
-            "completed_task": completed_task_id,
-            "message": "Work complete. Exiting - will be respawned if more tasks available.",
-        })
-        .to_string())
+        // task_done with None will auto-detect the claimed task
+        self.task_done(None)
     }
 
     // =========================================================================

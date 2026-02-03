@@ -22,6 +22,7 @@ pub mod config;
 pub mod conflict_resolver;
 pub mod constants;
 pub mod credentials;
+pub mod db;
 pub mod delivery;
 pub mod delta;
 pub mod dispatch;
@@ -35,7 +36,6 @@ pub mod git_http;
 pub mod github;
 pub mod gyp;
 pub mod gyp_chat;
-pub mod gyp_context;
 pub mod http_client;
 pub mod lifecycle;
 pub mod mcp;
@@ -90,9 +90,9 @@ pub use eval::{
 pub use files::Files;
 pub use gyp_chat::{GypChatError, GypChatMessage, GypChatResult, GypChatStore};
 pub use lifecycle::{
-    create_lifecycle_manager, LifecycleAction, LifecycleContext, LifecycleError, LifecycleEvent,
-    LifecycleManager, LifecycleResult, LocalLifecycleManager, RemoteLifecycleManager,
-    RunStateMachine, WorkerStateMachine,
+    LifecycleAction, LifecycleContext, LifecycleError, LifecycleEvent, LifecycleManager,
+    LifecycleResult, LocalLifecycleManager, RemoteLifecycleManager, RunStateMachine,
+    WorkerStateMachine,
 };
 pub use names::{
     generate_run_name, generate_unique_names, generate_worker_name, get_available_name,
@@ -156,9 +156,6 @@ pub use draft::{
     create_local_workspace_provider, create_workspace_provider, FileEntry, LocalWorkspaceProvider,
     StartingPoint, WorkspaceInfo, WorkspaceProvider,
 };
-
-// Gyp context (legacy)
-pub use gyp_context::GypContext;
 
 // Unified Gyp context builder
 pub use gyp::{

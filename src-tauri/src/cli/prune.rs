@@ -3,6 +3,7 @@
 //! Cleans up runs that have been delivered (their work merged to the
 //! project repository). This helps keep the runs directory clean.
 
+use crate::cli::helpers::block_on;
 use crate::core::{config, state::SQLiteState, state::Status, Files};
 use std::fs;
 
@@ -49,12 +50,12 @@ pub fn execute(json: bool) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Try to read state and check if delivered
-        let should_prune = match SQLiteState::new(db_path) {
+        let should_prune = match block_on(SQLiteState::new(&run_name)) {
             Ok(state) => {
-                let status = state.status().unwrap_or(Status::Draft);
+                let status = block_on(state.status()).unwrap_or(Status::Draft);
                 if status == Status::Delivered {
                     // Kill any lingering worker processes
-                    if let Ok(workers) = state.get_workers() {
+                    if let Ok(workers) = block_on(state.get_workers()) {
                         for worker in workers {
                             if let Some(pid) = worker.pid {
                                 kill_process(pid as u32);
@@ -63,7 +64,7 @@ pub fn execute(json: bool) -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     // Get project path for worktree cleanup
-                    if let Ok(Some(project_path_str)) = state.get_project_path() {
+                    if let Ok(Some(project_path_str)) = block_on(state.get_project_path()) {
                         let project_path = std::path::PathBuf::from(project_path_str);
                         if project_path.exists() {
                             // Remove hirsel_work remote if it exists

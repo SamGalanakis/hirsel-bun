@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
+use crate::cli::helpers::block_on;
 use crate::core::state::{HistoryEntry, SQLiteState};
 use crate::core::Config;
 
@@ -97,13 +98,13 @@ pub fn run_log(run_name: &str, follow: bool, limit: usize, format: OutputFormat)
     }
 
     // Open the database
-    let state = match SQLiteState::new(db_path) {
+    let state = match block_on(SQLiteState::new(run_name)) {
         Ok(s) => s,
         Err(e) => return LogResult::Error(format!("Failed to open database: {}", e)),
     };
 
     // Get initial history
-    let history = match state.get_history(limit as i64) {
+    let history = match block_on(state.get_history(limit as i64)) {
         Ok(h) => h,
         Err(e) => return LogResult::Error(format!("Failed to get history: {}", e)),
     };
@@ -179,7 +180,7 @@ fn output_json(history: &[HistoryEntry], run_name: &str, follow: bool) -> LogRes
 
 /// Follow the activity log, polling for new entries.
 fn follow_log(state: SQLiteState, limit: usize) -> LogResult {
-    let mut last_count = match state.get_history(limit as i64) {
+    let mut last_count = match block_on(state.get_history(limit as i64)) {
         Ok(h) => h.len(),
         Err(e) => return LogResult::Error(format!("Failed to get history: {}", e)),
     };
@@ -199,9 +200,12 @@ fn follow_log(state: SQLiteState, limit: usize) -> LogResult {
         thread::sleep(Duration::from_secs(1));
 
         // Reconnect to get fresh data (SQLite may have cached)
-        let new_history = match state.get_history(limit as i64) {
+        let new_history = match block_on(state.get_history(limit as i64)) {
             Ok(h) => h,
-            Err(_) => continue, // Ignore transient errors
+            Err(e) => {
+                tracing::warn!("Failed to fetch history in follow mode: {} - retrying", e);
+                continue;
+            }
         };
 
         if new_history.len() > last_count {

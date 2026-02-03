@@ -66,6 +66,12 @@ pub enum RunManagerError {
 
 pub type RunManagerResult<T> = Result<T, RunManagerError>;
 
+impl From<crate::core::orchestrator::OrchestratorError> for RunManagerError {
+    fn from(e: crate::core::orchestrator::OrchestratorError) -> Self {
+        RunManagerError::Other(e.to_string())
+    }
+}
+
 // =============================================================================
 // RunManager Trait
 // =============================================================================

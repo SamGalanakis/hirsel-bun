@@ -49,6 +49,10 @@ pub enum ScribeError {
     State(#[from] StateError),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Database error: {0}")]
+    Database(String),
+    #[error("Invalid path: {0}")]
+    InvalidPath(String),
     #[error("No pending submissions")]
     NoPending,
     #[error("Batch already processing")]
@@ -79,18 +83,18 @@ pub struct ScribeBatchResult {
 /// - There are pending submissions
 /// - The batch window has expired (batch_started_at + window < now)
 /// - No batch is currently processing
-pub fn should_process_batch(state: &SQLiteState, config: &Config) -> bool {
+pub async fn should_process_batch(state: &SQLiteState, config: &Config) -> bool {
     if !config.scribe_enabled {
         return false;
     }
 
     // Check if a batch is already processing
-    if let Ok(Some(_)) = state.get_processing_scribe_batch() {
+    if let Ok(Some(_)) = state.get_processing_scribe_batch().await {
         return false;
     }
 
     // Check if batch timer has expired
-    if let Ok(Some(started_at)) = state.get_scribe_batch_started_at() {
+    if let Ok(Some(started_at)) = state.get_scribe_batch_started_at().await {
         if let Ok(start_time) = chrono::DateTime::parse_from_rfc3339(&started_at) {
             let elapsed = chrono::Utc::now().signed_duration_since(start_time);
             let window = chrono::Duration::seconds(config.scribe_batch_window_seconds as i64);
@@ -115,20 +119,33 @@ pub async fn process_scribe_batch(
     _config: &Config,
     agent_command: &[String],
 ) -> Result<ScribeBatchResult, ScribeError> {
-    let db_path = files.db_path();
+    let run_name = files
+        .run_name()
+        .ok_or_else(|| ScribeError::InvalidPath("Failed to extract run name".to_string()))?;
     let docs_dir = files.docs_dir();
 
-    // Phase 1: Get submissions and mark as processing (sync)
+    // Phase 1: Get submissions and mark as processing
     let (batch_id, submissions) = {
-        let state = SQLiteState::new(db_path.clone())?;
-        let submissions = state.get_pending_scribe_submissions()?;
+        let state = SQLiteState::new(&run_name)
+            .await
+            .map_err(|e| ScribeError::Database(e.to_string()))?;
+        let submissions = state
+            .get_pending_scribe_submissions()
+            .await
+            .map_err(|e| ScribeError::Database(e.to_string()))?;
         if submissions.is_empty() {
             return Err(ScribeError::NoPending);
         }
 
-        let batch_id = state.next_scribe_batch_id()?;
+        let batch_id = state
+            .next_scribe_batch_id()
+            .await
+            .map_err(|e| ScribeError::Database(e.to_string()))?;
         let ids: Vec<i64> = submissions.iter().map(|s| s.id).collect();
-        state.mark_scribe_processing(&ids, batch_id)?;
+        state
+            .mark_scribe_processing(&ids, batch_id)
+            .await
+            .map_err(|e| ScribeError::Database(e.to_string()))?;
 
         info!(
             "Processing scribe batch {}: {} submissions",
@@ -145,11 +162,16 @@ pub async fn process_scribe_batch(
     // Phase 2: Run the scribe agent (async)
     let result = run_scribe_agent(&submissions, docs_dir.as_path(), agent_command).await;
 
-    // Phase 3: Update submission statuses based on result (sync)
+    // Phase 3: Update submission statuses based on result
     let success = result.is_ok();
     {
-        let state = SQLiteState::new(db_path)?;
-        state.complete_scribe_batch(batch_id, success)?;
+        let state = SQLiteState::new(&run_name)
+            .await
+            .map_err(|e| ScribeError::Database(e.to_string()))?;
+        state
+            .complete_scribe_batch(batch_id, success)
+            .await
+            .map_err(|e| ScribeError::Database(e.to_string()))?;
     }
 
     if let Err(ref e) = result {

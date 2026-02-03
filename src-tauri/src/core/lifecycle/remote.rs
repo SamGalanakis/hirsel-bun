@@ -42,45 +42,45 @@ impl RemoteLifecycleManager {
 
 impl LifecycleManager for RemoteLifecycleManager {
     // All operations return None/empty - coordinator handles lifecycle
-    fn process_event(&self, _event: LifecycleEvent) -> LifecycleResult<Vec<LifecycleAction>> {
+    async fn process_event(&self, _event: LifecycleEvent) -> LifecycleResult<Vec<LifecycleAction>> {
         Ok(vec![LifecycleAction::None])
     }
 
-    fn pause_run(&self, _reason: &str) -> LifecycleResult<Vec<String>> {
+    async fn pause_run(&self, _reason: &str) -> LifecycleResult<Vec<String>> {
         Err(LifecycleError::Config(
             "Cannot pause from remote worker".into(),
         ))
     }
 
-    fn resume_run(&self) -> LifecycleResult<Vec<LifecycleAction>> {
+    async fn resume_run(&self) -> LifecycleResult<Vec<LifecycleAction>> {
         Err(LifecycleError::Config(
             "Cannot resume from remote worker".into(),
         ))
     }
 
-    fn worker_done(&self, _worker_name: &str) -> LifecycleResult<Vec<LifecycleAction>> {
+    async fn worker_done(&self, _worker_name: &str) -> LifecycleResult<Vec<LifecycleAction>> {
         // Just return - coordinator handles eval triggering via status change
         Ok(vec![LifecycleAction::None])
     }
 
-    fn handle_time_expired(&self) -> LifecycleResult<()> {
+    async fn handle_time_expired(&self) -> LifecycleResult<()> {
         // Coordinator handles time expiration
         Ok(())
     }
 
-    fn all_workers_inactive(&self) -> LifecycleResult<bool> {
+    async fn all_workers_inactive(&self) -> LifecycleResult<bool> {
         Ok(false) // Coordinator queries this
     }
 
-    fn should_trigger_eval(&self) -> LifecycleResult<bool> {
+    async fn should_trigger_eval(&self) -> LifecycleResult<bool> {
         Ok(false) // Coordinator decides this
     }
 
-    fn can_scale_up(&self) -> LifecycleResult<bool> {
+    async fn can_scale_up(&self) -> LifecycleResult<bool> {
         Ok(false) // Coordinator handles scaling
     }
 
-    fn run_status(&self) -> LifecycleResult<Status> {
+    async fn run_status(&self) -> LifecycleResult<Status> {
         Err(LifecycleError::Config("Use HTTP API for status".into()))
     }
 

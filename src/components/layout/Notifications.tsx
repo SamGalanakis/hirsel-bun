@@ -40,16 +40,44 @@ export const NotificationsDropdown: Component = () => {
     onCleanup(() => clearInterval(interval));
   });
 
-  const markAllRead = () => {
+  const markAllRead = async () => {
+    const unreadNotifs = notifications().filter((n) => !n.read);
+
+    // Update local state immediately (optimistic)
     setNotifications((notifs) => notifs.map((n) => ({ ...n, read: true })));
     setTotalUnread(0);
+
+    // Persist each to backend
+    for (const n of unreadNotifs) {
+      try {
+        await invoke('mark_messages_read', {
+          runName: n.runName,
+          threadName: n.thread,
+          reader: 'user',
+        });
+      } catch (e) {
+        console.error('Failed to mark notification read:', e);
+      }
+    }
   };
 
-  const markOneRead = (id: string) => {
+  const markOneRead = async (notification: UnreadNotification & { read: boolean }) => {
+    // Update local state immediately (optimistic)
     setNotifications((notifs) =>
-      notifs.map((n) => (n.id === id ? { ...n, read: true } : n)),
+      notifs.map((n) => (n.id === notification.id ? { ...n, read: true } : n)),
     );
     setTotalUnread((c) => Math.max(0, c - 1));
+
+    // Persist to backend
+    try {
+      await invoke('mark_messages_read', {
+        runName: notification.runName,
+        threadName: notification.thread,
+        reader: 'user',
+      });
+    } catch (e) {
+      console.error('Failed to mark notification read:', e);
+    }
   };
 
   const goToMessage = (runName: string, thread: string) => {
@@ -111,7 +139,7 @@ export const NotificationsDropdown: Component = () => {
               {(notif) => (
                 <div
                   onClick={() => {
-                    markOneRead(notif.id);
+                    markOneRead(notif);
                     goToMessage(notif.runName, notif.thread);
                     setOpen(false);
                   }}
@@ -140,7 +168,7 @@ export const NotificationsDropdown: Component = () => {
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          markOneRead(notif.id);
+                          markOneRead(notif);
                         }}
                         class="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-pasture-600 text-wool-500 hover:text-wool-300 transition-opacity"
                         title="Mark as read"

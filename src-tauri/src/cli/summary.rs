@@ -5,9 +5,10 @@
 //! - Regenerate summary with --regenerate flag
 //! - JSON output for scripting
 
+use crate::cli::helpers::block_on;
+use crate::core::config;
 use crate::core::delta::{DeltaState, LiveNodeStatus};
 use crate::core::state::{SQLiteState, StateError};
-use crate::core::{config, Files};
 use serde::Serialize;
 
 /// Errors that can occur during summary operations.
@@ -51,30 +52,30 @@ pub fn run_summary(
         return Err(SummaryError::RunNotFound(run_name.to_string()));
     }
 
-    let run_dir = config::run_dir(run_name);
-    let files = Files::new(&run_dir);
-    let state = SQLiteState::new(files.db_path()).map_err(SummaryError::State)?;
+    let state = block_on(SQLiteState::new(run_name)).map_err(SummaryError::State)?;
 
     // Get existing summary
-    let existing_summary = state.get_summary().map_err(SummaryError::State)?;
+    let existing_summary = block_on(state.get_summary()).map_err(SummaryError::State)?;
 
     // If regenerate requested or no summary exists, generate one
     let summary_text = if regenerate || existing_summary.is_none() {
         let generated = generate_summary(&state, run_name)?;
-        state.set_summary(&generated).map_err(SummaryError::State)?;
+        block_on(state.set_summary(&generated)).map_err(SummaryError::State)?;
         Some(generated)
     } else {
         existing_summary
     };
 
     // Get stats for output
-    let status = state.status().map_err(SummaryError::State)?;
-    let workers = state.get_workers().map_err(SummaryError::State)?;
+    let status = block_on(state.status()).map_err(SummaryError::State)?;
+    let workers = block_on(state.get_workers()).map_err(SummaryError::State)?;
 
     // Get task stats from live_nodes if available (project run), otherwise fallback to empty
-    let (tasks_completed, tasks_total) = if let Ok(Some(project_id)) = state.get_project_id() {
+    let (tasks_completed, tasks_total) = if let Ok(Some(project_id)) =
+        block_on(state.get_project_id())
+    {
         let delta_state = DeltaState::new(project_id);
-        if let Ok(nodes) = delta_state.get_live_nodes() {
+        if let Ok(nodes) = block_on(delta_state.get_live_nodes()) {
             let completed = nodes
                 .iter()
                 .filter(|n| matches!(n.status, LiveNodeStatus::Done | LiveNodeStatus::Validated))
@@ -132,15 +133,15 @@ pub fn run_summary(
 fn generate_summary(state: &SQLiteState, run_name: &str) -> Result<String, SummaryError> {
     use crate::core::delta::LiveNode;
 
-    let status = state.status().map_err(SummaryError::State)?;
-    let workers = state.get_workers().map_err(SummaryError::State)?;
-    let history = state.get_history(100).map_err(SummaryError::State)?;
-    let request = state.get_request().map_err(SummaryError::State)?;
+    let status = block_on(state.status()).map_err(SummaryError::State)?;
+    let workers = block_on(state.get_workers()).map_err(SummaryError::State)?;
+    let history = block_on(state.get_history(100)).map_err(SummaryError::State)?;
+    let request = block_on(state.get_request()).map_err(SummaryError::State)?;
 
     // Get nodes from live_nodes if available
-    let nodes: Vec<LiveNode> = if let Ok(Some(project_id)) = state.get_project_id() {
+    let nodes: Vec<LiveNode> = if let Ok(Some(project_id)) = block_on(state.get_project_id()) {
         let delta_state = DeltaState::new(project_id);
-        delta_state.get_live_nodes().unwrap_or_default()
+        block_on(delta_state.get_live_nodes()).unwrap_or_default()
     } else {
         vec![]
     };
@@ -244,11 +245,9 @@ pub fn has_summary(run_name: &str) -> Result<bool, SummaryError> {
         return Err(SummaryError::RunNotFound(run_name.to_string()));
     }
 
-    let run_dir = config::run_dir(run_name);
-    let files = Files::new(&run_dir);
-    let state = SQLiteState::new(files.db_path()).map_err(SummaryError::State)?;
+    let state = block_on(SQLiteState::new(run_name)).map_err(SummaryError::State)?;
 
-    let summary = state.get_summary().map_err(SummaryError::State)?;
+    let summary = block_on(state.get_summary()).map_err(SummaryError::State)?;
     Ok(summary.is_some())
 }
 
@@ -258,11 +257,9 @@ pub fn get_summary_text(run_name: &str) -> Result<Option<String>, SummaryError> 
         return Err(SummaryError::RunNotFound(run_name.to_string()));
     }
 
-    let run_dir = config::run_dir(run_name);
-    let files = Files::new(&run_dir);
-    let state = SQLiteState::new(files.db_path()).map_err(SummaryError::State)?;
+    let state = block_on(SQLiteState::new(run_name)).map_err(SummaryError::State)?;
 
-    state.get_summary().map_err(SummaryError::State)
+    block_on(state.get_summary()).map_err(SummaryError::State)
 }
 
 #[cfg(test)]

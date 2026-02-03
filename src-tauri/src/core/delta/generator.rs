@@ -64,8 +64,8 @@ impl DeltaGenerator {
     ///
     /// For now, this uses a simple rule-based approach.
     /// In production, this could call an LLM for richer task descriptions.
-    pub fn generate_tasks(&self) -> GeneratorResult<Vec<DeltaTask>> {
-        let diff = self.diff_service.compute_diff()?;
+    pub async fn generate_tasks(&self) -> GeneratorResult<Vec<DeltaTask>> {
+        let diff = self.diff_service.compute_diff().await?;
 
         if diff.is_empty() {
             return Err(GeneratorError::NoChanges);
@@ -199,13 +199,13 @@ impl DeltaGenerator {
     }
 
     /// Compute and get the current diff
-    pub fn get_diff(&self) -> GeneratorResult<TreeDiff> {
-        Ok(self.diff_service.compute_diff()?)
+    pub async fn get_diff(&self) -> GeneratorResult<TreeDiff> {
+        Ok(self.diff_service.compute_diff().await?)
     }
 
     /// Generate diff summary for display
-    pub fn get_diff_summary(&self) -> GeneratorResult<String> {
-        let diff = self.diff_service.compute_diff()?;
+    pub async fn get_diff_summary(&self) -> GeneratorResult<String> {
+        let diff = self.diff_service.compute_diff().await?;
         Ok(self.diff_service.generate_summary(&diff))
     }
 }

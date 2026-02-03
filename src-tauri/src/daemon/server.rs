@@ -169,6 +169,7 @@ fn build_router(state: Arc<AppState>, gyp_state: Arc<gyp::GypState>) -> Router {
     // No auth layer for local daemon - localhost only
     shared_routes::build_shared_routes()
         // Daemon-specific routes
+        .route("/daemon/health", get(daemon_health))
         .route("/daemon/stop", post(daemon_stop))
         .route("/daemon/status", get(daemon_status))
         // Per-run config endpoints for workers
@@ -226,20 +227,51 @@ use axum::{extract::State, Json};
 use serde::Serialize;
 
 #[derive(Serialize)]
+struct DaemonHealth {
+    ok: bool,
+    version: String,
+    git_sha: String,
+}
+
+#[derive(Serialize)]
 struct DaemonStatus {
     running: bool,
     pid: u32,
     tcp_port: u16,
     hirsel_root: String,
+    runs_dir: String,
     uptime_secs: u64,
     active_runs: usize,
+    version: String,
+    git_sha: String,
+    build_date: String,
+}
+
+/// Simple health check for quick daemon alive detection
+async fn daemon_health() -> Json<DaemonHealth> {
+    use crate::version;
+    Json(DaemonHealth {
+        ok: true,
+        version: version::VERSION.to_string(),
+        git_sha: version::GIT_SHA.to_string(),
+    })
 }
 
 /// Get daemon status
 async fn daemon_status(State(state): State<Arc<AppState>>) -> Json<DaemonStatus> {
     use crate::core::api_types::RunStatus;
+    use crate::version;
 
-    let runs = state.orchestrator.list_runs().await.unwrap_or_default();
+    let runs = match state.orchestrator.list_runs().await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(
+                "[Daemon] Failed to list runs for status: {} - returning empty list",
+                e
+            );
+            Vec::new()
+        }
+    };
     let active_runs = runs
         .iter()
         .filter(|r| {
@@ -262,13 +294,20 @@ async fn daemon_status(State(state): State<Arc<AppState>>) -> Json<DaemonStatus>
         })
         .unwrap_or(0);
 
+    // Get runs_dir from config for debugging path issues
+    let runs_dir = state.config.read().await.runs_dir().display().to_string();
+
     Json(DaemonStatus {
         running: true,
         pid: std::process::id(),
         tcp_port: super::get_daemon_port(),
         hirsel_root: hirsel_dir().display().to_string(),
+        runs_dir,
         uptime_secs,
         active_runs,
+        version: version::VERSION.to_string(),
+        git_sha: version::GIT_SHA.to_string(),
+        build_date: version::BUILD_DATE.to_string(),
     })
 }
 
@@ -308,7 +347,8 @@ async fn get_run_state(
         ));
     }
 
-    crate::core::state::SQLiteState::new(db_path)
+    crate::core::state::SQLiteState::new(run_name)
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
 
@@ -327,7 +367,7 @@ async fn get_run_hitl(
         Err((status, msg)) => return (status, msg).into_response(),
     };
 
-    let enabled = sqlite_state.get_human_in_the_loop().unwrap_or(true);
+    let enabled = sqlite_state.get_human_in_the_loop().await.unwrap_or(true);
     Json(HitlResponse { enabled }).into_response()
 }
 
@@ -346,7 +386,7 @@ async fn get_run_request(
         Err((status, msg)) => return (status, msg).into_response(),
     };
 
-    let request = sqlite_state.get_request().ok().flatten();
+    let request = sqlite_state.get_request().await.ok().flatten();
     Json(RequestResponse { request }).into_response()
 }
 
@@ -365,7 +405,7 @@ async fn get_run_project_path(
         Err((status, msg)) => return (status, msg).into_response(),
     };
 
-    let project_path = sqlite_state.get_project_path().ok().flatten();
+    let project_path = sqlite_state.get_project_path().await.ok().flatten();
     Json(ProjectPathResponse { project_path }).into_response()
 }
 
@@ -384,7 +424,7 @@ async fn get_run_waiting_reason(
         Err((status, msg)) => return (status, msg).into_response(),
     };
 
-    let reason = sqlite_state.get_waiting_reason().ok().flatten();
+    let reason = sqlite_state.get_waiting_reason().await.ok().flatten();
     Json(WaitingReasonResponse { reason }).into_response()
 }
 
@@ -404,7 +444,10 @@ async fn set_run_waiting_reason(
         Err((status, msg)) => return (status, msg).into_response(),
     };
 
-    match sqlite_state.set_waiting_reason(body.reason.as_deref()) {
+    match sqlite_state
+        .set_waiting_reason(body.reason.as_deref())
+        .await
+    {
         Ok(_) => StatusCode::OK.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
@@ -421,13 +464,24 @@ use crate::core::server::worker_routes::{
 };
 
 /// Helper to create lifecycle manager for a run
-fn create_lifecycle_manager(
+async fn create_lifecycle_manager(
     run_name: &str,
     config: &crate::core::config::Config,
 ) -> Option<crate::core::lifecycle::LocalLifecycleManager> {
     let run_dir = config.runs_dir().join(run_name);
     let agent_command = crate::cli::config::get_agent_command();
-    crate::core::lifecycle::LocalLifecycleManager::new(run_name, run_dir, agent_command).ok()
+    match crate::core::lifecycle::LocalLifecycleManager::new(run_name, run_dir, agent_command).await
+    {
+        Ok(lm) => Some(lm),
+        Err(e) => {
+            tracing::warn!(
+                "[Daemon] Failed to create lifecycle manager for '{}': {} - lifecycle events disabled",
+                run_name,
+                e
+            );
+            None
+        }
+    }
 }
 
 /// Update worker state (status, heartbeat, etc.)
@@ -443,16 +497,9 @@ async fn update_worker(
 
     // Create lifecycle manager for lifecycle event handling
     let config = state.config.read().await;
-    let lifecycle = create_lifecycle_manager(&run, &config);
+    let lifecycle = create_lifecycle_manager(&run, &config).await;
 
-    match worker_routes::update_worker(
-        &sqlite_state,
-        &worker,
-        &body,
-        lifecycle
-            .as_ref()
-            .map(|l| l as &dyn crate::core::lifecycle::LifecycleManager),
-    ) {
+    match worker_routes::update_worker(&sqlite_state, &worker, &body, lifecycle.as_ref()).await {
         Ok(_) => Json(SuccessResponse::ok()).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
@@ -468,7 +515,7 @@ async fn list_workers(
         Err((status, msg)) => return (status, msg).into_response(),
     };
 
-    match worker_routes::list_workers(&sqlite_state) {
+    match worker_routes::list_workers(&sqlite_state).await {
         Ok(workers) => Json(WorkersResponse { workers }).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
@@ -484,7 +531,7 @@ async fn list_active_workers(
         Err((status, msg)) => return (status, msg).into_response(),
     };
 
-    match worker_routes::list_active_workers(&sqlite_state) {
+    match worker_routes::list_active_workers(&sqlite_state).await {
         Ok(workers) => Json(WorkersResponse { workers }).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
@@ -500,7 +547,7 @@ async fn all_workers_done(
         Err((status, msg)) => return (status, msg).into_response(),
     };
 
-    match worker_routes::all_workers_done(&sqlite_state) {
+    match worker_routes::all_workers_done(&sqlite_state).await {
         Ok(all_done) => Json(AllDoneResponse { all_done }).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
@@ -516,7 +563,7 @@ async fn get_worker(
         Err((status, msg)) => return (status, msg).into_response(),
     };
 
-    match worker_routes::get_worker(&sqlite_state, &worker) {
+    match worker_routes::get_worker(&sqlite_state, &worker).await {
         Ok(worker) => Json(WorkerResponse { worker }).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
@@ -532,7 +579,7 @@ async fn worker_heartbeat(
         Err((status, msg)) => return (status, msg).into_response(),
     };
 
-    match worker_routes::worker_heartbeat(&sqlite_state, &worker) {
+    match worker_routes::worker_heartbeat(&sqlite_state, &worker).await {
         Ok(status) => Json(HeartbeatResponse {
             status: status.to_string(),
         })
@@ -551,7 +598,7 @@ async fn request_scaling_check(
         Err((status, msg)) => return (status, msg).into_response(),
     };
 
-    match worker_routes::request_scaling_check(&sqlite_state) {
+    match worker_routes::request_scaling_check(&sqlite_state).await {
         Ok(_) => Json(SuccessResponse::ok()).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }

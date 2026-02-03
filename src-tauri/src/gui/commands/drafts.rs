@@ -196,24 +196,28 @@ pub async fn create_draft() -> Result<RunDetail, String> {
     ).map_err(|e| format!("Failed to create tasks file: {}", e))?;
 
     // Initialize database - NO workspace path yet
-    let db_path = run_dir.join("hirsel.db");
-    let state =
-        SQLiteState::new(db_path).map_err(|e| format!("Failed to create database: {}", e))?;
+    let state = SQLiteState::new(&run_name)
+        .await
+        .map_err(|e| format!("Failed to create database: {}", e))?;
 
     // Initialize state without workspace path (will be set in start_draft)
     state
         .init_state(None)
+        .await
         .map_err(|e| format!("Failed to init state: {}", e))?;
     state
         .set_status(crate::core::state::Status::Draft)
+        .await
         .map_err(|e| format!("Failed to set draft status: {}", e))?;
 
     // Set defaults
     state
         .set_worker_scale("1")
+        .await
         .map_err(|e| format!("Failed to set worker scale: {}", e))?;
     state
         .set_human_in_the_loop(true)
+        .await
         .map_err(|e| format!("Failed to set HITL: {}", e))?;
 
     // Return the run detail
@@ -264,7 +268,7 @@ pub async fn create_draft() -> Result<RunDetail, String> {
 pub async fn clone_run(source_run: String, new_name: String) -> Result<RunDetail, String> {
     // Use the shared ops implementation
     let config = CloneRunConfig::new(&source_run, &new_name);
-    let result = ops_clone_run(config).map_err(|e| e.to_string())?;
+    let result = ops_clone_run(config).await.map_err(|e| e.to_string())?;
 
     // Get agent type from global config for the RunDetail response
     let (global_config, _) =
@@ -320,11 +324,14 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
         return Err(format!("Run '{}' not found", run_name));
     }
 
-    let state = SQLiteState::new(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
+    let state = SQLiteState::new(&run_name)
+        .await
+        .map_err(|e| format!("Failed to open database: {}", e))?;
 
     // Verify it's a draft
     let status = state
         .status()
+        .await
         .map_err(|e| format!("Failed to get status: {}", e))?;
     if status != crate::core::state::Status::Draft {
         return Err("Can only update draft runs".to_string());
@@ -336,6 +343,7 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
         fs::write(&spec_path, &spec).map_err(|e| format!("Failed to write spec: {}", e))?;
         state
             .set_request(Some(&spec))
+            .await
             .map_err(|e| format!("Failed to update request: {}", e))?;
     }
 
@@ -343,6 +351,7 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
     if let Some(scale) = updates.worker_scale {
         state
             .set_worker_scale(&scale)
+            .await
             .map_err(|e| format!("Failed to update worker scale: {}", e))?;
     }
 
@@ -350,6 +359,7 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
     if let Some(limit) = updates.time_limit_minutes {
         state
             .set_time_limit_minutes(Some(limit))
+            .await
             .map_err(|e| format!("Failed to update time limit: {}", e))?;
     }
 
@@ -357,6 +367,7 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
     if let Some(hitl) = updates.human_in_the_loop {
         state
             .set_human_in_the_loop(hitl)
+            .await
             .map_err(|e| format!("Failed to update HITL: {}", e))?;
     }
 
@@ -364,6 +375,7 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
     if let Some(path) = updates.project_path {
         state
             .set_project_path(&path)
+            .await
             .map_err(|e| format!("Failed to update project path: {}", e))?;
     }
 
@@ -371,6 +383,7 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
     if let Some(branch) = updates.branch {
         state
             .set_branch(Some(&branch))
+            .await
             .map_err(|e| format!("Failed to update branch: {}", e))?;
     }
 
@@ -378,6 +391,7 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
     if let Some(runner) = updates.runner {
         state
             .set_default_runner(Some(&runner))
+            .await
             .map_err(|e| format!("Failed to update runner: {}", e))?;
     }
 
@@ -385,6 +399,7 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
     if let Some(worker_runners) = updates.worker_runners {
         state
             .set_worker_runners(Some(&worker_runners))
+            .await
             .map_err(|e| format!("Failed to update worker runners: {}", e))?;
     }
 
@@ -421,11 +436,14 @@ pub async fn change_starting_point(
         return Err(format!("Run '{}' not found", run_name));
     }
 
-    let state = SQLiteState::new(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
+    let state = SQLiteState::new(&run_name)
+        .await
+        .map_err(|e| format!("Failed to open database: {}", e))?;
 
     // Verify it's a draft
     let status = state
         .status()
+        .await
         .map_err(|e| format!("Failed to get status: {}", e))?;
     if status != crate::core::state::Status::Draft {
         return Err("Can only change starting point for draft runs".to_string());
@@ -441,9 +459,11 @@ pub async fn change_starting_point(
     // Clear workspace-related state fields
     state
         .clear_project_path()
+        .await
         .map_err(|e| format!("Failed to clear project path: {}", e))?;
     state
         .set_branch(None)
+        .await
         .map_err(|e| format!("Failed to clear branch: {}", e))?;
 
     // Initialize new workspace
@@ -456,11 +476,13 @@ pub async fn change_starting_point(
     // Update state with new workspace info
     state
         .set_project_path(workspace_info.path.to_str().unwrap_or("."))
+        .await
         .map_err(|e| format!("Failed to set project path: {}", e))?;
 
     if let Some(ref branch) = workspace_info.default_branch {
         state
             .set_branch(Some(branch))
+            .await
             .map_err(|e| format!("Failed to set branch: {}", e))?;
     }
 
@@ -479,7 +501,7 @@ pub async fn start_draft(
     profile: Option<String>,
 ) -> Result<RunDetail, String> {
     use crate::cli::config::get_agent_command;
-    use crate::cli::go::WorkerScale;
+    use crate::cli::helpers::WorkerScale;
     use crate::core::names::get_available_names;
     use crate::core::ops::{compute_multi_worker_config, setup_run_workspace, RunSetupConfig};
     use crate::core::runner::{create_runner, WorkerSpawnConfig as RunnerSpawnConfig};
@@ -492,12 +514,14 @@ pub async fn start_draft(
         return Err(format!("Run '{}' not found", run_name));
     }
 
-    let state =
-        SQLiteState::new(db_path.clone()).map_err(|e| format!("Failed to open database: {}", e))?;
+    let state = SQLiteState::new(&run_name)
+        .await
+        .map_err(|e| format!("Failed to open database: {}", e))?;
 
     // Verify it's a draft
     let status = state
         .status()
+        .await
         .map_err(|e| format!("Failed to get status: {}", e))?;
     if status != crate::core::state::Status::Draft {
         return Err("Can only start draft runs".to_string());
@@ -506,6 +530,7 @@ pub async fn start_draft(
     // Check if workspace already exists (e.g., from clone_run)
     let existing_workspace = state
         .get_project_path()
+        .await
         .map_err(|e| format!("Failed to get project path: {}", e))?;
 
     let project_path = if let Some(ref path_str) = existing_workspace {
@@ -520,7 +545,7 @@ pub async fn start_draft(
         // Priority: 1. Passed starting_point, 2. Stored in database, 3. Default to Greenfield
         let sp = if let Some(sp) = starting_point {
             sp
-        } else if let Ok(Some(sp_json)) = state.get_starting_point() {
+        } else if let Ok(Some(sp_json)) = state.get_starting_point().await {
             serde_json::from_str::<StartingPoint>(&sp_json)
                 .map_err(|e| format!("Failed to parse stored starting_point: {}", e))?
         } else {
@@ -536,14 +561,16 @@ pub async fn start_draft(
         // Store workspace path in state
         state
             .set_project_path(workspace_info.path.to_str().unwrap_or("."))
+            .await
             .map_err(|e| format!("Failed to set project path: {}", e))?;
 
         // Store starting_point in state (if not already stored)
-        if state.get_starting_point().ok().flatten().is_none() {
+        if state.get_starting_point().await.ok().flatten().is_none() {
             let sp_json = serde_json::to_string(&sp)
                 .map_err(|e| format!("Failed to serialize starting_point: {}", e))?;
             state
                 .set_starting_point(Some(&sp_json))
+                .await
                 .map_err(|e| format!("Failed to set starting_point: {}", e))?;
         }
 
@@ -551,6 +578,7 @@ pub async fn start_draft(
         if let Some(ref branch) = workspace_info.default_branch {
             state
                 .set_branch(Some(branch))
+                .await
                 .map_err(|e| format!("Failed to set branch: {}", e))?;
         }
 
@@ -560,6 +588,7 @@ pub async fn start_draft(
     // Parse worker scale
     let worker_scale_str = state
         .get_worker_scale()
+        .await
         .map_err(|e| format!("Failed to get worker scale: {}", e))?
         .unwrap_or_else(|| "1".to_string());
     let scale = WorkerScale::parse(&worker_scale_str)
@@ -579,9 +608,11 @@ pub async fn start_draft(
     // Store docs config in run state
     state
         .set_docs_path(Some(&global_config.scribe_docs_path))
+        .await
         .map_err(|e| format!("Failed to set docs path: {}", e))?;
     state
         .set_persist_docs_changes(global_config.scribe_persist_docs_changes)
+        .await
         .map_err(|e| format!("Failed to set persist_docs_changes: {}", e))?;
 
     // Set up workspace, worker clones, and chats using shared ops
@@ -602,27 +633,31 @@ pub async fn start_draft(
     for (worker_name, work_dir) in &setup_result.worker_dirs {
         let runner = state
             .get_runner_for_worker(worker_name)
+            .await
             .map_err(|e| format!("Failed to get runner for {}: {}", worker_name, e))?;
         state
             .add_worker(worker_name, work_dir.to_str().unwrap_or("."), &runner)
+            .await
             .map_err(|e| format!("Failed to register worker {}: {}", worker_name, e))?;
     }
 
     // Set status to working and start time tracking
     state
         .set_status(crate::core::state::Status::Working)
+        .await
         .map_err(|e| format!("Failed to set status: {}", e))?;
 
     // Always set started_at when run starts (for elapsed time calculation)
     state
         .set_started_at(None)
+        .await
         .map_err(|e| format!("Failed to set started_at: {}", e))?;
 
     // Save spec content to database for display in Specs tab
     let spec_path = run_dir.join("spec.md");
     if spec_path.exists() {
         if let Ok(spec_content) = std::fs::read_to_string(&spec_path) {
-            let _ = state.set_request(Some(&spec_content));
+            let _ = state.set_request(Some(&spec_content)).await;
         }
     }
 
@@ -638,6 +673,7 @@ pub async fn start_draft(
         // Check if run was paused while spawning
         if state
             .status()
+            .await
             .map(|s| s == crate::core::state::Status::Paused)
             .unwrap_or(false)
         {
@@ -663,6 +699,7 @@ pub async fn start_draft(
         // Get the runner name for this worker from run state
         let runner_name = state
             .get_runner_for_worker(worker_name)
+            .await
             .map_err(|e| format!("Failed to get runner for {}: {}", worker_name, e))?;
 
         // Look up runner config from global config
@@ -694,13 +731,15 @@ pub async fn start_draft(
             Ok(result) => {
                 // Update worker with PID
                 if let Some(pid) = result.pid {
-                    let _ = state.update_worker(
-                        worker_name,
-                        WorkerUpdate {
-                            pid: Some(pid as i64),
-                            ..Default::default()
-                        },
-                    );
+                    let _ = state
+                        .update_worker(
+                            worker_name,
+                            WorkerUpdate {
+                                pid: Some(pid as i64),
+                                ..Default::default()
+                            },
+                        )
+                        .await;
                 }
                 tracing::info!(
                     "Spawned worker {} on runner {} (type: {})",

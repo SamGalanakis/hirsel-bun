@@ -1176,8 +1176,7 @@ pub async fn run_claude_worker(config: ClaudeWorkerConfig) -> Result<WorkerResul
     );
 
     // Create the HirselClient for writing SessionUpdate events to database
-    let db_path = config.run_dir.join("hirsel.db");
-    let client = Arc::new(HirselClient::new(&config.worker_name, &db_path));
+    let client = Arc::new(HirselClient::new(&config.worker_name, &config.run_name));
 
     // Build MCP config for hirsel tools
     let mcp_config = create_hirsel_mcp_config(
@@ -1223,14 +1222,14 @@ pub async fn run_claude_worker(config: ClaudeWorkerConfig) -> Result<WorkerResul
     let should_exit = Arc::new(AtomicBool::new(false));
 
     // Spawn a background status monitor that watches for Awaiting status
-    // This runs in a separate thread to avoid blocking the async event loop
-    let monitor_db_path = db_path.clone();
+    // This runs in a separate tokio task to check the async database
+    let monitor_run_name = config.run_name.clone();
     let monitor_worker_name = config.worker_name.clone();
     let monitor_should_exit = should_exit.clone();
-    let monitor_handle = std::thread::spawn(move || {
+    let monitor_handle = tokio::spawn(async move {
         loop {
             // Check every second
-            std::thread::sleep(Duration::from_secs(1));
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
             // Check if we've been signaled to exit
             if monitor_should_exit.load(Ordering::Relaxed) {
@@ -1242,9 +1241,9 @@ pub async fn run_claude_worker(config: ClaudeWorkerConfig) -> Result<WorkerResul
             }
 
             // Check worker status in database
-            match crate::core::state::SQLiteState::new(monitor_db_path.clone()) {
+            match crate::core::state::SQLiteState::new(&monitor_run_name).await {
                 Ok(state) => {
-                    if let Ok(Some(worker)) = state.get_worker(&monitor_worker_name) {
+                    if let Ok(Some(worker)) = state.get_worker(&monitor_worker_name).await {
                         if worker.status == WorkerStatus::Awaiting {
                             info!(
                                 "[{}] Status monitor: worker entered Awaiting status, signaling termination",
@@ -1420,14 +1419,14 @@ pub async fn run_claude_worker(config: ClaudeWorkerConfig) -> Result<WorkerResul
                             BridgeEvent::SessionInit { session_id: sid } => {
                                 debug!("[{}] Session initialized: {}", config.worker_name, sid);
                                 // Save session_id to database so it can be used for resume
-                                match crate::core::state::SQLiteState::new(db_path.clone()) {
+                                match crate::core::state::SQLiteState::new(&config.run_name).await {
                                     Ok(state) => {
                                         use crate::core::state::WorkerUpdate;
                                         let update = WorkerUpdate {
                                             session_id: Some(sid.clone()),
                                             ..Default::default()
                                         };
-                                        if let Err(e) = state.update_worker(&config.worker_name, update) {
+                                        if let Err(e) = state.update_worker(&config.worker_name, update).await {
                                             warn!(
                                                 "[{}] Failed to save session_id to database: {}",
                                                 config.worker_name, e
@@ -1441,8 +1440,8 @@ pub async fn run_claude_worker(config: ClaudeWorkerConfig) -> Result<WorkerResul
                                     }
                                     Err(e) => {
                                         warn!(
-                                            "[{}] Failed to open database at {:?}: {}",
-                                            config.worker_name, db_path, e
+                                            "[{}] Failed to open database for run '{}': {}",
+                                            config.worker_name, config.run_name, e
                                         );
                                     }
                                 }
@@ -1491,8 +1490,8 @@ pub async fn run_claude_worker(config: ClaudeWorkerConfig) -> Result<WorkerResul
     // Cleanup
     bridge.cleanup();
 
-    // Wait for monitor thread to finish
-    if let Ok(triggered_by_awaiting) = monitor_handle.join() {
+    // Wait for monitor task to finish
+    if let Ok(triggered_by_awaiting) = monitor_handle.await {
         if triggered_by_awaiting {
             info!(
                 "[{}] Worker finished (terminated due to Awaiting status)",

@@ -1,7 +1,8 @@
 //! Debug and utility commands
 //!
-//! Commands for debugging, frontend logging, and version info.
+//! Commands for debugging, frontend logging, version info, and daemon health.
 
+use crate::daemon;
 use crate::version;
 
 /// Version information response
@@ -135,5 +136,109 @@ pub async fn kill_orphaned_acp_processes() -> Result<serde_json::Value, String> 
     #[cfg(not(unix))]
     {
         Ok(serde_json::json!({ "killed": 0 }))
+    }
+}
+
+/// Daemon health status response
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DaemonHealth {
+    pub running: bool,
+    pub version: Option<String>,
+    pub git_sha: Option<String>,
+    pub build_date: Option<String>,
+    pub uptime_secs: Option<u64>,
+    pub active_runs: Option<usize>,
+    pub pid: Option<u32>,
+    pub runs_dir: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Get daemon health status
+///
+/// Checks if daemon is running and returns its version info.
+/// If daemon is not running, returns running=false with error message.
+#[tauri::command]
+pub async fn get_daemon_health() -> DaemonHealth {
+    let port = daemon::get_daemon_port();
+    let url = format!("http://127.0.0.1:{}/daemon/status", port);
+
+    match reqwest::Client::new()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(2))
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let status = resp.status();
+            if status.is_success() {
+                if let Ok(data) = resp.json::<serde_json::Value>().await {
+                    return DaemonHealth {
+                        running: true,
+                        version: data
+                            .get("version")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        git_sha: data
+                            .get("git_sha")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        build_date: data
+                            .get("build_date")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        uptime_secs: data.get("uptime_secs").and_then(|v| v.as_u64()),
+                        active_runs: data
+                            .get("active_runs")
+                            .and_then(|v| v.as_u64())
+                            .map(|n| n as usize),
+                        pid: data.get("pid").and_then(|v| v.as_u64()).map(|n| n as u32),
+                        runs_dir: data
+                            .get("runs_dir")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        error: None,
+                    };
+                }
+            }
+            DaemonHealth {
+                running: false,
+                version: None,
+                git_sha: None,
+                build_date: None,
+                uptime_secs: None,
+                active_runs: None,
+                pid: None,
+                runs_dir: None,
+                error: Some(format!("Daemon returned status: {}", status)),
+            }
+        }
+        Err(e) => DaemonHealth {
+            running: false,
+            version: None,
+            git_sha: None,
+            build_date: None,
+            uptime_secs: None,
+            active_runs: None,
+            pid: None,
+            runs_dir: None,
+            error: Some(format!("Failed to connect to daemon: {}", e)),
+        },
+    }
+}
+
+/// Start or restart the daemon
+#[tauri::command]
+pub async fn ensure_daemon_running() -> Result<DaemonHealth, String> {
+    use crate::core::orchestrator::DaemonOrchestrator;
+
+    // Try to connect or start the daemon
+    match DaemonOrchestrator::connect_or_start() {
+        Ok(_) => {
+            // Wait a moment for daemon to be ready
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            Ok(get_daemon_health().await)
+        }
+        Err(e) => Err(format!("Failed to start daemon: {}", e)),
     }
 }

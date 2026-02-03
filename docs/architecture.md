@@ -19,7 +19,7 @@
 | Add board task/eval | `src-tauri/src/core/board/mod.rs`, `src-tauri/src/gui/commands/specflow.rs` |
 | Modify board UI | `src/components/specflow/SpecBoard.tsx` |
 | Add orchestrator method | `src-tauri/src/core/orchestrator/mod.rs` → trait, `local.rs`, `daemon.rs`, `remote.rs` impls |
-| Modify delta dispatch | `src-tauri/src/core/delta/runner.rs`, `src-tauri/src/daemon/lifecycle.rs` |
+| Modify delta dispatch | `src-tauri/src/core/delta/dispatch.rs`, `src-tauri/src/core/delta/runner.rs`, `src-tauri/src/daemon/lifecycle.rs` |
 
 ### Feature Flags
 
@@ -83,7 +83,7 @@ cargo build --features s3-storage               # With S3 support
 | `board/` | `mod.rs`, `types.rs`, `storage.rs` | SpecFlow board data (tasks, evals, task tree, file sync) |
 | `github/` | `mod.rs` | GitHub API client (octocrab) with auth fallback (env → gh config → hirsel config) |
 | `dispatch/` | `mod.rs` | Dispatch service: creates runs from board tasks, generates spec/eval, creates work+eval tasks with validates relationship |
-| `delta/` | `mod.rs`, `runner.rs`, `state.rs`, `types.rs` | Delta dispatch system: draft/live tree diffs, persistent project runs, live_nodes |
+| `delta/` | `mod.rs`, `dispatch.rs`, `runner.rs`, `state.rs`, `types.rs` | Delta dispatch system: draft/live tree diffs, persistent project runs, live_nodes |
 | `delivery/` | `mod.rs` | Delivery service: three-tier delivery (push/PR/merge), conflict detection, staleness checking |
 | `orchestrator/` | `mod.rs` → `Orchestrator` trait, `local.rs`, `remote.rs`, `daemon.rs` | Run orchestration pattern |
 | `lifecycle/` | `mod.rs` → `LifecycleManager` trait, `local.rs`, `remote.rs`, `transitions.rs` | Event-driven state machine |
@@ -100,6 +100,7 @@ cargo build --features s3-storage               # With S3 support
 | `service_worker/` | `mod.rs`, `scribe.rs`, `conflict_resolver.rs`, `types.rs` | Service workers: ScribeService for documentation, ConflictResolverServiceWrapper for merge conflicts |
 | `conflict_resolver/` | `mod.rs`, `client.rs`, `state.rs` | Git conflict resolution with AI agent |
 | `acp_runner.rs` | - | Unified ACP agent runner for scribe, conflict_resolver, compaction, eval |
+| `db.rs` | - | Shared SQLite connection utilities (open_db, open_global_db, utc_now, etc.) |
 | `error.rs` | - | `HirselError` enum with `ErrorKind` categorization |
 | `acp.rs` | - | Agent Control Protocol types, `AcpChild` process wrapper |
 | `state_access.rs` | - | Worker state abstraction (SQLite vs HTTP) |
@@ -222,8 +223,9 @@ cargo build --features s3-storage               # With S3 support
 | `components/modals/` | SettingsModal, HelpModal, ConfirmDialog |
 | `components/chat/` | GypMessenger |
 | `stores/` | AppProvider, ProjectProvider, RunsProvider, SelectionProvider, DeltaProvider |
-| `hooks/` | usePolling, useDebounce, useTauriEvent |
-| `lib/` | Icons, theme, toast, dev-logger, utils |
+| `hooks/` | useClickOutside, useElapsedTime, useEscapeKey, useGypChat |
+| `lib/` | Icons, theme, toast, dev-logger, utils, API helpers |
+| `lib/api.ts` | Tauri invoke wrappers: `safeInvoke`, `safeInvokeWithToast`, polling utilities |
 | `lib/elk-layout.ts` | ELK.js wrapper for hierarchical graph layout with orthogonal edge routing |
 
 **SpecBoard Architecture:**
@@ -233,6 +235,7 @@ cargo build --features s3-storage               # With S3 support
   - Context menus for node operations
   - Drag-and-drop node reordering
   - Keyboard navigation and shortcuts
+  - Live tree multiselect filter (spec tasks, worker tasks, deleted nodes)
 - **Graph Layout** - ELK.js (Eclipse Layout Kernel) for hierarchical graph layout:
   - `src/lib/elk-layout.ts` - ELK wrapper with orthogonal edge routing
   - Layered algorithm with proper crossing minimization
@@ -383,6 +386,13 @@ Unified error hierarchy for the codebase.
 - Automatic HTTP status mapping via `http_status()` method
 - `is_user_error()` distinguishes user errors from system errors
 
+**Error Conversion (From traits):** Common error types implement `From` for automatic conversion:
+- `OrchestratorError`: `From<StateError>`, `From<DeltaStateError>`, `From<ProjectError>`, `From<GypChatError>`, `From<reqwest::Error>`
+- `LifecycleError`: `From<StateError>`, `From<DeltaStateError>`, `From<std::io::Error>`
+- `RunManagerError`: `From<OrchestratorError>`, `From<std::io::Error>`, `From<serde_json::Error>`
+
+This allows using `?` operator directly instead of `.map_err(|e| Error::State(e.to_string()))`.
+
 ### Process Management (`src-tauri/src/core/acp.rs`)
 
 `AcpChild` wraps subprocess lifecycle for clean process management.
@@ -507,15 +517,15 @@ Draft ──start──► Working ───────────────
                  Working
 ```
 
-**Note:** Run stays in `Working` throughout both work and eval task execution. Eval tasks are regular tasks in the same worker pool - there is no separate "Eval" run status in the unified model.
+**Note:** Run transitions to `Eval` when all work tasks complete and evaluation begins. After eval passes, run moves to `Done`.
 
 | Status | Description | Terminal |
 |--------|-------------|----------|
 | `Draft` | Configured, workers not spawned | No |
-| `Working` | Workers actively running (both work and eval tasks) | No |
+| `Working` | Workers actively running | No |
 | `Paused` | Manually paused by user | No |
-| `Eval` | Legacy: Evaluation in progress (deprecated in unified model) | No |
-| `Done` | Completed successfully (all work tasks validated) | Yes |
+| `Eval` | Evaluation in progress | No |
+| `Done` | All work complete, eval passed | Yes |
 | `Delivered` | Changes pushed to branch | Yes |
 | `Failed` | Run failed (see `failure_reason`) | Yes |
 
@@ -567,6 +577,12 @@ EVAL:  Pending → Working → Done (pass) or Failed (fail)
 ```
 
 Workers claim and complete live_nodes via MCP tools. When an eval passes, its `validates` nodes are unblocked. When an eval fails, a repair task may be created.
+
+**Changed Draft Handling:** When a draft node is modified after dispatch:
+1. The live node content is updated from the draft
+2. The node is reopened (`reopen_live_node`) - clears `claimed_by`, `completed_at`, status reset to Pending
+3. If a worker was working on it, they receive a system message in their DM thread with the changes summary
+4. The node becomes available for any worker to claim
 
 ---
 
@@ -1018,15 +1034,21 @@ idle_timeout_seconds = 300        # 5 min default
 | GET | `/api/runs/{name}/threads` | `list_threads` |
 | GET/POST | `/api/runs/{name}/threads/{t}/messages` | `get_messages`, `send_message` |
 
-### Live Node Endpoints (via project context)
+### Live Node Endpoints
 
 | Method | Path | Handler |
 |--------|------|---------|
-| GET | `/api/live-nodes` | `list_live_nodes` |
-| POST | `/api/live-nodes` | `add_live_node` |
-| POST | `/api/live-nodes/{id}/claim` | `claim_live_node` |
-| POST | `/api/live-nodes/{id}/complete` | `complete_live_node` |
-| POST | `/api/live-nodes/{id}/unclaim` | `unclaim_live_node` |
+| GET | `/api/runs/{name}/live-nodes` | `get_live_nodes` |
+| POST | `/api/runs/{name}/live-nodes` | `add_live_node` |
+| GET | `/api/runs/{name}/live-nodes/claimable` | `get_claimable_live_nodes` |
+| POST | `/api/runs/{name}/live-nodes/{id}/claim` | `claim_live_node` |
+| POST | `/api/runs/{name}/live-nodes/{id}/complete` | `complete_live_node` |
+| POST | `/api/runs/{name}/live-nodes/{id}/unclaim` | `unclaim_live_node` |
+| GET | `/api/runs/{name}/live-nodes/{id}/blocked` | `get_blocked` |
+| POST | `/api/runs/{name}/live-nodes/{id}/eval-pass` | `eval_pass` |
+| POST | `/api/runs/{name}/live-nodes/{id}/eval-fail` | `eval_fail` |
+| POST | `/api/runs/{name}/live-nodes/{id}/tokens` | `add_tokens` |
+| GET | `/api/runs/{name}/live-nodes/{id}/validated` | `get_validated` |
 
 ### Config Endpoints
 

@@ -49,9 +49,11 @@ pub async fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsE
         &config.run_name,
         run_dir.clone(),
         vec![], // Agent command not needed for kill
-    ) {
+    )
+    .await
+    {
         // Clean up any snapshots before killing workers
-        if let Ok(workers) = lifecycle.state().get_workers() {
+        if let Ok(workers) = lifecycle.state().get_workers().await {
             let (app_config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
 
             for worker in workers {
@@ -92,7 +94,7 @@ pub async fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsE
         }
 
         // Kill any running worker processes using lifecycle manager
-        if let Ok(killed) = lifecycle.kill_all_workers() {
+        if let Ok(killed) = lifecycle.kill_all_workers().await {
             result.workers_killed = killed.len();
             if !killed.is_empty() {
                 tracing::info!(
@@ -104,7 +106,7 @@ pub async fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsE
         }
 
         // Get project path for remote cleanup
-        lifecycle.state().get_project_path().ok().flatten()
+        lifecycle.state().get_project_path().await.ok().flatten()
     } else {
         None
     };
@@ -125,8 +127,8 @@ pub async fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsE
     }
 
     // Delete Gyp chat history
-    if let Ok(store) = GypChatStore::open() {
-        if store.delete_run_messages(&config.run_name).is_ok() {
+    if let Ok(store) = GypChatStore::open().await {
+        if store.delete_run_messages(&config.run_name).await.is_ok() {
             tracing::debug!("Deleted GypChat messages for run '{}'", config.run_name);
         }
     }
@@ -155,7 +157,7 @@ pub async fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsE
 ///
 /// * `Ok(CloneRunResult)` - Details about what was cloned
 /// * `Err(OpsError)` - If the operation failed
-pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
+pub async fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
     // Validate new name
     let new_name = config.new_name.trim().to_string();
     if new_name.is_empty() {
@@ -178,16 +180,17 @@ pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
     }
 
     // Open source database to read settings
-    let source_state = SQLiteState::new(source_db_path)?;
+    let source_state = SQLiteState::new(&config.source_run).await?;
 
     // Read starting_point from source (if stored)
-    let starting_point_json = source_state.get_starting_point().ok().flatten();
+    let starting_point_json = source_state.get_starting_point().await.ok().flatten();
 
     // Read settings from source
     // For greenfield/gitrepo starting points, don't copy project_path - the cloned draft
     // will create its own workspace when started. For LocalFolder, keep the external path.
     let project_path = source_state
         .get_project_path()
+        .await
         .ok()
         .flatten()
         .and_then(|p| {
@@ -228,12 +231,13 @@ pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
         });
     let worker_scale = source_state
         .get_worker_scale()
+        .await
         .ok()
         .flatten()
         .unwrap_or_else(|| "1".to_string());
-    let time_limit_minutes = source_state.get_time_limit_minutes().ok().flatten();
-    let human_in_the_loop = source_state.get_human_in_the_loop().unwrap_or(true);
-    let default_runner = source_state.get_default_runner().ok().flatten();
+    let time_limit_minutes = source_state.get_time_limit_minutes().await.ok().flatten();
+    let human_in_the_loop = source_state.get_human_in_the_loop().await.unwrap_or(true);
+    let default_runner = source_state.get_default_runner().await.ok().flatten();
 
     // Read spec.md from source
     let source_spec_path = source_dir.join("spec.md");
@@ -298,27 +302,29 @@ pub fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsError> {
     )?;
 
     // Initialize database
-    let new_state = SQLiteState::new(new_dir.join("hirsel.db"))?;
+    let new_state = SQLiteState::new(&new_name).await?;
 
     // Set up new run with Draft status
-    new_state.init_state(project_path.as_deref())?;
-    new_state.set_status(crate::core::state::Status::Draft)?;
-    new_state.set_worker_scale(&worker_scale)?;
-    new_state.set_human_in_the_loop(human_in_the_loop)?;
+    new_state.init_state(project_path.as_deref()).await?;
+    new_state
+        .set_status(crate::core::state::Status::Draft)
+        .await?;
+    new_state.set_worker_scale(&worker_scale).await?;
+    new_state.set_human_in_the_loop(human_in_the_loop).await?;
 
     if let Some(limit) = time_limit_minutes {
-        new_state.set_time_limit_minutes(Some(limit))?;
+        new_state.set_time_limit_minutes(Some(limit)).await?;
     }
     if let Some(ref runner) = default_runner {
-        new_state.set_default_runner(Some(runner))?;
+        new_state.set_default_runner(Some(runner)).await?;
     }
     if !spec_content.is_empty() {
-        new_state.set_request(Some(&spec_content))?;
+        new_state.set_request(Some(&spec_content)).await?;
     }
 
     // Copy starting_point from source (if exists)
     if let Some(ref sp_json) = starting_point_json {
-        new_state.set_starting_point(Some(sp_json))?;
+        new_state.set_starting_point(Some(sp_json)).await?;
     }
 
     tracing::info!("Cloned '{}' to '{}' (draft)", config.source_run, new_name);
@@ -355,17 +361,17 @@ mod tests {
         assert!(matches!(result, Err(OpsError::RunNotFound(_))));
     }
 
-    #[test]
-    fn test_clone_nonexistent_run() {
+    #[tokio::test]
+    async fn test_clone_nonexistent_run() {
         let config = CloneRunConfig::new("nonexistent-run-12345", "new-run");
-        let result = clone_run(config);
+        let result = clone_run(config).await;
         assert!(matches!(result, Err(OpsError::RunNotFound(_))));
     }
 
-    #[test]
-    fn test_clone_empty_name() {
+    #[tokio::test]
+    async fn test_clone_empty_name() {
         let config = CloneRunConfig::new("source", "  ");
-        let result = clone_run(config);
+        let result = clone_run(config).await;
         assert!(matches!(result, Err(OpsError::InvalidState(_))));
     }
 }

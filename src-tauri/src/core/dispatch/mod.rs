@@ -7,11 +7,22 @@
 //! - Recording dispatch in task_runs junction table
 
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 use std::path::PathBuf;
 use tracing::info;
 
 use crate::core::board::{BoardService, BoardSnapshot, DispatchPreview, Eval, TaskTree};
 use crate::core::state::StateError;
+
+/// Block on an async future in a sync context
+fn block_on<F: Future>(f: F) -> F::Output {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(f)),
+        Err(_) => tokio::runtime::Runtime::new()
+            .expect("Failed to create tokio runtime")
+            .block_on(f),
+    }
+}
 
 /// Error type for dispatch operations
 #[derive(Debug, thiserror::Error)]
@@ -99,16 +110,16 @@ impl DispatchService {
 
     /// Get a preview of what will be dispatched from a task
     pub fn preview_dispatch(&self, task_id: &str) -> DispatchResult<DispatchPreview> {
-        Ok(self.board.preview_dispatch(task_id)?)
+        Ok(block_on(self.board.preview_dispatch(task_id))?)
     }
 
     /// Get the full dispatch scope (tasks + evals) for a task
     pub fn get_dispatch_scope(&self, task_id: &str) -> DispatchResult<(Vec<TaskTree>, Vec<Eval>)> {
-        let task_ids = self.board.get_subtree_task_ids(task_id)?;
-        let evals = self.board.get_evals_for_tasks(&task_ids)?;
+        let task_ids = block_on(self.board.get_subtree_task_ids(task_id))?;
+        let evals = block_on(self.board.get_evals_for_tasks(&task_ids))?;
 
         // Get the task tree for the dispatch scope
-        let all_tasks = self.board.get_tasks()?;
+        let all_tasks = block_on(self.board.get_tasks())?;
         let task_id_set: std::collections::HashSet<&String> = task_ids.iter().collect();
         let filtered_tasks: Vec<_> = all_tasks
             .into_iter()
@@ -132,7 +143,7 @@ impl DispatchService {
 
         // Collect all task IDs from all roots (deduplicated)
         for root_id in root_task_ids {
-            let subtree_ids = self.board.get_subtree_task_ids(root_id)?;
+            let subtree_ids = block_on(self.board.get_subtree_task_ids(root_id))?;
             for tid in subtree_ids {
                 if seen_tasks.insert(tid.clone()) {
                     all_task_ids.push(tid);
@@ -141,11 +152,11 @@ impl DispatchService {
         }
 
         // Get evals that validate any of these tasks
-        let evals = self.board.get_evals_for_tasks(&all_task_ids)?;
+        let evals = block_on(self.board.get_evals_for_tasks(&all_task_ids))?;
         let eval_ids: Vec<String> = evals.iter().map(|e| e.id.clone()).collect();
 
         // Build task tree from filtered tasks
-        let all_tasks = self.board.get_tasks()?;
+        let all_tasks = block_on(self.board.get_tasks())?;
         let task_id_set: std::collections::HashSet<&String> = all_task_ids.iter().collect();
         let filtered_tasks: Vec<_> = all_tasks
             .into_iter()
@@ -211,7 +222,7 @@ impl DispatchService {
 
     /// Create a board snapshot for the dispatch
     pub fn create_snapshot(&self, task_ids: &[String]) -> DispatchResult<BoardSnapshot> {
-        Ok(self.board.create_dispatch_snapshot(task_ids)?)
+        Ok(block_on(self.board.create_dispatch_snapshot(task_ids))?)
     }
 
     /// Generate spec.md content from tasks
@@ -261,8 +272,8 @@ impl DispatchService {
     }
 
     /// Record the dispatch in the task_runs table
-    pub fn record_dispatch(&self, task_id: &str, run_name: &str) -> DispatchResult<()> {
-        self.board.record_task_run(task_id, run_name)?;
+    pub async fn record_dispatch(&self, task_id: &str, run_name: &str) -> DispatchResult<()> {
+        self.board.record_task_run(task_id, run_name).await?;
         info!(
             "Recorded dispatch: task={}, run={}, project={}",
             task_id, run_name, self.project_id
@@ -271,13 +282,16 @@ impl DispatchService {
     }
 
     /// Get all runs dispatched from a task
-    pub fn get_task_runs(&self, task_id: &str) -> DispatchResult<Vec<crate::core::board::TaskRun>> {
-        Ok(self.board.get_runs_for_task(task_id)?)
+    pub async fn get_task_runs(
+        &self,
+        task_id: &str,
+    ) -> DispatchResult<Vec<crate::core::board::TaskRun>> {
+        Ok(self.board.get_runs_for_task(task_id).await?)
     }
 
     /// Get all task runs for the project
-    pub fn get_all_task_runs(&self) -> DispatchResult<Vec<crate::core::board::TaskRun>> {
-        Ok(self.board.get_all_task_runs()?)
+    pub async fn get_all_task_runs(&self) -> DispatchResult<Vec<crate::core::board::TaskRun>> {
+        Ok(self.board.get_all_task_runs().await?)
     }
 
     /// Execute a full dispatch: create run, record in task_runs, return info

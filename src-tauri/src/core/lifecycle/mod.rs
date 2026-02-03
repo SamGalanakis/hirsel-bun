@@ -48,6 +48,18 @@ pub enum LifecycleError {
 
 pub type LifecycleResult<T> = Result<T, LifecycleError>;
 
+impl From<crate::core::state::StateError> for LifecycleError {
+    fn from(e: crate::core::state::StateError) -> Self {
+        LifecycleError::State(e.to_string())
+    }
+}
+
+impl From<crate::core::delta::DeltaStateError> for LifecycleError {
+    fn from(e: crate::core::delta::DeltaStateError) -> Self {
+        LifecycleError::State(e.to_string())
+    }
+}
+
 /// Events that trigger lifecycle actions.
 #[derive(Debug, Clone)]
 pub enum LifecycleEvent {
@@ -172,74 +184,49 @@ impl LifecycleContext {
 /// All lifecycle operations go through this interface. Implementations
 /// handle the actual state updates and process management.
 ///
-/// Note: Methods are synchronous since SQLite operations are inherently sync.
-/// This trait can be used from async contexts by calling methods directly.
+/// Note: Methods are async since SQLite operations are now async with sqlx.
+#[allow(async_fn_in_trait)]
 pub trait LifecycleManager {
     /// Process a lifecycle event and return actions taken.
     ///
     /// This is the main entry point for all lifecycle operations.
     /// Events trigger state checks and appropriate actions.
-    fn process_event(&self, event: LifecycleEvent) -> LifecycleResult<Vec<LifecycleAction>>;
+    async fn process_event(&self, event: LifecycleEvent) -> LifecycleResult<Vec<LifecycleAction>>;
 
     /// Pause the run, killing all active workers.
     ///
     /// Workers will be marked as Paused and can be resumed later.
-    fn pause_run(&self, reason: &str) -> LifecycleResult<Vec<String>>;
+    async fn pause_run(&self, reason: &str) -> LifecycleResult<Vec<String>>;
 
     /// Resume the run, respawning paused workers.
     ///
     /// Returns a list of ResumeWorker actions for the daemon to process.
-    fn resume_run(&self) -> LifecycleResult<Vec<LifecycleAction>>;
+    async fn resume_run(&self) -> LifecycleResult<Vec<LifecycleAction>>;
 
     /// Handle a worker signaling it's done with work.
     ///
     /// This may trigger eval or mark the run as done if all workers are inactive.
-    fn worker_done(&self, worker_name: &str) -> LifecycleResult<Vec<LifecycleAction>>;
+    async fn worker_done(&self, worker_name: &str) -> LifecycleResult<Vec<LifecycleAction>>;
 
     /// Handle time limit expiration.
     ///
     /// Kills all workers and sets run to Failed with TimeLimit reason.
-    fn handle_time_expired(&self) -> LifecycleResult<()>;
+    async fn handle_time_expired(&self) -> LifecycleResult<()>;
 
     /// Check if all workers are inactive (awaiting or error).
-    fn all_workers_inactive(&self) -> LifecycleResult<bool>;
+    async fn all_workers_inactive(&self) -> LifecycleResult<bool>;
 
     /// Check if eval should be triggered.
     ///
     /// Returns true if all workers are inactive and run is in Working status.
-    fn should_trigger_eval(&self) -> LifecycleResult<bool>;
+    async fn should_trigger_eval(&self) -> LifecycleResult<bool>;
 
     /// Check if worker scaling is possible.
-    fn can_scale_up(&self) -> LifecycleResult<bool>;
+    async fn can_scale_up(&self) -> LifecycleResult<bool>;
 
     /// Get current run status.
-    fn run_status(&self) -> LifecycleResult<Status>;
+    async fn run_status(&self) -> LifecycleResult<Status>;
 
     /// Get the lifecycle context.
     fn context(&self) -> &LifecycleContext;
-}
-
-/// Create appropriate lifecycle manager based on environment.
-///
-/// If `HIRSEL_API_URL` is set, creates a `RemoteLifecycleManager` that
-/// delegates lifecycle operations to the coordinator.
-/// Otherwise, creates a `LocalLifecycleManager` that manages lifecycle locally.
-pub fn create_lifecycle_manager(
-    run_name: &str,
-    run_dir: PathBuf,
-    agent_command: Vec<String>,
-) -> Box<dyn LifecycleManager> {
-    if let Ok(api_url) = std::env::var("HIRSEL_API_URL") {
-        let worker_name = std::env::var("HIRSEL_WORKER").unwrap_or_default();
-        Box::new(RemoteLifecycleManager::new(run_name, api_url, worker_name))
-    } else {
-        match LocalLifecycleManager::new(run_name, run_dir, agent_command) {
-            Ok(lm) => Box::new(lm),
-            Err(e) => {
-                tracing::warn!("Failed to create local lifecycle manager: {}", e);
-                // Fall back to remote with empty URL (will return no-ops)
-                Box::new(RemoteLifecycleManager::new(run_name, "", ""))
-            }
-        }
-    }
 }

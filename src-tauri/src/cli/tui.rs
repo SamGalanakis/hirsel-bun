@@ -2,6 +2,7 @@
 //!
 //! Uses ratatui to display a live view of worker events similar to the GUI.
 
+use crate::cli::helpers::block_on;
 use crate::core::state::{SQLiteState, ToolCallStatus, WorkerEvent, WorkerEventType, WorkerStatus};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
@@ -141,10 +142,12 @@ impl AttachTui {
     }
 
     fn load_events(&mut self) -> anyhow::Result<()> {
-        let events = self
-            .state
-            .get_worker_events(&self.worker_name, self.last_event_id, 500)
-            .map_err(|e| anyhow::anyhow!("Failed to get events: {}", e))?;
+        let events = block_on(self.state.get_worker_events(
+            &self.worker_name,
+            self.last_event_id,
+            500,
+        ))
+        .map_err(|e| anyhow::anyhow!("Failed to get events: {}", e))?;
 
         for event in events {
             self.last_event_id = Some(event.id);
@@ -206,7 +209,7 @@ impl AttachTui {
     }
 
     fn update_worker_status(&mut self) {
-        if let Ok(Some(worker)) = self.state.get_worker(&self.worker_name) {
+        if let Ok(Some(worker)) = block_on(self.state.get_worker(&self.worker_name)) {
             self.worker_status = Some(worker.status);
         }
     }

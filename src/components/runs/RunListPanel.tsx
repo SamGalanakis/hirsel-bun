@@ -10,7 +10,7 @@ import {
   createSignal,
   onCleanup,
 } from 'solid-js';
-import { cloneRun, createDraft } from '../../lib/api';
+import { cloneRun, createDraft, safeInvokeWithToast } from '../../lib/api';
 import type { RunSummary } from '../../lib/types';
 import {
   formatElapsed,
@@ -92,24 +92,20 @@ export const RunListPanel: Component = () => {
   const contextPause = async () => {
     const run = contextMenu().run;
     if (!run) return;
-    try {
-      await invoke('pause_run', { runName: run.name });
-      await runs.invalidateRuns();
-    } catch (err) {
-      window.toast?.error('Failed to pause run');
-    }
+    const result = await safeInvokeWithToast('pause_run', { runName: run.name }, {
+      errorPrefix: 'Failed to pause run',
+    });
+    if (result.success) await runs.invalidateRuns();
     hideContextMenu();
   };
 
   const contextResume = async () => {
     const run = contextMenu().run;
     if (!run) return;
-    try {
-      await invoke('resume_run', { runName: run.name });
-      await runs.invalidateRuns();
-    } catch (err) {
-      window.toast?.error('Failed to resume run');
-    }
+    const result = await safeInvokeWithToast('resume_run', { runName: run.name }, {
+      errorPrefix: 'Failed to resume run',
+    });
+    if (result.success) await runs.invalidateRuns();
     hideContextMenu();
   };
 
@@ -121,26 +117,26 @@ export const RunListPanel: Component = () => {
     const confirmed = await window.confirmDialog?.delete(run.name, 'run');
     if (!confirmed) return;
 
-    try {
-      await invoke('delete_run', { runName: run.name });
+    const result = await safeInvokeWithToast('delete_run', { runName: run.name }, {
+      errorPrefix: 'Failed to delete run',
+    });
+    if (result.success) {
       if (runs.selectedRun() === run.name) {
         runs.setSelectedRun(null);
       }
       await runs.invalidateRuns();
-    } catch (err) {
-      window.toast?.error('Failed to delete run');
     }
   };
 
   const contextDeliver = async () => {
     const run = contextMenu().run;
     if (!run) return;
-    try {
-      const branch = await invoke<string>('deliver_run', { runName: run.name });
-      window.toast?.success(`Delivered to ${branch}`);
+    const result = await safeInvokeWithToast<string>('deliver_run', { runName: run.name }, {
+      errorPrefix: 'Failed to deliver',
+    });
+    if (result.success && result.data) {
+      window.toast?.success(`Delivered to ${result.data}`);
       await runs.invalidateRuns();
-    } catch (err) {
-      window.toast?.error('Failed to deliver');
     }
     hideContextMenu();
   };

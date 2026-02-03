@@ -6,6 +6,8 @@ export { ToolCard } from './ToolCard';
 export type { ToolCardProps } from './ToolCard';
 export { Dropdown } from './Dropdown';
 export type { DropdownOption, DropdownProps } from './Dropdown';
+export { MultiSelectDropdown } from './MultiSelectDropdown';
+export type { MultiSelectOption, MultiSelectDropdownProps } from './MultiSelectDropdown';
 export { StatusBadge } from './StatusBadge';
 export type { StatusBadgeProps } from './StatusBadge';
 export { SheepAvatar } from './SheepAvatar';

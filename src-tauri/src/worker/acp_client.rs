@@ -43,7 +43,7 @@ struct TerminalHandle {
 /// the Node.js ACP adapter and the native Claude CLI bridge.
 pub struct HirselClient {
     worker_name: String,
-    db_path: PathBuf,
+    run_name: String,
     terminals: Mutex<HashMap<TerminalId, TerminalHandle>>,
     terminal_counter: AtomicU64,
 }
@@ -54,24 +54,35 @@ impl HirselClient {
         &self.worker_name
     }
 
-    /// Get the database path.
-    pub fn db_path(&self) -> &Path {
-        &self.db_path
+    /// Get the run name.
+    pub fn run_name(&self) -> &str {
+        &self.run_name
     }
 }
 
 impl HirselClient {
-    pub fn new(worker_name: &str, db_path: &Path) -> Self {
+    pub fn new(worker_name: &str, run_name: &str) -> Self {
         Self {
             worker_name: worker_name.to_string(),
-            db_path: db_path.to_path_buf(),
+            run_name: run_name.to_string(),
             terminals: Mutex::new(HashMap::new()),
             terminal_counter: AtomicU64::new(0),
         }
     }
 
-    fn get_state(&self) -> Option<crate::core::state::SQLiteState> {
-        crate::core::state::SQLiteState::new(self.db_path.clone()).ok()
+    async fn get_state(&self) -> Option<crate::core::state::SQLiteState> {
+        match crate::core::state::SQLiteState::new(&self.run_name).await {
+            Ok(state) => Some(state),
+            Err(e) => {
+                tracing::warn!(
+                    "[{}] Failed to open database for run '{}': {}",
+                    self.worker_name,
+                    self.run_name,
+                    e
+                );
+                None
+            }
+        }
     }
 }
 
@@ -109,8 +120,8 @@ impl Client for HirselClient {
             SessionUpdate::AgentMessageChunk(chunk) => {
                 if let ContentBlock::Text(text) = &chunk.content {
                     // Write to database for streaming
-                    if let Some(state) = self.get_state() {
-                        match state.insert_text_event(&self.worker_name, &text.text) {
+                    if let Some(state) = self.get_state().await {
+                        match state.insert_text_event(&self.worker_name, &text.text).await {
                             Ok(id) => {
                                 debug!("[{}] Inserted text event id={}", self.worker_name, id)
                             }
@@ -124,8 +135,11 @@ impl Client for HirselClient {
             SessionUpdate::AgentThoughtChunk(chunk) => {
                 if let ContentBlock::Text(text) = &chunk.content {
                     // Write thought to database
-                    if let Some(state) = self.get_state() {
-                        match state.insert_thought_event(&self.worker_name, &text.text) {
+                    if let Some(state) = self.get_state().await {
+                        match state
+                            .insert_thought_event(&self.worker_name, &text.text)
+                            .await
+                        {
                             Ok(id) => {
                                 debug!("[{}] Inserted thought event id={}", self.worker_name, id)
                             }
@@ -138,6 +152,11 @@ impl Client for HirselClient {
                 }
             }
             SessionUpdate::ToolCall(tc) => {
+                debug!(
+                    "[{}] ToolCall received: id={}, title='{}', status={:?}",
+                    self.worker_name, tc.tool_call_id, tc.title, tc.status
+                );
+
                 // Convert ACP status to our status
                 let status = match tc.status {
                     agent_client_protocol::ToolCallStatus::Pending => ToolCallStatus::Pending,
@@ -168,15 +187,18 @@ impl Client for HirselClient {
                     .and_then(|v| serde_json::to_string(v).ok());
 
                 // Write to database
-                if let Some(state) = self.get_state() {
-                    match state.insert_tool_start_event(
-                        &self.worker_name,
-                        &tc.tool_call_id.to_string(),
-                        &tc.title,
-                        kind,
-                        status,
-                        input.as_deref(),
-                    ) {
+                if let Some(state) = self.get_state().await {
+                    match state
+                        .insert_tool_start_event(
+                            &self.worker_name,
+                            &tc.tool_call_id.to_string(),
+                            &tc.title,
+                            kind,
+                            status,
+                            input.as_deref(),
+                        )
+                        .await
+                    {
                         Ok(id) => debug!(
                             "[{}] Inserted tool_start event id={} for {}",
                             self.worker_name, id, tc.title
@@ -186,9 +208,22 @@ impl Client for HirselClient {
                             self.worker_name, tc.title, e
                         ),
                     }
+                } else {
+                    tracing::warn!(
+                        "[{}] Dropping ToolCall event - no database connection",
+                        self.worker_name
+                    );
                 }
             }
             SessionUpdate::ToolCallUpdate(update) => {
+                debug!(
+                    "[{}] ToolCallUpdate received: id={}, title={:?}, status={:?}",
+                    self.worker_name,
+                    update.tool_call_id,
+                    update.fields.title,
+                    update.fields.status
+                );
+
                 // Convert status if present
                 let status = update.fields.status.map(|s| match s {
                     agent_client_protocol::ToolCallStatus::Pending => ToolCallStatus::Pending,
@@ -202,14 +237,17 @@ impl Client for HirselClient {
                 let output = crate::core::acp::extract_tool_output(&update.fields);
 
                 // Write to database
-                if let Some(state) = self.get_state() {
-                    match state.insert_tool_update_event(
-                        &self.worker_name,
-                        &update.tool_call_id.to_string(),
-                        update.fields.title.as_deref(),
-                        status,
-                        output.as_deref(),
-                    ) {
+                if let Some(state) = self.get_state().await {
+                    match state
+                        .insert_tool_update_event(
+                            &self.worker_name,
+                            &update.tool_call_id.to_string(),
+                            update.fields.title.as_deref(),
+                            status,
+                            output.as_deref(),
+                        )
+                        .await
+                    {
                         Ok(id) => debug!(
                             "[{}] Inserted tool_update event id={} for {}",
                             self.worker_name, id, update.tool_call_id
@@ -219,6 +257,11 @@ impl Client for HirselClient {
                             self.worker_name, update.tool_call_id, e
                         ),
                     }
+                } else {
+                    tracing::warn!(
+                        "[{}] Dropping ToolCallUpdate event - no database connection",
+                        self.worker_name
+                    );
                 }
             }
             _ => {}
@@ -378,8 +421,7 @@ pub async fn run_acp_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
     );
 
     // Create the client
-    let db_path = config.run_dir.join("hirsel.db");
-    let client = Arc::new(HirselClient::new(&config.worker_name, &db_path));
+    let client = Arc::new(HirselClient::new(&config.worker_name, &config.run_name));
 
     // Spawn the agent process using AcpChild for automatic cleanup
     let spawn_config = AcpSpawnConfig::new(
@@ -545,18 +587,17 @@ pub fn build_worker_prompt(
     // Your Task - Direct assignment
     prompt.push_str("## Your Assigned Task\n\n");
     if let Some(task_id) = assigned_task_id {
-        let task_file = run_dir.join("tasks").join(format!("{}.md", task_id));
-        prompt.push_str(&format!("**Task:** `{}`\n", task_id));
-        prompt.push_str(&format!("**Details file:** `{}`\n\n", task_file.display()));
-        prompt.push_str(
-            "Read your task details with `get_task_details()` or by reading the file directly.\n\n",
-        );
+        prompt.push_str(&format!("**Task:** `{}`\n\n", task_id));
+        prompt.push_str("Use `get_task_details(\"");
+        prompt.push_str(task_id);
+        prompt.push_str("\")` to see your task content and requirements.\n\n");
     } else {
         prompt.push_str("Check `get_my_tasks()` to see your assigned work.\n\n");
     }
-    prompt.push_str("**Additional context tools:**\n");
+    prompt.push_str("**Task tools:**\n");
+    prompt.push_str("- `get_task_details(task_id)` - Get full content for a task\n");
     prompt.push_str("- `get_task_tree()` - See all tasks and their relationships\n");
-    prompt.push_str("- `get_available_tasks()` - See other tasks that are ready to work on\n\n");
+    prompt.push_str("- `get_available_tasks()` - See tasks ready to work on\n\n");
 
     // Git workflow
     prompt.push_str("## Git Workflow\n\n");
@@ -632,6 +673,9 @@ pub fn build_worker_prompt(
     prompt.push_str("  - `task_id`: lowercase with underscores (e.g., `implement_auth`)\n");
     prompt.push_str("  - `parent`: Optional parent task ID for hierarchy\n");
     prompt.push_str("  - `blocked_by`: Array of task IDs that must complete first\n");
+    prompt.push_str("- `delete_task(task_id)` - Delete a worker-created task\n");
+    prompt.push_str("  - Only tasks you created can be deleted (not spec tasks)\n");
+    prompt.push_str("  - Cannot delete claimed or completed tasks\n");
     prompt.push_str("- `add_eval(eval_id, name, validates)` - Create eval task\n");
     prompt.push_str("  - `validates`: Array of task IDs this eval validates\n\n");
 

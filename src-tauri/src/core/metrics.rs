@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use serde::Deserialize;
@@ -14,8 +14,10 @@ use tracing::debug;
 use crate::core::config::{get_context_window, AgentType, Config};
 use crate::core::constants::METRICS_CACHE_TTL;
 
-lazy_static::lazy_static! {
-    static ref METRICS_CACHE: Mutex<HashMap<String, (Instant, SessionMetrics)>> = Mutex::new(HashMap::new());
+static METRICS_CACHE: OnceLock<Mutex<HashMap<String, (Instant, SessionMetrics)>>> = OnceLock::new();
+
+fn metrics_cache() -> &'static Mutex<HashMap<String, (Instant, SessionMetrics)>> {
+    METRICS_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Session metrics data
@@ -79,7 +81,7 @@ pub fn get_session_metrics(session_id: Option<&str>, project_path: Option<&str>)
     // Check cache first
     let cache_key = format!("{}:{}", session_id, project_path);
     {
-        let cache = METRICS_CACHE.lock().unwrap();
+        let cache = metrics_cache().lock().unwrap();
         if let Some((cached_time, cached_data)) = cache.get(&cache_key) {
             if cached_time.elapsed() < METRICS_CACHE_TTL {
                 return cached_data.clone();
@@ -182,7 +184,7 @@ pub fn get_session_metrics(session_id: Option<&str>, project_path: Option<&str>)
 
     // Cache the result
     {
-        let mut cache = METRICS_CACHE.lock().unwrap();
+        let mut cache = metrics_cache().lock().unwrap();
         cache.insert(cache_key, (Instant::now(), metrics.clone()));
     }
 

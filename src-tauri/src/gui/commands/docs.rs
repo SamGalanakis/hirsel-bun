@@ -51,12 +51,18 @@ pub struct ProjectDocsResponse {
 #[tauri::command]
 pub async fn get_project_docs(project_id: i64) -> Result<ProjectDocsResponse, String> {
     // Get project to find workspace and docs path
-    let store = ProjectStore::open().map_err(|e| e.to_string())?;
-    let project = store.get_project(project_id).map_err(|e| e.to_string())?;
+    let store = ProjectStore::open().await.map_err(|e| e.to_string())?;
+    let project = store
+        .get_project(project_id)
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Check for active run
     let delta_state = DeltaState::new(project_id);
-    let project_run = delta_state.get_project_run().map_err(|e| e.to_string())?;
+    let project_run = delta_state
+        .get_project_run()
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Determine source and docs path
     if let Some(ref run) = project_run {
@@ -149,21 +155,33 @@ fn read_docs_from_dir(dir: &Path) -> Result<Vec<DocFile>, String> {
 
 /// Get run status from the run's database
 fn get_run_status(run_dir: &Path) -> String {
-    use crate::core::state::SQLiteState;
     use crate::core::Files;
 
     let files = Files::new(run_dir);
-    let db_path = files.db_path();
 
-    if !db_path.exists() {
-        return "unknown".to_string();
-    }
+    // Get run_name from the path
+    let run_name = match files.run_name() {
+        Some(name) => name,
+        None => return "unknown".to_string(),
+    };
 
-    match SQLiteState::new(db_path) {
-        Ok(state) => match state.status() {
-            Ok(status) => format!("{:?}", status).to_lowercase(),
-            Err(_) => "unknown".to_string(),
-        },
-        Err(_) => "unknown".to_string(),
-    }
+    // We need to use a blocking runtime since this is called from sync context
+    // This is a workaround - ideally this function should be async
+    let rt = match tokio::runtime::Handle::try_current() {
+        Ok(handle) => handle,
+        Err(_) => return "unknown".to_string(),
+    };
+
+    tokio::task::block_in_place(|| {
+        rt.block_on(async {
+            use crate::core::state::SQLiteState;
+            match SQLiteState::new(&run_name).await {
+                Ok(state) => match state.status().await {
+                    Ok(status) => format!("{:?}", status).to_lowercase(),
+                    Err(_) => "unknown".to_string(),
+                },
+                Err(_) => "unknown".to_string(),
+            }
+        })
+    })
 }

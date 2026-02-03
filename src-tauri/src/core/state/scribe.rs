@@ -3,10 +3,11 @@
 //! Methods for managing scribe submissions - learnings recorded by workers
 //! that are batched and processed by an ephemeral Scribe agent.
 
-use rusqlite::{params, Row};
+use sqlx::Row;
 
 use super::types::StateResult;
 use super::SQLiteState;
+use crate::core::db::utc_now;
 
 /// A scribe submission from a worker
 #[derive(Debug, Clone)]
@@ -26,127 +27,144 @@ impl SQLiteState {
     // Scribe Submission Methods
     // =========================================================================
 
-    fn submission_from_row(row: &Row) -> rusqlite::Result<ScribeSubmission> {
-        Ok(ScribeSubmission {
-            id: row.get("id")?,
-            worker_name: row.get("worker_name")?,
-            content: row.get("content")?,
-            status: row.get("status")?,
-            batch_id: row.get("batch_id")?,
-            retry_count: row.get("retry_count")?,
-            created_at: row.get("created_at")?,
-            processed_at: row.get("processed_at")?,
-        })
-    }
-
     /// Add a scribe submission from a worker
     ///
     /// If this is the first pending submission, also sets scribe_batch_started_at
-    pub fn add_scribe_submission(&self, worker_name: &str, content: &str) -> StateResult<i64> {
-        let now = self.now();
+    pub async fn add_scribe_submission(
+        &self,
+        worker_name: &str,
+        content: &str,
+    ) -> StateResult<i64> {
+        let pool = self.pool().await;
+        let now = utc_now();
 
         // Insert the submission
-        self.db.execute(
-            "INSERT INTO scribe_submissions (worker_name, content, status, created_at) VALUES (?1, ?2, 'pending', ?3)",
-            params![worker_name, content, now],
-        )?;
-        let id = self.db.last_insert_rowid();
+        let result = sqlx::query(
+            "INSERT INTO scribe_submissions (worker_name, content, status, created_at) VALUES (?, ?, 'pending', ?)",
+        )
+        .bind(worker_name)
+        .bind(content)
+        .bind(&now)
+        .execute(&pool)
+        .await?;
+        let id = result.last_insert_rowid();
 
         // If this is the first pending submission, start the batch timer
-        let pending_count: i64 = self.db.query_row(
-            "SELECT COUNT(*) FROM scribe_submissions WHERE status = 'pending'",
-            [],
-            |row| row.get(0),
-        )?;
+        let pending_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM scribe_submissions WHERE status = 'pending'")
+                .fetch_one(&pool)
+                .await?;
 
         if pending_count == 1 {
             // First pending - start the batch timer
-            self.db.execute(
-                "UPDATE state SET scribe_batch_started_at = ?1 WHERE id = 1",
-                params![now],
-            )?;
+            sqlx::query("UPDATE state SET scribe_batch_started_at = ? WHERE id = 1")
+                .bind(&now)
+                .execute(&pool)
+                .await?;
         }
 
         self.log_history(
             "scribe_submit",
             Some(&format!("Worker '{}' submitted learning", worker_name)),
-        )?;
+        )
+        .await?;
 
         Ok(id)
     }
 
     /// Get pending scribe submissions (including failed with retry_count < 3)
-    pub fn get_pending_scribe_submissions(&self) -> StateResult<Vec<ScribeSubmission>> {
-        let mut stmt = self.db.prepare(
+    pub async fn get_pending_scribe_submissions(&self) -> StateResult<Vec<ScribeSubmission>> {
+        let pool = self.pool().await;
+        let rows = sqlx::query(
             "SELECT id, worker_name, content, status, batch_id, retry_count, created_at, processed_at
              FROM scribe_submissions
              WHERE status = 'pending' OR (status = 'failed' AND retry_count < 3)
-             ORDER BY id"
-        )?;
-        let submissions = stmt
-            .query_map([], Self::submission_from_row)?
-            .collect::<Result<Vec<_>, _>>()?;
+             ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await?;
+
+        let submissions = rows
+            .into_iter()
+            .map(|row| ScribeSubmission {
+                id: row.get("id"),
+                worker_name: row.get("worker_name"),
+                content: row.get("content"),
+                status: row.get("status"),
+                batch_id: row.get("batch_id"),
+                retry_count: row.get("retry_count"),
+                created_at: row.get("created_at"),
+                processed_at: row.get("processed_at"),
+            })
+            .collect();
         Ok(submissions)
     }
 
     /// Check if a batch is currently being processed
-    pub fn get_processing_scribe_batch(&self) -> StateResult<Option<i64>> {
-        let batch_id: Option<i64> = self.db.query_row(
+    pub async fn get_processing_scribe_batch(&self) -> StateResult<Option<i64>> {
+        let pool = self.pool().await;
+        let batch_id: Option<i64> = sqlx::query_scalar(
             "SELECT DISTINCT batch_id FROM scribe_submissions WHERE status = 'processing' LIMIT 1",
-            [],
-            |row| row.get(0),
-        ).ok();
+        )
+        .fetch_optional(&pool)
+        .await?;
         Ok(batch_id)
     }
 
     /// Mark submissions as processing with a batch ID
-    pub fn mark_scribe_processing(&self, ids: &[i64], batch_id: i64) -> StateResult<()> {
+    pub async fn mark_scribe_processing(&self, ids: &[i64], batch_id: i64) -> StateResult<()> {
         if ids.is_empty() {
             return Ok(());
         }
 
+        let pool = self.pool().await;
         let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "UPDATE scribe_submissions SET status = 'processing', batch_id = ?1 WHERE id IN ({})",
+            "UPDATE scribe_submissions SET status = 'processing', batch_id = ? WHERE id IN ({})",
             placeholders
         );
 
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(batch_id)];
+        let mut query = sqlx::query(&sql).bind(batch_id);
         for id in ids {
-            params.push(Box::new(*id));
+            query = query.bind(id);
         }
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        self.db.execute(&sql, param_refs.as_slice())?;
+        query.execute(&pool).await?;
         Ok(())
     }
 
     /// Complete a scribe batch - mark submissions as done or failed
-    pub fn complete_scribe_batch(&self, batch_id: i64, success: bool) -> StateResult<()> {
-        let now = self.now();
+    pub async fn complete_scribe_batch(&self, batch_id: i64, success: bool) -> StateResult<()> {
+        let pool = self.pool().await;
+        let now = utc_now();
 
         if success {
-            self.db.execute(
-                "UPDATE scribe_submissions SET status = 'done', processed_at = ?1 WHERE batch_id = ?2 AND status = 'processing'",
-                params![now, batch_id],
-            )?;
+            sqlx::query(
+                "UPDATE scribe_submissions SET status = 'done', processed_at = ? WHERE batch_id = ? AND status = 'processing'",
+            )
+            .bind(&now)
+            .bind(batch_id)
+            .execute(&pool)
+            .await?;
 
             // Increment docs_version so workers know to re-sync
-            self.db.execute(
+            sqlx::query(
                 "UPDATE state SET docs_version = COALESCE(docs_version, 0) + 1 WHERE id = 1",
-                [],
-            )?;
+            )
+            .execute(&pool)
+            .await?;
         } else {
-            self.db.execute(
-                "UPDATE scribe_submissions SET status = 'failed', retry_count = retry_count + 1 WHERE batch_id = ?1 AND status = 'processing'",
-                params![batch_id],
-            )?;
+            sqlx::query(
+                "UPDATE scribe_submissions SET status = 'failed', retry_count = retry_count + 1 WHERE batch_id = ? AND status = 'processing'",
+            )
+            .bind(batch_id)
+            .execute(&pool)
+            .await?;
         }
 
         // Clear the batch timer
-        self.db.execute(
-            "UPDATE state SET scribe_batch_started_at = NULL WHERE id = 1",
-            [],
-        )?;
+        sqlx::query("UPDATE state SET scribe_batch_started_at = NULL WHERE id = 1")
+            .execute(&pool)
+            .await?;
 
         self.log_history(
             "scribe_batch",
@@ -155,45 +173,42 @@ impl SQLiteState {
                 batch_id,
                 if success { "completed" } else { "failed" }
             )),
-        )?;
+        )
+        .await?;
 
         Ok(())
     }
 
     /// Get when the current batch started (if any)
-    pub fn get_scribe_batch_started_at(&self) -> StateResult<Option<String>> {
-        let started_at: Option<String> = self
-            .db
-            .query_row(
-                "SELECT scribe_batch_started_at FROM state WHERE id = 1",
-                [],
-                |row| row.get(0),
-            )
-            .ok();
-        Ok(started_at)
+    pub async fn get_scribe_batch_started_at(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let started_at: Option<Option<String>> =
+            sqlx::query_scalar("SELECT scribe_batch_started_at FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(started_at.flatten())
     }
 
     /// Get the current docs version (for sync)
-    pub fn get_docs_version(&self) -> StateResult<i64> {
-        let version: i64 = self
-            .db
-            .query_row(
-                "SELECT COALESCE(docs_version, 0) FROM state WHERE id = 1",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
+    pub async fn get_docs_version(&self) -> StateResult<i64> {
+        let pool = self.pool().await;
+        let version: i64 =
+            sqlx::query_scalar("SELECT COALESCE(docs_version, 0) FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?
+                .unwrap_or(0);
         Ok(version)
     }
 
     /// Generate the next batch ID
-    pub fn next_scribe_batch_id(&self) -> StateResult<i64> {
-        let max_id: Option<i64> = self
-            .db
-            .query_row("SELECT MAX(batch_id) FROM scribe_submissions", [], |row| {
-                row.get(0)
-            })
-            .ok();
-        Ok(max_id.unwrap_or(0) + 1)
+    pub async fn next_scribe_batch_id(&self) -> StateResult<i64> {
+        let pool = self.pool().await;
+        // MAX returns NULL if no rows, which becomes None
+        // fetch_optional wraps that in another Option
+        let max_id: Option<Option<i64>> =
+            sqlx::query_scalar("SELECT MAX(batch_id) FROM scribe_submissions")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(max_id.flatten().unwrap_or(0) + 1)
     }
 }

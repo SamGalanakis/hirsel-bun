@@ -52,8 +52,8 @@ pub enum OpsError {
     OperationFailed(String),
 }
 
-impl From<rusqlite::Error> for OpsError {
-    fn from(e: rusqlite::Error) -> Self {
+impl From<sqlx::Error> for OpsError {
+    fn from(e: sqlx::Error) -> Self {
         OpsError::Database(e.to_string())
     }
 }

@@ -2,6 +2,7 @@
 //!
 //! Attaches to a worker to view live output using a TUI.
 
+use crate::cli::helpers::block_on;
 use crate::cli::tui::AttachTui;
 use crate::core::{Config, SQLiteState};
 
@@ -22,11 +23,10 @@ pub fn run_attach(run_name: &str, target: Option<&str>, json: bool) -> anyhow::R
         return Ok(());
     }
 
-    let db_path = run_dir.join("hirsel.db");
-    let state = SQLiteState::new(db_path.clone())?;
+    let state = block_on(SQLiteState::new(run_name))?;
 
-    let workers = state.get_workers()?;
-    let evals = state.get_evals(10)?;
+    let workers = block_on(state.get_workers())?;
+    let evals = block_on(state.get_evals(10))?;
 
     if workers.is_empty() && evals.is_empty() {
         if json {
@@ -43,10 +43,10 @@ pub fn run_attach(run_name: &str, target: Option<&str>, json: bool) -> anyhow::R
     // Determine leader (who has "scope" node or first worker)
     // Use live_nodes from the delta state if available
     let mut leader: Option<String> = None;
-    if let Ok(Some(project_id)) = state.get_project_id() {
+    if let Ok(Some(project_id)) = block_on(state.get_project_id()) {
         use crate::core::delta::DeltaState;
         let delta_state = DeltaState::new(project_id);
-        if let Ok(nodes) = delta_state.get_live_nodes() {
+        if let Ok(nodes) = block_on(delta_state.get_live_nodes()) {
             for node in &nodes {
                 if node.id == "scope" {
                     if let Some(ref claimed_by) = node.claimed_by {
@@ -164,7 +164,7 @@ pub fn run_attach(run_name: &str, target: Option<&str>, json: bool) -> anyhow::R
             );
         } else {
             // Launch TUI for worker
-            let state = SQLiteState::new(db_path)?;
+            let state = block_on(SQLiteState::new(run_name))?;
             let mut tui = AttachTui::new(run_name.to_string(), selection_name.clone(), state);
 
             if let Err(e) = tui.run() {
@@ -210,16 +210,15 @@ pub fn list_targets(run_name: &str) -> anyhow::Result<Vec<String>> {
         return Ok(vec![]);
     }
 
-    let db_path = run_dir.join("hirsel.db");
-    let state = SQLiteState::new(db_path)?;
+    let state = block_on(SQLiteState::new(run_name))?;
 
     let mut targets = Vec::new();
 
-    for worker in state.get_workers()? {
+    for worker in block_on(state.get_workers())? {
         targets.push(worker.name);
     }
 
-    for eval in state.get_evals(10)? {
+    for eval in block_on(state.get_evals(10))? {
         let eval_name = eval
             .eval_name
             .unwrap_or_else(|| format!("eval_{}", eval.id));

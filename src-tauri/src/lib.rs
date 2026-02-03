@@ -20,6 +20,7 @@ fn init_tracing() {
     use tracing_subscriber::EnvFilter;
     // Build filter from RUST_LOG env, but suppress noisy library spam
     let filter = EnvFilter::from_default_env()
+        .add_directive("sqlx=warn".parse().unwrap())
         .add_directive("rustls=warn".parse().unwrap())
         .add_directive("rustls_platform_verifier=warn".parse().unwrap())
         .add_directive("hyper=warn".parse().unwrap())
@@ -84,21 +85,6 @@ fn run_command(
     match cmd {
         Commands::Runs => list_runs(json)?,
         Commands::View(args) => view::execute(&args.run_name, json)?,
-        #[cfg(feature = "cli")]
-        Commands::Go(args) => {
-            let result = run_go(&args)?;
-            if json {
-                // Serialize manually since GoOutput doesn't derive Serialize
-                println!(
-                    "{{\"run_name\": \"{}\", \"run_dir\": \"{}\", \"worker_count\": {}}}",
-                    result.run_name,
-                    result.run_dir.display(),
-                    result.worker_count
-                );
-            } else {
-                println!("Started run: {}", result.run_name);
-            }
-        }
         Commands::Log(args) => {
             let format = if json {
                 OutputFormat::Json
@@ -195,14 +181,20 @@ fn run_command(
             }
         }
         Commands::Mode(args) => {
-            let run_dir = core::config::run_dir(&args.run_name);
-            let files = core::Files::new(&run_dir);
-            let state = core::state::SQLiteState::new(files.db_path())
-                .map_err(|e| format!("Failed to open database: {}", e))?;
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| format!("Failed to create runtime: {}", e))?;
+            rt.block_on(async {
+                let state = core::state::SQLiteState::new(&args.run_name)
+                    .await
+                    .map_err(|e| format!("Failed to open database: {}", e))?;
+                let hitl = args.new_mode.to_lowercase() == "hitl";
+                state
+                    .set_human_in_the_loop(hitl)
+                    .await
+                    .map_err(|e| format!("Failed to set mode: {}", e))?;
+                Ok::<(), String>(())
+            })?;
             let hitl = args.new_mode.to_lowercase() == "hitl";
-            state
-                .set_human_in_the_loop(hitl)
-                .map_err(|e| format!("Failed to set mode: {}", e))?;
             if json {
                 println!(r#"{{"mode": "{}"}}"#, if hitl { "hitl" } else { "yolo" });
             } else {
@@ -472,19 +464,6 @@ fn run_command(
             core::board::mcp::run_board_mcp_server(project_id)
                 .map_err(|e| format!("Board MCP error: {}", e))?;
         }
-        #[cfg(feature = "cli")]
-        Commands::Test(args) => {
-            cli::test::execute(
-                args.scenario.as_deref(),
-                args.run_name.as_deref(),
-                Some(&args.workers),
-                args.yolo,
-                json,
-                args.remote.as_deref(),
-                args.runner.as_deref(),
-            )
-            .map_err(|e| format!("Test error: {}", e))?;
-        }
         #[cfg(feature = "server")]
         Commands::Serve(args) => {
             // Server mode - run HTTP server for remote orchestration
@@ -611,6 +590,7 @@ pub fn run() {
                         && !target.starts_with("zbus")
                         && !target.starts_with("mio")
                         && !target.starts_with("tracing::span")
+                        && !target.starts_with("sqlx")
                 })
                 .build(),
         )
@@ -662,7 +642,9 @@ pub fn run() {
 
             // Reconcile stale workers on startup (both dev and release)
             // Workers that appear "Working" but have dead PIDs are marked as Paused
-            let stale = core::workers::reconcile_stale_workers();
+            // Create a runtime since we're in a sync context (tauri setup, no runtime yet)
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            let stale = rt.block_on(core::workers::reconcile_stale_workers());
             if !stale.is_empty() {
                 tracing::info!(
                     "[GUI] Startup reconciliation: marked {} stale worker(s) as Paused",

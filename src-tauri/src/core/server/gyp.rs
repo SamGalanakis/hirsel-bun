@@ -102,8 +102,8 @@ pub async fn start_session(
     let credentials = match body.context.credentials {
         Some(creds) => {
             // Store for future use (if encryption key is available)
-            if let Ok(store) = CredentialStore::open() {
-                if let Err(e) = store.store_all(&creds) {
+            if let Ok(store) = CredentialStore::open().await {
+                if let Err(e) = store.store_all(&creds).await {
                     debug!("[gyp] Failed to store credentials: {}", e);
                 }
             }
@@ -111,7 +111,10 @@ pub async fn start_session(
         }
         None => {
             // Load from store
-            CredentialStore::open().ok().map(|store| store.load_all())
+            match CredentialStore::open().await {
+                Ok(store) => Some(store.load_all().await),
+                Err(_) => None,
+            }
         }
     };
 

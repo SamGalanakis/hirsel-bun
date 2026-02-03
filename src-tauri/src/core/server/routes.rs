@@ -371,16 +371,13 @@ pub async fn add_scribe(
     Path(name): Path<String>,
     Json(body): Json<ScribeSubmitRequest>,
 ) -> Result<Json<ScribeSubmitResponse>> {
-    use crate::core::{config, state::SQLiteState, Files};
+    use crate::core::state::SQLiteState;
 
-    let run_dir = config::run_dir(&name);
-    let files = Files::new(&run_dir);
-    let state =
-        SQLiteState::new(files.db_path()).map_err(|e| OrchestratorError::State(e.to_string()))?;
+    let state = SQLiteState::new(&name).await?;
 
     let id = state
         .add_scribe_submission(&body.worker_name, &body.content)
-        .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        .await?;
 
     Ok(Json(ScribeSubmitResponse { id }))
 }
@@ -819,10 +816,12 @@ pub async fn store_credential(
     Json(body): Json<StoreCredentialRequest>,
 ) -> Result<StatusCode> {
     let store = CredentialStore::open()
+        .await
         .map_err(|e| OrchestratorError::Other(format!("Failed to open credential store: {}", e)))?;
 
     store
         .store(&key, &body.value)
+        .await
         .map_err(|e| OrchestratorError::Other(format!("Failed to store credential: {}", e)))?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -831,9 +830,10 @@ pub async fn store_credential(
 /// Get credential status (masked value)
 pub async fn get_credential(Path(key): Path<String>) -> Result<Json<CredentialStatusResponse>> {
     let store = CredentialStore::open()
+        .await
         .map_err(|e| OrchestratorError::Other(format!("Failed to open credential store: {}", e)))?;
 
-    match store.load(&key) {
+    match store.load(&key).await {
         Ok(value) => Ok(Json(CredentialStatusResponse {
             key: key.clone(),
             exists: true,
@@ -850,10 +850,12 @@ pub async fn get_credential(Path(key): Path<String>) -> Result<Json<CredentialSt
 /// Delete a credential
 pub async fn delete_credential(Path(key): Path<String>) -> Result<StatusCode> {
     let store = CredentialStore::open()
+        .await
         .map_err(|e| OrchestratorError::Other(format!("Failed to open credential store: {}", e)))?;
 
     store
         .delete(&key)
+        .await
         .map_err(|e| OrchestratorError::Other(format!("Failed to delete credential: {}", e)))?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -984,20 +986,16 @@ pub struct ProjectIdResponse {
 /// Workers use this to determine which project they're working on
 /// so they can add live nodes to the correct project.
 pub async fn get_project_id(Path(name): Path<String>) -> Result<Json<ProjectIdResponse>> {
-    use crate::core::{config, state::SQLiteState, Files};
+    use crate::core::{config, state::SQLiteState};
 
     let run_dir = config::run_dir(&name);
     if !run_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
-    let files = Files::new(&run_dir);
-    let state =
-        SQLiteState::new(files.db_path()).map_err(|e| OrchestratorError::State(e.to_string()))?;
+    let state = SQLiteState::new(&name).await?;
 
-    let project_id = state
-        .get_project_id()
-        .map_err(|e| OrchestratorError::State(e.to_string()))?;
+    let project_id = state.get_project_id().await?;
 
     Ok(Json(ProjectIdResponse { project_id }))
 }
@@ -1024,24 +1022,19 @@ pub async fn add_live_node(
     Json(body): Json<AddLiveNodeRequest>,
 ) -> Result<StatusCode> {
     use crate::core::delta::{DeltaState, NodeType};
-    use crate::core::{config, state::SQLiteState, Files};
+    use crate::core::{config, state::SQLiteState};
 
     let run_dir = config::run_dir(&name);
     if !run_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
-    let files = Files::new(&run_dir);
-    let state =
-        SQLiteState::new(files.db_path()).map_err(|e| OrchestratorError::State(e.to_string()))?;
+    let state = SQLiteState::new(&name).await?;
 
     // Get project_id for this run
-    let project_id = state
-        .get_project_id()
-        .map_err(|e| OrchestratorError::State(e.to_string()))?
-        .ok_or_else(|| {
-            OrchestratorError::InvalidOperation("Run is not linked to a project".into())
-        })?;
+    let project_id = state.get_project_id().await?.ok_or_else(|| {
+        OrchestratorError::InvalidOperation("Run is not linked to a project".into())
+    })?;
 
     // Parse node type (defaults to Task for unknown types)
     let node_type = NodeType::from_str(&body.node_type);
@@ -1063,7 +1056,7 @@ pub async fn add_live_node(
             node_type,
             &body.content,
         )
-        .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        .await?;
 
     Ok(StatusCode::CREATED)
 }
@@ -1073,28 +1066,21 @@ pub async fn add_live_node(
 /// GET /api/runs/{name}/live-nodes
 pub async fn get_live_nodes(Path(name): Path<String>) -> Result<Json<LiveNodesResponse>> {
     use crate::core::delta::DeltaState;
-    use crate::core::{config, state::SQLiteState, Files};
+    use crate::core::{config, state::SQLiteState};
 
     let run_dir = config::run_dir(&name);
     if !run_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
-    let files = Files::new(&run_dir);
-    let state =
-        SQLiteState::new(files.db_path()).map_err(|e| OrchestratorError::State(e.to_string()))?;
+    let state = SQLiteState::new(&name).await?;
 
-    let project_id = state
-        .get_project_id()
-        .map_err(|e| OrchestratorError::State(e.to_string()))?
-        .ok_or_else(|| {
-            OrchestratorError::InvalidOperation("Run is not linked to a project".into())
-        })?;
+    let project_id = state.get_project_id().await?.ok_or_else(|| {
+        OrchestratorError::InvalidOperation("Run is not linked to a project".into())
+    })?;
 
     let delta_state = DeltaState::new(project_id);
-    let nodes = delta_state
-        .get_live_nodes()
-        .map_err(|e| OrchestratorError::State(e.to_string()))?;
+    let nodes = delta_state.get_live_nodes().await?;
 
     Ok(Json(LiveNodesResponse { nodes }))
 }
@@ -1109,28 +1095,21 @@ pub struct LiveNodesResponse {
 /// GET /api/runs/{name}/live-nodes/claimable
 pub async fn get_claimable_live_nodes(Path(name): Path<String>) -> Result<Json<LiveNodesResponse>> {
     use crate::core::delta::DeltaState;
-    use crate::core::{config, state::SQLiteState, Files};
+    use crate::core::{config, state::SQLiteState};
 
     let run_dir = config::run_dir(&name);
     if !run_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
-    let files = Files::new(&run_dir);
-    let state =
-        SQLiteState::new(files.db_path()).map_err(|e| OrchestratorError::State(e.to_string()))?;
+    let state = SQLiteState::new(&name).await?;
 
-    let project_id = state
-        .get_project_id()
-        .map_err(|e| OrchestratorError::State(e.to_string()))?
-        .ok_or_else(|| {
-            OrchestratorError::InvalidOperation("Run is not linked to a project".into())
-        })?;
+    let project_id = state.get_project_id().await?.ok_or_else(|| {
+        OrchestratorError::InvalidOperation("Run is not linked to a project".into())
+    })?;
 
     let delta_state = DeltaState::new(project_id);
-    let nodes = delta_state
-        .get_claimable_nodes()
-        .map_err(|e| OrchestratorError::State(e.to_string()))?;
+    let nodes = delta_state.get_claimable_nodes().await?;
 
     Ok(Json(LiveNodesResponse { nodes }))
 }
@@ -1148,28 +1127,23 @@ pub async fn claim_live_node(
     Json(body): Json<ClaimLiveNodeRequest>,
 ) -> Result<Json<crate::core::delta::LiveNode>> {
     use crate::core::delta::DeltaState;
-    use crate::core::{config, state::SQLiteState, Files};
+    use crate::core::{config, state::SQLiteState};
 
     let run_dir = config::run_dir(&name);
     if !run_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
-    let files = Files::new(&run_dir);
-    let state =
-        SQLiteState::new(files.db_path()).map_err(|e| OrchestratorError::State(e.to_string()))?;
+    let state = SQLiteState::new(&name).await?;
 
-    let project_id = state
-        .get_project_id()
-        .map_err(|e| OrchestratorError::State(e.to_string()))?
-        .ok_or_else(|| {
-            OrchestratorError::InvalidOperation("Run is not linked to a project".into())
-        })?;
+    let project_id = state.get_project_id().await?.ok_or_else(|| {
+        OrchestratorError::InvalidOperation("Run is not linked to a project".into())
+    })?;
 
     let delta_state = DeltaState::new(project_id);
     let node = delta_state
         .claim_live_node(&node_id, &body.worker_name)
-        .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        .await?;
 
     Ok(Json(node))
 }
@@ -1187,28 +1161,23 @@ pub async fn complete_live_node(
     Json(body): Json<CompleteLiveNodeRequest>,
 ) -> Result<Json<crate::core::delta::LiveNode>> {
     use crate::core::delta::DeltaState;
-    use crate::core::{config, state::SQLiteState, Files};
+    use crate::core::{config, state::SQLiteState};
 
     let run_dir = config::run_dir(&name);
     if !run_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
-    let files = Files::new(&run_dir);
-    let state =
-        SQLiteState::new(files.db_path()).map_err(|e| OrchestratorError::State(e.to_string()))?;
+    let state = SQLiteState::new(&name).await?;
 
-    let project_id = state
-        .get_project_id()
-        .map_err(|e| OrchestratorError::State(e.to_string()))?
-        .ok_or_else(|| {
-            OrchestratorError::InvalidOperation("Run is not linked to a project".into())
-        })?;
+    let project_id = state.get_project_id().await?.ok_or_else(|| {
+        OrchestratorError::InvalidOperation("Run is not linked to a project".into())
+    })?;
 
     let delta_state = DeltaState::new(project_id);
     let node = delta_state
         .complete_live_node(&node_id, &body.worker_name)
-        .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        .await?;
 
     Ok(Json(node))
 }
@@ -1220,28 +1189,21 @@ pub async fn unclaim_live_node(
     Path((name, node_id)): Path<(String, String)>,
 ) -> Result<StatusCode> {
     use crate::core::delta::DeltaState;
-    use crate::core::{config, state::SQLiteState, Files};
+    use crate::core::{config, state::SQLiteState};
 
     let run_dir = config::run_dir(&name);
     if !run_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
-    let files = Files::new(&run_dir);
-    let state =
-        SQLiteState::new(files.db_path()).map_err(|e| OrchestratorError::State(e.to_string()))?;
+    let state = SQLiteState::new(&name).await?;
 
-    let project_id = state
-        .get_project_id()
-        .map_err(|e| OrchestratorError::State(e.to_string()))?
-        .ok_or_else(|| {
-            OrchestratorError::InvalidOperation("Run is not linked to a project".into())
-        })?;
+    let project_id = state.get_project_id().await?.ok_or_else(|| {
+        OrchestratorError::InvalidOperation("Run is not linked to a project".into())
+    })?;
 
     let delta_state = DeltaState::new(project_id);
-    delta_state
-        .unclaim_live_node(&node_id)
-        .map_err(|e| OrchestratorError::State(e.to_string()))?;
+    delta_state.unclaim_live_node(&node_id).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1258,28 +1220,21 @@ pub async fn is_live_node_blocked(
     Path((name, node_id)): Path<(String, String)>,
 ) -> Result<Json<LiveNodeBlockedResponse>> {
     use crate::core::delta::DeltaState;
-    use crate::core::{config, state::SQLiteState, Files};
+    use crate::core::{config, state::SQLiteState};
 
     let run_dir = config::run_dir(&name);
     if !run_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
-    let files = Files::new(&run_dir);
-    let state =
-        SQLiteState::new(files.db_path()).map_err(|e| OrchestratorError::State(e.to_string()))?;
+    let state = SQLiteState::new(&name).await?;
 
-    let project_id = state
-        .get_project_id()
-        .map_err(|e| OrchestratorError::State(e.to_string()))?
-        .ok_or_else(|| {
-            OrchestratorError::InvalidOperation("Run is not linked to a project".into())
-        })?;
+    let project_id = state.get_project_id().await?.ok_or_else(|| {
+        OrchestratorError::InvalidOperation("Run is not linked to a project".into())
+    })?;
 
     let delta_state = DeltaState::new(project_id);
-    let blocked = delta_state
-        .is_node_blocked(&node_id)
-        .map_err(|e| OrchestratorError::State(e.to_string()))?;
+    let blocked = delta_state.is_node_blocked(&node_id).await?;
 
     Ok(Json(LiveNodeBlockedResponse { blocked }))
 }
@@ -1297,28 +1252,21 @@ pub async fn live_node_eval_pass(
     Json(body): Json<EvalPassRequest>,
 ) -> Result<StatusCode> {
     use crate::core::delta::DeltaState;
-    use crate::core::{config, state::SQLiteState, Files};
+    use crate::core::{config, state::SQLiteState};
 
     let run_dir = config::run_dir(&name);
     if !run_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
-    let files = Files::new(&run_dir);
-    let state =
-        SQLiteState::new(files.db_path()).map_err(|e| OrchestratorError::State(e.to_string()))?;
+    let state = SQLiteState::new(&name).await?;
 
-    let project_id = state
-        .get_project_id()
-        .map_err(|e| OrchestratorError::State(e.to_string()))?
-        .ok_or_else(|| {
-            OrchestratorError::InvalidOperation("Run is not linked to a project".into())
-        })?;
+    let project_id = state.get_project_id().await?.ok_or_else(|| {
+        OrchestratorError::InvalidOperation("Run is not linked to a project".into())
+    })?;
 
     let delta_state = DeltaState::new(project_id);
-    delta_state
-        .eval_pass(&eval_id, &body.worker_name)
-        .map_err(|e| OrchestratorError::State(e.to_string()))?;
+    delta_state.eval_pass(&eval_id, &body.worker_name).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1342,28 +1290,23 @@ pub async fn live_node_eval_fail(
     Json(body): Json<EvalFailRequest>,
 ) -> Result<Json<EvalFailResponse>> {
     use crate::core::delta::DeltaState;
-    use crate::core::{config, state::SQLiteState, Files};
+    use crate::core::{config, state::SQLiteState};
 
     let run_dir = config::run_dir(&name);
     if !run_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
-    let files = Files::new(&run_dir);
-    let state =
-        SQLiteState::new(files.db_path()).map_err(|e| OrchestratorError::State(e.to_string()))?;
+    let state = SQLiteState::new(&name).await?;
 
-    let project_id = state
-        .get_project_id()
-        .map_err(|e| OrchestratorError::State(e.to_string()))?
-        .ok_or_else(|| {
-            OrchestratorError::InvalidOperation("Run is not linked to a project".into())
-        })?;
+    let project_id = state.get_project_id().await?.ok_or_else(|| {
+        OrchestratorError::InvalidOperation("Run is not linked to a project".into())
+    })?;
 
     let delta_state = DeltaState::new(project_id);
     let repair_node_id = delta_state
         .eval_fail(&eval_id, &body.worker_name, &body.feedback)
-        .map_err(|e| OrchestratorError::State(e.to_string()))?;
+        .await?;
 
     Ok(Json(EvalFailResponse { repair_node_id }))
 }
@@ -1381,28 +1324,21 @@ pub async fn set_live_node_tokens(
     Json(body): Json<SetTokensRequest>,
 ) -> Result<StatusCode> {
     use crate::core::delta::DeltaState;
-    use crate::core::{config, state::SQLiteState, Files};
+    use crate::core::{config, state::SQLiteState};
 
     let run_dir = config::run_dir(&name);
     if !run_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
-    let files = Files::new(&run_dir);
-    let state =
-        SQLiteState::new(files.db_path()).map_err(|e| OrchestratorError::State(e.to_string()))?;
+    let state = SQLiteState::new(&name).await?;
 
-    let project_id = state
-        .get_project_id()
-        .map_err(|e| OrchestratorError::State(e.to_string()))?
-        .ok_or_else(|| {
-            OrchestratorError::InvalidOperation("Run is not linked to a project".into())
-        })?;
+    let project_id = state.get_project_id().await?.ok_or_else(|| {
+        OrchestratorError::InvalidOperation("Run is not linked to a project".into())
+    })?;
 
     let delta_state = DeltaState::new(project_id);
-    delta_state
-        .set_node_tokens(&node_id, body.tokens)
-        .map_err(|e| OrchestratorError::State(e.to_string()))?;
+    delta_state.set_node_tokens(&node_id, body.tokens).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1419,28 +1355,21 @@ pub async fn get_validated_nodes(
     Path((name, eval_id)): Path<(String, String)>,
 ) -> Result<Json<ValidatedNodesResponse>> {
     use crate::core::delta::DeltaState;
-    use crate::core::{config, state::SQLiteState, Files};
+    use crate::core::{config, state::SQLiteState};
 
     let run_dir = config::run_dir(&name);
     if !run_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
-    let files = Files::new(&run_dir);
-    let state =
-        SQLiteState::new(files.db_path()).map_err(|e| OrchestratorError::State(e.to_string()))?;
+    let state = SQLiteState::new(&name).await?;
 
-    let project_id = state
-        .get_project_id()
-        .map_err(|e| OrchestratorError::State(e.to_string()))?
-        .ok_or_else(|| {
-            OrchestratorError::InvalidOperation("Run is not linked to a project".into())
-        })?;
+    let project_id = state.get_project_id().await?.ok_or_else(|| {
+        OrchestratorError::InvalidOperation("Run is not linked to a project".into())
+    })?;
 
     let delta_state = DeltaState::new(project_id);
-    let node_ids = delta_state
-        .get_validated_nodes(&eval_id)
-        .map_err(|e| OrchestratorError::State(e.to_string()))?;
+    let node_ids = delta_state.get_validated_nodes(&eval_id).await?;
 
     Ok(Json(ValidatedNodesResponse { node_ids }))
 }

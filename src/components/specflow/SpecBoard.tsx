@@ -19,10 +19,12 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 import { useProject } from '../../stores';
 import { useDelta } from '../../stores/delta-context';
-import { Icon, SheepAvatar } from '../shared';
+import { Icon, SheepAvatar, MultiSelectDropdown } from '../shared';
 import { WorkerDetailModal } from '../runs/WorkerDetailModal';
 import { TaskEditorModal } from './TaskEditorModal';
+import { DeliveryDialog } from './DeliveryDialog';
 import { SheepfoldPopover } from '../messaging';
+import { MarkdownContent } from '../docs/MarkdownContent';
 import { computeElkLayout, type LayoutInputNode, type ElkLayoutResult } from '../../lib/elk-layout';
 import type {
   DraftNodeTree,
@@ -224,6 +226,10 @@ const LiveNodeCard: Component<{
   const isMultiLine = () => props.position.lines.length > 1;
   const isWorking = () => props.node.status === 'working';
   const isDone = () => props.node.status === 'done';
+  const isAwaitingEval = () => props.node.status === 'awaiting_eval';
+  const isValidated = () => props.node.status === 'validated';
+  const isNeedsRepair = () => props.node.status === 'needs_repair';
+  const isComplete = () => isDone() || isValidated() || isAwaitingEval();
   const isFailed = () => props.node.status === 'failed';
 
   // ==========================================================================
@@ -262,7 +268,9 @@ const LiveNodeCard: Component<{
   // Status glow - external indicator that doesn't affect card dimensions
   const statusGlow = () => {
     if (isWorking()) return 'var(--glow-working)';
-    if (isDone()) return 'var(--glow-done)';
+    if (isValidated()) return 'var(--glow-validated, var(--glow-done))';
+    if (isDone() || isAwaitingEval()) return 'var(--glow-done)';
+    if (isNeedsRepair()) return 'var(--glow-needs-repair, 0 0 8px rgba(201, 162, 39, 0.4))';
     if (isFailed()) return 'var(--glow-failed)';
     return undefined;  // pending = no glow
   };
@@ -311,19 +319,33 @@ const LiveNodeCard: Component<{
       </div>
 
       {/* Status corner badge */}
-      <Show when={isDone() || isFailed() || isWorking()}>
+      <Show when={isComplete() || isFailed() || isWorking() || isNeedsRepair()}>
         <div
           class="absolute -top-1 -right-1 flex items-center justify-center rounded-full"
           style={{
             width: '14px',
             height: '14px',
-            background: isDone() ? 'var(--sage)' : isFailed() ? 'var(--terra)' : 'var(--amber-500)',
+            background: isComplete() ? 'var(--sage)' : isFailed() ? 'var(--terra)' : isNeedsRepair() ? 'var(--golden)' : 'var(--amber-500)',
             'box-shadow': '0 1px 3px rgba(0,0,0,0.3)',
           }}
         >
-          <Show when={isDone()}>
+          {/* Done or awaiting eval: single check */}
+          <Show when={isDone() || isAwaitingEval()}>
             <svg class="w-2.5 h-2.5 text-pasture-900" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
               <path d="M20 6 9 17l-5-5" />
+            </svg>
+          </Show>
+          {/* Validated: double check (verified) */}
+          <Show when={isValidated()}>
+            <svg class="w-2.5 h-2.5 text-pasture-900" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 6 7 17l-5-5" />
+              <path d="m22 10-7.5 7.5L13 16" />
+            </svg>
+          </Show>
+          {/* Needs repair: warning/wrench */}
+          <Show when={isNeedsRepair()}>
+            <svg class="w-2.5 h-2.5 text-pasture-900" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 9v4M12 17h.01" />
             </svg>
           </Show>
           <Show when={isFailed()}>
@@ -455,10 +477,17 @@ function buildLiveTreeFromDraft(
     };
   };
 
-  // Build tree for each root
-  return draftTree
+  // Build tree for each root in draft structure
+  const treeFromDraft = draftTree
     .map(root => buildNode(root))
     .filter((n): n is LiveNodeTree => n !== null);
+
+  // Also include root-level live nodes that have no draftNodeId (like scope task)
+  // These are system/worker-added root nodes that aren't in the draft tree.
+  // We iterate over the original liveNodes roots to find orphans.
+  const orphanRoots = liveNodes.filter(root => !root.draftNodeId);
+
+  return [...treeFromDraft, ...orphanRoots];
 }
 
 // =============================================================================
@@ -479,6 +508,9 @@ export const SpecBoard: Component = () => {
   // Edit modal state
   const [editingNode, setEditingNode] = createSignal<DraftNodeTree | null>(null);
   const [viewingLiveNode, setViewingLiveNode] = createSignal<LiveNodeTree | null>(null);
+
+  // Delivery dialog state
+  const [showDeliveryDialog, setShowDeliveryDialog] = createSignal(false);
 
   // New node prompt
   const [showNewPrompt, setShowNewPrompt] = createSignal(false);
@@ -513,8 +545,9 @@ export const SpecBoard: Component = () => {
   let workerScrollRef: HTMLDivElement | undefined;
   let flockPillRef: HTMLDivElement | undefined;
 
-  // Live task filter: true = show all tasks, false = only show spec tasks (tasks with draftNodeId)
-  const [showAllLiveTasks, setShowAllLiveTasks] = createSignal(true);
+  // Live task filter: controls which nodes are visible in the live tree
+  // 'spec-tasks' = tasks from the spec, 'worker-tasks' = worker-added tasks, 'deleted-nodes' = deleted nodes
+  const [liveFilters, setLiveFilters] = createSignal<string[]>(['spec-tasks', 'worker-tasks']);
 
   // Build live tree with project hierarchy from draft (project nodes are UI-only)
   const liveTreeWithProjects = createMemo(() => {
@@ -523,20 +556,47 @@ export const SpecBoard: Component = () => {
     return buildLiveTreeFromDraft(delta.draftTree(), delta.liveTree());
   });
 
-  // Filter live tree to only show spec tasks when showAllLiveTasks is false
+  // Get draft node IDs to identify deleted nodes (in live but not in draft)
+  const draftNodeIds = createMemo(() => {
+    const ids = new Set<string>();
+    const collectIds = (nodes: DraftNodeTree[]) => {
+      for (const node of nodes) {
+        ids.add(node.id);
+        collectIds(node.children);
+      }
+    };
+    collectIds(delta.draftTree());
+    return ids;
+  });
+
+  // Filter live tree based on selected filters
   const filteredLiveTree = createMemo(() => {
     const trees = liveTreeWithProjects();
-    if (showAllLiveTasks()) return trees;
+    const filters = liveFilters();
+    const showSpecTasks = filters.includes('spec-tasks');
+    const showWorkerTasks = filters.includes('worker-tasks');
+    const showDeletedNodes = filters.includes('deleted-nodes');
+    const draftIds = draftNodeIds();
 
-    // Filter recursively: keep only nodes with source='spec' (from spec)
+    // Filter recursively based on node type
     const filterTree = (node: LiveNodeTree): LiveNodeTree | null => {
-      // Always include nodes that came from the spec (source === 'spec')
+      const isWorkerAdded = node.source !== 'spec';
+      const isDeleted = node.source === 'spec' && !draftIds.has(node.id);
+      const isSpecTask = node.source === 'spec' && draftIds.has(node.id);
+
+      // First, recurse into children
       const filteredChildren = node.children
         .map(filterTree)
         .filter((n): n is LiveNodeTree => n !== null);
 
-      // Include this node if it has source='spec' OR has children that passed the filter
-      if (node.source === 'spec' || filteredChildren.length > 0) {
+      // Determine if this node should be shown
+      let shouldShow = false;
+      if (isDeleted && showDeletedNodes) shouldShow = true;
+      if (isWorkerAdded && showWorkerTasks) shouldShow = true;
+      if (isSpecTask && showSpecTasks) shouldShow = true;
+
+      // Also include if any children passed the filter
+      if (shouldShow || filteredChildren.length > 0) {
         return { ...node, children: filteredChildren };
       }
       return null;
@@ -727,9 +787,9 @@ export const SpecBoard: Component = () => {
     if (run.status === 'failed') return 'failed';
     if (run.status === 'paused') return 'paused';
 
-    // All nodes done or pending - show idle
-    const allDone = liveNodes.every(n => n.status === 'done');
-    if (allDone && liveNodes.length > 0) return 'done';
+    // All nodes complete (done, validated, or awaiting_eval) - show done
+    const allComplete = liveNodes.every(n => n.status === 'done' || n.status === 'validated' || n.status === 'awaiting_eval');
+    if (allComplete && liveNodes.length > 0) return 'done';
 
     // Run is working but no nodes active yet - workers starting up
     // Only show "starting" if ALL nodes are still pending (no work started yet)
@@ -1282,55 +1342,6 @@ export const SpecBoard: Component = () => {
                   }}
                 </For>
               </div>
-
-              {/* Status indicator */}
-              <Show when={liveRunStatus()}>
-                <div
-                  class="flex items-center gap-1.5 pl-2"
-                  style={{ 'border-left': '1px solid rgba(64, 64, 64, 0.5)' }}
-                >
-                  <div
-                    class={`w-1.5 h-1.5 rounded-full ${
-                      liveRunStatus() === 'working' || liveRunStatus() === 'starting'
-                        ? 'animate-pulse'
-                        : ''
-                    }`}
-                    style={{
-                      background:
-                        liveRunStatus() === 'working'
-                          ? 'var(--amber-500)'
-                          : liveRunStatus() === 'starting'
-                          ? 'var(--amber-400)'
-                          : liveRunStatus() === 'done'
-                          ? 'var(--sage)'
-                          : liveRunStatus() === 'failed'
-                          ? 'var(--terra)'
-                          : liveRunStatus() === 'paused'
-                          ? 'var(--golden)'
-                          : 'var(--wool-600)',
-                    }}
-                  />
-                  <span
-                    class="text-[9px] font-medium"
-                    style={{
-                      color:
-                        liveRunStatus() === 'working'
-                          ? 'var(--amber-400)'
-                          : liveRunStatus() === 'starting'
-                          ? 'var(--amber-300)'
-                          : liveRunStatus() === 'done'
-                          ? 'var(--sage)'
-                          : liveRunStatus() === 'failed'
-                          ? 'var(--terra)'
-                          : liveRunStatus() === 'paused'
-                          ? 'var(--golden)'
-                          : 'var(--wool-600)',
-                    }}
-                  >
-                    {liveRunStatus()}
-                  </span>
-                </div>
-              </Show>
             </div>
           </Show>
 
@@ -1405,58 +1416,8 @@ export const SpecBoard: Component = () => {
             </div>
           </Show>
 
-          {/* Right side: Controls */}
+          {/* Right side: Action buttons only */}
           <div class="flex-1 flex items-center justify-end gap-2">
-            {/* Delta toggle */}
-            <button
-              onClick={() => delta.toggleDeltaIndicators()}
-              class="p-1 rounded"
-              style={{
-                background: delta.showDeltaIndicators() ? 'rgba(212, 165, 116, 0.15)' : 'transparent',
-                color: delta.showDeltaIndicators() ? 'var(--amber-400)' : 'var(--wool-600)',
-              }}
-              title="Toggle delta indicators"
-            >
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="1.5"
-                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-                />
-              </svg>
-            </button>
-
-            {/* Live task filter toggle - only show when live tree is visible */}
-            <Show when={hasLiveTree()}>
-              <button
-                onClick={() => setShowAllLiveTasks((v) => !v)}
-                class="p-1 rounded"
-                style={{
-                  background: showAllLiveTasks() ? 'transparent' : 'rgba(212, 165, 116, 0.15)',
-                  color: showAllLiveTasks() ? 'var(--wool-600)' : 'var(--amber-400)',
-                }}
-                title={showAllLiveTasks() ? 'Hide worker-added tasks' : 'Show all tasks'}
-              >
-                <Icon name={showAllLiveTasks() ? 'layers' : 'git-branch'} class="w-3.5 h-3.5" />
-              </button>
-            </Show>
-
-            {/* Diff summary */}
-            <Show when={delta.hasDiff()}>
-              <div class="flex items-center gap-1.5 px-1.5 py-0.5 rounded" style={{ background: 'rgba(36, 36, 36, 0.6)' }}>
-                <Show when={(delta.diff()?.newNodes.length || 0) > 0}>
-                  <span class="text-[10px] text-sage font-medium">+{delta.diff()?.newNodes.length}</span>
-                </Show>
-                <Show when={(delta.diff()?.modifiedNodes.length || 0) > 0}>
-                  <span class="text-[10px] text-amber-400 font-medium">~{delta.diff()?.modifiedNodes.length}</span>
-                </Show>
-                <Show when={(delta.diff()?.deletedNodes.length || 0) > 0}>
-                  <span class="text-[10px] text-terra font-medium">-{delta.diff()?.deletedNodes.length}</span>
-                </Show>
-              </div>
-            </Show>
-
             {/* Dispatch button */}
             <button
               onClick={handleDispatch}
@@ -1470,6 +1431,58 @@ export const SpecBoard: Component = () => {
             >
               {delta.dispatchPending() ? 'Dispatching...' : 'Dispatch'}
             </button>
+
+            {/* Deliver button - shows after dispatch, when work is done */}
+            <Show when={hasLiveTree() && !delta.hasDiff() && liveRunStatus() === 'done'}>
+              <button
+                onClick={() => setShowDeliveryDialog(true)}
+                disabled={delta.deliveryPending()}
+                class="px-2.5 py-1 rounded text-[11px] font-medium disabled:opacity-30"
+                style={{
+                  background: 'rgba(125, 153, 112, 0.15)',
+                  color: 'var(--sage)',
+                  border: '1px solid rgba(125, 153, 112, 0.3)',
+                }}
+              >
+                <Icon name="git-branch" class="w-3 h-3 mr-1 inline" />
+                {delta.deliveryPending() ? 'Delivering...' : 'Deliver'}
+              </button>
+            </Show>
+
+            {/* Delivery status badge - shows when delivery is active */}
+            <Show when={delta.currentDelivery()}>
+              <button
+                onClick={() => setShowDeliveryDialog(true)}
+                class="flex items-center gap-1 px-2 py-0.5 rounded text-[10px]"
+                style={{
+                  background:
+                    delta.currentDelivery()?.status === 'pushed' || delta.currentDelivery()?.status === 'pr_open'
+                      ? 'rgba(56, 189, 248, 0.1)'
+                      : delta.currentDelivery()?.status === 'merged'
+                      ? 'rgba(125, 153, 112, 0.1)'
+                      : delta.currentDelivery()?.status === 'failed'
+                      ? 'rgba(196, 92, 74, 0.1)'
+                      : 'rgba(212, 165, 116, 0.1)',
+                  color:
+                    delta.currentDelivery()?.status === 'pushed' || delta.currentDelivery()?.status === 'pr_open'
+                      ? 'var(--sky-400)'
+                      : delta.currentDelivery()?.status === 'merged'
+                      ? 'var(--sage)'
+                      : delta.currentDelivery()?.status === 'failed'
+                      ? 'var(--terra)'
+                      : 'var(--amber-400)',
+                }}
+              >
+                <Show when={delta.currentDelivery()?.prNumber}>
+                  <Icon name="git-pull-request" class="w-3 h-3" />
+                  <span>#{delta.currentDelivery()?.prNumber}</span>
+                </Show>
+                <Show when={!delta.currentDelivery()?.prNumber}>
+                  <Icon name="git-branch" class="w-3 h-3" />
+                  <span>{delta.currentDelivery()?.status}</span>
+                </Show>
+              </button>
+            </Show>
           </div>
         </div>
 
@@ -1611,22 +1624,19 @@ export const SpecBoard: Component = () => {
                     background: 'rgba(30, 30, 30, 0.3)',
                   }}
                 >
-                  {/* Section label */}
+                  {/* Section toolbar - full width */}
                   <div
-                    class="absolute z-10 flex items-center gap-1.5 text-[9px] font-medium uppercase tracking-wider px-2 py-0.5 rounded"
-                    style={{
-                      left: '8px',
-                      top: '6px',
-                      background: 'rgba(30, 30, 30, 0.8)',
-                    }}
+                    class="absolute z-10 left-2 right-2 top-1.5 flex items-center justify-between px-2 py-1 rounded"
+                    style={{ background: 'rgba(30, 30, 30, 0.85)' }}
                   >
+                    {/* Left: Label + status + focus */}
                     <button
                       onClick={() => setFocusedView(focusedView() === 'live' ? 'both' : 'live')}
-                      class="flex items-center gap-1.5 hover:opacity-80"
+                      class="flex items-center gap-1.5 text-[9px] font-medium uppercase tracking-wider hover:opacity-80"
                       title={focusedView() === 'live' ? 'Show both' : 'Focus Live'}
                     >
                       <span style={{ color: 'var(--wool-500)' }}>Live</span>
-                      <span class="text-wool-600 text-[8px]">{Math.round(liveZoom() * 100)}%</span>
+                      <span class="text-wool-600 text-[8px] normal-case">{Math.round(liveZoom() * 100)}%</span>
                       <Show when={liveRunStatus()}>
                         <span style={{ color: 'var(--wool-600)' }}>·</span>
                         <span
@@ -1654,6 +1664,57 @@ export const SpecBoard: Component = () => {
                         </svg>
                       </Show>
                     </button>
+
+                    {/* Right: View controls */}
+                    <div class="flex items-center gap-2">
+                      {/* Diff summary */}
+                      <Show when={delta.hasDiff()}>
+                        <div class="flex items-center gap-1.5 px-1.5 py-0.5 rounded" style={{ background: 'rgba(36, 36, 36, 0.6)' }}>
+                          <Show when={(delta.diff()?.newNodes.length || 0) > 0}>
+                            <span class="text-[10px] text-sage font-medium">+{delta.diff()?.newNodes.length}</span>
+                          </Show>
+                          <Show when={(delta.diff()?.modifiedNodes.length || 0) > 0}>
+                            <span class="text-[10px] text-amber-400 font-medium">~{delta.diff()?.modifiedNodes.length}</span>
+                          </Show>
+                          <Show when={(delta.diff()?.deletedNodes.length || 0) > 0}>
+                            <span class="text-[10px] text-terra font-medium">-{delta.diff()?.deletedNodes.length}</span>
+                          </Show>
+                        </div>
+                      </Show>
+
+                      {/* Delta toggle */}
+                      <button
+                        onClick={() => delta.toggleDeltaIndicators()}
+                        class="p-1 rounded"
+                        style={{
+                          background: delta.showDeltaIndicators() ? 'rgba(212, 165, 116, 0.15)' : 'transparent',
+                          color: delta.showDeltaIndicators() ? 'var(--amber-400)' : 'var(--wool-600)',
+                        }}
+                        title="Toggle delta indicators"
+                      >
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="1.5"
+                            d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+                          />
+                        </svg>
+                      </button>
+
+                      {/* Views filter */}
+                      <MultiSelectDropdown
+                        value={liveFilters()}
+                        options={[
+                          { value: 'spec-tasks', label: 'Spec Tasks' },
+                          { value: 'worker-tasks', label: 'Worker Tasks' },
+                          { value: 'deleted-nodes', label: 'Deleted Nodes' },
+                        ]}
+                        onChange={setLiveFilters}
+                        label="Views"
+                        class="w-28 text-[10px]"
+                      />
+                    </div>
                   </div>
 
                   {/* Tree content - centered vertically, root at left */}
@@ -1891,7 +1952,7 @@ export const SpecBoard: Component = () => {
                 onClick={(e) => { if (e.target === e.currentTarget) { setViewingLiveNode(null); setSelectedLiveNodeId(null); } }}
               >
                 <div
-                  class="w-[420px] rounded-lg shadow-xl"
+                  class="w-[560px] max-h-[85vh] flex flex-col rounded-lg shadow-xl"
                   style={{
                     background: 'var(--pasture-800)',
                     border: '1px solid var(--pasture-600)',
@@ -1945,18 +2006,18 @@ export const SpecBoard: Component = () => {
                   </div>
 
                   {/* Content */}
-                  <div class="p-4 space-y-4">
-                    {/* Description/Content (read-only) */}
+                  <div class="p-4 space-y-4 overflow-y-auto flex-1">
+                    {/* Description/Content (read-only, rendered markdown) */}
                     <Show when={node().content}>
                       <div class="space-y-1.5">
                         <label class="text-xs font-medium text-wool-300">
                           {isEval() ? 'Acceptance Criteria' : 'Description'}
                         </label>
                         <div
-                          class="w-full px-3 py-2 rounded-md text-sm bg-pasture-900/50 border border-pasture-700 text-wool-200 whitespace-pre-wrap"
-                          style={{ 'min-height': '60px' }}
+                          class="w-full px-4 py-3 rounded-md bg-pasture-900/50 border border-pasture-700 overflow-auto"
+                          style={{ 'max-height': '400px' }}
                         >
-                          {node().content}
+                          <MarkdownContent content={node().content} compact />
                         </div>
                       </div>
                     </Show>
@@ -2004,8 +2065,65 @@ export const SpecBoard: Component = () => {
                       </div>
                     </Show>
 
+                    {/* Relationships Section */}
+                    <div class="space-y-2 pt-2 border-t border-pasture-700/50">
+                      <label class="text-xs font-medium text-wool-400">Relationships</label>
+
+                      {/* Parent */}
+                      <Show when={node().parentId}>
+                        <div class="flex items-center gap-2 text-[11px]">
+                          <span class="text-wool-500 w-16">Parent:</span>
+                          <code class="px-1.5 py-0.5 rounded bg-pasture-900/50 text-wool-300 font-mono">
+                            {node().parentId}
+                          </code>
+                        </div>
+                      </Show>
+
+                      {/* Children */}
+                      <Show when={node().children.length > 0}>
+                        <div class="flex items-start gap-2 text-[11px]">
+                          <span class="text-wool-500 w-16 pt-0.5">Children:</span>
+                          <div class="flex flex-wrap gap-1">
+                            <For each={node().children}>
+                              {(child) => (
+                                <code class="px-1.5 py-0.5 rounded bg-pasture-900/50 text-wool-300 font-mono">
+                                  {child.id}
+                                </code>
+                              )}
+                            </For>
+                          </div>
+                        </div>
+                      </Show>
+
+                      {/* Blocked By */}
+                      <Show when={node().blockedBy.length > 0}>
+                        <div class="flex items-start gap-2 text-[11px]">
+                          <span class="text-wool-500 w-16 pt-0.5">Blocked:</span>
+                          <div class="flex flex-wrap gap-1">
+                            <For each={node().blockedBy}>
+                              {(blockerId) => (
+                                <code class="px-1.5 py-0.5 rounded text-terra/80 font-mono" style={{ background: 'rgba(196, 112, 96, 0.1)' }}>
+                                  {blockerId}
+                                </code>
+                              )}
+                            </For>
+                          </div>
+                        </div>
+                      </Show>
+
+                      {/* Claimed By */}
+                      <Show when={node().claimedBy}>
+                        <div class="flex items-center gap-2 text-[11px]">
+                          <span class="text-wool-500 w-16">Worker:</span>
+                          <code class="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 font-mono">
+                            {node().claimedBy}
+                          </code>
+                        </div>
+                      </Show>
+                    </div>
+
                     {/* Node ID */}
-                    <div class="space-y-1.5">
+                    <div class="space-y-1.5 pt-2 border-t border-pasture-700/50">
                       <label class="text-xs font-medium text-wool-500">Node ID</label>
                       <code class="block px-2 py-1 rounded text-[10px] font-mono bg-pasture-900/30 border border-pasture-700/50 text-wool-500 truncate">
                         {node().id}
@@ -2062,6 +2180,14 @@ export const SpecBoard: Component = () => {
             workers={workers()}
             anchorRef={flockPillRef}
             onClose={() => project.setSheepfoldOpen(false)}
+          />
+        </Show>
+
+        {/* Delivery Dialog */}
+        <Show when={showDeliveryDialog()}>
+          <DeliveryDialog
+            onClose={() => setShowDeliveryDialog(false)}
+            defaultBranch="main"
           />
         </Show>
       </div>

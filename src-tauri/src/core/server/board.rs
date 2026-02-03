@@ -75,13 +75,7 @@ pub async fn export_board(
     Json(req): Json<ExportRequest>,
 ) -> Result<Json<String>> {
     let mut service = BoardService::new(project_id);
-    let scope = req.scope;
-
-    // Use tokio::task::spawn_blocking for sync operations
-    let board_dir = tokio::task::spawn_blocking(move || service.export_local_sync(&scope))
-        .await
-        .map_err(|e| anyhow::anyhow!("Task join error: {}", e))??;
-
+    let board_dir = service.export_local_sync(&req.scope).await?;
     Ok(Json(board_dir.to_string_lossy().to_string()))
 }
 
@@ -96,11 +90,7 @@ pub async fn import_board(
     Path(project_id): Path<i64>,
 ) -> Result<Json<SyncResult>> {
     let mut service = BoardService::new(project_id);
-
-    let result = tokio::task::spawn_blocking(move || service.import_local_sync())
-        .await
-        .map_err(|e| anyhow::anyhow!("Task join error: {}", e))??;
-
+    let result = service.import_local_sync().await?;
     Ok(Json(result))
 }
 

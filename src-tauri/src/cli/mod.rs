@@ -17,8 +17,6 @@ pub mod config;
 pub mod delete;
 pub mod deliver;
 pub mod diff;
-#[cfg(feature = "cli")]
-pub mod go;
 pub mod helpers;
 pub mod log;
 pub mod man;
@@ -35,8 +33,6 @@ pub mod summary;
 pub mod tasks;
 pub mod templates;
 #[cfg(feature = "cli")]
-pub mod test;
-#[cfg(feature = "cli")]
 pub mod tui;
 pub mod view;
 
@@ -52,15 +48,14 @@ pub use config::{
     agent_presets, get_agent_command, get_current_agent, run_config, set_agent, AgentPreset,
 };
 pub use delete::execute as run_delete;
-#[cfg(feature = "cli")]
-pub use go::{run as run_go, GoError, GoOutput, GoResult};
+pub use helpers::parse_time_limit;
 pub use log::{run_log, LogResult, OutputFormat};
 pub use man::run_man;
 pub use msg::{get_available_threads, run as run_msg, MsgError, MsgOutput, MsgResult, ThreadInfo};
 pub use pause::run_pause;
 pub use prune::execute as run_prune;
 pub use reset::{run_reset, ResetTarget};
-pub use resume::{parse_time_limit, run_resume};
+pub use resume::run_resume;
 pub use runs::list_runs;
 pub use spec::{read_spec, run_spec, update_spec_amendments, Amendment, SpecError};
 pub use summary::{get_summary_text, has_summary, run_summary, SummaryError};
@@ -94,10 +89,6 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     // ========== Run Management ==========
-    /// Start a new run
-    #[cfg(feature = "cli")]
-    Go(GoArgs),
-
     /// View run status
     View(RunNameArg),
 
@@ -189,10 +180,6 @@ pub enum Commands {
 
     /// Reset runs and/or config (requires typing 'reset' to confirm)
     Reset(ResetArgs),
-
-    /// Run e2e test scenarios
-    #[cfg(feature = "cli")]
-    Test(TestArgs),
 
     /// Run as HTTP server (headless mode for remote orchestration)
     #[cfg(feature = "server")]
@@ -372,64 +359,6 @@ pub struct RemoteWorkerArgs {
 }
 
 // ========== Argument structs ==========
-
-/// Arguments for `hirsel go`
-#[derive(Args, Debug)]
-pub struct GoArgs {
-    /// Name for this run
-    pub run_name: String,
-
-    /// Path to spec file or template name
-    pub spec: String,
-
-    /// Orchestrator profile to use (for remote server mode)
-    #[arg(long)]
-    pub profile: Option<String>,
-
-    /// Number or range of workers (e.g., "3", "1-5", "2+")
-    #[arg(short, long, default_value = "1")]
-    pub workers: String,
-
-    /// Time limit (e.g., "30m", "1h", "1h30m")
-    #[arg(short, long)]
-    pub time_limit: Option<String>,
-
-    /// Remote worker spec (e.g., "user@host:2")
-    #[arg(long)]
-    pub remote: Option<String>,
-
-    /// Run in sandbox mode
-    #[arg(long)]
-    pub sandbox: bool,
-
-    /// YOLO mode (skip confirmation prompts)
-    #[arg(long)]
-    pub yolo: bool,
-
-    /// Path to eval script
-    #[arg(long)]
-    pub eval: Option<String>,
-
-    /// Use a template instead of spec file
-    #[arg(long)]
-    pub template: Option<String>,
-
-    /// Project path (defaults to current directory)
-    #[arg(short = 'P', long)]
-    pub project: Option<String>,
-
-    /// Pause behavior when messaging user: "sender" or "all"
-    #[arg(long)]
-    pub pause_mode: Option<String>,
-
-    /// Path to assets folder (copies contents to run's assets/)
-    #[arg(long)]
-    pub assets: Option<String>,
-
-    /// Runner to use for workers (e.g., "local", "fly", or a named runner from config)
-    #[arg(long)]
-    pub runner: Option<String>,
-}
 
 /// Simple run name argument
 #[derive(Args, Debug)]
@@ -633,33 +562,6 @@ pub struct ResetArgs {
     pub confirm: Option<String>,
 }
 
-/// Arguments for `hirsel test`
-#[derive(Args, Debug)]
-pub struct TestArgs {
-    /// Scenario name to run (lists available scenarios if omitted)
-    pub scenario: Option<String>,
-
-    /// Custom run name (default: test-<scenario>)
-    #[arg(short = 'n', long)]
-    pub run_name: Option<String>,
-
-    /// Number of workers
-    #[arg(short, long, default_value = "1")]
-    pub workers: String,
-
-    /// YOLO mode (skip confirmation prompts)
-    #[arg(long)]
-    pub yolo: bool,
-
-    /// Remote worker spec (e.g., "user@host:2")
-    #[arg(long)]
-    pub remote: Option<String>,
-
-    /// Runner to use for workers (e.g., "local", "fly", or a named runner from config)
-    #[arg(long)]
-    pub runner: Option<String>,
-}
-
 /// Arguments for `hirsel serve`
 #[derive(Args, Debug)]
 pub struct ServeArgs {
@@ -845,34 +747,6 @@ pub fn run_cli() -> anyhow::Result<bool> {
 
     match command {
         // Run Management
-        #[cfg(feature = "cli")]
-        Commands::Go(args) => {
-            match go::run(&args) {
-                Ok(output) => {
-                    if json {
-                        // Build JSON manually since GoOutput doesn't impl Serialize
-                        let json_output = serde_json::json!({
-                            "run_name": output.run_name,
-                            "project_path": output.project_path,
-                            "run_dir": output.run_dir,
-                            "worker_names": output.worker_names,
-                            "worker_count": output.worker_count,
-                            "time_limit_minutes": output.time_limit_minutes,
-                        });
-                        println!("{}", serde_json::to_string_pretty(&json_output)?);
-                    } else {
-                        println!(
-                            "Started run '{}' with {} workers",
-                            output.run_name, output.worker_count
-                        );
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
-                }
-            }
-        }
         Commands::View(args) => {
             if let Err(e) = view::execute(&args.run_name, json) {
                 eprintln!("Error: {}", e);
@@ -995,7 +869,8 @@ pub fn run_cli() -> anyhow::Result<bool> {
             }
         }
         Commands::Clone(args) => {
-            if let Err(e) = clone::execute(&args.source_run, &args.new_name, json) {
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            if let Err(e) = rt.block_on(clone::execute(&args.source_run, &args.new_name, json)) {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
             }
@@ -1026,13 +901,11 @@ pub fn run_cli() -> anyhow::Result<bool> {
             }
         }
         Commands::Mode(args) => {
-            use crate::core::{config as core_config, state::SQLiteState, Files};
-            let run_dir = core_config::run_dir(&args.run_name);
-            let files = Files::new(&run_dir);
-            match SQLiteState::new(files.db_path()) {
+            use crate::core::state::SQLiteState;
+            match helpers::block_on(SQLiteState::new(&args.run_name)) {
                 Ok(state) => {
                     let hitl = args.new_mode.to_lowercase() == "hitl";
-                    if let Err(e) = state.set_human_in_the_loop(hitl) {
+                    if let Err(e) = helpers::block_on(state.set_human_in_the_loop(hitl)) {
                         eprintln!("Error setting mode: {}", e);
                         std::process::exit(1);
                     }
@@ -1232,21 +1105,6 @@ pub fn run_cli() -> anyhow::Result<bool> {
                 }
             }
         }
-        #[cfg(feature = "cli")]
-        Commands::Test(args) => {
-            if let Err(e) = test::execute(
-                args.scenario.as_deref(),
-                args.run_name.as_deref(),
-                Some(&args.workers),
-                args.yolo,
-                json,
-                args.remote.as_deref(),
-                args.runner.as_deref(),
-            ) {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
-        }
         Commands::WorkerRun(_args) => {
             // This is handled by lib.rs run_cli() for compatibility
             // Should not reach here in normal CLI flow
@@ -1325,8 +1183,8 @@ pub fn run_cli() -> anyhow::Result<bool> {
             let run_dir = core_config::run_dir(&args.run_name);
             let files = Files::new(&run_dir);
             if files.db_path().exists() {
-                if let Ok(state) = SQLiteState::new(files.db_path()) {
-                    if let Ok(workers) = state.get_workers() {
+                if let Ok(state) = helpers::block_on(SQLiteState::new(&args.run_name)) {
+                    if let Ok(workers) = helpers::block_on(state.get_workers()) {
                         for worker in workers {
                             println!("{}", worker.name);
                         }
@@ -1402,30 +1260,6 @@ mod tests {
         let cli = Cli::try_parse_from(["hirsel", "--json", "runs"]).unwrap();
         assert!(cli.json);
         assert!(matches!(cli.command, Some(Commands::Runs)));
-    }
-
-    #[test]
-    fn test_go_command() {
-        let cli = Cli::try_parse_from([
-            "hirsel",
-            "go",
-            "my-run",
-            "spec.md",
-            "--workers",
-            "3",
-            "--time-limit",
-            "30m",
-        ])
-        .unwrap();
-
-        if let Some(Commands::Go(args)) = cli.command {
-            assert_eq!(args.run_name, "my-run");
-            assert_eq!(args.spec, "spec.md");
-            assert_eq!(args.workers, "3");
-            assert_eq!(args.time_limit, Some("30m".to_string()));
-        } else {
-            panic!("Expected Go command");
-        }
     }
 
     #[test]

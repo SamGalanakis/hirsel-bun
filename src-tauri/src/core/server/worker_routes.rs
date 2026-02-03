@@ -5,7 +5,7 @@
 //!
 //! Each function takes:
 //! - `&SQLiteState` for state access
-//! - Optional `&dyn LifecycleManager` for lifecycle handling
+//! - Optional `&LocalLifecycleManager` for lifecycle handling
 //!
 //! The HTTP layer (daemon/coordinator_api) is responsible for:
 //! - Extracting state from headers or shared state
@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::lifecycle::{LifecycleEvent, LifecycleManager};
+use crate::core::lifecycle::{LifecycleEvent, LifecycleManager, LocalLifecycleManager};
 use crate::core::state::{SQLiteState, StateResult, Status, Worker, WorkerStatus, WorkerUpdate};
 
 // =============================================================================
@@ -127,48 +127,50 @@ pub struct ReasonRequest {
 // =============================================================================
 
 /// List all workers
-pub fn list_workers(state: &SQLiteState) -> StateResult<Vec<Worker>> {
-    state.get_workers()
+pub async fn list_workers(state: &SQLiteState) -> StateResult<Vec<Worker>> {
+    state.get_workers().await
 }
 
 /// List active workers (working status)
-pub fn list_active_workers(state: &SQLiteState) -> StateResult<Vec<Worker>> {
-    state.get_active_workers()
+pub async fn list_active_workers(state: &SQLiteState) -> StateResult<Vec<Worker>> {
+    state.get_active_workers().await
 }
 
 /// Check if all workers are done (inactive)
-pub fn all_workers_done(state: &SQLiteState) -> StateResult<bool> {
-    state.all_workers_inactive()
+pub async fn all_workers_done(state: &SQLiteState) -> StateResult<bool> {
+    state.all_workers_inactive().await
 }
 
 /// Get a specific worker
-pub fn get_worker(state: &SQLiteState, name: &str) -> StateResult<Option<Worker>> {
-    state.get_worker(name)
+pub async fn get_worker(state: &SQLiteState, name: &str) -> StateResult<Option<Worker>> {
+    state.get_worker(name).await
 }
 
 /// Update worker state with optional lifecycle handling
-pub fn update_worker(
+pub async fn update_worker(
     state: &SQLiteState,
     name: &str,
     request: &UpdateWorkerRequest,
-    lifecycle: Option<&dyn LifecycleManager>,
+    lifecycle: Option<&LocalLifecycleManager>,
 ) -> StateResult<()> {
     // Get old status for lifecycle event
-    let old_status = state.get_worker(name)?.map(|w| w.status);
+    let old_status = state.get_worker(name).await?.map(|w| w.status);
     let new_status = request.parse_status();
 
     // Apply update
     let update = request.to_worker_update();
-    state.update_worker(name, update)?;
+    state.update_worker(name, update).await?;
 
     // Trigger lifecycle event if status changed to Awaiting
     if let (Some(lifecycle), Some(old), Some(new)) = (lifecycle, old_status, new_status) {
         if old != new && new == WorkerStatus::Awaiting {
-            let _ = lifecycle.process_event(LifecycleEvent::WorkerStatusChanged {
-                worker_name: name.to_string(),
-                old,
-                new,
-            });
+            let _ = lifecycle
+                .process_event(LifecycleEvent::WorkerStatusChanged {
+                    worker_name: name.to_string(),
+                    old,
+                    new,
+                })
+                .await;
         }
     }
 
@@ -176,37 +178,37 @@ pub fn update_worker(
 }
 
 /// Update worker heartbeat and return current run status
-pub fn worker_heartbeat(state: &SQLiteState, name: &str) -> StateResult<Status> {
+pub async fn worker_heartbeat(state: &SQLiteState, name: &str) -> StateResult<Status> {
     let now = chrono::Utc::now().to_rfc3339();
     let update = WorkerUpdate {
         last_heartbeat: Some(now),
         ..Default::default()
     };
-    state.update_worker(name, update)?;
-    state.status()
+    state.update_worker(name, update).await?;
+    state.status().await
 }
 
 /// Create a new worker
-pub fn create_worker(
+pub async fn create_worker(
     state: &SQLiteState,
     name: &str,
     work_dir: &str,
     location: &str,
 ) -> StateResult<Option<Worker>> {
-    state.add_worker(name, work_dir, location)
+    state.add_worker(name, work_dir, location).await
 }
 
 /// Pause all workers
-pub fn pause_all_workers(state: &SQLiteState, reason: &str) -> StateResult<()> {
-    state.pause_all_workers(reason)
+pub async fn pause_all_workers(state: &SQLiteState, reason: &str) -> StateResult<()> {
+    state.pause_all_workers(reason).await
 }
 
 /// Resume all workers
-pub fn resume_all_workers(state: &SQLiteState) -> StateResult<()> {
-    state.resume_all_workers()
+pub async fn resume_all_workers(state: &SQLiteState) -> StateResult<()> {
+    state.resume_all_workers().await
 }
 
 /// Request a scaling check
-pub fn request_scaling_check(state: &SQLiteState) -> StateResult<()> {
-    state.request_scaling_check()
+pub async fn request_scaling_check(state: &SQLiteState) -> StateResult<()> {
+    state.request_scaling_check().await
 }

@@ -36,17 +36,21 @@ pub async fn run_eval_from_args(
     use tracing::info;
 
     let run_dir = PathBuf::from(run_dir);
-    let files = Files::new(&run_dir);
 
     // Parse agent command
     let agent_command: Vec<String> = serde_json::from_str(agent_command_json)
         .map_err(|e| EvalError::ProcessFailed(format!("Invalid agent command JSON: {}", e)))?;
 
     // Get or create eval record in database
-    let state = SQLiteState::new(files.db_path())?;
+    let state = SQLiteState::new(run_name)
+        .await
+        .map_err(|e| EvalError::ProcessFailed(format!("Failed to open database: {}", e)))?;
 
     // Create eval name with detective/QA themed naming
-    let existing_evals = state.get_evals(1000)?;
+    let existing_evals = state
+        .get_evals(1000)
+        .await
+        .map_err(|e| EvalError::ProcessFailed(format!("Failed to get evals: {}", e)))?;
     let eval_number = existing_evals.len() + 1;
     let eval_name = crate::core::names::generate_eval_name(eval_number);
 
@@ -95,15 +99,21 @@ pub async fn run_eval_from_args(
     );
 
     // Start eval in database
-    let eval_id = state.start_eval(
-        "staging",
-        Some(&eval_name),
-        Some(log_file.to_string_lossy().as_ref()),
-    )?;
+    let eval_id = state
+        .start_eval(
+            "staging",
+            Some(&eval_name),
+            Some(log_file.to_string_lossy().as_ref()),
+        )
+        .await
+        .map_err(|e| EvalError::ProcessFailed(format!("Failed to start eval: {}", e)))?;
 
     // Store our PID so the eval can be killed when pausing
     let pid = std::process::id();
-    state.set_eval_pid(eval_id, pid)?;
+    state
+        .set_eval_pid(eval_id, pid)
+        .await
+        .map_err(|e| EvalError::ProcessFailed(format!("Failed to set eval PID: {}", e)))?;
 
     info!(
         "[{}] Starting eval (id={}, pid={}) for run {}",
@@ -112,6 +122,7 @@ pub async fn run_eval_from_args(
 
     // Build config for ACP eval
     let config = EvalAcpConfig {
+        run_name: run_name.to_string(),
         eval_name: eval_name.clone(),
         eval_id,
         work_dir: eval_work_dir.clone(),
@@ -133,7 +144,10 @@ pub async fn run_eval_from_args(
     let result = result?;
 
     // Update eval record with result
-    state.complete_eval(eval_id, result.success, &result.feedback)?;
+    state
+        .complete_eval(eval_id, result.success, &result.feedback)
+        .await
+        .map_err(|e| EvalError::ProcessFailed(format!("Failed to complete eval: {}", e)))?;
 
     // Create lifecycle manager for worker operations
     let (cfg, _) = crate::core::Config::load().unwrap_or_else(|e| {
@@ -145,15 +159,16 @@ pub async fn run_eval_from_args(
         (crate::core::Config::default(), vec![])
     });
     let agent_cmd = cfg.agent.command.clone();
-    let lifecycle =
-        LocalLifecycleManager::new(run_name, run_dir.clone(), agent_cmd).map_err(|e| {
+    let lifecycle = LocalLifecycleManager::new(run_name, run_dir.clone(), agent_cmd)
+        .await
+        .map_err(|e| {
             EvalError::ProcessFailed(format!("Failed to create lifecycle manager: {}", e))
         })?;
 
     // Update run status based on result
     if result.success {
         // Kill any remaining worker processes before marking as Done
-        let killed = lifecycle.kill_all_workers().unwrap_or_else(|e| {
+        let killed = lifecycle.kill_all_workers().await.unwrap_or_else(|e| {
             tracing::warn!("[{}] Failed to kill workers: {}", eval_name, e);
             vec![]
         });
@@ -166,10 +181,13 @@ pub async fn run_eval_from_args(
         }
 
         info!("[{}] Eval PASSED - marking run as Done", eval_name);
-        state.set_status(Status::Done)?;
+        state
+            .set_status(Status::Done)
+            .await
+            .map_err(|e| EvalError::ProcessFailed(format!("Failed to set status: {}", e)))?;
 
         // Auto-cleanup test runs
-        if state.is_test_run().unwrap_or(false) {
+        if state.is_test_run().await.unwrap_or(false) {
             info!(
                 "[{}] Test run completed successfully - cleaning up",
                 eval_name
@@ -179,7 +197,10 @@ pub async fn run_eval_from_args(
         }
     } else {
         // Check retry count
-        let evals = state.get_evals(100)?;
+        let evals = state
+            .get_evals(100)
+            .await
+            .map_err(|e| EvalError::ProcessFailed(format!("Failed to get evals: {}", e)))?;
         let failed_count = evals
             .iter()
             .filter(|e| e.status == EvalStatus::Failed)
@@ -187,7 +208,7 @@ pub async fn run_eval_from_args(
 
         if failed_count >= 3 {
             // Kill any remaining worker processes before marking as Failed
-            let killed = lifecycle.kill_all_workers().unwrap_or_else(|e| {
+            let killed = lifecycle.kill_all_workers().await.unwrap_or_else(|e| {
                 tracing::warn!("[{}] Failed to kill workers: {}", eval_name, e);
                 vec![]
             });
@@ -203,10 +224,13 @@ pub async fn run_eval_from_args(
                 "[{}] Eval FAILED ({} failures) - marking run as Failed",
                 eval_name, failed_count
             );
-            state.set_failed(crate::core::state::FailureReason::EvalFailed)?;
+            state
+                .set_failed(crate::core::state::FailureReason::EvalFailed)
+                .await
+                .map_err(|e| EvalError::ProcessFailed(format!("Failed to set failed: {}", e)))?;
 
             // Auto-cleanup test runs
-            if state.is_test_run().unwrap_or(false) {
+            if state.is_test_run().await.unwrap_or(false) {
                 info!("[{}] Test run failed - cleaning up", eval_name);
                 cleanup_test_run(run_name);
                 return Ok(());
@@ -218,10 +242,13 @@ pub async fn run_eval_from_args(
             );
 
             // Set back to Working status to resume workers
-            state.set_status(Status::Working)?;
+            state
+                .set_status(Status::Working)
+                .await
+                .map_err(|e| EvalError::ProcessFailed(format!("Failed to set status: {}", e)))?;
 
             // Resume awaiting workers
-            if let Err(e) = lifecycle.resume_awaiting_workers() {
+            if let Err(e) = lifecycle.resume_awaiting_workers().await {
                 tracing::error!(
                     "[{}] Failed to resume workers after eval failure: {}",
                     eval_name,
@@ -254,8 +281,10 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
 
     // Build context from run state
     let files = Files::new(&config.run_dir);
-    let state = SQLiteState::new(files.db_path())?;
-    let ctx = build_eval_context(&files, &state);
+    let state = SQLiteState::new(&config.run_name)
+        .await
+        .map_err(|e| EvalError::ProcessFailed(format!("Failed to open database: {}", e)))?;
+    let ctx = build_eval_context(&files, &state).await;
 
     // Build the full prompt from context
     let full_prompt = build_eval_prompt(&ctx);
@@ -323,10 +352,9 @@ pub async fn run_eval_acp(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalEr
     let stdout_compat = stdout.compat();
 
     // Create the client
-    let db_path = config.run_dir.join("hirsel.db");
     let client = Arc::new(crate::worker::acp_client::HirselClient::new(
         &config.eval_name,
-        &db_path,
+        &config.run_name,
     ));
 
     // Create ACP connection

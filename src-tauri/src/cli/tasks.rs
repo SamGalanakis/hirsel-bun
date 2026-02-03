@@ -11,6 +11,7 @@
 //! All commands use live_nodes from the DeltaState (global database).
 
 use crate::cli::config::hirsel_root;
+use crate::cli::helpers::block_on;
 use crate::core::delta::{DeltaState, DeltaStateError, LiveNode, LiveNodeStatus, NodeType};
 use crate::core::state::{SQLiteState, StateError};
 use serde::Serialize;
@@ -75,12 +76,10 @@ fn get_run_dir(run_name: &str) -> Result<PathBuf, TaskError> {
 
 /// Get the SQLiteState and project_id for a run.
 fn get_project_state(run_name: &str) -> Result<(SQLiteState, i64), TaskError> {
-    let run_dir = get_run_dir(run_name)?;
-    let db_path = run_dir.join("hirsel.db");
-    let state = SQLiteState::new(db_path).map_err(TaskError::State)?;
+    let _ = get_run_dir(run_name)?; // Verify run exists
+    let state = block_on(SQLiteState::new(run_name)).map_err(TaskError::State)?;
 
-    let project_id = state
-        .get_project_id()
+    let project_id = block_on(state.get_project_id())
         .map_err(TaskError::State)?
         .ok_or(TaskError::NotProjectRun)?;
 
@@ -105,7 +104,7 @@ fn get_node_depth(nodes: &[LiveNode], node_id: &str) -> usize {
 pub fn run_tasks(run_name: &str, json_output: bool) -> Result<String, TaskError> {
     let (_, project_id) = get_project_state(run_name)?;
     let delta_state = DeltaState::new(project_id);
-    let nodes = delta_state.get_live_nodes()?;
+    let nodes = block_on(delta_state.get_live_nodes())?;
 
     if json_output {
         let displays: Vec<TaskDisplay> = nodes
@@ -162,7 +161,7 @@ pub fn run_tasks(run_name: &str, json_output: bool) -> Result<String, TaskError>
 
             let blocked = if !node.blocked_by.is_empty() {
                 // Check if actually blocked
-                if let Ok(true) = delta_state.is_node_blocked(&node.id) {
+                if let Ok(true) = block_on(delta_state.is_node_blocked(&node.id)) {
                     " [blocked]".to_string()
                 } else {
                     String::new()
@@ -222,7 +221,7 @@ pub fn run_task_add(
     // Convert Vec<String> to Vec<&str> for the API
     let blocked_by_refs: Vec<&str> = blocked_by.iter().map(|s| s.as_str()).collect();
 
-    delta_state.create_live_node_from_worker(
+    block_on(delta_state.create_live_node_from_worker(
         task_id,
         description,
         parent,
@@ -233,7 +232,7 @@ pub fn run_task_add(
         },
         NodeType::Task,
         "", // content - empty for CLI-added tasks
-    )?;
+    ))?;
 
     if json_output {
         return serde_json::to_string_pretty(&serde_json::json!({
@@ -258,7 +257,7 @@ pub fn run_task_delete(
     let (_, project_id) = get_project_state(run_name)?;
     let delta_state = DeltaState::new(project_id);
 
-    delta_state.delete_live_node(task_id)?;
+    block_on(delta_state.delete_live_node(task_id))?;
 
     if json_output {
         return serde_json::to_string_pretty(&serde_json::json!({
@@ -284,7 +283,7 @@ pub fn run_task_done(
     let delta_state = DeltaState::new(project_id);
 
     // Get the node first
-    let node = match delta_state.get_live_node(task_id) {
+    let node = match block_on(delta_state.get_live_node(task_id)) {
         Ok(n) => n,
         Err(DeltaStateError::LiveNodeNotFound(_)) => {
             return Err(TaskError::TaskNotFound(task_id.to_string()))
@@ -295,7 +294,7 @@ pub fn run_task_done(
     let claimed_by = node.claimed_by.clone();
 
     // Admin override: directly update status to done
-    delta_state.update_live_node_status(task_id, LiveNodeStatus::Done, None)?;
+    block_on(delta_state.update_live_node_status(task_id, LiveNodeStatus::Done, None))?;
 
     if json_output {
         return serde_json::to_string_pretty(&serde_json::json!({
@@ -327,7 +326,7 @@ pub fn run_task_reopen(
     let delta_state = DeltaState::new(project_id);
 
     // Verify task exists
-    match delta_state.get_live_node(task_id) {
+    match block_on(delta_state.get_live_node(task_id)) {
         Ok(_) => {}
         Err(DeltaStateError::LiveNodeNotFound(_)) => {
             return Err(TaskError::TaskNotFound(task_id.to_string()))
@@ -336,7 +335,7 @@ pub fn run_task_reopen(
     };
 
     // Reopen by setting status back to Pending
-    delta_state.update_live_node_status(task_id, LiveNodeStatus::Pending, None)?;
+    block_on(delta_state.update_live_node_status(task_id, LiveNodeStatus::Pending, None))?;
 
     if json_output {
         return serde_json::to_string_pretty(&serde_json::json!({
@@ -362,7 +361,7 @@ pub fn run_task_unclaim(
     let delta_state = DeltaState::new(project_id);
 
     // Get the node first
-    let node = match delta_state.get_live_node(task_id) {
+    let node = match block_on(delta_state.get_live_node(task_id)) {
         Ok(n) => n,
         Err(DeltaStateError::LiveNodeNotFound(_)) => {
             return Err(TaskError::TaskNotFound(task_id.to_string()))
@@ -373,7 +372,7 @@ pub fn run_task_unclaim(
     let claimed_by = node.claimed_by.clone();
 
     // Unclaim the node
-    delta_state.unclaim_live_node(task_id)?;
+    block_on(delta_state.unclaim_live_node(task_id))?;
 
     if json_output {
         return serde_json::to_string_pretty(&serde_json::json!({

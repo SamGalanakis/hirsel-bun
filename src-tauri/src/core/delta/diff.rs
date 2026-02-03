@@ -25,9 +25,9 @@ impl DiffService {
     }
 
     /// Compute the diff between draft and live trees
-    pub fn compute_diff(&self) -> DeltaStateResult<TreeDiff> {
-        let draft_nodes = self.state.get_draft_nodes()?;
-        let live_nodes = self.state.get_live_nodes()?;
+    pub async fn compute_diff(&self) -> DeltaStateResult<TreeDiff> {
+        let draft_nodes = self.state.get_draft_nodes().await?;
+        let live_nodes = self.state.get_live_nodes().await?;
 
         // Build lookup maps
         let draft_by_id: HashMap<&str, &DraftNode> =

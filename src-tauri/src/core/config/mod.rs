@@ -21,16 +21,29 @@ mod workers;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
+use std::future::Future;
 use std::path::PathBuf;
 use thiserror::Error;
+
+/// Block on an async future in a sync context.
+/// If already running in an async context, uses the current runtime.
+fn block_on<F: Future>(f: F) -> F::Output {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(f)),
+        Err(_) => {
+            // No runtime, create one
+            tokio::runtime::Runtime::new()
+                .expect("Failed to create tokio runtime")
+                .block_on(f)
+        }
+    }
+}
 
 // Re-export all public types
 pub use agent::AgentConfig;
 pub use git::{GitConfig, GitProvider};
 pub use orchestrator::{OrchestratorAccess, OrchestratorMode, OrchestratorProfile};
-pub use paths::{
-    global_db_path, hirsel_dir, list_runs, project_assets_dir, run_dir, run_exists, runs_dir,
-};
+pub use paths::{global_db_path, hirsel_dir, project_assets_dir, run_dir, run_exists, runs_dir};
 pub use storage::{S3Config, StorageBackend, StorageConfig, StorageProvider};
 pub use store::{ConfigStore, ConfigStoreError, PartialConfig};
 pub use types::{get_agent_env_vars, AgentAuth, AgentType, AuthConfig, AuthMethod};
@@ -358,9 +371,9 @@ impl Config {
         }
 
         // 1. Try loading from DB
-        match ConfigStore::open() {
+        match block_on(ConfigStore::open()) {
             Ok(store) => {
-                if let Some(partial) = store.load_config()? {
+                if let Some(partial) = block_on(store.load_config())? {
                     config.merge_from(partial);
                 }
 
@@ -371,7 +384,7 @@ impl Config {
                     warnings.extend(file_warnings);
 
                     // Save file config to DB (one-time migration or update)
-                    if let Err(e) = store.save_config(&config) {
+                    if let Err(e) = block_on(store.save_config(&config)) {
                         warnings.push(format!("Failed to save config to database: {}", e));
                     }
                 }
@@ -582,16 +595,16 @@ impl Config {
         saver::save_config(self, &self.config_file())?;
 
         // Also save to database
-        let store = ConfigStore::open()?;
-        store.save_config(self)?;
+        let store = block_on(ConfigStore::open())?;
+        block_on(store.save_config(self))?;
 
         Ok(())
     }
 
     /// Save the current configuration only to the database (no file write)
     pub fn save_to_db(&self) -> Result<(), ConfigError> {
-        let store = ConfigStore::open()?;
-        store.save_config(self)?;
+        let store = block_on(ConfigStore::open())?;
+        block_on(store.save_config(self))?;
         Ok(())
     }
 

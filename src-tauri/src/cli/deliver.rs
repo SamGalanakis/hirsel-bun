@@ -6,8 +6,9 @@
 //!
 //! Uses the Orchestrator trait to support both local and remote modes.
 
-use crate::cli::helpers::{block_on, get_orchestrator, CliOutput};
-use crate::core::orchestrator::OrchestratorError;
+use crate::cli::helpers::{
+    block_on, get_orchestrator, handle_orchestrator_result_with_data, CliOutput,
+};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -34,35 +35,22 @@ pub fn execute_with_profile(
     let output = CliOutput::new(json);
     let orch = get_orchestrator(profile)?;
 
-    match block_on(orch.deliver_run(run_name, branch.map(|s| s.to_string()))) {
-        Ok(branch_name) => {
-            let data = DeliverData {
-                branch: branch_name.clone(),
-            };
-            output.success_with_data(&format!("Delivered to branch '{}'", branch_name), data);
-            if !json {
-                println!();
-                println!("To cleanup: hirsel delete {}", run_name);
-            }
-            Ok(())
-        }
-        Err(OrchestratorError::RunNotFound(name)) => {
-            output.error_continue(&format!("Run '{}' not found", name));
-            Ok(())
-        }
-        Err(OrchestratorError::InvalidOperation(msg)) => {
-            output.error_continue(&msg);
-            Ok(())
-        }
-        Err(e) => {
-            if json {
-                output.error_continue(&e.to_string());
-                Ok(())
-            } else {
-                Err(e.into())
-            }
-        }
+    let result = handle_orchestrator_result_with_data(
+        block_on(orch.deliver_run(run_name, branch.map(|s| s.to_string()))),
+        &output,
+        json,
+        |branch_name| format!("Delivered to branch '{}'", branch_name),
+        |branch_name| DeliverData {
+            branch: branch_name.clone(),
+        },
+    )?;
+
+    if result.is_some() && !json {
+        println!();
+        println!("To cleanup: hirsel delete {}", run_name);
     }
+
+    Ok(())
 }
 
 #[cfg(test)]

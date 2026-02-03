@@ -2,16 +2,42 @@
 //!
 //! Tracks conflict resolution attempts in the database.
 
-use rusqlite::{params, Connection};
+use sqlx::{Row, SqlitePool};
 use thiserror::Error;
+use tokio::sync::OnceCell;
 
-use crate::core::config::global_db_path;
+use crate::core::db::{global_pool, utc_now};
+
+const SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS conflict_resolutions (
+    id INTEGER PRIMARY KEY,
+    delivery_id INTEGER NOT NULL,
+    file_path TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL,
+    resolved_at TEXT,
+    UNIQUE(delivery_id, file_path)
+);
+CREATE INDEX IF NOT EXISTS idx_conflict_resolutions_delivery ON conflict_resolutions(delivery_id);
+"#;
+
+static SCHEMA_INIT: OnceCell<()> = OnceCell::const_new();
+
+async fn ensure_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    SCHEMA_INIT
+        .get_or_try_init(|| async {
+            sqlx::raw_sql(SCHEMA).execute(pool).await?;
+            Ok::<(), sqlx::Error>(())
+        })
+        .await?;
+    Ok(())
+}
 
 /// Error type for state operations
 #[derive(Error, Debug)]
 pub enum StateError {
     #[error("Database error: {0}")]
-    Database(#[from] rusqlite::Error),
+    Database(#[from] sqlx::Error),
 }
 
 /// Status of a conflict resolution
@@ -65,61 +91,34 @@ impl ConflictResolverState {
         Self { delivery_id }
     }
 
-    /// Open database connection and ensure schema exists
-    fn open_db(&self) -> Result<Connection, StateError> {
-        let db = Connection::open(global_db_path())?;
-        db.busy_timeout(std::time::Duration::from_secs(30))?;
-        db.pragma_update(None, "journal_mode", "WAL")?;
-        self.ensure_schema(&db)?;
-        Ok(db)
-    }
-
-    /// Ensure the conflict_resolutions table exists
-    fn ensure_schema(&self, db: &Connection) -> Result<(), StateError> {
-        db.execute(
-            r#"
-            CREATE TABLE IF NOT EXISTS conflict_resolutions (
-                id INTEGER PRIMARY KEY,
-                delivery_id INTEGER NOT NULL,
-                file_path TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                created_at TEXT NOT NULL,
-                resolved_at TEXT,
-                UNIQUE(delivery_id, file_path)
-            )
-            "#,
-            [],
-        )?;
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_conflict_resolutions_delivery ON conflict_resolutions(delivery_id)",
-            [],
-        )?;
-        Ok(())
-    }
-
-    fn now(&self) -> String {
-        chrono::Utc::now()
-            .format("%Y-%m-%dT%H:%M:%S%.6fZ")
-            .to_string()
+    /// Get the pool and ensure schema
+    async fn pool(&self) -> Result<&'static SqlitePool, StateError> {
+        let pool = global_pool().await;
+        ensure_schema(pool).await?;
+        Ok(pool)
     }
 
     /// Create resolution records for a set of conflicting files
-    pub fn create_resolutions(
+    pub async fn create_resolutions(
         &self,
         files: &[String],
     ) -> Result<Vec<ConflictResolution>, StateError> {
-        let db = self.open_db()?;
-        let now = self.now();
+        let pool = self.pool().await?;
+        let now = utc_now();
         let mut resolutions = Vec::with_capacity(files.len());
 
         for file_path in files {
-            db.execute(
+            let result = sqlx::query(
                 "INSERT OR REPLACE INTO conflict_resolutions (delivery_id, file_path, status, created_at)
-                 VALUES (?1, ?2, 'pending', ?3)",
-                params![self.delivery_id, file_path, &now],
-            )?;
+                 VALUES (?, ?, 'pending', ?)",
+            )
+            .bind(self.delivery_id)
+            .bind(file_path)
+            .bind(&now)
+            .execute(pool)
+            .await?;
 
-            let id = db.last_insert_rowid();
+            let id = result.last_insert_rowid();
             resolutions.push(ConflictResolution {
                 id,
                 delivery_id: self.delivery_id,
@@ -134,41 +133,42 @@ impl ConflictResolverState {
     }
 
     /// Get all resolutions for this delivery
-    pub fn get_resolutions(&self) -> Result<Vec<ConflictResolution>, StateError> {
-        let db = self.open_db()?;
-        let mut stmt = db.prepare(
+    pub async fn get_resolutions(&self) -> Result<Vec<ConflictResolution>, StateError> {
+        let pool = self.pool().await?;
+
+        let rows = sqlx::query(
             "SELECT id, delivery_id, file_path, status, created_at, resolved_at
              FROM conflict_resolutions
-             WHERE delivery_id = ?1
+             WHERE delivery_id = ?
              ORDER BY id",
-        )?;
+        )
+        .bind(self.delivery_id)
+        .fetch_all(pool)
+        .await?;
 
-        let resolutions = stmt
-            .query_map([self.delivery_id], |row| {
-                Ok(ConflictResolution {
-                    id: row.get("id")?,
-                    delivery_id: row.get("delivery_id")?,
-                    file_path: row.get("file_path")?,
-                    status: ConflictResolutionStatus::from_str(
-                        &row.get::<_, String>("status").unwrap_or_default(),
-                    ),
-                    created_at: row.get("created_at")?,
-                    resolved_at: row.get("resolved_at")?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
+        let resolutions = rows
+            .into_iter()
+            .map(|row| ConflictResolution {
+                id: row.get("id"),
+                delivery_id: row.get("delivery_id"),
+                file_path: row.get("file_path"),
+                status: ConflictResolutionStatus::from_str(&row.get::<String, _>("status")),
+                created_at: row.get("created_at"),
+                resolved_at: row.get("resolved_at"),
+            })
+            .collect();
 
         Ok(resolutions)
     }
 
     /// Update resolution status
-    pub fn update_status(
+    pub async fn update_status(
         &self,
         id: i64,
         status: ConflictResolutionStatus,
     ) -> Result<(), StateError> {
-        let db = self.open_db()?;
-        let now = self.now();
+        let pool = self.pool().await?;
+        let now = utc_now();
 
         let resolved_at = if status == ConflictResolutionStatus::Resolved {
             Some(now.clone())
@@ -176,48 +176,56 @@ impl ConflictResolverState {
             None
         };
 
-        db.execute(
-            "UPDATE conflict_resolutions SET status = ?1, resolved_at = ?2 WHERE id = ?3",
-            params![status.as_str(), resolved_at, id],
-        )?;
+        sqlx::query("UPDATE conflict_resolutions SET status = ?, resolved_at = ? WHERE id = ?")
+            .bind(status.as_str())
+            .bind(resolved_at)
+            .bind(id)
+            .execute(pool)
+            .await?;
 
         Ok(())
     }
 
     /// Mark all resolutions as complete
-    pub fn mark_all_resolved(&self) -> Result<(), StateError> {
-        let db = self.open_db()?;
-        let now = self.now();
+    pub async fn mark_all_resolved(&self) -> Result<(), StateError> {
+        let pool = self.pool().await?;
+        let now = utc_now();
 
-        db.execute(
-            "UPDATE conflict_resolutions SET status = 'resolved', resolved_at = ?1 WHERE delivery_id = ?2",
-            params![&now, self.delivery_id],
-        )?;
+        sqlx::query(
+            "UPDATE conflict_resolutions SET status = 'resolved', resolved_at = ? WHERE delivery_id = ?",
+        )
+        .bind(&now)
+        .bind(self.delivery_id)
+        .execute(pool)
+        .await?;
 
         Ok(())
     }
 
     /// Mark all resolutions as failed
-    pub fn mark_all_failed(&self) -> Result<(), StateError> {
-        let db = self.open_db()?;
+    pub async fn mark_all_failed(&self) -> Result<(), StateError> {
+        let pool = self.pool().await?;
 
-        db.execute(
-            "UPDATE conflict_resolutions SET status = 'failed' WHERE delivery_id = ?1 AND status != 'resolved'",
-            params![self.delivery_id],
-        )?;
+        sqlx::query(
+            "UPDATE conflict_resolutions SET status = 'failed' WHERE delivery_id = ? AND status != 'resolved'",
+        )
+        .bind(self.delivery_id)
+        .execute(pool)
+        .await?;
 
         Ok(())
     }
 
     /// Check if all resolutions are complete
-    pub fn all_resolved(&self) -> Result<bool, StateError> {
-        let db = self.open_db()?;
+    pub async fn all_resolved(&self) -> Result<bool, StateError> {
+        let pool = self.pool().await?;
 
-        let count: i64 = db.query_row(
-            "SELECT COUNT(*) FROM conflict_resolutions WHERE delivery_id = ?1 AND status != 'resolved'",
-            [self.delivery_id],
-            |row| row.get(0),
-        )?;
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM conflict_resolutions WHERE delivery_id = ? AND status != 'resolved'",
+        )
+        .bind(self.delivery_id)
+        .fetch_one(pool)
+        .await?;
 
         Ok(count == 0)
     }

@@ -34,14 +34,14 @@ impl From<CloneRunResult> for CloneOutput {
 }
 
 /// Execute the clone command
-pub fn execute(
+pub async fn execute(
     source_run: &str,
     new_name: &str,
     json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = CloneRunConfig::new(source_run, new_name);
 
-    match clone_run(config) {
+    match clone_run(config).await {
         Ok(result) => {
             let output = CloneOutput::from(result);
             if json {

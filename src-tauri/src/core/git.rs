@@ -221,15 +221,24 @@ fn get_authenticated_url(url: &str) -> String {
     }
 
     // Try to load GitHub token from credential store
-    if let Ok(store) = CredentialStore::open() {
-        if let Ok(token) = store.load("git_github_token") {
-            // Embed token in URL: https://TOKEN@github.com/user/repo.git
-            return url.replacen(
-                "https://github.com/",
-                &format!("https://{}@github.com/", token),
-                1,
-            );
-        }
+    // Use a runtime since this function is sync but CredentialStore is now async
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(_) => return url.to_string(),
+    };
+
+    let token = rt.block_on(async {
+        let store = CredentialStore::open().await.ok()?;
+        store.load("git_github_token").await.ok()
+    });
+
+    if let Some(token) = token {
+        // Embed token in URL: https://TOKEN@github.com/user/repo.git
+        return url.replacen(
+            "https://github.com/",
+            &format!("https://{}@github.com/", token),
+            1,
+        );
     }
 
     url.to_string()

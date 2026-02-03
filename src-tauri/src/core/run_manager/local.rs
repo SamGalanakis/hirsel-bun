@@ -39,21 +39,21 @@ impl RunManager for LocalRunManager {
         self.orchestrator
             .list_runs()
             .await
-            .map_err(|e| RunManagerError::Other(e.to_string()))
+            .map_err(RunManagerError::from)
     }
 
     async fn get_run(&self, name: &str) -> RunManagerResult<RunDetail> {
         self.orchestrator
             .get_run(name)
             .await
-            .map_err(|e| RunManagerError::Other(e.to_string()))
+            .map_err(RunManagerError::from)
     }
 
     async fn delete_run(&self, name: &str) -> RunManagerResult<()> {
         self.orchestrator
             .delete_run(name)
             .await
-            .map_err(|e| RunManagerError::Other(e.to_string()))
+            .map_err(RunManagerError::from)
     }
 
     // =========================================================================
@@ -64,7 +64,7 @@ impl RunManager for LocalRunManager {
         self.orchestrator
             .pause_run(name)
             .await
-            .map_err(|e| RunManagerError::Other(e.to_string()))
+            .map_err(RunManagerError::from)
     }
 
     async fn resume_run(
@@ -75,14 +75,14 @@ impl RunManager for LocalRunManager {
         self.orchestrator
             .resume_run(name, time_limit_minutes)
             .await
-            .map_err(|e| RunManagerError::Other(e.to_string()))
+            .map_err(RunManagerError::from)
     }
 
     async fn deliver_run(&self, name: &str, branch: Option<String>) -> RunManagerResult<String> {
         self.orchestrator
             .deliver_run(name, branch)
             .await
-            .map_err(|e| RunManagerError::Other(e.to_string()))
+            .map_err(RunManagerError::from)
     }
 
     // =========================================================================
@@ -93,14 +93,14 @@ impl RunManager for LocalRunManager {
         self.orchestrator
             .list_workers(run)
             .await
-            .map_err(|e| RunManagerError::Other(e.to_string()))
+            .map_err(RunManagerError::from)
     }
 
     async fn restart_worker(&self, run: &str, worker: &str) -> RunManagerResult<()> {
         self.orchestrator
             .restart_worker(run, worker)
             .await
-            .map_err(|e| RunManagerError::Other(e.to_string()))
+            .map_err(RunManagerError::from)
     }
 
     async fn get_worker_events(
@@ -113,7 +113,7 @@ impl RunManager for LocalRunManager {
         self.orchestrator
             .get_worker_events(run, worker, after_id, limit)
             .await
-            .map_err(|e| RunManagerError::Other(e.to_string()))
+            .map_err(RunManagerError::from)
     }
 
     // =========================================================================
@@ -124,14 +124,14 @@ impl RunManager for LocalRunManager {
         self.orchestrator
             .list_threads(run)
             .await
-            .map_err(|e| RunManagerError::Other(e.to_string()))
+            .map_err(RunManagerError::from)
     }
 
     async fn get_messages(&self, run: &str, thread: &str) -> RunManagerResult<Vec<Message>> {
         self.orchestrator
             .get_messages(run, thread)
             .await
-            .map_err(|e| RunManagerError::Other(e.to_string()))
+            .map_err(RunManagerError::from)
     }
 
     async fn send_message(
@@ -143,7 +143,7 @@ impl RunManager for LocalRunManager {
         self.orchestrator
             .send_message(run, thread, content)
             .await
-            .map_err(|e| RunManagerError::Other(e.to_string()))
+            .map_err(RunManagerError::from)
     }
 
     // =========================================================================
@@ -154,7 +154,7 @@ impl RunManager for LocalRunManager {
         self.orchestrator
             .list_evals(run)
             .await
-            .map_err(|e| RunManagerError::Other(e.to_string()))
+            .map_err(RunManagerError::from)
     }
 
     async fn get_history(
@@ -165,7 +165,7 @@ impl RunManager for LocalRunManager {
         self.orchestrator
             .get_history(run, limit)
             .await
-            .map_err(|e| RunManagerError::Other(e.to_string()))
+            .map_err(RunManagerError::from)
     }
 
     // =========================================================================
@@ -182,11 +182,13 @@ impl RunManager for LocalRunManager {
 
         // Create lifecycle manager (it opens the state DB internally)
         let lifecycle = LocalLifecycleManager::new(run.to_string(), run_dir.clone(), agent_cmd)
+            .await
             .map_err(|e| RunManagerError::State(e.to_string()))?;
 
         // Process time check event
         let actions = lifecycle
             .process_event(LifecycleEvent::TimeCheck)
+            .await
             .map_err(|e| RunManagerError::State(e.to_string()))?;
 
         // Execute actions
@@ -205,14 +207,14 @@ impl RunManager for LocalRunManager {
         self.orchestrator
             .get_config()
             .await
-            .map_err(|e| RunManagerError::Other(e.to_string()))
+            .map_err(RunManagerError::from)
     }
 
     async fn health(&self) -> RunManagerResult<HealthResponse> {
         self.orchestrator
             .health()
             .await
-            .map_err(|e| RunManagerError::Other(e.to_string()))
+            .map_err(RunManagerError::from)
     }
 }
 
@@ -239,7 +241,7 @@ impl LocalRunManager {
                 self.orchestrator
                     .spawn_single_worker(run, &worker_name, &work_dir, None)
                     .await
-                    .map_err(|e| RunManagerError::Other(e.to_string()))
+                    .map_err(RunManagerError::from)
             }
 
             LifecycleAction::ResumeWorker {
@@ -262,7 +264,7 @@ impl LocalRunManager {
                         state_handle.as_ref(),
                     )
                     .await
-                    .map_err(|e| RunManagerError::Other(e.to_string()))
+                    .map_err(RunManagerError::from)
             }
 
             LifecycleAction::WorkersPaused(names) => {

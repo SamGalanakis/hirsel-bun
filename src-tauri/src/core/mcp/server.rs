@@ -66,6 +66,7 @@ pub fn run_mcp_server<S: McpToolServer>(server: &mut S) -> io::Result<()> {
 
         let (response, should_exit) = handle_request(server, request);
 
+        // Send response FIRST, before any exit actions
         if let Some(response) = response {
             if let Ok(json) = serde_json::to_string(&response) {
                 let _ = writeln!(stdout, "{}", json);
@@ -76,6 +77,16 @@ pub fn run_mcp_server<S: McpToolServer>(server: &mut S) -> io::Result<()> {
         if should_exit {
             // Give client time to read the response before we exit
             std::thread::sleep(std::time::Duration::from_millis(500));
+
+            // Kill parent process (Claude CLI) AFTER response is sent
+            // This ensures clean termination with the response delivered
+            #[cfg(unix)]
+            {
+                let ppid = unsafe { libc::getppid() };
+                tracing::info!("MCP server exiting, killing parent (pid={})", ppid);
+                unsafe { libc::kill(ppid, libc::SIGTERM) };
+            }
+
             break;
         }
     }

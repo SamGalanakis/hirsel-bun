@@ -4,6 +4,7 @@
 
 use super::types::{UnreadNotification, UnreadNotificationsResponse};
 use crate::core::api_types::{parse_timestamp, Message, ThreadSummary};
+use crate::core::delta::DeltaState;
 use crate::core::orchestrator::create_orchestrator;
 use crate::core::{config, state::SQLiteState};
 
@@ -35,25 +36,28 @@ pub async fn get_threads(run_name: String) -> Result<Vec<ThreadSummary>, String>
 /// This is a single query replacement for the N+1 query pattern
 #[tauri::command]
 pub async fn get_all_unread_notifications() -> Result<UnreadNotificationsResponse, String> {
-    // Get all run directories
-    let run_names = config::list_runs().unwrap_or_default();
+    // Get runs from project_runs table (source of truth)
+    let project_runs = DeltaState::list_all_project_runs()
+        .await
+        .unwrap_or_default();
 
     let mut all_notifications: Vec<UnreadNotification> = Vec::new();
     let mut runs_with_unread = 0;
 
-    for run_name in run_names {
+    for (project_run, _project_name) in project_runs {
+        let run_name = project_run.run_name;
         let db_path = config::run_dir(&run_name).join("hirsel.db");
         if !db_path.exists() {
             continue;
         }
 
-        let state = match SQLiteState::new(db_path) {
+        let state = match SQLiteState::new(&run_name).await {
             Ok(s) => s,
             Err(_) => continue,
         };
 
         // Get all unread messages for the user in this run
-        let unread_messages = match state.get_all_unread_messages("user") {
+        let unread_messages = match state.get_all_unread_messages("user").await {
             Ok(m) => m,
             Err(_) => continue,
         };
@@ -131,11 +135,14 @@ pub async fn mark_messages_read(
         return Err(format!("Run '{}' not found", run_name));
     }
 
-    let state = SQLiteState::new(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
+    let state = SQLiteState::new(&run_name)
+        .await
+        .map_err(|e| format!("Failed to open database: {}", e))?;
 
     // Mark all messages in thread as read by this reader
     state
         .mark_messages_read(&thread_name, &reader, None)
+        .await
         .map_err(|e| format!("Failed to mark messages read: {}", e))?;
 
     Ok(())

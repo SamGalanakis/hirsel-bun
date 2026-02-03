@@ -15,6 +15,7 @@
 //! NOTE: No board.json - structure is in database, accessed via MCP tools.
 
 use std::collections::HashSet;
+use std::future::Future;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -23,6 +24,17 @@ use tracing::{debug, info};
 use super::state::DeltaState;
 use super::types::UpdateDraftNodeRequest;
 use crate::core::config::hirsel_dir;
+
+/// Block on an async future in a sync context.
+/// If already running in an async context, uses the current runtime.
+fn block_on<F: Future>(f: F) -> F::Output {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(f)),
+        Err(_) => tokio::runtime::Runtime::new()
+            .expect("Failed to create tokio runtime")
+            .block_on(f),
+    }
+}
 
 /// Error type for export operations
 #[derive(Debug, thiserror::Error)]
@@ -96,7 +108,7 @@ impl DeltaExporter {
         }
 
         // Get all draft nodes for content export
-        let all_nodes = self.state.get_draft_nodes()?;
+        let all_nodes = block_on(self.state.get_draft_nodes())?;
 
         // Export content files to tasks/ directory
         let mut exported_ids = HashSet::new();
@@ -167,21 +179,19 @@ impl DeltaExporter {
                 if path.extension().map(|e| e == "md").unwrap_or(false) {
                     if let Some(node_id) = path.file_stem().and_then(|s| s.to_str()) {
                         // Try to find matching node in database
-                        if let Ok(existing) = self.state.get_draft_node(node_id) {
+                        if let Ok(existing) = block_on(self.state.get_draft_node(node_id)) {
                             // Read file content
                             if let Ok(file_content) = std::fs::read_to_string(&path) {
                                 // Update if content differs
                                 if existing.content != file_content {
-                                    if self
-                                        .state
-                                        .update_draft_node(
-                                            node_id,
-                                            &UpdateDraftNodeRequest {
-                                                content: Some(file_content),
-                                                ..Default::default()
-                                            },
-                                        )
-                                        .is_ok()
+                                    if block_on(self.state.update_draft_node(
+                                        node_id,
+                                        &UpdateDraftNodeRequest {
+                                            content: Some(file_content),
+                                            ..Default::default()
+                                        },
+                                    ))
+                                    .is_ok()
                                     {
                                         result.nodes_updated.push(node_id.to_string());
                                     }

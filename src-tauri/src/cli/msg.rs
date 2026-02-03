@@ -5,6 +5,7 @@
 //! - Send message to thread: `hirsel msg <run_name> "message"`
 //! - List available threads: `hirsel msg <run_name> --list-threads`
 
+use crate::cli::helpers::block_on;
 use crate::cli::MsgArgs;
 use crate::core::chats::{append_message_to_file, get_thread_names, ChatError, Message};
 use crate::core::names::slugify;
@@ -94,7 +95,7 @@ pub fn run(args: &MsgArgs) -> MsgResult<MsgOutput> {
     }
 
     let files = Files::new(&run_dir);
-    let state = SQLiteState::new(files.db_path())?;
+    let state = block_on(SQLiteState::new(&run_name))?;
 
     // Check chats directory exists
     let chats_dir = files.chats_dir();
@@ -108,7 +109,7 @@ pub fn run(args: &MsgArgs) -> MsgResult<MsgOutput> {
         let threads: Vec<ThreadInfo> = thread_names
             .into_iter()
             .map(|name| {
-                let count = state.get_thread_message_count(&name).unwrap_or(0);
+                let count = block_on(state.get_thread_message_count(&name)).unwrap_or(0);
                 ThreadInfo {
                     name,
                     message_count: count,
@@ -127,7 +128,7 @@ pub fn run(args: &MsgArgs) -> MsgResult<MsgOutput> {
 
     // View messages if no message provided
     if args.message.is_none() {
-        let messages = state.get_messages(&args.thread, 100)?;
+        let messages = block_on(state.get_messages(&args.thread, 100))?;
         let message_views: Vec<MessageView> = messages
             .into_iter()
             .map(|m| MessageView {
@@ -154,7 +155,7 @@ pub fn run(args: &MsgArgs) -> MsgResult<MsgOutput> {
     let message_text = args.message.as_ref().unwrap();
 
     // Write to both SQLite and file
-    state.add_message(&args.thread, "user", message_text, false)?;
+    block_on(state.add_message(&args.thread, "user", message_text, false))?;
 
     let message = Message::new("user", message_text.as_str());
     append_message_to_file(&chat_path, &message)?;
@@ -170,20 +171,20 @@ pub fn run(args: &MsgArgs) -> MsgResult<MsgOutput> {
 
 /// Resume workers that are waiting on a thread
 fn resume_waiting_workers(state: &SQLiteState, thread: &str) -> MsgResult<Vec<String>> {
-    let workers = state.get_workers()?;
+    let workers = block_on(state.get_workers())?;
     let mut resumed = Vec::new();
 
     for worker in workers {
         if worker.hitl_waiting && worker.waiting_thread.as_deref() == Some(thread) {
             // Clear waiting thread and hitl_waiting flag
-            state.update_worker(
+            block_on(state.update_worker(
                 &worker.name,
                 WorkerUpdate {
                     waiting_thread: Some(String::new()), // Clear waiting thread
                     hitl_waiting: Some(false),
                     ..Default::default()
                 },
-            )?;
+            ))?;
             resumed.push(worker.name.clone());
 
             // Note: Actual worker resumption (spawning ACP client) would happen here

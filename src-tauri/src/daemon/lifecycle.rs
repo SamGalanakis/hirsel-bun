@@ -66,7 +66,7 @@ pub async fn run_polling_loop(state: Arc<AppState>, config: DaemonConfig) {
         }
 
         // Process working project runs (delta dispatch system)
-        if let Ok(project_runs) = list_working_project_runs() {
+        if let Ok(project_runs) = list_working_project_runs().await {
             for (project_id, run_name) in project_runs {
                 has_active_runs = true;
                 last_active = Instant::now();
@@ -135,7 +135,7 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
 
     // Create lifecycle manager
     let lifecycle =
-        match LocalLifecycleManager::new(run_name, run_dir.clone(), agent_command.clone()) {
+        match LocalLifecycleManager::new(run_name, run_dir.clone(), agent_command.clone()).await {
             Ok(lm) => lm,
             Err(e) => {
                 tracing::warn!(
@@ -148,16 +148,61 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
         };
 
     // Check run status
-    let status = lifecycle.run_status().unwrap_or(Status::Draft);
+    let status = match lifecycle.run_status().await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(
+                "[Daemon] Failed to get run status for '{}': {} - assuming Draft",
+                run_name,
+                e
+            );
+            Status::Draft
+        }
+    };
 
     match status {
         Status::Working => {
+            // Check for crashed workers (PID dead but status=Working)
+            // This catches workers killed by OOM, SIGKILL, or other unexpected exits
+            if let Ok(workers) = lifecycle.state().get_workers().await {
+                for worker in workers {
+                    if worker.status == crate::core::state::WorkerStatus::Working {
+                        if let Some(pid) = worker.pid {
+                            if !crate::core::runner::local::LocalRunner::is_pid_alive(pid as u32) {
+                                tracing::warn!(
+                                    "[Daemon] Worker '{}' crashed (pid {} dead), marking as Error",
+                                    worker.name,
+                                    pid
+                                );
+                                let _ = lifecycle
+                                    .state()
+                                    .update_worker(
+                                        &worker.name,
+                                        crate::core::state::WorkerUpdate {
+                                            status: Some(crate::core::state::WorkerStatus::Error),
+                                            assigned_task_id: Some(None), // Clear assigned task
+                                            ..Default::default()
+                                        },
+                                    )
+                                    .await;
+                                // Request scaling check so the daemon can respawn or reassign
+                                let _ = lifecycle.state().request_scaling_check().await;
+                            }
+                        }
+                    }
+                }
+            }
+
             // Check if event-driven scaling was requested
-            let scaling_requested = lifecycle.state().consume_scaling_check().unwrap_or(false);
+            let scaling_requested = lifecycle
+                .state()
+                .consume_scaling_check()
+                .await
+                .unwrap_or(false);
 
             if scaling_requested {
                 // Event-driven scaling evaluation
-                match lifecycle.evaluate_scaling() {
+                match lifecycle.evaluate_scaling().await {
                     Ok(actions) => {
                         if !actions.is_empty() {
                             tracing::info!(
@@ -179,7 +224,7 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
             }
 
             // Process TimeCheck event - handles time limit, eval triggering
-            match lifecycle.process_event(LifecycleEvent::TimeCheck) {
+            match lifecycle.process_event(LifecycleEvent::TimeCheck).await {
                 Ok(actions) => {
                     for action in &actions {
                         tracing::debug!("[Daemon] Run '{}' action: {:?}", run_name, action);
@@ -198,14 +243,14 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
             }
 
             // Process scribe batches for documentation updates
-            if let Err(e) = maybe_process_scribe(run_name, &files) {
+            if let Err(e) = maybe_process_scribe(run_name, &files).await {
                 tracing::debug!("[Daemon] Scribe processing for '{}': {}", run_name, e);
             }
         }
         Status::Eval => {
             // Check time limit even during eval
-            if lifecycle.state().is_time_expired()? {
-                if let Err(e) = lifecycle.handle_time_expired() {
+            if lifecycle.state().is_time_expired().await? {
+                if let Err(e) = lifecycle.handle_time_expired().await {
                     tracing::warn!(
                         "[Daemon] Failed to handle time expired for '{}': {}",
                         run_name,
@@ -215,18 +260,22 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
             }
 
             // Check if eval process crashed (PID no longer alive)
-            if let Ok(Some(eval)) = lifecycle.state().get_running_eval() {
+            if let Ok(Some(eval)) = lifecycle.state().get_running_eval().await {
                 if let Some(pid) = eval.pid {
                     if !crate::core::runner::local::LocalRunner::is_pid_alive(pid) {
                         tracing::warn!(
                             "[Daemon] Eval process (pid={}) for run '{}' is no longer alive - marking as failed",
                             pid, run_name
                         );
-                        if let Err(e) = lifecycle.state().complete_eval(
-                            eval.id,
-                            false,
-                            "Eval process crashed or exited unexpectedly",
-                        ) {
+                        if let Err(e) = lifecycle
+                            .state()
+                            .complete_eval(
+                                eval.id,
+                                false,
+                                "Eval process crashed or exited unexpectedly",
+                            )
+                            .await
+                        {
                             tracing::error!(
                                 "[Daemon] Failed to mark crashed eval as failed for '{}': {}",
                                 run_name,
@@ -238,15 +287,16 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
                         let agent_command = crate::cli::config::get_agent_command();
                         if let Ok(lm) =
                             LocalLifecycleManager::new(run_name, run_dir.clone(), agent_command)
+                                .await
                         {
                             // Set back to Working so maybe_trigger_eval can fire
-                            if let Err(e) = lm.state().set_status(Status::Working) {
+                            if let Err(e) = lm.state().set_status(Status::Working).await {
                                 tracing::error!(
                                     "[Daemon] Failed to reset status for eval re-trigger on '{}': {}",
                                     run_name, e
                                 );
                             }
-                            match lm.process_event(LifecycleEvent::TimeCheck) {
+                            match lm.process_event(LifecycleEvent::TimeCheck).await {
                                 Ok(actions) => {
                                     handle_lifecycle_actions(run_name, &run_dir, actions).await;
                                 }
@@ -272,7 +322,7 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
 /// Check and process scribe batches if the batch window has expired.
 ///
 /// Uses ScribeService which handles local vs remote execution internally.
-fn maybe_process_scribe(run_name: &str, files: &Files) -> anyhow::Result<()> {
+async fn maybe_process_scribe(run_name: &str, _files: &Files) -> anyhow::Result<()> {
     let config = Config::load().map(|(c, _)| c).unwrap_or_else(|e| {
         tracing::warn!(
             "[Daemon] Failed to load config for scribe, using defaults: {}",
@@ -287,8 +337,8 @@ fn maybe_process_scribe(run_name: &str, files: &Files) -> anyhow::Result<()> {
 
     // Check if we should process
     let should_process = {
-        let state = SQLiteState::new(files.db_path())?;
-        scribe::should_process_batch(&state, &config)
+        let state = SQLiteState::new(run_name).await?;
+        scribe::should_process_batch(&state, &config).await
     };
 
     if should_process {
@@ -328,14 +378,19 @@ async fn handle_lifecycle_actions(
     run_dir: &std::path::Path,
     actions: Vec<LifecycleAction>,
 ) {
+    if actions.is_empty() {
+        return;
+    }
+
     // Create orchestrator for spawning
     let orchestrator = match create_local_orchestrator() {
         Ok(o) => o,
         Err(e) => {
-            tracing::warn!(
-                "[Daemon] Failed to create orchestrator for '{}': {}",
+            tracing::error!(
+                "[Daemon] Failed to create orchestrator for '{}': {} - dropping {} lifecycle actions",
                 run_name,
-                e
+                e,
+                actions.len()
             );
             return;
         }
@@ -428,7 +483,7 @@ async fn handle_lifecycle_actions(
 
             LifecycleAction::WorkersResumed(workers) => {
                 // Workers to resume - spawn each one via orchestrator
-                let state = match SQLiteState::new(run_dir.join("hirsel.db")) {
+                let state = match SQLiteState::new(run_name).await {
                     Ok(s) => s,
                     Err(e) => {
                         tracing::warn!("[Daemon] Failed to open state for '{}': {}", run_name, e);
@@ -438,7 +493,7 @@ async fn handle_lifecycle_actions(
 
                 for worker_name in workers {
                     // Get worker info for work_dir and session_id
-                    let worker = match state.get_worker(&worker_name) {
+                    let worker = match state.get_worker(&worker_name).await {
                         Ok(Some(w)) => w,
                         Ok(None) => {
                             tracing::warn!(
@@ -515,7 +570,7 @@ async fn handle_lifecycle_actions(
 /// that need AI-assisted conflict resolution.
 async fn process_resolving_deliveries() -> anyhow::Result<()> {
     // Get all deliveries in resolving_conflicts status
-    let deliveries = DeltaState::list_resolving_deliveries()?;
+    let deliveries = DeltaState::list_resolving_deliveries().await?;
 
     if deliveries.is_empty() {
         return Ok(());
@@ -553,7 +608,8 @@ async fn process_single_delivery(
 
     // Get the project run to find the work directory
     let project_run = state
-        .get_project_run()?
+        .get_project_run()
+        .await?
         .ok_or_else(|| anyhow::anyhow!("No project run found"))?;
 
     let run_path = config::run_dir(&project_run.run_name);
@@ -582,7 +638,9 @@ async fn process_single_delivery(
             "[Daemon] Delivery {} marked as resolving but no conflicts found",
             delivery.id
         );
-        state.update_delivery_status(delivery.id, BoardDeliveryStatus::InProgress)?;
+        state
+            .update_delivery_status(delivery.id, BoardDeliveryStatus::InProgress)
+            .await?;
         return Ok(());
     }
 
@@ -612,7 +670,9 @@ async fn process_single_delivery(
                     "[Daemon] Conflict markers still present after resolution: {}",
                     e
                 );
-                state.fail_delivery(delivery.id, "Conflict markers remain after AI resolution")?;
+                state
+                    .fail_delivery(delivery.id, "Conflict markers remain after AI resolution")
+                    .await?;
                 return Ok(());
             }
 
@@ -627,7 +687,9 @@ async fn process_single_delivery(
                         delivery.id,
                         sha
                     );
-                    state.update_delivery_status(delivery.id, BoardDeliveryStatus::InProgress)?;
+                    state
+                        .update_delivery_status(delivery.id, BoardDeliveryStatus::InProgress)
+                        .await?;
                 }
                 Err(e) => {
                     tracing::error!(
@@ -635,7 +697,9 @@ async fn process_single_delivery(
                         delivery.id,
                         e
                     );
-                    state.fail_delivery(delivery.id, &format!("Merge failed: {}", e))?;
+                    state
+                        .fail_delivery(delivery.id, &format!("Merge failed: {}", e))
+                        .await?;
                 }
             }
         }
@@ -645,7 +709,9 @@ async fn process_single_delivery(
                 "[Daemon] Conflict resolution failed for delivery {}",
                 delivery.id
             );
-            state.fail_delivery(delivery.id, "AI conflict resolution failed")?;
+            state
+                .fail_delivery(delivery.id, "AI conflict resolution failed")
+                .await?;
 
             // Abort the merge
             let _ = delivery_service.abort_merge();
@@ -656,7 +722,9 @@ async fn process_single_delivery(
                 delivery.id,
                 e
             );
-            state.fail_delivery(delivery.id, &format!("Resolver error: {}", e))?;
+            state
+                .fail_delivery(delivery.id, &format!("Resolver error: {}", e))
+                .await?;
 
             // Abort the merge
             let _ = delivery_service.abort_merge();

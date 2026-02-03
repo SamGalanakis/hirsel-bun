@@ -24,6 +24,13 @@ export default defineConfig({
   build: {
     outDir: '../dist',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'elk-layout': ['elkjs'],
+        },
+      },
+    },
   },
   server: {
     port: 1420,

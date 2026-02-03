@@ -3,10 +3,11 @@
 //! Methods for managing run-level state: status, request, project info, time tracking, etc.
 
 use chrono::{DateTime, Local};
-use rusqlite::params;
+use sqlx::Row;
 
 use super::types::{FailureReason, StateError, StateResult, Status, TimeInfo};
 use super::SQLiteState;
+use crate::core::db::utc_now;
 
 impl SQLiteState {
     // =========================================================================
@@ -14,15 +15,16 @@ impl SQLiteState {
     // =========================================================================
 
     /// Get the current run status
-    pub fn status(&self) -> StateResult<Status> {
-        let status: String = self
-            .db
-            .query_row("SELECT status FROM state WHERE id = 1", [], |row| {
-                row.get(0)
-            })
-            .unwrap_or_else(|_| "draft".to_string());
+    pub async fn status(&self) -> StateResult<Status> {
+        let pool = self.pool().await;
+        let status: Option<String> = sqlx::query_scalar("SELECT status FROM state WHERE id = 1")
+            .fetch_optional(&pool)
+            .await?;
 
-        Ok(Status::from_str(&status).unwrap_or(Status::Draft))
+        Ok(
+            Status::from_str(&status.unwrap_or_else(|| "draft".to_string()))
+                .unwrap_or(Status::Draft),
+        )
     }
 
     /// Check if a status transition is valid
@@ -59,8 +61,8 @@ impl SQLiteState {
     ///
     /// Set `validate` to true to enforce valid state transitions.
     /// When transitioning away from Failed, the failure_reason is cleared.
-    pub fn set_status_validated(&self, status: Status, validate: bool) -> StateResult<()> {
-        let old_status = self.status()?;
+    pub async fn set_status_validated(&self, status: Status, validate: bool) -> StateResult<()> {
+        let old_status = self.status().await?;
         if old_status == status {
             return Ok(()); // No change
         }
@@ -70,305 +72,305 @@ impl SQLiteState {
             return Err(StateError::InvalidTransition(old_status, status));
         }
 
-        let now = self.now();
-        self.db.execute(
+        let pool = self.pool().await;
+        let now = utc_now();
+        sqlx::query(
             r#"
             INSERT INTO state (id, status, created_at, updated_at)
-            VALUES (1, ?1, ?2, ?2)
-            ON CONFLICT(id) DO UPDATE SET status = ?1, updated_at = ?2
+            VALUES (1, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET status = excluded.status, updated_at = excluded.updated_at
             "#,
-            params![status.as_str(), now],
-        )?;
+        )
+        .bind(status.as_str())
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await?;
 
         // Clear failure_reason when transitioning away from Failed
         if old_status == Status::Failed && status != Status::Failed {
-            self.set_failure_reason(None)?;
+            self.set_failure_reason(None).await?;
         }
 
-        self.log_history("status_change", Some(&format!("run {}", status)))?;
+        self.log_history("status_change", Some(&format!("run {}", status)))
+            .await?;
         Ok(())
     }
 
     /// Set the run status (no validation for backward compatibility)
-    pub fn set_status(&self, status: Status) -> StateResult<()> {
-        self.set_status_validated(status, false)
+    pub async fn set_status(&self, status: Status) -> StateResult<()> {
+        self.set_status_validated(status, false).await
     }
 
     /// Initialize the state for a new run
-    pub fn init_state(&self, project_path: Option<&str>) -> StateResult<()> {
-        let now = self.now();
-        self.db.execute(
+    pub async fn init_state(&self, project_path: Option<&str>) -> StateResult<()> {
+        let pool = self.pool().await;
+        let now = utc_now();
+        sqlx::query(
             r#"
             INSERT OR REPLACE INTO state (id, status, created_at, updated_at, project_path)
-            VALUES (1, ?1, ?2, ?2, ?3)
+            VALUES (1, ?, ?, ?, ?)
             "#,
-            params![Status::Draft.as_str(), now, project_path],
-        )?;
-        self.log_history("init", None)?;
+        )
+        .bind(Status::Draft.as_str())
+        .bind(&now)
+        .bind(&now)
+        .bind(project_path)
+        .execute(&pool)
+        .await?;
+        self.log_history("init", None).await?;
         Ok(())
     }
 
     /// Get the request text
-    pub fn get_request(&self) -> StateResult<Option<String>> {
-        match self
-            .db
-            .query_row("SELECT request FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_request(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT request FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set the request text
-    pub fn set_request(&self, request: Option<&str>) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET request = ?1, updated_at = ?2 WHERE id = 1",
-            params![request, self.now()],
-        )?;
+    pub async fn set_request(&self, request: Option<&str>) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET request = ?, updated_at = ? WHERE id = 1")
+            .bind(request)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get the waiting reason
-    pub fn get_waiting_reason(&self) -> StateResult<Option<String>> {
-        match self
-            .db
-            .query_row("SELECT waiting_reason FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_waiting_reason(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT waiting_reason FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set the waiting reason
-    pub fn set_waiting_reason(&self, reason: Option<&str>) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET waiting_reason = ?1, updated_at = ?2 WHERE id = 1",
-            params![reason, self.now()],
-        )?;
+    pub async fn set_waiting_reason(&self, reason: Option<&str>) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET waiting_reason = ?, updated_at = ? WHERE id = 1")
+            .bind(reason)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get project path
-    pub fn get_project_path(&self) -> StateResult<Option<String>> {
-        match self
-            .db
-            .query_row("SELECT project_path FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_project_path(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT project_path FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set project path
-    pub fn set_project_path(&self, path: &str) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET project_path = ?1, updated_at = ?2 WHERE id = 1",
-            params![path, self.now()],
-        )?;
+    pub async fn set_project_path(&self, path: &str) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET project_path = ?, updated_at = ? WHERE id = 1")
+            .bind(path)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Clear project path (set to NULL)
-    pub fn clear_project_path(&self) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET project_path = NULL, updated_at = ?1 WHERE id = 1",
-            params![self.now()],
-        )?;
+    pub async fn clear_project_path(&self) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET project_path = NULL, updated_at = ? WHERE id = 1")
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get remote URL (for remote git repos)
-    pub fn get_remote_url(&self) -> StateResult<Option<String>> {
-        match self
-            .db
-            .query_row("SELECT remote_url FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_remote_url(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT remote_url FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set remote URL (for remote git repos)
-    pub fn set_remote_url(&self, url: Option<&str>) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET remote_url = ?1, updated_at = ?2 WHERE id = 1",
-            params![url, self.now()],
-        )?;
+    pub async fn set_remote_url(&self, url: Option<&str>) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET remote_url = ?, updated_at = ? WHERE id = 1")
+            .bind(url)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get branch (source branch for the run)
-    pub fn get_branch(&self) -> StateResult<Option<String>> {
-        match self
-            .db
-            .query_row("SELECT branch FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_branch(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT branch FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set branch (source branch for the run)
-    pub fn set_branch(&self, branch: Option<&str>) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET branch = ?1, updated_at = ?2 WHERE id = 1",
-            params![branch, self.now()],
-        )?;
+    pub async fn set_branch(&self, branch: Option<&str>) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET branch = ?, updated_at = ? WHERE id = 1")
+            .bind(branch)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get project ID
-    pub fn get_project_id(&self) -> StateResult<Option<i64>> {
-        match self
-            .db
-            .query_row("SELECT project_id FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<i64>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_project_id(&self) -> StateResult<Option<i64>> {
+        let pool = self.pool().await;
+        let result: Option<Option<i64>> =
+            sqlx::query_scalar("SELECT project_id FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set project ID
-    pub fn set_project_id(&self, project_id: i64) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET project_id = ?1, updated_at = ?2 WHERE id = 1",
-            params![project_id, self.now()],
-        )?;
+    pub async fn set_project_id(&self, project_id: i64) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET project_id = ?, updated_at = ? WHERE id = 1")
+            .bind(project_id)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get project name
-    pub fn get_project_name(&self) -> StateResult<Option<String>> {
-        match self
-            .db
-            .query_row("SELECT project_name FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_project_name(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT project_name FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set project name
-    pub fn set_project_name(&self, project_name: &str) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET project_name = ?1, updated_at = ?2 WHERE id = 1",
-            params![project_name, self.now()],
-        )?;
+    pub async fn set_project_name(&self, project_name: &str) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET project_name = ?, updated_at = ? WHERE id = 1")
+            .bind(project_name)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get created_at timestamp
-    pub fn get_created_at(&self) -> StateResult<Option<String>> {
-        match self
-            .db
-            .query_row("SELECT created_at FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_created_at(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT created_at FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Get updated_at timestamp
-    pub fn get_updated_at(&self) -> StateResult<Option<String>> {
-        match self
-            .db
-            .query_row("SELECT updated_at FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_updated_at(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT updated_at FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Get summary
-    pub fn get_summary(&self) -> StateResult<Option<String>> {
-        match self
-            .db
-            .query_row("SELECT summary FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_summary(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT summary FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set summary
-    pub fn set_summary(&self, summary: &str) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET summary = ?1, updated_at = ?2 WHERE id = 1",
-            params![summary, self.now()],
-        )?;
-        self.log_history("summary_generated", None)?;
+    pub async fn set_summary(&self, summary: &str) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET summary = ?, updated_at = ? WHERE id = 1")
+            .bind(summary)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
+        self.log_history("summary_generated", None).await?;
         Ok(())
     }
 
     /// Get worker scale
-    pub fn get_worker_scale(&self) -> StateResult<Option<String>> {
-        match self
-            .db
-            .query_row("SELECT worker_scale FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_worker_scale(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT worker_scale FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set worker scale
-    pub fn set_worker_scale(&self, scale: &str) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET worker_scale = ?1, updated_at = ?2 WHERE id = 1",
-            params![scale, self.now()],
-        )?;
+    pub async fn set_worker_scale(&self, scale: &str) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET worker_scale = ?, updated_at = ? WHERE id = 1")
+            .bind(scale)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get human in the loop setting
-    pub fn get_human_in_the_loop(&self) -> StateResult<bool> {
-        match self.db.query_row(
-            "SELECT human_in_the_loop FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<i64>>(0),
-        ) {
-            Ok(Some(val)) => Ok(val != 0),
-            Ok(None) => Ok(true), // Default to HITL
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(true),
-            Err(e) => Err(StateError::Sqlite(e)),
+    pub async fn get_human_in_the_loop(&self) -> StateResult<bool> {
+        let pool = self.pool().await;
+        let result: Option<Option<i64>> =
+            sqlx::query_scalar("SELECT human_in_the_loop FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        match result.flatten() {
+            Some(val) => Ok(val != 0),
+            None => Ok(true), // Default to HITL
         }
     }
 
     /// Set human in the loop
-    pub fn set_human_in_the_loop(&self, enabled: bool) -> StateResult<()> {
+    pub async fn set_human_in_the_loop(&self, enabled: bool) -> StateResult<()> {
         // Check if value is actually changing
-        let current = self.get_human_in_the_loop()?;
+        let current = self.get_human_in_the_loop().await?;
         if current == enabled {
             return Ok(()); // No change, skip logging and notification
         }
 
-        self.db.execute(
-            "UPDATE state SET human_in_the_loop = ?1, updated_at = ?2 WHERE id = 1",
-            params![if enabled { 1 } else { 0 }, self.now()],
-        )?;
-        self.log_history("mode_change", Some(if enabled { "hitl" } else { "yolo" }))?;
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET human_in_the_loop = ?, updated_at = ? WHERE id = 1")
+            .bind(if enabled { 1i64 } else { 0i64 })
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
+        self.log_history("mode_change", Some(if enabled { "hitl" } else { "yolo" }))
+            .await?;
 
         // Notify workers via group chat
         let msg = if enabled {
@@ -376,7 +378,7 @@ impl SQLiteState {
         } else {
             "The user is currently unavailable for messages. Do not attempt to contact them - do the work to the best of your abilities."
         };
-        self.add_message("group", "System", msg, false)?;
+        self.add_message("group", "System", msg, false).await?;
         Ok(())
     }
 
@@ -385,96 +387,95 @@ impl SQLiteState {
     // =========================================================================
 
     /// Get time limit in minutes
-    pub fn get_time_limit_minutes(&self) -> StateResult<Option<i64>> {
-        match self.db.query_row(
-            "SELECT time_limit_minutes FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<i64>>(0),
-        ) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_time_limit_minutes(&self) -> StateResult<Option<i64>> {
+        let pool = self.pool().await;
+        let result: Option<Option<i64>> =
+            sqlx::query_scalar("SELECT time_limit_minutes FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set time limit in minutes
-    pub fn set_time_limit_minutes(&self, minutes: Option<i64>) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET time_limit_minutes = ?1, updated_at = ?2 WHERE id = 1",
-            params![minutes, self.now()],
-        )?;
+    pub async fn set_time_limit_minutes(&self, minutes: Option<i64>) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET time_limit_minutes = ?, updated_at = ? WHERE id = 1")
+            .bind(minutes)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get started_at timestamp
-    pub fn get_started_at(&self) -> StateResult<Option<String>> {
-        match self
-            .db
-            .query_row("SELECT started_at FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_started_at(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT started_at FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set started_at timestamp
-    pub fn set_started_at(&self, timestamp: Option<&str>) -> StateResult<()> {
-        let ts = timestamp
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| self.now());
-        self.db.execute(
-            "UPDATE state SET started_at = ?1, updated_at = ?2 WHERE id = 1",
-            params![ts, self.now()],
-        )?;
+    pub async fn set_started_at(&self, timestamp: Option<&str>) -> StateResult<()> {
+        let pool = self.pool().await;
+        let ts = timestamp.map(|s| s.to_string()).unwrap_or_else(utc_now);
+        sqlx::query("UPDATE state SET started_at = ?, updated_at = ? WHERE id = 1")
+            .bind(&ts)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Clear time tracking
-    pub fn clear_time_tracking(&self) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET started_at = NULL, last_time_notification_pct = NULL, updated_at = ?1 WHERE id = 1",
-            params![self.now()],
-        )?;
+    pub async fn clear_time_tracking(&self) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET started_at = NULL, last_time_notification_pct = NULL, updated_at = ? WHERE id = 1")
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get last time notification percentage
-    pub fn get_last_time_notification_pct(&self) -> StateResult<Option<i64>> {
-        match self.db.query_row(
-            "SELECT last_time_notification_pct FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<i64>>(0),
-        ) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_last_time_notification_pct(&self) -> StateResult<Option<i64>> {
+        let pool = self.pool().await;
+        let result: Option<Option<i64>> =
+            sqlx::query_scalar("SELECT last_time_notification_pct FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set last time notification percentage
-    pub fn set_last_time_notification_pct(&self, pct: i64) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET last_time_notification_pct = ?1, updated_at = ?2 WHERE id = 1",
-            params![pct, self.now()],
-        )?;
+    pub async fn set_last_time_notification_pct(&self, pct: i64) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET last_time_notification_pct = ?, updated_at = ? WHERE id = 1")
+            .bind(pct)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get time info
-    pub fn get_time_info(&self) -> StateResult<Option<TimeInfo>> {
-        let row: Option<(Option<i64>, Option<String>)> = self
-            .db
-            .query_row(
-                "SELECT time_limit_minutes, started_at FROM state WHERE id = 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .ok();
+    pub async fn get_time_info(&self) -> StateResult<Option<TimeInfo>> {
+        let pool = self.pool().await;
+        let row = sqlx::query("SELECT time_limit_minutes, started_at FROM state WHERE id = 1")
+            .fetch_optional(&pool)
+            .await?;
 
-        match row {
-            Some((Some(limit_minutes), Some(started_at_str))) => {
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let limit_minutes: Option<i64> = row.get("time_limit_minutes");
+        let started_at_str: Option<String> = row.get("started_at");
+
+        match (limit_minutes, started_at_str) {
+            (Some(limit_minutes), Some(started_at_str)) => {
                 let started_at = DateTime::parse_from_rfc3339(&started_at_str)
                     .or_else(|_| DateTime::parse_from_str(&started_at_str, "%Y-%m-%dT%H:%M:%S%.f"))
                     .map(|dt| dt.with_timezone(&Local))
@@ -503,8 +504,8 @@ impl SQLiteState {
     }
 
     /// Check if time has expired
-    pub fn is_time_expired(&self) -> StateResult<bool> {
-        match self.get_time_info()? {
+    pub async fn is_time_expired(&self) -> StateResult<bool> {
+        match self.get_time_info().await? {
             Some(info) => Ok(info.remaining_minutes <= 0.0),
             None => Ok(false),
         }
@@ -515,26 +516,23 @@ impl SQLiteState {
     // =========================================================================
 
     /// Get iteration count
-    pub fn get_iteration_count(&self) -> StateResult<i64> {
-        match self.db.query_row(
-            "SELECT iteration_count FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<i64>>(0),
-        ) {
-            Ok(Some(val)) => Ok(val),
-            Ok(None) => Ok(0),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_iteration_count(&self) -> StateResult<i64> {
+        let pool = self.pool().await;
+        let result: Option<Option<i64>> =
+            sqlx::query_scalar("SELECT iteration_count FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten().unwrap_or(0))
     }
 
     /// Increment iteration count
-    pub fn increment_iteration(&self) -> StateResult<i64> {
-        self.db.execute(
-            "UPDATE state SET iteration_count = COALESCE(iteration_count, 0) + 1, updated_at = ?1 WHERE id = 1",
-            params![self.now()],
-        )?;
-        self.get_iteration_count()
+    pub async fn increment_iteration(&self) -> StateResult<i64> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET iteration_count = COALESCE(iteration_count, 0) + 1, updated_at = ? WHERE id = 1")
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
+        self.get_iteration_count().await
     }
 
     // =========================================================================
@@ -542,75 +540,72 @@ impl SQLiteState {
     // =========================================================================
 
     /// Get the failure reason (only meaningful when status is Failed)
-    pub fn get_failure_reason(&self) -> StateResult<Option<FailureReason>> {
-        match self
-            .db
-            .query_row("SELECT failure_reason FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(Some(val)) => Ok(FailureReason::from_str(&val)),
-            Ok(None) => Ok(None),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_failure_reason(&self) -> StateResult<Option<FailureReason>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT failure_reason FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten().and_then(|s| FailureReason::from_str(&s)))
     }
 
     /// Set the failure reason
-    pub fn set_failure_reason(&self, reason: Option<FailureReason>) -> StateResult<()> {
+    pub async fn set_failure_reason(&self, reason: Option<FailureReason>) -> StateResult<()> {
+        let pool = self.pool().await;
         let reason_str = reason.map(|r| r.as_str().to_string());
-        self.db.execute(
-            "UPDATE state SET failure_reason = ?1, updated_at = ?2 WHERE id = 1",
-            params![reason_str, self.now()],
-        )?;
+        sqlx::query("UPDATE state SET failure_reason = ?, updated_at = ? WHERE id = 1")
+            .bind(reason_str)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Set status to Failed with a reason
-    pub fn set_failed(&self, reason: FailureReason) -> StateResult<()> {
-        self.set_failure_reason(Some(reason))?;
-        self.set_status(Status::Failed)?;
+    pub async fn set_failed(&self, reason: FailureReason) -> StateResult<()> {
+        self.set_failure_reason(Some(reason)).await?;
+        self.set_status(Status::Failed).await?;
         Ok(())
     }
 
     /// Get pause mode ("sender" or "all")
-    pub fn get_pause_mode(&self) -> StateResult<String> {
-        match self
-            .db
-            .query_row("SELECT pause_mode FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(Some(val)) => Ok(val),
-            Ok(None) => Ok("sender".to_string()),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok("sender".to_string()),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_pause_mode(&self) -> StateResult<String> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT pause_mode FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten().unwrap_or_else(|| "sender".to_string()))
     }
 
     /// Set pause mode ("sender" or "all")
-    pub fn set_pause_mode(&self, mode: &str) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET pause_mode = ?1, updated_at = ?2 WHERE id = 1",
-            params![mode, self.now()],
-        )?;
+    pub async fn set_pause_mode(&self, mode: &str) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET pause_mode = ?, updated_at = ? WHERE id = 1")
+            .bind(mode)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Check if this is a test run (auto-cleanup after eval)
-    pub fn is_test_run(&self) -> StateResult<bool> {
-        let result: i64 = self.db.query_row(
-            "SELECT COALESCE(is_test, 0) FROM state WHERE id = 1",
-            [],
-            |row| row.get(0),
-        )?;
+    pub async fn is_test_run(&self) -> StateResult<bool> {
+        let pool = self.pool().await;
+        let result: i64 = sqlx::query_scalar("SELECT COALESCE(is_test, 0) FROM state WHERE id = 1")
+            .fetch_one(&pool)
+            .await?;
         Ok(result != 0)
     }
 
     /// Mark this run as a test run (will auto-cleanup after eval)
-    pub fn set_is_test(&self, is_test: bool) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET is_test = ?1, updated_at = ?2 WHERE id = 1",
-            params![if is_test { 1 } else { 0 }, self.now()],
-        )?;
+    pub async fn set_is_test(&self, is_test: bool) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET is_test = ?, updated_at = ? WHERE id = 1")
+            .bind(if is_test { 1i64 } else { 0i64 })
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
@@ -619,70 +614,70 @@ impl SQLiteState {
     // =========================================================================
 
     /// Get the default runner for this run
-    pub fn get_default_runner(&self) -> StateResult<Option<String>> {
-        match self
-            .db
-            .query_row("SELECT default_runner FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_default_runner(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT default_runner FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set the default runner for this run
-    pub fn set_default_runner(&self, runner: Option<&str>) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET default_runner = ?1, updated_at = ?2 WHERE id = 1",
-            params![runner, self.now()],
-        )?;
+    pub async fn set_default_runner(&self, runner: Option<&str>) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET default_runner = ?, updated_at = ? WHERE id = 1")
+            .bind(runner)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get per-worker runner assignments as JSON
-    pub fn get_worker_runners(
+    pub async fn get_worker_runners(
         &self,
     ) -> StateResult<Option<std::collections::HashMap<String, String>>> {
-        match self
-            .db
-            .query_row("SELECT worker_runners FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(Some(json)) => {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT worker_runners FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        match result.flatten() {
+            Some(json) => {
                 let map: std::collections::HashMap<String, String> =
                     serde_json::from_str(&json).unwrap_or_default();
                 Ok(Some(map))
             }
-            Ok(None) => Ok(None),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
+            None => Ok(None),
         }
     }
 
     /// Set per-worker runner assignments as JSON
-    pub fn set_worker_runners(
+    pub async fn set_worker_runners(
         &self,
         runners: Option<&std::collections::HashMap<String, String>>,
     ) -> StateResult<()> {
+        let pool = self.pool().await;
         let json = runners.map(|r| serde_json::to_string(r).unwrap_or_default());
-        self.db.execute(
-            "UPDATE state SET worker_runners = ?1, updated_at = ?2 WHERE id = 1",
-            params![json, self.now()],
-        )?;
+        sqlx::query("UPDATE state SET worker_runners = ?, updated_at = ? WHERE id = 1")
+            .bind(json)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get the runner name for a specific worker (falls back to default_runner, then "local")
-    pub fn get_runner_for_worker(&self, worker_name: &str) -> StateResult<String> {
+    pub async fn get_runner_for_worker(&self, worker_name: &str) -> StateResult<String> {
         // First check per-worker assignments
-        if let Some(runners) = self.get_worker_runners()? {
+        if let Some(runners) = self.get_worker_runners().await? {
             if let Some(runner) = runners.get(worker_name) {
                 return Ok(runner.clone());
             }
         }
         // Fall back to default runner
-        if let Some(default) = self.get_default_runner()? {
+        if let Some(default) = self.get_default_runner().await? {
             return Ok(default);
         }
         // Ultimate fallback
@@ -690,58 +685,50 @@ impl SQLiteState {
     }
 
     /// Get runner configs stored at run creation time.
-    ///
-    /// Returns a map of runner name -> RunnerConfig. This captures the full
-    /// configuration at the time the run was created, ensuring that config
-    /// changes don't affect in-progress runs.
-    pub fn get_runner_configs(
+    pub async fn get_runner_configs(
         &self,
     ) -> StateResult<Option<std::collections::HashMap<String, crate::core::runner::RunnerConfig>>>
     {
-        match self
-            .db
-            .query_row("SELECT runner_configs FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(Some(json)) => {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT runner_configs FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        match result.flatten() {
+            Some(json) => {
                 let map: std::collections::HashMap<String, crate::core::runner::RunnerConfig> =
                     serde_json::from_str(&json).unwrap_or_default();
                 Ok(Some(map))
             }
-            Ok(None) => Ok(None),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
+            None => Ok(None),
         }
     }
 
     /// Set runner configs at run creation time.
-    ///
-    /// This captures the full configuration for all runners used by this run,
-    /// ensuring that config changes don't affect in-progress runs.
-    pub fn set_runner_configs(
+    pub async fn set_runner_configs(
         &self,
         configs: Option<&std::collections::HashMap<String, crate::core::runner::RunnerConfig>>,
     ) -> StateResult<()> {
+        let pool = self.pool().await;
         let json = configs.map(|c| serde_json::to_string(c).unwrap_or_default());
-        self.db.execute(
-            "UPDATE state SET runner_configs = ?1, updated_at = ?2 WHERE id = 1",
-            params![json, self.now()],
-        )?;
+        sqlx::query("UPDATE state SET runner_configs = ?, updated_at = ? WHERE id = 1")
+            .bind(json)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get the resolved runner config for a specific worker.
-    ///
-    /// Looks up the runner config from stored runner_configs (captured at run creation).
-    pub fn get_runner_config_for_worker(
+    pub async fn get_runner_config_for_worker(
         &self,
         worker_name: &str,
     ) -> StateResult<crate::core::runner::RunnerConfig> {
         // Get the runner name for this worker
-        let runner_name = self.get_runner_for_worker(worker_name)?;
+        let runner_name = self.get_runner_for_worker(worker_name).await?;
 
         // Look up from stored configs
-        if let Some(configs) = self.get_runner_configs()? {
+        if let Some(configs) = self.get_runner_configs().await? {
             if let Some(config) = configs.get(&runner_name) {
                 return Ok(config.clone());
             }
@@ -756,24 +743,23 @@ impl SQLiteState {
     // =========================================================================
 
     /// Get the starting point as JSON
-    pub fn get_starting_point(&self) -> StateResult<Option<String>> {
-        match self
-            .db
-            .query_row("SELECT starting_point FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_starting_point(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT starting_point FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set the starting point as JSON
-    pub fn set_starting_point(&self, starting_point: Option<&str>) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET starting_point = ?1, updated_at = ?2 WHERE id = 1",
-            params![starting_point, self.now()],
-        )?;
+    pub async fn set_starting_point(&self, starting_point: Option<&str>) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET starting_point = ?, updated_at = ? WHERE id = 1")
+            .bind(starting_point)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
@@ -782,47 +768,47 @@ impl SQLiteState {
     // =========================================================================
 
     /// Get the docs path for this run (relative to workspace)
-    pub fn get_docs_path(&self) -> StateResult<Option<String>> {
-        match self
-            .db
-            .query_row("SELECT docs_path FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_docs_path(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT docs_path FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set the docs path for this run (relative to workspace)
-    pub fn set_docs_path(&self, path: Option<&str>) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET docs_path = ?1, updated_at = ?2 WHERE id = 1",
-            params![path, self.now()],
-        )?;
+    pub async fn set_docs_path(&self, path: Option<&str>) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET docs_path = ?, updated_at = ? WHERE id = 1")
+            .bind(path)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get whether to persist docs changes on delivery
-    pub fn get_persist_docs_changes(&self) -> StateResult<bool> {
-        match self.db.query_row(
-            "SELECT persist_docs_changes FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<i64>>(0),
-        ) {
-            Ok(Some(val)) => Ok(val != 0),
-            Ok(None) => Ok(true), // Default to persisting
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(true),
-            Err(e) => Err(StateError::Sqlite(e)),
+    pub async fn get_persist_docs_changes(&self) -> StateResult<bool> {
+        let pool = self.pool().await;
+        let result: Option<Option<i64>> =
+            sqlx::query_scalar("SELECT persist_docs_changes FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        match result.flatten() {
+            Some(val) => Ok(val != 0),
+            None => Ok(true), // Default to persisting
         }
     }
 
     /// Set whether to persist docs changes on delivery
-    pub fn set_persist_docs_changes(&self, persist: bool) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET persist_docs_changes = ?1, updated_at = ?2 WHERE id = 1",
-            params![if persist { 1 } else { 0 }, self.now()],
-        )?;
+    pub async fn set_persist_docs_changes(&self, persist: bool) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET persist_docs_changes = ?, updated_at = ? WHERE id = 1")
+            .bind(if persist { 1i64 } else { 0i64 })
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
@@ -831,73 +817,72 @@ impl SQLiteState {
     // =========================================================================
 
     /// Get the source task IDs (JSON array of task IDs from board dispatch)
-    pub fn get_source_task_ids(&self) -> StateResult<Option<Vec<String>>> {
-        match self.db.query_row(
-            "SELECT source_task_ids FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-        ) {
-            Ok(Some(json)) => {
+    pub async fn get_source_task_ids(&self) -> StateResult<Option<Vec<String>>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT source_task_ids FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        match result.flatten() {
+            Some(json) => {
                 let ids: Vec<String> = serde_json::from_str(&json).unwrap_or_default();
                 Ok(Some(ids))
             }
-            Ok(None) => Ok(None),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
+            None => Ok(None),
         }
     }
 
     /// Set the source task IDs
-    pub fn set_source_task_ids(&self, task_ids: Option<&[String]>) -> StateResult<()> {
+    pub async fn set_source_task_ids(&self, task_ids: Option<&[String]>) -> StateResult<()> {
+        let pool = self.pool().await;
         let json = task_ids.map(|ids| serde_json::to_string(ids).unwrap_or_default());
-        self.db.execute(
-            "UPDATE state SET source_task_ids = ?1, updated_at = ?2 WHERE id = 1",
-            params![json, self.now()],
-        )?;
+        sqlx::query("UPDATE state SET source_task_ids = ?, updated_at = ? WHERE id = 1")
+            .bind(json)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get the board snapshot (JSON snapshot of board state at dispatch)
-    pub fn get_board_snapshot(&self) -> StateResult<Option<String>> {
-        match self
-            .db
-            .query_row("SELECT board_snapshot FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_board_snapshot(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT board_snapshot FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set the board snapshot
-    pub fn set_board_snapshot(&self, snapshot: Option<&str>) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET board_snapshot = ?1, updated_at = ?2 WHERE id = 1",
-            params![snapshot, self.now()],
-        )?;
+    pub async fn set_board_snapshot(&self, snapshot: Option<&str>) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET board_snapshot = ?, updated_at = ? WHERE id = 1")
+            .bind(snapshot)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get the branch-off commit SHA
-    pub fn get_branch_off_commit(&self) -> StateResult<Option<String>> {
-        match self.db.query_row(
-            "SELECT branch_off_commit FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-        ) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_branch_off_commit(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT branch_off_commit FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set the branch-off commit SHA
-    pub fn set_branch_off_commit(&self, commit: Option<&str>) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET branch_off_commit = ?1, updated_at = ?2 WHERE id = 1",
-            params![commit, self.now()],
-        )?;
+    pub async fn set_branch_off_commit(&self, commit: Option<&str>) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET branch_off_commit = ?, updated_at = ? WHERE id = 1")
+            .bind(commit)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
@@ -906,142 +891,137 @@ impl SQLiteState {
     // =========================================================================
 
     /// Get the delivery status
-    pub fn get_delivery_status(&self) -> StateResult<super::types::DeliveryStatus> {
-        match self.db.query_row(
-            "SELECT delivery_status FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-        ) {
-            Ok(Some(val)) => Ok(super::types::DeliveryStatus::from_str(&val)
+    pub async fn get_delivery_status(&self) -> StateResult<super::types::DeliveryStatus> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT delivery_status FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        match result.flatten() {
+            Some(val) => Ok(super::types::DeliveryStatus::from_str(&val)
                 .unwrap_or(super::types::DeliveryStatus::Pending)),
-            Ok(None) => Ok(super::types::DeliveryStatus::Pending),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(super::types::DeliveryStatus::Pending),
-            Err(e) => Err(StateError::Sqlite(e)),
+            None => Ok(super::types::DeliveryStatus::Pending),
         }
     }
 
     /// Set the delivery status
-    pub fn set_delivery_status(&self, status: super::types::DeliveryStatus) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET delivery_status = ?1, updated_at = ?2 WHERE id = 1",
-            params![status.as_str(), self.now()],
-        )?;
+    pub async fn set_delivery_status(
+        &self,
+        status: super::types::DeliveryStatus,
+    ) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET delivery_status = ?, updated_at = ? WHERE id = 1")
+            .bind(status.as_str())
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get the delivery branch name
-    pub fn get_delivery_branch(&self) -> StateResult<Option<String>> {
-        match self.db.query_row(
-            "SELECT delivery_branch FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-        ) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_delivery_branch(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT delivery_branch FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set the delivery branch name
-    pub fn set_delivery_branch(&self, branch: Option<&str>) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET delivery_branch = ?1, updated_at = ?2 WHERE id = 1",
-            params![branch, self.now()],
-        )?;
+    pub async fn set_delivery_branch(&self, branch: Option<&str>) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET delivery_branch = ?, updated_at = ? WHERE id = 1")
+            .bind(branch)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get the PR URL
-    pub fn get_pr_url(&self) -> StateResult<Option<String>> {
-        match self
-            .db
-            .query_row("SELECT pr_url FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_pr_url(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT pr_url FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set the PR URL
-    pub fn set_pr_url(&self, url: Option<&str>) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET pr_url = ?1, updated_at = ?2 WHERE id = 1",
-            params![url, self.now()],
-        )?;
+    pub async fn set_pr_url(&self, url: Option<&str>) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET pr_url = ?, updated_at = ? WHERE id = 1")
+            .bind(url)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get the PR number
-    pub fn get_pr_number(&self) -> StateResult<Option<i64>> {
-        match self
-            .db
-            .query_row("SELECT pr_number FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<i64>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_pr_number(&self) -> StateResult<Option<i64>> {
+        let pool = self.pool().await;
+        let result: Option<Option<i64>> =
+            sqlx::query_scalar("SELECT pr_number FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set the PR number
-    pub fn set_pr_number(&self, number: Option<i64>) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET pr_number = ?1, updated_at = ?2 WHERE id = 1",
-            params![number, self.now()],
-        )?;
+    pub async fn set_pr_number(&self, number: Option<i64>) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET pr_number = ?, updated_at = ? WHERE id = 1")
+            .bind(number)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get the merged_at timestamp
-    pub fn get_merged_at(&self) -> StateResult<Option<String>> {
-        match self
-            .db
-            .query_row("SELECT merged_at FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_merged_at(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT merged_at FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set the merged_at timestamp
-    pub fn set_merged_at(&self, timestamp: Option<&str>) -> StateResult<()> {
-        let ts = timestamp
-            .map(|s| s.to_string())
-            .or_else(|| Some(self.now()));
-        self.db.execute(
-            "UPDATE state SET merged_at = ?1, updated_at = ?2 WHERE id = 1",
-            params![ts, self.now()],
-        )?;
+    pub async fn set_merged_at(&self, timestamp: Option<&str>) -> StateResult<()> {
+        let pool = self.pool().await;
+        let ts = timestamp.map(|s| s.to_string()).or_else(|| Some(utc_now()));
+        sqlx::query("UPDATE state SET merged_at = ?, updated_at = ? WHERE id = 1")
+            .bind(ts)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get the abandoned_at timestamp
-    pub fn get_abandoned_at(&self) -> StateResult<Option<String>> {
-        match self
-            .db
-            .query_row("SELECT abandoned_at FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_abandoned_at(&self) -> StateResult<Option<String>> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT abandoned_at FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten())
     }
 
     /// Set the abandoned_at timestamp
-    pub fn set_abandoned_at(&self, timestamp: Option<&str>) -> StateResult<()> {
-        let ts = timestamp
-            .map(|s| s.to_string())
-            .or_else(|| Some(self.now()));
-        self.db.execute(
-            "UPDATE state SET abandoned_at = ?1, updated_at = ?2 WHERE id = 1",
-            params![ts, self.now()],
-        )?;
+    pub async fn set_abandoned_at(&self, timestamp: Option<&str>) -> StateResult<()> {
+        let pool = self.pool().await;
+        let ts = timestamp.map(|s| s.to_string()).or_else(|| Some(utc_now()));
+        sqlx::query("UPDATE state SET abandoned_at = ?, updated_at = ? WHERE id = 1")
+            .bind(ts)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
@@ -1050,66 +1030,67 @@ impl SQLiteState {
     // =========================================================================
 
     /// Get the staleness commits count
-    pub fn get_staleness_commits(&self) -> StateResult<u32> {
-        match self.db.query_row(
-            "SELECT staleness_commits FROM state WHERE id = 1",
-            [],
-            |row| row.get::<_, Option<i64>>(0),
-        ) {
-            Ok(Some(val)) => Ok(val as u32),
-            Ok(None) => Ok(0),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
-            Err(e) => Err(StateError::Sqlite(e)),
-        }
+    pub async fn get_staleness_commits(&self) -> StateResult<u32> {
+        let pool = self.pool().await;
+        let result: Option<Option<i64>> =
+            sqlx::query_scalar("SELECT staleness_commits FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten().unwrap_or(0) as u32)
     }
 
     /// Set the staleness commits count
-    pub fn set_staleness_commits(&self, count: u32) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET staleness_commits = ?1, updated_at = ?2 WHERE id = 1",
-            params![count as i64, self.now()],
-        )?;
+    pub async fn set_staleness_commits(&self, count: u32) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET staleness_commits = ?, updated_at = ? WHERE id = 1")
+            .bind(count as i64)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Get the merge state
-    pub fn get_merge_state(&self) -> StateResult<super::types::MergeState> {
-        match self
-            .db
-            .query_row("SELECT merge_state FROM state WHERE id = 1", [], |row| {
-                row.get::<_, Option<String>>(0)
-            }) {
-            Ok(Some(val)) => Ok(super::types::MergeState::from_str(&val)
+    pub async fn get_merge_state(&self) -> StateResult<super::types::MergeState> {
+        let pool = self.pool().await;
+        let result: Option<Option<String>> =
+            sqlx::query_scalar("SELECT merge_state FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        match result.flatten() {
+            Some(val) => Ok(super::types::MergeState::from_str(&val)
                 .unwrap_or(super::types::MergeState::Unknown)),
-            Ok(None) => Ok(super::types::MergeState::Unknown),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(super::types::MergeState::Unknown),
-            Err(e) => Err(StateError::Sqlite(e)),
+            None => Ok(super::types::MergeState::Unknown),
         }
     }
 
     /// Set the merge state
-    pub fn set_merge_state(&self, state: super::types::MergeState) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET merge_state = ?1, updated_at = ?2 WHERE id = 1",
-            params![state.as_str(), self.now()],
-        )?;
+    pub async fn set_merge_state(&self, state: super::types::MergeState) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET merge_state = ?, updated_at = ? WHERE id = 1")
+            .bind(state.as_str())
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 
     /// Mark run as delivered (set delivery_status and merged_at)
-    pub fn mark_delivered(&self) -> StateResult<()> {
-        self.set_delivery_status(super::types::DeliveryStatus::Merged)?;
-        self.set_merged_at(None)?;
-        self.set_status(Status::Delivered)?;
-        self.log_history("delivered", None)?;
+    pub async fn mark_delivered(&self) -> StateResult<()> {
+        self.set_delivery_status(super::types::DeliveryStatus::Merged)
+            .await?;
+        self.set_merged_at(None).await?;
+        self.set_status(Status::Delivered).await?;
+        self.log_history("delivered", None).await?;
         Ok(())
     }
 
     /// Mark run as abandoned
-    pub fn mark_abandoned(&self) -> StateResult<()> {
-        self.set_delivery_status(super::types::DeliveryStatus::Abandoned)?;
-        self.set_abandoned_at(None)?;
-        self.log_history("abandoned", None)?;
+    pub async fn mark_abandoned(&self) -> StateResult<()> {
+        self.set_delivery_status(super::types::DeliveryStatus::Abandoned)
+            .await?;
+        self.set_abandoned_at(None).await?;
+        self.log_history("abandoned", None).await?;
         Ok(())
     }
 
@@ -1118,36 +1099,31 @@ impl SQLiteState {
     // =========================================================================
 
     /// Request a scaling check on the next daemon poll.
-    ///
-    /// Called by task state changes to signal that worker scaling should be evaluated.
-    /// The daemon's 5-second poll provides natural debouncing.
-    pub fn request_scaling_check(&self) -> StateResult<()> {
-        self.db.execute(
-            "UPDATE state SET scaling_check_requested = 1 WHERE id = 1",
-            [],
-        )?;
+    pub async fn request_scaling_check(&self) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query(
+            "UPDATE state SET scaling_check_requested = scaling_check_requested + 1 WHERE id = 1",
+        )
+        .execute(&pool)
+        .await?;
         Ok(())
     }
 
-    /// Consume the scaling check flag, returning whether it was set.
-    ///
-    /// Called by the daemon on its polling loop. Atomically reads and clears the flag.
-    pub fn consume_scaling_check(&self) -> StateResult<bool> {
-        let requested: bool = self
-            .db
-            .query_row(
-                "SELECT scaling_check_requested FROM state WHERE id = 1",
-                [],
-                |row| row.get::<_, i64>(0).map(|v| v != 0),
-            )
-            .unwrap_or(false);
+    /// Consume the scaling check counter, returning whether any checks were requested.
+    pub async fn consume_scaling_check(&self) -> StateResult<bool> {
+        let pool = self.pool().await;
+        let count: i64 =
+            sqlx::query_scalar("SELECT scaling_check_requested FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?
+                .flatten()
+                .unwrap_or(0);
 
-        if requested {
-            self.db.execute(
-                "UPDATE state SET scaling_check_requested = 0 WHERE id = 1",
-                [],
-            )?;
+        if count > 0 {
+            sqlx::query("UPDATE state SET scaling_check_requested = 0 WHERE id = 1")
+                .execute(&pool)
+                .await?;
         }
-        Ok(requested)
+        Ok(count > 0)
     }
 }

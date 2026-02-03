@@ -795,16 +795,23 @@ pub struct WorkerEventsResponse {
 // =============================================================================
 
 /// Convert core Status to API RunStatus
-pub fn convert_status(status: crate::core::state::Status) -> RunStatus {
-    match status {
-        crate::core::state::Status::Draft => RunStatus::Draft,
-        crate::core::state::Status::Working => RunStatus::Working,
-        crate::core::state::Status::Paused => RunStatus::Paused,
-        crate::core::state::Status::Failed => RunStatus::Failed,
-        crate::core::state::Status::Eval => RunStatus::Eval,
-        crate::core::state::Status::Done => RunStatus::Done,
-        crate::core::state::Status::Delivered => RunStatus::Delivered,
+impl From<crate::core::state::Status> for RunStatus {
+    fn from(status: crate::core::state::Status) -> Self {
+        match status {
+            crate::core::state::Status::Draft => RunStatus::Draft,
+            crate::core::state::Status::Working => RunStatus::Working,
+            crate::core::state::Status::Paused => RunStatus::Paused,
+            crate::core::state::Status::Failed => RunStatus::Failed,
+            crate::core::state::Status::Eval => RunStatus::Eval,
+            crate::core::state::Status::Done => RunStatus::Done,
+            crate::core::state::Status::Delivered => RunStatus::Delivered,
+        }
     }
+}
+
+/// Helper function for converting Status (delegates to From impl)
+pub fn convert_status(status: crate::core::state::Status) -> RunStatus {
+    status.into()
 }
 
 /// Check if status represents a completed run
