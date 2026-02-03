@@ -33,9 +33,6 @@ export const Layout: Component = () => {
     onCleanup(unsubscribe);
   });
 
-  // Show SpecBoard as base (always, unless project settings open)
-  const showSpecBoard = () => !project.showProjectSettings();
-
   return (
     <>
       <SvgDefinitions />
@@ -44,20 +41,18 @@ export const Layout: Component = () => {
 
       {/* Main Content Area */}
       <main class="flex-1 flex overflow-hidden bg-pasture-900 relative">
-        {/* SpecBoard - Primary canvas view (always rendered as base layer) */}
-        <Show when={showSpecBoard()}>
-          <div class="flex-1 flex overflow-hidden">
-            <div class="flex-1 flex flex-col overflow-hidden">
-              <SpecBoard />
-            </div>
-            {/* Docs Panel - side panel overlay */}
-            <Show when={project.docsOpen() && !project.docsFullScreen()}>
-              <DocsPanel />
-            </Show>
+        {/* SpecBoard - Primary canvas view (always mounted to avoid re-init issues) */}
+        <div class="flex-1 flex overflow-hidden">
+          <div class="flex-1 flex flex-col overflow-hidden">
+            <SpecBoard />
           </div>
-        </Show>
+          {/* Docs Panel - side panel overlay */}
+          <Show when={project.docsOpen() && !project.docsFullScreen()}>
+            <DocsPanel />
+          </Show>
+        </div>
 
-        {/* Full-screen overlays (replace OneBoard) */}
+        {/* ProjectSettings - modal overlay on top of SpecBoard */}
         <Show when={project.showProjectSettings()}>
           <ProjectSettings />
         </Show>

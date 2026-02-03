@@ -30,16 +30,18 @@ export const ProjectSettings: Component = () => {
   const [runner, setRunner] = createSignal<string>('');
   const [targetBranch, setTargetBranch] = createSignal<string>('');
 
-  // Track dirty state to avoid toast spam on blur without changes
+  // Track dirty state
   const [isDirty, setIsDirty] = createSignal(false);
 
   let nameInputRef: HTMLInputElement | undefined;
 
   const selectedProject = () => project.selectedProject();
 
-  // Load config defaults when modal opens
+  // Reset state and load config defaults when modal opens
   createEffect(() => {
     if (project.showProjectSettings()) {
+      setEditingName(false);
+      setIsDirty(false);
       loadConfigDefaults();
     }
   });
@@ -117,21 +119,19 @@ export const ProjectSettings: Component = () => {
   };
 
   const handleClose = () => {
-    if (!deleting() && !saving()) {
-      setEditingName(false);
-      project.setShowProjectSettings(false);
-    }
+    if (deleting() || saving()) return;
+    project.setShowProjectSettings(false);
   };
 
   const handleSaveName = async () => {
     const proj = selectedProject();
-    if (!proj || !nameValue().trim()) return;
+    const name = nameValue().trim();
+    if (!proj || !name) return;
+
+    const projectId = proj.id;
 
     try {
-      await invoke('update_project_name', {
-        projectId: proj.id,
-        name: nameValue().trim(),
-      });
+      await invoke('update_project_name', { projectId, name });
       await project.loadProjects();
       window.toast?.success('Project renamed');
       setEditingName(false);
@@ -141,25 +141,30 @@ export const ProjectSettings: Component = () => {
     }
   };
 
-  const handleSaveSettings = async () => {
+  const handleSave = async () => {
     const proj = selectedProject();
-    if (!proj || !isDirty()) return;
+    if (!proj) return;
+
+    // Capture ALL values before any async operation
+    const projectId = proj.id;
+    const settings = {
+      workerScale: workerScale() || null,
+      timeLimitMinutes: timeLimitMinutes() ? Number.parseInt(timeLimitMinutes(), 10) : null,
+      humanInTheLoop: humanInTheLoop(),
+      runner: runner() || null,
+      targetBranch: targetBranch() || null,
+    };
 
     setSaving(true);
     try {
-      await project.updateProjectSettings(proj.id, {
-        workerScale: workerScale() || null,
-        timeLimitMinutes: timeLimitMinutes() ? Number.parseInt(timeLimitMinutes(), 10) : null,
-        humanInTheLoop: humanInTheLoop(),
-        runner: runner() || null,
-        targetBranch: targetBranch() || null,
-      });
+      await project.updateProjectSettings(projectId, settings);
+      setSaving(false);
       window.toast?.success('Settings saved');
-      setIsDirty(false);
+      // Delay close to let reactive updates from updateProjectSettings settle
+      requestAnimationFrame(() => project.setShowProjectSettings(false));
     } catch (e) {
       console.error('Failed to save settings:', e);
       window.toast?.error(`Failed to save: ${e}`);
-    } finally {
       setSaving(false);
     }
   };
@@ -168,9 +173,12 @@ export const ProjectSettings: Component = () => {
     const proj = selectedProject();
     if (!proj) return;
 
+    const projectId = proj.id;
+    const projectName = proj.name;
+
     let confirmed: boolean | undefined;
     try {
-      confirmed = await window.confirmDialog?.delete(proj.name, 'project');
+      confirmed = await window.confirmDialog?.delete(projectName, 'project');
     } catch (e) {
       console.error('[ProjectSettings] Confirm dialog error:', e);
       return;
@@ -178,10 +186,7 @@ export const ProjectSettings: Component = () => {
     if (!confirmed) return;
 
     setDeleting(true);
-    const projectId = proj.id;
-    const projectName = proj.name;
 
-    // Use project context's removeProject which handles cleanup properly
     try {
       await project.removeProject(projectId);
       project.setShowProjectSettings(false);
@@ -194,22 +199,24 @@ export const ProjectSettings: Component = () => {
   };
 
   // Handle escape key to close
-  const handleEscape = (e: KeyboardEvent) => {
-    if (e.key === 'Escape' && !deleting() && !saving()) {
+  createEffect(() => {
+    if (!project.showProjectSettings()) return;
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (deleting() || saving()) return;
+
       if (editingName()) {
+        const name = selectedProject()?.name || '';
         setEditingName(false);
-        setNameValue(selectedProject()?.name || '');
+        setNameValue(name);
       } else {
         handleClose();
       }
-    }
-  };
+    };
 
-  createEffect(() => {
-    if (project.showProjectSettings()) {
-      document.addEventListener('keydown', handleEscape);
-      onCleanup(() => document.removeEventListener('keydown', handleEscape));
-    }
+    document.addEventListener('keydown', handleEscape);
+    onCleanup(() => document.removeEventListener('keydown', handleEscape));
   });
 
   return (
@@ -251,16 +258,18 @@ export const ProjectSettings: Component = () => {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleSaveName();
                     if (e.key === 'Escape') {
+                      const name = selectedProject()?.name || '';
                       setEditingName(false);
-                      setNameValue(selectedProject()?.name || '');
+                      setNameValue(name);
                     }
                   }}
                   onBlur={() => {
-                    if (nameValue().trim() && nameValue() !== selectedProject()?.name) {
+                    const name = selectedProject()?.name || '';
+                    if (nameValue().trim() && nameValue() !== name) {
                       handleSaveName();
                     } else {
                       setEditingName(false);
-                      setNameValue(selectedProject()?.name || '');
+                      setNameValue(name);
                     }
                   }}
                 />
@@ -339,8 +348,6 @@ export const ProjectSettings: Component = () => {
                         setWorkerScale(e.currentTarget.value);
                         setIsDirty(true);
                       }}
-                      onBlur={handleSaveSettings}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSaveSettings()}
                     />
                     <p class="text-xs text-muted-foreground mt-1">Number of parallel workers</p>
                   </div>
@@ -357,8 +364,6 @@ export const ProjectSettings: Component = () => {
                         setTimeLimitMinutes(e.currentTarget.value);
                         setIsDirty(true);
                       }}
-                      onBlur={handleSaveSettings}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSaveSettings()}
                     />
                     <p class="text-xs text-muted-foreground mt-1">Maximum run duration</p>
                   </div>
@@ -372,7 +377,6 @@ export const ProjectSettings: Component = () => {
                       onChange={(value) => {
                         setRunner(value);
                         setIsDirty(true);
-                        handleSaveSettings();
                       }}
                       placeholder={`Default (${runnerPlaceholder()})`}
                     />
@@ -394,7 +398,6 @@ export const ProjectSettings: Component = () => {
                     onChange={(e) => {
                       setHumanInTheLoop(e.currentTarget.checked);
                       setIsDirty(true);
-                      handleSaveSettings();
                     }}
                   />
                 </div>
@@ -419,12 +422,30 @@ export const ProjectSettings: Component = () => {
                     setTargetBranch(e.currentTarget.value);
                     setIsDirty(true);
                   }}
-                  onBlur={handleSaveSettings}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSaveSettings()}
                 />
                 <p class="text-xs text-muted-foreground mt-1">Branch for PRs and merges</p>
               </div>
             </div>
+          </div>
+
+          {/* Footer with Save/Cancel */}
+          <div class="px-6 py-4 border-t border-pasture-600 flex justify-end gap-2 shrink-0">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              onClick={handleClose}
+              disabled={deleting() || saving()}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn"
+              onClick={handleSave}
+              disabled={deleting() || saving() || !isDirty()}
+            >
+              {saving() ? 'Saving...' : 'Save'}
+            </button>
           </div>
         </div>
       </div>

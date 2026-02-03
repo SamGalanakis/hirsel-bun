@@ -4,6 +4,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import {
   type ParentComponent,
+  batch,
   createContext,
   createEffect,
   createSignal,
@@ -242,14 +243,17 @@ export const ProjectProvider: ParentComponent = (props) => {
         humanInTheLoop: settings.humanInTheLoop,
         runner: settings.runner,
       });
-      // Update local state
-      setProjects((prev) =>
-        prev.map((p) => (p.id === projectId ? { ...p, ...updated } : p))
-      );
-      // Update selected project if it's the one being edited
-      if (selectedProjectId() === projectId) {
-        setSelectedProject({ ...selectedProject()!, ...updated });
-      }
+      // Update local state - batch to prevent intermediate reactive states
+      batch(() => {
+        setProjects((prev) =>
+          prev.map((p) => (p.id === projectId ? { ...p, ...updated } : p))
+        );
+        // Update selected project if it's the one being edited
+        const current = selectedProject();
+        if (selectedProjectId() === projectId && current) {
+          setSelectedProject({ ...current, ...updated });
+        }
+      });
       return updated;
     } catch (e) {
       console.error('Failed to update project settings:', e);
