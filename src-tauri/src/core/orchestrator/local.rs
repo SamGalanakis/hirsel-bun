@@ -1101,7 +1101,7 @@ impl Orchestrator for LocalOrchestrator {
         if is_multi_worker {
             create_default_group_chat(
                 &chats_dir,
-                &[first_worker_name.clone()],
+                std::slice::from_ref(&first_worker_name),
                 Some(&first_worker_name),
             )
             .map_err(|e| OrchestratorError::Other(format!("Failed to create group chat: {}", e)))?;
@@ -1923,7 +1923,7 @@ impl Orchestrator for LocalOrchestrator {
 
             // Ensure daemon is running for lifecycle management (eval triggering, time limits)
             #[cfg(feature = "server")]
-            if let Ok(_) = crate::daemon::DaemonClient::connect_or_start() {
+            if crate::daemon::DaemonClient::connect_or_start().is_ok() {
                 tracing::debug!("Daemon is running for lifecycle management");
             }
         }

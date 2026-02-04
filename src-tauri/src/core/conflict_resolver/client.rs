@@ -191,7 +191,8 @@ impl Client for ConflictResolverClient {
         let output = match terminal.child.try_wait() {
             Ok(Some(_status)) => {
                 // Process finished - read remaining output
-                let stdout = terminal
+                
+                terminal
                     .child
                     .stdout
                     .take()
@@ -200,8 +201,7 @@ impl Client for ConflictResolverClient {
                         let mut buf = String::new();
                         s.read_to_string(&mut buf).ok().map(|_| buf)
                     })
-                    .unwrap_or_default();
-                stdout
+                    .unwrap_or_default()
             }
             Ok(None) => {
                 // Still running - no output yet

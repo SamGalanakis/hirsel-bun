@@ -339,15 +339,16 @@ impl DeliveryOrchestrator {
         target_branch: &str,
         branch_off_commit: Option<&str>,
     ) -> DeliveryResult<DeliveryState> {
-        let mut state = DeliveryState::default();
-
-        // Get current branch as delivery branch
-        state.delivery_branch = self.current_branch().ok();
-
-        // Check merge state
-        state.merge_state = self
+        let delivery_branch = self.current_branch().ok();
+        let merge_state = self
             .check_merge_state(target_branch)
             .unwrap_or(MergeState::Unknown);
+
+        let mut state = DeliveryState {
+            delivery_branch,
+            merge_state,
+            ..Default::default()
+        };
 
         // Get conflicting files if there are conflicts
         if state.merge_state == MergeState::Conflicts {

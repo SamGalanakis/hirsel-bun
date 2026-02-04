@@ -322,15 +322,12 @@ pub struct TaskFile {
 /// Scope for board export/context operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub enum ExportScope {
     /// Whole board - all tasks exported as separate files
+    #[default]
     WholeBoard,
     /// Focused on a specific task tree
     FocusedTask { task_id: String, task_name: String },
 }
 
-impl Default for ExportScope {
-    fn default() -> Self {
-        Self::WholeBoard
-    }
-}

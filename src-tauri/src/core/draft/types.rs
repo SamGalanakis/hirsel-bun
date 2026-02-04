@@ -8,8 +8,10 @@ use std::path::PathBuf;
 /// Starting point for a draft workspace - defines how the workspace is initialized
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
+#[derive(Default)]
 pub enum StartingPoint {
     /// Fresh start with empty project (git init)
+    #[default]
     Greenfield,
     /// Copy from local folder
     LocalFolder { path: String },
@@ -17,11 +19,6 @@ pub enum StartingPoint {
     GitRepo { url: String, branch: Option<String> },
 }
 
-impl Default for StartingPoint {
-    fn default() -> Self {
-        Self::Greenfield
-    }
-}
 
 impl StartingPoint {
     /// Get the type name as a string (for serialization/logging).

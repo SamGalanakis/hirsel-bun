@@ -4,6 +4,11 @@
 //! including file system utilities, state management, CLI
 //! command routing, and the Tauri GUI integration.
 
+// Allow these clippy warnings crate-wide
+#![allow(clippy::should_implement_trait)] // from_str methods are intentional
+#![allow(clippy::too_many_arguments)] // Complex functions need many args
+#![allow(clippy::ptr_arg)] // &PathBuf is fine for owned paths
+
 pub mod cli;
 pub mod core;
 #[cfg(feature = "server")]

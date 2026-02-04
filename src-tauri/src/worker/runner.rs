@@ -1019,7 +1019,7 @@ impl WorkerRunner {
     /// Returns all docs or a specific file from the run's docs/ directory.
     pub fn read_docs(&self, file: Option<&str>) -> WorkerResult<String> {
         let files = Files::new(&self.config.run_dir);
-        let docs = files.read_docs(file).map_err(|e| WorkerError::Io(e))?;
+        let docs = files.read_docs(file).map_err(WorkerError::Io)?;
 
         Ok(serde_json::to_string(&docs).unwrap_or_else(|_| "{}".to_string()))
     }

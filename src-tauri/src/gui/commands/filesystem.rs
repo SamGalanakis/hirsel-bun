@@ -23,8 +23,8 @@ fn expand_home(path: &str) -> PathBuf {
         if let Some(home) = dirs::home_dir() {
             if path == "~" {
                 return home;
-            } else if path.starts_with("~/") {
-                return home.join(&path[2..]);
+            } else if let Some(rest) = path.strip_prefix("~/") {
+                return home.join(rest);
             }
         }
     }
@@ -99,7 +99,7 @@ pub async fn suggest_paths(partial: String) -> Result<Vec<String>, String> {
     }
 
     // Sort suggestions alphabetically
-    suggestions.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    suggestions.sort_by_key(|a| a.to_lowercase());
 
     // Limit to 10 suggestions
     suggestions.truncate(10);

@@ -197,8 +197,8 @@ impl DeltaExporter {
                             // Read file content
                             if let Ok(file_content) = std::fs::read_to_string(&path) {
                                 // Update if content differs
-                                if existing.content != file_content {
-                                    if block_on(self.state.update_draft_node(
+                                if existing.content != file_content
+                                    && block_on(self.state.update_draft_node(
                                         node_id,
                                         &UpdateDraftNodeRequest {
                                             content: Some(file_content),
@@ -209,7 +209,6 @@ impl DeltaExporter {
                                     {
                                         result.nodes_updated.push(node_id.to_string());
                                     }
-                                }
                             }
                         }
                         // Files without matching nodes are ignored - structure comes from MCP

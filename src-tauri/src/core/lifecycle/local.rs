@@ -754,7 +754,7 @@ impl LocalLifecycleManager {
             Some(s) => s,
             None => return Ok(vec![]),
         };
-        let max_workers = scale.max as usize;
+        let max_workers = scale.max;
 
         // Get claimable nodes and workers
         let claimable = self.get_claimable_nodes().await?;

@@ -663,7 +663,7 @@ impl DeltaState {
             DraftNodeTree {
                 id: node.id.clone(),
                 name: node.name.clone(),
-                node_type: node.node_type.clone(),
+                node_type: node.node_type,
                 content: node.content.clone(),
                 validates: node.validates.clone(),
                 blocked_by: node.blocked_by.clone(),

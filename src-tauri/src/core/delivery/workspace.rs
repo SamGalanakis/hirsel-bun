@@ -111,5 +111,5 @@ pub async fn resolve_workspace_for_project(
         .get(&config.default_profile)
         .ok_or_else(|| WorkspaceError::Config("No default profile".to_string()))?;
 
-    resolve_workspace(project_id, &project_run.run_name, profile.mode.clone()).await
+    resolve_workspace(project_id, &project_run.run_name, profile.mode).await
 }

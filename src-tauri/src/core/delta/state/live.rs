@@ -485,7 +485,7 @@ impl DeltaState {
                 draft_node_id: node.draft_node_id.clone(),
                 parent_id: node.parent_id.clone(),
                 name: node.name.clone(),
-                node_type: node.node_type.clone(),
+                node_type: node.node_type,
                 content: node.content.clone(),
                 status: node.status,
                 source: node.source,

@@ -229,7 +229,9 @@ impl std::fmt::Display for EvalResult {
 /// Delivery status - tracks the publication state of a run's changes
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum DeliveryStatus {
+    #[default]
     Pending,   // Not yet delivered
     Pushed,    // Branch on remote, no PR
     PrOpen,    // PR created
@@ -265,11 +267,6 @@ impl DeliveryStatus {
     }
 }
 
-impl Default for DeliveryStatus {
-    fn default() -> Self {
-        DeliveryStatus::Pending
-    }
-}
 
 impl std::fmt::Display for DeliveryStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -280,7 +277,9 @@ impl std::fmt::Display for DeliveryStatus {
 /// Merge state - tracks whether a run can be cleanly merged
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum MergeState {
+    #[default]
     Unknown,   // Not yet checked
     Clean,     // Auto-merge possible
     Conflicts, // Needs resolution
@@ -305,11 +304,6 @@ impl MergeState {
     }
 }
 
-impl Default for MergeState {
-    fn default() -> Self {
-        MergeState::Unknown
-    }
-}
 
 impl std::fmt::Display for MergeState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -46,6 +46,7 @@ pub type DispatchResult<T> = Result<T, DispatchError>;
 /// Configuration for dispatching a run
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub struct DispatchConfig {
     /// Custom run name (auto-generated if not provided)
     pub run_name: Option<String>,
@@ -57,16 +58,6 @@ pub struct DispatchConfig {
     pub time_limit_minutes: Option<i64>,
 }
 
-impl Default for DispatchConfig {
-    fn default() -> Self {
-        Self {
-            run_name: None,
-            target_branch: None,
-            worker_scale: None,
-            time_limit_minutes: None,
-        }
-    }
-}
 
 /// Result of a successful dispatch
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -318,7 +309,7 @@ impl DispatchService {
         let run_name = config
             .run_name
             .clone()
-            .unwrap_or_else(|| crate::core::names::generate_run_name());
+            .unwrap_or_else(crate::core::names::generate_run_name);
 
         info!(
             "Prepared dispatch: run={}, tasks={}, evals={}",
@@ -368,7 +359,7 @@ impl DispatchService {
         let run_name = config
             .run_name
             .clone()
-            .unwrap_or_else(|| crate::core::names::generate_run_name());
+            .unwrap_or_else(crate::core::names::generate_run_name);
 
         info!(
             "Prepared multi-root dispatch: run={}, roots={}, tasks={}, evals={}",

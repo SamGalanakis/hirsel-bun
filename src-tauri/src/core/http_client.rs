@@ -214,7 +214,7 @@ impl AuthenticatedClient {
     /// Make a GET request and deserialize the JSON response
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> HttpResult<T> {
         self.client
-            .get(&self.url(path))
+            .get(self.url(path))
             .bearer_auth(&self.api_key)
             .send()
             .await?
@@ -229,7 +229,7 @@ impl AuthenticatedClient {
         body: &B,
     ) -> HttpResult<T> {
         self.client
-            .post(&self.url(path))
+            .post(self.url(path))
             .bearer_auth(&self.api_key)
             .json(body)
             .send()
@@ -241,7 +241,7 @@ impl AuthenticatedClient {
     /// Make a POST request with a JSON body, ignoring the response body
     pub async fn post_empty<B: Serialize>(&self, path: &str, body: &B) -> HttpResult<()> {
         self.client
-            .post(&self.url(path))
+            .post(self.url(path))
             .bearer_auth(&self.api_key)
             .json(body)
             .send()
@@ -258,7 +258,7 @@ impl AuthenticatedClient {
         body: &B,
     ) -> HttpResult<T> {
         self.client
-            .patch(&self.url(path))
+            .patch(self.url(path))
             .bearer_auth(&self.api_key)
             .json(body)
             .send()
@@ -275,7 +275,7 @@ impl AuthenticatedClient {
         content_type: &str,
     ) -> HttpResult<()> {
         self.client
-            .post(&self.url(path))
+            .post(self.url(path))
             .bearer_auth(&self.api_key)
             .header("Content-Type", content_type)
             .body(body)
@@ -289,7 +289,7 @@ impl AuthenticatedClient {
     /// Make a GET request and return raw bytes
     pub async fn get_bytes(&self, path: &str) -> HttpResult<Vec<u8>> {
         self.client
-            .get(&self.url(path))
+            .get(self.url(path))
             .bearer_auth(&self.api_key)
             .send()
             .await?
@@ -300,7 +300,7 @@ impl AuthenticatedClient {
     /// Make a DELETE request
     pub async fn delete(&self, path: &str) -> HttpResult<()> {
         self.client
-            .delete(&self.url(path))
+            .delete(self.url(path))
             .bearer_auth(&self.api_key)
             .send()
             .await?
