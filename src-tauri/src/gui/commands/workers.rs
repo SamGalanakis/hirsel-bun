@@ -6,14 +6,14 @@ use crate::core::api_types::{SheepConfig, Worker, WorkerLocation, WorkerStatus};
 use crate::core::config;
 use crate::core::orchestrator::create_orchestrator;
 
-use super::{err_string, get_run_state};
+use super::{get_run_state, ResultExt};
 
 /// Get all workers for a run
 /// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn get_workers(run_name: String) -> Result<Vec<Worker>, String> {
-    let orch = create_orchestrator(None).map_err(err_string)?;
-    orch.list_workers(&run_name).await.map_err(err_string)
+    let orch = create_orchestrator(None).str_err()?;
+    orch.list_workers(&run_name).await.str_err()
 }
 
 /// Attach a new worker to a run
@@ -274,10 +274,10 @@ pub async fn detach_worker(run_name: String, worker_id: u32) -> Result<(), Strin
 /// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn restart_worker(run_name: String, worker_id: u32) -> Result<(), String> {
-    let orch = create_orchestrator(None).map_err(err_string)?;
+    let orch = create_orchestrator(None).str_err()?;
 
     // Get workers to find the worker name from the ID
-    let workers = orch.list_workers(&run_name).await.map_err(err_string)?;
+    let workers = orch.list_workers(&run_name).await.str_err()?;
 
     let worker = workers
         .iter()
@@ -285,7 +285,5 @@ pub async fn restart_worker(run_name: String, worker_id: u32) -> Result<(), Stri
         .ok_or_else(|| format!("Worker with ID {} not found", worker_id))?;
 
     // Call restart_worker with the worker name
-    orch.restart_worker(&run_name, &worker.name)
-        .await
-        .map_err(err_string)
+    orch.restart_worker(&run_name, &worker.name).await.str_err()
 }

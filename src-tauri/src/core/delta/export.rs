@@ -70,13 +70,8 @@ pub struct DeltaExporter {
 }
 
 impl DeltaExporter {
-    /// Create a new exporter for a project (uses route_id = 0 for backwards compatibility)
-    pub fn new(project_id: i64) -> Self {
-        Self::with_route(project_id, 0)
-    }
-
     /// Create a new exporter for a project route
-    pub fn with_route(project_id: i64, route_id: i64) -> Self {
+    pub fn new(project_id: i64, route_id: i64) -> Self {
         // Look up route name
         let route_name = if route_id == 0 {
             "main".to_string()

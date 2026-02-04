@@ -2,6 +2,7 @@
 //!
 //! Commands for managing runs: listing, viewing details, pausing, resuming, deleting, and delivering.
 
+use super::ResultExt;
 use crate::core::api_types::{RunDetail, RunSummary};
 use crate::core::orchestrator::create_orchestrator;
 
@@ -21,16 +22,16 @@ pub async fn get_runs() -> Result<Vec<RunSummary>, String> {
     // Ensure daemon is running for lifecycle management
     ensure_daemon_running();
 
-    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
-    orch.list_runs().await.map_err(|e| e.to_string())
+    let orch = create_orchestrator(None).str_err()?;
+    orch.list_runs().await.str_err()
 }
 
 /// Get detailed information about a specific run
 /// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn get_run_detail(run_name: String) -> Result<RunDetail, String> {
-    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
-    let detail = orch.get_run(&run_name).await.map_err(|e| e.to_string())?;
+    let orch = create_orchestrator(None).str_err()?;
+    let detail = orch.get_run(&run_name).await.str_err()?;
 
     // Note: Lifecycle management (eval triggering) is handled by the daemon
 
@@ -41,26 +42,24 @@ pub async fn get_run_detail(run_name: String) -> Result<RunDetail, String> {
 /// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn pause_run(run_name: String) -> Result<(), String> {
-    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
-    orch.pause_run(&run_name).await.map_err(|e| e.to_string())
+    let orch = create_orchestrator(None).str_err()?;
+    orch.pause_run(&run_name).await.str_err()
 }
 
 /// Resume a paused run
 /// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn resume_run(run_name: String) -> Result<(), String> {
-    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
-    orch.resume_run(&run_name, None)
-        .await
-        .map_err(|e| e.to_string())
+    let orch = create_orchestrator(None).str_err()?;
+    orch.resume_run(&run_name, None).await.str_err()
 }
 
 /// Delete a run
 /// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn delete_run(run_name: String) -> Result<(), String> {
-    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
-    orch.delete_run(&run_name).await.map_err(|e| e.to_string())
+    let orch = create_orchestrator(None).str_err()?;
+    orch.delete_run(&run_name).await.str_err()
 }
 
 /// Delete all runs
@@ -114,8 +113,6 @@ pub async fn delete_all_runs() -> Result<(), String> {
 /// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn deliver_run(run_name: String, branch_name: Option<String>) -> Result<String, String> {
-    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
-    orch.deliver_run(&run_name, branch_name)
-        .await
-        .map_err(|e| e.to_string())
+    let orch = create_orchestrator(None).str_err()?;
+    orch.deliver_run(&run_name, branch_name).await.str_err()
 }

@@ -9,7 +9,9 @@ use tracing::info;
 use super::git_ops::{GitOperations, PushResult};
 use super::workspace::{resolve_workspace_for_project, WorkspaceLocation};
 use super::{DeliveryError, DeliveryResult};
+use crate::core::config::Config;
 use crate::core::forge::{create_forge_for_remote, ForgeProvider, MergeResult, PrInfo};
+use crate::core::service_worker::ConflictResolverServiceWrapper;
 use crate::core::state::MergeState;
 
 /// Current delivery state
@@ -60,8 +62,8 @@ pub struct DeliveryOrchestrator {
 
 impl DeliveryOrchestrator {
     /// Create a delivery orchestrator for a project
-    pub async fn for_project(project_id: i64) -> DeliveryResult<Self> {
-        let workspace = resolve_workspace_for_project(project_id)
+    pub async fn for_project(project_id: i64, route_id: i64) -> DeliveryResult<Self> {
+        let workspace = resolve_workspace_for_project(project_id, route_id)
             .await
             .map_err(|e| DeliveryError::InvalidState(e.to_string()))?;
 
@@ -205,6 +207,84 @@ impl DeliveryOrchestrator {
         info!("Merged PR #{}", pr.number);
 
         Ok(merge_result)
+    }
+
+    /// Auto-merge with AI-assisted conflict resolution.
+    pub async fn auto_merge_with_resolution(
+        &self,
+        target_branch: &str,
+        title: &str,
+        body: &str,
+        config: Config,
+        context: Option<&str>,
+    ) -> DeliveryResult<MergeResult> {
+        let merge_state = self.check_merge_state(target_branch)?;
+
+        // If clean, delegate to standard auto_merge
+        if merge_state == MergeState::Clean {
+            return self.auto_merge(target_branch, title, body).await;
+        }
+
+        // Conflicts - attempt resolution
+        let work_dir = match &self.workspace {
+            WorkspaceLocation::Local(path) => path.clone(),
+            WorkspaceLocation::Coordinator { .. } => {
+                return Err(DeliveryError::InvalidState(
+                    "Conflict resolution not supported in coordinator mode".to_string(),
+                ));
+            }
+        };
+
+        let git = self
+            .git_ops
+            .as_ref()
+            .ok_or_else(|| DeliveryError::InvalidState("No local workspace".to_string()))?;
+
+        // Start merge (creates conflict markers)
+        let conflicts = git.start_merge_with_conflicts(target_branch)?;
+
+        if !conflicts.is_empty() {
+            let default_ctx = format!("Merging into {} for: {}", target_branch, title);
+            let ctx = context.unwrap_or(&default_ctx);
+            let resolver = ConflictResolverServiceWrapper::with_config(config);
+
+            match resolver.resolve_conflicts(&work_dir, conflicts, ctx).await {
+                Ok(r) if r.success => { /* continue */ }
+                Ok(_) | Err(_) => {
+                    let _ = git.abort_merge();
+                    return Err(DeliveryError::ConflictResolutionFailed(
+                        "AI agent could not resolve conflicts".to_string(),
+                    ));
+                }
+            }
+
+            // Verify no markers remain
+            if let Err(e) = git.verify_no_conflict_markers() {
+                let _ = git.abort_merge();
+                return Err(e);
+            }
+        }
+
+        // Complete merge
+        git.complete_merge(&format!(
+            "Merge origin/{} (conflicts resolved by AI)",
+            target_branch
+        ))?;
+
+        // Push → PR → merge
+        let push_result = self.push_branch(None)?;
+        let forge = self.forge.as_ref().ok_or(DeliveryError::NotGitHub)?;
+        let repo = self.repo.as_ref().ok_or(DeliveryError::NotGitHub)?;
+
+        let pr = forge
+            .create_pr(repo, &push_result.branch, target_branch, title, body)
+            .await
+            .map_err(|e| DeliveryError::InvalidState(e.to_string()))?;
+
+        forge
+            .merge_pr(repo, pr.number, Some(title))
+            .await
+            .map_err(|e| DeliveryError::InvalidState(e.to_string()))
     }
 
     // ========== State Queries ==========

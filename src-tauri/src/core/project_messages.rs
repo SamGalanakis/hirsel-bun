@@ -15,11 +15,11 @@ use super::db::{global_pool, utc_now};
 const SCHEMA: &str = r#"
 -- Project-scoped messages for Sheepfold
 -- thread = 'meadow' for group chat, or worker_name for DMs
--- route_id scopes messages to a specific route (default 0 for backwards compatibility)
+-- route_id scopes messages to a specific route
 CREATE TABLE IF NOT EXISTS project_messages (
     id INTEGER PRIMARY KEY,
     project_id INTEGER NOT NULL,
-    route_id INTEGER NOT NULL DEFAULT 0,
+    route_id INTEGER NOT NULL,
     thread TEXT NOT NULL,
     sender TEXT NOT NULL,
     content TEXT NOT NULL,
@@ -36,7 +36,7 @@ CREATE INDEX IF NOT EXISTS idx_project_messages_timestamp ON project_messages(ti
 CREATE TABLE IF NOT EXISTS project_message_reads (
     reader TEXT NOT NULL,
     project_id INTEGER NOT NULL,
-    route_id INTEGER NOT NULL DEFAULT 0,
+    route_id INTEGER NOT NULL,
     thread TEXT NOT NULL,
     last_read_id INTEGER NOT NULL,
     PRIMARY KEY (reader, project_id, route_id, thread)

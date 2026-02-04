@@ -2,6 +2,7 @@
 //!
 //! Commands for listing, creating, and managing projects for SpecFlow boards.
 
+use super::ResultExt;
 use crate::core::config;
 use crate::core::delta::DeltaState;
 use crate::core::draft::StartingPoint;
@@ -11,18 +12,15 @@ use crate::core::state::SQLiteState;
 /// List all projects, sorted by most recently created
 #[tauri::command]
 pub async fn list_projects() -> Result<Vec<Project>, String> {
-    let store = ProjectStore::open().await.map_err(|e| e.to_string())?;
-    store.list_projects().await.map_err(|e| e.to_string())
+    let store = ProjectStore::open().await.str_err()?;
+    store.list_projects().await.str_err()
 }
 
 /// Get a project by ID
 #[tauri::command]
 pub async fn get_project(project_id: i64) -> Result<Project, String> {
-    let store = ProjectStore::open().await.map_err(|e| e.to_string())?;
-    store
-        .get_project(project_id)
-        .await
-        .map_err(|e| e.to_string())
+    let store = ProjectStore::open().await.str_err()?;
+    store.get_project(project_id).await.str_err()
 }
 
 /// Create a new project from a local folder path
@@ -31,7 +29,7 @@ pub async fn create_project_from_path(
     path: String,
     name: Option<String>,
 ) -> Result<Project, String> {
-    let store = ProjectStore::open().await.map_err(|e| e.to_string())?;
+    let store = ProjectStore::open().await.str_err()?;
 
     // Use folder name as project name if not provided
     let project_name = name.unwrap_or_else(|| {
@@ -71,10 +69,7 @@ pub async fn create_project_from_path(
             x: None,
             y: None,
         };
-        let project = store
-            .create_project(&req)
-            .await
-            .map_err(|e| e.to_string())?;
+        let project = store.create_project(&req).await.str_err()?;
         return Ok(project);
     }
 
@@ -93,10 +88,7 @@ pub async fn create_project_from_path(
         y: None,
     };
 
-    let project = store
-        .create_project(&req)
-        .await
-        .map_err(|e| e.to_string())?;
+    let project = store.create_project(&req).await.str_err()?;
     Ok(project)
 }
 
@@ -108,7 +100,7 @@ pub async fn create_project(
     x: Option<f64>,
     y: Option<f64>,
 ) -> Result<Project, String> {
-    let store = ProjectStore::open().await.map_err(|e| e.to_string())?;
+    let store = ProjectStore::open().await.str_err()?;
 
     // Check if project with this name already exists and generate unique name if needed
     let mut project_name = name;
@@ -142,10 +134,7 @@ pub async fn create_project(
         y,
     };
 
-    let project = store
-        .create_project(&req)
-        .await
-        .map_err(|e| e.to_string())?;
+    let project = store.create_project(&req).await.str_err()?;
     Ok(project)
 }
 
@@ -157,6 +146,7 @@ pub async fn create_project(
 #[tauri::command]
 pub async fn update_project(
     project_id: i64,
+    route_id: i64,
     x: Option<f64>,
     y: Option<f64>,
     description: Option<String>,
@@ -182,15 +172,12 @@ pub async fn update_project(
     };
 
     // Update project
-    let store = ProjectStore::open().await.map_err(|e| e.to_string())?;
-    let project = store
-        .update_project(project_id, &req)
-        .await
-        .map_err(|e| e.to_string())?;
+    let store = ProjectStore::open().await.str_err()?;
+    let project = store.update_project(project_id, &req).await.str_err()?;
 
     // Propagate settings to active run if one exists
     if worker_scale.is_some() || time_limit_minutes.is_some() || human_in_the_loop.is_some() {
-        if let Err(e) = propagate_settings_to_active_run(project_id, &req).await {
+        if let Err(e) = propagate_settings_to_active_run(project_id, route_id, &req).await {
             tracing::warn!(
                 "Failed to propagate settings to active run for project {}: {}",
                 project_id,
@@ -205,14 +192,12 @@ pub async fn update_project(
 /// Propagate project settings to the active run's state
 async fn propagate_settings_to_active_run(
     project_id: i64,
+    route_id: i64,
     req: &UpdateProjectRequest,
 ) -> Result<(), String> {
     // Find the active run for this project
-    let delta_state = DeltaState::new(project_id);
-    let project_run = delta_state
-        .get_project_run()
-        .await
-        .map_err(|e| e.to_string())?;
+    let delta_state = DeltaState::with_route(project_id, route_id);
+    let project_run = delta_state.get_project_run().await.str_err()?;
 
     let Some(run) = project_run else {
         return Ok(()); // No active run
@@ -225,9 +210,7 @@ async fn propagate_settings_to_active_run(
         return Ok(()); // Run doesn't have a database yet
     }
 
-    let state = SQLiteState::new(&run.run_name)
-        .await
-        .map_err(|e| e.to_string())?;
+    let state = SQLiteState::new(&run.run_name).await.str_err()?;
 
     // Propagate worker_scale (scale up allows spawning more workers immediately,
     // scale down prevents spawning/waking workers beyond the new limit)
@@ -271,7 +254,7 @@ async fn propagate_settings_to_active_run(
 /// Update a project's name
 #[tauri::command]
 pub async fn update_project_name(project_id: i64, name: String) -> Result<Project, String> {
-    let store = ProjectStore::open().await.map_err(|e| e.to_string())?;
+    let store = ProjectStore::open().await.str_err()?;
 
     let req = UpdateProjectRequest {
         name: Some(name),
@@ -288,18 +271,12 @@ pub async fn update_project_name(project_id: i64, name: String) -> Result<Projec
         y: None,
     };
 
-    store
-        .update_project(project_id, &req)
-        .await
-        .map_err(|e| e.to_string())
+    store.update_project(project_id, &req).await.str_err()
 }
 
 /// Delete a project (removes from list, doesn't delete files)
 #[tauri::command]
 pub async fn delete_project(project_id: i64) -> Result<(), String> {
-    let store = ProjectStore::open().await.map_err(|e| e.to_string())?;
-    store
-        .delete_project(project_id)
-        .await
-        .map_err(|e| e.to_string())
+    let store = ProjectStore::open().await.str_err()?;
+    store.delete_project(project_id).await.str_err()
 }

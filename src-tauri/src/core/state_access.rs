@@ -427,7 +427,7 @@ impl StateAccess for SQLiteState {
         waiting: bool,
     ) -> StateAccessResult<i64> {
         use crate::core::ProjectMessagesStore;
-        let route_id = self.get_route_id().await.unwrap_or(0);
+        let route_id = self.get_route_id().await?;
         let store = ProjectMessagesStore::open()
             .await
             .map_err(|e| StateAccessError::Database(e.to_string()))?;
@@ -445,7 +445,7 @@ impl StateAccess for SQLiteState {
         limit: i64,
     ) -> StateAccessResult<Vec<crate::core::ProjectMessage>> {
         use crate::core::ProjectMessagesStore;
-        let route_id = self.get_route_id().await.unwrap_or(0);
+        let route_id = self.get_route_id().await?;
         let store = ProjectMessagesStore::open()
             .await
             .map_err(|e| StateAccessError::Database(e.to_string()))?;
@@ -462,7 +462,7 @@ impl StateAccess for SQLiteState {
         reader: &str,
     ) -> StateAccessResult<Vec<crate::core::ProjectMessage>> {
         use crate::core::ProjectMessagesStore;
-        let route_id = self.get_route_id().await.unwrap_or(0);
+        let route_id = self.get_route_id().await?;
         let store = ProjectMessagesStore::open()
             .await
             .map_err(|e| StateAccessError::Database(e.to_string()))?;
@@ -499,7 +499,7 @@ impl StateAccess for SQLiteState {
         reader: &str,
     ) -> StateAccessResult<Vec<crate::core::ProjectMessage>> {
         use crate::core::ProjectMessagesStore;
-        let route_id = self.get_route_id().await.unwrap_or(0);
+        let route_id = self.get_route_id().await?;
         let store = ProjectMessagesStore::open()
             .await
             .map_err(|e| StateAccessError::Database(e.to_string()))?;
@@ -534,7 +534,7 @@ impl StateAccess for SQLiteState {
         reader: &str,
     ) -> StateAccessResult<()> {
         use crate::core::ProjectMessagesStore;
-        let route_id = self.get_route_id().await.unwrap_or(0);
+        let route_id = self.get_route_id().await?;
         let store = ProjectMessagesStore::open()
             .await
             .map_err(|e| StateAccessError::Database(e.to_string()))?;
@@ -546,7 +546,7 @@ impl StateAccess for SQLiteState {
 
     async fn get_project_threads(&self, project_id: i64) -> StateAccessResult<Vec<String>> {
         use crate::core::ProjectMessagesStore;
-        let route_id = self.get_route_id().await.unwrap_or(0);
+        let route_id = self.get_route_id().await?;
         let store = ProjectMessagesStore::open()
             .await
             .map_err(|e| StateAccessError::Database(e.to_string()))?;
@@ -743,15 +743,16 @@ impl StateAccess for SQLiteState {
     ) -> StateAccessResult<()> {
         use crate::core::delta::{DeltaState, NodeType};
 
-        // Get project_id from run state
+        // Get project_id and route_id from run state
         let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
                 "Cannot add live node: run is not linked to a board project".to_string(),
             )
         })?;
+        let route_id = self.get_route_id().await?;
 
-        // Create delta state for this project
-        let delta_state = DeltaState::new(project_id);
+        // Create delta state for this project and route
+        let delta_state = DeltaState::with_route(project_id, route_id);
 
         // Parse node type
         let node_type = NodeType::from_str(node_type);
@@ -779,8 +780,9 @@ impl StateAccess for SQLiteState {
                 "Cannot claim live node: run is not linked to a board project".to_string(),
             )
         })?;
+        let route_id = self.get_route_id().await?;
 
-        let delta_state = DeltaState::new(project_id);
+        let delta_state = DeltaState::with_route(project_id, route_id);
         delta_state
             .claim_live_node(id, worker_name)
             .await
@@ -799,8 +801,9 @@ impl StateAccess for SQLiteState {
                 "Cannot complete live node: run is not linked to a board project".to_string(),
             )
         })?;
+        let route_id = self.get_route_id().await?;
 
-        let delta_state = DeltaState::new(project_id);
+        let delta_state = DeltaState::with_route(project_id, route_id);
         delta_state
             .complete_live_node(id, worker_name)
             .await
@@ -815,8 +818,9 @@ impl StateAccess for SQLiteState {
                 "Cannot unclaim live node: run is not linked to a board project".to_string(),
             )
         })?;
+        let route_id = self.get_route_id().await?;
 
-        let delta_state = DeltaState::new(project_id);
+        let delta_state = DeltaState::with_route(project_id, route_id);
         delta_state
             .unclaim_live_node(id)
             .await
@@ -834,8 +838,9 @@ impl StateAccess for SQLiteState {
                 "Cannot get claimed live node: run is not linked to a board project".to_string(),
             )
         })?;
+        let route_id = self.get_route_id().await?;
 
-        let delta_state = DeltaState::new(project_id);
+        let delta_state = DeltaState::with_route(project_id, route_id);
         delta_state
             .get_claimed_node_for_worker(worker_name)
             .await
@@ -852,8 +857,9 @@ impl StateAccess for SQLiteState {
                 "Cannot get claimable nodes: run is not linked to a board project".to_string(),
             )
         })?;
+        let route_id = self.get_route_id().await?;
 
-        let delta_state = DeltaState::new(project_id);
+        let delta_state = DeltaState::with_route(project_id, route_id);
         delta_state.get_claimable_nodes().await.map_err(|e| {
             StateAccessError::Database(format!("Failed to get claimable nodes: {}", e))
         })
@@ -867,8 +873,9 @@ impl StateAccess for SQLiteState {
                 "Cannot get live nodes: run is not linked to a board project".to_string(),
             )
         })?;
+        let route_id = self.get_route_id().await?;
 
-        let delta_state = DeltaState::new(project_id);
+        let delta_state = DeltaState::with_route(project_id, route_id);
         delta_state
             .get_live_nodes()
             .await
@@ -883,8 +890,9 @@ impl StateAccess for SQLiteState {
                 "Cannot check live node blocked: run is not linked to a board project".to_string(),
             )
         })?;
+        let route_id = self.get_route_id().await?;
 
-        let delta_state = DeltaState::new(project_id);
+        let delta_state = DeltaState::with_route(project_id, route_id);
         delta_state.is_node_blocked(id).await.map_err(|e| {
             StateAccessError::Database(format!("Failed to check live node blocked: {}", e))
         })
@@ -898,8 +906,9 @@ impl StateAccess for SQLiteState {
                 "Cannot eval pass: run is not linked to a board project".to_string(),
             )
         })?;
+        let route_id = self.get_route_id().await?;
 
-        let delta_state = DeltaState::new(project_id);
+        let delta_state = DeltaState::with_route(project_id, route_id);
         delta_state
             .eval_pass(eval_id, worker_name)
             .await
@@ -919,8 +928,9 @@ impl StateAccess for SQLiteState {
                 "Cannot eval fail: run is not linked to a board project".to_string(),
             )
         })?;
+        let route_id = self.get_route_id().await?;
 
-        let delta_state = DeltaState::new(project_id);
+        let delta_state = DeltaState::with_route(project_id, route_id);
         delta_state
             .eval_fail(eval_id, worker_name, feedback)
             .await
@@ -935,8 +945,9 @@ impl StateAccess for SQLiteState {
                 "Cannot set live node tokens: run is not linked to a board project".to_string(),
             )
         })?;
+        let route_id = self.get_route_id().await?;
 
-        let delta_state = DeltaState::new(project_id);
+        let delta_state = DeltaState::with_route(project_id, route_id);
         delta_state.set_node_tokens(id, tokens).await.map_err(|e| {
             StateAccessError::Database(format!("Failed to set live node tokens: {}", e))
         })
@@ -950,8 +961,9 @@ impl StateAccess for SQLiteState {
                 "Cannot get validated nodes: run is not linked to a board project".to_string(),
             )
         })?;
+        let route_id = self.get_route_id().await?;
 
-        let delta_state = DeltaState::new(project_id);
+        let delta_state = DeltaState::with_route(project_id, route_id);
         delta_state.get_validated_nodes(eval_id).await.map_err(|e| {
             StateAccessError::Database(format!("Failed to get validated nodes: {}", e))
         })
@@ -965,8 +977,9 @@ impl StateAccess for SQLiteState {
                 "Cannot delete live node: run is not linked to a board project".to_string(),
             )
         })?;
+        let route_id = self.get_route_id().await?;
 
-        let delta_state = DeltaState::new(project_id);
+        let delta_state = DeltaState::with_route(project_id, route_id);
         delta_state
             .delete_live_node(id)
             .await

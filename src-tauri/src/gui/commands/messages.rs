@@ -6,6 +6,7 @@
 //! but workers now use project-level messages (Sheepfold) for communication.
 
 use super::types::{UnreadNotification, UnreadNotificationsResponse};
+use super::ResultExt;
 use crate::core::api_types::{parse_timestamp, Message, ThreadSummary};
 use crate::core::delta::DeltaState;
 use crate::core::orchestrator::create_orchestrator;
@@ -20,20 +21,16 @@ pub async fn get_messages(
     thread_name: String,
     _limit: Option<u32>,
 ) -> Result<Vec<Message>, String> {
-    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
-    orch.get_messages(&run_name, &thread_name)
-        .await
-        .map_err(|e| e.to_string())
+    let orch = create_orchestrator(None).str_err()?;
+    orch.get_messages(&run_name, &thread_name).await.str_err()
 }
 
 /// Get all threads for a run
 /// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn get_threads(run_name: String) -> Result<Vec<ThreadSummary>, String> {
-    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
-    orch.list_threads(&run_name)
-        .await
-        .map_err(|e| e.to_string())
+    let orch = create_orchestrator(None).str_err()?;
+    orch.list_threads(&run_name).await.str_err()
 }
 
 /// Get all unread notifications across all projects
@@ -45,9 +42,7 @@ pub async fn get_all_unread_notifications() -> Result<UnreadNotificationsRespons
         .await
         .unwrap_or_default();
 
-    let store = ProjectMessagesStore::open()
-        .await
-        .map_err(|e| e.to_string())?;
+    let store = ProjectMessagesStore::open().await.str_err()?;
 
     let mut all_notifications: Vec<UnreadNotification> = Vec::new();
     let mut projects_with_unread = 0;
@@ -164,10 +159,10 @@ pub async fn send_message(
     thread_name: String,
     content: String,
 ) -> Result<Message, String> {
-    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
+    let orch = create_orchestrator(None).str_err()?;
     orch.send_message(&run_name, &thread_name, &content)
         .await
-        .map_err(|e| e.to_string())
+        .str_err()
 }
 
 /// Mark messages as read
@@ -179,9 +174,7 @@ pub async fn mark_messages_read(
     _reader: String,
 ) -> Result<(), String> {
     // Get project_id from run
-    let project_runs = DeltaState::list_all_project_runs()
-        .await
-        .map_err(|e| e.to_string())?;
+    let project_runs = DeltaState::list_all_project_runs().await.str_err()?;
 
     let project_id = project_runs
         .iter()
@@ -190,21 +183,16 @@ pub async fn mark_messages_read(
         .ok_or_else(|| format!("Run '{}' not linked to a project", run_name))?;
 
     // Get project to find active_route_id
-    let project_store = ProjectStore::open().await.map_err(|e| e.to_string())?;
-    let project = project_store
-        .get_project(project_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    let project_store = ProjectStore::open().await.str_err()?;
+    let project = project_store.get_project(project_id).await.str_err()?;
     let route_id = project.active_route_id.unwrap_or(1);
 
-    let store = ProjectMessagesStore::open()
-        .await
-        .map_err(|e| e.to_string())?;
+    let store = ProjectMessagesStore::open().await.str_err()?;
 
     store
         .mark_messages_read(project_id, route_id, &thread_name, "user")
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     Ok(())
 }

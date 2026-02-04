@@ -93,21 +93,17 @@ pub async fn build_eval_context(files: &Files, state: &SQLiteState) -> EvalConte
     let assets_path = files.assets();
 
     // Get group chat messages (meadow) from project messages
-    // TODO: Get route_id from run metadata when available
-    let group_chat = match state.get_project_id().await {
-        Ok(Some(project_id)) => {
-            let route_id = state.get_route_id().await.unwrap_or(0);
-            match ProjectMessagesStore::open().await {
-                Ok(store) => match store
-                    .get_messages(project_id, route_id, "meadow", Some(500))
-                    .await
-                {
-                    Ok(msgs) => format_project_messages(&msgs),
-                    Err(_) => String::new(),
-                },
+    let group_chat = match (state.get_project_id().await, state.get_route_id().await) {
+        (Ok(Some(project_id)), Ok(route_id)) => match ProjectMessagesStore::open().await {
+            Ok(store) => match store
+                .get_messages(project_id, route_id, "meadow", Some(500))
+                .await
+            {
+                Ok(msgs) => format_project_messages(&msgs),
                 Err(_) => String::new(),
-            }
-        }
+            },
+            Err(_) => String::new(),
+        },
         _ => String::new(),
     };
 

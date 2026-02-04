@@ -265,7 +265,9 @@ impl SQLiteState {
             sqlx::query_scalar("SELECT route_id FROM state WHERE id = 1")
                 .fetch_optional(&pool)
                 .await?;
-        Ok(result.flatten().unwrap_or(0))
+        result
+            .flatten()
+            .ok_or_else(|| StateError::NotFound("route_id not set".to_string()))
     }
 
     /// Set route ID
@@ -394,8 +396,9 @@ impl SQLiteState {
             .await?;
 
         // Notify workers via group chat (project messages)
-        if let Some(project_id) = self.get_project_id().await? {
-            let route_id = self.get_route_id().await.unwrap_or(0);
+        if let (Some(project_id), Ok(route_id)) =
+            (self.get_project_id().await?, self.get_route_id().await)
+        {
             let msg = if enabled {
                 "The user is now available. Feel free to message them if needed."
             } else {

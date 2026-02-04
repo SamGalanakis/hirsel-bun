@@ -3,6 +3,7 @@
 //! Tauri commands for project-scoped messaging.
 //! All commands are scoped to a specific route within a project.
 
+use super::ResultExt;
 use crate::core::project::ProjectStore;
 use crate::core::{ProjectMessage, ProjectMessagesStore, ProjectThreadSummary};
 
@@ -14,13 +15,11 @@ pub async fn get_project_messages(
     thread: String,
     limit: Option<i64>,
 ) -> Result<Vec<ProjectMessage>, String> {
-    let store = ProjectMessagesStore::open()
-        .await
-        .map_err(|e| e.to_string())?;
+    let store = ProjectMessagesStore::open().await.str_err()?;
     store
         .get_messages(project_id, route_id, &thread, limit)
         .await
-        .map_err(|e| e.to_string())
+        .str_err()
 }
 
 /// Get all threads for a project route with unread counts
@@ -29,13 +28,11 @@ pub async fn get_project_threads(
     project_id: i64,
     route_id: i64,
 ) -> Result<Vec<ProjectThreadSummary>, String> {
-    let store = ProjectMessagesStore::open()
-        .await
-        .map_err(|e| e.to_string())?;
+    let store = ProjectMessagesStore::open().await.str_err()?;
     store
         .get_threads(project_id, route_id, "user")
         .await
-        .map_err(|e| e.to_string())
+        .str_err()
 }
 
 /// Send a message to a project thread
@@ -46,13 +43,11 @@ pub async fn send_project_message(
     thread: String,
     content: String,
 ) -> Result<ProjectMessage, String> {
-    let store = ProjectMessagesStore::open()
-        .await
-        .map_err(|e| e.to_string())?;
+    let store = ProjectMessagesStore::open().await.str_err()?;
     store
         .add_message(project_id, route_id, &thread, "user", &content, false)
         .await
-        .map_err(|e| e.to_string())
+        .str_err()
 }
 
 /// Mark messages in a thread as read
@@ -62,13 +57,11 @@ pub async fn mark_project_messages_read(
     route_id: i64,
     thread: String,
 ) -> Result<(), String> {
-    let store = ProjectMessagesStore::open()
-        .await
-        .map_err(|e| e.to_string())?;
+    let store = ProjectMessagesStore::open().await.str_err()?;
     store
         .mark_messages_read(project_id, route_id, &thread, "user")
         .await
-        .map_err(|e| e.to_string())
+        .str_err()
 }
 
 /// Get total unread count for a project route
@@ -83,20 +76,15 @@ pub async fn get_project_unread_count(
     let route_id = match route_id {
         Some(id) => id,
         None => {
-            let project_store = ProjectStore::open().await.map_err(|e| e.to_string())?;
-            let project = project_store
-                .get_project(project_id)
-                .await
-                .map_err(|e| e.to_string())?;
+            let project_store = ProjectStore::open().await.str_err()?;
+            let project = project_store.get_project(project_id).await.str_err()?;
             project.active_route_id.unwrap_or(1)
         }
     };
 
-    let store = ProjectMessagesStore::open()
-        .await
-        .map_err(|e| e.to_string())?;
+    let store = ProjectMessagesStore::open().await.str_err()?;
     store
         .get_unread_count(project_id, route_id, "user")
         .await
-        .map_err(|e| e.to_string())
+        .str_err()
 }

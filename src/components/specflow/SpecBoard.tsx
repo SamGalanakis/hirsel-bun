@@ -1090,61 +1090,85 @@ export const SpecBoard: Component = () => {
   };
 
   // Pan and zoom handlers (per side)
-  // Figma-style: scroll up (negative deltaY) = zoom in, scroll down = zoom out
-  // Zoom centers on cursor position
+  // Trackpad/mouse support:
+  // - Pinch-to-zoom (ctrlKey on wheel) or Ctrl+scroll = zoom centered on cursor
+  // - Two-finger scroll / regular scroll = pan
+  // - Middle mouse / Alt+click drag = pan (legacy)
   const handleWheel = (e: WheelEvent) => {
     const side = getSideFromEvent(e);
     if (!side) return;
 
     e.preventDefault();
-    const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
 
-    if (side === 'draft') {
-      const oldZoom = draftZoom();
-      const section = (e.target as HTMLElement).closest('.tree-section');
-      const layout = draftLayout();
-      // Calculate minimum zoom to fit tree in panel
-      const rect = section?.getBoundingClientRect();
-      const minZoom = rect ? calcFitZoom(layout.width, layout.height, rect.width, rect.height) : 0.25;
-      const newZoom = Math.max(minZoom, Math.min(3, oldZoom * zoomFactor));
-      if (section && rect) {
-        // Cursor position relative to section
-        const cursorX = e.clientX - rect.left - TREE_LEFT_MARGIN;
-        const cursorY = e.clientY - rect.top - rect.height / 2;
-        const currentPan = draftPan();
-        // Point in content space under cursor
-        const contentX = (cursorX - currentPan.x) / oldZoom;
-        const contentY = (cursorY - currentPan.y) / oldZoom;
-        // New pan to keep that point under cursor
-        setDraftPan({
-          x: cursorX - contentX * newZoom,
-          y: cursorY - contentY * newZoom,
-        });
+    // Pinch-to-zoom gesture (trackpad) or Ctrl+scroll (mouse) = zoom
+    if (e.ctrlKey) {
+      const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+
+      if (side === 'draft') {
+        const oldZoom = draftZoom();
+        const section = (e.target as HTMLElement).closest('.tree-section');
+        const layout = draftLayout();
+        const rect = section?.getBoundingClientRect();
+        const minZoom = rect ? calcFitZoom(layout.width, layout.height, rect.width, rect.height) : 0.25;
+        const newZoom = Math.max(minZoom, Math.min(3, oldZoom * zoomFactor));
+        if (section && rect) {
+          const cursorX = e.clientX - rect.left - TREE_LEFT_MARGIN;
+          const cursorY = e.clientY - rect.top - rect.height / 2;
+          const currentPan = draftPan();
+          const contentX = (cursorX - currentPan.x) / oldZoom;
+          const contentY = (cursorY - currentPan.y) / oldZoom;
+          setDraftPan({
+            x: cursorX - contentX * newZoom,
+            y: cursorY - contentY * newZoom,
+          });
+        }
+        setDraftZoom(newZoom);
+      } else {
+        const oldZoom = liveZoom();
+        const section = (e.target as HTMLElement).closest('.tree-section');
+        const layout = liveLayout();
+        const rect = section?.getBoundingClientRect();
+        const minZoom = rect ? calcFitZoom(layout.width, layout.height, rect.width, rect.height) : 0.25;
+        const newZoom = Math.max(minZoom, Math.min(3, oldZoom * zoomFactor));
+        if (section && rect) {
+          const cursorX = e.clientX - rect.left - TREE_LEFT_MARGIN;
+          const cursorY = e.clientY - rect.top - rect.height / 2;
+          const currentPan = livePan();
+          const contentX = (cursorX - currentPan.x) / oldZoom;
+          const contentY = (cursorY - currentPan.y) / oldZoom;
+          setLivePan({
+            x: cursorX - contentX * newZoom,
+            y: cursorY - contentY * newZoom,
+          });
+        }
+        setLiveZoom(newZoom);
       }
-      setDraftZoom(newZoom);
     } else {
-      const oldZoom = liveZoom();
+      // Regular scroll = pan (two-finger swipe on trackpad, scroll wheel on mouse)
       const section = (e.target as HTMLElement).closest('.tree-section');
-      const layout = liveLayout();
-      // Calculate minimum zoom to fit tree in panel
       const rect = section?.getBoundingClientRect();
-      const minZoom = rect ? calcFitZoom(layout.width, layout.height, rect.width, rect.height) : 0.25;
-      const newZoom = Math.max(minZoom, Math.min(3, oldZoom * zoomFactor));
-      if (section && rect) {
-        // Cursor position relative to section
-        const cursorX = e.clientX - rect.left - TREE_LEFT_MARGIN;
-        const cursorY = e.clientY - rect.top - rect.height / 2;
-        const currentPan = livePan();
-        // Point in content space under cursor
-        const contentX = (cursorX - currentPan.x) / oldZoom;
-        const contentY = (cursorY - currentPan.y) / oldZoom;
-        // New pan to keep that point under cursor
-        setLivePan({
-          x: cursorX - contentX * newZoom,
-          y: cursorY - contentY * newZoom,
-        });
+
+      if (side === 'draft') {
+        const layout = draftLayout();
+        const rawPan = {
+          x: draftPan().x - e.deltaX,
+          y: draftPan().y - e.deltaY,
+        };
+        const clampedPan = rect
+          ? clampPan(rawPan, layout.width, layout.height, rect.width, rect.height, draftZoom())
+          : rawPan;
+        setDraftPan(clampedPan);
+      } else {
+        const layout = liveLayout();
+        const rawPan = {
+          x: livePan().x - e.deltaX,
+          y: livePan().y - e.deltaY,
+        };
+        const clampedPan = rect
+          ? clampPan(rawPan, layout.width, layout.height, rect.width, rect.height, liveZoom())
+          : rawPan;
+        setLivePan(clampedPan);
       }
-      setLiveZoom(newZoom);
     }
   };
 

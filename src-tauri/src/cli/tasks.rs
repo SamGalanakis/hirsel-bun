@@ -75,7 +75,7 @@ fn get_run_dir(run_name: &str) -> Result<PathBuf, TaskError> {
 }
 
 /// Get the SQLiteState and project_id for a run.
-fn get_project_state(run_name: &str) -> Result<(SQLiteState, i64), TaskError> {
+fn get_project_state(run_name: &str) -> Result<(SQLiteState, i64, i64), TaskError> {
     let _ = get_run_dir(run_name)?; // Verify run exists
     let state = block_on(SQLiteState::new(run_name)).map_err(TaskError::State)?;
 
@@ -83,7 +83,9 @@ fn get_project_state(run_name: &str) -> Result<(SQLiteState, i64), TaskError> {
         .map_err(TaskError::State)?
         .ok_or(TaskError::NotProjectRun)?;
 
-    Ok((state, project_id))
+    let route_id = block_on(state.get_route_id()).map_err(TaskError::State)?;
+
+    Ok((state, project_id, route_id))
 }
 
 /// Calculate depth of a node in the tree.
@@ -102,8 +104,8 @@ fn get_node_depth(nodes: &[LiveNode], node_id: &str) -> usize {
 ///
 /// Lists all tasks in a run with their status, hierarchy, and assignments.
 pub fn run_tasks(run_name: &str, json_output: bool) -> Result<String, TaskError> {
-    let (_, project_id) = get_project_state(run_name)?;
-    let delta_state = DeltaState::new(project_id);
+    let (_, project_id, route_id) = get_project_state(run_name)?;
+    let delta_state = DeltaState::with_route(project_id, route_id);
     let nodes = block_on(delta_state.get_live_nodes())?;
 
     if json_output {
@@ -215,8 +217,8 @@ pub fn run_task_add(
     blocked_by: &[String],
     json_output: bool,
 ) -> Result<String, TaskError> {
-    let (_, project_id) = get_project_state(run_name)?;
-    let delta_state = DeltaState::new(project_id);
+    let (_, project_id, route_id) = get_project_state(run_name)?;
+    let delta_state = DeltaState::with_route(project_id, route_id);
 
     // Convert Vec<String> to Vec<&str> for the API
     let blocked_by_refs: Vec<&str> = blocked_by.iter().map(|s| s.as_str()).collect();
@@ -254,8 +256,8 @@ pub fn run_task_delete(
     task_id: &str,
     json_output: bool,
 ) -> Result<String, TaskError> {
-    let (_, project_id) = get_project_state(run_name)?;
-    let delta_state = DeltaState::new(project_id);
+    let (_, project_id, route_id) = get_project_state(run_name)?;
+    let delta_state = DeltaState::with_route(project_id, route_id);
 
     block_on(delta_state.delete_live_node(task_id))?;
 
@@ -279,8 +281,8 @@ pub fn run_task_done(
     task_id: &str,
     json_output: bool,
 ) -> Result<String, TaskError> {
-    let (_, project_id) = get_project_state(run_name)?;
-    let delta_state = DeltaState::new(project_id);
+    let (_, project_id, route_id) = get_project_state(run_name)?;
+    let delta_state = DeltaState::with_route(project_id, route_id);
 
     // Get the node first
     let node = match block_on(delta_state.get_live_node(task_id)) {
@@ -322,8 +324,8 @@ pub fn run_task_reopen(
     task_id: &str,
     json_output: bool,
 ) -> Result<String, TaskError> {
-    let (_, project_id) = get_project_state(run_name)?;
-    let delta_state = DeltaState::new(project_id);
+    let (_, project_id, route_id) = get_project_state(run_name)?;
+    let delta_state = DeltaState::with_route(project_id, route_id);
 
     // Verify task exists
     match block_on(delta_state.get_live_node(task_id)) {
@@ -357,8 +359,8 @@ pub fn run_task_unclaim(
     task_id: &str,
     json_output: bool,
 ) -> Result<String, TaskError> {
-    let (_, project_id) = get_project_state(run_name)?;
-    let delta_state = DeltaState::new(project_id);
+    let (_, project_id, route_id) = get_project_state(run_name)?;
+    let delta_state = DeltaState::with_route(project_id, route_id);
 
     // Get the node first
     let node = match block_on(delta_state.get_live_node(task_id)) {

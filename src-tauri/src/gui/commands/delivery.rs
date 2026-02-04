@@ -4,6 +4,8 @@
 //! Also includes board delivery commands for the delta dispatch system.
 
 use super::get_run_work_dir;
+use super::ResultExt;
+use crate::core::config::Config;
 use crate::core::delivery::{
     delivery_branch_name, pr_body, pr_title, DeliveryOrchestrator, DeliveryState, PushResult,
 };
@@ -27,12 +29,12 @@ pub async fn get_delivery_state(
         Err(_) => None,
     };
 
-    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).map_err(|e| e.to_string())?;
+    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).str_err()?;
 
     orchestrator
         .get_delivery_state(&target_branch, branch_off_commit.as_deref())
         .await
-        .map_err(|e| e.to_string())
+        .str_err()
 }
 
 /// Check merge state for a run
@@ -40,11 +42,9 @@ pub async fn get_delivery_state(
 pub async fn check_merge_state(run_name: String, target_branch: String) -> Result<String, String> {
     let work_dir = get_run_work_dir(&run_name)?;
 
-    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).map_err(|e| e.to_string())?;
+    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).str_err()?;
 
-    let state = orchestrator
-        .check_merge_state(&target_branch)
-        .map_err(|e| e.to_string())?;
+    let state = orchestrator.check_merge_state(&target_branch).str_err()?;
 
     Ok(state.as_str().to_string())
 }
@@ -57,11 +57,9 @@ pub async fn get_conflicting_files(
 ) -> Result<Vec<String>, String> {
     let work_dir = get_run_work_dir(&run_name)?;
 
-    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).map_err(|e| e.to_string())?;
+    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).str_err()?;
 
-    orchestrator
-        .get_conflicting_files(&target_branch)
-        .map_err(|e| e.to_string())
+    orchestrator.get_conflicting_files(&target_branch).str_err()
 }
 
 /// Check staleness (commits on target since branch-off)
@@ -73,11 +71,11 @@ pub async fn check_staleness(
 ) -> Result<u32, String> {
     let work_dir = get_run_work_dir(&run_name)?;
 
-    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).map_err(|e| e.to_string())?;
+    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).str_err()?;
 
     orchestrator
         .check_staleness(&target_branch, &branch_off_commit)
-        .map_err(|e| e.to_string())
+        .str_err()
 }
 
 /// Tier 1: Push branch to remote
@@ -85,9 +83,9 @@ pub async fn check_staleness(
 pub async fn push_run_branch(run_name: String) -> Result<PushResult, String> {
     let work_dir = get_run_work_dir(&run_name)?;
 
-    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).map_err(|e| e.to_string())?;
+    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).str_err()?;
 
-    orchestrator.push_branch(None).map_err(|e| e.to_string())
+    orchestrator.push_branch(None).str_err()
 }
 
 /// Tier 2: Create a pull request
@@ -100,15 +98,15 @@ pub async fn create_run_pr(
 ) -> Result<PrInfo, String> {
     let work_dir = get_run_work_dir(&run_name)?;
 
-    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).map_err(|e| e.to_string())?;
+    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).str_err()?;
 
     orchestrator
         .create_pr(&target_branch, &title, &body)
         .await
-        .map_err(|e| e.to_string())
+        .str_err()
 }
 
-/// Tier 3: Auto-merge (push, create PR, merge)
+/// Tier 3: Auto-merge (push, create PR, merge) with AI-assisted conflict resolution
 #[tauri::command]
 pub async fn auto_merge_run(
     run_name: String,
@@ -117,13 +115,14 @@ pub async fn auto_merge_run(
     body: String,
 ) -> Result<MergeResult, String> {
     let work_dir = get_run_work_dir(&run_name)?;
+    let config = Config::load().map(|(c, _)| c).unwrap_or_default();
 
-    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).map_err(|e| e.to_string())?;
+    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).str_err()?;
 
     orchestrator
-        .auto_merge(&target_branch, &title, &body)
+        .auto_merge_with_resolution(&target_branch, &title, &body, config, None)
         .await
-        .map_err(|e| e.to_string())
+        .str_err()
 }
 
 /// Generate PR title from run
@@ -162,7 +161,7 @@ pub async fn get_board_versions(
     route_id: i64,
 ) -> Result<Vec<BoardVersion>, String> {
     let state = DeltaState::with_route(project_id, route_id);
-    state.get_board_versions().await.map_err(|e| e.to_string())
+    state.get_board_versions().await.str_err()
 }
 
 /// Get the latest board version for a project
@@ -172,7 +171,7 @@ pub async fn get_latest_board_version(
     route_id: i64,
 ) -> Result<Option<BoardVersion>, String> {
     let state = DeltaState::with_route(project_id, route_id);
-    state.get_latest_version().await.map_err(|e| e.to_string())
+    state.get_latest_version().await.str_err()
 }
 
 /// Get the current (non-terminal) delivery for a project
@@ -182,10 +181,7 @@ pub async fn get_current_board_delivery(
     route_id: i64,
 ) -> Result<Option<Delivery>, String> {
     let state = DeltaState::with_route(project_id, route_id);
-    state
-        .get_current_delivery()
-        .await
-        .map_err(|e| e.to_string())
+    state.get_current_delivery().await.str_err()
 }
 
 /// Start a delivery for a board version
@@ -205,25 +201,22 @@ pub async fn start_board_delivery(
     let delivery = state
         .create_delivery(version_id, &target_branch)
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     // Mark as in progress
     state
         .update_delivery_status(delivery.id, BoardDeliveryStatus::InProgress)
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     // Create an attempt record
-    state
-        .add_delivery_attempt(delivery.id)
-        .await
-        .map_err(|e| e.to_string())?;
+    state.add_delivery_attempt(delivery.id).await.str_err()?;
 
     // Get the project run to find the work directory
     let project_run = state
         .get_project_run()
         .await
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .ok_or("No project run found")?;
 
     let run_path = hirsel_dir().join("runs").join(&project_run.run_name);
@@ -234,9 +227,9 @@ pub async fn start_board_delivery(
     }
 
     // Create orchestrator and push
-    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).map_err(|e| e.to_string())?;
+    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).str_err()?;
 
-    let push_result = orchestrator.push_branch(None).map_err(|e| e.to_string())?;
+    let push_result = orchestrator.push_branch(None).str_err()?;
 
     // Update delivery with branch info
     state
@@ -247,18 +240,15 @@ pub async fn start_board_delivery(
             None,
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     state
         .update_delivery_status(delivery.id, BoardDeliveryStatus::Pushed)
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     // Return the updated delivery
-    state
-        .get_delivery(delivery.id)
-        .await
-        .map_err(|e| e.to_string())
+    state.get_delivery(delivery.id).await.str_err()
 }
 
 /// Retry a failed delivery
@@ -274,13 +264,10 @@ pub async fn retry_board_delivery(
     state
         .update_delivery_status(delivery_id, BoardDeliveryStatus::InProgress)
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     // Add new attempt
-    state
-        .add_delivery_attempt(delivery_id)
-        .await
-        .map_err(|e| e.to_string())
+    state.add_delivery_attempt(delivery_id).await.str_err()
 }
 
 /// Get delivery attempts for a delivery
@@ -291,10 +278,7 @@ pub async fn get_delivery_attempts(
     delivery_id: i64,
 ) -> Result<Vec<DeliveryAttempt>, String> {
     let state = DeltaState::with_route(project_id, route_id);
-    state
-        .get_delivery_attempts(delivery_id)
-        .await
-        .map_err(|e| e.to_string())
+    state.get_delivery_attempts(delivery_id).await.str_err()
 }
 
 /// Complete a board delivery (push, PR, merge)
@@ -312,7 +296,7 @@ pub async fn complete_board_delivery(
     let project_run = state
         .get_project_run()
         .await
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .ok_or("No project run found")?;
 
     let run_path = hirsel_dir().join("runs").join(&project_run.run_name);
@@ -322,16 +306,13 @@ pub async fn complete_board_delivery(
         return Err(format!("Work directory not found: {}", work_dir.display()));
     }
 
-    let delivery = state
-        .get_delivery(delivery_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    let delivery = state.get_delivery(delivery_id).await.str_err()?;
 
-    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).map_err(|e| e.to_string())?;
+    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).str_err()?;
 
     match action.as_str() {
         "push" => {
-            let push_result = orchestrator.push_branch(None).map_err(|e| e.to_string())?;
+            let push_result = orchestrator.push_branch(None).str_err()?;
             state
                 .update_delivery_info(
                     delivery_id,
@@ -340,11 +321,11 @@ pub async fn complete_board_delivery(
                     None,
                 )
                 .await
-                .map_err(|e| e.to_string())?;
+                .str_err()?;
             state
                 .update_delivery_status(delivery_id, BoardDeliveryStatus::Pushed)
                 .await
-                .map_err(|e| e.to_string())?;
+                .str_err()?;
         }
         "pr" => {
             let title = format!("Board v{} delivery", delivery.version_id);
@@ -357,7 +338,7 @@ pub async fn complete_board_delivery(
             let pr = orchestrator
                 .create_pr(&delivery.target_branch, &title, &body)
                 .await
-                .map_err(|e| e.to_string())?;
+                .str_err()?;
             state
                 .update_delivery_info(
                     delivery_id,
@@ -371,34 +352,32 @@ pub async fn complete_board_delivery(
                     Some(pr.number as i64),
                 )
                 .await
-                .map_err(|e| e.to_string())?;
+                .str_err()?;
             state
                 .update_delivery_status(delivery_id, BoardDeliveryStatus::PrOpen)
                 .await
-                .map_err(|e| e.to_string())?;
+                .str_err()?;
         }
         "merge" => {
+            let config = Config::load().map(|(c, _)| c).unwrap_or_default();
             let title = format!("Board v{} delivery", delivery.version_id);
             let body = format!(
                 "Automated delivery from Hirsel board version {}",
                 delivery.version_id
             );
             let _merge = orchestrator
-                .auto_merge(&delivery.target_branch, &title, &body)
+                .auto_merge_with_resolution(&delivery.target_branch, &title, &body, config, None)
                 .await
-                .map_err(|e| e.to_string())?;
+                .str_err()?;
             state
                 .update_delivery_status(delivery_id, BoardDeliveryStatus::Merged)
                 .await
-                .map_err(|e| e.to_string())?;
+                .str_err()?;
         }
         _ => return Err(format!("Unknown action: {}", action)),
     }
 
-    state
-        .get_delivery(delivery_id)
-        .await
-        .map_err(|e| e.to_string())
+    state.get_delivery(delivery_id).await.str_err()
 }
 
 /// Abandon a delivery
@@ -412,5 +391,5 @@ pub async fn abandon_board_delivery(
     state
         .update_delivery_status(delivery_id, BoardDeliveryStatus::Abandoned)
         .await
-        .map_err(|e| e.to_string())
+        .str_err()
 }

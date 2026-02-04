@@ -16,7 +16,7 @@
 | Modify lifecycle | `src-tauri/src/core/lifecycle/mod.rs`, `src-tauri/src/core/lifecycle/local.rs` |
 | Add archive strategy | `src-tauri/src/core/snapshot/mod.rs`, new strategy impl of `ArchiveStrategy` |
 | Add service worker | `src-tauri/src/core/service_worker/scribe.rs`, `src-tauri/src/cli/service_worker.rs` |
-| Add board task/eval | `src-tauri/src/core/board/mod.rs`, `src-tauri/src/gui/commands/specflow.rs` |
+| Add board task/eval | `src-tauri/src/core/board/mod.rs`, `src-tauri/src/gui/commands/delta.rs` |
 | Modify board UI | `src/components/specflow/SpecBoard.tsx`, `src/components/layout/CanvasToolbar.tsx` |
 | Add orchestrator method | `src-tauri/src/core/orchestrator/mod.rs` → trait, `local.rs`, `daemon.rs`, `remote.rs` impls |
 | Modify delta dispatch | `src-tauri/src/core/delta/dispatch.rs`, `src-tauri/src/core/delta/runner.rs`, `src-tauri/src/daemon/lifecycle.rs` |
@@ -80,7 +80,7 @@ cargo build --features s3-storage               # With S3 support
 |-----------|-----------|---------|
 | `state/` | `mod.rs`, `types.rs`, `run.rs`, `workers.rs`, `messages.rs`, `events.rs`, `evals.rs`, `history.rs`, `scribe.rs` | SQLite state management (per-run) |
 | `project/` | `mod.rs`, `types.rs`, `store.rs` | Project database (global), SpecFlow per-project configuration |
-| `board/` | `mod.rs`, `types.rs`, `storage.rs` | SpecFlow board data (tasks, evals, task tree, file sync) |
+| `board/` | `mod.rs`, `types.rs`, `storage.rs`, `mcp.rs` | SpecFlow board data (tasks, evals, task tree, file sync, MCP server for Gyp) |
 | `github/` | `mod.rs` | GitHub API client (octocrab) with auth fallback (env → gh config → hirsel config) |
 | `forge/` | `mod.rs` → `ForgeProvider` trait, `github.rs` | Extensible forge abstraction for PR/merge operations (currently GitHub only) |
 | `dispatch/` | `mod.rs` | Dispatch service: creates runs from board tasks, generates spec/eval, creates work+eval tasks with validates relationship |
@@ -137,7 +137,7 @@ cargo build --features s3-storage               # With S3 support
 | `file_server.rs` | File upload server for remote workers |
 
 **MCP Worker Tools** (available to all workers):
-- Live Node Management: `get_task_tree`, `get_available_tasks`, `get_my_tasks`, `get_task_details`, `complete_task`, `add_task`, `add_eval`
+- Live Node Management: `get_task_tree`, `get_available_tasks`, `get_my_tasks`, `get_task_details`, `complete_task`, `add_task`, `add_eval`, `delete_task`
 - Communication: `list_contacts`, `chat_history`, `chat_send`, `chat_unread`
 - Documentation: `scribe`, `read_docs`
 - Work Management: `work_done` (signal ready for next task), `time_status`
@@ -172,12 +172,13 @@ cargo build --features s3-storage               # With S3 support
 | `delivery.rs` | `get_delivery_state`, `check_merge_state`, `get_conflicting_files`, `check_staleness`, `push_run_branch`, `create_run_pr`, `auto_merge_run`, `generate_pr_title`, `generate_pr_body`, `delivery_branch_name`, `get_board_versions`, `get_latest_board_version`, `get_current_board_delivery`, `start_board_delivery`, `get_board_delivery_status`, `retry_board_delivery`, `get_delivery_attempts`, `complete_board_delivery`, `abandon_board_delivery` |
 | `routes.rs` | `list_routes`, `get_route`, `get_route_by_name`, `get_route_tree`, `create_route`, `delete_route`, `set_active_route`, `get_active_route` |
 | `project_messages.rs` | `get_project_messages`, `get_project_threads`, `send_project_message`, `mark_project_messages_read`, `get_project_unread_count` |
+| `docs.rs` | `get_project_docs` |
+| `ide.rs` | `open_in_ide` |
 
 ### `src-tauri/src/cli/` - CLI Commands
 
 | File | Command | Feature |
 |------|---------|---------|
-| `go.rs` | `hirsel go <run> <spec>` | `cli` |
 | `runs.rs` | `hirsel runs` | - |
 | `view.rs` | `hirsel view <run>` | - |
 | `log.rs` | `hirsel log <run>` | - |
@@ -187,7 +188,7 @@ cargo build --features s3-storage               # With S3 support
 | `delete.rs` | `hirsel delete <run>` | - |
 | `deliver.rs` | `hirsel deliver <run>` | - |
 | `msg.rs` | `hirsel msg <run>` | - |
-| `tasks.rs` | `hirsel tasks <project>` - View live nodes for a project | - |
+| `tasks.rs` | `hirsel tasks <run>` - View live nodes for a run | - |
 | `diff.rs` | `hirsel diff <run>` | - |
 | `summary.rs` | `hirsel summary <run>` | - |
 | `spec.rs` | `hirsel spec <run>` | - |
@@ -198,14 +199,13 @@ cargo build --features s3-storage               # With S3 support
 | `templates.rs` | `hirsel templates` | - |
 | `man.rs` | `hirsel man` | - |
 | `completions.rs` | `hirsel completions` | - |
-| `test.rs` | `hirsel test <scenario>` | `cli` |
+| `clone.rs` | `hirsel clone <run> <new_name>` | - |
 | `scribe.rs` | `hirsel scribe <run>` | - |
 | `helpers.rs` | Shared helper functions | - |
 | `tui.rs` | Terminal UI for `attach` command | `cli` |
 | `mod.rs` | `hirsel mode <run>`, `hirsel amend <run>` (inline) | - |
 | `acp_bridge.rs` | `hirsel __acp-bridge` | - |
 | `service_worker.rs` | `hirsel __service-worker --type scribe` | `cli` |
-| `mod.rs` | `hirsel clone <run>` (inline) | - |
 | `mod.rs` | `hirsel serve` (inline) | `server` |
 
 ### `src-tauri/src/daemon/` - Background Process
@@ -221,14 +221,14 @@ cargo build --features s3-storage               # With S3 support
 
 | Directory | Purpose |
 |-----------|---------|
-| `components/layout/` | Layout, TitleBar, StatusBar, LeftDrawer, CanvasToolbar, RadialMenu, ProjectSelector |
+| `components/layout/` | Layout, TitleBar, StatusBar, LeftDrawer, CanvasToolbar, RadialMenu, ProjectSelector, Notifications, SvgDefinitions, WelcomeScreen |
 | `components/runs/` | RunListPanel, RunDetail, WorkerCard, TaskTreeView |
 | `components/specflow/` | SpecBoard, DeliveryDialog, RouteSelector, ForkRouteDialog, RunStatusPill, TaskEditorModal |
 | `components/modals/` | SettingsModal, HelpModal, ConfirmDialog |
 | `components/chat/` | GypMessenger |
 | `components/messaging/` | MessagingPanel (right drawer for route-scoped messaging: Meadow group chat + worker DMs) |
 | `stores/` | AppProvider, ProjectProvider, RunsProvider, SelectionProvider, DeltaProvider, RouteProvider |
-| `hooks/` | useClickOutside, useElapsedTime, useEscapeKey, useGypChat |
+| `hooks/` | useClickOutside, useElapsedTime, useEscapeKey, useGypChat, useModalClosing, usePolling, useWindowEvent |
 | `lib/` | Icons, theme, toast, dev-logger, utils, API helpers |
 | `lib/api.ts` | Tauri invoke wrappers: `safeInvoke`, `safeInvokeWithToast`, polling utilities |
 | `lib/elk-layout.ts` | ELK.js wrapper for hierarchical graph layout with orthogonal edge routing |
@@ -614,8 +614,8 @@ SpecFlow Board (GUI)
    ▼ User selects rows → Enter dispatch mode
 Toggle row selection
    │
-   ▼ dispatch_rows(projectId, rowIds)
-specflow.rs command
+   ▼ dispatch_deltas(projectId, routeId)
+delta.rs command
    │
    ├─► Expand selection with blocked_by dependencies (ripple)
    ├─► Check for already-dispatched rows → Warning if found

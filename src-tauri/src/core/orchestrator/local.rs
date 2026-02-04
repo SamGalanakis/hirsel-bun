@@ -278,9 +278,11 @@ impl Orchestrator for LocalOrchestrator {
         let unread_count = state.get_unread_count().await.unwrap_or(0) as u32;
 
         // Get task counts from live nodes (project runs)
-        let (tasks_done, tasks_total) =
-            if let Some(project_id) = state.get_project_id().await.ok().flatten() {
-                let route_id = state.get_route_id().await.unwrap_or(0);
+        let (tasks_done, tasks_total) = match (
+            state.get_project_id().await.ok().flatten(),
+            state.get_route_id().await.ok(),
+        ) {
+            (Some(project_id), Some(route_id)) => {
                 let delta_state = DeltaState::with_route(project_id, route_id);
                 if let Ok(nodes) = delta_state.get_live_nodes().await {
                     let done = nodes.iter().filter(|n| n.status.is_complete()).count() as u32;
@@ -288,9 +290,9 @@ impl Orchestrator for LocalOrchestrator {
                 } else {
                     (0, 0)
                 }
-            } else {
-                (0, 0)
-            };
+            }
+            _ => (0, 0),
+        };
 
         let workers = match state.get_workers().await {
             Ok(w) => w,
@@ -593,16 +595,18 @@ impl Orchestrator for LocalOrchestrator {
         let core_workers = state.get_workers().await?;
 
         // Get live nodes from project and build claimed task map
-        let claimed_task_map = if let Some(project_id) = state.get_project_id().await.ok().flatten()
-        {
-            let route_id = state.get_route_id().await.unwrap_or(0);
-            let live_nodes = DeltaState::with_route(project_id, route_id)
-                .get_live_nodes()
-                .await
-                .unwrap_or_default();
-            Self::build_claimed_task_map(&live_nodes)
-        } else {
-            HashMap::new()
+        let claimed_task_map = match (
+            state.get_project_id().await.ok().flatten(),
+            state.get_route_id().await.ok(),
+        ) {
+            (Some(project_id), Some(route_id)) => {
+                let live_nodes = DeltaState::with_route(project_id, route_id)
+                    .get_live_nodes()
+                    .await
+                    .unwrap_or_default();
+                Self::build_claimed_task_map(&live_nodes)
+            }
+            _ => HashMap::new(),
         };
 
         let workers = core_workers
@@ -755,7 +759,10 @@ impl Orchestrator for LocalOrchestrator {
             OrchestratorError::InvalidOperation("Run not linked to project".into())
         })?;
 
-        let route_id = state.get_route_id().await.unwrap_or(0);
+        let route_id = state
+            .get_route_id()
+            .await
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
         let store = ProjectMessagesStore::open()
             .await
@@ -787,7 +794,10 @@ impl Orchestrator for LocalOrchestrator {
             OrchestratorError::InvalidOperation("Run not linked to project".into())
         })?;
 
-        let route_id = state.get_route_id().await.unwrap_or(0);
+        let route_id = state
+            .get_route_id()
+            .await
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
         let store = ProjectMessagesStore::open()
             .await
@@ -826,7 +836,10 @@ impl Orchestrator for LocalOrchestrator {
             OrchestratorError::InvalidOperation("Run not linked to project".into())
         })?;
 
-        let route_id = state.get_route_id().await.unwrap_or(0);
+        let route_id = state
+            .get_route_id()
+            .await
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
         let store = ProjectMessagesStore::open()
             .await
@@ -999,18 +1012,8 @@ impl Orchestrator for LocalOrchestrator {
             .init_dirs()
             .map_err(|e| OrchestratorError::Other(format!("Failed to init dirs: {}", e)))?;
 
-        // Write spec file
-        std::fs::write(files.spec(), &request.spec)
-            .map_err(|e| OrchestratorError::Other(format!("Failed to write spec: {}", e)))?;
-
-        // Write eval file if provided
-        if let Some(ref eval_content) = request.eval {
-            std::fs::write(run_dir.join("eval.md"), eval_content)
-                .map_err(|e| OrchestratorError::Other(format!("Failed to write eval: {}", e)))?;
-        }
-
-        // Note: Task content is now stored in live nodes and accessed via MCP tools.
-        // No task files are written to disk.
+        // Note: Task content is stored in live nodes and accessed via MCP tools.
+        // No spec.md or task files are written to disk.
 
         // Initialize workspace from starting_point if provided
         let project_path = if let Some(ref starting_point) = request.starting_point {
@@ -1359,8 +1362,10 @@ impl Orchestrator for LocalOrchestrator {
             // Claim task and set assigned_task_id if provided
             if let Some(ref task_id) = task_for_worker {
                 // Use live nodes for project runs
-                if let Some(project_id) = sqlite_state.get_project_id().await.ok().flatten() {
-                    let route_id = sqlite_state.get_route_id().await.unwrap_or(0);
+                if let (Some(project_id), Ok(route_id)) = (
+                    sqlite_state.get_project_id().await.ok().flatten(),
+                    sqlite_state.get_route_id().await,
+                ) {
                     let delta_state = DeltaState::with_route(project_id, route_id);
                     if let Err(e) = delta_state.claim_live_node(task_id, worker_name).await {
                         tracing::warn!(
@@ -1562,18 +1567,8 @@ impl Orchestrator for LocalOrchestrator {
             .init_dirs()
             .map_err(|e| OrchestratorError::Other(format!("Failed to init dirs: {}", e)))?;
 
-        // Write spec file
-        std::fs::write(files.spec(), &request.spec)
-            .map_err(|e| OrchestratorError::Other(format!("Failed to write spec: {}", e)))?;
-
-        // Write eval file if provided
-        if let Some(ref eval_content) = request.eval {
-            std::fs::write(run_dir.join("eval.md"), eval_content)
-                .map_err(|e| OrchestratorError::Other(format!("Failed to write eval: {}", e)))?;
-        }
-
-        // Note: Task content is now stored in live nodes and accessed via MCP tools.
-        // No task files are written to disk.
+        // Note: Task content is stored in live nodes and accessed via MCP tools.
+        // No spec.md or task files are written to disk.
 
         // 3.5. Load project and resolve starting_point
         let store = ProjectStore::open().await?;

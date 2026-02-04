@@ -84,7 +84,6 @@ hirsel deliver my-feature --branch feature/my-feature
 
 | Command | Description |
 |---------|-------------|
-| `go` | Start a new run |
 | `runs` | List all runs |
 | `view` | View run status |
 | `log` | View activity log |
@@ -95,9 +94,13 @@ hirsel deliver my-feature --branch feature/my-feature
 | `pause` | Pause all workers |
 | `resume` | Resume a paused run |
 | `delete` | Remove a run |
-| `tasks` | List tasks |
+| `clone` | Clone a run to a new draft |
+| `tasks` | List tasks for a run |
 | `task-add` | Add a task |
 | `task-done` | Mark task complete |
+| `task-delete` | Delete a task |
+| `task-reopen` | Reopen a completed task |
+| `task-unclaim` | Unclaim a task |
 | `summary` | Generate run summary |
 | `config` | Configure agent settings |
 

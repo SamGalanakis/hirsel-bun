@@ -33,9 +33,17 @@ pub use types::*;
 // Re-export the event stream manager for state management
 pub use events::WorkerEventStreamManager;
 
-/// Helper to convert any error to String for Tauri command results
-pub fn err_string<E: ToString>(e: E) -> String {
-    e.to_string()
+/// Extension trait for converting Result errors to String
+///
+/// Provides a concise alternative to `.map_err(|e| e.to_string())` for Tauri commands.
+pub trait ResultExt<T, E: ToString> {
+    fn str_err(self) -> Result<T, String>;
+}
+
+impl<T, E: ToString> ResultExt<T, E> for Result<T, E> {
+    fn str_err(self) -> Result<T, String> {
+        self.map_err(|e| e.to_string())
+    }
 }
 
 /// Helper to get SQLiteState for a run, with standard error handling

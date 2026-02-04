@@ -92,9 +92,12 @@ pub async fn resolve_workspace(
 }
 
 /// Resolve workspace for a project using its active run
-pub async fn resolve_workspace_for_project(project_id: i64) -> WorkspaceResult<WorkspaceLocation> {
+pub async fn resolve_workspace_for_project(
+    project_id: i64,
+    route_id: i64,
+) -> WorkspaceResult<WorkspaceLocation> {
     // Get the active project run
-    let state = DeltaState::new(project_id);
+    let state = DeltaState::with_route(project_id, route_id);
     let project_run = state
         .get_project_run()
         .await

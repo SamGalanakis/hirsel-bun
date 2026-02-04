@@ -10,11 +10,12 @@ import {
   onCleanup,
 } from 'solid-js';
 import type { ConfigDefaults, StartingPoint } from '../../lib/types';
-import { useProject } from '../../stores';
+import { useProject, useRoute } from '../../stores';
 import { Icon, Dropdown, type DropdownOption } from '../shared';
 
 export const ProjectSettings: Component = () => {
   const project = useProject();
+  const route = useRoute();
   const [deleting, setDeleting] = createSignal(false);
   const [editingName, setEditingName] = createSignal(false);
   const [nameValue, setNameValue] = createSignal('');
@@ -147,6 +148,7 @@ export const ProjectSettings: Component = () => {
 
     // Capture ALL values before any async operation
     const projectId = proj.id;
+    const routeId = route.activeRoute()?.id ?? route.routes()[0]?.id ?? 0;
     const settings = {
       workerScale: workerScale() || null,
       timeLimitMinutes: timeLimitMinutes() ? Number.parseInt(timeLimitMinutes(), 10) : null,
@@ -157,7 +159,7 @@ export const ProjectSettings: Component = () => {
 
     setSaving(true);
     try {
-      await project.updateProjectSettings(projectId, settings);
+      await project.updateProjectSettings(projectId, routeId, settings);
       setSaving(false);
       window.toast?.success('Settings saved');
       // Delay close to let reactive updates from updateProjectSettings settle

@@ -15,7 +15,7 @@ use crate::core::gyp::{GypContextBuilder, GypScope, TaskFocus};
 use crate::core::{ChatContext, GypChatStore, ProjectStore};
 use crate::gui::commands::chat::ChatOrchestratorManager;
 
-use super::err_string;
+use super::ResultExt;
 
 /// Request to start a Gyp session
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,12 +81,12 @@ pub async fn start_gyp_session(
         }
 
         StartGypSessionRequest::Board { project_id } => {
-            let store = ProjectStore::open().await.map_err(err_string)?;
-            let project = store.get_project(*project_id).await.map_err(err_string)?;
+            let store = ProjectStore::open().await.str_err()?;
+            let project = store.get_project(*project_id).await.str_err()?;
             let route_id = project.active_route_id.unwrap_or(1);
 
             // Export draft tree to board.json for agent access
-            let mut exporter = DeltaExporter::with_route(*project_id, route_id);
+            let mut exporter = DeltaExporter::new(*project_id, route_id);
             exporter
                 .export_for_agent()
                 .map_err(|e| format!("Failed to export draft tree: {}", e))?;
@@ -102,12 +102,12 @@ pub async fn start_gyp_session(
             task_id,
             task_name,
         } => {
-            let store = ProjectStore::open().await.map_err(err_string)?;
-            let project = store.get_project(*project_id).await.map_err(err_string)?;
+            let store = ProjectStore::open().await.str_err()?;
+            let project = store.get_project(*project_id).await.str_err()?;
             let route_id = project.active_route_id.unwrap_or(1);
 
             // Export draft tree to board.json for agent access
-            let mut exporter = DeltaExporter::with_route(*project_id, route_id);
+            let mut exporter = DeltaExporter::new(*project_id, route_id);
             exporter
                 .export_for_agent()
                 .map_err(|e| format!("Failed to export draft tree: {}", e))?;
@@ -239,8 +239,8 @@ pub async fn send_gyp_message(
             focus: None,
             ..
         } => {
-            let store = ProjectStore::open().await.map_err(err_string)?;
-            let project = store.get_project(*project_id).await.map_err(err_string)?;
+            let store = ProjectStore::open().await.str_err()?;
+            let project = store.get_project(*project_id).await.str_err()?;
             GypContextBuilder::for_board(*project_id, &project.starting_point)
         }
         GypScope::Board {
@@ -248,8 +248,8 @@ pub async fn send_gyp_message(
             focus: Some(f),
             ..
         } => {
-            let store = ProjectStore::open().await.map_err(err_string)?;
-            let project = store.get_project(*project_id).await.map_err(err_string)?;
+            let store = ProjectStore::open().await.str_err()?;
+            let project = store.get_project(*project_id).await.str_err()?;
             GypContextBuilder::for_board_focused(
                 *project_id,
                 &project.starting_point,
@@ -289,7 +289,7 @@ pub async fn get_gyp_history(
     limit: usize,
 ) -> Result<Vec<crate::core::GypChatMessage>, String> {
     tracing::debug!("[gyp] get_gyp_history scope={:?}", scope);
-    let store = GypChatStore::open().await.map_err(err_string)?;
+    let store = GypChatStore::open().await.str_err()?;
 
     let messages = match &scope {
         // Note: get_messages doesn't support limit, returns all messages
@@ -297,7 +297,7 @@ pub async fn get_gyp_history(
         GypScope::Run { run_name, .. } => store.get_messages(Some(run_name)).await,
         GypScope::Board { project_id, .. } => store.get_board_messages(*project_id, limit).await,
     }
-    .map_err(err_string)?;
+    .str_err()?;
 
     // Apply limit for non-board scopes (board already has limit in query)
     let messages = match &scope {
@@ -311,14 +311,14 @@ pub async fn get_gyp_history(
 /// Clear Gyp chat history for a scope
 #[tauri::command]
 pub async fn clear_gyp_history(scope: GypScope) -> Result<(), String> {
-    let store = GypChatStore::open().await.map_err(err_string)?;
+    let store = GypChatStore::open().await.str_err()?;
 
     match scope {
         GypScope::General => store.clear_messages(None).await,
         GypScope::Run { run_name, .. } => store.clear_messages(Some(&run_name)).await,
         GypScope::Board { project_id, .. } => store.clear_board_messages(project_id).await,
     }
-    .map_err(err_string)?;
+    .str_err()?;
 
     Ok(())
 }
@@ -332,7 +332,7 @@ pub async fn save_gyp_message(
     role: String,
     chunks_json: String,
 ) -> Result<i64, String> {
-    let store = GypChatStore::open().await.map_err(err_string)?;
+    let store = GypChatStore::open().await.str_err()?;
 
     match &scope {
         GypScope::Board { project_id, .. } => {
@@ -347,7 +347,7 @@ pub async fn save_gyp_message(
         }
         GypScope::General => store.save_message(None, &role, &chunks_json).await,
     }
-    .map_err(err_string)
+    .str_err()
 }
 
 /// Stop a Gyp session

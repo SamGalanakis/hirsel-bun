@@ -89,8 +89,12 @@ interface ProjectContextValue {
 
   // Actions
   removeProject: (projectId: number) => Promise<void>;
-  updateProjectPosition: (projectId: number, x: number, y: number) => Promise<void>;
-  updateProjectSettings: (projectId: number, settings: Partial<Project>) => Promise<Project | null>;
+  updateProjectPosition: (projectId: number, routeId: number, x: number, y: number) => Promise<void>;
+  updateProjectSettings: (
+    projectId: number,
+    routeId: number,
+    settings: Partial<Project>
+  ) => Promise<Project | null>;
 }
 
 const ProjectContext = createContext<ProjectContextValue>();
@@ -215,13 +219,16 @@ export const ProjectProvider: ParentComponent = (props) => {
     }
   };
 
-  const updateProjectPosition = async (projectId: number, x: number, y: number) => {
+  const updateProjectPosition = async (
+    projectId: number,
+    routeId: number,
+    x: number,
+    y: number
+  ) => {
     try {
-      await invoke('update_project', { projectId, x, y });
+      await invoke('update_project', { projectId, routeId, x, y });
       // Update local state
-      setProjects((prev) =>
-        prev.map((p) => (p.id === projectId ? { ...p, x, y } : p))
-      );
+      setProjects((prev) => prev.map((p) => (p.id === projectId ? { ...p, x, y } : p)));
     } catch (e) {
       console.error('Failed to update project position:', e);
     }
@@ -229,11 +236,13 @@ export const ProjectProvider: ParentComponent = (props) => {
 
   const updateProjectSettings = async (
     projectId: number,
+    routeId: number,
     settings: Partial<Project>
   ): Promise<Project | null> => {
     try {
       const updated = await invoke<Project>('update_project', {
         projectId,
+        routeId,
         x: settings.x,
         y: settings.y,
         description: settings.description,

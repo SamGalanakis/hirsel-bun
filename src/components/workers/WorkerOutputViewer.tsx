@@ -316,19 +316,20 @@ export const WorkerOutputViewer: Component = () => {
                     {/* Tool card */}
                     <Show when={group.type === 'tool'}>
                       {(() => {
-                        // First event (tool_start) has title/kind/input
-                        // Latest event (tool_update) has status/output
-                        const firstEvent = group.events[0];
+                        // Find event with title (usually tool_start, but handle race conditions
+                        // where tool_update arrives before tool_start in DB ordering)
+                        const titleEvent = group.events.find(e => e.toolTitle) ?? group.events[0];
+                        // Latest event has current status/output
                         const latestEvent = group.events[group.events.length - 1];
                         return (
                           <ToolCard
-                            title={firstEvent?.toolTitle}
-                            kind={firstEvent?.toolKind}
+                            title={titleEvent?.toolTitle}
+                            kind={titleEvent?.toolKind}
                             status={latestEvent?.toolStatus}
-                            input={firstEvent?.toolInput}
+                            input={titleEvent?.toolInput}
                             output={latestEvent?.toolOutput}
-                            expanded={expandedTools().has(firstEvent?.toolCallId || '')}
-                            onToggle={() => toggleTool(firstEvent?.toolCallId || '')}
+                            expanded={expandedTools().has(group.events[0]?.toolCallId || '')}
+                            onToggle={() => toggleTool(group.events[0]?.toolCallId || '')}
                           />
                         );
                       })()}

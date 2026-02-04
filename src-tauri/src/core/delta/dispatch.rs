@@ -91,18 +91,13 @@ pub struct DeltaDispatchService {
 }
 
 impl DeltaDispatchService {
-    /// Create a new dispatch service for a project (uses route_id = 0 for backwards compatibility)
-    pub fn new(project_id: i64) -> Self {
-        Self::with_route(project_id, 0)
-    }
-
     /// Create a new dispatch service for a project route
-    pub fn with_route(project_id: i64, route_id: i64) -> Self {
+    pub fn new(project_id: i64, route_id: i64) -> Self {
         Self {
             project_id,
             route_id,
             state: DeltaState::with_route(project_id, route_id),
-            generator: DeltaGenerator::with_route(project_id, route_id),
+            generator: DeltaGenerator::new(project_id, route_id),
         }
     }
 
@@ -450,7 +445,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_service_creation() {
-        let service = DeltaDispatchService::new(1);
+        let service = DeltaDispatchService::new(1, 0);
         assert_eq!(service.project_id, 1);
     }
 }

@@ -591,6 +591,7 @@ impl BoardDeliveryStatus {
 pub struct Delivery {
     pub id: i64,
     pub project_id: i64,
+    pub route_id: i64,
     pub version_id: i64,
     pub status: BoardDeliveryStatus,
     pub target_branch: String,

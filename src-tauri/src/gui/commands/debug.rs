@@ -2,6 +2,7 @@
 //!
 //! Commands for debugging, frontend logging, version info, and daemon health.
 
+use super::ResultExt;
 use crate::daemon;
 use crate::version;
 
@@ -52,7 +53,7 @@ pub async fn get_process_counts() -> Result<serde_json::Value, String> {
             .arg("-c")
             .arg("ps aux | grep -E '[c]laude' | wc -l")
             .output()
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
         let claude_count: i32 = String::from_utf8_lossy(&claude_output.stdout)
             .trim()
             .parse()
@@ -63,7 +64,7 @@ pub async fn get_process_counts() -> Result<serde_json::Value, String> {
             .arg("-c")
             .arg("ps aux | grep -E '[a]cp|[c]laude-code-acp' | wc -l")
             .output()
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
         let acp_count: i32 = String::from_utf8_lossy(&acp_output.stdout)
             .trim()
             .parse()
@@ -74,7 +75,7 @@ pub async fn get_process_counts() -> Result<serde_json::Value, String> {
             .arg("-c")
             .arg("ps aux | grep -E '[n]ode' | wc -l")
             .output()
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
         let node_count: i32 = String::from_utf8_lossy(&node_output.stdout)
             .trim()
             .parse()
@@ -85,7 +86,7 @@ pub async fn get_process_counts() -> Result<serde_json::Value, String> {
             .arg("-c")
             .arg("ps aux | grep -E 'claude|acp' | grep -v grep | head -20")
             .output()
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
         let details = String::from_utf8_lossy(&detail_output.stdout).to_string();
 
         Ok(serde_json::json!({
@@ -119,7 +120,7 @@ pub async fn kill_orphaned_acp_processes() -> Result<serde_json::Value, String> 
             .arg("-f")
             .arg("__acp-bridge")
             .output()
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
 
         // pkill returns 0 if processes were killed, 1 if none found
         let killed = if output.status.success() {

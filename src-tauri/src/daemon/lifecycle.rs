@@ -67,12 +67,12 @@ pub async fn run_polling_loop(state: Arc<AppState>, config: DaemonConfig) {
 
         // Process working project runs (delta dispatch system)
         if let Ok(project_runs) = list_working_project_runs().await {
-            for (project_id, run_name) in project_runs {
+            for (project_id, route_id, run_name) in project_runs {
                 has_active_runs = true;
                 last_active = Instant::now();
 
                 // Process delta submissions for this project run
-                let runner = DeltaRunner::new(project_id);
+                let runner = DeltaRunner::new(project_id, route_id);
                 match runner.process_pending(&state.orchestrator).await {
                     Ok(processed) => {
                         if processed > 0 {
@@ -584,12 +584,12 @@ async fn process_resolving_deliveries() -> anyhow::Result<()> {
     // Load config for the service wrapper
     let config = Config::load().map(|(c, _)| c).unwrap_or_default();
 
-    for (project_id, delivery) in deliveries {
-        if let Err(e) = process_single_delivery(project_id, &delivery, &config).await {
+    for delivery in deliveries {
+        if let Err(e) = process_single_delivery(&delivery, &config).await {
             tracing::warn!(
                 "[Daemon] Failed to process delivery {} for project {}: {}",
                 delivery.id,
-                project_id,
+                delivery.project_id,
                 e
             );
         }
@@ -599,12 +599,8 @@ async fn process_resolving_deliveries() -> anyhow::Result<()> {
 }
 
 /// Process a single delivery that needs conflict resolution
-async fn process_single_delivery(
-    project_id: i64,
-    delivery: &Delivery,
-    config: &Config,
-) -> anyhow::Result<()> {
-    let state = DeltaState::new(project_id);
+async fn process_single_delivery(delivery: &Delivery, config: &Config) -> anyhow::Result<()> {
+    let state = DeltaState::with_route(delivery.project_id, delivery.route_id);
 
     // Get the project run to find the work directory
     let project_run = state

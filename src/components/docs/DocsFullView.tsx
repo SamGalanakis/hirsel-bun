@@ -13,7 +13,7 @@ import {
   createSignal,
   onCleanup,
 } from 'solid-js';
-import { useProject } from '../../stores';
+import { useProject, useRoute } from '../../stores';
 import { Icon } from '../shared';
 import { MarkdownContent } from './MarkdownContent';
 
@@ -35,15 +35,22 @@ interface ProjectDocsResponse {
 
 export const DocsFullView: Component = () => {
   const project = useProject();
+  const route = useRoute();
   const [activeTab, setActiveTab] = createSignal<string | null>(null);
 
   // Fetch docs
   const [docs, { refetch }] = createResource(
-    () => project.docsFullScreen() ? project.selectedProjectId() : null,
-    async (projectId) => {
-      if (!projectId) return null;
+    () => {
+      if (!project.docsFullScreen()) return null;
+      const projectId = project.selectedProjectId();
+      const routeId = route.activeRoute()?.id ?? route.routes()[0]?.id;
+      if (!projectId || !routeId) return null;
+      return { projectId, routeId };
+    },
+    async (params) => {
+      if (!params) return null;
       try {
-        return await invoke<ProjectDocsResponse>('get_project_docs', { projectId });
+        return await invoke<ProjectDocsResponse>('get_project_docs', params);
       } catch (e) {
         console.error('Failed to fetch project docs:', e);
         return null;

@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
+use super::ResultExt;
 use crate::core::config;
 
 /// Result of opening in IDE
@@ -126,7 +127,7 @@ fn get_preferred_editor() -> Result<FoundEditor, String> {
     }
 
     // Check if user has a preference
-    let (cfg, _) = config::Config::load().map_err(|e| e.to_string())?;
+    let (cfg, _) = config::Config::load().str_err()?;
     if let Some(ref preferred) = cfg.preferred_ide {
         if let Some(editor) = available.iter().find(|e| &e.name == preferred) {
             return Ok(editor.clone());
@@ -176,44 +177,31 @@ fn launch_editor(editor: &FoundEditor, target_path: &Path) -> Result<(), String>
 
 /// Get the staging path for a run
 ///
-/// This retrieves the project_path from the run's state, which is the
-/// staging directory where the codebase lives.
-async fn get_staging_path(run_name: &str) -> Result<PathBuf, String> {
-    let state = super::get_run_state(run_name).await?;
-
-    // First try project_path from state (this is the canonical staging path)
-    if let Some(path) = state
-        .get_project_path()
-        .await
-        .map_err(|e| format!("Failed to get project path: {}", e))?
-    {
-        let staging_path = PathBuf::from(&path);
-        if staging_path.exists() {
-            return Ok(staging_path);
-        }
-    }
-
-    // Fallback: try the work/staging directory structure
+/// Returns the `work/staging/` directory where workers push their changes.
+/// This is the canonical working directory containing the current state of the code.
+///
+/// Architecture:
+/// - `workspace/` is the INPUT (initial project state, e.g., empty git repo for greenfield)
+/// - `work/staging/` is the OUTPUT (where workers actually write code)
+fn get_staging_path(run_name: &str) -> Result<PathBuf, String> {
     let run_dir = config::run_dir(run_name);
     let staging_dir = run_dir.join("work").join("staging");
-    if staging_dir.exists() {
-        return Ok(staging_dir);
+
+    if !staging_dir.exists() {
+        return Err(format!(
+            "No workspace found for run '{}'. Workers may not have started yet.",
+            run_name
+        ));
     }
 
-    // Last resort: just return the work directory
-    let work_dir = run_dir.join("work");
-    if work_dir.exists() {
-        return Ok(work_dir);
-    }
-
-    Err(format!("No staging directory found for run '{}'", run_name))
+    Ok(staging_dir)
 }
 
 /// Open the staging directory for a run in the user's preferred IDE
 #[tauri::command]
 pub async fn open_in_ide(run_name: String) -> Result<OpenIdeResult, String> {
     // Get the staging path for this run
-    let staging_path = get_staging_path(&run_name).await?;
+    let staging_path = get_staging_path(&run_name)?;
 
     // Get the preferred/available editor
     let editor = get_preferred_editor()?;

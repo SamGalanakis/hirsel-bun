@@ -3,6 +3,7 @@
 //! Commands for reading and writing application configuration.
 
 use super::types::{ConfigDefaults, ConfigUpdateRequest};
+use super::ResultExt;
 use crate::core::api_types::ConfigResponse;
 use crate::core::config;
 use crate::core::orchestrator::create_orchestrator;
@@ -15,8 +16,8 @@ use std::time::Instant;
 /// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn get_config() -> Result<ConfigResponse, String> {
-    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
-    orch.get_config().await.map_err(|e| e.to_string())
+    let orch = create_orchestrator(None).str_err()?;
+    orch.get_config().await.str_err()
 }
 
 /// Get global config defaults for project settings inheritance

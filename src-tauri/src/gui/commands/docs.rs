@@ -6,6 +6,7 @@ use serde::Serialize;
 use std::fs;
 use std::path::Path;
 
+use super::ResultExt;
 use crate::core::config;
 use crate::core::delta::DeltaState;
 use crate::core::draft::StartingPoint;
@@ -49,20 +50,17 @@ pub struct ProjectDocsResponse {
 /// 1. If project has an active run (Working/Eval), read from run_dir/docs/
 /// 2. Otherwise, read from workspace/docs_path/
 #[tauri::command]
-pub async fn get_project_docs(project_id: i64) -> Result<ProjectDocsResponse, String> {
+pub async fn get_project_docs(
+    project_id: i64,
+    route_id: i64,
+) -> Result<ProjectDocsResponse, String> {
     // Get project to find workspace and docs path
-    let store = ProjectStore::open().await.map_err(|e| e.to_string())?;
-    let project = store
-        .get_project(project_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    let store = ProjectStore::open().await.str_err()?;
+    let project = store.get_project(project_id).await.str_err()?;
 
     // Check for active run
-    let delta_state = DeltaState::new(project_id);
-    let project_run = delta_state
-        .get_project_run()
-        .await
-        .map_err(|e| e.to_string())?;
+    let delta_state = DeltaState::with_route(project_id, route_id);
+    let project_run = delta_state.get_project_run().await.str_err()?;
 
     // Determine source and docs path
     if let Some(ref run) = project_run {

@@ -174,9 +174,7 @@ export const RadialMenu: Component = () => {
 
   // Check if deliver is available
   const canDeliver = () => {
-    const hasLive = delta.liveTree() !== null && delta.liveTree()!.length > 0;
-    const noDiff = !delta.hasDiff();
-    return hasLive && noDiff;
+    return delta.liveTree() !== null && delta.liveTree()!.length > 0;
   };
 
   // Action handlers

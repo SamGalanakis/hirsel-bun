@@ -45,7 +45,7 @@ Development project - no database migrations needed. Modify schema directly in `
 ```tsx
 // Components: src/components/**/*.tsx
 // Stores: src/stores/ (AppProvider, ProjectProvider, RunsProvider, SelectionProvider, DeltaProvider, RouteProvider)
-// Hooks: src/hooks/ (usePolling, useDebounce, useTauriEvent)
+// Hooks: src/hooks/ (usePolling, useClickOutside, useElapsedTime, useEscapeKey, useGypChat, useModalClosing, useWindowEvent)
 ```
 
 **Icons:** Use the `<Icon name="icon-name" />` component from `src/components/shared`. Icons render as inline SVGs - no DOM mutation needed.
@@ -64,7 +64,7 @@ import { Icon } from '../shared';
 cargo build             # Build to src-tauri/target/debug/hirsel
 ```
 
-**CLI commands:** `runs`, `view <run>`, `attach <run>`, `go <run> <spec>`, `test <scenario> --yolo`, `tasks <project>`
+**CLI commands:** `runs`, `view <run>`, `attach <run>`, `tasks <run>`, `summary <run>`, `deliver <run>`
 
 ## Debugging
 

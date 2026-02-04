@@ -59,13 +59,8 @@ pub struct DeltaRunner {
 }
 
 impl DeltaRunner {
-    /// Create a new runner for a project (uses route_id = 0 for backwards compatibility)
-    pub fn new(project_id: i64) -> Self {
-        Self::with_route(project_id, 0)
-    }
-
     /// Create a new runner for a project route
-    pub fn with_route(project_id: i64, route_id: i64) -> Self {
+    pub fn new(project_id: i64, route_id: i64) -> Self {
         Self {
             project_id,
             route_id,
@@ -381,17 +376,25 @@ impl DeltaRunner {
 }
 
 /// Get all working project runs (used by daemon)
-pub async fn list_working_project_runs() -> RunnerResult<Vec<(i64, String)>> {
+/// Returns (project_id, route_id, run_name)
+pub async fn list_working_project_runs() -> RunnerResult<Vec<(i64, i64, String)>> {
     let pool = global_pool().await;
 
-    let rows =
-        sqlx::query("SELECT project_id, run_name FROM project_runs WHERE status = 'working'")
-            .fetch_all(pool)
-            .await?;
+    let rows = sqlx::query(
+        "SELECT project_id, route_id, run_name FROM project_runs WHERE status = 'working'",
+    )
+    .fetch_all(pool)
+    .await?;
 
     let runs = rows
         .into_iter()
-        .map(|row| (row.get("project_id"), row.get("run_name")))
+        .map(|row| {
+            (
+                row.get("project_id"),
+                row.get("route_id"),
+                row.get("run_name"),
+            )
+        })
         .collect();
 
     Ok(runs)

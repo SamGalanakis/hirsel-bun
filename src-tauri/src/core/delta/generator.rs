@@ -53,15 +53,10 @@ pub struct DeltaGenerator {
 }
 
 impl DeltaGenerator {
-    /// Create a new generator for a project (uses route_id = 0 for backwards compatibility)
-    pub fn new(project_id: i64) -> Self {
-        Self::with_route(project_id, 0)
-    }
-
     /// Create a new generator for a project route
-    pub fn with_route(project_id: i64, route_id: i64) -> Self {
+    pub fn new(project_id: i64, route_id: i64) -> Self {
         Self {
-            diff_service: DiffService::with_route(project_id, route_id),
+            diff_service: DiffService::new(project_id, route_id),
         }
     }
 

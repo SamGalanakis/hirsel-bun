@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::ResultExt;
 use crate::core::api_types::{Eval, HistoryEntry};
 use crate::core::config;
 use crate::core::orchestrator::create_orchestrator;
@@ -153,10 +154,8 @@ pub async fn get_history(
     run_name: String,
     limit: Option<u32>,
 ) -> Result<Vec<HistoryEntry>, String> {
-    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
-    orch.get_history(&run_name, limit)
-        .await
-        .map_err(|e| e.to_string())
+    let orch = create_orchestrator(None).str_err()?;
+    orch.get_history(&run_name, limit).await.str_err()
 }
 
 /// Get the eval spec (eval.md) content for a run
@@ -179,6 +178,6 @@ pub async fn get_eval_spec(run_name: String) -> Result<Option<String>, String> {
 /// Uses the orchestrator to support both local and remote modes
 #[tauri::command]
 pub async fn get_evals(run_name: String) -> Result<Vec<Eval>, String> {
-    let orch = create_orchestrator(None).map_err(|e| e.to_string())?;
-    orch.list_evals(&run_name).await.map_err(|e| e.to_string())
+    let orch = create_orchestrator(None).str_err()?;
+    orch.list_evals(&run_name).await.str_err()
 }

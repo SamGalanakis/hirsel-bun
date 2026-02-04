@@ -1217,16 +1217,20 @@ pub async fn add_live_node(
 
     let state = SQLiteState::new(&name).await?;
 
-    // Get project_id for this run
+    // Get project_id and route_id for this run
     let project_id = state.get_project_id().await?.ok_or_else(|| {
         OrchestratorError::InvalidOperation("Run is not linked to a project".into())
     })?;
+    let route_id = state
+        .get_route_id()
+        .await
+        .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
     // Parse node type (defaults to Task for unknown types)
     let node_type = NodeType::from_str(&body.node_type);
 
     // Create live node via DeltaState
-    let delta_state = DeltaState::new(project_id);
+    let delta_state = DeltaState::with_route(project_id, route_id);
 
     let blocked_by: Option<Vec<&str>> = body
         .blocked_by
@@ -1264,8 +1268,12 @@ pub async fn get_live_nodes(Path(name): Path<String>) -> Result<Json<LiveNodesRe
     let project_id = state.get_project_id().await?.ok_or_else(|| {
         OrchestratorError::InvalidOperation("Run is not linked to a project".into())
     })?;
+    let route_id = state
+        .get_route_id()
+        .await
+        .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
-    let delta_state = DeltaState::new(project_id);
+    let delta_state = DeltaState::with_route(project_id, route_id);
     let nodes = delta_state.get_live_nodes().await?;
 
     Ok(Json(LiveNodesResponse { nodes }))
@@ -1293,8 +1301,12 @@ pub async fn get_claimable_live_nodes(Path(name): Path<String>) -> Result<Json<L
     let project_id = state.get_project_id().await?.ok_or_else(|| {
         OrchestratorError::InvalidOperation("Run is not linked to a project".into())
     })?;
+    let route_id = state
+        .get_route_id()
+        .await
+        .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
-    let delta_state = DeltaState::new(project_id);
+    let delta_state = DeltaState::with_route(project_id, route_id);
     let nodes = delta_state.get_claimable_nodes().await?;
 
     Ok(Json(LiveNodesResponse { nodes }))
@@ -1325,8 +1337,12 @@ pub async fn claim_live_node(
     let project_id = state.get_project_id().await?.ok_or_else(|| {
         OrchestratorError::InvalidOperation("Run is not linked to a project".into())
     })?;
+    let route_id = state
+        .get_route_id()
+        .await
+        .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
-    let delta_state = DeltaState::new(project_id);
+    let delta_state = DeltaState::with_route(project_id, route_id);
     let node = delta_state
         .claim_live_node(&node_id, &body.worker_name)
         .await?;
@@ -1359,8 +1375,12 @@ pub async fn complete_live_node(
     let project_id = state.get_project_id().await?.ok_or_else(|| {
         OrchestratorError::InvalidOperation("Run is not linked to a project".into())
     })?;
+    let route_id = state
+        .get_route_id()
+        .await
+        .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
-    let delta_state = DeltaState::new(project_id);
+    let delta_state = DeltaState::with_route(project_id, route_id);
     let node = delta_state
         .complete_live_node(&node_id, &body.worker_name)
         .await?;
@@ -1387,8 +1407,12 @@ pub async fn unclaim_live_node(
     let project_id = state.get_project_id().await?.ok_or_else(|| {
         OrchestratorError::InvalidOperation("Run is not linked to a project".into())
     })?;
+    let route_id = state
+        .get_route_id()
+        .await
+        .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
-    let delta_state = DeltaState::new(project_id);
+    let delta_state = DeltaState::with_route(project_id, route_id);
     delta_state.unclaim_live_node(&node_id).await?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -1418,8 +1442,12 @@ pub async fn is_live_node_blocked(
     let project_id = state.get_project_id().await?.ok_or_else(|| {
         OrchestratorError::InvalidOperation("Run is not linked to a project".into())
     })?;
+    let route_id = state
+        .get_route_id()
+        .await
+        .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
-    let delta_state = DeltaState::new(project_id);
+    let delta_state = DeltaState::with_route(project_id, route_id);
     let blocked = delta_state.is_node_blocked(&node_id).await?;
 
     Ok(Json(LiveNodeBlockedResponse { blocked }))
@@ -1450,8 +1478,12 @@ pub async fn live_node_eval_pass(
     let project_id = state.get_project_id().await?.ok_or_else(|| {
         OrchestratorError::InvalidOperation("Run is not linked to a project".into())
     })?;
+    let route_id = state
+        .get_route_id()
+        .await
+        .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
-    let delta_state = DeltaState::new(project_id);
+    let delta_state = DeltaState::with_route(project_id, route_id);
     delta_state.eval_pass(&eval_id, &body.worker_name).await?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -1488,8 +1520,12 @@ pub async fn live_node_eval_fail(
     let project_id = state.get_project_id().await?.ok_or_else(|| {
         OrchestratorError::InvalidOperation("Run is not linked to a project".into())
     })?;
+    let route_id = state
+        .get_route_id()
+        .await
+        .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
-    let delta_state = DeltaState::new(project_id);
+    let delta_state = DeltaState::with_route(project_id, route_id);
     let repair_node_id = delta_state
         .eval_fail(&eval_id, &body.worker_name, &body.feedback)
         .await?;
@@ -1522,8 +1558,12 @@ pub async fn set_live_node_tokens(
     let project_id = state.get_project_id().await?.ok_or_else(|| {
         OrchestratorError::InvalidOperation("Run is not linked to a project".into())
     })?;
+    let route_id = state
+        .get_route_id()
+        .await
+        .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
-    let delta_state = DeltaState::new(project_id);
+    let delta_state = DeltaState::with_route(project_id, route_id);
     delta_state.set_node_tokens(&node_id, body.tokens).await?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -1553,8 +1593,12 @@ pub async fn get_validated_nodes(
     let project_id = state.get_project_id().await?.ok_or_else(|| {
         OrchestratorError::InvalidOperation("Run is not linked to a project".into())
     })?;
+    let route_id = state
+        .get_route_id()
+        .await
+        .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
-    let delta_state = DeltaState::new(project_id);
+    let delta_state = DeltaState::with_route(project_id, route_id);
     let node_ids = delta_state.get_validated_nodes(&eval_id).await?;
 
     Ok(Json(ValidatedNodesResponse { node_ids }))

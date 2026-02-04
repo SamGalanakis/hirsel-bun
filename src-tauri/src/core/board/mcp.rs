@@ -757,7 +757,7 @@ impl BoardMcpServer {
 
     /// Re-export board to sync files
     fn sync_export(&self) -> Result<(), String> {
-        let mut exporter = DeltaExporter::with_route(self.project_id, self.current_route_id());
+        let mut exporter = DeltaExporter::new(self.project_id, self.current_route_id());
         exporter.export_for_agent().map_err(|e| e.to_string())?;
         Ok(())
     }

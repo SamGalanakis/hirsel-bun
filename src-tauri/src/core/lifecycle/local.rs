@@ -76,19 +76,18 @@ impl LocalLifecycleManager {
 
     /// Get DeltaState for this run's project, if linked to a project.
     async fn get_delta_state(&self) -> Option<DeltaState> {
-        self.state
-            .get_project_id()
-            .await
-            .ok()
-            .flatten()
-            .map(DeltaState::new)
+        let project_id = self.state.get_project_id().await.ok().flatten()?;
+        let route_id = self.state.get_route_id().await.ok()?;
+        Some(DeltaState::with_route(project_id, route_id))
     }
 
     /// Send a system message to the group chat (meadow).
     /// Uses project messages if the run is linked to a project.
     async fn send_system_message(&self, message: &str) {
-        if let Ok(Some(project_id)) = self.state.get_project_id().await {
-            let route_id = self.state.get_route_id().await.unwrap_or(0);
+        if let (Ok(Some(project_id)), Ok(route_id)) = (
+            self.state.get_project_id().await,
+            self.state.get_route_id().await,
+        ) {
             if let Ok(store) = ProjectMessagesStore::open().await {
                 if let Err(e) = store
                     .add_message(project_id, route_id, "meadow", "system", message, false)
@@ -103,8 +102,10 @@ impl LocalLifecycleManager {
     /// Send a system message to a specific worker (their DM thread).
     /// Uses project messages if the run is linked to a project.
     async fn send_system_message_to_worker(&self, worker_name: &str, message: &str) {
-        if let Ok(Some(project_id)) = self.state.get_project_id().await {
-            let route_id = self.state.get_route_id().await.unwrap_or(0);
+        if let (Ok(Some(project_id)), Ok(route_id)) = (
+            self.state.get_project_id().await,
+            self.state.get_route_id().await,
+        ) {
             if let Ok(store) = ProjectMessagesStore::open().await {
                 if let Err(e) = store
                     .add_message(project_id, route_id, worker_name, "system", message, false)

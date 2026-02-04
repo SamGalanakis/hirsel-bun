@@ -5,6 +5,7 @@
 
 use super::runs::get_run_detail;
 use super::types::{DraftUpdateRequest, RepoValidation};
+use super::ResultExt;
 use crate::core::api_types::{RunDetail, RunStatus};
 use crate::core::draft::{create_workspace_provider, StartingPoint};
 use crate::core::git;
@@ -268,7 +269,7 @@ pub async fn create_draft() -> Result<RunDetail, String> {
 pub async fn clone_run(source_run: String, new_name: String) -> Result<RunDetail, String> {
     // Use the shared ops implementation
     let config = CloneRunConfig::new(&source_run, &new_name);
-    let result = ops_clone_run(config).await.map_err(|e| e.to_string())?;
+    let result = ops_clone_run(config).await.str_err()?;
 
     // Get agent type from global config for the RunDetail response
     let (global_config, _) =
@@ -627,7 +628,7 @@ pub async fn start_draft(
         docs_path: global_config.scribe_docs_path.clone(),
     };
 
-    let setup_result = setup_run_workspace(&setup_config).map_err(|e| e.to_string())?;
+    let setup_result = setup_run_workspace(&setup_config).str_err()?;
 
     // Register workers in state with per-worker runner assignments
     for (worker_name, work_dir) in &setup_result.worker_dirs {
