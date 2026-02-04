@@ -4,7 +4,7 @@
 //! Structure is managed via MCP tools (board_view, board_task, etc.)
 //!
 //! File structure:
-//! ```
+//! ```text
 //! ~/.hirsel/projects/{project_id}/routes/{route_name}/board/
 //! └── tasks/
 //!     ├── build-api.md     # Task content

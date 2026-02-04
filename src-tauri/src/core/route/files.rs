@@ -1,7 +1,7 @@
 //! Route file management
 //!
 //! Handles the file structure for routes:
-//! ```
+//! ```text
 //! ~/.hirsel/projects/{project_id}/routes/
 //! ├── main/
 //! │   ├── docs/

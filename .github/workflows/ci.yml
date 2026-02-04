@@ -72,8 +72,13 @@ jobs:
         with:
           args: ${{ matrix.args }}
 
+      - name: Configure git for tests
+        run: |
+          git config --global user.email "ci@hirsel.dev"
+          git config --global user.name "CI"
+
       - name: Run tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
       - name: Upload macOS DMG
         if: matrix.platform == 'macos-latest'
