@@ -330,4 +330,3 @@ pub enum ExportScope {
     /// Focused on a specific task tree
     FocusedTask { task_id: String, task_name: String },
 }
-

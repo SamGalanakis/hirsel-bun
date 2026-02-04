@@ -58,7 +58,6 @@ pub struct DispatchConfig {
     pub time_limit_minutes: Option<i64>,
 }
 
-
 /// Result of a successful dispatch
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

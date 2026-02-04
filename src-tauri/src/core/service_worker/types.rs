@@ -173,8 +173,8 @@ impl ServiceWorkerBase {
     pub fn should_use_remote(&self) -> bool {
         let runner = self.get_runner_name();
         match runner {
-            None => false,              // No config → local
-            Some("local") => false,     // Explicit local
+            None => false,                        // No config → local
+            Some("local") => false,               // Explicit local
             Some(r) => self.config.has_runner(r), // Check if runner exists
         }
     }

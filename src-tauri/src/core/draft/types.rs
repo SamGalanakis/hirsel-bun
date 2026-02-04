@@ -19,7 +19,6 @@ pub enum StartingPoint {
     GitRepo { url: String, branch: Option<String> },
 }
 
-
 impl StartingPoint {
     /// Get the type name as a string (for serialization/logging).
     pub fn type_name(&self) -> &'static str {

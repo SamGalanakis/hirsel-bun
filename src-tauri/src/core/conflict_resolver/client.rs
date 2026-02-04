@@ -191,7 +191,7 @@ impl Client for ConflictResolverClient {
         let output = match terminal.child.try_wait() {
             Ok(Some(_status)) => {
                 // Process finished - read remaining output
-                
+
                 terminal
                     .child
                     .stdout

@@ -232,7 +232,7 @@ impl std::fmt::Display for EvalResult {
 #[derive(Default)]
 pub enum DeliveryStatus {
     #[default]
-    Pending,   // Not yet delivered
+    Pending, // Not yet delivered
     Pushed,    // Branch on remote, no PR
     PrOpen,    // PR created
     Merged,    // Merged to target
@@ -267,7 +267,6 @@ impl DeliveryStatus {
     }
 }
 
-
 impl std::fmt::Display for DeliveryStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_str())
@@ -280,7 +279,7 @@ impl std::fmt::Display for DeliveryStatus {
 #[derive(Default)]
 pub enum MergeState {
     #[default]
-    Unknown,   // Not yet checked
+    Unknown, // Not yet checked
     Clean,     // Auto-merge possible
     Conflicts, // Needs resolution
 }
@@ -303,7 +302,6 @@ impl MergeState {
         }
     }
 }
-
 
 impl std::fmt::Display for MergeState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

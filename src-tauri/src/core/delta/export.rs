@@ -206,9 +206,9 @@ impl DeltaExporter {
                                         },
                                     ))
                                     .is_ok()
-                                    {
-                                        result.nodes_updated.push(node_id.to_string());
-                                    }
+                                {
+                                    result.nodes_updated.push(node_id.to_string());
+                                }
                             }
                         }
                         // Files without matching nodes are ignored - structure comes from MCP
