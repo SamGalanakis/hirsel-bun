@@ -1,1 +1,1 @@
-export { SheepfoldPopover } from './SheepfoldPopover';
+export { MessagingPanel } from './MessagingPanel';

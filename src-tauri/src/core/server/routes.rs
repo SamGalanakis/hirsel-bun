@@ -353,6 +353,192 @@ pub async fn send_message(
 }
 
 // =============================================================================
+// Project Messages (Sheepfold)
+//
+// These endpoints are for workers to access project-level messages.
+// Workers use these via HttpState when running remotely.
+// =============================================================================
+
+use crate::core::{ProjectMessage, ProjectMessagesStore};
+
+#[derive(Debug, Deserialize)]
+pub struct ProjectMessageRequest {
+    pub thread: String,
+    pub sender: String,
+    pub content: String,
+    #[serde(default)]
+    pub waiting: bool,
+    #[serde(default)]
+    pub route_id: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProjectMessageResponse {
+    pub id: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProjectMessagesResponse {
+    pub messages: Vec<ProjectMessage>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProjectThreadsResponse {
+    pub threads: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MarkProjectMessagesReadRequest {
+    pub reader: String,
+}
+
+pub async fn add_project_message(
+    Path(project_id): Path<i64>,
+    Json(body): Json<ProjectMessageRequest>,
+) -> Result<Json<ProjectMessageResponse>> {
+    let store = ProjectMessagesStore::open()
+        .await
+        .map_err(|e| OrchestratorError::Other(format!("Failed to open project messages: {}", e)))?;
+    let msg = store
+        .add_message(
+            project_id,
+            body.route_id,
+            &body.thread,
+            &body.sender,
+            &body.content,
+            body.waiting,
+        )
+        .await
+        .map_err(|e| OrchestratorError::Other(format!("Failed to add message: {}", e)))?;
+    Ok(Json(ProjectMessageResponse { id: msg.id }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProjectMessagesQuery {
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub route_id: i64,
+}
+
+pub async fn get_project_messages(
+    Path((project_id, thread)): Path<(i64, String)>,
+    Query(query): Query<ProjectMessagesQuery>,
+) -> Result<Json<ProjectMessagesResponse>> {
+    let store = ProjectMessagesStore::open()
+        .await
+        .map_err(|e| OrchestratorError::Other(format!("Failed to open project messages: {}", e)))?;
+    let messages = store
+        .get_messages(project_id, query.route_id, &thread, query.limit)
+        .await
+        .map_err(|e| OrchestratorError::Other(format!("Failed to get messages: {}", e)))?;
+    Ok(Json(ProjectMessagesResponse { messages }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UnreadMessagesQuery {
+    #[serde(default)]
+    pub route_id: i64,
+}
+
+pub async fn get_unread_project_messages(
+    Path((project_id, thread, reader)): Path<(i64, String, String)>,
+    Query(query): Query<UnreadMessagesQuery>,
+) -> Result<Json<ProjectMessagesResponse>> {
+    let store = ProjectMessagesStore::open()
+        .await
+        .map_err(|e| OrchestratorError::Other(format!("Failed to open project messages: {}", e)))?;
+
+    // Get threads to find unread count
+    let threads = store
+        .get_threads(project_id, query.route_id, &reader)
+        .await
+        .map_err(|e| OrchestratorError::Other(format!("Failed to get threads: {}", e)))?;
+
+    let thread_info = threads.iter().find(|t| t.thread == thread);
+    let unread_count = thread_info.map(|t| t.unread_count).unwrap_or(0);
+
+    if unread_count == 0 {
+        return Ok(Json(ProjectMessagesResponse { messages: vec![] }));
+    }
+
+    let messages = store
+        .get_messages(project_id, query.route_id, &thread, Some(unread_count))
+        .await
+        .map_err(|e| OrchestratorError::Other(format!("Failed to get messages: {}", e)))?;
+
+    // Filter out messages from the reader
+    let filtered: Vec<_> = messages
+        .into_iter()
+        .filter(|m| m.sender != reader)
+        .collect();
+    Ok(Json(ProjectMessagesResponse { messages: filtered }))
+}
+
+pub async fn get_all_unread_project_messages(
+    Path((project_id, reader)): Path<(i64, String)>,
+    Query(query): Query<UnreadMessagesQuery>,
+) -> Result<Json<ProjectMessagesResponse>> {
+    let store = ProjectMessagesStore::open()
+        .await
+        .map_err(|e| OrchestratorError::Other(format!("Failed to open project messages: {}", e)))?;
+
+    let threads = store
+        .get_threads(project_id, query.route_id, &reader)
+        .await
+        .map_err(|e| OrchestratorError::Other(format!("Failed to get threads: {}", e)))?;
+
+    let mut all_unread = Vec::new();
+    for thread_info in threads {
+        if thread_info.unread_count > 0 {
+            let messages = store
+                .get_messages(
+                    project_id,
+                    query.route_id,
+                    &thread_info.thread,
+                    Some(thread_info.unread_count),
+                )
+                .await
+                .map_err(|e| OrchestratorError::Other(format!("Failed to get messages: {}", e)))?;
+            all_unread.extend(messages.into_iter().filter(|m| m.sender != reader));
+        }
+    }
+    Ok(Json(ProjectMessagesResponse {
+        messages: all_unread,
+    }))
+}
+
+pub async fn mark_project_messages_read(
+    Path((project_id, thread)): Path<(i64, String)>,
+    Query(query): Query<UnreadMessagesQuery>,
+    Json(body): Json<MarkProjectMessagesReadRequest>,
+) -> Result<StatusCode> {
+    let store = ProjectMessagesStore::open()
+        .await
+        .map_err(|e| OrchestratorError::Other(format!("Failed to open project messages: {}", e)))?;
+    store
+        .mark_messages_read(project_id, query.route_id, &thread, &body.reader)
+        .await
+        .map_err(|e| OrchestratorError::Other(format!("Failed to mark read: {}", e)))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn get_project_threads(
+    Path(project_id): Path<i64>,
+    Query(query): Query<UnreadMessagesQuery>,
+) -> Result<Json<ProjectThreadsResponse>> {
+    let store = ProjectMessagesStore::open()
+        .await
+        .map_err(|e| OrchestratorError::Other(format!("Failed to open project messages: {}", e)))?;
+    let threads = store
+        .get_threads(project_id, query.route_id, "")
+        .await
+        .map_err(|e| OrchestratorError::Other(format!("Failed to get threads: {}", e)))?;
+    Ok(Json(ProjectThreadsResponse {
+        threads: threads.into_iter().map(|t| t.thread).collect(),
+    }))
+}
+
+// =============================================================================
 // Scribe - Documentation
 // =============================================================================
 

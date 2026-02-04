@@ -314,23 +314,33 @@ Content files: `{board_dir}/tasks/{{id}}.md`
 
 Use these hirsel MCP tools to manage board structure:
 
-### `board_view`
-View the full board structure with task IDs and file paths.
-No parameters. Returns JSON with all tasks and evals.
+### Route Management
 
-### `board_task`
-Create or update a task.
+**`board_routes`** - List all routes for this project
+- Shows route hierarchy (which routes forked from which)
+- Returns: id, name, created_at, parent_route_id, forked_from_version, active flag
+- Use to understand available exploration branches
+
+**`board_switch_route`** - Switch to a different route
+- `{ route_id }` → all subsequent operations use this route
+- Use when user wants to explore a different branch
+- Each route has its own independent board state
+
+### Board Structure
+
+**`board_view`** - View the full board structure
+- No parameters. Returns JSON with all tasks and evals for current route.
+
+**`board_task`** - Create or update a task
 - Create: `{ name, blocked_by?, parent_id?, content? }` → returns new ID and file path
 - Update: `{ id, name?, blocked_by?, parent_id? }`
 
-### `board_eval`
-Create or update an eval (validation task).
+**`board_eval`** - Create or update an eval (validation task)
 - Create: `{ name, validates, content? }` → returns new ID and file path
 - Update: `{ id, validates? }`
 - `validates` must reference existing task IDs
 
-### `board_delete`
-Delete a task or eval.
+**`board_delete`** - Delete a task or eval
 - `{ id }` → removes node, deletes file, cleans up references
 
 ## Content Editing
@@ -349,11 +359,20 @@ Task/eval content lives in markdown files:
 - Eval runs after validated tasks complete
 - Empty array = project-level gate (runs after ALL tasks)
 
+## Routes (Parallel Exploration)
+
+Routes allow forking the board to explore different approaches:
+- Each route is an independent copy of the board state
+- The "main" route is the default starting point
+- Forked routes inherit tasks from their parent at fork time
+- Use `board_routes` to see available routes, `board_switch_route` to change
+
 ## Workflow
 
 1. Call `board_view` to see current board structure
 2. Use `board_task`/`board_eval` to create or modify structure
 3. Edit `board/tasks/{id}.md` files for detailed content
+4. (Optional) Use routes to explore alternatives without losing work
 
 **IMPORTANT:** There is NO board.json file. Structure is managed ONLY via MCP tools."#
             .to_string()
@@ -370,7 +389,8 @@ Task/eval content lives in markdown files:
             GypScope::Run { .. } => "\n- Use hirsel MCP tools, NOT CLI commands",
             GypScope::Board { .. } => {
                 r#"
-- Use hirsel MCP tools (board_view, board_task, board_eval, board_delete) for structure
+- Use hirsel MCP tools for board structure (board_view, board_task, board_eval, board_delete)
+- Use board_routes/board_switch_route for route management
 - Edit content files directly at board/tasks/{id}.md
 - DON'T list tasks/evals in chat - the user sees them in the board visualization
 - After editing, just confirm briefly (e.g., "Done. Added 10 tasks and 5 evals.")"#
@@ -400,15 +420,48 @@ Task/eval content lives in markdown files:
                 ..
             } => {
                 // Prefer project workspace so Claude CLI picks up CLAUDE.md
-                // Fall back to board directory
+                // Fall back to board directory (route-scoped)
                 workspace_path.clone().unwrap_or_else(|| {
-                    hirsel_dir()
-                        .join("projects")
-                        .join(project_id.to_string())
-                        .join("board")
+                    // Get route-scoped board directory
+                    let board_dir = Self::get_board_dir(*project_id);
+                    // Ensure directory exists
+                    if !board_dir.exists() {
+                        let _ = std::fs::create_dir_all(&board_dir);
+                    }
+                    board_dir
                 })
             }
         }
+    }
+
+    /// Get the board directory for a project's active route
+    fn get_board_dir(project_id: i64) -> PathBuf {
+        use crate::core::route::RouteFiles;
+
+        // Try to get active route name, fallback to "main"
+        let route_name =
+            Self::get_active_route_name(project_id).unwrap_or_else(|| "main".to_string());
+        RouteFiles::new(project_id, &route_name).board_dir()
+    }
+
+    /// Get the active route name for a project
+    fn get_active_route_name(project_id: i64) -> Option<String> {
+        use crate::core::project::ProjectStore;
+        use crate::core::route::RouteStore;
+
+        // Use block_on since this is called from sync context
+        let rt = tokio::runtime::Handle::try_current().ok()?;
+        tokio::task::block_in_place(|| {
+            rt.block_on(async {
+                let project_store = ProjectStore::open().await.ok()?;
+                let project = project_store.get_project(project_id).await.ok()?;
+                let route_id = project.active_route_id?;
+
+                let route_store = RouteStore::new(project_id).await.ok()?;
+                let route = route_store.get_route(route_id).await.ok()?;
+                Some(route.name)
+            })
+        })
     }
 
     // =========================================================================

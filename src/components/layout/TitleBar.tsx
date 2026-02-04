@@ -1,124 +1,30 @@
 /**
- * Application title bar with project selector breadcrumbs
+ * TitleBar - Minimal application header
+ *
+ * Shows:
+ * - App name "Hirsel" on left
+ * - Right side: Notifications, App settings
  */
-import { type Component, Show } from 'solid-js';
-import { useApp, useProject, useRuns } from '../../stores';
+import { type Component } from 'solid-js';
+import { useApp } from '../../stores';
 import { NotificationsDropdown } from './Notifications';
-import { ProjectSelector } from './ProjectSelector';
 import { Icon } from '../shared';
 
 export const TitleBar: Component = () => {
   const app = useApp();
-  const project = useProject();
-  const runs = useRuns();
 
   return (
-    <header class="flex items-center justify-between px-4 py-2 border-b border-pasture-600/50 bg-pasture-900/50 backdrop-blur-sm select-none relative z-50">
-      {/* Breadcrumbs */}
-      <nav aria-label="Breadcrumb">
-        <ol class="flex items-center gap-1 text-sm">
-          {/* Project selector (root) */}
-          <li>
-            <ProjectSelector />
-          </li>
-
-          {/* Board/Runs crumb - only show when project is selected */}
-          <Show when={project.selectedProject()}>
-            <li class="text-wool-700" aria-hidden="true">
-              <Icon name="chevron-right" class="w-4 h-4" />
-            </li>
-            <li>
-              <button
-                type="button"
-                onClick={() => {
-                  runs.setSelectedRun(null);
-                  project.setActiveProjectView('board');
-                }}
-                class="flex items-center gap-1.5 px-2 py-1 rounded-md transition-colors"
-                classList={{
-                  'text-wool-100 bg-pasture-700/50': project.activeProjectView() === 'board' && !runs.selectedRun(),
-                  'text-wool-500 hover:text-wool-300 hover:bg-pasture-800': project.activeProjectView() !== 'board' || !!runs.selectedRun(),
-                }}
-              >
-                <Icon name="layout-grid" class="w-3.5 h-3.5" />
-                <span>Board</span>
-              </button>
-            </li>
-          </Show>
-
-          {/* Runs crumb */}
-          <Show when={project.selectedProject() && (project.activeProjectView() === 'runs' || runs.selectedRun())}>
-            <li class="text-wool-700" aria-hidden="true">
-              <Icon name="chevron-right" class="w-4 h-4" />
-            </li>
-            <li>
-              <Show
-                when={runs.selectedRun()}
-                fallback={
-                  <span class="flex items-center gap-1.5 px-2 py-1 text-wool-100 bg-pasture-700/50 rounded-md">
-                    <Icon name="play" class="w-3.5 h-3.5" />
-                    <span>Runs</span>
-                  </span>
-                }
-              >
-                <button
-                  type="button"
-                  onClick={() => runs.setSelectedRun(null)}
-                  class="flex items-center gap-1.5 px-2 py-1 rounded-md text-wool-500 hover:text-wool-300 hover:bg-pasture-800 transition-colors"
-                >
-                  <Icon name="play" class="w-3.5 h-3.5" />
-                  <span>Runs</span>
-                </button>
-              </Show>
-            </li>
-          </Show>
-
-          {/* Selected run crumb */}
-          <Show when={runs.selectedRun()}>
-            <li class="text-wool-700" aria-hidden="true">
-              <Icon name="chevron-right" class="w-4 h-4" />
-            </li>
-            <li>
-              <span class="flex items-center gap-1.5 px-2 py-1 text-wool-100 bg-pasture-700/50 rounded-md">
-                <span class="max-w-[200px] truncate">{runs.selectedRun()}</span>
-              </span>
-            </li>
-          </Show>
-        </ol>
-      </nav>
+    <header class="flex items-center justify-between px-3 py-1.5 border-b border-pasture-600/50 bg-pasture-900/50 backdrop-blur-sm select-none relative z-50">
+      {/* Left: App name */}
+      <div class="flex items-center gap-3">
+        <span class="text-[13px] font-semibold text-wool-200 tracking-tight">Hirsel</span>
+      </div>
 
       {/* Right side actions */}
       <div class="flex items-center gap-1">
         <NotificationsDropdown />
 
-        {/* Docs panel toggle - only show when project selected */}
-        <Show when={project.selectedProject()}>
-          <button
-            type="button"
-            onClick={() => project.setDocsOpen(!project.docsOpen())}
-            class="p-2 rounded-md transition-colors"
-            classList={{
-              'text-sage-400 bg-pasture-700/50': project.docsOpen(),
-              'text-wool-500 hover:text-wool-300 hover:bg-pasture-800': !project.docsOpen(),
-            }}
-            title="Project documentation"
-          >
-            <Icon name="book-open" class="w-4 h-4" />
-          </button>
-        </Show>
-
-        {/* Project settings - only show when project selected */}
-        <Show when={project.selectedProject()}>
-          <button
-            type="button"
-            onClick={() => project.setShowProjectSettings(true)}
-            class="p-2 rounded-md text-wool-500 hover:text-wool-300 hover:bg-pasture-800 transition-colors"
-            title={`${project.selectedProject()?.name} settings`}
-          >
-            <Icon name="folder-cog" class="w-4 h-4" />
-          </button>
-        </Show>
-
+        {/* App settings */}
         <button
           type="button"
           onClick={() => app.setShowSettings(true)}

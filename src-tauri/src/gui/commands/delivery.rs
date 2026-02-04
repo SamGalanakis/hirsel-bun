@@ -4,14 +4,14 @@
 //! Also includes board delivery commands for the delta dispatch system.
 
 use super::get_run_work_dir;
-use crate::core::db::global_pool;
-use crate::core::delivery::{DeliveryService, DeliveryState, PushResult};
+use crate::core::delivery::{
+    delivery_branch_name, pr_body, pr_title, DeliveryOrchestrator, DeliveryState, PushResult,
+};
 use crate::core::delta::{
     BoardDeliveryStatus, BoardVersion, Delivery, DeliveryAttempt, DeltaState,
 };
-use crate::core::github::{MergeInfo, PrInfo};
+use crate::core::forge::{MergeResult, PrInfo};
 use crate::core::{hirsel_dir, SQLiteState};
-use sqlx::Row;
 
 /// Get the delivery state for a run
 #[tauri::command]
@@ -27,9 +27,10 @@ pub async fn get_delivery_state(
         Err(_) => None,
     };
 
-    let service = DeliveryService::new(&work_dir);
-    service
-        .get_delivery_state_async(&target_branch, branch_off_commit.as_deref())
+    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).map_err(|e| e.to_string())?;
+
+    orchestrator
+        .get_delivery_state(&target_branch, branch_off_commit.as_deref())
         .await
         .map_err(|e| e.to_string())
 }
@@ -39,8 +40,9 @@ pub async fn get_delivery_state(
 pub async fn check_merge_state(run_name: String, target_branch: String) -> Result<String, String> {
     let work_dir = get_run_work_dir(&run_name)?;
 
-    let service = DeliveryService::new(&work_dir);
-    let state = service
+    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).map_err(|e| e.to_string())?;
+
+    let state = orchestrator
         .check_merge_state(&target_branch)
         .map_err(|e| e.to_string())?;
 
@@ -55,8 +57,9 @@ pub async fn get_conflicting_files(
 ) -> Result<Vec<String>, String> {
     let work_dir = get_run_work_dir(&run_name)?;
 
-    let service = DeliveryService::new(&work_dir);
-    service
+    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).map_err(|e| e.to_string())?;
+
+    orchestrator
         .get_conflicting_files(&target_branch)
         .map_err(|e| e.to_string())
 }
@@ -70,8 +73,9 @@ pub async fn check_staleness(
 ) -> Result<u32, String> {
     let work_dir = get_run_work_dir(&run_name)?;
 
-    let service = DeliveryService::new(&work_dir);
-    service
+    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).map_err(|e| e.to_string())?;
+
+    orchestrator
         .check_staleness(&target_branch, &branch_off_commit)
         .map_err(|e| e.to_string())
 }
@@ -81,8 +85,9 @@ pub async fn check_staleness(
 pub async fn push_run_branch(run_name: String) -> Result<PushResult, String> {
     let work_dir = get_run_work_dir(&run_name)?;
 
-    let service = DeliveryService::new(&work_dir);
-    service.push_branch(None).map_err(|e| e.to_string())
+    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).map_err(|e| e.to_string())?;
+
+    orchestrator.push_branch(None).map_err(|e| e.to_string())
 }
 
 /// Tier 2: Create a pull request
@@ -95,8 +100,9 @@ pub async fn create_run_pr(
 ) -> Result<PrInfo, String> {
     let work_dir = get_run_work_dir(&run_name)?;
 
-    let service = DeliveryService::new(&work_dir);
-    service
+    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).map_err(|e| e.to_string())?;
+
+    orchestrator
         .create_pr(&target_branch, &title, &body)
         .await
         .map_err(|e| e.to_string())
@@ -109,11 +115,12 @@ pub async fn auto_merge_run(
     target_branch: String,
     title: String,
     body: String,
-) -> Result<MergeInfo, String> {
+) -> Result<MergeResult, String> {
     let work_dir = get_run_work_dir(&run_name)?;
 
-    let service = DeliveryService::new(&work_dir);
-    service
+    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).map_err(|e| e.to_string())?;
+
+    orchestrator
         .auto_merge(&target_branch, &title, &body)
         .await
         .map_err(|e| e.to_string())
@@ -125,7 +132,7 @@ pub async fn generate_pr_title(
     run_name: String,
     summary: Option<String>,
 ) -> Result<String, String> {
-    Ok(DeliveryService::pr_title(&run_name, summary.as_deref()))
+    Ok(pr_title(&run_name, summary.as_deref()))
 }
 
 /// Generate PR body from run
@@ -135,13 +142,13 @@ pub async fn generate_pr_body(
     task_ids: Vec<String>,
     eval_ids: Vec<String>,
 ) -> Result<String, String> {
-    Ok(DeliveryService::pr_body(&run_name, &task_ids, &eval_ids))
+    Ok(pr_body(&run_name, &task_ids, &eval_ids))
 }
 
 /// Generate delivery branch name
 #[tauri::command]
-pub async fn delivery_branch_name(run_name: String) -> Result<String, String> {
-    Ok(DeliveryService::delivery_branch_name(&run_name))
+pub async fn get_delivery_branch_name(run_name: String) -> Result<String, String> {
+    Ok(delivery_branch_name(&run_name))
 }
 
 // =============================================================================
@@ -150,22 +157,31 @@ pub async fn delivery_branch_name(run_name: String) -> Result<String, String> {
 
 /// Get all board versions for a project
 #[tauri::command]
-pub async fn get_board_versions(project_id: i64) -> Result<Vec<BoardVersion>, String> {
-    let state = DeltaState::new(project_id);
+pub async fn get_board_versions(
+    project_id: i64,
+    route_id: i64,
+) -> Result<Vec<BoardVersion>, String> {
+    let state = DeltaState::with_route(project_id, route_id);
     state.get_board_versions().await.map_err(|e| e.to_string())
 }
 
 /// Get the latest board version for a project
 #[tauri::command]
-pub async fn get_latest_board_version(project_id: i64) -> Result<Option<BoardVersion>, String> {
-    let state = DeltaState::new(project_id);
+pub async fn get_latest_board_version(
+    project_id: i64,
+    route_id: i64,
+) -> Result<Option<BoardVersion>, String> {
+    let state = DeltaState::with_route(project_id, route_id);
     state.get_latest_version().await.map_err(|e| e.to_string())
 }
 
 /// Get the current (non-terminal) delivery for a project
 #[tauri::command]
-pub async fn get_current_board_delivery(project_id: i64) -> Result<Option<Delivery>, String> {
-    let state = DeltaState::new(project_id);
+pub async fn get_current_board_delivery(
+    project_id: i64,
+    route_id: i64,
+) -> Result<Option<Delivery>, String> {
+    let state = DeltaState::with_route(project_id, route_id);
     state
         .get_current_delivery()
         .await
@@ -173,14 +189,17 @@ pub async fn get_current_board_delivery(project_id: i64) -> Result<Option<Delive
 }
 
 /// Start a delivery for a board version
+///
+/// Creates the delivery record, marks it in progress, and pushes the branch.
 #[tauri::command]
 pub async fn start_board_delivery(
     project_id: i64,
+    route_id: i64,
     version_id: i64,
     target_branch: String,
     _resolve_conflicts: bool, // Reserved for future use
 ) -> Result<Delivery, String> {
-    let state = DeltaState::new(project_id);
+    let state = DeltaState::with_route(project_id, route_id);
 
     // Create the delivery record
     let delivery = state
@@ -200,6 +219,41 @@ pub async fn start_board_delivery(
         .await
         .map_err(|e| e.to_string())?;
 
+    // Get the project run to find the work directory
+    let project_run = state
+        .get_project_run()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("No project run found")?;
+
+    let run_path = hirsel_dir().join("runs").join(&project_run.run_name);
+    let work_dir = run_path.join("work").join("staging");
+
+    if !work_dir.exists() {
+        return Err(format!("Work directory not found: {}", work_dir.display()));
+    }
+
+    // Create orchestrator and push
+    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).map_err(|e| e.to_string())?;
+
+    let push_result = orchestrator.push_branch(None).map_err(|e| e.to_string())?;
+
+    // Update delivery with branch info
+    state
+        .update_delivery_info(
+            delivery.id,
+            Some(&push_result.branch),
+            push_result.url.as_deref(),
+            None,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    state
+        .update_delivery_status(delivery.id, BoardDeliveryStatus::Pushed)
+        .await
+        .map_err(|e| e.to_string())?;
+
     // Return the updated delivery
     state
         .get_delivery(delivery.id)
@@ -207,53 +261,14 @@ pub async fn start_board_delivery(
         .map_err(|e| e.to_string())
 }
 
-/// Get delivery status
-#[tauri::command]
-pub async fn get_board_delivery_status(delivery_id: i64) -> Result<Delivery, String> {
-    // We need to query without knowing the project_id
-    // Use a helper that queries directly
-    let pool = global_pool().await;
-
-    let row = sqlx::query(
-        "SELECT id, project_id, version_id, status, target_branch, delivery_branch,
-                pr_url, pr_number, started_at, completed_at, failure_reason
-         FROM deliveries
-         WHERE id = ?",
-    )
-    .bind(delivery_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| e.to_string())?
-    .ok_or_else(|| format!("Delivery {} not found", delivery_id))?;
-
-    Ok(Delivery {
-        id: row.get("id"),
-        project_id: row.get("project_id"),
-        version_id: row.get("version_id"),
-        status: BoardDeliveryStatus::from_str(&row.get::<String, _>("status")),
-        target_branch: row.get("target_branch"),
-        delivery_branch: row.get("delivery_branch"),
-        pr_url: row.get("pr_url"),
-        pr_number: row.get("pr_number"),
-        started_at: row.get("started_at"),
-        completed_at: row.get("completed_at"),
-        failure_reason: row.get("failure_reason"),
-    })
-}
-
 /// Retry a failed delivery
 #[tauri::command]
-pub async fn retry_board_delivery(delivery_id: i64) -> Result<DeliveryAttempt, String> {
-    // Get the delivery to find project_id
-    let pool = global_pool().await;
-
-    let project_id: i64 = sqlx::query_scalar("SELECT project_id FROM deliveries WHERE id = ?")
-        .bind(delivery_id)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let state = DeltaState::new(project_id);
+pub async fn retry_board_delivery(
+    project_id: i64,
+    route_id: i64,
+    delivery_id: i64,
+) -> Result<DeliveryAttempt, String> {
+    let state = DeltaState::with_route(project_id, route_id);
 
     // Reset status to in_progress
     state
@@ -270,17 +285,12 @@ pub async fn retry_board_delivery(delivery_id: i64) -> Result<DeliveryAttempt, S
 
 /// Get delivery attempts for a delivery
 #[tauri::command]
-pub async fn get_delivery_attempts(delivery_id: i64) -> Result<Vec<DeliveryAttempt>, String> {
-    // Get the delivery to find project_id
-    let pool = global_pool().await;
-
-    let project_id: i64 = sqlx::query_scalar("SELECT project_id FROM deliveries WHERE id = ?")
-        .bind(delivery_id)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let state = DeltaState::new(project_id);
+pub async fn get_delivery_attempts(
+    project_id: i64,
+    route_id: i64,
+    delivery_id: i64,
+) -> Result<Vec<DeliveryAttempt>, String> {
+    let state = DeltaState::with_route(project_id, route_id);
     state
         .get_delivery_attempts(delivery_id)
         .await
@@ -291,10 +301,12 @@ pub async fn get_delivery_attempts(delivery_id: i64) -> Result<Vec<DeliveryAttem
 #[tauri::command]
 pub async fn complete_board_delivery(
     project_id: i64,
+    route_id: i64,
     delivery_id: i64,
-    action: String, // "push", "pr", "merge"
+    action: String,          // "push", "pr", "merge"
+    summary: Option<String>, // Optional summary for PR body
 ) -> Result<Delivery, String> {
-    let state = DeltaState::new(project_id);
+    let state = DeltaState::with_route(project_id, route_id);
 
     // Get the project run to find the work directory
     let project_run = state
@@ -314,13 +326,12 @@ pub async fn complete_board_delivery(
         .get_delivery(delivery_id)
         .await
         .map_err(|e| e.to_string())?;
-    let delivery_service = DeliveryService::new(&work_dir);
+
+    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir).map_err(|e| e.to_string())?;
 
     match action.as_str() {
         "push" => {
-            let push_result = delivery_service
-                .push_branch(None)
-                .map_err(|e| e.to_string())?;
+            let push_result = orchestrator.push_branch(None).map_err(|e| e.to_string())?;
             state
                 .update_delivery_info(
                     delivery_id,
@@ -337,11 +348,13 @@ pub async fn complete_board_delivery(
         }
         "pr" => {
             let title = format!("Board v{} delivery", delivery.version_id);
-            let body = format!(
-                "Automated delivery from Hirsel board version {}",
-                delivery.version_id
-            );
-            let pr = delivery_service
+            let body = summary.unwrap_or_else(|| {
+                format!(
+                    "Automated delivery from Hirsel board version {}",
+                    delivery.version_id
+                )
+            });
+            let pr = orchestrator
                 .create_pr(&delivery.target_branch, &title, &body)
                 .await
                 .map_err(|e| e.to_string())?;
@@ -370,7 +383,7 @@ pub async fn complete_board_delivery(
                 "Automated delivery from Hirsel board version {}",
                 delivery.version_id
             );
-            let _merge = delivery_service
+            let _merge = orchestrator
                 .auto_merge(&delivery.target_branch, &title, &body)
                 .await
                 .map_err(|e| e.to_string())?;
@@ -390,8 +403,12 @@ pub async fn complete_board_delivery(
 
 /// Abandon a delivery
 #[tauri::command]
-pub async fn abandon_board_delivery(project_id: i64, delivery_id: i64) -> Result<(), String> {
-    let state = DeltaState::new(project_id);
+pub async fn abandon_board_delivery(
+    project_id: i64,
+    route_id: i64,
+    delivery_id: i64,
+) -> Result<(), String> {
+    let state = DeltaState::with_route(project_id, route_id);
     state
         .update_delivery_status(delivery_id, BoardDeliveryStatus::Abandoned)
         .await

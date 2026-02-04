@@ -15,6 +15,7 @@ import {
   batch,
 } from 'solid-js';
 import { useProject } from './project-context';
+import { useRoute } from './route-context';
 import type {
   DraftNodeTree,
   LiveNodeTree,
@@ -56,7 +57,7 @@ interface DeltaState {
   hasDiff: () => boolean;
 
   // Actions
-  loadTrees: (projectId: number) => Promise<void>;
+  loadTrees: (projectId: number, routeId: number) => Promise<void>;
   refreshTrees: () => Promise<void>;
   createDraftNode: (request: CreateDraftNodeRequest) => Promise<DraftNode | null>;
   updateDraftNode: (nodeId: string, request: UpdateDraftNodeRequest) => Promise<DraftNode | null>;
@@ -69,7 +70,7 @@ interface DeltaState {
   // Delivery actions
   loadDeliveryState: () => Promise<void>;
   startDelivery: (targetBranch: string, resolveConflicts?: boolean) => Promise<BoardDelivery | null>;
-  completeDelivery: (action: 'push' | 'pr' | 'merge') => Promise<BoardDelivery | null>;
+  completeDelivery: (action: 'push' | 'pr' | 'merge', summary?: string) => Promise<BoardDelivery | null>;
   retryDelivery: () => Promise<DeliveryAttempt | null>;
   abandonDelivery: () => Promise<boolean>;
 }
@@ -94,6 +95,7 @@ export const useDelta = () => {
 
 export const DeltaProvider: ParentComponent = (props) => {
   const project = useProject();
+  const route = useRoute();
 
   // Tree state
   const [draftTree, setDraftTree] = createSignal<DraftNodeTree[]>([]);
@@ -123,10 +125,10 @@ export const DeltaProvider: ParentComponent = (props) => {
   // Actions
   // ==========================================================================
 
-  const loadTrees = async (projectId: number) => {
+  const loadTrees = async (projectId: number, routeId: number) => {
     try {
       setLoading(true);
-      const response = await invoke<DualTreeResponse>('get_dual_trees', { projectId });
+      const response = await invoke<DualTreeResponse>('get_dual_trees', { projectId, routeId });
       batch(() => {
         setDraftTree(response.draft);
         setLiveTree(response.live);
@@ -142,17 +144,19 @@ export const DeltaProvider: ParentComponent = (props) => {
 
   const refreshTrees = async () => {
     const projectId = project.selectedProjectId();
-    if (projectId) {
-      await loadTrees(projectId);
+    const routeId = route.activeRoute()?.id ?? route.routes()[0]?.id;
+    if (projectId && routeId) {
+      await loadTrees(projectId, routeId);
     }
   };
 
   const createDraftNode = async (request: CreateDraftNodeRequest): Promise<DraftNode | null> => {
     const projectId = project.selectedProjectId();
-    if (!projectId) return null;
+    const routeId = route.activeRoute()?.id;
+    if (!projectId || !routeId) return null;
 
     try {
-      const node = await invoke<DraftNode>('create_draft_node', { projectId, request });
+      const node = await invoke<DraftNode>('create_draft_node', { projectId, routeId, request });
       await refreshTrees();
       return node;
     } catch (e) {
@@ -167,10 +171,11 @@ export const DeltaProvider: ParentComponent = (props) => {
     request: UpdateDraftNodeRequest
   ): Promise<DraftNode | null> => {
     const projectId = project.selectedProjectId();
-    if (!projectId) return null;
+    const routeId = route.activeRoute()?.id;
+    if (!projectId || !routeId) return null;
 
     try {
-      const node = await invoke<DraftNode>('update_draft_node', { projectId, nodeId, request });
+      const node = await invoke<DraftNode>('update_draft_node', { projectId, routeId, nodeId, request });
       await refreshTrees();
       return node;
     } catch (e) {
@@ -182,10 +187,11 @@ export const DeltaProvider: ParentComponent = (props) => {
 
   const deleteDraftNode = async (nodeId: string): Promise<boolean> => {
     const projectId = project.selectedProjectId();
-    if (!projectId) return false;
+    const routeId = route.activeRoute()?.id;
+    if (!projectId || !routeId) return false;
 
     try {
-      await invoke('delete_draft_node', { projectId, nodeId });
+      await invoke('delete_draft_node', { projectId, routeId, nodeId });
       await refreshTrees();
       return true;
     } catch (e) {
@@ -201,10 +207,11 @@ export const DeltaProvider: ParentComponent = (props) => {
     newPosition: number
   ): Promise<boolean> => {
     const projectId = project.selectedProjectId();
-    if (!projectId) return false;
+    const routeId = route.activeRoute()?.id;
+    if (!projectId || !routeId) return false;
 
     try {
-      await invoke('move_draft_node', { projectId, nodeId, newParentId, newPosition });
+      await invoke('move_draft_node', { projectId, routeId, nodeId, newParentId, newPosition });
       await refreshTrees();
       return true;
     } catch (e) {
@@ -216,10 +223,11 @@ export const DeltaProvider: ParentComponent = (props) => {
 
   const resetTree = async (): Promise<boolean> => {
     const projectId = project.selectedProjectId();
-    if (!projectId) return false;
+    const routeId = route.activeRoute()?.id;
+    if (!projectId || !routeId) return false;
 
     try {
-      await invoke('reset_project_tree', { projectId });
+      await invoke('reset_project_tree', { projectId, routeId });
       await refreshTrees();
       window.toast?.success('Tree reset successfully');
       return true;
@@ -232,11 +240,12 @@ export const DeltaProvider: ParentComponent = (props) => {
 
   const dispatch = async (): Promise<DeltaDispatchResponse | null> => {
     const projectId = project.selectedProjectId();
-    if (!projectId) return null;
+    const routeId = route.activeRoute()?.id;
+    if (!projectId || !routeId) return null;
 
     try {
       setDispatchPending(true);
-      const response = await invoke<DeltaDispatchResponse>('dispatch_deltas', { projectId });
+      const response = await invoke<DeltaDispatchResponse>('dispatch_deltas', { projectId, routeId });
       await refreshTrees();
       window.toast?.success(`Dispatched ${response.deltaCount} delta tasks`);
       return response;
@@ -259,13 +268,14 @@ export const DeltaProvider: ParentComponent = (props) => {
 
   const loadDeliveryState = async () => {
     const projectId = project.selectedProjectId();
-    if (!projectId) return;
+    const routeId = route.activeRoute()?.id;
+    if (!projectId || !routeId) return;
 
     try {
       const [versions, latest, delivery] = await Promise.all([
-        invoke<BoardVersion[]>('get_board_versions', { projectId }),
-        invoke<BoardVersion | null>('get_latest_board_version', { projectId }),
-        invoke<BoardDelivery | null>('get_current_board_delivery', { projectId }),
+        invoke<BoardVersion[]>('get_board_versions', { projectId, routeId }),
+        invoke<BoardVersion | null>('get_latest_board_version', { projectId, routeId }),
+        invoke<BoardDelivery | null>('get_current_board_delivery', { projectId, routeId }),
       ]);
 
       batch(() => {
@@ -283,8 +293,9 @@ export const DeltaProvider: ParentComponent = (props) => {
     resolveConflicts = false
   ): Promise<BoardDelivery | null> => {
     const projectId = project.selectedProjectId();
+    const routeId = route.activeRoute()?.id;
     const version = latestVersion();
-    if (!projectId || !version) {
+    if (!projectId || !routeId || !version) {
       window.toast?.error('No version available for delivery');
       return null;
     }
@@ -293,6 +304,7 @@ export const DeltaProvider: ParentComponent = (props) => {
       setDeliveryPending(true);
       const delivery = await invoke<BoardDelivery>('start_board_delivery', {
         projectId,
+        routeId,
         versionId: version.id,
         targetBranch,
         resolveConflicts,
@@ -310,11 +322,13 @@ export const DeltaProvider: ParentComponent = (props) => {
   };
 
   const completeDelivery = async (
-    action: 'push' | 'pr' | 'merge'
+    action: 'push' | 'pr' | 'merge',
+    summary?: string
   ): Promise<BoardDelivery | null> => {
     const projectId = project.selectedProjectId();
+    const routeId = route.activeRoute()?.id;
     const delivery = currentDelivery();
-    if (!projectId || !delivery) {
+    if (!projectId || !routeId || !delivery) {
       window.toast?.error('No active delivery');
       return null;
     }
@@ -323,8 +337,10 @@ export const DeltaProvider: ParentComponent = (props) => {
       setDeliveryPending(true);
       const updated = await invoke<BoardDelivery>('complete_board_delivery', {
         projectId,
+        routeId,
         deliveryId: delivery.id,
         action,
+        summary,
       });
       setCurrentDelivery(updated);
 
@@ -341,8 +357,10 @@ export const DeltaProvider: ParentComponent = (props) => {
   };
 
   const retryDelivery = async (): Promise<DeliveryAttempt | null> => {
+    const projectId = project.selectedProjectId();
+    const routeId = route.activeRoute()?.id;
     const delivery = currentDelivery();
-    if (!delivery) {
+    if (!projectId || !routeId || !delivery) {
       window.toast?.error('No delivery to retry');
       return null;
     }
@@ -350,6 +368,8 @@ export const DeltaProvider: ParentComponent = (props) => {
     try {
       setDeliveryPending(true);
       const attempt = await invoke<DeliveryAttempt>('retry_board_delivery', {
+        projectId,
+        routeId,
         deliveryId: delivery.id,
       });
       await loadDeliveryState();
@@ -366,8 +386,9 @@ export const DeltaProvider: ParentComponent = (props) => {
 
   const abandonDelivery = async (): Promise<boolean> => {
     const projectId = project.selectedProjectId();
+    const routeId = route.activeRoute()?.id;
     const delivery = currentDelivery();
-    if (!projectId || !delivery) {
+    if (!projectId || !routeId || !delivery) {
       window.toast?.error('No delivery to abandon');
       return false;
     }
@@ -375,6 +396,7 @@ export const DeltaProvider: ParentComponent = (props) => {
     try {
       await invoke('abandon_board_delivery', {
         projectId,
+        routeId,
         deliveryId: delivery.id,
       });
       setCurrentDelivery(null);
@@ -391,13 +413,15 @@ export const DeltaProvider: ParentComponent = (props) => {
   // Effects
   // ==========================================================================
 
-  // Load trees and delivery state when project changes
+  // Load trees and delivery state when project or route changes
   createEffect(() => {
     const projectId = project.selectedProjectId();
-    if (projectId) {
-      loadTrees(projectId);
+    // Use active route, or fall back to first route in list
+    const routeId = route.activeRoute()?.id ?? route.routes()[0]?.id;
+    if (projectId && routeId) {
+      loadTrees(projectId, routeId);
       loadDeliveryState();
-    } else {
+    } else if (!projectId) {
       batch(() => {
         setDraftTree([]);
         setLiveTree([]);
@@ -410,10 +434,36 @@ export const DeltaProvider: ParentComponent = (props) => {
     }
   });
 
-  // Poll for changes (including Gyp sync)
+  // Listen for route changes and reload trees
   createEffect(() => {
     const projectId = project.selectedProjectId();
     if (!projectId) return;
+
+    const handleRouteChange = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.projectId === projectId && detail?.routeId) {
+        // Clear current trees to show loading state
+        batch(() => {
+          setDraftTree([]);
+          setLiveTree([]);
+          setDiff(null);
+          setProjectRun(null);
+        });
+        // Reload trees for new route
+        loadTrees(projectId, detail.routeId);
+        loadDeliveryState();
+      }
+    };
+
+    window.addEventListener('route-changed', handleRouteChange);
+    onCleanup(() => window.removeEventListener('route-changed', handleRouteChange));
+  });
+
+  // Poll for changes (including Gyp sync)
+  createEffect(() => {
+    const projectId = project.selectedProjectId();
+    const routeId = route.activeRoute()?.id ?? route.routes()[0]?.id;
+    if (!projectId || !routeId) return;
 
     const interval = setInterval(async () => {
       // Only refresh if not currently dispatching
@@ -421,10 +471,10 @@ export const DeltaProvider: ParentComponent = (props) => {
 
       try {
         // Sync Gyp file changes first
-        await invoke('sync_gyp_changes', { projectId });
+        await invoke('sync_gyp_changes', { projectId, routeId });
 
         // Load trees and compare before updating to avoid flicker
-        const response = await invoke<DualTreeResponse>('get_dual_trees', { projectId });
+        const response = await invoke<DualTreeResponse>('get_dual_trees', { projectId, routeId });
 
         // Only update if data actually changed (simple JSON comparison)
         const newDraftJson = JSON.stringify(response.draft);

@@ -10,7 +10,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::core::http_client::ResponseExt;
-use crate::core::state::{Message, Status, Worker, WorkerStatus};
+use crate::core::state::{Status, Worker, WorkerStatus};
 
 // =============================================================================
 // Common Response Types
@@ -269,11 +269,14 @@ impl HttpState {
     }
 
     // =========================================================================
-    // Message operations
+    // Project Message operations (Sheepfold)
+    //
+    // Messages are stored at the project level in the global database.
     // =========================================================================
 
-    pub async fn add_message(
+    pub async fn add_project_message(
         &self,
+        project_id: i64,
         thread: &str,
         sender: &str,
         content: &str,
@@ -290,9 +293,10 @@ impl HttpState {
         struct MessageResponse {
             id: i64,
         }
+        let endpoint = format!("/api/projects/{}/messages", project_id);
         let result: MessageResponse = self
             .post(
-                "/messages",
+                &endpoint,
                 &MessageRequest {
                     thread: thread.to_string(),
                     sender: sender.to_string(),
@@ -304,54 +308,86 @@ impl HttpState {
         Ok(result.id)
     }
 
-    pub async fn get_messages(&self, thread: &str, limit: i64) -> HttpStateResult<Vec<Message>> {
+    pub async fn get_project_messages(
+        &self,
+        project_id: i64,
+        thread: &str,
+        limit: i64,
+    ) -> HttpStateResult<Vec<crate::core::ProjectMessage>> {
         #[derive(Deserialize)]
         struct MessagesResponse {
-            messages: Vec<Message>,
+            messages: Vec<crate::core::ProjectMessage>,
         }
-        let result: MessagesResponse = self
-            .get(&format!("/messages/{}?limit={}", thread, limit))
-            .await?;
+        let endpoint = format!(
+            "/api/projects/{}/messages/{}?limit={}",
+            project_id, thread, limit
+        );
+        let result: MessagesResponse = self.get(&endpoint).await?;
         Ok(result.messages)
     }
 
-    pub async fn get_unread_messages(
+    pub async fn get_unread_project_messages(
         &self,
+        project_id: i64,
         thread: &str,
         reader: &str,
-    ) -> HttpStateResult<Vec<Message>> {
+    ) -> HttpStateResult<Vec<crate::core::ProjectMessage>> {
         #[derive(Deserialize)]
         struct MessagesResponse {
-            messages: Vec<Message>,
+            messages: Vec<crate::core::ProjectMessage>,
         }
-        let result: MessagesResponse = self
-            .get(&format!("/messages/{}/unread/{}", thread, reader))
-            .await?;
+        let endpoint = format!(
+            "/api/projects/{}/messages/{}/unread/{}",
+            project_id, thread, reader
+        );
+        let result: MessagesResponse = self.get(&endpoint).await?;
         Ok(result.messages)
     }
 
-    pub async fn mark_messages_read(
+    pub async fn get_all_unread_project_messages(
         &self,
+        project_id: i64,
+        reader: &str,
+    ) -> HttpStateResult<Vec<crate::core::ProjectMessage>> {
+        #[derive(Deserialize)]
+        struct MessagesResponse {
+            messages: Vec<crate::core::ProjectMessage>,
+        }
+        let endpoint = format!("/api/projects/{}/messages/unread/{}", project_id, reader);
+        let result: MessagesResponse = self.get(&endpoint).await?;
+        Ok(result.messages)
+    }
+
+    pub async fn mark_project_messages_read(
+        &self,
+        project_id: i64,
         thread: &str,
         reader: &str,
-        up_to_id: Option<i64>,
     ) -> HttpStateResult<()> {
         #[derive(Serialize)]
         struct MarkReadRequest {
             reader: String,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            up_to_id: Option<i64>,
         }
+        let endpoint = format!("/api/projects/{}/messages/{}/mark-read", project_id, thread);
         let _: SuccessResponse = self
             .post(
-                &format!("/messages/{}/mark_read", thread),
+                &endpoint,
                 &MarkReadRequest {
                     reader: reader.to_string(),
-                    up_to_id,
                 },
             )
             .await?;
         Ok(())
+    }
+
+    pub async fn get_project_threads(&self, project_id: i64) -> HttpStateResult<Vec<String>> {
+        #[derive(Deserialize)]
+        struct ThreadsResponse {
+            threads: Vec<String>,
+        }
+        let endpoint = format!("/api/projects/{}/threads", project_id);
+        let result: ThreadsResponse = self.get(&endpoint).await?;
+        Ok(result.threads)
     }
 
     // =========================================================================
@@ -762,24 +798,6 @@ impl HttpState {
         Ok(result.all_done)
     }
 
-    pub async fn get_all_unread_messages(&self, reader: &str) -> HttpStateResult<Vec<Message>> {
-        #[derive(Deserialize)]
-        struct MessagesResponse {
-            messages: Vec<Message>,
-        }
-        let result: MessagesResponse = self.get(&format!("/messages/unread/{}", reader)).await?;
-        Ok(result.messages)
-    }
-
-    pub async fn get_threads(&self) -> HttpStateResult<Vec<String>> {
-        #[derive(Deserialize)]
-        struct ThreadsResponse {
-            threads: Vec<String>,
-        }
-        let result: ThreadsResponse = self.get("/messages/threads").await?;
-        Ok(result.threads)
-    }
-
     pub async fn get_time_info(&self) -> HttpStateResult<Option<crate::core::state::TimeInfo>> {
         #[derive(Deserialize)]
         struct TimeInfoResponse {
@@ -876,42 +894,57 @@ impl StateAccess for HttpState {
         ))
     }
 
-    async fn add_message(
+    async fn add_project_message(
         &self,
+        project_id: i64,
         thread: &str,
         sender: &str,
         content: &str,
+        waiting: bool,
     ) -> StateAccessResult<i64> {
-        Ok(HttpState::add_message(self, thread, sender, content, false).await?)
+        Ok(
+            HttpState::add_project_message(self, project_id, thread, sender, content, waiting)
+                .await?,
+        )
     }
 
-    async fn get_messages(&self, thread: &str, limit: i64) -> StateAccessResult<Vec<Message>> {
-        Ok(HttpState::get_messages(self, thread, limit).await?)
-    }
-
-    async fn get_unread_messages(
+    async fn get_project_messages(
         &self,
+        project_id: i64,
+        thread: &str,
+        limit: i64,
+    ) -> StateAccessResult<Vec<crate::core::ProjectMessage>> {
+        Ok(HttpState::get_project_messages(self, project_id, thread, limit).await?)
+    }
+
+    async fn get_unread_project_messages(
+        &self,
+        project_id: i64,
         thread: &str,
         reader: &str,
-    ) -> StateAccessResult<Vec<Message>> {
-        Ok(HttpState::get_unread_messages(self, thread, reader).await?)
+    ) -> StateAccessResult<Vec<crate::core::ProjectMessage>> {
+        Ok(HttpState::get_unread_project_messages(self, project_id, thread, reader).await?)
     }
 
-    async fn get_all_unread_messages(&self, reader: &str) -> StateAccessResult<Vec<Message>> {
-        Ok(HttpState::get_all_unread_messages(self, reader).await?)
-    }
-
-    async fn mark_messages_read(
+    async fn get_all_unread_project_messages(
         &self,
+        project_id: i64,
+        reader: &str,
+    ) -> StateAccessResult<Vec<crate::core::ProjectMessage>> {
+        Ok(HttpState::get_all_unread_project_messages(self, project_id, reader).await?)
+    }
+
+    async fn mark_project_messages_read(
+        &self,
+        project_id: i64,
         thread: &str,
         reader: &str,
-        up_to_id: Option<i64>,
     ) -> StateAccessResult<()> {
-        Ok(HttpState::mark_messages_read(self, thread, reader, up_to_id).await?)
+        Ok(HttpState::mark_project_messages_read(self, project_id, thread, reader).await?)
     }
 
-    async fn get_threads(&self) -> StateAccessResult<Vec<String>> {
-        Ok(HttpState::get_threads(self).await?)
+    async fn get_project_threads(&self, project_id: i64) -> StateAccessResult<Vec<String>> {
+        Ok(HttpState::get_project_threads(self, project_id).await?)
     }
 
     async fn start_eval(

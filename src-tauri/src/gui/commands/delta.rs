@@ -1,6 +1,7 @@
 //! Delta dispatch Tauri commands
 //!
 //! Commands for the unified board with draft/live trees and delta dispatch.
+//! All commands are scoped to a specific route within a project.
 
 use serde::{Deserialize, Serialize};
 
@@ -14,17 +15,17 @@ use crate::core::orchestrator::DaemonOrchestrator;
 // Tree Operations
 // =============================================================================
 
-/// Get the draft tree for a project
+/// Get the draft tree for a project route
 #[tauri::command]
-pub async fn get_draft_tree(project_id: i64) -> Result<Vec<DraftNodeTree>, String> {
-    let state = DeltaState::new(project_id);
+pub async fn get_draft_tree(project_id: i64, route_id: i64) -> Result<Vec<DraftNodeTree>, String> {
+    let state = DeltaState::with_route(project_id, route_id);
     state.get_draft_tree().await.map_err(|e| e.to_string())
 }
 
-/// Get the live tree for a project
+/// Get the live tree for a project route
 #[tauri::command]
-pub async fn get_live_tree(project_id: i64) -> Result<Vec<LiveNodeTree>, String> {
-    let state = DeltaState::new(project_id);
+pub async fn get_live_tree(project_id: i64, route_id: i64) -> Result<Vec<LiveNodeTree>, String> {
+    let state = DeltaState::with_route(project_id, route_id);
     state.get_live_tree().await.map_err(|e| e.to_string())
 }
 
@@ -32,9 +33,10 @@ pub async fn get_live_tree(project_id: i64) -> Result<Vec<LiveNodeTree>, String>
 #[tauri::command]
 pub async fn create_draft_node(
     project_id: i64,
+    route_id: i64,
     request: CreateDraftNodeRequest,
 ) -> Result<crate::core::delta::DraftNode, String> {
-    let state = DeltaState::new(project_id);
+    let state = DeltaState::with_route(project_id, route_id);
     state
         .create_draft_node(&request)
         .await
@@ -45,10 +47,11 @@ pub async fn create_draft_node(
 #[tauri::command]
 pub async fn update_draft_node(
     project_id: i64,
+    route_id: i64,
     node_id: String,
     request: UpdateDraftNodeRequest,
 ) -> Result<crate::core::delta::DraftNode, String> {
-    let state = DeltaState::new(project_id);
+    let state = DeltaState::with_route(project_id, route_id);
     state
         .update_draft_node(&node_id, &request)
         .await
@@ -57,8 +60,12 @@ pub async fn update_draft_node(
 
 /// Delete a draft node
 #[tauri::command]
-pub async fn delete_draft_node(project_id: i64, node_id: String) -> Result<(), String> {
-    let state = DeltaState::new(project_id);
+pub async fn delete_draft_node(
+    project_id: i64,
+    route_id: i64,
+    node_id: String,
+) -> Result<(), String> {
+    let state = DeltaState::with_route(project_id, route_id);
     state
         .delete_draft_node(&node_id)
         .await
@@ -69,11 +76,12 @@ pub async fn delete_draft_node(project_id: i64, node_id: String) -> Result<(), S
 #[tauri::command]
 pub async fn move_draft_node(
     project_id: i64,
+    route_id: i64,
     node_id: String,
     new_parent_id: Option<String>,
     new_position: i32,
 ) -> Result<(), String> {
-    let state = DeltaState::new(project_id);
+    let state = DeltaState::with_route(project_id, route_id);
     state
         .move_draft_node(&node_id, new_parent_id.as_deref(), new_position)
         .await
@@ -82,8 +90,8 @@ pub async fn move_draft_node(
 
 /// Reset project tree - delete all draft nodes except the root
 #[tauri::command]
-pub async fn reset_project_tree(project_id: i64) -> Result<(), String> {
-    let state = DeltaState::new(project_id);
+pub async fn reset_project_tree(project_id: i64, route_id: i64) -> Result<(), String> {
+    let state = DeltaState::with_route(project_id, route_id);
     state.reset_tree().await.map_err(|e| e.to_string())
 }
 
@@ -93,15 +101,15 @@ pub async fn reset_project_tree(project_id: i64) -> Result<(), String> {
 
 /// Compute the diff between draft and live trees
 #[tauri::command]
-pub async fn compute_tree_diff(project_id: i64) -> Result<TreeDiff, String> {
-    let service = DeltaDispatchService::new(project_id);
+pub async fn compute_tree_diff(project_id: i64, route_id: i64) -> Result<TreeDiff, String> {
+    let service = DeltaDispatchService::with_route(project_id, route_id);
     service.get_diff().await.map_err(|e| e.to_string())
 }
 
 /// Get a human-readable diff summary
 #[tauri::command]
-pub async fn get_diff_summary(project_id: i64) -> Result<String, String> {
-    let service = DeltaDispatchService::new(project_id);
+pub async fn get_diff_summary(project_id: i64, route_id: i64) -> Result<String, String> {
+    let service = DeltaDispatchService::with_route(project_id, route_id);
     service.get_diff_summary().await.map_err(|e| e.to_string())
 }
 
@@ -128,13 +136,13 @@ pub struct DispatchResponse {
 ///    - Adds all delta tasks to the run database
 ///    - Spawns workers to process the tasks
 #[tauri::command]
-pub async fn dispatch_deltas(project_id: i64) -> Result<DispatchResponse, String> {
+pub async fn dispatch_deltas(project_id: i64, route_id: i64) -> Result<DispatchResponse, String> {
     // 1. Dispatch creates global DB records (delta_submissions, live_nodes)
-    let service = DeltaDispatchService::new(project_id);
+    let service = DeltaDispatchService::with_route(project_id, route_id);
     let result = service.dispatch().await.map_err(|e| e.to_string())?;
 
     // 2. Use DeltaRunner to process pending submissions via orchestrator
-    let runner = DeltaRunner::new(project_id);
+    let runner = DeltaRunner::with_route(project_id, route_id);
     let orchestrator = DaemonOrchestrator::connect_or_start()
         .map_err(|e| format!("Failed to connect to daemon: {}", e))?;
 
@@ -155,8 +163,9 @@ pub async fn dispatch_deltas(project_id: i64) -> Result<DispatchResponse, String
 #[tauri::command]
 pub async fn preview_delta_dispatch(
     project_id: i64,
+    route_id: i64,
 ) -> Result<DeltaDispatchPreviewResponse, String> {
-    let service = DeltaDispatchService::new(project_id);
+    let service = DeltaDispatchService::with_route(project_id, route_id);
     let preview = service.preview().await.map_err(|e| e.to_string())?;
 
     Ok(DeltaDispatchPreviewResponse {
@@ -179,10 +188,10 @@ pub struct DeltaDispatchPreviewResponse {
 // Run Operations
 // =============================================================================
 
-/// Get the persistent run for a project
+/// Get the persistent run for a project route
 #[tauri::command]
-pub async fn get_project_run(project_id: i64) -> Result<Option<ProjectRun>, String> {
-    let service = DeltaDispatchService::new(project_id);
+pub async fn get_project_run(project_id: i64, route_id: i64) -> Result<Option<ProjectRun>, String> {
+    let service = DeltaDispatchService::with_route(project_id, route_id);
     service.get_project_run().await.map_err(|e| e.to_string())
 }
 
@@ -190,11 +199,12 @@ pub async fn get_project_run(project_id: i64) -> Result<Option<ProjectRun>, Stri
 #[tauri::command]
 pub async fn complete_live_node(
     project_id: i64,
+    route_id: i64,
     node_id: String,
     success: bool,
     commit_sha: Option<String>,
 ) -> Result<(), String> {
-    let service = DeltaDispatchService::new(project_id);
+    let service = DeltaDispatchService::with_route(project_id, route_id);
     service
         .complete_live_node(&node_id, success, commit_sha.as_deref())
         .await
@@ -203,8 +213,12 @@ pub async fn complete_live_node(
 
 /// Complete a revert operation (delete the live node)
 #[tauri::command]
-pub async fn complete_revert(project_id: i64, node_id: String) -> Result<(), String> {
-    let service = DeltaDispatchService::new(project_id);
+pub async fn complete_revert(
+    project_id: i64,
+    route_id: i64,
+    node_id: String,
+) -> Result<(), String> {
+    let service = DeltaDispatchService::with_route(project_id, route_id);
     service
         .complete_revert(&node_id)
         .await
@@ -227,8 +241,8 @@ pub struct DualTreeResponse {
 
 /// Get both trees in one call (more efficient for UI)
 #[tauri::command]
-pub async fn get_dual_trees(project_id: i64) -> Result<DualTreeResponse, String> {
-    let service = DeltaDispatchService::new(project_id);
+pub async fn get_dual_trees(project_id: i64, route_id: i64) -> Result<DualTreeResponse, String> {
+    let service = DeltaDispatchService::with_route(project_id, route_id);
 
     let draft = service.get_draft_tree().await.map_err(|e| e.to_string())?;
     // Return flat live nodes - frontend builds tree structure using draft hierarchy
@@ -258,8 +272,8 @@ pub async fn get_dual_trees(project_id: i64) -> Result<DualTreeResponse, String>
 /// This should be called periodically while Gyp is active to pick up
 /// changes made by the agent to the board JSON files.
 #[tauri::command]
-pub async fn sync_gyp_changes(project_id: i64) -> Result<SyncResult, String> {
-    let mut exporter = DeltaExporter::new(project_id);
+pub async fn sync_gyp_changes(project_id: i64, route_id: i64) -> Result<SyncResult, String> {
+    let mut exporter = DeltaExporter::with_route(project_id, route_id);
     exporter
         .sync_file_changes()
         .map_err(|e| format!("Sync failed: {}", e))

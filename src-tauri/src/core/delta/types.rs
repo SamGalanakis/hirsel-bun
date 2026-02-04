@@ -510,6 +510,7 @@ impl ProjectRunStatus {
 pub struct ProjectRun {
     pub id: i64,
     pub project_id: i64,
+    pub route_id: i64,
     pub run_name: String,
     pub status: ProjectRunStatus,
     pub created_at: String,

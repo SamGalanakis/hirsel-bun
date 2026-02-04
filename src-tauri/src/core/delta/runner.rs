@@ -53,15 +53,23 @@ pub type RunnerResult<T> = Result<T, RunnerError>;
 /// Delta runner for processing submissions
 pub struct DeltaRunner {
     project_id: i64,
+    #[allow(dead_code)]
+    route_id: i64,
     state: DeltaState,
 }
 
 impl DeltaRunner {
-    /// Create a new runner for a project
+    /// Create a new runner for a project (uses route_id = 0 for backwards compatibility)
     pub fn new(project_id: i64) -> Self {
+        Self::with_route(project_id, 0)
+    }
+
+    /// Create a new runner for a project route
+    pub fn with_route(project_id: i64, route_id: i64) -> Self {
         Self {
             project_id,
-            state: DeltaState::new(project_id),
+            route_id,
+            state: DeltaState::with_route(project_id, route_id),
         }
     }
 
@@ -188,6 +196,7 @@ impl DeltaRunner {
         let request = StartRunRequest {
             name: run_name.to_string(),
             project_id: self.project_id,
+            route_id: Some(self.route_id),
             spec,
             starting_point: Some(project.starting_point.clone()),
             eval: None, // Eval nodes are handled as tasks

@@ -11,10 +11,13 @@ use crate::core::db::{global_pool, utc_now};
 use crate::core::names::slugify;
 
 /// Schema for delta tables
+///
+/// All route-scoped tables include route_id for isolation between parallel exploration routes.
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS draft_nodes (
     id TEXT NOT NULL,
     project_id INTEGER NOT NULL,
+    route_id INTEGER NOT NULL,
     parent_id TEXT,
     position INTEGER NOT NULL DEFAULT 0,
     name TEXT NOT NULL,
@@ -24,33 +27,39 @@ CREATE TABLE IF NOT EXISTS draft_nodes (
     y REAL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    PRIMARY KEY (id, project_id)
+    PRIMARY KEY (id, project_id, route_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_draft_nodes_project ON draft_nodes(project_id);
+CREATE INDEX IF NOT EXISTS idx_draft_nodes_route ON draft_nodes(route_id);
 CREATE INDEX IF NOT EXISTS idx_draft_nodes_parent ON draft_nodes(parent_id);
 
 CREATE TABLE IF NOT EXISTS draft_node_validates (
     eval_id TEXT NOT NULL,
     task_id TEXT NOT NULL,
     project_id INTEGER NOT NULL,
-    PRIMARY KEY (project_id, eval_id, task_id)
+    route_id INTEGER NOT NULL,
+    PRIMARY KEY (project_id, route_id, eval_id, task_id)
 );
 CREATE INDEX IF NOT EXISTS idx_draft_validates_eval ON draft_node_validates(eval_id);
 CREATE INDEX IF NOT EXISTS idx_draft_validates_task ON draft_node_validates(task_id);
+CREATE INDEX IF NOT EXISTS idx_draft_validates_route ON draft_node_validates(route_id);
 
 CREATE TABLE IF NOT EXISTS draft_node_blocked_by (
     node_id TEXT NOT NULL,
     blocker_id TEXT NOT NULL,
     project_id INTEGER NOT NULL,
-    PRIMARY KEY (project_id, node_id, blocker_id)
+    route_id INTEGER NOT NULL,
+    PRIMARY KEY (project_id, route_id, node_id, blocker_id)
 );
 CREATE INDEX IF NOT EXISTS idx_draft_blocked_node ON draft_node_blocked_by(node_id);
 CREATE INDEX IF NOT EXISTS idx_draft_blocked_blocker ON draft_node_blocked_by(blocker_id);
+CREATE INDEX IF NOT EXISTS idx_draft_blocked_route ON draft_node_blocked_by(route_id);
 
 CREATE TABLE IF NOT EXISTS live_nodes (
     id TEXT NOT NULL,
     project_id INTEGER NOT NULL,
+    route_id INTEGER NOT NULL,
     draft_node_id TEXT,
     parent_id TEXT,
     position INTEGER NOT NULL DEFAULT 0,
@@ -72,35 +81,42 @@ CREATE TABLE IF NOT EXISTS live_nodes (
     eval_result TEXT,
     eval_feedback TEXT,
     tokens_used INTEGER,
-    PRIMARY KEY (id, project_id)
+    PRIMARY KEY (id, project_id, route_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_live_nodes_project ON live_nodes(project_id);
+CREATE INDEX IF NOT EXISTS idx_live_nodes_route ON live_nodes(route_id);
 CREATE INDEX IF NOT EXISTS idx_live_nodes_parent ON live_nodes(parent_id);
 CREATE INDEX IF NOT EXISTS idx_live_nodes_project_status ON live_nodes(project_id, status);
+CREATE INDEX IF NOT EXISTS idx_live_nodes_route_status ON live_nodes(route_id, status);
 CREATE INDEX IF NOT EXISTS idx_live_nodes_claimed ON live_nodes(project_id, claimed_by) WHERE status = 'working';
 
 CREATE TABLE IF NOT EXISTS live_node_validates (
     eval_id TEXT NOT NULL,
     task_id TEXT NOT NULL,
     project_id INTEGER NOT NULL,
-    PRIMARY KEY (project_id, eval_id, task_id)
+    route_id INTEGER NOT NULL,
+    PRIMARY KEY (project_id, route_id, eval_id, task_id)
 );
 CREATE INDEX IF NOT EXISTS idx_live_validates_eval ON live_node_validates(eval_id);
 CREATE INDEX IF NOT EXISTS idx_live_validates_task ON live_node_validates(task_id);
+CREATE INDEX IF NOT EXISTS idx_live_validates_route ON live_node_validates(route_id);
 
 CREATE TABLE IF NOT EXISTS live_node_blocked_by (
     node_id TEXT NOT NULL,
     blocker_id TEXT NOT NULL,
     project_id INTEGER NOT NULL,
-    PRIMARY KEY (project_id, node_id, blocker_id)
+    route_id INTEGER NOT NULL,
+    PRIMARY KEY (project_id, route_id, node_id, blocker_id)
 );
 CREATE INDEX IF NOT EXISTS idx_live_blocked_node ON live_node_blocked_by(node_id);
 CREATE INDEX IF NOT EXISTS idx_live_blocked_blocker ON live_node_blocked_by(blocker_id);
+CREATE INDEX IF NOT EXISTS idx_live_blocked_route ON live_node_blocked_by(route_id);
 
 CREATE TABLE IF NOT EXISTS delta_submissions (
     id INTEGER PRIMARY KEY,
     project_id INTEGER NOT NULL,
+    route_id INTEGER NOT NULL,
     batch_id INTEGER,
     delta_type TEXT NOT NULL,
     draft_node_id TEXT,
@@ -115,34 +131,41 @@ CREATE TABLE IF NOT EXISTS delta_submissions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_delta_submissions_project ON delta_submissions(project_id);
+CREATE INDEX IF NOT EXISTS idx_delta_submissions_route ON delta_submissions(route_id);
 CREATE INDEX IF NOT EXISTS idx_delta_submissions_batch ON delta_submissions(batch_id);
 
 CREATE TABLE IF NOT EXISTS project_runs (
     id INTEGER PRIMARY KEY,
-    project_id INTEGER NOT NULL UNIQUE,
+    project_id INTEGER NOT NULL,
+    route_id INTEGER NOT NULL,
     run_name TEXT NOT NULL UNIQUE,
     status TEXT NOT NULL DEFAULT 'paused',
     created_at TEXT NOT NULL,
-    last_dispatch_at TEXT
+    last_dispatch_at TEXT,
+    UNIQUE(project_id, route_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_project_runs_project ON project_runs(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_runs_route ON project_runs(route_id);
 
 CREATE TABLE IF NOT EXISTS board_versions (
     id INTEGER PRIMARY KEY,
     project_id INTEGER NOT NULL,
+    route_id INTEGER NOT NULL,
     batch_id INTEGER NOT NULL,
     version_number INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     description TEXT,
-    UNIQUE(project_id, version_number)
+    UNIQUE(project_id, route_id, version_number)
 );
 
 CREATE INDEX IF NOT EXISTS idx_board_versions_project ON board_versions(project_id);
+CREATE INDEX IF NOT EXISTS idx_board_versions_route ON board_versions(route_id);
 
 CREATE TABLE IF NOT EXISTS deliveries (
     id INTEGER PRIMARY KEY,
     project_id INTEGER NOT NULL,
+    route_id INTEGER NOT NULL,
     version_id INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     target_branch TEXT NOT NULL,
@@ -156,6 +179,7 @@ CREATE TABLE IF NOT EXISTS deliveries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_deliveries_project ON deliveries(project_id);
+CREATE INDEX IF NOT EXISTS idx_deliveries_route ON deliveries(route_id);
 CREATE INDEX IF NOT EXISTS idx_deliveries_version ON deliveries(version_id);
 CREATE INDEX IF NOT EXISTS idx_deliveries_status ON deliveries(status);
 
@@ -207,14 +231,44 @@ pub enum DeltaStateError {
 pub type DeltaStateResult<T> = Result<T, DeltaStateError>;
 
 /// State manager for delta operations
+///
+/// Manages draft and live trees for a specific project+route combination.
+/// Each route has independent trees, runs, versions, and deliveries.
 pub struct DeltaState {
     project_id: i64,
+    route_id: i64,
 }
 
 impl DeltaState {
-    /// Create a new delta state manager for a project
+    /// Create a new delta state manager for a project's route
+    ///
+    /// For backwards compatibility, use the main route if not specified.
+    /// Prefer `with_route()` for new code.
     pub fn new(project_id: i64) -> Self {
-        Self { project_id }
+        // Default to route_id=0 which will be resolved to main route on first query
+        // This maintains backwards compatibility during migration
+        Self {
+            project_id,
+            route_id: 0,
+        }
+    }
+
+    /// Create a delta state manager for a specific route
+    pub fn with_route(project_id: i64, route_id: i64) -> Self {
+        Self {
+            project_id,
+            route_id,
+        }
+    }
+
+    /// Get the project ID
+    pub fn project_id(&self) -> i64 {
+        self.project_id
+    }
+
+    /// Get the route ID
+    pub fn route_id(&self) -> i64 {
+        self.route_id
     }
 
     /// Get the global pool with schema initialized
@@ -242,11 +296,12 @@ impl DeltaState {
         let mut counter = 1;
         loop {
             let exists: bool = sqlx::query_scalar(&format!(
-                "SELECT EXISTS(SELECT 1 FROM {} WHERE id = ? AND project_id = ?)",
+                "SELECT EXISTS(SELECT 1 FROM {} WHERE id = ? AND project_id = ? AND route_id = ?)",
                 table
             ))
             .bind(&candidate)
             .bind(self.project_id)
+            .bind(self.route_id)
             .fetch_one(pool)
             .await?;
 
@@ -270,8 +325,9 @@ impl DeltaState {
     ) -> DeltaStateResult<HashMap<String, Vec<String>>> {
         let mut map: HashMap<String, Vec<String>> = HashMap::new();
         let rows =
-            sqlx::query("SELECT eval_id, task_id FROM draft_node_validates WHERE project_id = ?")
+            sqlx::query("SELECT eval_id, task_id FROM draft_node_validates WHERE project_id = ? AND route_id = ?")
                 .bind(self.project_id)
+                .bind(self.route_id)
                 .fetch_all(pool)
                 .await?;
 
@@ -290,9 +346,10 @@ impl DeltaState {
     ) -> DeltaStateResult<HashMap<String, Vec<String>>> {
         let mut map: HashMap<String, Vec<String>> = HashMap::new();
         let rows = sqlx::query(
-            "SELECT node_id, blocker_id FROM draft_node_blocked_by WHERE project_id = ?",
+            "SELECT node_id, blocker_id FROM draft_node_blocked_by WHERE project_id = ? AND route_id = ?",
         )
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_all(pool)
         .await?;
 
@@ -311,10 +368,11 @@ impl DeltaState {
         node_id: &str,
     ) -> DeltaStateResult<Vec<String>> {
         let ids: Vec<String> = sqlx::query_scalar(
-            "SELECT task_id FROM draft_node_validates WHERE eval_id = ? AND project_id = ?",
+            "SELECT task_id FROM draft_node_validates WHERE eval_id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(node_id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_all(pool)
         .await?;
         Ok(ids)
@@ -327,10 +385,11 @@ impl DeltaState {
         node_id: &str,
     ) -> DeltaStateResult<Vec<String>> {
         let ids: Vec<String> = sqlx::query_scalar(
-            "SELECT blocker_id FROM draft_node_blocked_by WHERE node_id = ? AND project_id = ?",
+            "SELECT blocker_id FROM draft_node_blocked_by WHERE node_id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(node_id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_all(pool)
         .await?;
         Ok(ids)
@@ -343,8 +402,9 @@ impl DeltaState {
     ) -> DeltaStateResult<HashMap<String, Vec<String>>> {
         let mut map: HashMap<String, Vec<String>> = HashMap::new();
         let rows =
-            sqlx::query("SELECT eval_id, task_id FROM live_node_validates WHERE project_id = ?")
+            sqlx::query("SELECT eval_id, task_id FROM live_node_validates WHERE project_id = ? AND route_id = ?")
                 .bind(self.project_id)
+                .bind(self.route_id)
                 .fetch_all(pool)
                 .await?;
 
@@ -363,9 +423,10 @@ impl DeltaState {
     ) -> DeltaStateResult<HashMap<String, Vec<String>>> {
         let mut map: HashMap<String, Vec<String>> = HashMap::new();
         let rows = sqlx::query(
-            "SELECT node_id, blocker_id FROM live_node_blocked_by WHERE project_id = ?",
+            "SELECT node_id, blocker_id FROM live_node_blocked_by WHERE project_id = ? AND route_id = ?",
         )
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_all(pool)
         .await?;
 
@@ -384,10 +445,11 @@ impl DeltaState {
         node_id: &str,
     ) -> DeltaStateResult<Vec<String>> {
         let ids: Vec<String> = sqlx::query_scalar(
-            "SELECT task_id FROM live_node_validates WHERE eval_id = ? AND project_id = ?",
+            "SELECT task_id FROM live_node_validates WHERE eval_id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(node_id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_all(pool)
         .await?;
         Ok(ids)
@@ -400,10 +462,11 @@ impl DeltaState {
         node_id: &str,
     ) -> DeltaStateResult<Vec<String>> {
         let ids: Vec<String> = sqlx::query_scalar(
-            "SELECT blocker_id FROM live_node_blocked_by WHERE node_id = ? AND project_id = ?",
+            "SELECT blocker_id FROM live_node_blocked_by WHERE node_id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(node_id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_all(pool)
         .await?;
         Ok(ids)
@@ -424,10 +487,11 @@ impl DeltaState {
         let rows = sqlx::query(
             "SELECT id, project_id, parent_id, position, name, node_type, content, x, y, created_at, updated_at
              FROM draft_nodes
-             WHERE project_id = ?
+             WHERE project_id = ? AND route_id = ?
              ORDER BY parent_id NULLS FIRST, position",
         )
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_all(pool)
         .await?;
 
@@ -466,10 +530,11 @@ impl DeltaState {
         let row = sqlx::query(
             "SELECT id, project_id, parent_id, position, name, node_type, content, x, y, created_at, updated_at
              FROM draft_nodes
-             WHERE id = ? AND project_id = ?",
+             WHERE id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_optional(pool)
         .await?
         .ok_or_else(|| DeltaStateError::DraftNodeNotFound(id.to_string()))?;
@@ -511,10 +576,11 @@ impl DeltaState {
         // Validate parent_id if provided
         if let Some(pid) = &req.parent_id {
             let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM draft_nodes WHERE id = ? AND project_id = ?)",
+                "SELECT EXISTS(SELECT 1 FROM draft_nodes WHERE id = ? AND project_id = ? AND route_id = ?)",
             )
             .bind(pid)
             .bind(self.project_id)
+            .bind(self.route_id)
             .fetch_one(pool)
             .await?;
             if !exists {
@@ -530,19 +596,21 @@ impl DeltaState {
         let position: i32 = match &parent_id {
             Some(pid) => {
                 let max: Option<i32> = sqlx::query_scalar(
-                    "SELECT MAX(position) FROM draft_nodes WHERE parent_id = ? AND project_id = ?",
+                    "SELECT MAX(position) FROM draft_nodes WHERE parent_id = ? AND project_id = ? AND route_id = ? AND route_id = ?",
                 )
                 .bind(pid)
                 .bind(self.project_id)
+                .bind(self.route_id)
                 .fetch_one(pool)
                 .await?;
                 max.unwrap_or(-1) + 1
             }
             None => {
                 let max: Option<i32> = sqlx::query_scalar(
-                    "SELECT MAX(position) FROM draft_nodes WHERE parent_id IS NULL AND project_id = ?",
+                    "SELECT MAX(position) FROM draft_nodes WHERE parent_id IS NULL AND project_id = ? AND route_id = ?",
                 )
                 .bind(self.project_id)
+                .bind(self.route_id)
                 .fetch_one(pool)
                 .await?;
                 max.unwrap_or(-1) + 1
@@ -550,11 +618,12 @@ impl DeltaState {
         };
 
         sqlx::query(
-            "INSERT INTO draft_nodes (id, project_id, parent_id, position, name, node_type, content, x, y, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO draft_nodes (id, project_id, route_id, parent_id, position, name, node_type, content, x, y, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .bind(&parent_id)
         .bind(position)
         .bind(&req.name)
@@ -570,11 +639,12 @@ impl DeltaState {
         // Insert validates relationships
         for task_id in &req.validates {
             sqlx::query(
-                "INSERT INTO draft_node_validates (eval_id, task_id, project_id) VALUES (?, ?, ?)",
+                "INSERT INTO draft_node_validates (eval_id, task_id, project_id, route_id) VALUES (?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(task_id)
             .bind(self.project_id)
+            .bind(self.route_id)
             .execute(pool)
             .await?;
         }
@@ -582,11 +652,12 @@ impl DeltaState {
         // Insert blocked_by relationships
         for blocker_id in &req.blocked_by {
             sqlx::query(
-                "INSERT INTO draft_node_blocked_by (node_id, blocker_id, project_id) VALUES (?, ?, ?)",
+                "INSERT INTO draft_node_blocked_by (node_id, blocker_id, project_id, route_id) VALUES (?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(blocker_id)
             .bind(self.project_id)
+            .bind(self.route_id)
             .execute(pool)
             .await?;
         }
@@ -643,9 +714,10 @@ impl DeltaState {
         }
 
         sql.push_str(&format!(
-            " WHERE id = ?{} AND project_id = ?{}",
+            " WHERE id = ?{} AND project_id = ?{} AND route_id = ?{}",
             bind_index,
-            bind_index + 1
+            bind_index + 1,
+            bind_index + 2
         ));
 
         let mut query = sqlx::query(&sql).bind(&now);
@@ -661,23 +733,25 @@ impl DeltaState {
         if let Some(y) = req.y {
             query = query.bind(y);
         }
-        query = query.bind(id).bind(self.project_id);
+        query = query.bind(id).bind(self.project_id).bind(self.route_id);
         query.execute(pool).await?;
 
         // Replace validates if provided
         if let Some(ref validates) = req.validates {
-            sqlx::query("DELETE FROM draft_node_validates WHERE eval_id = ? AND project_id = ?")
+            sqlx::query("DELETE FROM draft_node_validates WHERE eval_id = ? AND project_id = ? AND route_id = ?")
                 .bind(id)
                 .bind(self.project_id)
+                .bind(self.route_id)
                 .execute(pool)
                 .await?;
             for task_id in validates {
                 sqlx::query(
-                    "INSERT INTO draft_node_validates (eval_id, task_id, project_id) VALUES (?, ?, ?)",
+                    "INSERT INTO draft_node_validates (eval_id, task_id, project_id, route_id) VALUES (?, ?, ?, ?)",
                 )
                 .bind(id)
                 .bind(task_id)
                 .bind(self.project_id)
+                .bind(self.route_id)
                 .execute(pool)
                 .await?;
             }
@@ -685,18 +759,20 @@ impl DeltaState {
 
         // Replace blocked_by if provided
         if let Some(ref blocked_by) = req.blocked_by {
-            sqlx::query("DELETE FROM draft_node_blocked_by WHERE node_id = ? AND project_id = ?")
+            sqlx::query("DELETE FROM draft_node_blocked_by WHERE node_id = ? AND project_id = ? AND route_id = ?")
                 .bind(id)
                 .bind(self.project_id)
+                .bind(self.route_id)
                 .execute(pool)
                 .await?;
             for blocker_id in blocked_by {
                 sqlx::query(
-                    "INSERT INTO draft_node_blocked_by (node_id, blocker_id, project_id) VALUES (?, ?, ?)",
+                    "INSERT INTO draft_node_blocked_by (node_id, blocker_id, project_id, route_id) VALUES (?, ?, ?, ?)",
                 )
                 .bind(id)
                 .bind(blocker_id)
                 .bind(self.project_id)
+                .bind(self.route_id)
                 .execute(pool)
                 .await?;
             }
@@ -718,10 +794,11 @@ impl DeltaState {
         while i < to_delete.len() {
             let parent_id = &to_delete[i];
             let children: Vec<String> = sqlx::query_scalar(
-                "SELECT id FROM draft_nodes WHERE parent_id = ? AND project_id = ?",
+                "SELECT id FROM draft_nodes WHERE parent_id = ? AND project_id = ? AND route_id = ? AND route_id = ?",
             )
             .bind(parent_id)
             .bind(self.project_id)
+            .bind(self.route_id)
             .fetch_all(pool)
             .await?;
             to_delete.extend(children);
@@ -731,33 +808,38 @@ impl DeltaState {
         // Delete all nodes and their relationships (children first due to potential FK constraints)
         for node_id in to_delete.iter().rev() {
             // Delete validates relationships (both as eval and as referenced task)
-            sqlx::query("DELETE FROM draft_node_validates WHERE eval_id = ? AND project_id = ?")
+            sqlx::query("DELETE FROM draft_node_validates WHERE eval_id = ? AND project_id = ? AND route_id = ?")
                 .bind(node_id)
                 .bind(self.project_id)
+                .bind(self.route_id)
                 .execute(pool)
                 .await?;
-            sqlx::query("DELETE FROM draft_node_validates WHERE task_id = ? AND project_id = ?")
+            sqlx::query("DELETE FROM draft_node_validates WHERE task_id = ? AND project_id = ? AND route_id = ?")
                 .bind(node_id)
                 .bind(self.project_id)
+                .bind(self.route_id)
                 .execute(pool)
                 .await?;
             // Delete blocked_by relationships (both as blocker and as blocked)
-            sqlx::query("DELETE FROM draft_node_blocked_by WHERE node_id = ? AND project_id = ?")
+            sqlx::query("DELETE FROM draft_node_blocked_by WHERE node_id = ? AND project_id = ? AND route_id = ?")
                 .bind(node_id)
                 .bind(self.project_id)
+                .bind(self.route_id)
                 .execute(pool)
                 .await?;
             sqlx::query(
-                "DELETE FROM draft_node_blocked_by WHERE blocker_id = ? AND project_id = ?",
+                "DELETE FROM draft_node_blocked_by WHERE blocker_id = ? AND project_id = ? AND route_id = ?",
             )
             .bind(node_id)
             .bind(self.project_id)
+            .bind(self.route_id)
             .execute(pool)
             .await?;
             // Delete the node itself
-            sqlx::query("DELETE FROM draft_nodes WHERE id = ? AND project_id = ?")
+            sqlx::query("DELETE FROM draft_nodes WHERE id = ? AND project_id = ? AND route_id = ?")
                 .bind(node_id)
                 .bind(self.project_id)
+                .bind(self.route_id)
                 .execute(pool)
                 .await?;
         }
@@ -772,18 +854,21 @@ impl DeltaState {
         let pool = self.pool().await?;
 
         // Delete all relationships (root node doesn't have validates/blocked_by)
-        sqlx::query("DELETE FROM draft_node_validates WHERE project_id = ?")
+        sqlx::query("DELETE FROM draft_node_validates WHERE project_id = ? AND route_id = ?")
             .bind(self.project_id)
+            .bind(self.route_id)
             .execute(pool)
             .await?;
-        sqlx::query("DELETE FROM draft_node_blocked_by WHERE project_id = ?")
+        sqlx::query("DELETE FROM draft_node_blocked_by WHERE project_id = ? AND route_id = ?")
             .bind(self.project_id)
+            .bind(self.route_id)
             .execute(pool)
             .await?;
 
         // Delete all draft nodes except the root (where parent_id IS NOT NULL)
-        sqlx::query("DELETE FROM draft_nodes WHERE project_id = ? AND parent_id IS NOT NULL")
+        sqlx::query("DELETE FROM draft_nodes WHERE project_id = ? AND route_id = ? AND parent_id IS NOT NULL")
             .bind(self.project_id)
+            .bind(self.route_id)
             .execute(pool)
             .await?;
 
@@ -809,10 +894,11 @@ impl DeltaState {
         // Validate parent exists if specified
         if let Some(ref pid) = new_parent_id {
             let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM draft_nodes WHERE id = ? AND project_id = ?)",
+                "SELECT EXISTS(SELECT 1 FROM draft_nodes WHERE id = ? AND project_id = ? AND route_id = ?)",
             )
             .bind(pid)
             .bind(self.project_id)
+            .bind(self.route_id)
             .fetch_one(pool)
             .await?;
             if !exists {
@@ -823,13 +909,14 @@ impl DeltaState {
 
         let now = utc_now();
         sqlx::query(
-            "UPDATE draft_nodes SET parent_id = ?, position = ?, updated_at = ? WHERE id = ? AND project_id = ?",
+            "UPDATE draft_nodes SET parent_id = ?, position = ?, updated_at = ? WHERE id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(new_parent_id)
         .bind(new_position)
         .bind(&now)
         .bind(id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .execute(pool)
         .await?;
 
@@ -863,10 +950,11 @@ impl DeltaState {
         // Validate parent exists if specified
         if let Some(pid) = parent_id {
             let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM draft_nodes WHERE id = ? AND project_id = ?)",
+                "SELECT EXISTS(SELECT 1 FROM draft_nodes WHERE id = ? AND project_id = ? AND route_id = ?)",
             )
             .bind(pid)
             .bind(self.project_id)
+            .bind(self.route_id)
             .fetch_one(pool)
             .await?;
             if !exists {
@@ -877,21 +965,23 @@ impl DeltaState {
         // Get position (append to end of siblings)
         let position: i32 = {
             let max: Option<i32> = sqlx::query_scalar(
-                "SELECT MAX(position) FROM draft_nodes WHERE parent_id IS ? AND project_id = ?",
+                "SELECT MAX(position) FROM draft_nodes WHERE parent_id IS ? AND project_id = ? AND route_id = ?",
             )
             .bind(parent_id)
             .bind(self.project_id)
+            .bind(self.route_id)
             .fetch_one(pool)
             .await?;
             max.unwrap_or(-1) + 1
         };
 
         sqlx::query(
-            "INSERT INTO draft_nodes (id, project_id, parent_id, position, name, node_type, content, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO draft_nodes (id, project_id, route_id, parent_id, position, name, node_type, content, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .bind(parent_id)
         .bind(position)
         .bind(name)
@@ -905,11 +995,12 @@ impl DeltaState {
         // Insert validates relationships
         for task_id in validates {
             sqlx::query(
-                "INSERT INTO draft_node_validates (eval_id, task_id, project_id) VALUES (?, ?, ?)",
+                "INSERT INTO draft_node_validates (eval_id, task_id, project_id, route_id) VALUES (?, ?, ?, ?)",
             )
             .bind(id)
             .bind(task_id)
             .bind(self.project_id)
+            .bind(self.route_id)
             .execute(pool)
             .await?;
         }
@@ -917,11 +1008,12 @@ impl DeltaState {
         // Insert blocked_by relationships
         for blocker_id in blocked_by {
             sqlx::query(
-                "INSERT INTO draft_node_blocked_by (node_id, blocker_id, project_id) VALUES (?, ?, ?)",
+                "INSERT INTO draft_node_blocked_by (node_id, blocker_id, project_id, route_id) VALUES (?, ?, ?, ?)",
             )
             .bind(id)
             .bind(blocker_id)
             .bind(self.project_id)
+            .bind(self.route_id)
             .execute(pool)
             .await?;
         }
@@ -933,9 +1025,10 @@ impl DeltaState {
     pub async fn get_root_node_id(&self) -> DeltaStateResult<Option<String>> {
         let pool = self.pool().await?;
         let id: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM draft_nodes WHERE parent_id IS NULL AND project_id = ? ORDER BY position LIMIT 1",
+            "SELECT id FROM draft_nodes WHERE parent_id IS NULL AND project_id = ? AND route_id = ? ORDER BY position LIMIT 1",
         )
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_optional(pool)
         .await?;
         Ok(id)
@@ -952,11 +1045,12 @@ impl DeltaState {
         let rows = sqlx::query(
             "SELECT id, project_id, parent_id, position, name, node_type, content, x, y, created_at, updated_at
              FROM draft_nodes
-             WHERE parent_id = ? AND project_id = ?
+             WHERE parent_id = ? AND project_id = ? AND route_id = ?
              ORDER BY position",
         )
         .bind(parent_id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_all(pool)
         .await?;
 
@@ -1064,10 +1158,11 @@ impl DeltaState {
         let rows = sqlx::query(
             "SELECT id, project_id, draft_node_id, parent_id, position, name, node_type, content, status, source, x, y, created_at, updated_at, completed_at, last_commit_sha, claimed_by, claimed_at, completed_by, eval_result, eval_feedback, tokens_used
              FROM live_nodes
-             WHERE project_id = ?
+             WHERE project_id = ? AND route_id = ?
              ORDER BY parent_id NULLS FIRST, position",
         )
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_all(pool)
         .await?;
 
@@ -1119,10 +1214,11 @@ impl DeltaState {
         let row = sqlx::query(
             "SELECT id, project_id, draft_node_id, parent_id, position, name, node_type, content, status, source, x, y, created_at, updated_at, completed_at, last_commit_sha, claimed_by, claimed_at, completed_by, eval_result, eval_feedback, tokens_used
              FROM live_nodes
-             WHERE id = ? AND project_id = ?",
+             WHERE id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_optional(pool)
         .await?
         .ok_or_else(|| DeltaStateError::LiveNodeNotFound(id.to_string()))?;
@@ -1166,11 +1262,12 @@ impl DeltaState {
         let now = utc_now();
 
         sqlx::query(
-            "INSERT INTO live_nodes (id, project_id, draft_node_id, parent_id, position, name, node_type, content, status, source, x, y, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'spec', ?, ?, ?, ?)",
+            "INSERT INTO live_nodes (id, project_id, route_id, draft_node_id, parent_id, position, name, node_type, content, status, source, x, y, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'spec', ?, ?, ?, ?)",
         )
         .bind(&draft.id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .bind(&draft.id) // draft_node_id = draft.id initially
         .bind(&draft.parent_id)
         .bind(draft.position)
@@ -1187,11 +1284,12 @@ impl DeltaState {
         // Insert validates relationships (OR IGNORE handles duplicates)
         for task_id in &draft.validates {
             sqlx::query(
-                "INSERT OR IGNORE INTO live_node_validates (eval_id, task_id, project_id) VALUES (?, ?, ?)",
+                "INSERT OR IGNORE INTO live_node_validates (eval_id, task_id, project_id, route_id) VALUES (?, ?, ?, ?)",
             )
             .bind(&draft.id)
             .bind(task_id)
             .bind(self.project_id)
+            .bind(self.route_id)
             .execute(pool)
             .await?;
         }
@@ -1199,11 +1297,12 @@ impl DeltaState {
         // Insert blocked_by relationships (OR IGNORE handles duplicates)
         for blocker_id in &draft.blocked_by {
             sqlx::query(
-                "INSERT OR IGNORE INTO live_node_blocked_by (node_id, blocker_id, project_id) VALUES (?, ?, ?)",
+                "INSERT OR IGNORE INTO live_node_blocked_by (node_id, blocker_id, project_id, route_id) VALUES (?, ?, ?, ?)",
             )
             .bind(&draft.id)
             .bind(blocker_id)
             .bind(self.project_id)
+            .bind(self.route_id)
             .execute(pool)
             .await?;
         }
@@ -1231,19 +1330,21 @@ impl DeltaState {
         let position: i32 = match parent_id {
             Some(pid) => {
                 let max: Option<i32> = sqlx::query_scalar(
-                    "SELECT MAX(position) FROM live_nodes WHERE parent_id = ? AND project_id = ?",
+                    "SELECT MAX(position) FROM live_nodes WHERE parent_id = ? AND project_id = ? AND route_id = ? AND route_id = ?",
                 )
                 .bind(pid)
                 .bind(self.project_id)
+                .bind(self.route_id)
                 .fetch_one(pool)
                 .await?;
                 max.unwrap_or(-1) + 1
             }
             None => {
                 let max: Option<i32> = sqlx::query_scalar(
-                    "SELECT MAX(position) FROM live_nodes WHERE parent_id IS NULL AND project_id = ?",
+                    "SELECT MAX(position) FROM live_nodes WHERE parent_id IS NULL AND project_id = ? AND route_id = ?",
                 )
                 .bind(self.project_id)
+                .bind(self.route_id)
                 .fetch_one(pool)
                 .await?;
                 max.unwrap_or(-1) + 1
@@ -1251,11 +1352,12 @@ impl DeltaState {
         };
 
         sqlx::query(
-            "INSERT INTO live_nodes (id, project_id, draft_node_id, parent_id, position, name, node_type, content, status, source, created_at, updated_at)
-             VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 'pending', 'worker', ?, ?)",
+            "INSERT INTO live_nodes (id, project_id, route_id, draft_node_id, parent_id, position, name, node_type, content, status, source, created_at, updated_at)
+             VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, 'pending', 'worker', ?, ?)",
         )
         .bind(id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .bind(parent_id)
         .bind(position)
         .bind(name)
@@ -1270,11 +1372,12 @@ impl DeltaState {
         if let Some(blockers) = blocked_by {
             for blocker_id in blockers {
                 sqlx::query(
-                    "INSERT OR IGNORE INTO live_node_blocked_by (node_id, blocker_id, project_id) VALUES (?, ?, ?)",
+                    "INSERT OR IGNORE INTO live_node_blocked_by (node_id, blocker_id, project_id, route_id) VALUES (?, ?, ?, ?)",
                 )
                 .bind(id)
                 .bind(blocker_id)
                 .bind(self.project_id)
+                .bind(self.route_id)
                 .execute(pool)
                 .await?;
             }
@@ -1303,6 +1406,7 @@ impl DeltaState {
                 )
                 .bind(&node.id)
                 .bind(self.project_id)
+                .bind(self.route_id)
                 .execute(pool)
                 .await?;
             }
@@ -1332,7 +1436,7 @@ impl DeltaState {
         };
 
         sqlx::query(
-            "UPDATE live_nodes SET status = ?, completed_at = ?, last_commit_sha = ?, updated_at = ? WHERE id = ? AND project_id = ?",
+            "UPDATE live_nodes SET status = ?, completed_at = ?, last_commit_sha = ?, updated_at = ? WHERE id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(status.as_str())
         .bind(completed_at)
@@ -1340,6 +1444,7 @@ impl DeltaState {
         .bind(&now)
         .bind(id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .execute(pool)
         .await?;
 
@@ -1355,7 +1460,7 @@ impl DeltaState {
         let now = utc_now();
 
         sqlx::query(
-            "UPDATE live_nodes SET name = ?, content = ?, x = ?, y = ?, updated_at = ? WHERE id = ? AND project_id = ?",
+            "UPDATE live_nodes SET name = ?, content = ?, x = ?, y = ?, updated_at = ? WHERE id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(&draft.name)
         .bind(&draft.content)
@@ -1364,39 +1469,46 @@ impl DeltaState {
         .bind(&now)
         .bind(&draft.id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .execute(pool)
         .await?;
 
         // Replace validates relationships (OR IGNORE handles duplicates in list)
-        sqlx::query("DELETE FROM live_node_validates WHERE eval_id = ? AND project_id = ?")
-            .bind(&draft.id)
-            .bind(self.project_id)
-            .execute(pool)
-            .await?;
+        sqlx::query(
+            "DELETE FROM live_node_validates WHERE eval_id = ? AND project_id = ? AND route_id = ?",
+        )
+        .bind(&draft.id)
+        .bind(self.project_id)
+        .bind(self.route_id)
+        .execute(pool)
+        .await?;
         for task_id in &draft.validates {
             sqlx::query(
-                "INSERT OR IGNORE INTO live_node_validates (eval_id, task_id, project_id) VALUES (?, ?, ?)",
+                "INSERT OR IGNORE INTO live_node_validates (eval_id, task_id, project_id, route_id) VALUES (?, ?, ?, ?)",
             )
             .bind(&draft.id)
             .bind(task_id)
             .bind(self.project_id)
+            .bind(self.route_id)
             .execute(pool)
             .await?;
         }
 
         // Replace blocked_by relationships (OR IGNORE handles duplicates in list)
-        sqlx::query("DELETE FROM live_node_blocked_by WHERE node_id = ? AND project_id = ?")
+        sqlx::query("DELETE FROM live_node_blocked_by WHERE node_id = ? AND project_id = ? AND route_id = ?")
             .bind(&draft.id)
             .bind(self.project_id)
+            .bind(self.route_id)
             .execute(pool)
             .await?;
         for blocker_id in &draft.blocked_by {
             sqlx::query(
-                "INSERT OR IGNORE INTO live_node_blocked_by (node_id, blocker_id, project_id) VALUES (?, ?, ?)",
+                "INSERT OR IGNORE INTO live_node_blocked_by (node_id, blocker_id, project_id, route_id) VALUES (?, ?, ?, ?)",
             )
             .bind(&draft.id)
             .bind(blocker_id)
             .bind(self.project_id)
+            .bind(self.route_id)
             .execute(pool)
             .await?;
         }
@@ -1409,42 +1521,53 @@ impl DeltaState {
         let pool = self.pool().await?;
 
         // Delete associated delta_submissions first (cascade)
-        sqlx::query("DELETE FROM delta_submissions WHERE live_node_id = ? AND project_id = ?")
+        sqlx::query("DELETE FROM delta_submissions WHERE live_node_id = ? AND project_id = ? AND route_id = ?")
             .bind(id)
             .bind(self.project_id)
+            .bind(self.route_id)
             .execute(pool)
             .await?;
 
         // Delete validates relationships (both as eval and as referenced task)
-        sqlx::query("DELETE FROM live_node_validates WHERE eval_id = ? AND project_id = ?")
-            .bind(id)
-            .bind(self.project_id)
-            .execute(pool)
-            .await?;
-        sqlx::query("DELETE FROM live_node_validates WHERE task_id = ? AND project_id = ?")
-            .bind(id)
-            .bind(self.project_id)
-            .execute(pool)
-            .await?;
+        sqlx::query(
+            "DELETE FROM live_node_validates WHERE eval_id = ? AND project_id = ? AND route_id = ?",
+        )
+        .bind(id)
+        .bind(self.project_id)
+        .bind(self.route_id)
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "DELETE FROM live_node_validates WHERE task_id = ? AND project_id = ? AND route_id = ?",
+        )
+        .bind(id)
+        .bind(self.project_id)
+        .bind(self.route_id)
+        .execute(pool)
+        .await?;
 
         // Delete blocked_by relationships (both as blocker and as blocked)
-        sqlx::query("DELETE FROM live_node_blocked_by WHERE node_id = ? AND project_id = ?")
+        sqlx::query("DELETE FROM live_node_blocked_by WHERE node_id = ? AND project_id = ? AND route_id = ?")
             .bind(id)
             .bind(self.project_id)
+            .bind(self.route_id)
             .execute(pool)
             .await?;
-        sqlx::query("DELETE FROM live_node_blocked_by WHERE blocker_id = ? AND project_id = ?")
+        sqlx::query("DELETE FROM live_node_blocked_by WHERE blocker_id = ? AND project_id = ? AND route_id = ?")
             .bind(id)
             .bind(self.project_id)
+            .bind(self.route_id)
             .execute(pool)
             .await?;
 
         // Delete the live node
-        let result = sqlx::query("DELETE FROM live_nodes WHERE id = ? AND project_id = ?")
-            .bind(id)
-            .bind(self.project_id)
-            .execute(pool)
-            .await?;
+        let result =
+            sqlx::query("DELETE FROM live_nodes WHERE id = ? AND project_id = ? AND route_id = ?")
+                .bind(id)
+                .bind(self.project_id)
+                .bind(self.route_id)
+                .execute(pool)
+                .await?;
         if result.rows_affected() == 0 {
             return Err(DeltaStateError::LiveNodeNotFound(id.to_string()));
         }
@@ -1545,10 +1668,11 @@ impl DeltaState {
             let refs_json = serde_json::to_string(&task.refs)?;
 
             let result = sqlx::query(
-                "INSERT INTO delta_submissions (project_id, batch_id, delta_type, draft_node_id, live_node_id, name, description, priority, status, refs, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+                "INSERT INTO delta_submissions (project_id, route_id, batch_id, delta_type, draft_node_id, live_node_id, name, description, priority, status, refs, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
             )
             .bind(self.project_id)
+            .bind(self.route_id)
             .bind(batch_id)
             .bind(task.delta_type.as_str())
             .bind(&task.draft_node_id)
@@ -1591,10 +1715,11 @@ impl DeltaState {
         let rows = sqlx::query(
             "SELECT id, project_id, batch_id, delta_type, draft_node_id, live_node_id, name, description, priority, status, refs, created_at, processed_at
              FROM delta_submissions
-             WHERE project_id = ? AND batch_id = ? AND status = 'pending'
+             WHERE project_id = ? AND route_id = ? AND batch_id = ? AND status = 'pending'
              ORDER BY priority DESC, id",
         )
         .bind(self.project_id)
+        .bind(self.route_id)
         .bind(batch_id)
         .fetch_all(pool)
         .await?;
@@ -1635,12 +1760,14 @@ impl DeltaState {
     /// Get next batch ID
     pub async fn next_batch_id(&self) -> DeltaStateResult<i64> {
         let pool = self.pool().await?;
-        let max: Option<i64> =
-            sqlx::query_scalar("SELECT MAX(batch_id) FROM delta_submissions WHERE project_id = ?")
-                .bind(self.project_id)
-                .fetch_optional(pool)
-                .await?
-                .flatten();
+        let max: Option<i64> = sqlx::query_scalar(
+            "SELECT MAX(batch_id) FROM delta_submissions WHERE project_id = ? AND route_id = ?",
+        )
+        .bind(self.project_id)
+        .bind(self.route_id)
+        .fetch_optional(pool)
+        .await?
+        .flatten();
 
         Ok(max.unwrap_or(0) + 1)
     }
@@ -1702,11 +1829,12 @@ impl DeltaState {
     pub async fn get_project_run(&self) -> DeltaStateResult<Option<ProjectRun>> {
         let pool = self.pool().await?;
         let row = sqlx::query(
-            "SELECT id, project_id, run_name, status, created_at, last_dispatch_at
+            "SELECT id, project_id, route_id, run_name, status, created_at, last_dispatch_at
              FROM project_runs
-             WHERE project_id = ?",
+             WHERE project_id = ? AND route_id = ?",
         )
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_optional(pool)
         .await?;
 
@@ -1719,10 +1847,11 @@ impl DeltaState {
         let now = utc_now();
 
         let result = sqlx::query(
-            "INSERT INTO project_runs (project_id, run_name, status, created_at)
-             VALUES (?, ?, 'paused', ?)",
+            "INSERT INTO project_runs (project_id, route_id, run_name, status, created_at)
+             VALUES (?, ?, ?, 'paused', ?)",
         )
         .bind(self.project_id)
+        .bind(self.route_id)
         .bind(run_name)
         .bind(&now)
         .execute(pool)
@@ -1732,6 +1861,7 @@ impl DeltaState {
         Ok(ProjectRun {
             id,
             project_id: self.project_id,
+            route_id: self.route_id,
             run_name: run_name.to_string(),
             status: ProjectRunStatus::Paused,
             created_at: now,
@@ -1746,9 +1876,10 @@ impl DeltaState {
     ) -> DeltaStateResult<()> {
         let pool = self.pool().await?;
 
-        sqlx::query("UPDATE project_runs SET status = ? WHERE project_id = ?")
+        sqlx::query("UPDATE project_runs SET status = ? WHERE project_id = ? AND route_id = ?")
             .bind(status.as_str())
             .bind(self.project_id)
+            .bind(self.route_id)
             .execute(pool)
             .await?;
 
@@ -1760,11 +1891,14 @@ impl DeltaState {
         let pool = self.pool().await?;
         let now = utc_now();
 
-        sqlx::query("UPDATE project_runs SET last_dispatch_at = ? WHERE project_id = ?")
-            .bind(&now)
-            .bind(self.project_id)
-            .execute(pool)
-            .await?;
+        sqlx::query(
+            "UPDATE project_runs SET last_dispatch_at = ? WHERE project_id = ? AND route_id = ?",
+        )
+        .bind(&now)
+        .bind(self.project_id)
+        .bind(self.route_id)
+        .execute(pool)
+        .await?;
 
         Ok(())
     }
@@ -1777,16 +1911,12 @@ impl DeltaState {
         ProjectRun {
             id: row.get("id"),
             project_id: row.get("project_id"),
+            route_id: row.get("route_id"),
             run_name,
             status,
             created_at: row.get("created_at"),
             last_dispatch_at: row.get("last_dispatch_at"),
         }
-    }
-
-    /// Get project ID
-    pub fn project_id(&self) -> i64 {
-        self.project_id
     }
 
     // =========================================================================
@@ -1805,19 +1935,21 @@ impl DeltaState {
         // Get next version number for this project
         let version_number: i32 = {
             let max: Option<i32> = sqlx::query_scalar(
-                "SELECT MAX(version_number) FROM board_versions WHERE project_id = ?",
+                "SELECT MAX(version_number) FROM board_versions WHERE project_id = ? AND route_id = ?",
             )
             .bind(self.project_id)
+            .bind(self.route_id)
             .fetch_one(pool)
             .await?;
             max.unwrap_or(0) + 1
         };
 
         let result = sqlx::query(
-            "INSERT INTO board_versions (project_id, batch_id, version_number, created_at, description)
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO board_versions (project_id, route_id, batch_id, version_number, created_at, description)
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(self.project_id)
+        .bind(self.route_id)
         .bind(batch_id)
         .bind(version_number)
         .bind(&now)
@@ -1842,10 +1974,11 @@ impl DeltaState {
         let rows = sqlx::query(
             "SELECT id, project_id, batch_id, version_number, created_at, description
              FROM board_versions
-             WHERE project_id = ?
+             WHERE project_id = ? AND route_id = ?
              ORDER BY version_number DESC",
         )
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_all(pool)
         .await?;
 
@@ -1863,11 +1996,12 @@ impl DeltaState {
         let row = sqlx::query(
             "SELECT id, project_id, batch_id, version_number, created_at, description
              FROM board_versions
-             WHERE project_id = ?
+             WHERE project_id = ? AND route_id = ?
              ORDER BY version_number DESC
              LIMIT 1",
         )
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_optional(pool)
         .await?;
 
@@ -1880,10 +2014,11 @@ impl DeltaState {
         let row = sqlx::query(
             "SELECT id, project_id, batch_id, version_number, created_at, description
              FROM board_versions
-             WHERE id = ? AND project_id = ?",
+             WHERE id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_optional(pool)
         .await?
         .ok_or_else(|| DeltaStateError::DraftNodeNotFound(format!("Board version {}", id)))?;
@@ -1915,10 +2050,11 @@ impl DeltaState {
         let pool = self.pool().await?;
 
         let result = sqlx::query(
-            "INSERT INTO deliveries (project_id, version_id, status, target_branch)
-             VALUES (?, ?, 'pending', ?)",
+            "INSERT INTO deliveries (project_id, route_id, version_id, status, target_branch)
+             VALUES (?, ?, ?, 'pending', ?)",
         )
         .bind(self.project_id)
+        .bind(self.route_id)
         .bind(version_id)
         .bind(target_branch)
         .execute(pool)
@@ -1947,11 +2083,12 @@ impl DeltaState {
             "SELECT id, project_id, version_id, status, target_branch, delivery_branch,
                     pr_url, pr_number, started_at, completed_at, failure_reason
              FROM deliveries
-             WHERE project_id = ? AND status NOT IN ('merged', 'abandoned', 'failed')
+             WHERE project_id = ? AND route_id = ? AND status NOT IN ('merged', 'abandoned', 'failed')
              ORDER BY id DESC
              LIMIT 1",
         )
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_optional(pool)
         .await?;
 
@@ -2240,7 +2377,7 @@ impl DeltaState {
         ensure_schema(pool).await?;
 
         let rows = sqlx::query(
-            "SELECT pr.id, pr.project_id, pr.run_name, pr.status, pr.created_at, pr.last_dispatch_at,
+            "SELECT pr.id, pr.project_id, pr.route_id, pr.run_name, pr.status, pr.created_at, pr.last_dispatch_at,
                     p.name as project_name
              FROM project_runs pr
              JOIN projects p ON pr.project_id = p.id
@@ -2257,6 +2394,7 @@ impl DeltaState {
                     ProjectRun {
                         id: row.get("id"),
                         project_id: row.get("project_id"),
+                        route_id: row.get("route_id"),
                         run_name: row.get("run_name"),
                         status: ProjectRunStatus::from_str(&status_str),
                         created_at: row.get("created_at"),
@@ -2295,7 +2433,7 @@ impl DeltaState {
         }
 
         sqlx::query(
-            "UPDATE live_nodes SET status = ?, claimed_by = ?, claimed_at = ?, updated_at = ? WHERE id = ? AND project_id = ?",
+            "UPDATE live_nodes SET status = ?, claimed_by = ?, claimed_at = ?, updated_at = ? WHERE id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(LiveNodeStatus::Working.as_str())
         .bind(worker_name)
@@ -2303,6 +2441,7 @@ impl DeltaState {
         .bind(&now)
         .bind(id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .execute(pool)
         .await?;
 
@@ -2315,12 +2454,13 @@ impl DeltaState {
         let now = utc_now();
 
         sqlx::query(
-            "UPDATE live_nodes SET status = ?, claimed_by = NULL, claimed_at = NULL, updated_at = ? WHERE id = ? AND project_id = ?",
+            "UPDATE live_nodes SET status = ?, claimed_by = NULL, claimed_at = NULL, updated_at = ? WHERE id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(LiveNodeStatus::Pending.as_str())
         .bind(&now)
         .bind(id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .execute(pool)
         .await?;
 
@@ -2358,7 +2498,7 @@ impl DeltaState {
         };
 
         sqlx::query(
-            "UPDATE live_nodes SET status = ?, completed_at = ?, completed_by = ?, updated_at = ? WHERE id = ? AND project_id = ?",
+            "UPDATE live_nodes SET status = ?, completed_at = ?, completed_by = ?, updated_at = ? WHERE id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(new_status.as_str())
         .bind(&now)
@@ -2366,6 +2506,7 @@ impl DeltaState {
         .bind(&now)
         .bind(id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .execute(pool)
         .await?;
 
@@ -2407,10 +2548,11 @@ impl DeltaState {
     pub async fn has_validating_eval(&self, node_id: &str) -> DeltaStateResult<bool> {
         let pool = self.pool().await?;
         let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM live_node_validates WHERE task_id = ? AND project_id = ?",
+            "SELECT COUNT(*) FROM live_node_validates WHERE task_id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(node_id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_one(pool)
         .await?;
         Ok(count > 0)
@@ -2478,12 +2620,13 @@ impl DeltaState {
         let now = utc_now();
         sqlx::query(
             "UPDATE live_nodes SET status = ?, updated_at = ?
-             WHERE id = ? AND project_id = ? AND status NOT IN ('done', 'awaiting_eval', 'validated')",
+             WHERE id = ? AND project_id = ? AND route_id = ? AND status NOT IN ('done', 'awaiting_eval', 'validated')",
         )
         .bind(new_status.as_str())
         .bind(&now)
         .bind(&parent_id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .execute(pool)
         .await?;
 
@@ -2495,10 +2638,11 @@ impl DeltaState {
     pub async fn get_validated_nodes(&self, eval_id: &str) -> DeltaStateResult<Vec<String>> {
         let pool = self.pool().await?;
         let node_ids: Vec<String> = sqlx::query_scalar(
-            "SELECT task_id FROM live_node_validates WHERE eval_id = ? AND project_id = ?",
+            "SELECT task_id FROM live_node_validates WHERE eval_id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(eval_id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_all(pool)
         .await?;
         Ok(node_ids)
@@ -2532,7 +2676,7 @@ impl DeltaState {
 
         // Mark eval as done with pass result
         sqlx::query(
-            "UPDATE live_nodes SET status = ?, completed_at = ?, completed_by = ?, eval_result = ?, updated_at = ? WHERE id = ? AND project_id = ?",
+            "UPDATE live_nodes SET status = ?, completed_at = ?, completed_by = ?, eval_result = ?, updated_at = ? WHERE id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(LiveNodeStatus::Done.as_str())
         .bind(&now)
@@ -2541,18 +2685,20 @@ impl DeltaState {
         .bind(&now)
         .bind(eval_id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .execute(pool)
         .await?;
 
         // Validate all nodes in the validates list
         for node_id in &validated_node_ids {
             sqlx::query(
-                "UPDATE live_nodes SET status = ?, updated_at = ? WHERE id = ? AND project_id = ? AND status IN (?, ?)",
+                "UPDATE live_nodes SET status = ?, updated_at = ? WHERE id = ? AND project_id = ? AND route_id = ? AND status IN (?, ?)",
             )
             .bind(LiveNodeStatus::Validated.as_str())
             .bind(&now)
             .bind(node_id)
             .bind(self.project_id)
+            .bind(self.route_id)
             .bind(LiveNodeStatus::Done.as_str())
             .bind(LiveNodeStatus::AwaitingEval.as_str())
             .execute(pool)
@@ -2611,11 +2757,12 @@ impl DeltaState {
         let repair_name = format!("Repair: {}", feedback.chars().take(50).collect::<String>());
 
         sqlx::query(
-            "INSERT INTO live_nodes (id, project_id, parent_id, position, name, node_type, content, status, source, created_at, updated_at)
-             VALUES (?, ?, ?, 0, ?, 'task', ?, 'pending', 'system', ?, ?)",
+            "INSERT INTO live_nodes (id, project_id, route_id, parent_id, position, name, node_type, content, status, source, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 0, ?, 'task', ?, 'pending', 'system', ?, ?)",
         )
         .bind(&repair_id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .bind(eval_id)
         .bind(&repair_name)
         .bind(feedback)
@@ -2627,7 +2774,7 @@ impl DeltaState {
         // Mark eval as pending (blocked by repair), set feedback
         // Reset claimed_by so it can be reclaimed after repair
         sqlx::query(
-            "UPDATE live_nodes SET status = ?, eval_result = ?, eval_feedback = ?, claimed_by = NULL, claimed_at = NULL, updated_at = ? WHERE id = ? AND project_id = ?",
+            "UPDATE live_nodes SET status = ?, eval_result = ?, eval_feedback = ?, claimed_by = NULL, claimed_at = NULL, updated_at = ? WHERE id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(LiveNodeStatus::Pending.as_str())
         .bind(EvalResult::Fail.as_str())
@@ -2635,28 +2782,31 @@ impl DeltaState {
         .bind(&now)
         .bind(eval_id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .execute(pool)
         .await?;
 
         // Add blocking relationship (eval is now blocked by repair node)
         sqlx::query(
-            "INSERT OR IGNORE INTO live_node_blocked_by (node_id, blocker_id, project_id) VALUES (?, ?, ?)",
+            "INSERT OR IGNORE INTO live_node_blocked_by (node_id, blocker_id, project_id, route_id) VALUES (?, ?, ?, ?)",
         )
         .bind(eval_id)
         .bind(&repair_id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .execute(pool)
         .await?;
 
         // Mark validated nodes as needs_repair
         for node_id in &validated_node_ids {
             sqlx::query(
-                "UPDATE live_nodes SET status = ?, updated_at = ? WHERE id = ? AND project_id = ? AND status IN (?, ?)",
+                "UPDATE live_nodes SET status = ?, updated_at = ? WHERE id = ? AND project_id = ? AND route_id = ? AND status IN (?, ?)",
             )
             .bind(LiveNodeStatus::NeedsRepair.as_str())
             .bind(&now)
             .bind(node_id)
             .bind(self.project_id)
+            .bind(self.route_id)
             .bind(LiveNodeStatus::Done.as_str())
             .bind(LiveNodeStatus::AwaitingEval.as_str())
             .execute(pool)
@@ -2789,10 +2939,11 @@ impl DeltaState {
     pub async fn set_node_tokens(&self, id: &str, tokens: i64) -> DeltaStateResult<()> {
         let pool = self.pool().await?;
 
-        sqlx::query("UPDATE live_nodes SET tokens_used = ? WHERE id = ? AND project_id = ?")
+        sqlx::query("UPDATE live_nodes SET tokens_used = ? WHERE id = ? AND project_id = ? AND route_id = ?")
             .bind(tokens)
             .bind(id)
             .bind(self.project_id)
+            .bind(self.route_id)
             .execute(pool)
             .await?;
 
@@ -2807,10 +2958,11 @@ impl DeltaState {
         let pool = self.pool().await?;
 
         let id: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM live_nodes WHERE claimed_by = ? AND project_id = ? AND status = 'working'",
+            "SELECT id FROM live_nodes WHERE claimed_by = ? AND project_id = ? AND route_id = ? AND status = 'working'",
         )
         .bind(worker_name)
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_optional(pool)
         .await?;
 
@@ -2826,11 +2978,12 @@ impl DeltaState {
         let now = utc_now();
 
         sqlx::query(
-            "UPDATE live_nodes SET status = 'pending', claimed_by = NULL, claimed_at = NULL, completed_at = NULL, completed_by = NULL, eval_result = NULL, eval_feedback = NULL, updated_at = ? WHERE id = ? AND project_id = ?",
+            "UPDATE live_nodes SET status = 'pending', claimed_by = NULL, claimed_at = NULL, completed_at = NULL, completed_by = NULL, eval_result = NULL, eval_feedback = NULL, updated_at = ? WHERE id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(&now)
         .bind(id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .execute(pool)
         .await?;
 
@@ -2847,10 +3000,11 @@ impl DeltaState {
     pub async fn has_children(&self, id: &str) -> DeltaStateResult<bool> {
         let pool = self.pool().await?;
         let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM live_nodes WHERE parent_id = ? AND project_id = ?",
+            "SELECT COUNT(*) FROM live_nodes WHERE parent_id = ? AND project_id = ? AND route_id = ? AND route_id = ?",
         )
         .bind(id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_one(pool)
         .await?;
         Ok(count > 0)
@@ -2867,11 +3021,12 @@ impl DeltaState {
         let rows = sqlx::query(
             "SELECT id, project_id, draft_node_id, parent_id, position, name, node_type, content, status, source, x, y, created_at, updated_at, completed_at, last_commit_sha, claimed_by, claimed_at, completed_by, eval_result, eval_feedback, tokens_used
              FROM live_nodes
-             WHERE parent_id = ? AND project_id = ?
+             WHERE parent_id = ? AND project_id = ? AND route_id = ?
              ORDER BY position",
         )
         .bind(id)
         .bind(self.project_id)
+        .bind(self.route_id)
         .fetch_all(pool)
         .await?;
 

@@ -65,6 +65,12 @@ interface AppContextValue {
   setSidebarCollapsed: (collapsed: boolean) => void;
   toggleSidebar: () => void;
 
+  // Radial/Pie Menu
+  radialMenuOpen: () => boolean;
+  radialMenuPosition: () => { x: number; y: number };
+  openRadialMenu: (x: number, y: number) => void;
+  closeRadialMenu: () => void;
+
   // Actions
   executeAction: (action: ShortcutAction) => void;
 }
@@ -88,6 +94,25 @@ export const AppProvider: ParentComponent = (props) => {
   const [showSettings, setShowSettings] = createSignal(false);
   const [notificationsOpen, setNotificationsOpen] = createSignal(false);
   const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
+  const [radialMenuOpen, setRadialMenuOpen] = createSignal(false);
+  const [radialMenuPosition, setRadialMenuPosition] = createSignal({ x: 0, y: 0 });
+
+  // Track mouse position for pie menu
+  let lastMousePosition = { x: 0, y: 0 };
+  if (typeof window !== 'undefined') {
+    window.addEventListener('mousemove', (e) => {
+      lastMousePosition = { x: e.clientX, y: e.clientY };
+    });
+  }
+
+  const openRadialMenu = (x: number, y: number) => {
+    setRadialMenuPosition({ x, y });
+    setRadialMenuOpen(true);
+  };
+
+  const closeRadialMenu = () => {
+    setRadialMenuOpen(false);
+  };
 
   // Load version info
   createEffect(() => {
@@ -168,6 +193,13 @@ export const AppProvider: ParentComponent = (props) => {
       case 'toggle-sidebar':
         setSidebarCollapsed((c) => !c);
         break;
+      case 'toggle-radial':
+        if (radialMenuOpen()) {
+          closeRadialMenu();
+        } else {
+          openRadialMenu(lastMousePosition.x, lastMousePosition.y);
+        }
+        break;
       case 'fullscreen':
         window.dispatchEvent(new CustomEvent('toggle-activity-fullscreen'));
         break;
@@ -223,6 +255,10 @@ export const AppProvider: ParentComponent = (props) => {
     sidebarCollapsed,
     setSidebarCollapsed,
     toggleSidebar: () => setSidebarCollapsed((c) => !c),
+    radialMenuOpen,
+    radialMenuPosition,
+    openRadialMenu,
+    closeRadialMenu,
     executeAction,
   };
 

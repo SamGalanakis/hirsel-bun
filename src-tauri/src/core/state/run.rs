@@ -258,6 +258,27 @@ impl SQLiteState {
         Ok(())
     }
 
+    /// Get route ID
+    pub async fn get_route_id(&self) -> StateResult<i64> {
+        let pool = self.pool().await;
+        let result: Option<Option<i64>> =
+            sqlx::query_scalar("SELECT route_id FROM state WHERE id = 1")
+                .fetch_optional(&pool)
+                .await?;
+        Ok(result.flatten().unwrap_or(0))
+    }
+
+    /// Set route ID
+    pub async fn set_route_id(&self, route_id: i64) -> StateResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE state SET route_id = ?, updated_at = ? WHERE id = 1")
+            .bind(route_id)
+            .bind(utc_now())
+            .execute(&pool)
+            .await?;
+        Ok(())
+    }
+
     /// Get project name
     pub async fn get_project_name(&self) -> StateResult<Option<String>> {
         let pool = self.pool().await;
@@ -372,13 +393,20 @@ impl SQLiteState {
         self.log_history("mode_change", Some(if enabled { "hitl" } else { "yolo" }))
             .await?;
 
-        // Notify workers via group chat
-        let msg = if enabled {
-            "The user is now available. Feel free to message them if needed."
-        } else {
-            "The user is currently unavailable for messages. Do not attempt to contact them - do the work to the best of your abilities."
-        };
-        self.add_message("group", "System", msg, false).await?;
+        // Notify workers via group chat (project messages)
+        if let Some(project_id) = self.get_project_id().await? {
+            let route_id = self.get_route_id().await.unwrap_or(0);
+            let msg = if enabled {
+                "The user is now available. Feel free to message them if needed."
+            } else {
+                "The user is currently unavailable for messages. Do not attempt to contact them - do the work to the best of your abilities."
+            };
+            if let Ok(store) = crate::core::ProjectMessagesStore::open().await {
+                let _ = store
+                    .add_message(project_id, route_id, "meadow", "system", msg, false)
+                    .await;
+            }
+        }
         Ok(())
     }
 
@@ -1125,5 +1153,89 @@ impl SQLiteState {
                 .await?;
         }
         Ok(count > 0)
+    }
+
+    // =========================================================================
+    // Run Summary (for efficient status queries)
+    // =========================================================================
+
+    /// Get all run summary data in an optimized single fetch.
+    /// Note: unread_count is always 0 as messaging uses project-level storage.
+    pub async fn get_run_summary(&self) -> StateResult<super::types::RunStateSummary> {
+        use chrono::{DateTime, Utc};
+        use sqlx::Row;
+
+        let pool = self.pool().await;
+
+        // Query 1: Get all needed state columns in one query
+        let state_row = sqlx::query(
+            "SELECT status, created_at, updated_at, started_at, time_limit_minutes, worker_scale FROM state WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await?;
+
+        let status: String = state_row.get("status");
+        let created_at: Option<String> = state_row.get("created_at");
+        let updated_at: Option<String> = state_row.get("updated_at");
+        let started_at: Option<String> = state_row.get("started_at");
+        let time_limit_minutes: Option<i64> = state_row.get("time_limit_minutes");
+        let worker_scale: Option<String> = state_row.get("worker_scale");
+
+        // Query 2: Get worker counts
+        let worker_row = sqlx::query(
+            "SELECT COUNT(*) as total, SUM(CASE WHEN status = 'working' THEN 1 ELSE 0 END) as active FROM workers",
+        )
+        .fetch_one(&pool)
+        .await?;
+
+        let workers_registered: i64 = worker_row.get("total");
+        let workers_active: Option<i64> = worker_row.get("active");
+
+        // workers_total is the max scale (from worker_scale), falling back to registered count
+        let workers_total = worker_scale
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(workers_registered as u32);
+
+        // Parse status
+        let status = super::types::Status::from_str(&status).unwrap_or(super::types::Status::Draft);
+
+        // Calculate elapsed minutes based on status
+        let elapsed_minutes = if status == super::types::Status::Draft {
+            0.0
+        } else if let Some(ref sa) = started_at {
+            if let Ok(start_time) = DateTime::parse_from_rfc3339(sa) {
+                let elapsed = Utc::now().signed_duration_since(start_time);
+                elapsed.num_seconds() as f64 / 60.0
+            } else {
+                0.0
+            }
+        } else if let Some(ref ca) = created_at {
+            if let Ok(start_time) = DateTime::parse_from_rfc3339(ca) {
+                let elapsed = Utc::now().signed_duration_since(start_time);
+                elapsed.num_seconds() as f64 / 60.0
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
+        Ok(super::types::RunStateSummary {
+            status,
+            created_at,
+            updated_at,
+            started_at,
+            time_limit_minutes,
+            unread_count: 0, // Always 0 - messaging uses project-level storage
+            workers_active: workers_active.unwrap_or(0) as u32,
+            workers_total,
+            elapsed_minutes,
+        })
+    }
+
+    /// Get unread count - always returns 0 as messaging uses project-level storage.
+    pub async fn get_unread_count(&self) -> StateResult<i64> {
+        // Run-level unread tracking is deprecated - messaging uses project-level storage
+        Ok(0)
     }
 }

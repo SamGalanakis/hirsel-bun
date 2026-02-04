@@ -22,7 +22,6 @@ pub mod eval_mcp;
 pub mod file_server;
 pub mod http_state;
 pub mod mcp;
-pub mod msg;
 pub mod remote_runner;
 pub mod runner;
 
@@ -33,7 +32,5 @@ pub use eval_mcp::{run_eval_mcp_server, EvalMcpServer};
 #[cfg(any(feature = "server", feature = "worker"))]
 pub use file_server::{start_file_server, FileServerHandle, FILE_RECEIVER_PORT};
 pub use mcp::{run_mcp_server_main as run_mcp_server, McpServer};
-pub use msg::{execute_inbox, execute_list, execute_read, execute_send};
-pub use msg::{inbox, list, read, send, MsgError, MsgResult};
 pub use remote_runner::{run_remote_worker, run_remote_worker_with_config, RemoteWorkerConfig};
 pub use runner::{WorkerConfig, WorkerError, WorkerRunner};

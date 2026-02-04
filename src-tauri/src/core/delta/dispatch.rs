@@ -84,17 +84,25 @@ pub type DeltaDispatchResult<T> = Result<T, DispatchError>;
 pub struct DeltaDispatchService {
     #[allow(dead_code)]
     project_id: i64,
+    #[allow(dead_code)]
+    route_id: i64,
     state: DeltaState,
     generator: DeltaGenerator,
 }
 
 impl DeltaDispatchService {
-    /// Create a new dispatch service for a project
+    /// Create a new dispatch service for a project (uses route_id = 0 for backwards compatibility)
     pub fn new(project_id: i64) -> Self {
+        Self::with_route(project_id, 0)
+    }
+
+    /// Create a new dispatch service for a project route
+    pub fn with_route(project_id: i64, route_id: i64) -> Self {
         Self {
             project_id,
-            state: DeltaState::new(project_id),
-            generator: DeltaGenerator::new(project_id),
+            route_id,
+            state: DeltaState::with_route(project_id, route_id),
+            generator: DeltaGenerator::with_route(project_id, route_id),
         }
     }
 
@@ -258,7 +266,14 @@ impl DeltaDispatchService {
                     // Send message to worker's DM thread
                     if let Ok(store) = crate::core::ProjectMessagesStore::open().await {
                         if let Err(e) = store
-                            .add_message(self.project_id, &worker_name, "system", &message, false)
+                            .add_message(
+                                self.project_id,
+                                self.route_id,
+                                &worker_name,
+                                "system",
+                                &message,
+                                false,
+                            )
                             .await
                         {
                             info!(

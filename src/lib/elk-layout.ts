@@ -43,7 +43,7 @@ export interface LayoutNodePosition {
 export interface LayoutEdgeRoute {
   fromId: string;
   toId: string;
-  edgeType: 'blockedBy' | 'validates';
+  edgeType: 'blockedBy' | 'validates' | 'hierarchy';
   waypoints: [number, number][];
 }
 
@@ -154,6 +154,7 @@ function buildElkGraph(nodes: LayoutInputNode[]): ElkNode {
           id: `e${edgeIndex++}`,
           sources: [parent.id],
           targets: [child.id],
+          labels: [{ text: 'hierarchy' }],
         });
       }
       addTreeEdges(child);
@@ -333,7 +334,13 @@ function transformResult(elkResult: ElkNode): ElkLayoutResult {
 
       if (waypoints.length >= 2) {
         // Determine edge type from label
-        const edgeType = edge.labels?.[0]?.text === 'validates' ? 'validates' : 'blockedBy';
+        const labelText = edge.labels?.[0]?.text;
+        const edgeType: 'blockedBy' | 'validates' | 'hierarchy' =
+          labelText === 'validates'
+            ? 'validates'
+            : labelText === 'hierarchy'
+              ? 'hierarchy'
+              : 'blockedBy';
         edges.push({
           fromId: edge.sources[0],
           toId: edge.targets[0],

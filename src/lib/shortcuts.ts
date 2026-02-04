@@ -26,6 +26,7 @@ export type ShortcutAction =
   | 'close-panel'
   | 'toggle-sidebar'
   | 'toggle-theme'
+  | 'toggle-radial'
   | 'show-help';
 
 export type ShortcutCategory = 'navigation' | 'run-controls' | 'communication' | 'other';
@@ -145,6 +146,13 @@ export const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
     category: 'other',
     binding: { key: 'Escape' },
     defaultBinding: { key: 'Escape' },
+  },
+  {
+    action: 'toggle-radial',
+    label: 'Pie menu',
+    category: 'other',
+    binding: { key: '`' },
+    defaultBinding: { key: '`' },
   },
 ];
 

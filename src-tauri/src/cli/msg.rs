@@ -4,13 +4,14 @@
 //! - View messages in a thread: `hirsel msg <run_name>`
 //! - Send message to thread: `hirsel msg <run_name> "message"`
 //! - List available threads: `hirsel msg <run_name> --list-threads`
+//!
+//! Messages are stored in project-level storage (Sheepfold) so workers can see them.
 
 use crate::cli::helpers::block_on;
 use crate::cli::MsgArgs;
-use crate::core::chats::{append_message_to_file, get_thread_names, ChatError, Message};
 use crate::core::names::slugify;
 use crate::core::state::{SQLiteState, StateError, WorkerUpdate};
-use crate::core::Files;
+use crate::core::ProjectMessagesStore;
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -20,20 +21,17 @@ pub enum MsgError {
     #[error("State error: {0}")]
     State(#[from] StateError),
 
-    #[error("Chat error: {0}")]
-    Chat(#[from] ChatError),
-
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
     #[error("Run not found: {0}")]
     RunNotFound(String),
 
-    #[error("Chats directory not found for run: {0}")]
-    ChatsNotFound(String),
+    #[error("Run not linked to project: {0}")]
+    NotLinkedToProject(String),
 
-    #[error("Thread not found: {0}")]
-    ThreadNotFound(String),
+    #[error("Project messages error: {0}")]
+    ProjectMessages(String),
 }
 
 pub type MsgResult<T> = Result<T, MsgError>;
@@ -94,47 +92,44 @@ pub fn run(args: &MsgArgs) -> MsgResult<MsgOutput> {
         return Err(MsgError::RunNotFound(run_name));
     }
 
-    let files = Files::new(&run_dir);
     let state = block_on(SQLiteState::new(&run_name))?;
 
-    // Check chats directory exists
-    let chats_dir = files.chats_dir();
-    if !chats_dir.exists() {
-        return Err(MsgError::ChatsNotFound(run_name));
-    }
+    // Get project_id - required for messaging
+    let project_id = block_on(state.get_project_id())?
+        .ok_or_else(|| MsgError::NotLinkedToProject(run_name.clone()))?;
+
+    // Get route_id (defaults to 0 for backwards compatibility)
+    let route_id = block_on(state.get_route_id()).unwrap_or(0);
+
+    let store = block_on(ProjectMessagesStore::open())
+        .map_err(|e| MsgError::ProjectMessages(e.to_string()))?;
 
     // Handle --list-threads
     if args.list_threads {
-        let thread_names = get_thread_names(&chats_dir)?;
-        let threads: Vec<ThreadInfo> = thread_names
+        let thread_summaries = block_on(store.get_threads(project_id, route_id, "user"))
+            .map_err(|e| MsgError::ProjectMessages(e.to_string()))?;
+
+        let threads = thread_summaries
             .into_iter()
-            .map(|name| {
-                let count = block_on(state.get_thread_message_count(&name)).unwrap_or(0);
-                ThreadInfo {
-                    name,
-                    message_count: count,
-                }
+            .map(|t| ThreadInfo {
+                name: t.thread,
+                message_count: t.message_count,
             })
             .collect();
 
         return Ok(MsgOutput::ThreadList { run_name, threads });
     }
 
-    // Check thread exists
-    let chat_path = files.chat_file(&args.thread);
-    if !chat_path.exists() {
-        return Err(MsgError::ThreadNotFound(args.thread.clone()));
-    }
-
     // View messages if no message provided
     if args.message.is_none() {
-        let messages = block_on(state.get_messages(&args.thread, 100))?;
-        let message_views: Vec<MessageView> = messages
+        let messages = block_on(store.get_messages(project_id, route_id, &args.thread, Some(100)))
+            .map_err(|e| MsgError::ProjectMessages(e.to_string()))?;
+
+        let message_views = messages
             .into_iter()
             .map(|m| MessageView {
                 sender: m.sender,
                 content: m.content,
-                // timestamp is already a String from state
                 timestamp: if m.timestamp.len() > 16 {
                     m.timestamp[..16].to_string()
                 } else {
@@ -154,11 +149,15 @@ pub fn run(args: &MsgArgs) -> MsgResult<MsgOutput> {
     // Send message
     let message_text = args.message.as_ref().unwrap();
 
-    // Write to both SQLite and file
-    block_on(state.add_message(&args.thread, "user", message_text, false))?;
-
-    let message = Message::new("user", message_text.as_str());
-    append_message_to_file(&chat_path, &message)?;
+    block_on(store.add_message(
+        project_id,
+        route_id,
+        &args.thread,
+        "user",
+        message_text,
+        false,
+    ))
+    .map_err(|e| MsgError::ProjectMessages(e.to_string()))?;
 
     // Check for waiting workers on this thread and resume them
     let resumed_workers = resume_waiting_workers(&state, &args.thread)?;
@@ -186,16 +185,13 @@ fn resume_waiting_workers(state: &SQLiteState, thread: &str) -> MsgResult<Vec<St
                 },
             ))?;
             resumed.push(worker.name.clone());
-
-            // Note: Actual worker resumption (spawning ACP client) would happen here
-            // in a full implementation. For now we just record which workers would be resumed.
         }
     }
 
     Ok(resumed)
 }
 
-/// Get available threads for error messages
+/// Get available threads for a run
 pub fn get_available_threads(run_name: &str) -> MsgResult<Vec<String>> {
     let run_name = slugify(run_name);
     let runs_dir = get_runs_dir();
@@ -205,14 +201,20 @@ pub fn get_available_threads(run_name: &str) -> MsgResult<Vec<String>> {
         return Err(MsgError::RunNotFound(run_name));
     }
 
-    let files = Files::new(&run_dir);
-    let chats_dir = files.chats_dir();
+    let state = block_on(SQLiteState::new(&run_name))?;
 
-    if !chats_dir.exists() {
-        return Ok(Vec::new());
-    }
+    let project_id = block_on(state.get_project_id())?
+        .ok_or_else(|| MsgError::NotLinkedToProject(run_name.clone()))?;
 
-    Ok(get_thread_names(&chats_dir)?)
+    let route_id = block_on(state.get_route_id()).unwrap_or(0);
+
+    let store = block_on(ProjectMessagesStore::open())
+        .map_err(|e| MsgError::ProjectMessages(e.to_string()))?;
+
+    let threads = block_on(store.get_threads(project_id, route_id, "user"))
+        .map_err(|e| MsgError::ProjectMessages(e.to_string()))?;
+
+    Ok(threads.into_iter().map(|t| t.thread).collect())
 }
 
 #[cfg(test)]

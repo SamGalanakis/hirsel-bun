@@ -42,7 +42,7 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
   const [blockedBy, setBlockedBy] = createSignal(props.node.blockedBy.join(', '));
 
   // UI state
-  const [activeTab, setActiveTab] = createSignal<'edit' | 'preview'>('edit');
+  const [activeTab, setActiveTab] = createSignal<'edit' | 'preview'>('preview');
   const [dragOver, setDragOver] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
 

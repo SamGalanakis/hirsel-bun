@@ -1,11 +1,11 @@
 //! Delta tree export/import for Gyp agent access
 //!
-//! Content files live at `tasks/{id}.md` for direct editing.
+//! Content files live at `routes/{route_name}/board/tasks/{id}.md` for direct editing.
 //! Structure is managed via MCP tools (board_view, board_task, etc.)
 //!
 //! File structure:
 //! ```
-//! ~/.hirsel/projects/{project_id}/board/
+//! ~/.hirsel/projects/{project_id}/routes/{route_name}/board/
 //! └── tasks/
 //!     ├── build-api.md     # Task content
 //!     ├── api-test.md      # Eval content
@@ -23,7 +23,7 @@ use tracing::{debug, info};
 
 use super::state::DeltaState;
 use super::types::UpdateDraftNodeRequest;
-use crate::core::config::hirsel_dir;
+use crate::core::route::{RouteFiles, RouteStore};
 
 /// Block on an async future in a sync context.
 /// If already running in an async context, uses the current runtime.
@@ -63,24 +63,43 @@ pub struct SyncResult {
 /// Exporter for content files
 pub struct DeltaExporter {
     project_id: i64,
+    #[allow(dead_code)]
+    route_id: i64,
+    route_name: String,
     state: DeltaState,
 }
 
 impl DeltaExporter {
-    /// Create a new exporter for a project
+    /// Create a new exporter for a project (uses route_id = 0 for backwards compatibility)
     pub fn new(project_id: i64) -> Self {
+        Self::with_route(project_id, 0)
+    }
+
+    /// Create a new exporter for a project route
+    pub fn with_route(project_id: i64, route_id: i64) -> Self {
+        // Look up route name
+        let route_name = if route_id == 0 {
+            "main".to_string()
+        } else {
+            block_on(async {
+                let store = RouteStore::new(project_id).await.ok()?;
+                let route = store.get_route(route_id).await.ok()?;
+                Some(route.name)
+            })
+            .unwrap_or_else(|| "main".to_string())
+        };
+
         Self {
             project_id,
-            state: DeltaState::new(project_id),
+            route_id,
+            route_name,
+            state: DeltaState::with_route(project_id, route_id),
         }
     }
 
-    /// Get the board directory path for this project
+    /// Get the board directory path for this route
     pub fn board_dir(&self) -> PathBuf {
-        hirsel_dir()
-            .join("projects")
-            .join(self.project_id.to_string())
-            .join("board")
+        RouteFiles::new(self.project_id, &self.route_name).board_dir()
     }
 
     /// Ensure the board directory exists

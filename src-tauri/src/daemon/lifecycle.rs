@@ -629,8 +629,8 @@ async fn process_single_delivery(
     );
 
     // Get the conflicting files from the working tree
-    let delivery_service = crate::core::delivery::DeliveryService::new(&work_dir);
-    let conflicts = delivery_service.get_working_tree_conflicts()?;
+    let git_ops = crate::core::delivery::GitOperations::new(&work_dir);
+    let conflicts = git_ops.get_working_tree_conflicts()?;
 
     if conflicts.is_empty() {
         // No conflicts - this shouldn't happen but handle gracefully
@@ -665,7 +665,7 @@ async fn process_single_delivery(
             );
 
             // Verify no conflict markers remain
-            if let Err(e) = delivery_service.verify_no_conflict_markers() {
+            if let Err(e) = git_ops.verify_no_conflict_markers() {
                 tracing::error!(
                     "[Daemon] Conflict markers still present after resolution: {}",
                     e
@@ -677,7 +677,7 @@ async fn process_single_delivery(
             }
 
             // Complete the merge
-            match delivery_service.complete_merge(&format!(
+            match git_ops.complete_merge(&format!(
                 "Merge {} (conflicts resolved by AI)",
                 delivery.target_branch
             )) {
@@ -714,7 +714,7 @@ async fn process_single_delivery(
                 .await?;
 
             // Abort the merge
-            let _ = delivery_service.abort_merge();
+            let _ = git_ops.abort_merge();
         }
         Err(e) => {
             tracing::error!(
@@ -727,7 +727,7 @@ async fn process_single_delivery(
                 .await?;
 
             // Abort the merge
-            let _ = delivery_service.abort_merge();
+            let _ = git_ops.abort_merge();
         }
     }
 

@@ -62,11 +62,36 @@ pub fn build_shared_routes() -> Router<Arc<AppState>> {
             "/api/runs/{name}/workers/{worker}/events",
             get(routes::get_worker_events),
         )
-        // Threads and messages
+        // Threads and messages (run-level - used by orchestrator/GUI)
         .route("/api/runs/{name}/threads", get(routes::list_threads))
         .route(
             "/api/runs/{name}/threads/{thread}/messages",
             get(routes::get_messages).post(routes::send_message),
+        )
+        // Project messages (Sheepfold - used by workers via StateAccess)
+        .route(
+            "/api/projects/{project_id}/messages",
+            post(routes::add_project_message),
+        )
+        .route(
+            "/api/projects/{project_id}/messages/{thread}",
+            get(routes::get_project_messages),
+        )
+        .route(
+            "/api/projects/{project_id}/messages/{thread}/unread/{reader}",
+            get(routes::get_unread_project_messages),
+        )
+        .route(
+            "/api/projects/{project_id}/messages/{thread}/mark-read",
+            post(routes::mark_project_messages_read),
+        )
+        .route(
+            "/api/projects/{project_id}/messages/unread/{reader}",
+            get(routes::get_all_unread_project_messages),
+        )
+        .route(
+            "/api/projects/{project_id}/threads",
+            get(routes::get_project_threads),
         )
         // Scribe - documentation
         .route("/api/runs/{name}/scribe", post(routes::add_scribe))

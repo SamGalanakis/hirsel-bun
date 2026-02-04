@@ -17,10 +17,12 @@ mod events;
 mod files;
 mod filesystem;
 mod gyp;
+mod ide;
 mod logs;
 mod messages;
 mod project_messages;
 mod projects;
+mod routes;
 mod runs;
 pub mod types;
 mod workers;
@@ -176,13 +178,12 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         delivery::auto_merge_run,
         delivery::generate_pr_title,
         delivery::generate_pr_body,
-        delivery::delivery_branch_name,
+        delivery::get_delivery_branch_name,
         // Board delivery commands (delta dispatch system)
         delivery::get_board_versions,
         delivery::get_latest_board_version,
         delivery::get_current_board_delivery,
         delivery::start_board_delivery,
-        delivery::get_board_delivery_status,
         delivery::retry_board_delivery,
         delivery::get_delivery_attempts,
         delivery::complete_board_delivery,
@@ -212,5 +213,16 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         project_messages::send_project_message,
         project_messages::mark_project_messages_read,
         project_messages::get_project_unread_count,
+        // IDE commands
+        ide::open_in_ide,
+        // Route commands
+        routes::list_routes,
+        routes::get_route,
+        routes::get_route_by_name,
+        routes::get_route_tree,
+        routes::create_route,
+        routes::delete_route,
+        routes::set_active_route,
+        routes::get_active_route,
     ]
 }

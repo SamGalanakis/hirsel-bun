@@ -26,7 +26,7 @@ use crate::core::ops::{
 use crate::core::project::ProjectStore;
 use crate::core::runner::{create_runner, Runner, WorkerSpawnConfig as RunnerSpawnConfig};
 use crate::core::state::{SQLiteState, Status, WorkerUpdate};
-use crate::core::Files;
+use crate::core::{Files, ProjectMessagesStore};
 
 /// Get the coordinator's Tailscale hostname if connected to a tailnet.
 ///
@@ -181,6 +181,7 @@ impl Orchestrator for LocalOrchestrator {
         for (project_run, project_name) in project_runs {
             let run_name = &project_run.run_name;
             let project_id = project_run.project_id;
+            let route_id = project_run.route_id;
 
             // Convert project run status to API status
             let status = match project_run.status {
@@ -190,7 +191,7 @@ impl Orchestrator for LocalOrchestrator {
             };
 
             // Get task counts from live_nodes
-            let delta_state = DeltaState::new(project_id);
+            let delta_state = DeltaState::with_route(project_id, route_id);
             let (tasks_done, tasks_total) = if let Ok(nodes) = delta_state.get_live_nodes().await {
                 let done = nodes.iter().filter(|n| n.status.is_complete()).count() as u32;
                 (done, nodes.len() as u32)
@@ -279,7 +280,8 @@ impl Orchestrator for LocalOrchestrator {
         // Get task counts from live nodes (project runs)
         let (tasks_done, tasks_total) =
             if let Some(project_id) = state.get_project_id().await.ok().flatten() {
-                let delta_state = DeltaState::new(project_id);
+                let route_id = state.get_route_id().await.unwrap_or(0);
+                let delta_state = DeltaState::with_route(project_id, route_id);
                 if let Ok(nodes) = delta_state.get_live_nodes().await {
                     let done = nodes.iter().filter(|n| n.status.is_complete()).count() as u32;
                     (done, nodes.len() as u32)
@@ -593,7 +595,8 @@ impl Orchestrator for LocalOrchestrator {
         // Get live nodes from project and build claimed task map
         let claimed_task_map = if let Some(project_id) = state.get_project_id().await.ok().flatten()
         {
-            let live_nodes = DeltaState::new(project_id)
+            let route_id = state.get_route_id().await.unwrap_or(0);
+            let live_nodes = DeltaState::with_route(project_id, route_id)
                 .get_live_nodes()
                 .await
                 .unwrap_or_default();
@@ -748,23 +751,31 @@ impl Orchestrator for LocalOrchestrator {
     async fn list_threads(&self, run: &str) -> OrchestratorResult<Vec<ThreadSummary>> {
         let state = self.get_state(run).await?;
 
-        let thread_names = state.get_threads().await?;
+        let project_id = state.get_project_id().await?.ok_or_else(|| {
+            OrchestratorError::InvalidOperation("Run not linked to project".into())
+        })?;
 
-        let mut threads = Vec::new();
-        for name in thread_names {
-            let message_count = state.get_thread_message_count(&name).await.unwrap_or(0) as u32;
-            let messages = state.get_messages(&name, 1).await.unwrap_or_default();
-            let last_message = messages.first().map(|m| m.content.clone());
-            let last_timestamp = messages.first().map(|m| m.timestamp.clone());
+        let route_id = state.get_route_id().await.unwrap_or(0);
 
-            threads.push(ThreadSummary {
-                name,
-                message_count,
-                unread_count: 0,
-                last_message,
-                last_timestamp,
-            });
-        }
+        let store = ProjectMessagesStore::open()
+            .await
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+        let project_threads = store
+            .get_threads(project_id, route_id, "user")
+            .await
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+        let threads = project_threads
+            .into_iter()
+            .map(|t| ThreadSummary {
+                name: t.thread,
+                message_count: t.message_count as u32,
+                unread_count: t.unread_count as u32,
+                last_message: t.last_message,
+                last_timestamp: t.last_timestamp,
+            })
+            .collect();
 
         Ok(threads)
     }
@@ -772,9 +783,22 @@ impl Orchestrator for LocalOrchestrator {
     async fn get_messages(&self, run: &str, thread: &str) -> OrchestratorResult<Vec<Message>> {
         let state = self.get_state(run).await?;
 
-        let core_messages = state.get_messages(thread, 100).await?;
+        let project_id = state.get_project_id().await?.ok_or_else(|| {
+            OrchestratorError::InvalidOperation("Run not linked to project".into())
+        })?;
 
-        let messages = core_messages
+        let route_id = state.get_route_id().await.unwrap_or(0);
+
+        let store = ProjectMessagesStore::open()
+            .await
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+        let project_messages = store
+            .get_messages(project_id, route_id, thread, Some(100))
+            .await
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+        let messages = project_messages
             .into_iter()
             .map(|m| Message {
                 id: m.id as u32,
@@ -798,16 +822,29 @@ impl Orchestrator for LocalOrchestrator {
     ) -> OrchestratorResult<Message> {
         let state = self.get_state(run).await?;
 
-        let message_id = state.add_message(thread, "user", content, false).await?;
+        let project_id = state.get_project_id().await?.ok_or_else(|| {
+            OrchestratorError::InvalidOperation("Run not linked to project".into())
+        })?;
+
+        let route_id = state.get_route_id().await.unwrap_or(0);
+
+        let store = ProjectMessagesStore::open()
+            .await
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+        let pm = store
+            .add_message(project_id, route_id, thread, "user", content, false)
+            .await
+            .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
         Ok(Message {
-            id: message_id as u32,
-            thread: thread.to_string(),
-            sender: "user".to_string(),
-            content: content.to_string(),
-            waiting: false,
+            id: pm.id as u32,
+            thread: pm.thread,
+            sender: pm.sender,
+            content: pm.content,
+            waiting: pm.waiting,
             read_by: None,
-            timestamp: Utc::now().to_rfc3339(),
+            timestamp: pm.timestamp,
         })
     }
 
@@ -1323,7 +1360,8 @@ impl Orchestrator for LocalOrchestrator {
             if let Some(ref task_id) = task_for_worker {
                 // Use live nodes for project runs
                 if let Some(project_id) = sqlite_state.get_project_id().await.ok().flatten() {
-                    let delta_state = DeltaState::new(project_id);
+                    let route_id = sqlite_state.get_route_id().await.unwrap_or(0);
+                    let delta_state = DeltaState::with_route(project_id, route_id);
                     if let Err(e) = delta_state.claim_live_node(task_id, worker_name).await {
                         tracing::warn!(
                             "Failed to claim live node {} for worker {}: {}",
@@ -1578,6 +1616,12 @@ impl Orchestrator for LocalOrchestrator {
             .set_project_name(&project.name)
             .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to set project_name: {}", e)))?;
+        if let Some(route_id) = request.route_id {
+            state
+                .set_route_id(route_id)
+                .await
+                .map_err(|e| OrchestratorError::Other(format!("Failed to set route_id: {}", e)))?;
+        }
 
         // Store starting_point in database for cloning
         let sp_json = serde_json::to_string(&starting_point).map_err(|e| {
@@ -1685,15 +1729,16 @@ impl Orchestrator for LocalOrchestrator {
         let first_worker = &worker_names[0];
 
         // Create delta state for live node operations
-        let delta_state = DeltaState::new(project.id);
-
         // Pre-claim scope for first worker (scope node created by dispatch)
-        if let Err(e) = delta_state.claim_live_node("scope", first_worker).await {
-            tracing::warn!(
-                "Failed to pre-claim scope live node for {}: {}",
-                first_worker,
-                e
-            );
+        if let Some(route_id) = request.route_id {
+            let delta_state = DeltaState::with_route(project.id, route_id);
+            if let Err(e) = delta_state.claim_live_node("scope", first_worker).await {
+                tracing::warn!(
+                    "Failed to pre-claim scope live node for {}: {}",
+                    first_worker,
+                    e
+                );
+            }
         }
 
         // Store docs config from global settings

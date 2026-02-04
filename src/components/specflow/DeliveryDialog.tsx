@@ -11,7 +11,7 @@ import { type Component, Show, createSignal, createEffect } from 'solid-js';
 import { useEscapeKey } from '../../hooks';
 import { useDelta } from '../../stores/delta-context';
 import { Icon } from '../shared';
-import type { BoardDeliveryStatus } from '../../lib/types';
+import type { BoardDeliveryStatus, LiveNodeTree } from '../../lib/types';
 
 interface DeliveryDialogProps {
   onClose: () => void;
@@ -24,6 +24,31 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
   // Form state
   const [targetBranch, setTargetBranch] = createSignal(props.defaultBranch || 'main');
   const [error, setError] = createSignal<string | null>(null);
+  const [summary, setSummary] = createSignal('');
+  const [summaryEdited, setSummaryEdited] = createSignal(false);
+
+  // Helper to flatten live tree
+  const flattenTree = (nodes: LiveNodeTree[]): LiveNodeTree[] => {
+    const result: LiveNodeTree[] = [];
+    const flatten = (n: LiveNodeTree) => {
+      result.push(n);
+      n.children.forEach(flatten);
+    };
+    nodes.forEach(flatten);
+    return result;
+  };
+
+  // Generate summary on mount (only if not edited)
+  createEffect(() => {
+    if (summaryEdited()) return; // Don't regenerate if user edited
+
+    const completedNodes = flattenTree(delta.liveTree())
+      .filter((n) => n.source === 'spec' && !n.parentId) // Root spec nodes only
+      .filter((n) => ['done', 'validated', 'awaiting_eval'].includes(n.status));
+
+    const lines = completedNodes.map((n) => `- ${n.name}`);
+    setSummary(lines.join('\n') || 'No completed tasks');
+  });
 
   useEscapeKey(() => {
     if (!delta.deliveryPending()) {
@@ -49,7 +74,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
   // Handle completing delivery with PR creation
   const handleCreatePR = async () => {
     setError(null);
-    const result = await delta.completeDelivery('pr');
+    const result = await delta.completeDelivery('pr', summary());
     if (!result) {
       setError('Failed to create PR');
     }
@@ -189,6 +214,28 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
                 <span>
                   Creates branch: <span class="text-wool-300 font-medium">hirsel/...</span>
                 </span>
+              </div>
+
+              <div>
+                <label class="block text-xs font-medium text-wool-400 mb-1.5">
+                  Summary
+                </label>
+                <textarea
+                  value={summary()}
+                  onInput={(e) => {
+                    setSummary(e.currentTarget.value);
+                    setSummaryEdited(true);
+                  }}
+                  rows={4}
+                  class="w-full px-3 py-2 rounded text-sm text-wool-200"
+                  style={{
+                    background: 'rgba(36, 36, 36, 0.8)',
+                    border: '1px solid rgba(64, 64, 64, 0.5)',
+                  }}
+                />
+                <p class="text-[10px] text-wool-600 mt-1">
+                  Auto-generated from completed tasks. Edit to customize.
+                </p>
               </div>
             </div>
           </Show>

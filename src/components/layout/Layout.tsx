@@ -6,10 +6,15 @@
  * - Live tree (read-only) after first dispatch
  */
 import { type Component, Show, createEffect, onCleanup } from 'solid-js';
-import { useProject, useRuns } from '../../stores';
+import { useApp, useProject, useRuns } from '../../stores';
+import { Icon } from '../shared';
 import { TitleBar } from './TitleBar';
 import { StatusBar } from './StatusBar';
 import { SvgDefinitions } from './SvgDefinitions';
+import { LeftDrawer } from './LeftDrawer';
+import { ProjectSelector } from './ProjectSelector';
+import { RadialMenu } from './RadialMenu';
+import { WelcomeScreen } from './WelcomeScreen';
 import { ProjectSetup } from '../projects/ProjectSetup';
 import { ProjectSettings } from '../projects/ProjectSettings';
 import { SpecBoard } from '../specflow/SpecBoard';
@@ -22,8 +27,10 @@ import { ConfirmDialog } from '../modals/ConfirmDialog';
 import { Toaster } from '../shared/Toaster';
 import { DebugPanel } from '../shared/DebugPanel';
 import { DocsPanel, DocsFullView } from '../docs';
+import { MessagingPanel } from '../messaging';
 
 export const Layout: Component = () => {
+  const app = useApp();
   const project = useProject();
   const runs = useRuns();
 
@@ -41,16 +48,34 @@ export const Layout: Component = () => {
 
       {/* Main Content Area */}
       <main class="flex-1 flex overflow-hidden bg-pasture-900 relative">
-        {/* SpecBoard - Primary canvas view (always mounted to avoid re-init issues) */}
-        <div class="flex-1 flex overflow-hidden">
-          <div class="flex-1 flex flex-col overflow-hidden">
-            <SpecBoard />
-          </div>
-          {/* Docs Panel - side panel overlay */}
-          <Show when={project.docsOpen() && !project.docsFullScreen()}>
-            <DocsPanel />
+        {/* Welcome screen - only when no projects exist at all */}
+        <Show when={!project.loading() && project.projects().length === 0}>
+          <WelcomeScreen />
+        </Show>
+
+        {/* Normal UI - when projects exist */}
+        <Show when={project.projects().length > 0}>
+          {/* Left Drawer - Navigation sidebar */}
+          <Show when={project.selectedProject()}>
+            <LeftDrawer />
           </Show>
-        </div>
+
+          {/* SpecBoard - Primary canvas view, keyed by project to reset state on switch */}
+          <div class="flex-1 flex overflow-hidden">
+            <div class="flex-1 flex flex-col overflow-hidden relative">
+              <Show when={project.selectedProjectId()} keyed>
+                {(_projectId) => <SpecBoard />}
+              </Show>
+            </div>
+            {/* Right side panels */}
+            <Show when={project.docsOpen() && !project.docsFullScreen()}>
+              <DocsPanel />
+            </Show>
+            <Show when={project.sheepfoldOpen()}>
+              <MessagingPanel />
+            </Show>
+          </div>
+        </Show>
 
         {/* ProjectSettings - modal overlay on top of SpecBoard */}
         <Show when={project.showProjectSettings()}>
@@ -81,6 +106,12 @@ export const Layout: Component = () => {
       <ConfirmDialog />
       <Toaster />
       <DebugPanel />
+
+      {/* Pie Menu - global overlay triggered by Alt+Space */}
+      <RadialMenu />
+
+      {/* Project Selector dropdown (triggered from LeftDrawer) */}
+      <ProjectSelector dropdownOnly />
     </>
   );
 };

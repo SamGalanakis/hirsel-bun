@@ -908,17 +908,21 @@ import type { ProjectMessage, ProjectThreadSummary } from './types';
  */
 export async function getProjectMessages(
   projectId: number,
+  routeId: number,
   thread: string,
   limit?: number,
 ): Promise<ProjectMessage[]> {
-  return invoke<ProjectMessage[]>('get_project_messages', { projectId, thread, limit });
+  return invoke<ProjectMessage[]>('get_project_messages', { projectId, routeId, thread, limit });
 }
 
 /**
  * Get all threads for a project with unread counts
  */
-export async function getProjectThreads(projectId: number): Promise<ProjectThreadSummary[]> {
-  return invoke<ProjectThreadSummary[]>('get_project_threads', { projectId });
+export async function getProjectThreads(
+  projectId: number,
+  routeId: number,
+): Promise<ProjectThreadSummary[]> {
+  return invoke<ProjectThreadSummary[]>('get_project_threads', { projectId, routeId });
 }
 
 /**
@@ -926,17 +930,22 @@ export async function getProjectThreads(projectId: number): Promise<ProjectThrea
  */
 export async function sendProjectMessage(
   projectId: number,
+  routeId: number,
   thread: string,
   content: string,
 ): Promise<ProjectMessage> {
-  return invoke<ProjectMessage>('send_project_message', { projectId, thread, content });
+  return invoke<ProjectMessage>('send_project_message', { projectId, routeId, thread, content });
 }
 
 /**
  * Mark messages in a thread as read
  */
-export async function markProjectMessagesRead(projectId: number, thread: string): Promise<void> {
-  return invoke('mark_project_messages_read', { projectId, thread });
+export async function markProjectMessagesRead(
+  projectId: number,
+  routeId: number,
+  thread: string,
+): Promise<void> {
+  return invoke('mark_project_messages_read', { projectId, routeId, thread });
 }
 
 /**

@@ -10,7 +10,6 @@
 mod evals;
 mod events;
 mod history;
-mod messages;
 mod run;
 mod scribe;
 pub mod types;
@@ -39,7 +38,6 @@ CREATE TABLE IF NOT EXISTS state (
     project_path TEXT,
     remote_url TEXT,
     branch TEXT,
-    unread_count INTEGER DEFAULT 0,
     human_in_the_loop INTEGER DEFAULT 1,
     summary TEXT,
     waiting_reason TEXT,
@@ -63,6 +61,7 @@ CREATE TABLE IF NOT EXISTS state (
     persist_docs_changes INTEGER DEFAULT 1,
     project_id INTEGER,
     project_name TEXT,
+    route_id INTEGER,
 
     -- Dispatch tracking
     source_task_ids TEXT,      -- JSON array of task IDs from board
@@ -126,22 +125,6 @@ CREATE TABLE IF NOT EXISTS evals (
     finished_at TEXT
 );
 
-CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY,
-    thread TEXT NOT NULL,
-    sender TEXT NOT NULL,
-    content TEXT NOT NULL,
-    timestamp TEXT NOT NULL,
-    waiting INTEGER DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS message_reads (
-    worker_name TEXT NOT NULL,
-    thread TEXT NOT NULL,
-    last_read_id INTEGER NOT NULL,
-    PRIMARY KEY (worker_name, thread)
-);
-
 CREATE TABLE IF NOT EXISTS amendments (
     id INTEGER PRIMARY KEY,
     message TEXT NOT NULL,
@@ -183,8 +166,6 @@ CREATE TABLE IF NOT EXISTS scribe_submissions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_scribe_status ON scribe_submissions(status);
-CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread);
-CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 CREATE INDEX IF NOT EXISTS idx_worker_events_worker ON worker_events(worker_name);
 CREATE INDEX IF NOT EXISTS idx_worker_events_timestamp ON worker_events(timestamp);
 "#;

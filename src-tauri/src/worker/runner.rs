@@ -705,27 +705,55 @@ impl WorkerRunner {
     }
 
     // =========================================================================
-    // Message Operations
+    // Message Operations (Project-Level via Sheepfold)
+    //
+    // All messages are stored in the global project_messages table.
+    // Thread naming:
+    // - "meadow" = group chat (all workers + human)
+    // - Worker names = DMs (e.g., "willow-coopworth")
+    //
+    // Semantic aliases:
+    // - "user" → worker's own name (DM with human)
+    // - "group" → "meadow" (group chat)
     // =========================================================================
+
+    /// Get the project_id for messaging. Returns error if not in a board run.
+    fn get_project_id_for_messaging(&self) -> WorkerResult<i64> {
+        self.run_async(self.state().get_project_id())?
+            .ok_or_else(|| {
+                WorkerError::Config("Messaging requires a project context (board run)".to_string())
+            })
+    }
+
+    /// Translate semantic thread names to actual thread names.
+    /// - "user" → worker's own name (DM)
+    /// - "group" → "meadow" (group chat)
+    fn translate_thread(&self, thread: &str) -> String {
+        match thread {
+            "user" => self.config.worker_name.clone(),
+            "group" => "meadow".to_string(),
+            _ => thread.to_string(),
+        }
+    }
 
     /// Send a message to a thread.
     /// When thread is "user", messages are sent to the worker's own DM thread
     /// and HITL pause is triggered automatically (if HITL mode is enabled).
     pub fn msg_send(&self, thread: &str, message: &str) -> WorkerResult<String> {
         let worker_name = self.config.worker_name.clone();
+        let project_id = self.get_project_id_for_messaging()?;
         let is_user_dm = thread == "user";
 
-        // Translate "user" thread to worker's own DM thread
-        let actual_thread = if is_user_dm {
-            worker_name.as_str()
-        } else {
-            thread
-        };
+        // Translate semantic thread to actual thread
+        let actual_thread = self.translate_thread(thread);
 
-        self.run_async(
-            self.state()
-                .add_message(actual_thread, &worker_name, message),
-        )?;
+        self.run_async(self.state().add_project_message(
+            project_id,
+            &actual_thread,
+            &worker_name,
+            message,
+            is_user_dm, // waiting flag for HITL
+        ))?;
 
         // Auto-trigger HITL pause when messaging the user (if HITL enabled)
         let hitl_enabled = self
@@ -739,7 +767,7 @@ impl WorkerRunner {
                 &worker_name,
                 WorkerUpdate {
                     hitl_waiting: Some(true),
-                    waiting_thread: Some(actual_thread.to_string()),
+                    waiting_thread: Some(actual_thread.clone()),
                     ..Default::default()
                 },
             ))?;
@@ -756,12 +784,30 @@ impl WorkerRunner {
     /// Read messages from a thread (or all threads).
     pub fn msg_read(&self, thread: Option<&str>) -> WorkerResult<String> {
         let worker_name = self.config.worker_name.clone();
+        let project_id = self.get_project_id_for_messaging()?;
+
         let messages = if let Some(t) = thread {
-            self.run_async(self.state().get_unread_messages(t, &worker_name))?
+            let actual_thread = self.translate_thread(t);
+            self.run_async(self.state().get_unread_project_messages(
+                project_id,
+                &actual_thread,
+                &worker_name,
+            ))?
         } else {
-            // Read from all threads
-            self.run_async(self.state().get_all_unread_messages(&worker_name))?
+            self.run_async(
+                self.state()
+                    .get_all_unread_project_messages(project_id, &worker_name),
+            )?
         };
+
+        // Mark messages as read
+        for msg in &messages {
+            let _ = self.run_async(self.state().mark_project_messages_read(
+                project_id,
+                &msg.thread,
+                &worker_name,
+            ));
+        }
 
         Ok(serde_json::json!({
             "messages": messages.iter().map(|m| serde_json::json!({
@@ -777,7 +823,8 @@ impl WorkerRunner {
 
     /// List available message threads.
     pub fn msg_list(&self) -> WorkerResult<String> {
-        let threads = self.run_async(self.state().get_threads())?;
+        let project_id = self.get_project_id_for_messaging()?;
+        let threads = self.run_async(self.state().get_project_threads(project_id))?;
 
         Ok(serde_json::json!({
             "threads": threads,
@@ -788,12 +835,16 @@ impl WorkerRunner {
     /// Check inbox for new messages.
     pub fn msg_inbox(&self) -> WorkerResult<String> {
         let worker_name = self.config.worker_name.clone();
-        let threads = self.run_async(self.state().get_threads())?;
+        let project_id = self.get_project_id_for_messaging()?;
+        let threads = self.run_async(self.state().get_project_threads(project_id))?;
 
         let mut inbox = Vec::new();
         for thread in &threads {
-            let messages =
-                self.run_async(self.state().get_unread_messages(thread, &worker_name))?;
+            let messages = self.run_async(self.state().get_unread_project_messages(
+                project_id,
+                thread,
+                &worker_name,
+            ))?;
 
             if !messages.is_empty() {
                 inbox.push(serde_json::json!({
@@ -815,7 +866,7 @@ impl WorkerRunner {
     }
 
     // =========================================================================
-    // New Chat API (cleaner interface)
+    // Chat API (cleaner interface for workers)
     // =========================================================================
 
     /// List available chat contacts.
@@ -845,22 +896,26 @@ impl WorkerRunner {
     /// Get chat message history, optionally filtered by contact.
     pub fn chat_history(&self, with: Option<&str>, limit: Option<usize>) -> WorkerResult<String> {
         let worker_name = self.config.worker_name.clone();
-        let limit = limit.unwrap_or(50);
+        let project_id = self.get_project_id_for_messaging()?;
+        let limit = limit.unwrap_or(50) as i64;
 
-        // Translate contact to thread name
-        let thread = with.map(|w| if w == "user" { worker_name.as_str() } else { w });
-
-        let messages = if let Some(t) = thread {
-            self.run_async(self.state().get_unread_messages(t, &worker_name))?
+        let messages = if let Some(contact) = with {
+            let actual_thread = self.translate_thread(contact);
+            self.run_async(
+                self.state()
+                    .get_project_messages(project_id, &actual_thread, limit),
+            )?
         } else {
-            self.run_async(self.state().get_all_unread_messages(&worker_name))?
+            // Get from all threads (limited)
+            self.run_async(
+                self.state()
+                    .get_all_unread_project_messages(project_id, &worker_name),
+            )?
         };
-
-        // Apply limit
-        let messages: Vec<_> = messages.into_iter().take(limit).collect();
 
         let msgs: Vec<serde_json::Value> = messages
             .iter()
+            .take(limit as usize)
             .map(|m| {
                 serde_json::json!({
                     "from": m.sender,
@@ -880,39 +935,27 @@ impl WorkerRunner {
 
     /// Send a chat message to a specific contact.
     pub fn chat_send(&self, to: &str, message: &str) -> WorkerResult<String> {
-        // Translate "user" to worker's own thread for DM semantics
-        let thread = if to == "user" {
-            self.config.worker_name.as_str()
-        } else {
-            to
-        };
-
-        self.msg_send(thread, message)
+        self.msg_send(to, message)
     }
 
     /// Check for unread messages, optionally filtered by contact.
     pub fn chat_unread(&self, with: Option<&str>) -> WorkerResult<String> {
         let worker_name = self.config.worker_name.clone();
+        let project_id = self.get_project_id_for_messaging()?;
 
-        // Translate contact to thread name
-        let thread = with.map(|w| {
-            if w == "user" {
-                worker_name.clone()
-            } else {
-                w.to_string()
-            }
-        });
-
-        let threads = if let Some(t) = thread {
-            vec![t]
+        let threads = if let Some(contact) = with {
+            vec![self.translate_thread(contact)]
         } else {
-            self.run_async(self.state().get_threads())?
+            self.run_async(self.state().get_project_threads(project_id))?
         };
 
         let mut unread = Vec::new();
         for thread in &threads {
-            let messages =
-                self.run_async(self.state().get_unread_messages(thread, &worker_name))?;
+            let messages = self.run_async(self.state().get_unread_project_messages(
+                project_id,
+                thread,
+                &worker_name,
+            ))?;
 
             if !messages.is_empty() {
                 unread.push(serde_json::json!({

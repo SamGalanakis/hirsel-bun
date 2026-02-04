@@ -83,9 +83,10 @@ pub async fn start_gyp_session(
         StartGypSessionRequest::Board { project_id } => {
             let store = ProjectStore::open().await.map_err(err_string)?;
             let project = store.get_project(*project_id).await.map_err(err_string)?;
+            let route_id = project.active_route_id.unwrap_or(1);
 
             // Export draft tree to board.json for agent access
-            let mut exporter = DeltaExporter::new(*project_id);
+            let mut exporter = DeltaExporter::with_route(*project_id, route_id);
             exporter
                 .export_for_agent()
                 .map_err(|e| format!("Failed to export draft tree: {}", e))?;
@@ -103,9 +104,10 @@ pub async fn start_gyp_session(
         } => {
             let store = ProjectStore::open().await.map_err(err_string)?;
             let project = store.get_project(*project_id).await.map_err(err_string)?;
+            let route_id = project.active_route_id.unwrap_or(1);
 
             // Export draft tree to board.json for agent access
-            let mut exporter = DeltaExporter::new(*project_id);
+            let mut exporter = DeltaExporter::with_route(*project_id, route_id);
             exporter
                 .export_for_agent()
                 .map_err(|e| format!("Failed to export draft tree: {}", e))?;

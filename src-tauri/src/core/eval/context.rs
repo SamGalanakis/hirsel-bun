@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::core::{EvalStatus, Files, SQLiteState};
+use crate::core::{EvalStatus, Files, ProjectMessagesStore, SQLiteState};
 
 /// Context gathered for eval agent.
 pub struct EvalContext {
@@ -92,10 +92,23 @@ pub async fn build_eval_context(files: &Files, state: &SQLiteState) -> EvalConte
     // Get assets path
     let assets_path = files.assets();
 
-    // Get group chat messages (NOT DMs)
-    let group_chat = match state.get_messages("group", 500).await {
-        Ok(msgs) => format_messages(&msgs),
-        Err(_) => String::new(),
+    // Get group chat messages (meadow) from project messages
+    // TODO: Get route_id from run metadata when available
+    let group_chat = match state.get_project_id().await {
+        Ok(Some(project_id)) => {
+            let route_id = state.get_route_id().await.unwrap_or(0);
+            match ProjectMessagesStore::open().await {
+                Ok(store) => match store
+                    .get_messages(project_id, route_id, "meadow", Some(500))
+                    .await
+                {
+                    Ok(msgs) => format_project_messages(&msgs),
+                    Err(_) => String::new(),
+                },
+                Err(_) => String::new(),
+            }
+        }
+        _ => String::new(),
     };
 
     // Get previous failed evals
@@ -122,8 +135,8 @@ pub async fn build_eval_context(files: &Files, state: &SQLiteState) -> EvalConte
     }
 }
 
-/// Format messages for prompt inclusion.
-fn format_messages(msgs: &[crate::core::state::Message]) -> String {
+/// Format project messages for prompt inclusion.
+fn format_project_messages(msgs: &[crate::core::ProjectMessage]) -> String {
     msgs.iter()
         .map(|m| format!("[{}] {}: {}", m.timestamp, m.sender, m.content))
         .collect::<Vec<_>>()

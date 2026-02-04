@@ -17,7 +17,7 @@
 | Add archive strategy | `src-tauri/src/core/snapshot/mod.rs`, new strategy impl of `ArchiveStrategy` |
 | Add service worker | `src-tauri/src/core/service_worker/scribe.rs`, `src-tauri/src/cli/service_worker.rs` |
 | Add board task/eval | `src-tauri/src/core/board/mod.rs`, `src-tauri/src/gui/commands/specflow.rs` |
-| Modify board UI | `src/components/specflow/SpecBoard.tsx` |
+| Modify board UI | `src/components/specflow/SpecBoard.tsx`, `src/components/layout/CanvasToolbar.tsx` |
 | Add orchestrator method | `src-tauri/src/core/orchestrator/mod.rs` → trait, `local.rs`, `daemon.rs`, `remote.rs` impls |
 | Modify delta dispatch | `src-tauri/src/core/delta/dispatch.rs`, `src-tauri/src/core/delta/runner.rs`, `src-tauri/src/daemon/lifecycle.rs` |
 
@@ -82,9 +82,11 @@ cargo build --features s3-storage               # With S3 support
 | `project/` | `mod.rs`, `types.rs`, `store.rs` | Project database (global), SpecFlow per-project configuration |
 | `board/` | `mod.rs`, `types.rs`, `storage.rs` | SpecFlow board data (tasks, evals, task tree, file sync) |
 | `github/` | `mod.rs` | GitHub API client (octocrab) with auth fallback (env → gh config → hirsel config) |
+| `forge/` | `mod.rs` → `ForgeProvider` trait, `github.rs` | Extensible forge abstraction for PR/merge operations (currently GitHub only) |
 | `dispatch/` | `mod.rs` | Dispatch service: creates runs from board tasks, generates spec/eval, creates work+eval tasks with validates relationship |
 | `delta/` | `mod.rs`, `dispatch.rs`, `runner.rs`, `state.rs`, `types.rs` | Delta dispatch system: draft/live tree diffs, persistent project runs, live_nodes |
-| `delivery/` | `mod.rs` | Delivery service: three-tier delivery (push/PR/merge), conflict detection, staleness checking |
+| `route/` | `mod.rs`, `types.rs`, `store.rs`, `files.rs` | Route management for parallel project exploration (forking, route-scoped trees/docs/messages) |
+| `delivery/` | `mod.rs`, `orchestrator.rs` → `DeliveryOrchestrator`, `git_ops.rs` → `GitOperations`, `workspace.rs` | Delivery orchestration: three-tier delivery (push/PR/merge), git operations, workspace resolution |
 | `orchestrator/` | `mod.rs` → `Orchestrator` trait, `local.rs`, `remote.rs`, `daemon.rs` | Run orchestration pattern |
 | `lifecycle/` | `mod.rs` → `LifecycleManager` trait, `local.rs`, `remote.rs`, `transitions.rs` | Event-driven state machine |
 | `runner/` | `types.rs` → `Runner` trait, `local.rs`, `fly.rs`, `ssh.rs`, `composed.rs`, `config.rs`, `setup.rs` | Worker host implementations |
@@ -110,7 +112,7 @@ cargo build --features s3-storage               # With S3 support
 | `chats.rs` | - | GypChat message storage |
 | `gyp_chat.rs` | - | Project-level chat history |
 | `gyp_context.rs` | - | Gyp context building |
-| `project_messages.rs` | - | Sheepfold: project-scoped messaging (Meadow group chat + worker DMs) |
+| `project_messages.rs` | - | Sheepfold: route-scoped messaging (Meadow group chat + worker DMs), requires route_id |
 | `api_types.rs` | - | Shared API response types |
 | `worker_routes.rs` | - | Worker HTTP handlers |
 | `message_routes.rs` | - | Message HTTP handlers |
@@ -168,6 +170,8 @@ cargo build --features s3-storage               # With S3 support
 | `gyp.rs` | `start_gyp_session`, `send_gyp_message`, `save_gyp_message`, `get_gyp_history`, `clear_gyp_history`, `stop_gyp_session` |
 | `delta.rs` | `get_draft_tree`, `get_live_tree`, `create_draft_node`, `update_draft_node`, `delete_draft_node`, `move_draft_node`, `reset_project_tree`, `compute_tree_diff`, `get_diff_summary`, `dispatch_deltas`, `preview_delta_dispatch`, `get_project_run`, `complete_live_node`, `complete_revert`, `get_dual_trees`, `sync_gyp_changes` |
 | `delivery.rs` | `get_delivery_state`, `check_merge_state`, `get_conflicting_files`, `check_staleness`, `push_run_branch`, `create_run_pr`, `auto_merge_run`, `generate_pr_title`, `generate_pr_body`, `delivery_branch_name`, `get_board_versions`, `get_latest_board_version`, `get_current_board_delivery`, `start_board_delivery`, `get_board_delivery_status`, `retry_board_delivery`, `get_delivery_attempts`, `complete_board_delivery`, `abandon_board_delivery` |
+| `routes.rs` | `list_routes`, `get_route`, `get_route_by_name`, `get_route_tree`, `create_route`, `delete_route`, `set_active_route`, `get_active_route` |
+| `project_messages.rs` | `get_project_messages`, `get_project_threads`, `send_project_message`, `mark_project_messages_read`, `get_project_unread_count` |
 
 ### `src-tauri/src/cli/` - CLI Commands
 
@@ -217,25 +221,35 @@ cargo build --features s3-storage               # With S3 support
 
 | Directory | Purpose |
 |-----------|---------|
-| `components/layout/` | Layout, TitleBar, StatusBar |
+| `components/layout/` | Layout, TitleBar, StatusBar, LeftDrawer, CanvasToolbar, RadialMenu, ProjectSelector |
 | `components/runs/` | RunListPanel, RunDetail, WorkerCard, TaskTreeView |
-| `components/specflow/` | SpecBoard (unified canvas component with delta dispatch, node rendering, context menus) |
+| `components/specflow/` | SpecBoard, DeliveryDialog, RouteSelector, ForkRouteDialog, RunStatusPill, TaskEditorModal |
 | `components/modals/` | SettingsModal, HelpModal, ConfirmDialog |
 | `components/chat/` | GypMessenger |
-| `stores/` | AppProvider, ProjectProvider, RunsProvider, SelectionProvider, DeltaProvider |
+| `components/messaging/` | MessagingPanel (right drawer for route-scoped messaging: Meadow group chat + worker DMs) |
+| `stores/` | AppProvider, ProjectProvider, RunsProvider, SelectionProvider, DeltaProvider, RouteProvider |
 | `hooks/` | useClickOutside, useElapsedTime, useEscapeKey, useGypChat |
 | `lib/` | Icons, theme, toast, dev-logger, utils, API helpers |
 | `lib/api.ts` | Tauri invoke wrappers: `safeInvoke`, `safeInvokeWithToast`, polling utilities |
 | `lib/elk-layout.ts` | ELK.js wrapper for hierarchical graph layout with orthogonal edge routing |
 
+**UI Hierarchy:**
+- **TitleBar** - App-level: app name, notifications, app settings
+- **LeftDrawer** - Navigation: project selector, route list (collapsible)
+- **CanvasToolbar** - Route-level: run status, worker avatars with hover shortcuts
+- **SpecBoard** - Canvas with view controls (Draft/Live/Both toggle in top-right corner)
+- **Right panels** - DocsPanel and MessagingPanel slide in from right
+
 **SpecBoard Architecture:**
 - `SpecBoard.tsx` - Unified canvas component handling:
   - Draft/live tree visualization with delta dispatch
+  - View toggle (D=Draft, L=Live, B=Both) with automatic tree centering
   - Node rendering with visual hierarchy indicators
   - Context menus for node operations
   - Drag-and-drop node reordering
   - Keyboard navigation and shortcuts
   - Live tree multiselect filter (spec tasks, worker tasks, deleted nodes)
+  - Granularity filter (all levels, level 2, top only) - collapses tree depth
 - **Graph Layout** - ELK.js (Eclipse Layout Kernel) for hierarchical graph layout:
   - `src/lib/elk-layout.ts` - ELK wrapper with orthogonal edge routing
   - Layered algorithm with proper crossing minimization
@@ -245,6 +259,10 @@ cargo build --features s3-storage               # With S3 support
   - `validates` (eval→task): sage green lines
   - `blockedBy` (task→task): terra red lines
   - `blockedBy` computed as inverse of `validates` in backend tree builders
+- **DeliveryDialog** - Dialog for delivering changes:
+  - Auto-generates summary from completed root spec nodes
+  - User can edit summary before creating PR
+  - Summary becomes PR body
 
 ---
 
@@ -739,6 +757,57 @@ Daemon evaluates scaling:
 
 ---
 
+## Routes System (`src-tauri/src/core/route/`)
+
+Routes enable parallel exploration of different approaches within a project. Each route has independent:
+- Draft tree (editable spec nodes)
+- Live tree (dispatched work items)
+- Documentation
+- Workspace code
+- Messages (Sheepfold)
+
+### Route Concepts
+
+| Concept | Description |
+|---------|-------------|
+| **Main route** | Created automatically with each project (id=1) |
+| **Fork** | Create new route from parent's current state |
+| **Active route** | Currently selected route (`projects.active_route_id`) |
+| **Route tree** | Hierarchical display of routes and their ancestry |
+
+### Route-Scoped Data
+
+Data that is scoped to a specific route:
+- `draft_nodes` - Primary key includes `route_id`
+- `draft_node_validates` - Has `route_id` column
+- `draft_node_blocked_by` - Has `route_id` column
+- `live_nodes` - Has `route_id` column
+- `project_messages` - Has `route_id` column
+
+Route files stored at `~/.hirsel/projects/{project_id}/routes/{route_name}/`:
+- `docs/` - Route documentation
+- `board/tasks/{id}.md` - Task/eval content files for Gyp editing
+- `code/` - Code snapshot directory
+
+### Route Forking
+
+When creating a route with a `parent_route_id`:
+1. Database records are copied: `draft_nodes`, `draft_node_validates`, `draft_node_blocked_by`
+2. Files are copied: `docs/`, `board/tasks/`
+3. The new route gets its own folder structure at `routes/{new_route_name}/`
+
+This allows independent exploration of different approaches while preserving the parent state.
+
+### Frontend Integration
+
+- `LeftDrawer` shows routes list with active indicator, fork button, and bottom actions (Meadow, Docs, Settings)
+- `ForkRouteDialog` for creating new routes
+- Route changes trigger `route-changed` event
+- DeltaContext reloads trees when route changes
+- All tree/message operations use `active_route_id` from project
+
+---
+
 ## Database Schema
 
 ### Global Database (`~/.hirsel/hirsel.db`)
@@ -755,7 +824,8 @@ Daemon evaluates scaling:
 | `project_runs` | `id` | Persistent project runs |
 | `board_versions` | `id` | Board version history |
 | `board_deliveries` | `id` | Board delivery tracking |
-| `project_messages` | `id` | Sheepfold messages |
+| `project_messages` | `id` | Sheepfold messages (route-scoped) |
+| `routes` | `id` | Project routes for parallel exploration |
 
 **config:**
 - `key` - Configuration key (e.g., "runners", "auth", "eval_timeout")
@@ -837,10 +907,12 @@ The board module stores project-level data in the global database (`~/.hirsel/hi
 ├── hirsel.db             # Global DB (config, credentials, projects, board, live_nodes)
 ├── key                   # Encryption key for credentials
 ├── hirsel.pid            # Daemon PID file
-├── projects/{id}/        # Project-specific data
-│   └── board/            # Agent file sync directory
-│       ├── tasks/        # JSON files for each task
-│       └── evals/        # JSON files for each eval
+├── projects/{id}/
+│   └── routes/{route_name}/    # Route-scoped data
+│       ├── docs/               # Route documentation
+│       ├── board/
+│       │   └── tasks/          # Task content files ({id}.md)
+│       └── code/               # Code snapshot (for forking)
 └── runs/{run_name}/
     ├── hirsel.db         # Run state (workers, messages, events, evals, history)
     ├── spec.md           # Specification (input)
@@ -855,6 +927,8 @@ The board module stores project-level data in the global database (`~/.hirsel/hi
 ```
 
 **Note:** Work items (live_nodes) are stored in the global database, not per-run. This enables cross-run coordination and persistent project runs.
+
+**Route-scoped files:** Each route has independent board content files at `routes/{route_name}/board/tasks/{id}.md`. When forking a route, both database records (draft_nodes, relationships) and files (docs/, board/tasks/) are copied from the parent.
 
 ### Git Workspace Setup (`src-tauri/src/core/git.rs`, `ops/setup.rs`)
 

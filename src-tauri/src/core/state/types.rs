@@ -424,16 +424,6 @@ pub struct Eval {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Message {
-    pub id: i64,
-    pub thread: String,
-    pub sender: String,
-    pub content: String,
-    pub timestamp: String,
-    pub waiting: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
     pub id: i64,
     pub timestamp: String,

@@ -5,7 +5,6 @@
 //!
 //! Route handlers for state operations are in submodules:
 //! - `eval_routes` - Eval API endpoints
-//! - `message_routes` - Message/thread API endpoints
 //! - `worker_routes` - Worker API endpoints
 //! - `shared_routes` - Route builders shared with daemon
 
@@ -13,7 +12,6 @@ mod auth;
 pub mod board;
 pub mod eval_routes;
 pub mod gyp;
-pub mod message_routes;
 pub mod routes;
 pub mod shared_routes;
 pub mod worker_routes;

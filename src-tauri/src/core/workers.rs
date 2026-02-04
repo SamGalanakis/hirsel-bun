@@ -12,6 +12,7 @@
 use crate::cli::AgentPreset;
 use crate::core::constants::TIME_NOTIFICATION_THRESHOLDS;
 use crate::core::state::{SQLiteState, StateError, Status, WorkerStatus, WorkerUpdate};
+use crate::core::ProjectMessagesStore;
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
 use thiserror::Error;
@@ -382,15 +383,25 @@ pub async fn check_and_send_time_notifications(
         if threshold > last_notified && pct_elapsed >= threshold {
             let message = get_time_notification_message(threshold);
 
-            // Send to group chat for multi-worker, or worker direct for single
-            let thread = if is_multi_worker {
-                "group".to_string()
-            } else {
-                worker_name.unwrap_or("user").to_string()
-            };
+            // Send via project messages if the run is linked to a project
+            if let Ok(Some(project_id)) = state.get_project_id().await {
+                let route_id = state.get_route_id().await.unwrap_or(0);
+                if let Ok(store) = ProjectMessagesStore::open().await {
+                    // Send to meadow (group) or worker DM
+                    let thread = if is_multi_worker {
+                        "meadow".to_string()
+                    } else {
+                        worker_name.unwrap_or("user").to_string()
+                    };
 
-            // Add message to state
-            state.add_message(&thread, "System", message, false).await?;
+                    if let Err(e) = store
+                        .add_message(project_id, route_id, &thread, "system", message, false)
+                        .await
+                    {
+                        warn!("Failed to send time notification to project: {}", e);
+                    }
+                }
+            }
 
             info!("Time notification sent: {}% - {}", threshold, message);
             state.set_last_time_notification_pct(threshold).await?;

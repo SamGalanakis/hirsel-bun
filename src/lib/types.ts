@@ -753,6 +753,18 @@ export interface StartGypSessionResponse {
 }
 
 // =============================================================================
+// IDE Types
+// =============================================================================
+
+/** Result of opening a run's staging directory in IDE */
+export interface OpenIdeResult {
+  success: boolean;
+  ideUsed: string;
+  pathOpened: string;
+  wasDownloaded: boolean;
+}
+
+// =============================================================================
 // Version Info
 // =============================================================================
 
@@ -1345,6 +1357,30 @@ export const BOARD_DELIVERY_STATUS_ICONS: Record<BoardDeliveryStatus, string> = 
   failed: '\u2717', // ✗
   abandoned: '\u2205', // ∅
 };
+
+// =============================================================================
+// Route Types (Parallel Exploration Branches)
+// =============================================================================
+
+/** A route within a project (parallel exploration branch) */
+export interface Route {
+  id: number;
+  projectId: number;
+  name: string;
+  parentRouteId: number | null;
+  parentVersionId: number | null;
+  createdAt: string;
+}
+
+/** Route with ancestry information for tree display */
+export interface RouteTree {
+  id: number;
+  name: string;
+  parentRouteId: number | null;
+  parentVersionId: number | null;
+  children: RouteTree[];
+  createdAt: string;
+}
 
 // =============================================================================
 // Project Messages Types (Sheepfold)

@@ -44,7 +44,7 @@ Development project - no database migrations needed. Modify schema directly in `
 
 ```tsx
 // Components: src/components/**/*.tsx
-// Stores: src/stores/ (AppProvider, ProjectProvider, RunsProvider, SelectionProvider)
+// Stores: src/stores/ (AppProvider, ProjectProvider, RunsProvider, SelectionProvider, DeltaProvider, RouteProvider)
 // Hooks: src/hooks/ (usePolling, useDebounce, useTauriEvent)
 ```
 

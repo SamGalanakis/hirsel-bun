@@ -17,13 +17,13 @@ import {
   onCleanup,
 } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
-import { useProject } from '../../stores';
+import { useProject, useRoute } from '../../stores';
 import { useDelta } from '../../stores/delta-context';
-import { Icon, SheepAvatar, MultiSelectDropdown } from '../shared';
-import { WorkerDetailModal } from '../runs/WorkerDetailModal';
+import { Icon } from '../shared';
+import { CanvasToolbar } from '../layout/CanvasToolbar';
 import { TaskEditorModal } from './TaskEditorModal';
 import { DeliveryDialog } from './DeliveryDialog';
-import { SheepfoldPopover } from '../messaging';
+import { ForkRouteDialog } from './ForkRouteDialog';
 import { MarkdownContent } from '../docs/MarkdownContent';
 import { computeElkLayout, type LayoutInputNode, type ElkLayoutResult } from '../../lib/elk-layout';
 import type {
@@ -32,7 +32,6 @@ import type {
   TreeDiff,
   NodeType,
   LiveNodeStatus,
-  WorkerDisplay,
 } from '../../lib/types';
 
 // =============================================================================
@@ -103,7 +102,7 @@ function wrapTextToWidth(name: string, width: number): string[] {
 interface EdgeRoute {
   from: string;
   to: string;
-  type: 'blockedBy' | 'validates';
+  type: 'blockedBy' | 'validates' | 'hierarchy';
   waypoints: [number, number][]; // Full path through all waypoints
 }
 
@@ -134,6 +133,7 @@ const DraftNodeCard: Component<{
   const isModified = () =>
     props.showDelta && props.diff?.modifiedNodes.some((m) => m.draftNode.id === props.node.id);
   const isEval = () => props.node.nodeType === 'eval';
+  const isContainer = () => !isEval() && props.node.children.length > 0;
   const isMultiLine = () => props.position.lines.length > 1;
 
   // ==========================================================================
@@ -154,6 +154,17 @@ const DraftNodeCard: Component<{
       : '0 2px 4px rgba(0,0,0,0.25)',
   });
 
+  // CONTAINER: Organizational grouping - ghost style, recedes visually
+  const containerStyles = () => ({
+    bg: 'transparent',
+    border: props.selected ? 'var(--wool-500)' : 'var(--wool-700)',
+    borderWidth: '1px',
+    borderStyle: 'dashed',
+    textColor: 'var(--wool-500)',
+    radius: '5px',
+    boxShadow: 'none',
+  });
+
   // TASK: The sheep - warmer, more grounded gradient
   const taskStyles = () => ({
     bg: 'var(--node-task-bg)',
@@ -167,7 +178,7 @@ const DraftNodeCard: Component<{
       : '0 2px 4px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.02)',
   });
 
-  const styles = () => isEval() ? evalStyles() : taskStyles();
+  const styles = () => isEval() ? evalStyles() : isContainer() ? containerStyles() : taskStyles();
 
   return (
     <div
@@ -223,6 +234,8 @@ const LiveNodeCard: Component<{
   const isDeleted = () =>
     props.showDelta && props.diff?.deletedNodes.some((n) => n.id === props.node.id);
   const isEval = () => props.node.nodeType === 'eval';
+  // Container: task with children (organizational grouping - cannot be claimed)
+  const isContainer = () => !isEval() && props.node.children.length > 0;
   const isMultiLine = () => props.position.lines.length > 1;
   const isWorking = () => props.node.status === 'working';
   const isDone = () => props.node.status === 'done';
@@ -250,6 +263,17 @@ const LiveNodeCard: Component<{
       : '0 2px 4px rgba(0,0,0,0.25)',
   });
 
+  // CONTAINER: Organizational grouping - ghost style, recedes visually
+  const containerStyles = () => ({
+    bg: 'transparent',
+    border: props.selected ? 'var(--wool-500)' : 'var(--wool-700)',
+    borderWidth: '1px',
+    borderStyle: 'dashed',
+    textColor: 'var(--wool-500)',
+    radius: '5px',
+    boxShadow: 'none',
+  });
+
   // TASK: The sheep - warmer, more grounded gradient
   const taskStyles = () => ({
     bg: 'var(--node-task-bg)',
@@ -263,7 +287,7 @@ const LiveNodeCard: Component<{
       : '0 2px 4px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.02)',
   });
 
-  const styles = () => isEval() ? evalStyles() : taskStyles();
+  const styles = () => isEval() ? evalStyles() : isContainer() ? containerStyles() : taskStyles();
 
   // Status glow - external indicator that doesn't affect card dimensions
   const statusGlow = () => {
@@ -383,27 +407,82 @@ const LiveNodeCard: Component<{
 const DependencyConnectors: Component<{
   edgeRoutes: EdgeRoute[];
 }> = (props) => {
+  // Separate hierarchy edges (render first, behind) from dependency edges
+  const hierarchyEdges = () => props.edgeRoutes.filter(e => e.type === 'hierarchy');
+  const dependencyEdges = () => props.edgeRoutes.filter(e => e.type !== 'hierarchy');
+
   return (
     <svg class="absolute inset-0 pointer-events-none overflow-visible" style={{ 'z-index': 0 }}>
-      <For each={props.edgeRoutes}>
+      {/* Arrowhead markers for blocked-by edges */}
+      <defs>
+        <marker
+          id="arrowhead-blocked"
+          markerWidth="6"
+          markerHeight="5"
+          refX="5"
+          refY="2.5"
+          orient="auto"
+          markerUnits="strokeWidth"
+        >
+          <polygon points="0,0 6,2.5 0,5" fill="var(--edge-blocked-by)" />
+        </marker>
+        <marker
+          id="arrowhead-validates"
+          markerWidth="6"
+          markerHeight="5"
+          refX="5"
+          refY="2.5"
+          orient="auto"
+          markerUnits="strokeWidth"
+        >
+          <polygon points="0,0 6,2.5 0,5" fill="var(--edge-validates)" />
+        </marker>
+      </defs>
+
+      {/* Hierarchy edges: subtle, structural - rendered first (behind) */}
+      <For each={hierarchyEdges()}>
         {(edge) => {
-          const { waypoints, type } = edge;
+          const { waypoints } = edge;
           if (waypoints.length < 2) return null;
 
-          // Build SVG path through all waypoints
           const pathD = waypoints
             .map((pt, i) => `${i === 0 ? 'M' : 'L'} ${pt[0]} ${pt[1]}`)
             .join(' ');
 
-          // Styling based on relationship type
-          const isValidates = type === 'validates';
+          return (
+            <path
+              d={pathD}
+              fill="none"
+              stroke="var(--edge-hierarchy)"
+              stroke-width="1"
+              stroke-dasharray="2 3"
+              stroke-linecap="round"
+              opacity="0.4"
+            />
+          );
+        }}
+      </For>
 
-          // BlockedBy: terra/red lines (task depends on task)
-          // Validates: sage/green lines (eval validates task)
+      {/* Dependency edges: blockedBy and validates - rendered on top */}
+      <For each={dependencyEdges()}>
+        {(edge) => {
+          const { waypoints, type } = edge;
+          if (waypoints.length < 2) return null;
+
+          const pathD = waypoints
+            .map((pt, i) => `${i === 0 ? 'M' : 'L'} ${pt[0]} ${pt[1]}`)
+            .join(' ');
+
+          const isValidates = type === 'validates';
+          const isBlocked = type === 'blockedBy';
+
+          // BlockedBy: terra/red lines (task depends on task) - with arrowhead
+          // Validates: sage/green lines (eval validates task) - with arrowhead
           const strokeColor = isValidates
             ? 'var(--edge-validates)'
             : 'var(--edge-blocked-by)';
           const strokeWidth = isValidates ? 1 : 1.25;
+          const markerId = isValidates ? 'url(#arrowhead-validates)' : 'url(#arrowhead-blocked)';
 
           return (
             <path
@@ -411,6 +490,7 @@ const DependencyConnectors: Component<{
               fill="none"
               stroke={strokeColor}
               stroke-width={strokeWidth}
+              marker-end={markerId}
             />
           );
         }}
@@ -497,6 +577,7 @@ function buildLiveTreeFromDraft(
 export const SpecBoard: Component = () => {
   const project = useProject();
   const delta = useDelta();
+  const route = useRoute();
 
   // Selection state
   const [selectedNodeId, setSelectedNodeId] = createSignal<string | null>(null);
@@ -511,6 +592,12 @@ export const SpecBoard: Component = () => {
 
   // Delivery dialog state
   const [showDeliveryDialog, setShowDeliveryDialog] = createSignal(false);
+
+  // IDE loading state
+  const [ideLoading, setIdeLoading] = createSignal(false);
+
+  // Fork route dialog state
+  const [showForkDialog, setShowForkDialog] = createSignal(false);
 
   // New node prompt
   const [showNewPrompt, setShowNewPrompt] = createSignal(false);
@@ -537,17 +624,14 @@ export const SpecBoard: Component = () => {
   const [activePanSide, setActivePanSide] = createSignal<'draft' | 'live' | null>(null);
   let canvasRef: HTMLDivElement | undefined;
 
-  // Worker state
-  const [workers, setWorkers] = createSignal<WorkerDisplay[]>([]);
-  const [selectedWorker, setSelectedWorker] = createSignal<WorkerDisplay | null>(null);
-  const [hoveredWorker, setHoveredWorker] = createSignal<WorkerDisplay | null>(null);
-  const [workerPopoverPos, setWorkerPopoverPos] = createSignal<{ x: number; y: number } | null>(null);
-  let workerScrollRef: HTMLDivElement | undefined;
-  let flockPillRef: HTMLDivElement | undefined;
 
   // Live task filter: controls which nodes are visible in the live tree
   // 'spec-tasks' = tasks from the spec, 'worker-tasks' = worker-added tasks, 'deleted-nodes' = deleted nodes
   const [liveFilters, setLiveFilters] = createSignal<string[]>(['spec-tasks', 'worker-tasks']);
+
+  // Granularity filter: controls depth level of live tree
+  // 'all' = show all nodes, '2' = root + immediate children, '1' = root nodes only
+  const [granularity, setGranularity] = createSignal<'all' | '2' | '1'>('all');
 
   // Build live tree with project hierarchy from draft (project nodes are UI-only)
   const liveTreeWithProjects = createMemo(() => {
@@ -569,7 +653,7 @@ export const SpecBoard: Component = () => {
     return ids;
   });
 
-  // Filter live tree based on selected filters
+  // Filter live tree based on selected filters and granularity
   const filteredLiveTree = createMemo(() => {
     const trees = liveTreeWithProjects();
     const filters = liveFilters();
@@ -577,17 +661,20 @@ export const SpecBoard: Component = () => {
     const showWorkerTasks = filters.includes('worker-tasks');
     const showDeletedNodes = filters.includes('deleted-nodes');
     const draftIds = draftNodeIds();
+    const maxDepth = granularity() === 'all' ? Infinity : granularity() === '2' ? 2 : 1;
 
-    // Filter recursively based on node type
-    const filterTree = (node: LiveNodeTree): LiveNodeTree | null => {
+    // Filter recursively based on node type and depth
+    const filterTree = (node: LiveNodeTree, depth: number = 1): LiveNodeTree | null => {
       const isWorkerAdded = node.source !== 'spec';
       const isDeleted = node.source === 'spec' && !draftIds.has(node.id);
       const isSpecTask = node.source === 'spec' && draftIds.has(node.id);
 
-      // First, recurse into children
-      const filteredChildren = node.children
-        .map(filterTree)
-        .filter((n): n is LiveNodeTree => n !== null);
+      // Granularity: don't recurse beyond maxDepth
+      const filteredChildren = depth < maxDepth
+        ? node.children
+            .map((c) => filterTree(c, depth + 1))
+            .filter((n): n is LiveNodeTree => n !== null)
+        : [];
 
       // Determine if this node should be shown
       let shouldShow = false;
@@ -602,7 +689,7 @@ export const SpecBoard: Component = () => {
       return null;
     };
 
-    return trees.map(filterTree).filter((n): n is LiveNodeTree => n !== null);
+    return trees.map((t) => filterTree(t, 1)).filter((n): n is LiveNodeTree => n !== null);
   });
 
   // Layout state (computed via ELK.js in frontend)
@@ -771,58 +858,6 @@ export const SpecBoard: Component = () => {
   // Check if we have a live tree (post-dispatch)
   const hasLiveTree = () => liveTreeWithProjects().length > 0;
 
-  // Compute effective run status from live tree
-  const liveRunStatus = createMemo(() => {
-    // Guard: ensure we have a selected project before accessing delta state
-    if (!project.selectedProject()) return null;
-
-    const run = delta.projectRun();
-    if (!run) return null;
-
-    // Check if any live node is working (use synthesized tree with projects)
-    const liveNodes = flattenLiveTree(liveTreeWithProjects());
-    const hasWorkingNode = liveNodes.some(n => n.status === 'working');
-
-    if (hasWorkingNode) return 'working';
-    if (run.status === 'failed') return 'failed';
-    if (run.status === 'paused') return 'paused';
-
-    // All nodes complete (done, validated, or awaiting_eval) - show done
-    const allComplete = liveNodes.every(n => n.status === 'done' || n.status === 'validated' || n.status === 'awaiting_eval');
-    if (allComplete && liveNodes.length > 0) return 'done';
-
-    // Run is working but no nodes active yet - workers starting up
-    // Only show "starting" if ALL nodes are still pending (no work started yet)
-    const allPending = liveNodes.every(n => n.status === 'pending');
-    if (run.status === 'working' && liveNodes.length > 0 && allPending) return 'starting';
-
-    return 'idle';
-  });
-
-  // Fetch workers when a project run is active
-  createEffect(() => {
-    const run = delta.projectRun();
-    if (!run) {
-      setWorkers([]);
-      return;
-    }
-
-    const fetchWorkers = async () => {
-      try {
-        const result = await invoke<WorkerDisplay[]>('get_workers', { runName: run.runName });
-        setWorkers(result);
-      } catch (e) {
-        console.warn('Failed to fetch workers:', e);
-      }
-    };
-
-    // Initial fetch
-    fetchWorkers();
-
-    // Poll every 2 seconds while run is active
-    const interval = setInterval(fetchWorkers, 2000);
-    onCleanup(() => clearInterval(interval));
-  });
 
   // Layout constants
   const SECTION_GAP = 16;     // Gap between sections (horizontal)
@@ -975,17 +1010,28 @@ export const SpecBoard: Component = () => {
     await delta.dispatch();
   };
 
-  const handleAttachWorker = () => {
-    const worker = selectedWorker();
+  const handleOpenInIde = async () => {
     const run = delta.projectRun();
-    if (!worker || !run) return;
+    if (!run || ideLoading()) return;
 
-    // Dispatch event to open WorkerOutputViewer for spectating
-    window.dispatchEvent(new CustomEvent('show-worker-output', {
-      detail: { runName: run.runName, workerName: worker.name }
-    }));
-    setSelectedWorker(null);
+    setIdeLoading(true);
+    try {
+      const result = await invoke<{
+        success: boolean;
+        ideUsed: string;
+        pathOpened: string;
+        wasDownloaded: boolean;
+      }>('open_in_ide', { runName: run.runName });
+      if (result.success) {
+        window.toast?.success(`Opened in ${result.ideUsed}`);
+      }
+    } catch (e) {
+      window.toast?.error(`Failed to open IDE: ${e}`);
+    } finally {
+      setIdeLoading(false);
+    }
   };
+
 
   // Keyboard shortcuts
   createEffect(() => {
@@ -994,8 +1040,7 @@ export const SpecBoard: Component = () => {
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
       if (e.key === 'Escape') {
-        if (selectedWorker()) setSelectedWorker(null);
-        else if (editingNode()) setEditingNode(null);
+        if (editingNode()) setEditingNode(null);
         else if (showNewPrompt()) setShowNewPrompt(false);
         else if (contextMenu()) hideContextMenu();
       }
@@ -1003,6 +1048,26 @@ export const SpecBoard: Component = () => {
 
     document.addEventListener('keydown', handler);
     onCleanup(() => document.removeEventListener('keydown', handler));
+  });
+
+  // Listen for radial menu actions
+  createEffect(() => {
+    const handleRadialDispatch = () => handleDispatch();
+    const handleRadialDeliver = () => setShowDeliveryDialog(true);
+    const handleRadialOpenIde = () => handleOpenInIde();
+    const handleOpenForkDialog = () => setShowForkDialog(true);
+
+    window.addEventListener('radial-dispatch', handleRadialDispatch);
+    window.addEventListener('radial-deliver', handleRadialDeliver);
+    window.addEventListener('radial-open-ide', handleRadialOpenIde);
+    window.addEventListener('open-fork-dialog', handleOpenForkDialog);
+
+    onCleanup(() => {
+      window.removeEventListener('radial-dispatch', handleRadialDispatch);
+      window.removeEventListener('radial-deliver', handleRadialDeliver);
+      window.removeEventListener('radial-open-ide', handleRadialOpenIde);
+      window.removeEventListener('open-fork-dialog', handleOpenForkDialog);
+    });
   });
 
   // Detect which side the cursor is over
@@ -1162,13 +1227,62 @@ export const SpecBoard: Component = () => {
     setActivePanSide(null);
   };
 
-  const resetView = () => {
+  // Switch view and reset zoom/pan for clean centered view
+  const switchView = (view: 'draft' | 'live' | 'both') => {
+    setFocusedView(view);
     setDraftZoom(1);
     setLiveZoom(1);
-    setDraftPan({ x: 0, y: 0 });
-    setLivePan({ x: 0, y: 0 });
-    setFocusedView('both');
+
+    // Wait for DOM to update with new panel sizes, then center trees
+    requestAnimationFrame(() => {
+      // Center draft tree
+      if (view === 'draft' || view === 'both') {
+        const draftSection = document.querySelector('.draft-section');
+        if (draftSection) {
+          const rect = draftSection.getBoundingClientRect();
+          const layout = draftLayout();
+          // Center horizontally: (panelWidth - treeWidth) / 2 - TREE_LEFT_MARGIN
+          const centerX = Math.max(0, (rect.width - layout.width) / 2 - TREE_LEFT_MARGIN);
+          setDraftPan({ x: centerX, y: 0 });
+        } else {
+          setDraftPan({ x: 0, y: 0 });
+        }
+      }
+
+      // Center live tree
+      if (view === 'live' || view === 'both') {
+        const liveSection = document.querySelector('.live-section');
+        if (liveSection) {
+          const rect = liveSection.getBoundingClientRect();
+          const layout = liveLayout();
+          const centerX = Math.max(0, (rect.width - layout.width) / 2 - TREE_LEFT_MARGIN);
+          setLivePan({ x: centerX, y: 0 });
+        } else {
+          setLivePan({ x: 0, y: 0 });
+        }
+      }
+    });
   };
+
+  // Keyboard shortcuts for view switching (d=Draft, l=Live, b=Both)
+  createEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+
+      const key = e.key.toLowerCase();
+      if (key === 'd') {
+        switchView('draft');
+      } else if (key === 'l' && hasLiveTree()) {
+        switchView('live');
+      } else if (key === 'b' && hasLiveTree()) {
+        switchView('both');
+      }
+    };
+
+    document.addEventListener('keydown', handler);
+    onCleanup(() => document.removeEventListener('keydown', handler));
+  });
 
   // ==========================================================================
   // Render
@@ -1219,273 +1333,17 @@ export const SpecBoard: Component = () => {
 
   return (
     <Show when={project.selectedProject()} fallback={<NoProjectSelected />}>
-      <div class="flex-1 flex overflow-hidden">
+      <div class="flex-1 flex flex-col overflow-hidden">
+        {/* Canvas Toolbar - workers, status, live tree filters */}
+        <CanvasToolbar
+          granularity={granularity}
+          setGranularity={setGranularity}
+          liveFilters={liveFilters}
+          setLiveFilters={setLiveFilters}
+          hasLiveTree={hasLiveTree()}
+        />
+
         <div class="flex-1 flex flex-col overflow-hidden bg-pasture-900">
-        {/* Header - minimal */}
-        <div
-          class="flex items-center justify-between px-3 py-2"
-          style={{ 'border-bottom': '1px solid rgba(51, 51, 51, 0.5)' }}
-        >
-          {/* Left side: empty for balance */}
-          <div class="flex-1" />
-
-          {/* Center: Flock Pill with integrated Sheepfold */}
-          <Show when={workers().length > 0}>
-            <div
-              ref={flockPillRef}
-              class="relative flex items-center gap-2 px-2.5 py-1.5 rounded-full"
-              style={{
-                background: 'rgba(36, 36, 36, 0.5)',
-                border: '1px solid rgba(64, 64, 64, 0.4)',
-              }}
-            >
-              {/* Meadow button (group chat) */}
-              <button
-                onClick={() => {
-                  project.setActiveThread('meadow');
-                  project.setSheepfoldOpen(true);
-                }}
-                class="relative flex items-center justify-center w-7 h-7 rounded-full transition-all hover:scale-110"
-                style={{
-                  background: project.sheepfoldOpen() && project.activeThread() === 'meadow'
-                    ? 'rgba(212, 165, 116, 0.25)'
-                    : 'rgba(64, 64, 64, 0.4)',
-                  border: project.sheepfoldOpen() && project.activeThread() === 'meadow'
-                    ? '1px solid rgba(212, 165, 116, 0.4)'
-                    : '1px solid transparent',
-                }}
-                title="Meadow - Group chat"
-              >
-                <Icon name="users" class="w-3.5 h-3.5 text-wool-400" />
-                {/* Unread badge on Meadow */}
-                <Show when={project.projectUnreadCount() > 0}>
-                  <span
-                    class="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold flex items-center justify-center"
-                    style={{ background: 'var(--amber-500)', color: 'var(--pasture-900)' }}
-                  >
-                    {project.projectUnreadCount() > 99 ? '99+' : project.projectUnreadCount()}
-                  </span>
-                </Show>
-              </button>
-
-              {/* Divider */}
-              <div class="w-px h-5 bg-pasture-600/50" />
-
-              {/* Flock label */}
-              <span class="text-[9px] text-wool-500 font-medium uppercase tracking-wider">
-                Flock
-              </span>
-
-              {/* Worker avatars carousel */}
-              <div
-                ref={workerScrollRef}
-                class="flex items-center gap-1.5 overflow-x-auto scrollbar-none"
-                style={{ 'max-width': 'min(280px, 35vw)' }}
-              >
-                <For each={workers()}>
-                  {(worker) => {
-                    const isWorking = () => worker.status === 'working';
-                    const isError = () => worker.status === 'error';
-                    const isHitl = () => worker.hitlWaiting;
-
-                    const handleMouseEnter = (e: MouseEvent) => {
-                      const btn = e.currentTarget as HTMLElement;
-                      const rect = btn.getBoundingClientRect();
-                      setWorkerPopoverPos({ x: rect.left + rect.width / 2, y: rect.bottom + 8 });
-                      setHoveredWorker(worker);
-                    };
-
-                    const handleMouseLeave = () => {
-                      // Delay to allow moving to popover
-                      setTimeout(() => {
-                        const popover = document.querySelector('.worker-hover-popover');
-                        if (!popover?.matches(':hover')) {
-                          setHoveredWorker(null);
-                        }
-                      }, 100);
-                    };
-
-                    return (
-                      <button
-                        onMouseEnter={handleMouseEnter}
-                        onMouseLeave={handleMouseLeave}
-                        onClick={() => setSelectedWorker(worker)}
-                        class="relative flex-shrink-0 rounded-full transition-all hover:scale-110 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
-                        style={{
-                          width: '32px',
-                          height: '32px',
-                          'box-shadow': isWorking()
-                            ? '0 0 12px rgba(212, 165, 116, 0.5)'
-                            : isError()
-                            ? '0 0 10px rgba(196, 92, 74, 0.5)'
-                            : isHitl()
-                            ? '0 0 10px rgba(201, 162, 39, 0.5)'
-                            : undefined,
-                        }}
-                        title={worker.name}
-                      >
-                        <SheepAvatar
-                          config={worker.sheepConfig}
-                          size={32}
-                          status={worker.status}
-                          class="w-full h-full"
-                        />
-                        {/* HITL indicator dot */}
-                        <Show when={isHitl()}>
-                          <div
-                            class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full animate-pulse"
-                            style={{ background: 'var(--golden)' }}
-                          />
-                        </Show>
-                      </button>
-                    );
-                  }}
-                </For>
-              </div>
-            </div>
-          </Show>
-
-          {/* Worker Hover Popover */}
-          <Show when={hoveredWorker() && workerPopoverPos()}>
-            <div
-              class="worker-hover-popover fixed z-50 rounded-lg shadow-xl"
-              style={{
-                left: `${workerPopoverPos()!.x}px`,
-                top: `${workerPopoverPos()!.y}px`,
-                transform: 'translateX(-50%)',
-                background: 'linear-gradient(180deg, #2d2d2d 0%, #262626 100%)',
-                border: '1px solid rgba(64, 64, 64, 0.6)',
-                'box-shadow': '0 8px 24px rgba(0,0,0,0.4)',
-              }}
-              onMouseLeave={() => setHoveredWorker(null)}
-            >
-              {/* Arrow */}
-              <div
-                class="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 rotate-45"
-                style={{
-                  background: '#2d2d2d',
-                  border: '1px solid rgba(64, 64, 64, 0.6)',
-                  'border-bottom': 'none',
-                  'border-right': 'none',
-                }}
-              />
-              <div class="relative px-3 py-2.5">
-                {/* Worker name */}
-                <p class="text-xs font-medium text-wool-200 text-center mb-2">
-                  {hoveredWorker()!.name}
-                </p>
-                {/* Quick action buttons */}
-                <div class="flex items-center gap-1.5">
-                  <button
-                    onClick={() => {
-                      project.openWorkerDM(hoveredWorker()!.name);
-                      setHoveredWorker(null);
-                    }}
-                    class="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[10px] font-medium transition-colors"
-                    style={{
-                      background: 'rgba(212, 165, 116, 0.15)',
-                      border: '1px solid rgba(212, 165, 116, 0.25)',
-                      color: 'var(--amber-400)',
-                    }}
-                  >
-                    <Icon name="message-circle" class="w-3 h-3" />
-                    Message
-                  </button>
-                  <button
-                    onClick={() => {
-                      const worker = hoveredWorker();
-                      const run = delta.projectRun();
-                      if (worker && run) {
-                        window.dispatchEvent(new CustomEvent('show-worker-output', {
-                          detail: { runName: run.runName, workerName: worker.name }
-                        }));
-                      }
-                      setHoveredWorker(null);
-                    }}
-                    class="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[10px] font-medium transition-colors hover:bg-pasture-700"
-                    style={{
-                      background: 'rgba(64, 64, 64, 0.4)',
-                      color: 'var(--wool-400)',
-                    }}
-                  >
-                    <Icon name="eye" class="w-3 h-3" />
-                    Spectate
-                  </button>
-                </div>
-              </div>
-            </div>
-          </Show>
-
-          {/* Right side: Action buttons only */}
-          <div class="flex-1 flex items-center justify-end gap-2">
-            {/* Dispatch button */}
-            <button
-              onClick={handleDispatch}
-              disabled={!delta.hasDiff() || delta.dispatchPending()}
-              class="px-2.5 py-1 rounded text-[11px] font-medium disabled:opacity-30 disabled:cursor-not-allowed"
-              style={{
-                background: delta.hasDiff() ? 'rgba(212, 165, 116, 0.2)' : 'rgba(36, 36, 36, 0.5)',
-                border: delta.hasDiff() ? '1px solid rgba(212, 165, 116, 0.35)' : '1px solid rgba(51, 51, 51, 0.4)',
-                color: delta.hasDiff() ? 'var(--amber-300)' : 'var(--wool-600)',
-              }}
-            >
-              {delta.dispatchPending() ? 'Dispatching...' : 'Dispatch'}
-            </button>
-
-            {/* Deliver button - shows after dispatch, when work is done */}
-            <Show when={hasLiveTree() && !delta.hasDiff() && liveRunStatus() === 'done'}>
-              <button
-                onClick={() => setShowDeliveryDialog(true)}
-                disabled={delta.deliveryPending()}
-                class="px-2.5 py-1 rounded text-[11px] font-medium disabled:opacity-30"
-                style={{
-                  background: 'rgba(125, 153, 112, 0.15)',
-                  color: 'var(--sage)',
-                  border: '1px solid rgba(125, 153, 112, 0.3)',
-                }}
-              >
-                <Icon name="git-branch" class="w-3 h-3 mr-1 inline" />
-                {delta.deliveryPending() ? 'Delivering...' : 'Deliver'}
-              </button>
-            </Show>
-
-            {/* Delivery status badge - shows when delivery is active */}
-            <Show when={delta.currentDelivery()}>
-              <button
-                onClick={() => setShowDeliveryDialog(true)}
-                class="flex items-center gap-1 px-2 py-0.5 rounded text-[10px]"
-                style={{
-                  background:
-                    delta.currentDelivery()?.status === 'pushed' || delta.currentDelivery()?.status === 'pr_open'
-                      ? 'rgba(56, 189, 248, 0.1)'
-                      : delta.currentDelivery()?.status === 'merged'
-                      ? 'rgba(125, 153, 112, 0.1)'
-                      : delta.currentDelivery()?.status === 'failed'
-                      ? 'rgba(196, 92, 74, 0.1)'
-                      : 'rgba(212, 165, 116, 0.1)',
-                  color:
-                    delta.currentDelivery()?.status === 'pushed' || delta.currentDelivery()?.status === 'pr_open'
-                      ? 'var(--sky-400)'
-                      : delta.currentDelivery()?.status === 'merged'
-                      ? 'var(--sage)'
-                      : delta.currentDelivery()?.status === 'failed'
-                      ? 'var(--terra)'
-                      : 'var(--amber-400)',
-                }}
-              >
-                <Show when={delta.currentDelivery()?.prNumber}>
-                  <Icon name="git-pull-request" class="w-3 h-3" />
-                  <span>#{delta.currentDelivery()?.prNumber}</span>
-                </Show>
-                <Show when={!delta.currentDelivery()?.prNumber}>
-                  <Icon name="git-branch" class="w-3 h-3" />
-                  <span>{delta.currentDelivery()?.status}</span>
-                </Show>
-              </button>
-            </Show>
-          </div>
-        </div>
-
         {/* Canvas Area with Pan/Zoom */}
         <div
           ref={canvasRef}
@@ -1503,20 +1361,68 @@ export const SpecBoard: Component = () => {
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
         >
-          {/* Reset view button */}
-          <div class="absolute bottom-3 right-3 z-20">
+          {/* Top-right: View controls - Draft/Live/Both */}
+          <div
+            class="absolute top-3 right-3 z-20 flex items-center gap-0.5 p-1 rounded-lg"
+            style={{
+              background: 'rgba(30, 30, 30, 0.9)',
+              border: '1px solid rgba(64, 64, 64, 0.5)',
+              'box-shadow': '0 2px 8px rgba(0,0,0,0.3)',
+            }}
+          >
+            {/* Draft button */}
             <button
-              onClick={resetView}
-              class="flex items-center gap-1.5 px-2 py-1 rounded text-wool-400 hover:text-wool-200"
-              style={{ background: 'rgba(30, 30, 30, 0.8)', border: '1px solid rgba(64, 64, 64, 0.4)' }}
-              title="Reset view (zoom & pan)"
+              onClick={() => switchView('draft')}
+              class="px-2.5 py-1 rounded text-[10px] font-medium transition-all"
+              style={{
+                background: focusedView() === 'draft' ? 'rgba(212, 165, 116, 0.25)' : 'transparent',
+                color: focusedView() === 'draft' ? 'var(--amber-400)' : 'var(--wool-500)',
+              }}
+              title="Draft view (D)"
             >
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
-              </svg>
-              <span class="text-[10px]">Reset</span>
+              Draft
             </button>
+
+            {/* Live button - only show when live tree exists */}
+            <Show when={hasLiveTree()}>
+              <button
+                onClick={() => switchView('live')}
+                class="px-2.5 py-1 rounded text-[10px] font-medium transition-all"
+                style={{
+                  background: focusedView() === 'live' ? 'rgba(138, 133, 128, 0.2)' : 'transparent',
+                  color: focusedView() === 'live' ? 'var(--wool-300)' : 'var(--wool-500)',
+                }}
+                title="Live view (L)"
+              >
+                Live
+              </button>
+
+              {/* Both button */}
+              <button
+                onClick={() => switchView('both')}
+                class="px-2.5 py-1 rounded text-[10px] font-medium transition-all"
+                style={{
+                  background: focusedView() === 'both' ? 'rgba(138, 133, 128, 0.2)' : 'transparent',
+                  color: focusedView() === 'both' ? 'var(--wool-300)' : 'var(--wool-500)',
+                }}
+                title="Both views (B)"
+              >
+                Both
+              </button>
+            </Show>
           </div>
+
+          {/* Bottom-right: Zoom indicator */}
+          <Show when={hasLiveTree()}>
+            <div
+              class="absolute bottom-3 right-3 z-20 flex items-center gap-2 px-2.5 py-1 rounded text-[10px] font-medium"
+              style={{ background: 'rgba(30, 30, 30, 0.85)', border: '1px solid rgba(64, 64, 64, 0.4)' }}
+            >
+              <span style={{ color: 'var(--amber-600)' }}>{Math.round(draftZoom() * 100)}%</span>
+              <span class="text-wool-700">·</span>
+              <span class="text-wool-500">{Math.round(liveZoom() * 100)}%</span>
+            </div>
+          </Show>
 
           <Show
             when={delta.draftTree().length > 0 || liveTreeWithProjects().length > 0}
@@ -1543,37 +1449,6 @@ export const SpecBoard: Component = () => {
                     background: hasLiveTree() ? 'rgba(36, 34, 30, 0.3)' : 'transparent',
                   }}
                 >
-                  {/* Section label - only show when split view (live tree exists) */}
-                  <Show when={hasLiveTree()}>
-                    <div
-                      class="absolute z-10 text-[9px] font-medium uppercase tracking-wider px-2 py-0.5 rounded"
-                      style={{
-                        left: '8px',
-                        top: '6px',
-                        background: 'rgba(30, 30, 30, 0.8)',
-                      }}
-                    >
-                      <button
-                        onClick={() => setFocusedView(focusedView() === 'draft' ? 'both' : 'draft')}
-                        class="flex items-center gap-1.5 hover:opacity-80"
-                        title={focusedView() === 'draft' ? 'Show both' : 'Focus Draft'}
-                      >
-                        <span style={{ color: 'var(--amber-600)' }}>Draft</span>
-                        <span class="text-wool-600 text-[8px]">{Math.round(draftZoom() * 100)}%</span>
-                        <Show when={focusedView() !== 'draft'}>
-                          <svg class="w-2.5 h-2.5 text-wool-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-                          </svg>
-                        </Show>
-                        <Show when={focusedView() === 'draft'}>
-                          <svg class="w-2.5 h-2.5 text-wool-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
-                          </svg>
-                        </Show>
-                      </button>
-                    </div>
-                  </Show>
-
                   {/* Tree content - centered vertically, root at left */}
                   <div
                     class="absolute"
@@ -1624,99 +1499,6 @@ export const SpecBoard: Component = () => {
                     background: 'rgba(30, 30, 30, 0.3)',
                   }}
                 >
-                  {/* Section toolbar - full width */}
-                  <div
-                    class="absolute z-10 left-2 right-2 top-1.5 flex items-center justify-between px-2 py-1 rounded"
-                    style={{ background: 'rgba(30, 30, 30, 0.85)' }}
-                  >
-                    {/* Left: Label + status + focus */}
-                    <button
-                      onClick={() => setFocusedView(focusedView() === 'live' ? 'both' : 'live')}
-                      class="flex items-center gap-1.5 text-[9px] font-medium uppercase tracking-wider hover:opacity-80"
-                      title={focusedView() === 'live' ? 'Show both' : 'Focus Live'}
-                    >
-                      <span style={{ color: 'var(--wool-500)' }}>Live</span>
-                      <span class="text-wool-600 text-[8px] normal-case">{Math.round(liveZoom() * 100)}%</span>
-                      <Show when={liveRunStatus()}>
-                        <span style={{ color: 'var(--wool-600)' }}>·</span>
-                        <span
-                          class={(liveRunStatus() === 'working' || liveRunStatus() === 'starting') ? 'animate-pulse' : ''}
-                          style={{
-                            color: liveRunStatus() === 'working' ? 'var(--amber-400)'
-                              : liveRunStatus() === 'starting' ? 'var(--amber-300)'
-                              : liveRunStatus() === 'done' ? 'var(--sage)'
-                              : liveRunStatus() === 'failed' ? 'var(--terra)'
-                              : liveRunStatus() === 'paused' ? 'var(--golden)'
-                              : 'var(--wool-600)',
-                          }}
-                        >
-                          {liveRunStatus() === 'starting' ? 'starting...' : liveRunStatus()}
-                        </span>
-                      </Show>
-                      <Show when={focusedView() !== 'live'}>
-                        <svg class="w-2.5 h-2.5 text-wool-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-                        </svg>
-                      </Show>
-                      <Show when={focusedView() === 'live'}>
-                        <svg class="w-2.5 h-2.5 text-wool-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
-                        </svg>
-                      </Show>
-                    </button>
-
-                    {/* Right: View controls */}
-                    <div class="flex items-center gap-2">
-                      {/* Diff summary */}
-                      <Show when={delta.hasDiff()}>
-                        <div class="flex items-center gap-1.5 px-1.5 py-0.5 rounded" style={{ background: 'rgba(36, 36, 36, 0.6)' }}>
-                          <Show when={(delta.diff()?.newNodes.length || 0) > 0}>
-                            <span class="text-[10px] text-sage font-medium">+{delta.diff()?.newNodes.length}</span>
-                          </Show>
-                          <Show when={(delta.diff()?.modifiedNodes.length || 0) > 0}>
-                            <span class="text-[10px] text-amber-400 font-medium">~{delta.diff()?.modifiedNodes.length}</span>
-                          </Show>
-                          <Show when={(delta.diff()?.deletedNodes.length || 0) > 0}>
-                            <span class="text-[10px] text-terra font-medium">-{delta.diff()?.deletedNodes.length}</span>
-                          </Show>
-                        </div>
-                      </Show>
-
-                      {/* Delta toggle */}
-                      <button
-                        onClick={() => delta.toggleDeltaIndicators()}
-                        class="p-1 rounded"
-                        style={{
-                          background: delta.showDeltaIndicators() ? 'rgba(212, 165, 116, 0.15)' : 'transparent',
-                          color: delta.showDeltaIndicators() ? 'var(--amber-400)' : 'var(--wool-600)',
-                        }}
-                        title="Toggle delta indicators"
-                      >
-                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width="1.5"
-                            d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-                          />
-                        </svg>
-                      </button>
-
-                      {/* Views filter */}
-                      <MultiSelectDropdown
-                        value={liveFilters()}
-                        options={[
-                          { value: 'spec-tasks', label: 'Spec Tasks' },
-                          { value: 'worker-tasks', label: 'Worker Tasks' },
-                          { value: 'deleted-nodes', label: 'Deleted Nodes' },
-                        ]}
-                        onChange={setLiveFilters}
-                        label="Views"
-                        class="w-28 text-[10px]"
-                      />
-                    </div>
-                  </div>
-
                   {/* Tree content - centered vertically, root at left */}
                   <div
                     class="absolute"
@@ -2146,22 +1928,6 @@ export const SpecBoard: Component = () => {
           }}
         </Show>
 
-        {/* Worker Detail Modal */}
-        <Show when={selectedWorker()}>
-          {(worker) => (
-            <WorkerDetailModal
-              worker={worker()}
-              metricsAvailable={true}
-              runName={delta.projectRun()?.runName || ''}
-              onClose={() => setSelectedWorker(null)}
-              onAttach={handleAttachWorker}
-              onOpenDM={() => {
-                project.openWorkerDM(worker().name);
-                setSelectedWorker(null);
-              }}
-            />
-          )}
-        </Show>
 
         {/* Loading overlay */}
         <Show when={delta.loading()}>
@@ -2174,14 +1940,6 @@ export const SpecBoard: Component = () => {
         </Show>
         </div>
 
-        {/* Sheepfold Popover */}
-        <Show when={project.sheepfoldOpen()}>
-          <SheepfoldPopover
-            workers={workers()}
-            anchorRef={flockPillRef}
-            onClose={() => project.setSheepfoldOpen(false)}
-          />
-        </Show>
 
         {/* Delivery Dialog */}
         <Show when={showDeliveryDialog()}>
@@ -2189,6 +1947,11 @@ export const SpecBoard: Component = () => {
             onClose={() => setShowDeliveryDialog(false)}
             defaultBranch="main"
           />
+        </Show>
+
+        {/* Fork Route Dialog */}
+        <Show when={showForkDialog()}>
+          <ForkRouteDialog onClose={() => setShowForkDialog(false)} />
         </Show>
       </div>
     </Show>

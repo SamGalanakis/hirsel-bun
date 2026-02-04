@@ -5,6 +5,16 @@
 //! to interact with run state without knowing if they're accessing SQLite directly
 //! (local workers) or via HTTP (remote workers through SSH tunnels).
 //!
+//! ## Messaging Architecture
+//!
+//! Messages are stored at the **project level** in the global database (`project_messages` table).
+//! This allows the Sheepfold UI and workers to share the same messaging system:
+//! - `"meadow"` thread = group chat (all workers + human)
+//! - Worker name threads (e.g., `"willow-coopworth"`) = DMs
+//!
+//! Workers use `"user"` as a semantic alias that maps to their own name (DM with human).
+//! Workers use `"group"` as a semantic alias that maps to `"meadow"` (group chat).
+//!
 //! ## StateAccess vs Orchestrator
 //!
 //! These two traits serve different purposes:
@@ -12,7 +22,7 @@
 //! - **`StateAccess`** (this module): Worker-side, per-run operations during execution
 //!   - Task claiming and completion
 //!   - Worker heartbeats and status updates
-//!   - Message sending between workers
+//!   - Message sending between workers (via project messages)
 //!   - Reading/writing run configuration
 //!
 //! - **`Orchestrator`** (see `orchestrator` module): Coordinator-side, cross-run management
@@ -26,7 +36,7 @@
 
 use async_trait::async_trait;
 
-use crate::core::state::{Eval, Message, Status, TimeInfo, Worker, WorkerStatus, WorkerUpdate};
+use crate::core::state::{Eval, Status, TimeInfo, Worker, WorkerStatus, WorkerUpdate};
 
 /// Error type for state access operations
 #[derive(Debug, thiserror::Error)]
@@ -92,34 +102,60 @@ pub trait StateAccess: Send {
     async fn resume_all_workers(&self) -> StateAccessResult<()>;
 
     // =========================================================================
-    // Message operations
+    // Message operations (project-level via Sheepfold)
+    //
+    // Messages are stored in the global database's project_messages table.
+    // Thread naming:
+    // - "meadow" = group chat (all workers + human)
+    // - Worker names = DMs (e.g., "willow-coopworth")
+    //
+    // Workers should use get_project_id() to get the project_id for messaging.
     // =========================================================================
 
-    async fn add_message(
+    /// Add a message to a project thread.
+    /// Thread should be "meadow" for group chat or a worker name for DM.
+    async fn add_project_message(
         &self,
+        project_id: i64,
         thread: &str,
         sender: &str,
         content: &str,
+        waiting: bool,
     ) -> StateAccessResult<i64>;
 
-    async fn get_messages(&self, thread: &str, limit: i64) -> StateAccessResult<Vec<Message>>;
-
-    async fn get_unread_messages(
+    /// Get messages from a project thread.
+    async fn get_project_messages(
         &self,
+        project_id: i64,
+        thread: &str,
+        limit: i64,
+    ) -> StateAccessResult<Vec<crate::core::ProjectMessage>>;
+
+    /// Get unread messages for a reader in a project thread.
+    async fn get_unread_project_messages(
+        &self,
+        project_id: i64,
         thread: &str,
         reader: &str,
-    ) -> StateAccessResult<Vec<Message>>;
+    ) -> StateAccessResult<Vec<crate::core::ProjectMessage>>;
 
-    async fn get_all_unread_messages(&self, reader: &str) -> StateAccessResult<Vec<Message>>;
-
-    async fn mark_messages_read(
+    /// Get all unread messages for a reader across all threads in a project.
+    async fn get_all_unread_project_messages(
         &self,
+        project_id: i64,
+        reader: &str,
+    ) -> StateAccessResult<Vec<crate::core::ProjectMessage>>;
+
+    /// Mark messages as read in a project thread.
+    async fn mark_project_messages_read(
+        &self,
+        project_id: i64,
         thread: &str,
         reader: &str,
-        up_to_id: Option<i64>,
     ) -> StateAccessResult<()>;
 
-    async fn get_threads(&self) -> StateAccessResult<Vec<String>>;
+    /// Get all thread names for a project.
+    async fn get_project_threads(&self, project_id: i64) -> StateAccessResult<Vec<String>>;
 
     // =========================================================================
     // Eval operations
@@ -382,42 +418,144 @@ impl StateAccess for SQLiteState {
         Ok(SQLiteState::resume_all_workers(self).await?)
     }
 
-    async fn add_message(
+    async fn add_project_message(
         &self,
+        project_id: i64,
         thread: &str,
         sender: &str,
         content: &str,
+        waiting: bool,
     ) -> StateAccessResult<i64> {
-        Ok(SQLiteState::add_message(self, thread, sender, content, false).await?)
+        use crate::core::ProjectMessagesStore;
+        let route_id = self.get_route_id().await.unwrap_or(0);
+        let store = ProjectMessagesStore::open()
+            .await
+            .map_err(|e| StateAccessError::Database(e.to_string()))?;
+        let msg = store
+            .add_message(project_id, route_id, thread, sender, content, waiting)
+            .await
+            .map_err(|e| StateAccessError::Database(e.to_string()))?;
+        Ok(msg.id)
     }
 
-    async fn get_messages(&self, thread: &str, limit: i64) -> StateAccessResult<Vec<Message>> {
-        Ok(SQLiteState::get_messages(self, thread, limit).await?)
-    }
-
-    async fn get_unread_messages(
+    async fn get_project_messages(
         &self,
+        project_id: i64,
+        thread: &str,
+        limit: i64,
+    ) -> StateAccessResult<Vec<crate::core::ProjectMessage>> {
+        use crate::core::ProjectMessagesStore;
+        let route_id = self.get_route_id().await.unwrap_or(0);
+        let store = ProjectMessagesStore::open()
+            .await
+            .map_err(|e| StateAccessError::Database(e.to_string()))?;
+        store
+            .get_messages(project_id, route_id, thread, Some(limit))
+            .await
+            .map_err(|e| StateAccessError::Database(e.to_string()))
+    }
+
+    async fn get_unread_project_messages(
+        &self,
+        project_id: i64,
         thread: &str,
         reader: &str,
-    ) -> StateAccessResult<Vec<Message>> {
-        Ok(SQLiteState::get_unread_messages(self, thread, reader).await?)
+    ) -> StateAccessResult<Vec<crate::core::ProjectMessage>> {
+        use crate::core::ProjectMessagesStore;
+        let route_id = self.get_route_id().await.unwrap_or(0);
+        let store = ProjectMessagesStore::open()
+            .await
+            .map_err(|e| StateAccessError::Database(e.to_string()))?;
+        // Get all messages in thread, filter to unread
+        let threads = store
+            .get_threads(project_id, route_id, reader)
+            .await
+            .map_err(|e| StateAccessError::Database(e.to_string()))?;
+
+        // Find the specific thread's last_read info
+        let thread_info = threads.iter().find(|t| t.thread == thread);
+        let unread_count = thread_info.map(|t| t.unread_count).unwrap_or(0);
+
+        if unread_count == 0 {
+            return Ok(vec![]);
+        }
+
+        // Get recent messages (unread ones)
+        let messages = store
+            .get_messages(project_id, route_id, thread, Some(unread_count))
+            .await
+            .map_err(|e| StateAccessError::Database(e.to_string()))?;
+
+        // Filter out messages from the reader themselves
+        Ok(messages
+            .into_iter()
+            .filter(|m| m.sender != reader)
+            .collect())
     }
 
-    async fn get_all_unread_messages(&self, reader: &str) -> StateAccessResult<Vec<Message>> {
-        Ok(SQLiteState::get_all_unread_messages(self, reader).await?)
-    }
-
-    async fn mark_messages_read(
+    async fn get_all_unread_project_messages(
         &self,
+        project_id: i64,
+        reader: &str,
+    ) -> StateAccessResult<Vec<crate::core::ProjectMessage>> {
+        use crate::core::ProjectMessagesStore;
+        let route_id = self.get_route_id().await.unwrap_or(0);
+        let store = ProjectMessagesStore::open()
+            .await
+            .map_err(|e| StateAccessError::Database(e.to_string()))?;
+        let threads = store
+            .get_threads(project_id, route_id, reader)
+            .await
+            .map_err(|e| StateAccessError::Database(e.to_string()))?;
+
+        let mut all_unread = Vec::new();
+        for thread_info in threads {
+            if thread_info.unread_count > 0 {
+                let messages = store
+                    .get_messages(
+                        project_id,
+                        route_id,
+                        &thread_info.thread,
+                        Some(thread_info.unread_count),
+                    )
+                    .await
+                    .map_err(|e| StateAccessError::Database(e.to_string()))?;
+                // Filter out messages from the reader themselves
+                all_unread.extend(messages.into_iter().filter(|m| m.sender != reader));
+            }
+        }
+        Ok(all_unread)
+    }
+
+    async fn mark_project_messages_read(
+        &self,
+        project_id: i64,
         thread: &str,
         reader: &str,
-        up_to_id: Option<i64>,
     ) -> StateAccessResult<()> {
-        Ok(SQLiteState::mark_messages_read(self, thread, reader, up_to_id).await?)
+        use crate::core::ProjectMessagesStore;
+        let route_id = self.get_route_id().await.unwrap_or(0);
+        let store = ProjectMessagesStore::open()
+            .await
+            .map_err(|e| StateAccessError::Database(e.to_string()))?;
+        store
+            .mark_messages_read(project_id, route_id, thread, reader)
+            .await
+            .map_err(|e| StateAccessError::Database(e.to_string()))
     }
 
-    async fn get_threads(&self) -> StateAccessResult<Vec<String>> {
-        Ok(SQLiteState::get_threads(self).await?)
+    async fn get_project_threads(&self, project_id: i64) -> StateAccessResult<Vec<String>> {
+        use crate::core::ProjectMessagesStore;
+        let route_id = self.get_route_id().await.unwrap_or(0);
+        let store = ProjectMessagesStore::open()
+            .await
+            .map_err(|e| StateAccessError::Database(e.to_string()))?;
+        // Use a dummy reader since we just want thread names
+        let threads = store
+            .get_threads(project_id, route_id, "")
+            .await
+            .map_err(|e| StateAccessError::Database(e.to_string()))?;
+        Ok(threads.into_iter().map(|t| t.thread).collect())
     }
 
     async fn start_eval(

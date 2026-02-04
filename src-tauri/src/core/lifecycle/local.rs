@@ -17,6 +17,7 @@ use crate::core::snapshot::{
     WorkerStateHandle,
 };
 use crate::core::state::{FailureReason, SQLiteState, Status, WorkerStatus, WorkerUpdate};
+use crate::core::ProjectMessagesStore;
 // Note: Workers are no longer spawned directly from the lifecycle manager.
 // The daemon handles spawning via the orchestrator, which uses the runner system.
 use std::path::PathBuf;
@@ -81,6 +82,41 @@ impl LocalLifecycleManager {
             .ok()
             .flatten()
             .map(DeltaState::new)
+    }
+
+    /// Send a system message to the group chat (meadow).
+    /// Uses project messages if the run is linked to a project.
+    async fn send_system_message(&self, message: &str) {
+        if let Ok(Some(project_id)) = self.state.get_project_id().await {
+            let route_id = self.state.get_route_id().await.unwrap_or(0);
+            if let Ok(store) = ProjectMessagesStore::open().await {
+                if let Err(e) = store
+                    .add_message(project_id, route_id, "meadow", "system", message, false)
+                    .await
+                {
+                    warn!("Failed to send system message to project: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Send a system message to a specific worker (their DM thread).
+    /// Uses project messages if the run is linked to a project.
+    async fn send_system_message_to_worker(&self, worker_name: &str, message: &str) {
+        if let Ok(Some(project_id)) = self.state.get_project_id().await {
+            let route_id = self.state.get_route_id().await.unwrap_or(0);
+            if let Ok(store) = ProjectMessagesStore::open().await {
+                if let Err(e) = store
+                    .add_message(project_id, route_id, worker_name, "system", message, false)
+                    .await
+                {
+                    warn!(
+                        "Failed to send system message to worker {}: {}",
+                        worker_name, e
+                    );
+                }
+            }
+        }
     }
 
     /// Get claimable nodes (live nodes that can be claimed).
@@ -674,17 +710,11 @@ impl LocalLifecycleManager {
         }
 
         // Announce in group chat
-        self.state
-            .add_message(
-                "group",
-                "System",
-                &format!(
-                    "New worker **{}** has joined and is assigned task **{}**.",
-                    new_name, node.id
-                ),
-                false,
-            )
-            .await?;
+        self.send_system_message(&format!(
+            "New worker **{}** has joined and is assigned task **{}**.",
+            new_name, node.id
+        ))
+        .await;
 
         info!(
             "maybe_scale_up: spawning worker {} with task {}",
@@ -1024,18 +1054,11 @@ impl LocalLifecycleManager {
                 }
 
                 // Announce in group chat
-                let _ = self
-                    .state
-                    .add_message(
-                        "group",
-                        "System",
-                        &format!(
-                            "New worker **{}** has joined and is assigned task **{}**.",
-                            new_name, node.id
-                        ),
-                        false,
-                    )
-                    .await;
+                self.send_system_message(&format!(
+                    "New worker **{}** has joined and is assigned task **{}**.",
+                    new_name, node.id
+                ))
+                .await;
 
                 actions.push(LifecycleAction::SpawnWorker {
                     worker_name: new_name.clone(),
@@ -1453,11 +1476,14 @@ impl LifecycleManager for LocalLifecycleManager {
         let is_multi_worker = workers.len() > 1;
 
         let message = "Time limit reached. Run failed.";
-        let thread = if is_multi_worker { "group" } else { "user" };
 
-        self.state
-            .add_message(thread, "System", message, false)
-            .await?;
+        // Send to group chat or individual worker DM
+        if is_multi_worker {
+            self.send_system_message(message).await;
+        } else if let Some(worker) = workers.first() {
+            self.send_system_message_to_worker(&worker.name, message)
+                .await;
+        }
 
         // Cancel any running evals
         let cancelled = self

@@ -316,6 +316,11 @@ pub struct Config {
     /// Whether to persist scribe documentation changes back to workspace on delivery (default: true)
     #[serde(default = "default_scribe_persist_docs_changes")]
     pub scribe_persist_docs_changes: bool,
+
+    /// Preferred IDE for "Open in IDE" feature
+    /// Options: "cursor", "code", "zed", "nvim"
+    #[serde(default)]
+    pub preferred_ide: Option<String>,
 }
 
 impl Default for Config {
@@ -344,6 +349,7 @@ impl Default for Config {
             service_workers: ServiceWorkersConfig::default(),
             scribe_docs_path: default_scribe_docs_path(),
             scribe_persist_docs_changes: default_scribe_persist_docs_changes(),
+            preferred_ide: None,
         }
     }
 }
@@ -470,6 +476,9 @@ impl Config {
         }
         if let Some(scribe_persist_docs_changes) = partial.scribe_persist_docs_changes {
             self.scribe_persist_docs_changes = scribe_persist_docs_changes;
+        }
+        if let Some(preferred_ide) = partial.preferred_ide {
+            self.preferred_ide = preferred_ide;
         }
     }
 

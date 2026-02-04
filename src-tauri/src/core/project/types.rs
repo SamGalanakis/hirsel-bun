@@ -31,6 +31,9 @@ pub struct Project {
     // Canvas position (for OneBoard portfolio view)
     pub x: Option<f64>,
     pub y: Option<f64>,
+
+    // Active route ID for this project
+    pub active_route_id: Option<i64>,
 }
 
 /// Request to create a new project

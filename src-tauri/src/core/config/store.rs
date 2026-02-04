@@ -76,6 +76,7 @@ pub struct PartialConfig {
     pub service_workers: Option<ServiceWorkersConfig>,
     pub scribe_docs_path: Option<String>,
     pub scribe_persist_docs_changes: Option<bool>,
+    pub preferred_ide: Option<Option<String>>,
 }
 
 /// Database-backed configuration store.
@@ -294,6 +295,13 @@ impl ConfigStore {
                 "scribe_persist_docs_changes" => {
                     partial.scribe_persist_docs_changes = Some(value == "true");
                 }
+                "preferred_ide" => {
+                    if value == "null" || value.is_empty() {
+                        partial.preferred_ide = Some(None);
+                    } else {
+                        partial.preferred_ide = Some(Some(value));
+                    }
+                }
                 _ => {
                     // Unknown key, ignore
                 }
@@ -396,6 +404,12 @@ impl ConfigStore {
             },
         )
         .await?;
+
+        // Preferred IDE
+        match &config.preferred_ide {
+            Some(ide) => self.set("preferred_ide", ide).await?,
+            None => self.set("preferred_ide", "null").await?,
+        }
 
         Ok(())
     }

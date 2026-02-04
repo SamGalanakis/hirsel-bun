@@ -42,7 +42,10 @@ CREATE TABLE IF NOT EXISTS projects (
 
     -- Canvas position (for OneBoard portfolio view)
     x REAL,
-    y REAL
+    y REAL,
+
+    -- Active route for this project
+    active_route_id INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name);
@@ -71,6 +74,8 @@ pub enum ProjectError {
     NotFound(String),
     #[error("Project already exists: {0}")]
     AlreadyExists(String),
+    #[error("Route error: {0}")]
+    Route(#[from] crate::core::route::RouteError),
 }
 
 pub type ProjectResult<T> = Result<T, ProjectError>;
@@ -142,8 +147,26 @@ impl ProjectStore {
         .execute(pool)
         .await?;
 
-        let id = result.last_insert_rowid();
-        self.get_project(id).await
+        let project_id = result.last_insert_rowid();
+
+        // Create the main route for this project
+        let route_store = crate::core::route::RouteStore::new(project_id).await?;
+        let main_route = route_store.create_main_route().await?;
+
+        // Set the active route to the main route
+        sqlx::query("UPDATE projects SET active_route_id = ? WHERE id = ?")
+            .bind(main_route.id)
+            .bind(project_id)
+            .execute(pool)
+            .await?;
+
+        // Initialize route files (docs, board.md, code directories)
+        let route_files = crate::core::route::RouteFiles::new(project_id, &main_route.name);
+        if let Err(e) = route_files.init_dirs() {
+            tracing::warn!("Failed to initialize route directories: {}", e);
+        }
+
+        self.get_project(project_id).await
     }
 
     /// Get a project by ID
@@ -154,7 +177,8 @@ impl ProjectStore {
             "SELECT id, name, created_at, updated_at,
                     starting_point_type, starting_point_path, starting_point_url, starting_point_branch,
                     worker_scale, time_limit_minutes, human_in_the_loop,
-                    docs_path, persist_docs_changes, description, target_branch, runner, x, y
+                    docs_path, persist_docs_changes, description, target_branch, runner, x, y,
+                    active_route_id
              FROM projects
              WHERE id = ?",
         )
@@ -174,7 +198,8 @@ impl ProjectStore {
             "SELECT id, name, created_at, updated_at,
                     starting_point_type, starting_point_path, starting_point_url, starting_point_branch,
                     worker_scale, time_limit_minutes, human_in_the_loop,
-                    docs_path, persist_docs_changes, description, target_branch, runner, x, y
+                    docs_path, persist_docs_changes, description, target_branch, runner, x, y,
+                    active_route_id
              FROM projects
              WHERE name = ?",
         )
@@ -196,7 +221,8 @@ impl ProjectStore {
             "SELECT id, name, created_at, updated_at,
                     starting_point_type, starting_point_path, starting_point_url, starting_point_branch,
                     worker_scale, time_limit_minutes, human_in_the_loop,
-                    docs_path, persist_docs_changes, description, target_branch, runner, x, y
+                    docs_path, persist_docs_changes, description, target_branch, runner, x, y,
+                    active_route_id
              FROM projects
              ORDER BY created_at DESC",
         )
@@ -477,6 +503,7 @@ impl ProjectStore {
             runner: row.get("runner"),
             x: row.get("x"),
             y: row.get("y"),
+            active_route_id: row.get("active_route_id"),
         })
     }
 }

@@ -30,6 +30,7 @@ pub mod draft;
 pub mod error;
 pub mod eval;
 pub mod files;
+pub mod forge;
 pub mod git;
 #[cfg(feature = "server")]
 pub mod git_http;
@@ -46,6 +47,7 @@ pub mod orchestrator;
 pub mod process;
 pub mod project;
 pub mod project_messages;
+pub mod route;
 pub mod run_manager;
 pub mod runner;
 pub mod scribe;
@@ -172,7 +174,16 @@ pub use dispatch::{
 };
 
 // Delivery service
-pub use delivery::{DeliveryError, DeliveryResult, DeliveryService, DeliveryState, PushResult};
+pub use delivery::{
+    delivery_branch_name, pr_body, pr_title, DeliveryError, DeliveryOrchestrator, DeliveryResult,
+    DeliveryState, DeliveryStatus, GitOperations, PushResult,
+};
+
+// Forge providers
+pub use forge::{
+    create_forge_for_remote, ForgeError, ForgeProvider, ForgeResult, GitHubForge,
+    MergeResult as ForgeMergeResult, PrInfo as ForgePrInfo,
+};
 
 // Board service (tree operations and agent file sync)
 pub use board::{
@@ -191,4 +202,9 @@ pub use delta::{
     DispatchResult as DeltaDispatchResult, DraftNode, DraftNodeTree, LiveNode, LiveNodeStatus,
     LiveNodeTree, ModifiedNode, NodeType, ProjectRun, ProjectRunStatus, Reference, TreeDiff,
     UpdateDraftNodeRequest,
+};
+
+// Route management
+pub use route::{
+    CreateRouteRequest, Route, RouteError, RouteFiles, RouteResult, RouteStore, RouteTree,
 };
