@@ -207,12 +207,18 @@ export const ProjectProvider: ParentComponent = (props) => {
     // Delete the project - this is the critical operation
     await invoke('delete_project', { projectId });
 
-    // Cleanup: reload projects and deselect if needed
+    // Cleanup: reload projects and handle selection
     // These shouldn't fail, but don't let cleanup errors mask successful delete
     try {
       await loadProjects();
       if (selectedProjectId() === projectId) {
-        deselectProject();
+        // Auto-select another project if any remain
+        const remaining = projects();
+        if (remaining.length > 0) {
+          selectProject(remaining[0]);
+        } else {
+          deselectProject();
+        }
       }
     } catch (e) {
       console.error('Project deleted but cleanup failed:', e);

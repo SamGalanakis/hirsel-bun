@@ -7,7 +7,10 @@ no-default-features = false
 version = 2
 # Ignore unmaintained crates (Tauri has many unmaintained transitive deps)
 unmaintained = "none"
-ignore = []
+# RUSTSEC-2023-0071: rsa timing sidechannel - no fix available, transitive dep from octocrab
+# Only used for JWT signing (GitHub API auth), not in network-observable crypto operations
+# RUSTSEC-2026-0007: bytes integer overflow - transitive dep, waiting for upstream fix
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0007"]
 
 [licenses]
 version = 2
@@ -37,11 +40,6 @@ registries = []
 # Allow local workspace crates without licenses
 [[licenses.clarify]]
 crate = "hirsel"
-expression = "MIT"
-license-files = []
-
-[[licenses.clarify]]
-crate = "tauri-plugin-mcp"
 expression = "MIT"
 license-files = []
 

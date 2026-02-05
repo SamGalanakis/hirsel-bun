@@ -110,6 +110,16 @@ impl DeltaState {
         // Propagate status up to parent
         self.propagate_parent_status(id).await?;
 
+        // Check if this is a repair task completing (source=System, parent is eval)
+        if node.source == LiveNodeSource::System {
+            if let Some(parent_id) = &node.parent_id {
+                let parent = self.get_live_node(parent_id).await?;
+                if parent.node_type == NodeType::Eval {
+                    self.handle_repair_completion(id, parent_id).await?;
+                }
+            }
+        }
+
         // Check if all live nodes are complete -> pause project run
         self.check_project_run_completion().await?;
 
@@ -229,6 +239,68 @@ impl DeltaState {
 
         // Recursively propagate to grandparent
         Box::pin(self.propagate_parent_status(&parent_id)).await
+    }
+
+    /// Handle completion of a repair task
+    ///
+    /// When a repair task (source=System, child of eval) completes:
+    /// 1. Remove blocking relationship so eval is unblocked
+    /// 2. Reset eval to pending for re-claiming
+    /// 3. Transition needs_repair tasks back to awaiting_eval
+    async fn handle_repair_completion(
+        &self,
+        repair_id: &str,
+        eval_id: &str,
+    ) -> DeltaStateResult<()> {
+        let pool = self.pool().await?;
+        let now = utc_now();
+
+        // 1. Remove blocking relationship (eval no longer blocked by repair)
+        sqlx::query(
+            "DELETE FROM live_node_blocked_by
+             WHERE node_id = ? AND blocker_id = ? AND project_id = ? AND route_id = ?",
+        )
+        .bind(eval_id)
+        .bind(repair_id)
+        .bind(self.project_id)
+        .bind(self.route_id)
+        .execute(pool)
+        .await?;
+
+        // 2. Reset eval to pending so it can be re-claimed
+        // Keep eval_result and eval_feedback for history
+        sqlx::query(
+            "UPDATE live_nodes
+             SET status = ?, claimed_by = NULL, claimed_at = NULL, updated_at = ?
+             WHERE id = ? AND project_id = ? AND route_id = ?",
+        )
+        .bind(LiveNodeStatus::Pending.as_str())
+        .bind(&now)
+        .bind(eval_id)
+        .bind(self.project_id)
+        .bind(self.route_id)
+        .execute(pool)
+        .await?;
+
+        // 3. Transition needs_repair tasks back to awaiting_eval
+        let validated_node_ids = self.get_validated_nodes(eval_id).await?;
+        for node_id in &validated_node_ids {
+            sqlx::query(
+                "UPDATE live_nodes
+                 SET status = ?, updated_at = ?
+                 WHERE id = ? AND project_id = ? AND route_id = ? AND status = ?",
+            )
+            .bind(LiveNodeStatus::AwaitingEval.as_str())
+            .bind(&now)
+            .bind(node_id)
+            .bind(self.project_id)
+            .bind(self.route_id)
+            .bind(LiveNodeStatus::NeedsRepair.as_str())
+            .execute(pool)
+            .await?;
+        }
+
+        Ok(())
     }
 
     /// Get all node IDs validated by an eval

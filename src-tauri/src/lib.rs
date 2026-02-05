@@ -583,7 +583,7 @@ pub fn run() {
 
     use std::sync::Arc;
 
-    let mut builder = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(
             tauri_plugin_log::Builder::new()
                 .filter(|metadata| {
@@ -609,16 +609,6 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }));
-
-    // Enable MCP plugin in debug builds for AI agent debugging
-    #[cfg(debug_assertions)]
-    {
-        builder = builder.plugin(tauri_plugin_mcp::init_with_config(
-            tauri_plugin_mcp::PluginConfig::new("Hirsel".to_string())
-                .start_socket_server(true)
-                .socket_path("/tmp/hirsel-mcp.sock".into()),
-        ));
-    }
 
     // Create chat session manager as shared state
     let chat_manager = Arc::new(core::ChatSessionManager::new());

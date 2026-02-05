@@ -266,8 +266,8 @@ impl DeltaState {
         for node in claimable {
             if node.id != "scope" {
                 sqlx::query(
-                    "INSERT OR IGNORE INTO live_node_blocked_by (node_id, blocker_id, project_id)
-                     VALUES (?, 'scope', ?)",
+                    "INSERT OR IGNORE INTO live_node_blocked_by (node_id, blocker_id, project_id, route_id)
+                     VALUES (?, 'scope', ?, ?)",
                 )
                 .bind(&node.id)
                 .bind(self.project_id)

@@ -17,7 +17,6 @@ gui = [
     "dep:tauri",
     "dep:tauri-plugin-log",
     "dep:tauri-plugin-single-instance",
-    "dep:tauri-plugin-mcp",
     "dep:rfd",
     "tauri-build",
     "cli",
@@ -48,8 +47,7 @@ chrono = "0.4"
 tauri = { version = "2", features = ["protocol-asset"], optional = true }
 tauri-plugin-log = { version = "2", optional = true }
 tauri-plugin-single-instance = { version = "2", optional = true }
-tauri-plugin-mcp = { path = "../tauri-plugin-mcp", optional = true }
-rfd = { version = "0.15", optional = true }
+rfd = { version = "0.17", optional = true }
 
 # === Server dependencies (feature-gated) ===
 axum = { version = "0.8", features = ["multipart"], optional = true }
@@ -76,7 +74,7 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 anyhow = "1"
 libc = "0.2"
-agent-client-protocol = { version = "0.9.3", features = ["unstable_session_resume"] }
+agent-client-protocol = { version = "0.9.4", features = ["unstable"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "io-util", "io-std", "fs", "process", "signal", "macros"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 tokio-stream = "0.1"
@@ -93,7 +91,7 @@ tar = "0.4"
 walkdir = "2"
 aes-gcm = "0.10"
 hex = "0.4"
-octocrab = "0.44"
+octocrab = "0.49"
 
 # S3 storage (feature-gated)
 aws-sdk-s3 = { version = "1", optional = true }
