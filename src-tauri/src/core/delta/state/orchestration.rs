@@ -520,6 +520,7 @@ impl DeltaState {
     /// - If blocker has no validating eval: blocker must be Done
     /// - If blocker has validating eval AND shares it with current node: blocker must be Done/AwaitingEval
     /// - If blocker has validating eval but different group: blocker must be Validated
+    ///
     /// For eval nodes: validated nodes must be Done/AwaitingEval/Validated
     pub async fn is_node_blocked(&self, node_id: &str) -> DeltaStateResult<bool> {
         let node = self.get_live_node(node_id).await?;
