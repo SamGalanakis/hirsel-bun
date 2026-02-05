@@ -2,7 +2,7 @@
 //!
 //! Stores project-scoped messaging in the global hirsel database.
 //! Supports:
-//! - Meadow (group chat with all workers + human)
+//! - Chat (group chat with all workers + human)
 //! - Worker DMs (direct messages via worker name threads)
 
 use serde::{Deserialize, Serialize};
@@ -14,7 +14,7 @@ use super::db::{global_pool, utc_now};
 /// Schema for project messages tables
 const SCHEMA: &str = r#"
 -- Project-scoped messages for Sheepfold
--- thread = 'meadow' for group chat, or worker_name for DMs
+-- thread = 'chat' for group chat, or worker_name for DMs
 -- route_id scopes messages to a specific route
 CREATE TABLE IF NOT EXISTS project_messages (
     id INTEGER PRIMARY KEY,

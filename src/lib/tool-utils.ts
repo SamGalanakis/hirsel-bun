@@ -79,3 +79,67 @@ export function getToolShortLabel(title: string | null | undefined): string {
 export function isToolWorking(status: string | null | undefined): boolean {
   return status === 'pending' || status === 'in_progress';
 }
+
+/**
+ * Determine effective tool status from events.
+ *
+ * The ACP protocol doesn't always send explicit `in_progress` status.
+ * If a tool has started but not completed/failed, it's effectively running.
+ */
+export function getEffectiveToolStatus(
+  hasStarted: boolean,
+  latestStatus: string | null | undefined,
+): string {
+  // If completed or failed, use that
+  if (latestStatus === 'completed' || latestStatus === 'failed') {
+    return latestStatus;
+  }
+
+  // If tool has started (tool_start event exists), it's running
+  if (hasStarted) {
+    return 'in_progress';
+  }
+
+  // Otherwise pending
+  return latestStatus || 'pending';
+}
+
+/** Tool status indicator with distinct visual treatment for pending vs in_progress */
+export interface ToolStatusIndicator {
+  icon: string;
+  color: string;
+  animate: boolean;
+  label: string;
+}
+
+/** Get distinct visual indicator based on tool status */
+export function getToolStatusIndicator(status: string | null | undefined): ToolStatusIndicator {
+  switch (status) {
+    case 'pending':
+      return { icon: 'clock', color: 'text-wool-500', animate: false, label: 'Queued' };
+    case 'in_progress':
+      return { icon: 'loader', color: 'text-amber-500', animate: true, label: 'Running' };
+    case 'completed':
+      return { icon: 'check', color: 'text-sage', animate: false, label: 'Done' };
+    case 'failed':
+      return { icon: 'x', color: 'text-terra', animate: false, label: 'Failed' };
+    default:
+      return { icon: 'circle', color: 'text-wool-600', animate: false, label: '' };
+  }
+}
+
+/** Get pip CSS class based on tool status */
+export function getToolPipClass(status: string | null | undefined): string {
+  switch (status) {
+    case 'pending':
+      return 'pending';
+    case 'in_progress':
+      return 'working';
+    case 'completed':
+      return 'done';
+    case 'failed':
+      return 'failed';
+    default:
+      return 'pending';
+  }
+}

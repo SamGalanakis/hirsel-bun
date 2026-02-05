@@ -21,7 +21,7 @@ env:
 jobs:
   # Build CLI binaries for Linux x86_64
   build-linux:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2204
     strategy:
       fail-fast: false
       matrix:
@@ -80,7 +80,7 @@ jobs:
   # Build Tauri GUI (optional, heavier build)
   build-ui:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_ui || startsWith(github.ref, 'refs/tags/v') }}
-    runs-on: ubuntu-22.04
+    runs-on: blacksmith-4vcpu-ubuntu-2204
 
     steps:
       - uses: actions/checkout@v4
@@ -104,7 +104,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 'lts/*'
-          cache: 'npm'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -116,7 +118,7 @@ jobs:
           shared-key: ui
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
@@ -143,7 +145,7 @@ jobs:
 
   # Combine all CLI binaries into single artifact
   combine-binaries:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2204
     needs: build-linux
     steps:
       - uses: actions/checkout@v4
@@ -190,7 +192,7 @@ jobs:
 
   # Build and push Docker image
   docker:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2204
     needs: combine-binaries
     permissions:
       contents: read
@@ -271,7 +273,7 @@ jobs:
   # Create release with binaries
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2204
     needs: [combine-binaries, docker]
     permissions:
       contents: write

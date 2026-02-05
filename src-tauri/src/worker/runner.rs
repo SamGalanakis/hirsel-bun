@@ -709,12 +709,12 @@ impl WorkerRunner {
     //
     // All messages are stored in the global project_messages table.
     // Thread naming:
-    // - "meadow" = group chat (all workers + human)
+    // - "chat" = group chat (all workers + human)
     // - Worker names = DMs (e.g., "willow-coopworth")
     //
     // Semantic aliases:
     // - "user" → worker's own name (DM with human)
-    // - "group" → "meadow" (group chat)
+    // - "group" → "chat" (group chat)
     // =========================================================================
 
     /// Get the project_id for messaging. Returns error if not in a board run.
@@ -727,11 +727,11 @@ impl WorkerRunner {
 
     /// Translate semantic thread names to actual thread names.
     /// - "user" → worker's own name (DM)
-    /// - "group" → "meadow" (group chat)
+    /// - "group" → "chat" (group chat)
     fn translate_thread(&self, thread: &str) -> String {
         match thread {
             "user" => self.config.worker_name.clone(),
-            "group" => "meadow".to_string(),
+            "group" => "chat".to_string(),
             _ => thread.to_string(),
         }
     }

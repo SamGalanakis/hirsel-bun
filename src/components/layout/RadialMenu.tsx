@@ -195,7 +195,7 @@ export const RadialMenu: Component = () => {
 
   const handleChat = () => {
     app.closeRadialMenu();
-    project.setActiveThread('meadow');
+    project.setActiveThread('chat');
     project.setSheepfoldOpen(true);
   };
 

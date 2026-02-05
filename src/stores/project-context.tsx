@@ -75,7 +75,7 @@ interface ProjectContextValue {
   // Sheepfold (project messaging) state
   sheepfoldOpen: () => boolean;
   setSheepfoldOpen: (open: boolean) => void;
-  activeThread: () => string; // 'meadow' or worker name
+  activeThread: () => string; // 'chat' or worker name
   setActiveThread: (thread: string) => void;
   projectUnreadCount: () => number;
   openWorkerDM: (workerName: string) => void; // Opens drawer + selects thread
@@ -121,7 +121,7 @@ export const ProjectProvider: ParentComponent = (props) => {
 
   // Sheepfold state
   const [sheepfoldOpen, setSheepfoldOpen] = createSignal(false);
-  const [activeThread, setActiveThread] = createSignal('meadow');
+  const [activeThread, setActiveThread] = createSignal('chat');
   const [projectUnreadCount, setProjectUnreadCount] = createSignal(0);
 
   const selectedProjectId = () => selectedProject()?.id ?? null;

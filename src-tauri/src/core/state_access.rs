@@ -9,11 +9,11 @@
 //!
 //! Messages are stored at the **project level** in the global database (`project_messages` table).
 //! This allows the Sheepfold UI and workers to share the same messaging system:
-//! - `"meadow"` thread = group chat (all workers + human)
+//! - `"chat"` thread = group chat (all workers + human)
 //! - Worker name threads (e.g., `"willow-coopworth"`) = DMs
 //!
 //! Workers use `"user"` as a semantic alias that maps to their own name (DM with human).
-//! Workers use `"group"` as a semantic alias that maps to `"meadow"` (group chat).
+//! Workers use `"group"` as a semantic alias that maps to `"chat"` (group chat).
 //!
 //! ## StateAccess vs Orchestrator
 //!
@@ -106,14 +106,14 @@ pub trait StateAccess: Send {
     //
     // Messages are stored in the global database's project_messages table.
     // Thread naming:
-    // - "meadow" = group chat (all workers + human)
+    // - "chat" = group chat (all workers + human)
     // - Worker names = DMs (e.g., "willow-coopworth")
     //
     // Workers should use get_project_id() to get the project_id for messaging.
     // =========================================================================
 
     /// Add a message to a project thread.
-    /// Thread should be "meadow" for group chat or a worker name for DM.
+    /// Thread should be "chat" for group chat or a worker name for DM.
     async fn add_project_message(
         &self,
         project_id: i64,

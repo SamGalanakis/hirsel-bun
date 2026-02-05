@@ -31,8 +31,8 @@ export const LeftDrawer: Component = () => {
     window.dispatchEvent(new CustomEvent('open-fork-dialog'));
   };
 
-  const handleOpenMeadow = () => {
-    project.setActiveThread('meadow');
+  const handleOpenChat = () => {
+    project.setActiveThread('chat');
     project.setSheepfoldOpen(true);
   };
 
@@ -133,15 +133,15 @@ export const LeftDrawer: Component = () => {
 
       {/* Bottom Actions */}
       <div class="mt-auto border-t border-pasture-600/30 p-2 space-y-0.5">
-        {/* Meadow (Chat) */}
+        {/* Chat */}
         <button
-          onClick={handleOpenMeadow}
+          onClick={handleOpenChat}
           class="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-pasture-700 transition-colors relative"
-          title="Meadow - Team chat"
+          title="Chat"
         >
           <Icon name="message-circle" class="w-4 h-4 text-wool-500 flex-shrink-0" />
           <Show when={!isCollapsed()}>
-            <span class="text-[12px] text-wool-400">Meadow</span>
+            <span class="text-[12px] text-wool-400">Chat</span>
           </Show>
           {/* Unread badge */}
           <Show when={project.projectUnreadCount() > 0}>

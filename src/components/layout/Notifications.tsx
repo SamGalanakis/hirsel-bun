@@ -6,11 +6,12 @@ import { type Component, For, Show, createEffect, createSignal, onCleanup } from
 import { useClickOutside, useEscapeKey } from '../../hooks';
 import type { UnreadNotification } from '../../lib/types';
 import { formatTimeShort } from '../../lib/utils/formatters';
-import { useRuns } from '../../stores';
+import { useProject, useRuns } from '../../stores';
 import { Icon } from '../shared';
 
 export const NotificationsDropdown: Component = () => {
   const runs = useRuns();
+  const project = useProject();
   const [open, setOpen] = createSignal(false);
   const [notifications, setNotifications] = createSignal<
     (UnreadNotification & { read: boolean })[]
@@ -80,12 +81,15 @@ export const NotificationsDropdown: Component = () => {
     }
   };
 
-  const goToMessage = (runName: string, thread: string) => {
-    runs.setSelectedRun(runName);
-    window.dispatchEvent(new CustomEvent('switch-tab', { detail: 'chat' }));
-    window.dispatchEvent(
-      new CustomEvent('select-thread', { detail: thread }),
-    );
+  const goToMessage = (projectId: number, thread: string) => {
+    // Find the project by ID and select it
+    const targetProject = project.projects().find((p) => p.id === projectId);
+    if (targetProject) {
+      project.selectProject(targetProject);
+    }
+    // Open messaging panel and select the thread
+    project.setActiveThread(thread);
+    project.setSheepfoldOpen(true);
   };
 
   const toggleOpen = () => {
@@ -140,7 +144,7 @@ export const NotificationsDropdown: Component = () => {
                 <div
                   onClick={() => {
                     markOneRead(notif);
-                    goToMessage(notif.runName, notif.thread);
+                    goToMessage(notif.projectId, notif.thread);
                     setOpen(false);
                   }}
                   class="p-3 hover:bg-pasture-700 cursor-pointer border-b border-pasture-700 last:border-0 transition-all duration-300 group relative"

@@ -17,6 +17,7 @@ use crate::core::config;
 #[serde(rename_all = "camelCase")]
 pub struct UnreadNotification {
     pub id: String,
+    pub project_id: i64,
     pub run_name: String,
     pub thread: String,
     pub sender: String,

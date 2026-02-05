@@ -2402,6 +2402,12 @@ section.flex-1.flex.flex-col {
   background-color: rgba(var(--terra-rgb, 196, 92, 74), 0.1);
 }
 
+/* Tool pending state - distinct from working */
+.gyp-tool-card.pending {
+  border-color: var(--pasture-500);
+  opacity: 0.8;
+}
+
 /* Tool card expanded drawer */
 .gyp-tool-drawer {
   animation: gyp-drawer-expand 200ms ease-out;
@@ -2417,6 +2423,108 @@ section.flex-1.flex.flex-col {
     opacity: 1;
     transform: scaleY(1);
   }
+}
+
+/* ===== Tool Cluster Styles ===== */
+
+/* Container for cluster and expanded content */
+.tool-cluster-container {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Collapsed cluster button */
+.tool-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: color-mix(in srgb, var(--pasture-700) 50%, transparent);
+  border: 1px solid var(--pasture-600);
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 150ms ease-out;
+}
+
+.tool-cluster:hover {
+  background: color-mix(in srgb, var(--pasture-700) 70%, transparent);
+  border-color: var(--pasture-500);
+}
+
+/* Status pips row */
+.tool-pips {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.tool-pip {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  transition: background-color 150ms ease-out;
+}
+
+.tool-pip.pending {
+  background: var(--wool-600);
+}
+
+.tool-pip.working {
+  background: var(--amber-500);
+  animation: tool-pip-pulse 1.5s ease-in-out infinite;
+}
+
+.tool-pip.done {
+  background: var(--sage);
+}
+
+.tool-pip.failed {
+  background: var(--terra);
+}
+
+@keyframes tool-pip-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Expanded cluster content */
+.tool-cluster-expanded {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0 4px 12px;
+  border-left: 2px solid var(--pasture-600);
+  margin-left: 8px;
+  animation: tool-cluster-expand 200ms ease-out;
+}
+
+@keyframes tool-cluster-expand {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Tool row - compact for inside clusters */
+.tool-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  border-radius: 4px;
+  transition: background-color 100ms ease-out;
+}
+
+.tool-row:hover {
+  background: color-mix(in srgb, var(--pasture-700) 40%, transparent);
 }
 
 /* Empty state styling */

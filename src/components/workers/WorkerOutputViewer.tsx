@@ -7,7 +7,8 @@ import { type Component, For, Show, createEffect, createSignal, onCleanup } from
 import { useEscapeKey } from '../../hooks';
 import { createStore, produce } from 'solid-js/store';
 import type { WorkerEvent, WorkerStatus, WorkerStreamEvent } from '../../lib/types';
-import { Icon, ToolCard } from '../shared';
+import { getEffectiveToolStatus } from '../../lib/tool-utils';
+import { Icon, ThinkingBlock, ToolCard, ToolCluster, type ClusterToolGroup } from '../shared';
 
 export const WorkerOutputViewer: Component = () => {
   const [visible, setVisible] = createSignal(false);
@@ -138,7 +139,16 @@ export const WorkerOutputViewer: Component = () => {
     });
   };
 
-  // Group consecutive text events for display
+  // Group type for display - includes tool_cluster for consecutive tools
+  type GroupType = 'text' | 'thinking' | 'tool' | 'tool_cluster';
+  type EventGroup = {
+    type: GroupType;
+    content: string;
+    events: WorkerEvent[];
+    tools?: ClusterToolGroup[];
+  };
+
+  // Group consecutive text events for display and cluster consecutive tools
   // Note: We use events.length to ensure SolidJS tracks array changes,
   // then slice() to create a plain array for iteration
   const groupedEvents = () => {
@@ -146,7 +156,7 @@ export const WorkerOutputViewer: Component = () => {
     const _len = events.length;
     const eventsCopy = events.slice();
 
-    const result: Array<{ type: 'text' | 'thinking' | 'tool'; content: string; events: WorkerEvent[] }> = [];
+    const result: EventGroup[] = [];
     let currentText: WorkerEvent[] = [];
     let currentThinking: WorkerEvent[] = [];
 
@@ -197,7 +207,38 @@ export const WorkerOutputViewer: Component = () => {
 
     flushText();
     flushThinking();
-    return result;
+
+    // Phase 2: Cluster consecutive tool groups
+    const clustered: EventGroup[] = [];
+    let toolBuffer: EventGroup[] = [];
+
+    const flushToolBuffer = () => {
+      if (toolBuffer.length >= 2) {
+        // Create a cluster from consecutive tools
+        clustered.push({
+          type: 'tool_cluster',
+          content: '',
+          events: [],
+          tools: toolBuffer.map((t) => ({ events: t.events })),
+        });
+      } else if (toolBuffer.length === 1) {
+        // Single tool, keep as-is
+        clustered.push(toolBuffer[0]);
+      }
+      toolBuffer = [];
+    };
+
+    for (const group of result) {
+      if (group.type === 'tool') {
+        toolBuffer.push(group);
+      } else {
+        flushToolBuffer();
+        clustered.push(group);
+      }
+    }
+    flushToolBuffer();
+
+    return clustered;
   };
 
   const statusColor = () => {
@@ -302,18 +343,10 @@ export const WorkerOutputViewer: Component = () => {
 
                     {/* Thinking block */}
                     <Show when={group.type === 'thinking' && showThinking()}>
-                      <div class="border-l-2 border-amber-500/30 pl-3 py-1">
-                        <div class="flex items-center gap-1.5 text-amber-500/70 text-xs mb-1">
-                          <Icon name="brain" class="w-3 h-3" />
-                          <span>Thinking</span>
-                        </div>
-                        <div class="text-wool-500 text-xs whitespace-pre-wrap">
-                          {group.content}
-                        </div>
-                      </div>
+                      <ThinkingBlock content={group.content} />
                     </Show>
 
-                    {/* Tool card */}
+                    {/* Tool card (single tool) */}
                     <Show when={group.type === 'tool'}>
                       {(() => {
                         // Find event with title (usually tool_start, but handle race conditions
@@ -321,11 +354,14 @@ export const WorkerOutputViewer: Component = () => {
                         const titleEvent = group.events.find(e => e.toolTitle) ?? group.events[0];
                         // Latest event has current status/output
                         const latestEvent = group.events[group.events.length - 1];
+                        // Determine effective status: if started but not completed/failed, it's running
+                        const hasStarted = group.events.some(e => e.eventType === 'tool_start');
+                        const effectiveStatus = getEffectiveToolStatus(hasStarted, latestEvent?.toolStatus);
                         return (
                           <ToolCard
                             title={titleEvent?.toolTitle}
                             kind={titleEvent?.toolKind}
-                            status={latestEvent?.toolStatus}
+                            status={effectiveStatus}
                             input={titleEvent?.toolInput}
                             output={latestEvent?.toolOutput}
                             expanded={expandedTools().has(group.events[0]?.toolCallId || '')}
@@ -333,6 +369,11 @@ export const WorkerOutputViewer: Component = () => {
                           />
                         );
                       })()}
+                    </Show>
+
+                    {/* Tool cluster (multiple consecutive tools) */}
+                    <Show when={group.type === 'tool_cluster' && group.tools}>
+                      <ToolCluster tools={group.tools!} />
                     </Show>
                   </>
                 )}

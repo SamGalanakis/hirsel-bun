@@ -87,14 +87,14 @@ rm -rf ~/.hirsel ~/.local/share/app.hirsel
 Install dev tools:
 ```bash
 cargo install cargo-deny cargo-machete cargo-nextest typos-cli tokei prek
-npm install
+bun install
 ```
 
 Run checks:
 ```bash
-npm run lint              # Biome lint
-npm run lint:fix          # Biome lint + fix
-npm run test              # cargo nextest
+bun run lint              # Biome lint
+bun run lint:fix          # Biome lint + fix
+bun run test              # cargo nextest
 cargo deny check          # Dependency audit
 cargo machete             # Find unused deps
 typos                     # Spell check

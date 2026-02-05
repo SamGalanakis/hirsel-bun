@@ -406,7 +406,7 @@ impl SQLiteState {
             };
             if let Ok(store) = crate::core::ProjectMessagesStore::open().await {
                 let _ = store
-                    .add_message(project_id, route_id, "meadow", "system", msg, false)
+                    .add_message(project_id, route_id, "chat", "system", msg, false)
                     .await;
             }
         }

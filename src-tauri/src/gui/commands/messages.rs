@@ -85,8 +85,8 @@ pub async fn get_all_unread_notifications() -> Result<UnreadNotificationsRespons
         let mut project_has_unread = false;
 
         for thread_info in threads {
-            // Skip meadow (group chat) for notifications - too noisy
-            if thread_info.thread == "meadow" {
+            // Skip chat (group chat) for notifications - too noisy
+            if thread_info.thread == "chat" {
                 continue;
             }
 
@@ -118,6 +118,7 @@ pub async fn get_all_unread_notifications() -> Result<UnreadNotificationsRespons
 
                 all_notifications.push(UnreadNotification {
                     id: format!("{}-{}-{}", project_run.run_name, msg.thread, msg.id),
+                    project_id,
                     run_name: project_run.run_name.clone(),
                     thread: msg.thread,
                     sender: msg.sender,

@@ -67,5 +67,5 @@ if [[ "$1" == "--mcp" ]]; then
     wait
 else
     echo "Running tauri dev (daemon will auto-start on first use)..."
-    GDK_BACKEND=x11 npm run dev 2>&1 | tee -a "$LOG_FILE"
+    GDK_BACKEND=x11 bun run dev 2>&1 | tee -a "$LOG_FILE"
 fi

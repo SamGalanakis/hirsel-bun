@@ -159,7 +159,7 @@ export const MessagingPanel: Component = () => {
   };
 
   const getWorkerForThread = (threadName: string) => {
-    if (threadName === 'meadow') return null;
+    if (threadName === 'chat') return null;
     return workers().find((w) => w.name === threadName);
   };
 
@@ -204,21 +204,21 @@ export const MessagingPanel: Component = () => {
         {/* Meadow tab */}
         <button
           type="button"
-          onClick={() => project.setActiveThread('meadow')}
+          onClick={() => project.setActiveThread('chat')}
           class="relative flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-all whitespace-nowrap"
           classList={{
-            'bg-amber-500/15 text-amber-300': activeThread() === 'meadow',
-            'text-wool-400 hover:text-wool-200 hover:bg-pasture-700': activeThread() !== 'meadow',
+            'bg-amber-500/15 text-amber-300': activeThread() === 'chat',
+            'text-wool-400 hover:text-wool-200 hover:bg-pasture-700': activeThread() !== 'chat',
           }}
         >
           <Icon name="users" class="w-3.5 h-3.5" />
-          <span>Meadow</span>
-          <Show when={getThreadUnread('meadow') > 0}>
+          <span>Chat</span>
+          <Show when={getThreadUnread('chat') > 0}>
             <span
               class="ml-1 min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold flex items-center justify-center"
               style={{ background: 'var(--amber-500)', color: 'var(--pasture-900)' }}
             >
-              {getThreadUnread('meadow')}
+              {getThreadUnread('chat')}
             </span>
           </Show>
         </button>
@@ -261,14 +261,14 @@ export const MessagingPanel: Component = () => {
 
       {/* Thread info bar */}
       <div class="px-3 py-1.5 border-b border-pasture-700/30 bg-pasture-800/30">
-        <Show when={activeThread() === 'meadow'}>
+        <Show when={activeThread() === 'chat'}>
           <div class="flex items-center gap-1.5">
             <Icon name="users" class="w-3.5 h-3.5 text-wool-500" />
-            <span class="text-[11px] font-medium text-wool-300">Meadow</span>
-            <span class="text-[10px] text-wool-600">· Team chat</span>
+            <span class="text-[11px] font-medium text-wool-300">Chat</span>
+            <span class="text-[10px] text-wool-600">· Group chat</span>
           </div>
         </Show>
-        <Show when={activeThread() !== 'meadow'}>
+        <Show when={activeThread() !== 'chat'}>
           {(() => {
             const worker = () => getWorkerForThread(activeThread());
             return (
@@ -306,7 +306,7 @@ export const MessagingPanel: Component = () => {
             </div>
             <p class="text-sm text-wool-400">No messages yet</p>
             <p class="text-xs text-wool-600 mt-1">
-              {activeThread() === 'meadow'
+              {activeThread() === 'chat'
                 ? 'Start a conversation with your team'
                 : `Send a message to ${activeThread()}`}
             </p>
@@ -364,7 +364,7 @@ export const MessagingPanel: Component = () => {
                   }}
                 >
                   {/* Sender name (for non-user in group chat) */}
-                  <Show when={!isUser() && activeThread() === 'meadow'}>
+                  <Show when={!isUser() && activeThread() === 'chat'}>
                     <p class="text-[10px] font-medium text-wool-500 mb-1">{msg.sender}</p>
                   </Show>
                   <p class="text-[13px] text-wool-200 whitespace-pre-wrap break-words leading-relaxed">
@@ -397,7 +397,7 @@ export const MessagingPanel: Component = () => {
             onInput={(e) => setMessageInput(e.currentTarget.value)}
             onKeyDown={handleKeyDown}
             placeholder={
-              activeThread() === 'meadow'
+              activeThread() === 'chat'
                 ? 'Message the team...'
                 : `Message ${activeThread()}...`
             }

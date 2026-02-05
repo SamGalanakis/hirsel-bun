@@ -18,7 +18,7 @@ import { Portal } from 'solid-js/web';
 import type { ChatMessage, ChatToolCall, PendingPermission } from '../../lib/types';
 import { useApp, useProject, useRuns } from '../../stores';
 import { useGypChat, type GypChatContext } from '../../hooks/use-gyp-chat';
-import { Icon, ToolCard } from '../shared';
+import { Icon, ThinkingBlock, ToolCard } from '../shared';
 
 const PANEL_WIDTH = 440;
 const PANEL_HEIGHT = 520;
@@ -562,7 +562,9 @@ const MessageBubble: Component<{
       >
         {/* Thinking block */}
         <Show when={props.message.thinking}>
-          <ThinkingBlock thinking={props.message.thinking!} />
+          <div class="mb-2">
+            <ThinkingBlock content={props.message.thinking!} />
+          </div>
         </Show>
 
         {/* Content */}
@@ -589,33 +591,6 @@ const MessageBubble: Component<{
           </div>
         </Show>
       </div>
-    </div>
-  );
-};
-
-// Thinking block - collapsible thought bubble
-const ThinkingBlock: Component<{ thinking: string }> = (props) => {
-  const [expanded, setExpanded] = createSignal(false);
-
-  return (
-    <div
-      class={`gyp-thinking-block mb-2 p-2 cursor-pointer ${expanded() ? 'expanded' : 'collapsed'}`}
-      onClick={() => setExpanded(!expanded())}
-    >
-      <div class="flex items-center gap-1.5 text-amber-500/70 text-xs mb-1">
-        <Icon name="brain" class="w-3 h-3" />
-        <span class="italic" style="font-family: 'ET Book', serif;">Thinking</span>
-        <Icon
-          name={expanded() ? 'chevron-up' : 'chevron-down'}
-          class="w-3 h-3 ml-auto"
-        />
-      </div>
-      <p
-        class="text-xs text-wool-500 whitespace-pre-wrap overflow-hidden"
-        classList={{ 'line-clamp-1': !expanded() }}
-      >
-        {props.thinking}
-      </p>
     </div>
   );
 };

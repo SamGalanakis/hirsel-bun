@@ -222,9 +222,9 @@ cargo build --features s3-storage               # With S3 support
 | Directory | Purpose |
 |-----------|---------|
 | `components/layout/` | Layout, TitleBar, StatusBar, LeftDrawer, CanvasToolbar, RadialMenu, ProjectSelector, Notifications, SvgDefinitions, WelcomeScreen |
-| `components/runs/` | RunListPanel, RunDetail, WorkerCard, TaskTreeView |
+| `components/runs/` | RunListPanel, RunListItem, WorkerCard, WorkerDetailModal, ActivityLog, tabs/ |
 | `components/specflow/` | SpecBoard, DeliveryDialog, RouteSelector, ForkRouteDialog, RunStatusPill, TaskEditorModal |
-| `components/modals/` | SettingsModal, HelpModal, ConfirmDialog |
+| `components/modals/` | SettingsModal, ConfirmDialog, AttachPicker |
 | `components/chat/` | GypMessenger |
 | `components/messaging/` | MessagingPanel (right drawer for route-scoped messaging: Meadow group chat + worker DMs) |
 | `stores/` | AppProvider, ProjectProvider, RunsProvider, SelectionProvider, DeltaProvider, RouteProvider |

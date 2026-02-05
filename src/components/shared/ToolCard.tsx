@@ -6,7 +6,7 @@
 
 import { Component, Show } from 'solid-js';
 import { Icon } from './Icon';
-import { getToolIcon, getToolShortLabel, isToolWorking } from '../../lib/tool-utils';
+import { getToolIcon, getToolShortLabel, getToolStatusIndicator, isToolWorking } from '../../lib/tool-utils';
 
 /** Props for ToolCard component */
 export interface ToolCardProps {
@@ -31,9 +31,11 @@ export const ToolCard: Component<ToolCardProps> = (props) => {
   const iconName = () => getToolIcon(props.kind);
   const shortLabel = () => getToolShortLabel(props.title);
   const working = () => isToolWorking(props.status);
+  const statusIndicator = () => getToolStatusIndicator(props.status);
 
   const statusClass = () => {
-    if (working()) return 'working';
+    if (props.status === 'in_progress') return 'working';
+    if (props.status === 'pending') return 'pending';
     if (props.status === 'completed') return 'completed';
     if (props.status === 'failed') return 'failed';
     return '';
@@ -58,13 +60,18 @@ export const ToolCard: Component<ToolCardProps> = (props) => {
         onClick={props.onToggle}
         class={`gyp-tool-card ${statusClass()}`}
         classList={{
-          'text-amber-400': working(),
+          'text-amber-400': props.status === 'in_progress',
+          'text-wool-500': props.status === 'pending',
           'text-wool-400': props.status === 'completed',
           'text-terra': props.status === 'failed',
         }}
       >
-        <Show when={working()}>
+        {/* Status indicator: distinct for pending vs in_progress */}
+        <Show when={statusIndicator().animate}>
           <span class="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
+        </Show>
+        <Show when={!statusIndicator().animate && working()}>
+          <Icon name={statusIndicator().icon} class={`w-3 h-3 ${statusIndicator().color}`} />
         </Show>
         <Show when={!working()}>
           <Icon name={iconName()} class="w-3 h-3" />

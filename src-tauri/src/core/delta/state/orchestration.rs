@@ -165,6 +165,35 @@ impl DeltaState {
         Ok(count > 0)
     }
 
+    /// Check if two nodes share at least one validating eval
+    ///
+    /// If nodes share a validating eval, they're in the same validation group.
+    /// The blocker only needs to be Done (not Validated) because the shared
+    /// eval will validate them together.
+    pub async fn share_validating_eval(
+        &self,
+        node_a: &str,
+        node_b: &str,
+    ) -> DeltaStateResult<bool> {
+        let pool = self.pool().await?;
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM live_node_validates v1
+             INNER JOIN live_node_validates v2
+               ON v1.eval_id = v2.eval_id
+               AND v1.project_id = v2.project_id
+               AND v1.route_id = v2.route_id
+             WHERE v1.task_id = ? AND v2.task_id = ?
+               AND v1.project_id = ? AND v1.route_id = ?",
+        )
+        .bind(node_a)
+        .bind(node_b)
+        .bind(self.project_id)
+        .bind(self.route_id)
+        .fetch_one(pool)
+        .await?;
+        Ok(count > 0)
+    }
+
     /// Propagate status changes up to parent nodes.
     ///
     /// Called after a child's status changes. Checks if all siblings have the same
@@ -487,7 +516,10 @@ impl DeltaState {
 
     /// Check if a node is blocked
     ///
-    /// For work nodes: blockers must be Validated (or Done if no validating eval)
+    /// For task nodes:
+    /// - If blocker has no validating eval: blocker must be Done
+    /// - If blocker has validating eval AND shares it with current node: blocker must be Done/AwaitingEval
+    /// - If blocker has validating eval but different group: blocker must be Validated
     /// For eval nodes: validated nodes must be Done/AwaitingEval/Validated
     pub async fn is_node_blocked(&self, node_id: &str) -> DeltaStateResult<bool> {
         let node = self.get_live_node(node_id).await?;
@@ -508,7 +540,19 @@ impl DeltaState {
                     };
 
                     let is_blocking = if self.has_validating_eval(blocker_id).await? {
-                        blocker.status != LiveNodeStatus::Validated
+                        // If current node and blocker share a validating eval, they're
+                        // in the same validation group. Blocker just needs work complete.
+                        if self.share_validating_eval(&node.id, blocker_id).await? {
+                            !matches!(
+                                blocker.status,
+                                LiveNodeStatus::Done
+                                    | LiveNodeStatus::AwaitingEval
+                                    | LiveNodeStatus::Validated
+                            )
+                        } else {
+                            // Different validation groups: must be fully Validated
+                            blocker.status != LiveNodeStatus::Validated
+                        }
                     } else {
                         !blocker.status.is_complete()
                     };

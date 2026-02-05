@@ -388,9 +388,9 @@ pub async fn check_and_send_time_notifications(
                 (state.get_project_id().await, state.get_route_id().await)
             {
                 if let Ok(store) = ProjectMessagesStore::open().await {
-                    // Send to meadow (group) or worker DM
+                    // Send to chat (group) or worker DM
                     let thread = if is_multi_worker {
-                        "meadow".to_string()
+                        "chat".to_string()
                     } else {
                         worker_name.unwrap_or("user").to_string()
                     };

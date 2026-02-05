@@ -81,7 +81,7 @@ impl LocalLifecycleManager {
         Some(DeltaState::with_route(project_id, route_id))
     }
 
-    /// Send a system message to the group chat (meadow).
+    /// Send a system message to the group chat.
     /// Uses project messages if the run is linked to a project.
     async fn send_system_message(&self, message: &str) {
         if let (Ok(Some(project_id)), Ok(route_id)) = (
@@ -90,7 +90,7 @@ impl LocalLifecycleManager {
         ) {
             if let Ok(store) = ProjectMessagesStore::open().await {
                 if let Err(e) = store
-                    .add_message(project_id, route_id, "meadow", "system", message, false)
+                    .add_message(project_id, route_id, "chat", "system", message, false)
                     .await
                 {
                     warn!("Failed to send system message to project: {}", e);

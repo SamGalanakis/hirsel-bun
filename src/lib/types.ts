@@ -275,6 +275,7 @@ export interface ThreadSummary {
 /** Unread notification from backend */
 export interface UnreadNotification {
   id: string;
+  projectId: number;
   runName: string;
   thread: string;
   sender: string;
@@ -1390,7 +1391,7 @@ export interface RouteTree {
 export interface ProjectMessage {
   id: number;
   projectId: number;
-  thread: string; // 'meadow' or worker_name
+  thread: string; // 'chat' or worker_name
   sender: string; // 'user' or worker_name
   content: string;
   waiting: boolean;
