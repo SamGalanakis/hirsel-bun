@@ -17,7 +17,7 @@ jobs:
         include:
           - platform: macos-latest
             args: '--target aarch64-apple-darwin'
-          - platform: blacksmith-4vcpu-ubuntu-2204
+          - platform: ubuntu-22.04
             args: ''
 
     runs-on: ${{ matrix.platform }}
@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Linux dependencies
-        if: contains(matrix.platform, 'ubuntu')
+        if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -99,7 +99,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload Linux DEB
-        if: contains(matrix.platform, 'ubuntu')
+        if: matrix.platform == 'ubuntu-22.04'
         uses: actions/upload-artifact@v4
         with:
           name: hirsel-linux-deb
@@ -107,7 +107,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload Linux AppImage
-        if: contains(matrix.platform, 'ubuntu')
+        if: matrix.platform == 'ubuntu-22.04'
         uses: actions/upload-artifact@v4
         with:
           name: hirsel-linux-appimage
@@ -115,7 +115,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload Linux binary
-        if: contains(matrix.platform, 'ubuntu')
+        if: matrix.platform == 'ubuntu-22.04'
         uses: actions/upload-artifact@v4
         with:
           name: hirsel-linux-binary
@@ -130,7 +130,7 @@ jobs:
           echo "**Target:** ${{ matrix.args || 'default' }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
-          if [[ "${{ matrix.platform }}" == macos* ]]; then
+          if [ "${{ matrix.platform }}" == "macos-latest" ]; then
             echo "- hirsel-macos-dmg" >> $GITHUB_STEP_SUMMARY
             echo "- hirsel-macos-app" >> $GITHUB_STEP_SUMMARY
           else
