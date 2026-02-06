@@ -206,15 +206,6 @@ impl AuthConfig {
     }
 }
 
-/// Get credentials for an agent type as environment variables
-pub fn get_agent_env_vars(
-    agent_type: AgentType,
-    auth_config: &AuthConfig,
-) -> HashMap<String, String> {
-    let agent_auth = auth_config.get_auth_for(agent_type);
-    agent_auth.get_credentials(agent_type)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -31,24 +31,6 @@ pub enum EvalError {
     ProcessFailed(String),
 }
 
-/// Result of running an eval
-#[derive(Debug, Clone)]
-pub struct EvalResult {
-    pub passed: bool,
-    pub feedback: String,
-    pub duration_secs: u64,
-    pub exit_code: Option<i32>,
-}
-
-/// Configuration for running an eval
-#[derive(Debug, Clone)]
-pub struct EvalConfig {
-    pub script_path: String,
-    pub work_dir: String,
-    pub timeout_secs: u32,
-    pub env: Vec<(String, String)>,
-}
-
 /// Configuration for running an ACP-based eval.
 #[derive(Debug, Clone)]
 pub struct EvalAcpConfig {

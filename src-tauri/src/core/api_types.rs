@@ -814,32 +814,11 @@ pub fn convert_status(status: crate::core::state::Status) -> RunStatus {
     status.into()
 }
 
-/// Check if status represents a completed run
-pub fn is_completed_status(status: &RunStatus) -> bool {
-    matches!(
-        status,
-        RunStatus::Done | RunStatus::Failed | RunStatus::Delivered
-    )
-}
-
 /// Parse an RFC3339 timestamp and return elapsed minutes since then
 pub fn parse_elapsed_minutes(timestamp_str: &str) -> f64 {
     if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(timestamp_str) {
         let now = chrono::Utc::now();
         let duration = now.signed_duration_since(ts);
-        duration.num_seconds() as f64 / 60.0
-    } else {
-        0.0
-    }
-}
-
-/// Calculate duration in minutes between two RFC3339 timestamps
-pub fn calculate_duration_minutes(start: &str, end: &str) -> f64 {
-    if let (Ok(start_ts), Ok(end_ts)) = (
-        chrono::DateTime::parse_from_rfc3339(start),
-        chrono::DateTime::parse_from_rfc3339(end),
-    ) {
-        let duration = end_ts.signed_duration_since(start_ts);
         duration.num_seconds() as f64 / 60.0
     } else {
         0.0

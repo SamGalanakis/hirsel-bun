@@ -141,9 +141,3 @@ impl ScribeService {
         self.base.stop().await
     }
 }
-
-/// Create a ScribeService from config with default agent command.
-pub fn create_scribe_service() -> ScribeService {
-    let config = Config::load().map(|(c, _)| c).unwrap_or_default();
-    ScribeService::with_config(config)
-}

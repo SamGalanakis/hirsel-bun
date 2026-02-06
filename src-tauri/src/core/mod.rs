@@ -32,8 +32,6 @@ pub mod eval;
 pub mod files;
 pub mod forge;
 pub mod git;
-#[cfg(feature = "server")]
-pub mod git_http;
 pub mod github;
 pub mod gyp;
 pub mod gyp_chat;
@@ -66,8 +64,8 @@ pub use acp::{
     ACPClientConfig, ACPError, AcpChild, AcpSpawnConfig, MCPServerConfig, SessionUpdate,
 };
 pub use chat_orchestrator::{
-    create_chat_orchestrator, create_local_chat_orchestrator, ChatContext, ChatMcpServer,
-    ChatOrchestrator, ChatOrchestratorError, ChatOrchestratorResult, LocalChatOrchestrator,
+    create_chat_orchestrator, ChatContext, ChatMcpServer, ChatOrchestrator,
+    ChatOrchestratorError, ChatOrchestratorResult, LocalChatOrchestrator,
     RemoteChatOrchestrator, SessionInfo,
 };
 pub use chat_session::{
@@ -85,10 +83,7 @@ pub use credentials::{
     ForwardedCredentials,
 };
 pub use error::{ErrorKind, HirselError, HirselResult};
-pub use eval::{
-    run_eval_acp, run_eval_from_args, EvalAcpConfig, EvalAcpResult, EvalConfig, EvalError,
-    EvalResult,
-};
+pub use eval::{run_eval_acp, run_eval_from_args, EvalAcpConfig, EvalAcpResult, EvalError};
 pub use files::Files;
 pub use gyp_chat::{GypChatError, GypChatMessage, GypChatResult, GypChatStore};
 pub use lifecycle::{
@@ -97,8 +92,7 @@ pub use lifecycle::{
     WorkerStateMachine,
 };
 pub use names::{
-    generate_run_name, generate_unique_names, generate_worker_name, get_available_name,
-    get_available_names, slugify,
+    generate_run_name, generate_worker_name, get_available_name, get_available_names, slugify,
 };
 pub use orchestrator::{
     create_local_orchestrator, create_orchestrator, LocalOrchestrator, Orchestrator,
@@ -112,13 +106,13 @@ pub use project_messages::{
     ProjectThreadSummary,
 };
 pub use run_manager::{
-    create_local_run_manager, create_run_manager, LocalRunManager, RemoteRunManager, RunManager,
-    RunManagerError, RunManagerResult,
+    create_run_manager, LocalRunManager, RemoteRunManager, RunManager, RunManagerError,
+    RunManagerResult,
 };
 pub use runner::{
-    create_runner, parse_remote_spec, parse_remote_specs, LocalRunner, Runner, RunnerConfig,
-    RunnerError, RunnerResult, SpawnResult as RunnerSpawnResult, SshHostConfig, SshRunner,
-    WorkerHandle, WorkerSpawnConfig as RunnerSpawnConfig,
+    create_runner, LocalRunner, Runner, RunnerConfig, RunnerError, RunnerResult,
+    SpawnResult as RunnerSpawnResult, SshHostConfig, SshRunner, WorkerHandle,
+    WorkerSpawnConfig as RunnerSpawnConfig,
 };
 pub use scribe::{process_scribe_batch, should_process_batch, ScribeBatchResult, ScribeError};
 
@@ -128,8 +122,8 @@ pub use conflict_resolver::{
     ConflictResolverResult, ConflictResolverService, ConflictResolverState, ResolutionResult,
 };
 pub use service_worker::{
-    create_scribe_service, ScribeService, ServiceWorkerError, ServiceWorkerHandle,
-    ServiceWorkerResult, ServiceWorkerType,
+    ScribeService, ServiceWorkerError, ServiceWorkerHandle, ServiceWorkerResult,
+    ServiceWorkerType,
 };
 #[cfg(feature = "s3-storage")]
 pub use snapshot::S3ArchiveStrategy;
@@ -142,8 +136,7 @@ pub use state_access::{StateAccess, StateAccessError, StateAccessResult};
 #[cfg(feature = "s3-storage")]
 pub use storage::S3FileStorage;
 pub use storage::{
-    create_default_local_storage, create_file_storage, create_local_storage, FileStorage,
-    LocalFileStorage, StorageError, StorageResult,
+    create_file_storage, FileStorage, LocalFileStorage, StorageError, StorageResult,
 };
 pub use workers::{
     check_and_send_time_notifications, check_worker_heartbeats, get_agent_command, is_pid_alive,
@@ -155,8 +148,8 @@ pub use workers::{
 #[cfg(feature = "s3-storage")]
 pub use draft::S3WorkspaceProvider;
 pub use draft::{
-    create_local_workspace_provider, create_workspace_provider, FileEntry, LocalWorkspaceProvider,
-    StartingPoint, WorkspaceInfo, WorkspaceProvider,
+    create_workspace_provider, FileEntry, LocalWorkspaceProvider, StartingPoint, WorkspaceInfo,
+    WorkspaceProvider,
 };
 
 // Unified Gyp context builder

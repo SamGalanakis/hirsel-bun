@@ -21,7 +21,7 @@ pub mod mcp;
 pub mod storage;
 mod types;
 
-pub use storage::{create_board_storage, BoardStorage, LocalBoardStorage, RemoteBoardStorage};
+pub use storage::{BoardStorage, LocalBoardStorage, RemoteBoardStorage};
 pub use types::{
     BoardJson, BoardSnapshot, Bookmark, CreateEvalRequest, CreateTaskRequest, DispatchPreview,
     Eval, EvalStatus, ExportScope, SyncResult, Task, TaskFile, TaskRun, TaskStatus, TaskTree,

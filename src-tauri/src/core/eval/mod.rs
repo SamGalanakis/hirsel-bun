@@ -6,17 +6,13 @@
 mod acp;
 mod context;
 mod parser;
-mod script;
 mod types;
 
 // Re-export public types
-pub use types::{EvalAcpConfig, EvalAcpResult, EvalConfig, EvalError, EvalResult};
+pub use types::{EvalAcpConfig, EvalAcpResult, EvalError};
 
 // Re-export context types
 pub use context::{EvalContext, EvalFailure};
-
-// Re-export script execution functions
-pub use script::{execute_eval_script, run_eval, run_eval_in_tmux};
 
 // Re-export parser functions
 pub use parser::{get_eval_script, has_eval_script, parse_eval_script};

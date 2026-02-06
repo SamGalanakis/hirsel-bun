@@ -25,8 +25,8 @@ mod conflict_resolver;
 mod scribe;
 mod types;
 
-pub use conflict_resolver::{create_conflict_resolver_service, ConflictResolverServiceWrapper};
-pub use scribe::{create_scribe_service, ScribeService};
+pub use conflict_resolver::ConflictResolverServiceWrapper;
+pub use scribe::ScribeService;
 pub use types::{
     ServiceWorkerBase, ServiceWorkerError, ServiceWorkerHandle, ServiceWorkerResult,
     ServiceWorkerType,

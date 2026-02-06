@@ -1236,9 +1236,4 @@ impl SQLiteState {
         })
     }
 
-    /// Get unread count - always returns 0 as messaging uses project-level storage.
-    pub async fn get_unread_count(&self) -> StateResult<i64> {
-        // Run-level unread tracking is deprecated - messaging uses project-level storage
-        Ok(0)
-    }
 }

@@ -173,7 +173,7 @@ pub struct CreateRunRequest {
     pub starting_point: Option<StartingPoint>,
     /// Optional runner name (default: from server config)
     pub runner: Option<String>,
-    /// Maximum workers to autoscale to (default: 1)
+    /// Maximum workers to autoscale to (default: 5)
     pub worker_scale: Option<u32>,
     /// Time limit in minutes
     pub time_limit_minutes: Option<u32>,
@@ -602,17 +602,6 @@ pub fn create_orchestrator(profile: Option<&str>) -> OrchestratorResult<Box<dyn 
             Ok(Box::new(RemoteOrchestrator::new(url.clone(), key)))
         }
     }
-}
-
-/// Create a daemon orchestrator that communicates with the local daemon
-///
-/// This starts the daemon if it's not running and returns an orchestrator
-/// that communicates via Unix socket. Use this when you want the daemon
-/// to handle operations (e.g., for CLI commands that should trigger
-/// daemon lifecycle management).
-#[cfg(feature = "server")]
-pub fn create_daemon_orchestrator() -> OrchestratorResult<DaemonOrchestrator> {
-    DaemonOrchestrator::connect_or_start()
 }
 
 /// Create a local orchestrator directly (bypasses profile resolution)

@@ -191,27 +191,6 @@ pub fn get_session_metrics(session_id: Option<&str>, project_path: Option<&str>)
     metrics
 }
 
-/// Get aggregate metrics for all workers in a run
-pub fn get_run_metrics(workers: &[(Option<String>, Option<String>)]) -> SessionMetrics {
-    let mut total = SessionMetrics::default();
-
-    for (session_id, work_dir) in workers {
-        let metrics = get_session_metrics(session_id.as_deref(), work_dir.as_deref());
-
-        total.turns += metrics.turns;
-        total.input_tokens += metrics.input_tokens;
-        total.output_tokens += metrics.output_tokens;
-
-        // Keep the last seen model
-        if metrics.model.is_some() {
-            total.model = metrics.model;
-            total.context_window = metrics.context_window;
-        }
-    }
-
-    total
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

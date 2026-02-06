@@ -22,7 +22,7 @@ repos:
     hooks:
       - id: typescript
         name: TypeScript
-        entry: npx tsc --noEmit
+        entry: bunx tsc --noEmit
         language: system
         pass_filenames: false
         stages: [pre-commit]
@@ -63,7 +63,7 @@ repos:
 
       - id: biome
         name: Biome lint & format
-        entry: npx @biomejs/biome check --write src/
+        entry: bunx @biomejs/biome check --write src/
         language: system
         pass_filenames: false
         stages: [pre-commit]

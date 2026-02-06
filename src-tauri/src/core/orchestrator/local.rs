@@ -17,7 +17,7 @@ use crate::core::api_types::{
     WorkerEventsResponse, WorkerLocation, WorkerStatus,
 };
 use crate::core::config::{self, Config};
-use crate::core::delta::{DeltaState, LiveNodeStatus, ProjectRunStatus};
+use crate::core::delta::{DeltaState, ProjectRunStatus};
 use crate::core::draft::create_workspace_provider;
 use crate::core::names::{get_available_names, slugify};
 use crate::core::ops::{
@@ -70,22 +70,6 @@ impl LocalOrchestrator {
         SQLiteState::new(run_name)
             .await
             .map_err(|e| OrchestratorError::State(e.to_string()))
-    }
-
-    /// Build a map from worker name to their currently claimed task name.
-    /// This pre-indexes live_nodes to avoid O(n) lookups per worker.
-    fn build_claimed_task_map(
-        live_nodes: &[crate::core::delta::LiveNode],
-    ) -> HashMap<String, String> {
-        live_nodes
-            .iter()
-            .filter(|n| n.status == LiveNodeStatus::Working)
-            .filter_map(|n| {
-                n.claimed_by
-                    .as_ref()
-                    .map(|worker| (worker.clone(), n.name.clone()))
-            })
-            .collect()
     }
 
     /// Convert core worker to GUI worker type
@@ -190,14 +174,10 @@ impl Orchestrator for LocalOrchestrator {
                 ProjectRunStatus::Failed => crate::core::api_types::RunStatus::Failed,
             };
 
-            // Get task counts from live_nodes
+            // Get task counts from live_nodes (lightweight count query)
             let delta_state = DeltaState::with_route(project_id, route_id);
-            let (tasks_done, tasks_total) = if let Ok(nodes) = delta_state.get_live_nodes().await {
-                let done = nodes.iter().filter(|n| n.status.is_complete()).count() as u32;
-                (done, nodes.len() as u32)
-            } else {
-                (0, 0)
-            };
+            let (tasks_done, tasks_total) =
+                delta_state.get_live_node_counts().await.unwrap_or((0, 0));
 
             // Get worker counts and other data from per-run DB if available
             let db_path = runs_dir.join(run_name).join("hirsel.db");
@@ -275,7 +255,7 @@ impl Orchestrator for LocalOrchestrator {
         let iteration_count = state.get_iteration_count().await.unwrap_or(0) as u32;
         let human_in_the_loop = state.get_human_in_the_loop().await.unwrap_or(true);
         let waiting_reason = state.get_waiting_reason().await.ok().flatten();
-        let unread_count = state.get_unread_count().await.unwrap_or(0) as u32;
+        let unread_count = 0u32;
 
         // Get task counts from live nodes (project runs)
         let (tasks_done, tasks_total) = match (
@@ -594,18 +574,15 @@ impl Orchestrator for LocalOrchestrator {
 
         let core_workers = state.get_workers().await?;
 
-        // Get live nodes from project and build claimed task map
+        // Lightweight query: get only worker->task mapping instead of loading full live tree
         let claimed_task_map = match (
             state.get_project_id().await.ok().flatten(),
             state.get_route_id().await.ok(),
         ) {
-            (Some(project_id), Some(route_id)) => {
-                let live_nodes = DeltaState::with_route(project_id, route_id)
-                    .get_live_nodes()
-                    .await
-                    .unwrap_or_default();
-                Self::build_claimed_task_map(&live_nodes)
-            }
+            (Some(project_id), Some(route_id)) => DeltaState::with_route(project_id, route_id)
+                .get_claimed_task_map()
+                .await
+                .unwrap_or_default(),
             _ => HashMap::new(),
         };
 
@@ -1093,7 +1070,7 @@ impl Orchestrator for LocalOrchestrator {
         let first_worker_name = names::generate_worker_name();
 
         // Determine multi-worker mode from scale
-        let max_scale = request.worker_scale.unwrap_or(1);
+        let max_scale = request.worker_scale.unwrap_or(5);
         let is_multi_worker = max_scale > 1;
 
         // Create chat files
@@ -1643,7 +1620,7 @@ impl Orchestrator for LocalOrchestrator {
                 .map_err(|e| OrchestratorError::Other(format!("Failed to set branch: {}", e)))?;
         }
 
-        let scale_max = request.worker_scale.unwrap_or(1);
+        let scale_max = request.worker_scale.unwrap_or(5);
         state
             .set_worker_scale(&scale_max.to_string())
             .await

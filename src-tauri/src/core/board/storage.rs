@@ -9,7 +9,7 @@ use async_trait::async_trait;
 
 use super::types::TaskFile;
 use super::BoardError;
-use crate::core::config::{hirsel_dir, OrchestratorMode, OrchestratorProfile};
+use crate::core::config::hirsel_dir;
 use crate::core::http_client::AuthenticatedClient;
 
 pub type StorageResult<T> = Result<T, BoardError>;
@@ -186,23 +186,6 @@ impl BoardStorage for RemoteBoardStorage {
             .get(&format!("/api/board/{}/tasks", self.project_id))
             .await?;
         Ok(slugs)
-    }
-}
-
-/// Create appropriate board storage based on profile
-pub fn create_board_storage(
-    project_id: i64,
-    profile: Option<&OrchestratorProfile>,
-) -> Box<dyn BoardStorage> {
-    match profile {
-        Some(p) if p.mode == OrchestratorMode::Remote => {
-            if let (Some(url), Some(api_key)) = (&p.url, &p.api_key) {
-                Box::new(RemoteBoardStorage::new(project_id, url, api_key))
-            } else {
-                Box::new(LocalBoardStorage::new(project_id))
-            }
-        }
-        _ => Box::new(LocalBoardStorage::new(project_id)),
     }
 }
 

@@ -286,41 +286,6 @@ docker run -d --rm \
     )
 }
 
-/// Generate script to sync changes back to coordinator via git push.
-pub fn generate_sync_script(work_dir: &str) -> String {
-    format!(
-        r#"
-cd {work_dir}
-
-# Stage all changes
-git add -A
-
-# Commit if there are changes
-if ! git diff --cached --quiet; then
-    git commit -m "Worker changes $(date +%Y-%m-%d_%H:%M:%S)"
-fi
-
-# Push to coordinator
-git push -u origin HEAD 2>&1 || echo "Push failed (may need pull first)"
-"#,
-        work_dir = work_dir,
-    )
-}
-
-/// Generate script to pull latest changes from coordinator.
-pub fn generate_pull_script(work_dir: &str) -> String {
-    format!(
-        r#"
-cd {work_dir}
-
-# Fetch and merge from coordinator
-git fetch origin
-git merge origin/HEAD --no-edit 2>&1 || echo "Merge failed (may have conflicts)"
-"#,
-        work_dir = work_dir,
-    )
-}
-
 /// Generate init script for Fly machines.
 ///
 /// This script is run as the machine's init command (entrypoint).

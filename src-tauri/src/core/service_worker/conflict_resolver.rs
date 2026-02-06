@@ -160,9 +160,3 @@ impl ConflictResolverServiceWrapper {
         self.base.stop().await
     }
 }
-
-/// Create a ConflictResolverServiceWrapper from config with default agent command.
-pub fn create_conflict_resolver_service() -> ConflictResolverServiceWrapper {
-    let config = Config::load().map(|(c, _)| c).unwrap_or_default();
-    ConflictResolverServiceWrapper::with_config(config)
-}
