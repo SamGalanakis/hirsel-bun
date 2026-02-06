@@ -64,6 +64,7 @@ fn check_port_conflict(port: u16) -> Result<()> {
 }
 
 /// Start the daemon server on TCP
+#[tracing::instrument(skip_all, fields(port = config.tcp_port))]
 pub async fn start_daemon(config: DaemonConfig) -> Result<()> {
     // Check for port conflicts before starting
     check_port_conflict(config.tcp_port)?;

@@ -303,12 +303,14 @@ def main() -> None:
     print("=" * 80)
 
     trace_path = session_dir / "trace.json"
+    daemon_trace_path = session_dir / "daemon-trace.json"
     frontend_path = session_dir / "frontend.json"
 
     trace_data = load_json(trace_path)
+    daemon_trace_data = load_json(daemon_trace_path)
     frontend_data = load_json(frontend_path)
 
-    if trace_data is None and frontend_data is None:
+    if trace_data is None and daemon_trace_data is None and frontend_data is None:
         print("No profiling data found in session directory")
         sys.exit(1)
 
@@ -317,6 +319,12 @@ def main() -> None:
         print("Backend (tracing-chrome)")
         print("-" * 80)
         report_backend(trace_data)
+
+    if daemon_trace_data is not None:
+        print()
+        print("Daemon (tracing-chrome)")
+        print("-" * 80)
+        report_backend(daemon_trace_data)
 
     if frontend_data is not None:
         print()

@@ -44,7 +44,9 @@ fn init_tracing() {
             });
         std::fs::create_dir_all(&profiling_dir).expect("Failed to create profiling directory");
 
-        let trace_file = profiling_dir.join("trace.json");
+        let trace_filename =
+            std::env::var("HIRSEL_TRACE_FILENAME").unwrap_or_else(|_| "trace.json".to_string());
+        let trace_file = profiling_dir.join(trace_filename);
         eprintln!("[profiling] Writing trace to {}", trace_file.display());
 
         let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()

@@ -83,7 +83,10 @@ impl DaemonClient {
 
     /// Start the daemon process
     fn start_daemon(port: u16) -> Result<()> {
+        use std::fs::OpenOptions;
         use std::process::{Command, Stdio};
+
+        use crate::core::config::paths::hirsel_dir;
 
         let exe = std::env::current_exe()?;
 
@@ -93,12 +96,23 @@ impl DaemonClient {
             port
         );
 
+        let daemon_log = hirsel_dir().join("daemon.log");
+        let stderr_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&daemon_log)
+            .map(Stdio::from)
+            .unwrap_or_else(|_| Stdio::null());
+
         // Spawn daemon in background, passing port via env var
         let mut cmd = Command::new(&exe);
         cmd.arg("__daemon")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(stderr_file);
+
+        // Give the daemon its own trace file so it doesn't contend with the GUI's trace.json
+        cmd.env("HIRSEL_TRACE_FILENAME", "daemon-trace.json");
 
         // Pass current environment including HIRSEL_ROOT and HIRSEL_DAEMON_PORT
         if let Ok(root) = std::env::var("HIRSEL_ROOT") {

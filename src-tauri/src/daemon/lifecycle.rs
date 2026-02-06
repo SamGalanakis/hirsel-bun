@@ -30,6 +30,7 @@ use crate::core::Files;
 use super::server::DaemonConfig;
 
 /// Run the lifecycle polling loop
+#[tracing::instrument(skip_all)]
 pub async fn run_polling_loop(state: Arc<AppState>, config: DaemonConfig) {
     let mut tick = interval(Duration::from_secs(2));
     let mut last_active = Instant::now();
@@ -121,6 +122,7 @@ pub async fn run_polling_loop(state: Arc<AppState>, config: DaemonConfig) {
 /// 1. Creates a LocalLifecycleManager for the run
 /// 2. Processes TimeCheck event which returns lifecycle actions
 /// 3. Handles actions like SpawnWorker via the orchestrator
+#[tracing::instrument]
 async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
     let run_dir = config::run_dir(run_name);
     let files = Files::new(&run_dir);
@@ -322,6 +324,7 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
 /// Check and process scribe batches if the batch window has expired.
 ///
 /// Uses ScribeService which handles local vs remote execution internally.
+#[tracing::instrument(skip(_files))]
 async fn maybe_process_scribe(run_name: &str, _files: &Files) -> anyhow::Result<()> {
     let config = Config::load().map(|(c, _)| c).unwrap_or_else(|e| {
         tracing::warn!(
@@ -373,6 +376,7 @@ async fn maybe_process_scribe(run_name: &str, _files: &Files) -> anyhow::Result<
 ///
 /// This ensures workers are spawned using the correct runner (local/docker/fly/ssh)
 /// based on the run's configuration.
+#[tracing::instrument(skip(actions))]
 async fn handle_lifecycle_actions(
     run_name: &str,
     run_dir: &std::path::Path,
@@ -572,6 +576,7 @@ async fn handle_lifecycle_actions(
 ///
 /// This function is called from the polling loop to check for deliveries
 /// that need AI-assisted conflict resolution.
+#[tracing::instrument]
 async fn process_resolving_deliveries() -> anyhow::Result<()> {
     // Get all deliveries in resolving_conflicts status
     let deliveries = DeltaState::list_resolving_deliveries().await?;
@@ -603,6 +608,7 @@ async fn process_resolving_deliveries() -> anyhow::Result<()> {
 }
 
 /// Process a single delivery that needs conflict resolution
+#[tracing::instrument(skip(delivery, config), fields(delivery_id = delivery.id, project_id = delivery.project_id))]
 async fn process_single_delivery(delivery: &Delivery, config: &Config) -> anyhow::Result<()> {
     let state = DeltaState::with_route(delivery.project_id, delivery.route_id);
 
