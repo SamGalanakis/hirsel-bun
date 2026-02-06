@@ -3,9 +3,11 @@
  *
  * In dev mode, intercepts console.log/warn/error and sends them to the backend
  * to be written to a log file for easier debugging.
+ *
+ * Batches messages and flushes periodically to reduce IPC overhead.
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './invoke';
 
 // Only enable in development
 const isDev = (import.meta as { env?: { DEV?: boolean } }).env?.DEV ?? false;
@@ -37,12 +39,32 @@ function formatArgs(args: unknown[]): string {
     .join(' ');
 }
 
-// Send log to backend
-async function sendToBackend(level: string, message: string) {
-  try {
-    await invoke('log_frontend', { level, message });
-  } catch {
-    // Silently fail - don't want logging to break the app
+// Batch buffer for log messages
+let logBuffer: [string, string][] = [];
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+const FLUSH_INTERVAL_MS = 2000;
+const MAX_BUFFER_SIZE = 50;
+
+function flushLogs() {
+  if (logBuffer.length === 0) return;
+  const entries = logBuffer;
+  logBuffer = [];
+  invoke('log_frontend_batch', { entries }).catch(() => {
+    // Silently fail
+  });
+}
+
+function queueLog(level: string, message: string) {
+  logBuffer.push([level, message]);
+  if (logBuffer.length >= MAX_BUFFER_SIZE) {
+    if (flushTimer !== null) clearTimeout(flushTimer);
+    flushTimer = null;
+    flushLogs();
+  } else if (flushTimer === null) {
+    flushTimer = setTimeout(() => {
+      flushTimer = null;
+      flushLogs();
+    }, FLUSH_INTERVAL_MS);
   }
 }
 
@@ -58,27 +80,27 @@ export function initDevLogger() {
   // Override console methods
   console.log = (...args: unknown[]) => {
     originalConsole.log(...args);
-    sendToBackend('INFO', formatArgs(args));
+    queueLog('INFO', formatArgs(args));
   };
 
   console.info = (...args: unknown[]) => {
     originalConsole.info(...args);
-    sendToBackend('INFO', formatArgs(args));
+    queueLog('INFO', formatArgs(args));
   };
 
   console.warn = (...args: unknown[]) => {
     originalConsole.warn(...args);
-    sendToBackend('WARN', formatArgs(args));
+    queueLog('WARN', formatArgs(args));
   };
 
   console.error = (...args: unknown[]) => {
     originalConsole.error(...args);
-    sendToBackend('ERROR', formatArgs(args));
+    queueLog('ERROR', formatArgs(args));
   };
 
   console.debug = (...args: unknown[]) => {
     originalConsole.debug(...args);
-    sendToBackend('DEBUG', formatArgs(args));
+    queueLog('DEBUG', formatArgs(args));
   };
 
   // Log that dev logger is initialized - use the NEW console.log so it goes to backend

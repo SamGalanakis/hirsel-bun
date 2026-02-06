@@ -60,6 +60,7 @@ pub struct StartGypSessionResponse {
 ///
 /// Creates a new chat session with appropriate context based on the request type.
 /// Returns session ID and the resolved scope.
+#[tracing::instrument(skip(app, orchestrator_manager, request))]
 #[tauri::command]
 pub async fn start_gyp_session(
     app: tauri::AppHandle,
@@ -197,6 +198,7 @@ pub async fn start_gyp_session(
 /// The message may be augmented with context based on the current scope.
 /// - `scope`: Current scope for context injection
 /// - `focus`: Updated focus (for board context)
+#[tracing::instrument(skip(orchestrator_manager, content, focus))]
 #[tauri::command]
 pub async fn send_gyp_message(
     orchestrator_manager: tauri::State<'_, Arc<ChatOrchestratorManager>>,
@@ -283,6 +285,7 @@ pub async fn send_gyp_message(
 }
 
 /// Get Gyp chat history for a scope
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_gyp_history(
     scope: GypScope,
@@ -309,6 +312,7 @@ pub async fn get_gyp_history(
 }
 
 /// Clear Gyp chat history for a scope
+#[tracing::instrument]
 #[tauri::command]
 pub async fn clear_gyp_history(scope: GypScope) -> Result<(), String> {
     let store = GypChatStore::open().await.str_err()?;
@@ -326,6 +330,7 @@ pub async fn clear_gyp_history(scope: GypScope) -> Result<(), String> {
 /// Save a Gyp message to history
 ///
 /// Unified save command that handles all scopes (board, run, general).
+#[tracing::instrument(skip(chunks_json))]
 #[tauri::command]
 pub async fn save_gyp_message(
     scope: GypScope,
@@ -351,6 +356,7 @@ pub async fn save_gyp_message(
 }
 
 /// Stop a Gyp session
+#[tracing::instrument(skip(orchestrator_manager))]
 #[tauri::command]
 pub async fn stop_gyp_session(
     orchestrator_manager: tauri::State<'_, Arc<ChatOrchestratorManager>>,

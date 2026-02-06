@@ -30,6 +30,7 @@
 | `server` | HTTP server, daemon | No (implied by `cli`) |
 | `worker` | Minimal remote worker binary | No |
 | `s3-storage` | S3-compatible storage backend | No |
+| `profiling` | Backend tracing-chrome + frontend IPC instrumentation | No |
 
 ```bash
 cargo build                                     # Full GUI
@@ -83,7 +84,7 @@ cargo build --features s3-storage               # With S3 support
 | `board/` | `mod.rs`, `types.rs`, `storage.rs`, `mcp.rs` | SpecFlow board data (tasks, evals, task tree, file sync, MCP server for Gyp) |
 | `github/` | `mod.rs` | GitHub API client (octocrab) with auth fallback (env → gh config → hirsel config) |
 | `forge/` | `mod.rs` → `ForgeProvider` trait, `github.rs` | Extensible forge abstraction for PR/merge operations (currently GitHub only) |
-| `dispatch/` | `mod.rs` | Dispatch service: creates runs from board tasks, generates spec/eval, creates work+eval tasks with validates relationship |
+| `dispatch/` | `mod.rs` | Dispatch service: creates runs from board tasks, generates spec/eval, creates work+eval tasks with validated_by relationship |
 | `delta/` | `mod.rs`, `dispatch.rs`, `runner.rs`, `state.rs`, `types.rs` | Delta dispatch system: draft/live tree diffs, persistent project runs, live_nodes |
 | `route/` | `mod.rs`, `types.rs`, `store.rs`, `files.rs` | Route management for parallel project exploration (forking, route-scoped trees/docs/messages) |
 | `delivery/` | `mod.rs`, `orchestrator.rs` → `DeliveryOrchestrator`, `git_ops.rs` → `GitOperations`, `workspace.rs` | Delivery orchestration: three-tier delivery (push/PR/merge), git operations, workspace resolution |
@@ -96,7 +97,7 @@ cargo build --features s3-storage               # With S3 support
 | `draft/` | `mod.rs`, `types.rs` → `StartingPoint`, `workspace.rs`, `local_workspace.rs`, `s3_workspace.rs` | StartingPoint, workspace init |
 | `config/` | `mod.rs`, `store.rs`, `loader.rs`, `saver.rs`, `types.rs`, `agent.rs`, `storage.rs`, `orchestrator.rs`, `paths.rs` | Config struct, DB storage, profiles, runners |
 | `ops/` | `mod.rs`, `run.rs`, `setup.rs`, `spawn.rs`, `project.rs`, `docs.rs`, `types.rs` | Shared CLI/GUI operations |
-| `server/` | `mod.rs` → `start_server()`, `routes.rs`, `auth.rs`, `gyp.rs`, `board.rs` | HTTP server for remote mode |
+| `server/` | `mod.rs` → `start_server()`, `routes.rs`, `shared_routes.rs`, `auth.rs`, `gyp.rs`, `board.rs`, `worker_routes.rs`, `eval_routes.rs` | HTTP server for remote mode |
 | `eval/` | `mod.rs`, `acp.rs`, `context.rs`, `parser.rs`, `script.rs`, `types.rs` | Eval runner: ACP eval agent, context building, script parsing |
 | `storage/` | `mod.rs` | File storage abstraction (local/S3) |
 | `service_worker/` | `mod.rs`, `scribe.rs`, `conflict_resolver.rs`, `types.rs` | Service workers: ScribeService for documentation, ConflictResolverServiceWrapper for merge conflicts |
@@ -111,13 +112,13 @@ cargo build --features s3-storage               # With S3 support
 | `files.rs` | - | Run directory file operations |
 | `chats.rs` | - | GypChat message storage |
 | `gyp_chat.rs` | - | Project-level chat history |
-| `gyp_context.rs` | - | Gyp context building |
 | `project_messages.rs` | - | Sheepfold: route-scoped messaging (Meadow group chat + worker DMs), requires route_id |
 | `api_types.rs` | - | Shared API response types |
-| `worker_routes.rs` | - | Worker HTTP handlers |
-| `message_routes.rs` | - | Message HTTP handlers |
-| `eval_routes.rs` | - | Eval HTTP handlers |
-| `git_http.rs` | - | Git HTTP server for remote workers |
+| `git_http.rs` | - | Git Smart HTTP backend for remote worker git access (`#[cfg(feature = "server")]`) |
+| `http_client.rs` | - | Shared HTTP client utilities |
+| `constants.rs` | - | Application constants |
+| `process.rs` | - | Process management utilities |
+| `scribe.rs` | - | Scribe agent prompt and batch processing |
 | `credentials.rs` | - | Encrypted credential store |
 | `git.rs` | - | Git operations |
 | `tailscale.rs` | - | Tailscale integration |
@@ -145,7 +146,7 @@ cargo build --features s3-storage               # With S3 support
 **Note:** These tools operate on **live_nodes** in the global database (`~/.hirsel/hirsel.db`), not the old per-run SQLiteState tasks.
 
 **MCP Eval Tools** (available to eval tasks):
-- `eval_pass` - Mark eval as passed, validate all tasks in `validates[]`
+- `eval_pass` - Mark eval as passed, validate tasks where all evals in `validated_by` pass
 - `eval_fail(feedback)` - Mark eval as failed, create repair task as child of eval
 
 **Note:** Workers receive pre-assigned tasks at spawn time. There is no `claim_task` tool - task assignment is handled by the coordinator via direct assignment.
@@ -256,9 +257,8 @@ cargo build --features s3-storage               # With S3 support
   - Uses only tree structure (parent-child) for positioning
   - blockedBy/validates edges are visual overlays that don't affect layout
 - **DependencyConnectors** - SVG polylines for dependency edges:
-  - `validates` (eval→task): sage green lines
+  - `validates` (eval→task, computed from validated_by): sage green lines
   - `blockedBy` (task→task): terra red lines
-  - `blockedBy` computed as inverse of `validates` in backend tree builders
 - **DeliveryDialog** - Dialog for delivering changes:
   - Auto-generates summary from completed root spec nodes
   - User can edit summary before creating PR
@@ -594,7 +594,7 @@ EVAL:  Pending → Working → Done (pass) or Failed (fail)
                            creates repair task
 ```
 
-Workers claim and complete live_nodes via MCP tools. When an eval passes, its `validates` nodes are unblocked. When an eval fails, a repair task may be created.
+Workers claim and complete live_nodes via MCP tools. When an eval passes, tasks where all `validated_by` evals pass are marked Validated and unblocked. When an eval fails, a repair task may be created.
 
 **Changed Draft Handling:** When a draft node is modified after dispatch:
 1. The live node content is updated from the draft
@@ -779,7 +779,7 @@ Routes enable parallel exploration of different approaches within a project. Eac
 
 Data that is scoped to a specific route:
 - `draft_nodes` - Primary key includes `route_id`
-- `draft_node_validates` - Has `route_id` column
+- `draft_node_validated_by` - Has `route_id` column
 - `draft_node_blocked_by` - Has `route_id` column
 - `live_nodes` - Has `route_id` column
 - `project_messages` - Has `route_id` column
@@ -792,7 +792,7 @@ Route files stored at `~/.hirsel/projects/{project_id}/routes/{route_name}/`:
 ### Route Forking
 
 When creating a route with a `parent_route_id`:
-1. Database records are copied: `draft_nodes`, `draft_node_validates`, `draft_node_blocked_by`
+1. Database records are copied: `draft_nodes`, `draft_node_validated_by`, `draft_node_blocked_by`
 2. Files are copied: `docs/`, `board/tasks/`
 3. The new route gets its own folder structure at `routes/{new_route_name}/`
 
@@ -841,8 +841,9 @@ This allows independent exploration of different approaches while preserving the
 - `node_type` - 'task' or 'eval'
 - `status` - 'pending', 'working', 'done', 'failed'
 - `source` - 'spec', 'worker', 'system'
-- `validates` - JSON array of task IDs this eval validates
-- `blocked_by` - JSON array of blocking node IDs
+- `validated_by` - Junction table (task→eval): which evals validate this task
+- `validates` - Computed from validated_by junction table (eval→tasks)
+- `blocked_by` - Junction table of blocking node IDs
 
 ### Run Database (`~/.hirsel/runs/{name}/hirsel.db`)
 
@@ -895,7 +896,7 @@ The board module stores project-level data in the global database (`~/.hirsel/hi
 **board_evals:**
 - `id` - Slug ID
 - `project_id`, `name`, `status`
-- `content`, `validates` (JSON array of task IDs)
+- `content`, `validates` (computed from validated_by junction table)
 
 ---
 
@@ -1149,6 +1150,15 @@ idle_timeout_seconds = 300        # 5 min default
 | POST | `/api/board/{project_id}/tasks/{slug}` | `save_task_file` - Save task file |
 | DELETE | `/api/board/{project_id}/tasks/{slug}` | `delete_task_file` - Delete task file |
 
+### Git HTTP Endpoints
+
+| Method | Path | Handler |
+|--------|------|---------|
+| ANY | `/git/{run_name}` | `git_run_root_handler` - Git smart HTTP root (info/refs via query params) |
+| ANY | `/git/{run_name}/*path` | `git_run_handler` - Git smart HTTP sub-paths (git-upload-pack, git-receive-pack) |
+
+These endpoints proxy requests to `git-http-backend` CGI, resolving `run_name` to `~/.hirsel/runs/{run_name}/work/staging/`. Used by remote workers (SSH, Fly) to clone/fetch/push against the coordinator's staging repo. Mounted in `build_shared_routes()` so both daemon and remote server expose them.
+
 ### Gyp Chat Endpoints
 
 | Method | Path | Handler |
@@ -1166,7 +1176,7 @@ Routes are shared between daemon and remote server via `shared_routes.rs` to avo
 
 | Builder | Used By | Description |
 |---------|---------|-------------|
-| `build_shared_routes()` | Both | Run ops, workers, tasks, messages, evals, history, assets |
+| `build_shared_routes()` | Both | Run ops, workers, tasks, messages, evals, history, assets, git HTTP |
 | `build_gyp_routes()` | Both | Gyp chat sessions (requires `GypState`) |
 | `build_config_routes()` | Remote only | Config CRUD, credentials |
 | `build_board_routes()` | Remote only | Board sync for SpecFlow |
@@ -1284,7 +1294,7 @@ Ephemeral runners (Fly) bootstrap workers via init scripts in `runner/setup.rs`:
 1. **Download hirsel binary** - From GitHub releases with version pinning (`HIRSEL_TAG=v{VERSION}`)
 2. **Install dependencies** - Node.js for agent tools if not in image
 3. **Fetch project files** - Tarball from coordinator's `/api/runs/{name}/files`
-4. **Initialize git** - With coordinator as remote for syncing
+4. **Initialize git** - With coordinator as remote (`{coordinator_url}/git/{run_name}`) for push/pull via git smart HTTP
 5. **Start worker** - `hirsel __remote-worker` connects back to coordinator
 
 The coordinator embeds its version at compile time and passes it to workers, ensuring binary compatibility.

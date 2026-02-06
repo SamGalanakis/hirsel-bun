@@ -1,7 +1,7 @@
 /**
  * Run list sidebar panel
  */
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../../lib/invoke';
 import {
   type Component,
   For,

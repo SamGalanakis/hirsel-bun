@@ -382,6 +382,10 @@ async fn handle_lifecycle_actions(
         return;
     }
 
+    // Bump runs generation so frontend detects state changes from lifecycle actions
+    use crate::core::delta::bump_generation;
+    bump_generation("runs_gen").await.ok();
+
     // Create orchestrator for spawning
     let orchestrator = match create_local_orchestrator() {
         Ok(o) => o,

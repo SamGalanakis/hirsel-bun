@@ -198,6 +198,7 @@ fn get_staging_path(run_name: &str) -> Result<PathBuf, String> {
 }
 
 /// Open the staging directory for a run in the user's preferred IDE
+#[tracing::instrument]
 #[tauri::command]
 pub async fn open_in_ide(run_name: String) -> Result<OpenIdeResult, String> {
     // Get the staging path for this run

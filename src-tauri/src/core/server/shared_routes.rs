@@ -14,12 +14,13 @@
 //! | `build_board_routes()` | Remote only | Board sync for SpecFlow |
 
 use axum::{
-    routing::{delete, get, patch, post},
+    routing::{any, delete, get, patch, post},
     Router,
 };
 use std::sync::Arc;
 
 use super::{board, gyp, routes, AppState};
+use crate::core::git_http;
 
 /// Routes shared between daemon and remote server
 ///
@@ -152,6 +153,9 @@ pub fn build_shared_routes() -> Router<Arc<AppState>> {
             "/api/runs/{name}/live-nodes/{id}/validated",
             get(routes::get_validated_nodes),
         )
+        // Git HTTP backend for remote workers
+        .route("/git/{run_name}", any(git_http::git_run_root_handler))
+        .route("/git/{run_name}/*path", any(git_http::git_run_handler))
 }
 
 /// Gyp chat routes (requires separate GypState)

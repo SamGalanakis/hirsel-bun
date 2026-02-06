@@ -2,64 +2,63 @@
  * Collapsed cluster view for multiple consecutive tools
  *
  * Shows count + status pips, expands to show individual tools.
+ * Click on a tool to see its input/output details.
+ * Used by both WorkerOutputViewer and GypMessenger.
  */
 import { Component, For, Show, createSignal } from 'solid-js';
 import { Icon } from './Icon';
 import { ToolStatusPip } from './ToolStatusPip';
-import type { WorkerEvent } from '../../lib/types';
-import { getEffectiveToolStatus, getToolIcon, getToolShortLabel, getToolStatusIndicator } from '../../lib/tool-utils';
+import { getToolIcon, getToolShortLabel, getToolStatusIndicator } from '../../lib/tool-utils';
 
-/** A single tool group within a cluster */
-export interface ClusterToolGroup {
-  events: WorkerEvent[];
+/** Generic tool info for clustering - works with both ChatToolCall and WorkerEvent */
+export interface ToolInfo {
+  id: string;
+  title: string | null | undefined;
+  kind: string | null | undefined;
+  status: string;
+  input?: string | null;
+  output?: string | null;
 }
 
 export interface ToolClusterProps {
-  /** Tool groups in this cluster */
-  tools: ClusterToolGroup[];
+  /** Tools to display in this cluster */
+  tools: ToolInfo[];
 }
+
+/** Parse and format JSON input for display */
+const formatInput = (input: string | null | undefined): string | null => {
+  if (!input) return null;
+  try {
+    const parsed = JSON.parse(input);
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return input;
+  }
+};
 
 /** Collapsed cluster view with status pips */
 export const ToolCluster: Component<ToolClusterProps> = (props) => {
   const [expanded, setExpanded] = createSignal(false);
+  const [selectedToolId, setSelectedToolId] = createSignal<string | null>(null);
 
   const toolCount = () => props.tools.length;
+  const toolStatuses = () => props.tools.map((t) => t.status);
+  const selectedTool = () => props.tools.find((t) => t.id === selectedToolId());
 
-  // Get effective status for each tool group
-  // If tool has started but not completed/failed, treat as in_progress
-  const toolStatuses = () =>
-    props.tools.map((group) => {
-      const hasStarted = group.events.some((e) => e.eventType === 'tool_start');
-      const latestEvent = group.events[group.events.length - 1];
-      return getEffectiveToolStatus(hasStarted, latestEvent?.toolStatus);
-    });
-
-  // Summary: how many done, failed, working, pending
-  const statusSummary = () => {
-    const statuses = toolStatuses();
-    return {
-      done: statuses.filter((s) => s === 'completed').length,
-      failed: statuses.filter((s) => s === 'failed').length,
-      working: statuses.filter((s) => s === 'in_progress').length,
-      pending: statuses.filter((s) => s === 'pending' || !s).length,
-    };
+  const toggleTool = (id: string) => {
+    setSelectedToolId((prev) => (prev === id ? null : id));
   };
 
   return (
     <div class="tool-cluster-container">
       {/* Collapsed view */}
-      <button
-        onClick={() => setExpanded(!expanded())}
-        class="tool-cluster"
-      >
+      <button onClick={() => setExpanded(!expanded())} class="tool-cluster">
         <Icon name="layers" class="w-3.5 h-3.5 text-wool-400" />
         <span class="text-wool-300">{toolCount()} tools</span>
 
         {/* Status pips */}
         <div class="tool-pips">
-          <For each={toolStatuses()}>
-            {(status) => <ToolStatusPip status={status} />}
-          </For>
+          <For each={toolStatuses()}>{(status) => <ToolStatusPip status={status} />}</For>
         </div>
 
         {/* Expand indicator */}
@@ -73,43 +72,79 @@ export const ToolCluster: Component<ToolClusterProps> = (props) => {
       <Show when={expanded()}>
         <div class="tool-cluster-expanded">
           <For each={props.tools}>
-            {(group) => {
-              const titleEvent = () => group.events.find((e) => e.toolTitle) ?? group.events[0];
-              const latestEvent = () => group.events[group.events.length - 1];
-              const hasStarted = () => group.events.some((e) => e.eventType === 'tool_start');
-              const status = () => getEffectiveToolStatus(hasStarted(), latestEvent()?.toolStatus);
-              const statusIndicator = () => getToolStatusIndicator(status());
+            {(tool) => {
+              const statusIndicator = () => getToolStatusIndicator(tool.status);
+              const isSelected = () => selectedToolId() === tool.id;
 
               return (
-                <div class="tool-row">
-                  {/* Status indicator */}
-                  <Show when={statusIndicator().animate}>
-                    <span class="w-3 h-3 border border-amber-500 border-t-transparent rounded-full animate-spin shrink-0" />
-                  </Show>
-                  <Show when={!statusIndicator().animate}>
+                <div class="tool-row-container">
+                  <button
+                    class="tool-row"
+                    classList={{ selected: isSelected() }}
+                    onClick={() => toggleTool(tool.id)}
+                  >
+                    {/* Status indicator */}
+                    <Show when={statusIndicator().animate}>
+                      <span class="w-3 h-3 border border-amber-500 border-t-transparent rounded-full animate-spin shrink-0" />
+                    </Show>
+                    <Show when={!statusIndicator().animate}>
+                      <Icon
+                        name={statusIndicator().icon}
+                        class={`w-3 h-3 shrink-0 ${statusIndicator().color}`}
+                      />
+                    </Show>
+
+                    {/* Tool icon */}
+                    <Icon name={getToolIcon(tool.kind)} class="w-3 h-3 text-wool-500 shrink-0" />
+
+                    {/* Tool name */}
+                    <span class="text-wool-300 truncate">{getToolShortLabel(tool.title)}</span>
+
+                    {/* Status label for working tools */}
+                    <Show when={tool.status === 'in_progress'}>
+                      <span class="text-amber-500 text-[10px] ml-auto">running</span>
+                    </Show>
+                    <Show when={tool.status === 'pending'}>
+                      <span class="text-wool-600 text-[10px] ml-auto">queued</span>
+                    </Show>
+
+                    {/* Expand indicator */}
                     <Icon
-                      name={statusIndicator().icon}
-                      class={`w-3 h-3 shrink-0 ${statusIndicator().color}`}
+                      name={isSelected() ? 'chevron-up' : 'chevron-down'}
+                      class="w-3 h-3 text-wool-600 ml-1"
                     />
-                  </Show>
+                  </button>
 
-                  {/* Tool icon */}
-                  <Icon
-                    name={getToolIcon(titleEvent()?.toolKind)}
-                    class="w-3 h-3 text-wool-500 shrink-0"
-                  />
-
-                  {/* Tool name */}
-                  <span class="text-wool-300 truncate">
-                    {getToolShortLabel(titleEvent()?.toolTitle)}
-                  </span>
-
-                  {/* Status label for working tools */}
-                  <Show when={status() === 'in_progress'}>
-                    <span class="text-amber-500 text-[10px] ml-auto">running</span>
-                  </Show>
-                  <Show when={status() === 'pending'}>
-                    <span class="text-wool-600 text-[10px] ml-auto">queued</span>
+                  {/* Tool details drawer */}
+                  <Show when={isSelected()}>
+                    <div class="tool-row-details">
+                      <div class="text-[10px] text-wool-500 mb-1 truncate" title={tool.title || ''}>
+                        {tool.title || 'Tool'}
+                      </div>
+                      <Show when={tool.input}>
+                        <div class="mb-2">
+                          <p class="text-[10px] text-wool-600 mb-0.5 uppercase tracking-wide">
+                            Input
+                          </p>
+                          <pre class="text-[10px] text-wool-400 bg-pasture-900 p-1.5 rounded overflow-x-auto whitespace-pre-wrap break-all max-h-24 overflow-y-auto">
+                            {formatInput(tool.input)}
+                          </pre>
+                        </div>
+                      </Show>
+                      <Show when={tool.output}>
+                        <div>
+                          <p class="text-[10px] text-wool-600 mb-0.5 uppercase tracking-wide">
+                            Output
+                          </p>
+                          <pre class="text-[10px] text-wool-400 bg-pasture-900 p-1.5 rounded overflow-x-auto whitespace-pre-wrap break-all max-h-24 overflow-y-auto">
+                            {tool.output}
+                          </pre>
+                        </div>
+                      </Show>
+                      <Show when={!tool.input && !tool.output}>
+                        <p class="text-[10px] text-wool-600 italic">No details available</p>
+                      </Show>
+                    </div>
                   </Show>
                 </div>
               );

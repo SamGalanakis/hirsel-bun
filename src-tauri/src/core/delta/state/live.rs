@@ -18,10 +18,11 @@ impl DeltaState {
 
         // Load relationships first
         let validates_map = self.load_live_validates(pool).await?;
+        let validated_by_map = self.load_live_validated_by(pool).await?;
         let blocked_by_map = self.load_live_blocked_by(pool).await?;
 
         let rows = sqlx::query(
-            "SELECT id, project_id, draft_node_id, parent_id, position, name, node_type, content, status, source, x, y, created_at, updated_at, completed_at, last_commit_sha, claimed_by, claimed_at, completed_by, eval_result, eval_feedback, tokens_used
+            "SELECT id, project_id, draft_node_id, parent_id, position, name, node_type, content, status, source, x, y, created_at, updated_at, completed_at, last_commit_sha, resolves, claimed_by, claimed_at, completed_by, eval_result, eval_feedback, tokens_used
              FROM live_nodes
              WHERE project_id = ? AND route_id = ?
              ORDER BY parent_id NULLS FIRST, position",
@@ -47,6 +48,7 @@ impl DeltaState {
                     status: LiveNodeStatus::from_str(&row.get::<String, _>("status")),
                     source: LiveNodeSource::from_str(&row.get::<String, _>("source")),
                     validates: validates_map.get(&id).cloned().unwrap_or_default(),
+                    validated_by: validated_by_map.get(&id).cloned().unwrap_or_default(),
                     blocked_by: blocked_by_map.get(&id).cloned().unwrap_or_default(),
                     x: row.get("x"),
                     y: row.get("y"),
@@ -54,6 +56,7 @@ impl DeltaState {
                     updated_at: row.get("updated_at"),
                     completed_at: row.get("completed_at"),
                     last_commit_sha: row.get("last_commit_sha"),
+                    resolves: row.get("resolves"),
                     claimed_by: row.get("claimed_by"),
                     claimed_at: row.get("claimed_at"),
                     completed_by: row.get("completed_by"),
@@ -74,10 +77,11 @@ impl DeltaState {
         let pool = self.pool().await?;
 
         let validates = self.load_live_node_validates(pool, id).await?;
+        let validated_by = self.load_live_node_validated_by(pool, id).await?;
         let blocked_by = self.load_live_node_blocked_by(pool, id).await?;
 
         let row = sqlx::query(
-            "SELECT id, project_id, draft_node_id, parent_id, position, name, node_type, content, status, source, x, y, created_at, updated_at, completed_at, last_commit_sha, claimed_by, claimed_at, completed_by, eval_result, eval_feedback, tokens_used
+            "SELECT id, project_id, draft_node_id, parent_id, position, name, node_type, content, status, source, x, y, created_at, updated_at, completed_at, last_commit_sha, resolves, claimed_by, claimed_at, completed_by, eval_result, eval_feedback, tokens_used
              FROM live_nodes
              WHERE id = ? AND project_id = ? AND route_id = ?",
         )
@@ -100,6 +104,7 @@ impl DeltaState {
             status: LiveNodeStatus::from_str(&row.get::<String, _>("status")),
             source: LiveNodeSource::from_str(&row.get::<String, _>("source")),
             validates,
+            validated_by,
             blocked_by,
             x: row.get("x"),
             y: row.get("y"),
@@ -107,6 +112,7 @@ impl DeltaState {
             updated_at: row.get("updated_at"),
             completed_at: row.get("completed_at"),
             last_commit_sha: row.get("last_commit_sha"),
+            resolves: row.get("resolves"),
             claimed_by: row.get("claimed_by"),
             claimed_at: row.get("claimed_at"),
             completed_by: row.get("completed_by"),
@@ -146,13 +152,13 @@ impl DeltaState {
         .execute(pool)
         .await?;
 
-        // Insert validates relationships (OR IGNORE handles duplicates)
-        for task_id in &draft.validates {
+        // Insert validated_by relationships (task declares which evals validate it)
+        for eval_id in &draft.validated_by {
             sqlx::query(
-                "INSERT OR IGNORE INTO live_node_validates (eval_id, task_id, project_id, route_id) VALUES (?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO live_node_validated_by (eval_id, task_id, project_id, route_id) VALUES (?, ?, ?, ?)",
             )
+            .bind(eval_id)
             .bind(&draft.id)
-            .bind(task_id)
             .bind(self.project_id)
             .bind(self.route_id)
             .execute(pool)
@@ -172,6 +178,7 @@ impl DeltaState {
             .await?;
         }
 
+        self.bump_tree_generation().await?;
         self.get_live_node(&draft.id).await
     }
 
@@ -187,6 +194,7 @@ impl DeltaState {
         blocked_by: Option<&[&str]>,
         node_type: NodeType,
         content: &str,
+        validates: Option<&[&str]>,
     ) -> DeltaStateResult<LiveNode> {
         let pool = self.pool().await?;
         let now = utc_now();
@@ -248,6 +256,22 @@ impl DeltaState {
             }
         }
 
+        // For eval nodes with validates (convenience sugar): write validated_by on target tasks
+        if let Some(task_ids) = validates {
+            for task_id in task_ids {
+                sqlx::query(
+                    "INSERT OR IGNORE INTO live_node_validated_by (eval_id, task_id, project_id, route_id) VALUES (?, ?, ?, ?)",
+                )
+                .bind(id)
+                .bind(task_id)
+                .bind(self.project_id)
+                .bind(self.route_id)
+                .execute(pool)
+                .await?;
+            }
+        }
+
+        self.bump_tree_generation().await?;
         self.get_live_node(id).await
     }
 
@@ -313,6 +337,7 @@ impl DeltaState {
         .execute(pool)
         .await?;
 
+        self.bump_tree_generation().await?;
         self.get_live_node(id).await
     }
 
@@ -338,21 +363,21 @@ impl DeltaState {
         .execute(pool)
         .await?;
 
-        // Replace validates relationships (OR IGNORE handles duplicates in list)
+        // Replace validated_by relationships (task declares which evals validate it)
         sqlx::query(
-            "DELETE FROM live_node_validates WHERE eval_id = ? AND project_id = ? AND route_id = ?",
+            "DELETE FROM live_node_validated_by WHERE task_id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(&draft.id)
         .bind(self.project_id)
         .bind(self.route_id)
         .execute(pool)
         .await?;
-        for task_id in &draft.validates {
+        for eval_id in &draft.validated_by {
             sqlx::query(
-                "INSERT OR IGNORE INTO live_node_validates (eval_id, task_id, project_id, route_id) VALUES (?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO live_node_validated_by (eval_id, task_id, project_id, route_id) VALUES (?, ?, ?, ?)",
             )
+            .bind(eval_id)
             .bind(&draft.id)
-            .bind(task_id)
             .bind(self.project_id)
             .bind(self.route_id)
             .execute(pool)
@@ -399,7 +424,7 @@ impl DeltaState {
 
         // Delete validates relationships (both as eval and as referenced task)
         sqlx::query(
-            "DELETE FROM live_node_validates WHERE eval_id = ? AND project_id = ? AND route_id = ?",
+            "DELETE FROM live_node_validated_by WHERE eval_id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(id)
         .bind(self.project_id)
@@ -407,7 +432,7 @@ impl DeltaState {
         .execute(pool)
         .await?;
         sqlx::query(
-            "DELETE FROM live_node_validates WHERE task_id = ? AND project_id = ? AND route_id = ?",
+            "DELETE FROM live_node_validated_by WHERE task_id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(id)
         .bind(self.project_id)
@@ -444,6 +469,7 @@ impl DeltaState {
         if result.rows_affected() == 0 {
             return Err(DeltaStateError::LiveNodeNotFound(id.to_string()));
         }
+        self.bump_tree_generation().await?;
         Ok(())
     }
 
@@ -490,9 +516,11 @@ impl DeltaState {
                 status: node.status,
                 source: node.source,
                 validates: node.validates.clone(),
+                validated_by: node.validated_by.clone(),
                 blocked_by: node.blocked_by.clone(),
                 completed_at: node.completed_at.clone(),
                 last_commit_sha: node.last_commit_sha.clone(),
+                resolves: node.resolves.clone(),
                 children,
                 x: node.x,
                 y: node.y,
@@ -529,10 +557,11 @@ impl DeltaState {
 
         // Load relationships
         let validates_map = self.load_live_validates(pool).await?;
+        let validated_by_map = self.load_live_validated_by(pool).await?;
         let blocked_by_map = self.load_live_blocked_by(pool).await?;
 
         let rows = sqlx::query(
-            "SELECT id, project_id, draft_node_id, parent_id, position, name, node_type, content, status, source, x, y, created_at, updated_at, completed_at, last_commit_sha, claimed_by, claimed_at, completed_by, eval_result, eval_feedback, tokens_used
+            "SELECT id, project_id, draft_node_id, parent_id, position, name, node_type, content, status, source, x, y, created_at, updated_at, completed_at, last_commit_sha, resolves, claimed_by, claimed_at, completed_by, eval_result, eval_feedback, tokens_used
              FROM live_nodes
              WHERE parent_id = ? AND project_id = ? AND route_id = ?
              ORDER BY position",
@@ -559,6 +588,7 @@ impl DeltaState {
                     status: LiveNodeStatus::from_str(&row.get::<String, _>("status")),
                     source: LiveNodeSource::from_str(&row.get::<String, _>("source")),
                     validates: validates_map.get(&node_id).cloned().unwrap_or_default(),
+                    validated_by: validated_by_map.get(&node_id).cloned().unwrap_or_default(),
                     blocked_by: blocked_by_map.get(&node_id).cloned().unwrap_or_default(),
                     x: row.get("x"),
                     y: row.get("y"),
@@ -566,6 +596,7 @@ impl DeltaState {
                     updated_at: row.get("updated_at"),
                     completed_at: row.get("completed_at"),
                     last_commit_sha: row.get("last_commit_sha"),
+                    resolves: row.get("resolves"),
                     claimed_by: row.get("claimed_by"),
                     claimed_at: row.get("claimed_at"),
                     completed_by: row.get("completed_by"),
@@ -601,5 +632,54 @@ impl DeltaState {
     /// and cleans up relationships.
     pub async fn delete_live_node_by_id(&self, id: &str) -> DeltaStateResult<()> {
         self.delete_live_node(id).await
+    }
+
+    /// Get a lightweight map of worker_name -> task_name for currently working nodes.
+    ///
+    /// This avoids loading the full live tree with all relationships just to build
+    /// the claimed task mapping for the workers display.
+    pub async fn get_claimed_task_map(&self) -> DeltaStateResult<HashMap<String, String>> {
+        let pool = self.pool().await?;
+
+        let rows = sqlx::query(
+            "SELECT claimed_by, name FROM live_nodes
+             WHERE project_id = ? AND route_id = ? AND status = 'working' AND claimed_by IS NOT NULL",
+        )
+        .bind(self.project_id)
+        .bind(self.route_id)
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                let claimed_by: String = row.get("claimed_by");
+                let name: String = row.get("name");
+                (claimed_by, name)
+            })
+            .collect())
+    }
+
+    /// Get summary counts for live nodes (done, total) without loading full data.
+    pub async fn get_live_node_counts(&self) -> DeltaStateResult<(u32, u32)> {
+        let pool = self.pool().await?;
+
+        let total: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM live_nodes WHERE project_id = ? AND route_id = ?",
+        )
+        .bind(self.project_id)
+        .bind(self.route_id)
+        .fetch_one(pool)
+        .await?;
+
+        let done: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM live_nodes WHERE project_id = ? AND route_id = ? AND status IN ('done', 'validated')",
+        )
+        .bind(self.project_id)
+        .bind(self.route_id)
+        .fetch_one(pool)
+        .await?;
+
+        Ok((done as u32, total as u32))
     }
 }

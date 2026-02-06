@@ -9,6 +9,7 @@ use crate::core::credentials::CredentialStore;
 ///
 /// This is used for storing API keys that should not be stored
 /// in plain text in the config file.
+#[tracing::instrument(skip(value))]
 #[tauri::command]
 pub async fn store_credential(key_type: String, value: String) -> Result<(), String> {
     let store = CredentialStore::open().await.str_err()?;
@@ -16,6 +17,7 @@ pub async fn store_credential(key_type: String, value: String) -> Result<(), Str
 }
 
 /// Delete a credential from the credential store
+#[tracing::instrument]
 #[tauri::command]
 pub async fn delete_credential(key_type: String) -> Result<(), String> {
     let store = CredentialStore::open().await.str_err()?;
@@ -23,6 +25,7 @@ pub async fn delete_credential(key_type: String) -> Result<(), String> {
 }
 
 /// Check if a credential exists in the credential store
+#[tracing::instrument]
 #[tauri::command]
 pub async fn has_credential(key_type: String) -> Result<bool, String> {
     let store = CredentialStore::open().await.str_err()?;
@@ -32,6 +35,7 @@ pub async fn has_credential(key_type: String) -> Result<bool, String> {
 /// Get the actual value of a credential
 ///
 /// Used internally for auth verification. Only accessible from within the app.
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_credential(key_type: String) -> Result<Option<String>, String> {
     let store = CredentialStore::open().await.str_err()?;
@@ -45,6 +49,7 @@ pub async fn get_credential(key_type: String) -> Result<Option<String>, String> 
 ///
 /// Returns the first 4 and last 4 characters of the credential,
 /// or "****" if the credential is short.
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_credential_masked(key_type: String) -> Result<Option<String>, String> {
     let store = CredentialStore::open().await.str_err()?;

@@ -1,7 +1,11 @@
 /**
- * Runs context - replaces the Alpine DataCache with SolidJS reactivity
+ * Runs context - manages run list, run detail, workers, threads, history
+ *
+ * Centralizes all run-related polling so components can read from the store
+ * instead of polling independently.
  */
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/invoke';
+import { createPoll } from '../lib/poll';
 import {
   type ParentComponent,
   createContext,
@@ -55,7 +59,9 @@ interface RunsContextValue {
 
 const RunsContext = createContext<RunsContextValue>();
 
-const POLL_INTERVAL_MS = 2000;
+/** Active polling interval — 5s when runs are active, 15s when idle */
+const ACTIVE_POLL_MS = 5000;
+const IDLE_POLL_MS = 15000;
 
 export const RunsProvider: ParentComponent = (props) => {
   const [state, setState] = createStore<RunsState>({
@@ -69,6 +75,11 @@ export const RunsProvider: ParentComponent = (props) => {
   const [selectedRun, setSelectedRunSignal] = createSignal<string | null>(null);
   const [loading, setLoading] = createSignal(true);
   const [subscriberCount, setSubscriberCount] = createSignal(0);
+  const [runsGeneration, setRunsGeneration] = createSignal(0);
+
+  /** Whether any run is in an active state (working/eval) */
+  const hasActiveRuns = () =>
+    state.runs.some((r) => r.status === 'working' || r.status === 'eval');
 
   // Fetch runs list
   const fetchRuns = async () => {
@@ -189,23 +200,44 @@ export const RunsProvider: ParentComponent = (props) => {
     }
   };
 
-  // Polling
-  createEffect(() => {
-    // Initial fetch
-    fetchRuns();
+  // Generation-aware poll for runs list
+  const pollRuns = async () => {
+    try {
+      const result = await invoke<[RunSummary[], number] | null>('get_runs_if_changed', {
+        lastGeneration: runsGeneration(),
+      });
+      if (result === null) return; // No changes
+      const [runs, gen] = result;
+      const filtered = (runs || []).filter((r): r is RunSummary => r != null);
+      setState('runs', reconcile(filtered));
+      setRunsGeneration(gen);
+      setLoading(false);
 
-    // Set up polling
-    const interval = setInterval(() => {
-      if (subscriberCount() > 0) {
-        fetchRuns();
+      // Check if selected run still exists
+      const currentRun = selectedRun();
+      if (currentRun && !filtered.some((r) => r.name === currentRun)) {
+        handleRunDeleted(currentRun);
+      }
+    } catch (e) {
+      console.error('[RunsContext] Failed to fetch runs:', e);
+    }
+  };
+
+  // Polling — adaptive interval based on active run state
+  createEffect(() => {
+    const interval = hasActiveRuns() ? ACTIVE_POLL_MS : IDLE_POLL_MS;
+
+    createPoll(
+      async () => {
+        if (subscriberCount() <= 0) return;
+        await pollRuns();
         const currentRun = selectedRun();
         if (currentRun) {
-          fetchRunData(currentRun);
+          await fetchRunData(currentRun);
         }
-      }
-    }, POLL_INTERVAL_MS);
-
-    onCleanup(() => clearInterval(interval));
+      },
+      { interval, immediate: true },
+    );
   });
 
   // Listen for run-selected events from other sources
@@ -247,7 +279,10 @@ export const RunsProvider: ParentComponent = (props) => {
     selectedRun,
     setSelectedRun,
     loading,
-    invalidateRuns: fetchRuns,
+    invalidateRuns: () => {
+      setRunsGeneration(0);
+      return fetchRuns();
+    },
     invalidateRunDetail: () => {
       const run = selectedRun();
       return run ? fetchRunDetail(run) : Promise.resolve();

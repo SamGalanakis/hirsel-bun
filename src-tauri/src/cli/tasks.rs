@@ -233,7 +233,8 @@ pub fn run_task_add(
             Some(blocked_by_refs.as_slice())
         },
         NodeType::Task,
-        "", // content - empty for CLI-added tasks
+        "",   // content - empty for CLI-added tasks
+        None, // validates - not used for tasks
     ))?;
 
     if json_output {

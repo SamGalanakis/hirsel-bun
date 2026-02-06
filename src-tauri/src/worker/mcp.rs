@@ -109,7 +109,7 @@ fn get_tools() -> Vec<Tool> {
         },
         Tool {
             name: "add_eval",
-            description: "Create an eval task that validates other tasks. Eval becomes ready when all validated tasks complete.",
+            description: "Create an eval task. If validates is provided, writes validated_by on target tasks. Eval becomes ready when all validated tasks complete. Omit validates for global/e2e evals.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -124,10 +124,10 @@ fn get_tools() -> Vec<Tool> {
                     "validates": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "List of task IDs this eval validates"
+                        "description": "Task IDs this eval validates (convenience sugar — writes validated_by on each task). Omit for global evals."
                     }
                 },
-                "required": ["eval_id", "name", "validates"]
+                "required": ["eval_id", "name"]
             }),
         },
         Tool {
@@ -391,7 +391,7 @@ impl McpServer {
                             .filter_map(|v| v.as_str().map(String::from))
                             .collect()
                     })
-                    .ok_or_else(|| WorkerError::Config("validates is required".into()))?;
+                    .unwrap_or_default();
 
                 self.runner
                     .add_eval(eval_id, eval_name, &validates)

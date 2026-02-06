@@ -1904,6 +1904,130 @@ section.flex-1.flex.flex-col {
   display: block;
 }
 
+.markdown-preview em {
+  font-style: italic;
+  color: var(--wool-300);
+}
+
+.markdown-preview h4 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--wool-100);
+  margin-bottom: 0.375rem;
+  margin-top: 0.875rem;
+}
+
+.markdown-preview h5 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--wool-200);
+  margin-bottom: 0.25rem;
+  margin-top: 0.75rem;
+}
+
+.markdown-preview h6 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--wool-300);
+  margin-bottom: 0.25rem;
+  margin-top: 0.75rem;
+}
+
+.markdown-preview hr {
+  border: none;
+  border-top: 1px solid var(--pasture-600);
+  margin: 1.5rem 0;
+}
+
+.markdown-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 0.75rem;
+  font-size: 0.85em;
+}
+
+.markdown-preview th {
+  background: var(--pasture-800);
+  color: var(--wool-200);
+  font-weight: 600;
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--pasture-600);
+}
+
+.markdown-preview td {
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--pasture-700);
+  color: var(--wool-300);
+}
+
+/* Compact mode — smaller text/spacing for side panel and SpecBoard */
+.markdown-preview.compact {
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.markdown-preview.compact h1 {
+  font-size: 1rem;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.375rem;
+  border-bottom: 1px solid var(--pasture-700);
+}
+
+.markdown-preview.compact h2 {
+  font-size: 0.875rem;
+  margin-top: 0.75rem;
+  margin-bottom: 0.375rem;
+}
+
+.markdown-preview.compact h3 {
+  font-size: 0.8rem;
+  margin-top: 0.625rem;
+  margin-bottom: 0.25rem;
+}
+
+.markdown-preview.compact h4,
+.markdown-preview.compact h5,
+.markdown-preview.compact h6 {
+  font-size: 0.75rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.markdown-preview.compact p {
+  margin-bottom: 0.5rem;
+}
+
+.markdown-preview.compact ul,
+.markdown-preview.compact ol {
+  margin-bottom: 0.5rem;
+  padding-left: 1.25rem;
+}
+
+.markdown-preview.compact pre {
+  padding: 0.625rem;
+  margin-bottom: 0.5rem;
+}
+
+.markdown-preview.compact blockquote {
+  padding-left: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.markdown-preview.compact hr {
+  margin: 0.75rem 0;
+}
+
+.markdown-preview.compact table {
+  margin-bottom: 0.5rem;
+}
+
+.markdown-preview.compact th,
+.markdown-preview.compact td {
+  padding: 0.3rem 0.5rem;
+}
+
 /* ============================================================================
    Inline Messages Panel
    ============================================================================ */
@@ -2511,7 +2635,13 @@ section.flex-1.flex.flex-col {
   }
 }
 
-/* Tool row - compact for inside clusters */
+/* Tool row container - wraps row + details */
+.tool-row-container {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Tool row - compact clickable button for inside clusters */
 .tool-row {
   display: flex;
   align-items: center;
@@ -2520,11 +2650,143 @@ section.flex-1.flex.flex-col {
   font-family: var(--font-mono);
   font-size: 11px;
   border-radius: 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
   transition: background-color 100ms ease-out;
 }
 
 .tool-row:hover {
   background: color-mix(in srgb, var(--pasture-700) 40%, transparent);
+}
+
+.tool-row.selected {
+  background: color-mix(in srgb, var(--pasture-700) 60%, transparent);
+}
+
+/* Tool row details - expandable section */
+.tool-row-details {
+  padding: 8px 12px;
+  margin: 2px 0 4px 20px;
+  background: color-mix(in srgb, var(--pasture-800) 80%, transparent);
+  border-radius: 4px;
+  border-left: 2px solid var(--pasture-500);
+  animation: tool-row-details-expand 150ms ease-out;
+}
+
+@keyframes tool-row-details-expand {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ===== Markdown Content Styles ===== */
+.markdown-content {
+  line-height: 1.5;
+}
+
+.markdown-content p {
+  margin: 0 0 0.75em 0;
+}
+
+.markdown-content p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-content strong {
+  font-weight: 600;
+  color: var(--wool-200);
+}
+
+.markdown-content em {
+  font-style: italic;
+}
+
+.markdown-content code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: color-mix(in srgb, var(--pasture-700) 60%, transparent);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  color: var(--wool-300);
+}
+
+.markdown-content pre {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--pasture-900);
+  padding: 0.75em 1em;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 0.75em 0;
+}
+
+.markdown-content pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.markdown-content li {
+  margin: 0.25em 0;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4 {
+  font-weight: 600;
+  color: var(--wool-200);
+  margin: 1em 0 0.5em 0;
+}
+
+.markdown-content h1:first-child,
+.markdown-content h2:first-child,
+.markdown-content h3:first-child,
+.markdown-content h4:first-child {
+  margin-top: 0;
+}
+
+.markdown-content h1 { font-size: 1.25em; }
+.markdown-content h2 { font-size: 1.15em; }
+.markdown-content h3 { font-size: 1.05em; }
+.markdown-content h4 { font-size: 1em; }
+
+.markdown-content blockquote {
+  border-left: 3px solid var(--pasture-500);
+  padding-left: 1em;
+  margin: 0.75em 0;
+  color: var(--wool-400);
+  font-style: italic;
+}
+
+.markdown-content a {
+  color: var(--amber-400);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.markdown-content a:hover {
+  color: var(--amber-300);
+}
+
+.markdown-content hr {
+  border: none;
+  border-top: 1px solid var(--pasture-600);
+  margin: 1em 0;
 }
 
 /* Empty state styling */
@@ -2764,11 +3026,13 @@ section.flex-1.flex.flex-col {
   --glow-working: 0 0 12px color-mix(in srgb, var(--amber-500) 40%, transparent);
   --glow-done: 0 0 8px color-mix(in srgb, var(--sage) 25%, transparent);
   --glow-failed: 0 0 10px color-mix(in srgb, var(--terra) 35%, transparent);
+  --glow-claimable: 0 0 6px color-mix(in srgb, var(--amber-500) 15%, transparent);
 
   /* Edge stroke colors (dependency connectors) */
   --edge-validates: rgb(85, 115, 75);
   --edge-blocked-by: rgb(145, 85, 70);
   --edge-hierarchy: rgb(90, 85, 78);
+  --edge-resolves: rgb(180, 150, 40);
 
   /* CodeMirror theme support */
   --cm-selection-bg: color-mix(in srgb, var(--amber-500) 20%, transparent);
@@ -2788,6 +3052,8 @@ section.flex-1.flex.flex-col {
   --edge-validates: rgb(74, 115, 64);
   --edge-blocked-by: rgb(184, 69, 53);
   --edge-hierarchy: rgb(160, 155, 145);
+  --edge-resolves: rgb(180, 150, 40);
+  --glow-claimable: 0 0 6px color-mix(in srgb, var(--amber-500) 12%, transparent);
 }
 
 /* ============================================

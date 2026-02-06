@@ -98,10 +98,21 @@ impl DeliveryOrchestrator {
         })
     }
 
-    /// Create a delivery orchestrator from a work directory path
-    pub fn from_work_dir(work_dir: impl Into<std::path::PathBuf>) -> DeliveryResult<Self> {
+    /// Create a delivery orchestrator from a work directory path.
+    ///
+    /// If `expected_remote` is provided and the git repo doesn't have an
+    /// origin remote (or has a different one), it will be added/updated.
+    pub fn from_work_dir(
+        work_dir: impl Into<std::path::PathBuf>,
+        expected_remote: Option<&str>,
+    ) -> DeliveryResult<Self> {
         let path = work_dir.into();
         let ops = GitOperations::new(&path);
+
+        // Ensure origin remote is configured if we know what it should be
+        if let Some(url) = expected_remote {
+            ops.ensure_remote(url)?;
+        }
 
         let remote_url = ops.remote_url().ok();
         let (forge, repo) = if let Some(ref url) = remote_url {
@@ -125,9 +136,32 @@ impl DeliveryOrchestrator {
         &self.workspace
     }
 
+    /// Check if this orchestrator has a remote configured
+    pub fn has_remote(&self) -> bool {
+        self.git_ops
+            .as_ref()
+            .map(|ops| ops.remote_url().is_ok())
+            .unwrap_or(false)
+    }
+
     /// Check if this orchestrator has a forge (can create PRs)
     pub fn has_forge(&self) -> bool {
         self.forge.is_some()
+    }
+
+    /// Check if a target branch exists on the remote
+    pub fn target_exists_on_remote(&self, target_branch: &str) -> DeliveryResult<bool> {
+        let git = self
+            .git_ops
+            .as_ref()
+            .ok_or_else(|| DeliveryError::InvalidState("No local workspace".to_string()))?;
+
+        // Fetch first so we have latest refs
+        let _ = git.fetch(target_branch);
+
+        // Check if the remote ref exists
+        let result = git.rev_parse(&format!("origin/{}", target_branch));
+        Ok(result.is_ok())
     }
 
     /// Get the git operations (if local workspace)
@@ -137,14 +171,21 @@ impl DeliveryOrchestrator {
 
     // ========== Tier 1: Push Branch ==========
 
-    /// Push branch to remote
-    pub fn push_branch(&self, branch: Option<&str>) -> DeliveryResult<PushResult> {
+    /// Push branch to remote.
+    ///
+    /// When `delivery_branch` is provided, pushes `HEAD` to that branch name
+    /// on the remote rather than the current local branch name.
+    pub fn push_branch(
+        &self,
+        branch: Option<&str>,
+        delivery_branch: Option<&str>,
+    ) -> DeliveryResult<PushResult> {
         let git = self
             .git_ops
             .as_ref()
             .ok_or_else(|| DeliveryError::InvalidState("No local workspace".to_string()))?;
 
-        git.push_branch(branch)
+        git.push_branch(branch, delivery_branch)
     }
 
     // ========== Tier 2: Create PR ==========
@@ -157,7 +198,7 @@ impl DeliveryOrchestrator {
         body: &str,
     ) -> DeliveryResult<PrInfo> {
         // First push the branch
-        let push_result = self.push_branch(None)?;
+        let push_result = self.push_branch(None, None)?;
 
         // Get forge and repo
         let forge = self
@@ -272,7 +313,7 @@ impl DeliveryOrchestrator {
         ))?;
 
         // Push → PR → merge
-        let push_result = self.push_branch(None)?;
+        let push_result = self.push_branch(None, None)?;
         let forge = self.forge.as_ref().ok_or(DeliveryError::NotGitHub)?;
         let repo = self.repo.as_ref().ok_or(DeliveryError::NotGitHub)?;
 
@@ -321,6 +362,16 @@ impl DeliveryOrchestrator {
             .ok_or_else(|| DeliveryError::InvalidState("No local workspace".to_string()))?;
 
         git.check_staleness(target_branch, branch_off_commit)
+    }
+
+    /// List remote branches
+    pub fn list_remote_branches(&self) -> DeliveryResult<Vec<String>> {
+        let git = self
+            .git_ops
+            .as_ref()
+            .ok_or_else(|| DeliveryError::InvalidState("No local workspace".to_string()))?;
+
+        git.list_remote_branches()
     }
 
     /// Get current branch

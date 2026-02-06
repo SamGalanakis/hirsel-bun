@@ -6,7 +6,7 @@
  *
  * Prerequisites:
  * - Hirsel must be running with the MCP server enabled
- * - Run with: npx tsx tests/e2e/create-run.test.ts
+ * - Run with: bunx tsx tests/e2e/create-run.test.ts
  */
 
 import { McpTestClient } from '../mcp-client.js';

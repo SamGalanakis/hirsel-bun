@@ -590,6 +590,7 @@ impl WorkerRunner {
             },
             "task", // node_type
             "",     // content - empty for worker-added tasks
+            None,   // validates - not used for tasks
         ))?;
 
         tracing::debug!(
@@ -618,20 +619,27 @@ impl WorkerRunner {
 
     /// Add a new eval task as a live node.
     ///
-    /// Note: The validates relationship is stored in the content field as JSON.
+    /// The validates list writes validated_by on target live tasks via the junction table.
     pub fn add_eval(
         &self,
         eval_id: &str,
         name: &str,
         validates: &[String],
     ) -> WorkerResult<String> {
-        // Store validates in content as JSON
-        let content = serde_json::json!({ "validates": validates }).to_string();
+        let validates_refs: Vec<&str> = validates.iter().map(|s| s.as_str()).collect();
 
         self.run_async(self.state().add_live_node(
-            eval_id, name, None, // No parent
+            eval_id,
+            name,
+            None, // No parent
             None, // No blocked_by (eval uses validates relationship)
-            "eval", &content,
+            "eval",
+            "", // No content
+            if validates_refs.is_empty() {
+                None
+            } else {
+                Some(validates_refs.as_slice())
+            },
         ))?;
 
         Ok(serde_json::json!({

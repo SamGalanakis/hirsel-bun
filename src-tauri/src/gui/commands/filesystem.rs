@@ -7,6 +7,7 @@ use std::path::PathBuf;
 /// Open a native folder picker dialog
 ///
 /// Returns the selected folder path, or None if cancelled.
+#[tracing::instrument]
 #[tauri::command]
 pub async fn pick_folder() -> Result<Option<String>, String> {
     let result = rfd::AsyncFileDialog::new()
@@ -34,6 +35,7 @@ fn expand_home(path: &str) -> PathBuf {
 /// Get path suggestions for autocomplete
 ///
 /// Given a partial path, returns a list of matching directories.
+#[tracing::instrument]
 #[tauri::command]
 pub async fn suggest_paths(partial: String) -> Result<Vec<String>, String> {
     // Handle empty input

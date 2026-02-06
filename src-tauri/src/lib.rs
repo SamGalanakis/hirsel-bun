@@ -18,19 +18,67 @@ pub mod gui;
 pub mod version;
 pub mod worker;
 
+/// Initialize tracing subscriber with profiling support.
+/// When built with `--features profiling` AND HIRSEL_PROFILING=1, outputs Chrome Trace Format
+/// JSON to `~/.hirsel/profiling/trace-{timestamp}.json` for viewing in Perfetto UI.
+#[cfg(feature = "profiling")]
+fn init_tracing() {
+    use tracing_subscriber::prelude::*;
+    use tracing_subscriber::EnvFilter;
+
+    let filter = EnvFilter::from_default_env()
+        .add_directive("sqlx=off".parse().unwrap())
+        .add_directive("rustls=warn".parse().unwrap())
+        .add_directive("rustls_platform_verifier=warn".parse().unwrap())
+        .add_directive("hyper=warn".parse().unwrap())
+        .add_directive("reqwest=warn".parse().unwrap());
+
+    if std::env::var("HIRSEL_PROFILING").as_deref() == Ok("1") {
+        let profiling_dir = std::env::var("HIRSEL_PROFILING_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                let dir = core::hirsel_dir()
+                    .join("profiling")
+                    .join(chrono::Local::now().format("%Y-%m-%dT%H-%M-%S").to_string());
+                dir
+            });
+        std::fs::create_dir_all(&profiling_dir).expect("Failed to create profiling directory");
+
+        let trace_file = profiling_dir.join("trace.json");
+        eprintln!("[profiling] Writing trace to {}", trace_file.display());
+
+        let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+            .file(trace_file)
+            .include_args(true)
+            .build();
+
+        // Store guard in a static so traces flush on process exit.
+        // FlushGuard is !Sync, so we use Mutex instead of OnceLock.
+        static FLUSH_GUARD: std::sync::Mutex<Option<tracing_chrome::FlushGuard>> =
+            std::sync::Mutex::new(None);
+        *FLUSH_GUARD.lock().unwrap() = Some(guard);
+
+        let fmt_layer = tracing_subscriber::fmt::layer().with_filter(filter);
+        let _ = tracing_subscriber::registry()
+            .with(fmt_layer)
+            .with(chrome_layer)
+            .try_init();
+    } else {
+        let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+    }
+}
+
 /// Initialize tracing subscriber for debug logging.
 /// Only active when built with `--features dev` AND RUST_LOG is set.
-#[cfg(feature = "dev")]
+#[cfg(all(feature = "dev", not(feature = "profiling")))]
 fn init_tracing() {
     use tracing_subscriber::EnvFilter;
-    // Build filter from RUST_LOG env, but suppress noisy library spam
     let filter = EnvFilter::from_default_env()
         .add_directive("sqlx=warn".parse().unwrap())
         .add_directive("rustls=warn".parse().unwrap())
         .add_directive("rustls_platform_verifier=warn".parse().unwrap())
         .add_directive("hyper=warn".parse().unwrap())
         .add_directive("reqwest=warn".parse().unwrap());
-    // Only initialize once, ignore errors from multiple calls
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 }
 
@@ -204,19 +252,6 @@ fn run_command(
                 println!(r#"{{"mode": "{}"}}"#, if hitl { "hitl" } else { "yolo" });
             } else {
                 println!("Mode set to {}", if hitl { "hitl" } else { "yolo" });
-            }
-        }
-        Commands::Amend(args) => {
-            let run_dir = core::config::run_dir(&args.run_name);
-            // Create a new amendment with current timestamp
-            let amendment = Amendment {
-                id: chrono::Utc::now().timestamp(),
-                timestamp: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
-                message: args.message.clone(),
-            };
-            update_spec_amendments(&run_dir, &[amendment])?;
-            if !json {
-                println!("Amendment added to run '{}'", args.run_name);
             }
         }
         Commands::Spec(args) => {
@@ -583,11 +618,19 @@ pub fn run() {
 
     use std::sync::Arc;
 
-    let builder = tauri::Builder::default()
-        .plugin(
+    let mut builder = tauri::Builder::default();
+
+    // When profiling, init_tracing() already set up a global subscriber (fmt + chrome),
+    // so skip tauri_plugin_log to avoid "logger already initialized" panic.
+    #[cfg(feature = "profiling")]
+    let skip_tauri_log = std::env::var("HIRSEL_PROFILING").as_deref() == Ok("1");
+    #[cfg(not(feature = "profiling"))]
+    let skip_tauri_log = false;
+
+    if !skip_tauri_log {
+        builder = builder.plugin(
             tauri_plugin_log::Builder::new()
                 .filter(|metadata| {
-                    // Filter out noisy library spam
                     let target = metadata.target();
                     !target.starts_with("rustls")
                         && !target.starts_with("hyper")
@@ -598,17 +641,19 @@ pub fn run() {
                         && !target.starts_with("sqlx")
                 })
                 .build(),
-        )
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            // When a second instance tries to launch, focus the existing window
-            use tauri::Manager;
-            tracing::info!("Second instance attempted with args: {:?}", args);
-            if let Some(window) = app.get_webview_window("main") {
-                // Unminimize if minimized, then focus
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
-        }));
+        );
+    }
+
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        // When a second instance tries to launch, focus the existing window
+        use tauri::Manager;
+        tracing::info!("Second instance attempted with args: {:?}", args);
+        if let Some(window) = app.get_webview_window("main") {
+            // Unminimize if minimized, then focus
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }));
 
     // Create chat session manager as shared state
     let chat_manager = Arc::new(core::ChatSessionManager::new());

@@ -7,8 +7,8 @@
  * - Live tree filters: depth + show added/deleted (right)
  */
 import { type Component, Show, For, createSignal, createEffect, onCleanup } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
-import { useApp, useProject } from '../../stores';
+import { invoke } from '../../lib/invoke';
+import { useApp, useProject, useRuns } from '../../stores';
 import { useDelta } from '../../stores/delta-context';
 import { Icon, SheepAvatar } from '../shared';
 import { RunStatusPill } from '../specflow/RunStatusPill';
@@ -29,42 +29,25 @@ export const CanvasToolbar: Component<CanvasToolbarProps> = (props) => {
   const app = useApp();
   const project = useProject();
   const delta = useDelta();
+  const runsCtx = useRuns();
 
-  // Workers state
-  const [workers, setWorkers] = createSignal<WorkerDisplay[]>([]);
+  // Workers state — read from RunsContext store (centralized polling)
+  const workers = () => {
+    const run = delta.projectRun();
+    if (!run) return [] as WorkerDisplay[];
+    // If the selected run matches the project run, use centralized workers
+    if (runsCtx.selectedRun() === run.runName) return runsCtx.workers();
+    return [] as WorkerDisplay[];
+  };
+
   const [runValid, setRunValid] = createSignal(true);
   const [selectedWorker, setSelectedWorker] = createSignal<WorkerDisplay | null>(null);
   const [hoveredWorker, setHoveredWorker] = createSignal<WorkerDisplay | null>(null);
 
-  // Fetch workers when project run changes
+  // Track run validity
   createEffect(() => {
     const run = delta.projectRun();
-    if (!run) {
-      setWorkers([]);
-      setRunValid(true);
-      return;
-    }
-
-    setRunValid(true);
-
-    const fetchWorkers = async () => {
-      try {
-        const result = await invoke<WorkerDisplay[]>('get_workers', { runName: run.runName });
-        setWorkers(result);
-        setRunValid(true);
-      } catch (e) {
-        const errorStr = String(e);
-        if (errorStr.includes('not found') || errorStr.includes('Not found')) {
-          setRunValid(false);
-          setWorkers([]);
-          return;
-        }
-      }
-    };
-
-    fetchWorkers();
-    const interval = setInterval(fetchWorkers, 2000);
-    onCleanup(() => clearInterval(interval));
+    setRunValid(!!run);
   });
 
   // Compute effective run status from live tree

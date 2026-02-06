@@ -125,14 +125,6 @@ CREATE TABLE IF NOT EXISTS evals (
     finished_at TEXT
 );
 
-CREATE TABLE IF NOT EXISTS amendments (
-    id INTEGER PRIMARY KEY,
-    message TEXT NOT NULL,
-    timestamp TEXT NOT NULL,
-    author TEXT NOT NULL DEFAULT 'user',
-    spec_hash TEXT NOT NULL
-);
-
 -- Worker output events for real-time UI streaming
 -- event_type: 'text', 'tool_start', 'tool_update', 'tool_end', 'thought'
 -- tool_status: 'pending', 'in_progress', 'completed', 'failed' (for tool events)

@@ -49,6 +49,7 @@ pub struct ProjectDocsResponse {
 /// Returns docs from the most relevant source:
 /// 1. If project has an active run (Working/Eval), read from run_dir/docs/
 /// 2. Otherwise, read from workspace/docs_path/
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_project_docs(
     project_id: i64,

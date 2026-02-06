@@ -13,8 +13,7 @@ import {
   createSignal,
   onCleanup,
 } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
-import { useProject, useRoute } from '../../stores';
+import { useProject, useRoute, useRuns } from '../../stores';
 import { useDelta } from '../../stores/delta-context';
 import {
   getProjectMessages,
@@ -22,16 +21,15 @@ import {
   markProjectMessagesRead,
   sendProjectMessage,
 } from '../../lib/api';
-import type { WorkerDisplay } from '../../lib/types';
 import { Icon, SheepAvatar } from '../shared';
 
 export const MessagingPanel: Component = () => {
   const project = useProject();
   const route = useRoute();
   const delta = useDelta();
+  const runsCtx = useRuns();
   const [messageInput, setMessageInput] = createSignal('');
   const [sending, setSending] = createSignal(false);
-  const [workers, setWorkers] = createSignal<WorkerDisplay[]>([]);
   let messagesEndRef: HTMLDivElement | undefined;
   let inputRef: HTMLTextAreaElement | undefined;
 
@@ -39,27 +37,13 @@ export const MessagingPanel: Component = () => {
   const routeId = () => route.activeRoute()?.id;
   const activeThread = () => project.activeThread();
 
-  // Fetch workers when project run is active
-  createEffect(() => {
+  // Workers — read from RunsContext store (centralized polling)
+  const workers = () => {
     const run = delta.projectRun();
-    if (!run) {
-      setWorkers([]);
-      return;
-    }
-
-    const fetchWorkers = async () => {
-      try {
-        const result = await invoke<WorkerDisplay[]>('get_workers', { runName: run.runName });
-        setWorkers(result);
-      } catch (e) {
-        console.warn('Failed to fetch workers:', e);
-      }
-    };
-
-    fetchWorkers();
-    const interval = setInterval(fetchWorkers, 3000);
-    onCleanup(() => clearInterval(interval));
-  });
+    if (!run) return [];
+    if (runsCtx.selectedRun() === run.runName) return runsCtx.workers();
+    return [];
+  };
 
   // Fetch threads for tab display
   const [threads, { refetch: refetchThreads }] = createResource(

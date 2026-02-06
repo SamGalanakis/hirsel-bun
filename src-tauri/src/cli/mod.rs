@@ -57,7 +57,7 @@ pub use prune::execute as run_prune;
 pub use reset::{run_reset, ResetTarget};
 pub use resume::run_resume;
 pub use runs::list_runs;
-pub use spec::{read_spec, run_spec, update_spec_amendments, Amendment, SpecError};
+pub use spec::{read_spec, run_spec, SpecError};
 pub use summary::{get_summary_text, has_summary, run_summary, SummaryError};
 pub use templates::{
     get_template, get_templates_dir, list_templates, read_template_eval, read_template_spec,
@@ -131,9 +131,6 @@ pub enum Commands {
 
     /// Set run mode (hitl/yolo)
     Mode(ModeArgs),
-
-    /// Add amendment to spec
-    Amend(AmendArgs),
 
     /// View/edit spec
     Spec(RunNameArg),
@@ -461,16 +458,6 @@ pub struct ModeArgs {
 
     /// New mode (hitl or yolo)
     pub new_mode: String,
-}
-
-/// Arguments for `hirsel amend`
-#[derive(Args, Debug)]
-pub struct AmendArgs {
-    /// Name of the run
-    pub run_name: String,
-
-    /// Amendment message
-    pub message: String,
 }
 
 /// Arguments for `hirsel asset`
@@ -913,29 +900,6 @@ pub fn run_cli() -> anyhow::Result<bool> {
                         println!(r#"{{"mode": "{}"}}"#, if hitl { "hitl" } else { "yolo" });
                     } else {
                         println!("Mode set to {}", if hitl { "hitl" } else { "yolo" });
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
-                }
-            }
-        }
-        Commands::Amend(args) => {
-            use crate::core::config as core_config;
-            let run_dir = core_config::run_dir(&args.run_name);
-            // Create an amendment from the message
-            let amendment = spec::Amendment {
-                id: 0, // Will be assigned by the storage
-                message: args.message.clone(),
-                timestamp: chrono::Utc::now().to_rfc3339(),
-            };
-            match spec::update_spec_amendments(&run_dir, &[amendment]) {
-                Ok(_) => {
-                    if json {
-                        println!(r#"{{"status": "amended"}}"#);
-                    } else {
-                        println!("Amendment added to spec");
                     }
                 }
                 Err(e) => {

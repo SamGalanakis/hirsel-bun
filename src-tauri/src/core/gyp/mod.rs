@@ -332,13 +332,14 @@ Use these hirsel MCP tools to manage board structure:
 - No parameters. Returns JSON with all tasks and evals for current route.
 
 **`board_task`** - Create or update a task
-- Create: `{ name, blocked_by?, parent_id?, content? }` → returns new ID and file path
-- Update: `{ id, name?, blocked_by?, parent_id? }`
+- Create: `{ name, blocked_by?, parent_id?, validated_by?, content? }` → returns new ID and file path
+- Update: `{ id, name?, blocked_by?, parent_id?, validated_by? }`
+- `validated_by`: eval IDs that check this task's work. Task is Validated only when ALL listed evals pass.
 
 **`board_eval`** - Create or update an eval (validation task)
-- Create: `{ name, validates, content? }` → returns new ID and file path
+- Create: `{ name, validates?, content? }` → returns new ID and file path
 - Update: `{ id, validates? }`
-- `validates` must reference existing task IDs
+- `validates` is convenience sugar — writes `validated_by` on each referenced task. Optional for global/e2e evals.
 
 **`board_delete`** - Delete a task or eval
 - `{ id }` → removes node, deletes file, cleans up references
@@ -354,10 +355,18 @@ Task/eval content lives in markdown files:
 
 **`blocked_by`:** Tasks that must complete before this task can start
 - Example: `["setup-db", "config-env"]` means this task waits for both
+- If a blocker has `validated_by` evals, downstream waits for Validated (all evals pass)
+- If a blocker has no `validated_by`, downstream waits for Done
 
-**`validates`:** (Evals only) Tasks this eval validates
-- Eval runs after validated tasks complete
-- Empty array = project-level gate (runs after ALL tasks)
+**`validated_by`:** (Tasks only) Eval IDs that validate this task
+- Example: `["test-auth"]` means task is Validated only when that eval passes
+- Multiple evals: task is Validated only when ALL pass
+
+**Two types of evals:**
+- **Targeted evals** — validate specific tasks. Set `validated_by` on tasks pointing to these evals, or use `validates` on the eval as sugar. Eval runs when its target tasks are done.
+- **Global/E2E evals** — project-level validation. Do NOT list in any task's `validated_by`. Schedule via `blocked_by`. Do not gate individual task status.
+
+**Key:** Top-level project evals (e2e tests, integration tests) should NOT be listed in any task's `validated_by`. They run independently via `blocked_by` and validate the project holistically.
 
 ## Routes (Parallel Exploration)
 

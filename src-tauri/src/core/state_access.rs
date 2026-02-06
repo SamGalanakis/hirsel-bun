@@ -294,6 +294,7 @@ pub trait StateAccess: Send {
     ///
     /// This creates a live_node in the global database with source='worker'.
     /// Only works if the run has a project_id set (is linked to a board).
+    /// For eval nodes, `validates` writes validated_by on target tasks.
     async fn add_live_node(
         &self,
         id: &str,
@@ -302,6 +303,7 @@ pub trait StateAccess: Send {
         blocked_by: Option<&[&str]>,
         node_type: &str, // "task" or "eval"
         content: &str,
+        validates: Option<&[&str]>,
     ) -> StateAccessResult<()>;
 
     /// Claim a live node for a worker
@@ -740,6 +742,7 @@ impl StateAccess for SQLiteState {
         blocked_by: Option<&[&str]>,
         node_type: &str,
         content: &str,
+        validates: Option<&[&str]>,
     ) -> StateAccessResult<()> {
         use crate::core::delta::{DeltaState, NodeType};
 
@@ -759,7 +762,9 @@ impl StateAccess for SQLiteState {
 
         // Create the live node
         delta_state
-            .create_live_node_from_worker(id, name, parent_id, blocked_by, node_type, content)
+            .create_live_node_from_worker(
+                id, name, parent_id, blocked_by, node_type, content, validates,
+            )
             .await
             .map_err(|e| {
                 StateAccessError::Database(format!("Failed to create live node: {}", e))

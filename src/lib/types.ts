@@ -863,14 +863,14 @@ export interface TaskTree {
 /**
  * An eval in the board
  *
- * Evals are flat (not nested) and reference tasks via validates[]
+ * Evals are flat (not nested) and have a computed validates[] from tasks' validated_by
  */
 export interface BoardEval {
   id: string; // Slug ID (e.g., "api-test")
   name: string;
   status: BoardEvalStatus;
   content: string;
-  validates: string[]; // Task IDs this eval validates
+  validates: string[]; // Computed: task IDs where validated_by includes this eval
   x: number | null;
   y: number | null;
   createdAt: string;
@@ -1095,6 +1095,7 @@ export interface DraftNode {
   nodeType: NodeType;
   content: string;
   validates: string[];
+  validatedBy: string[];
   blockedBy: string[];
   x: number | null;
   y: number | null;
@@ -1109,7 +1110,8 @@ export interface DraftNodeTree {
   nodeType: NodeType;
   content: string;
   validates: string[];
-  blockedBy: string[]; // Computed inverse of validates - tasks blocked by evals
+  validatedBy: string[];
+  blockedBy: string[];
   children: DraftNodeTree[];
   x: number | null;
   y: number | null;
@@ -1128,6 +1130,7 @@ export interface LiveNode {
   status: LiveNodeStatus;
   source: LiveNodeSource;
   validates: string[];
+  validatedBy: string[];
   blockedBy: string[];
   x: number | null;
   y: number | null;
@@ -1135,6 +1138,7 @@ export interface LiveNode {
   updatedAt: string;
   completedAt: string | null;
   lastCommitSha: string | null;
+  resolves: string | null;
 }
 
 /** Live node tree (nested for rendering) */
@@ -1148,12 +1152,14 @@ export interface LiveNodeTree {
   status: LiveNodeStatus;
   source: LiveNodeSource;
   validates: string[];
+  validatedBy: string[];
   blockedBy: string[];
   children: LiveNodeTree[];
   x: number | null;
   y: number | null;
   completedAt: string | null;
   lastCommitSha: string | null;
+  resolves: string | null;
   claimedBy: string | null;
   claimedAt: string | null;
   completedBy: string | null;
@@ -1176,6 +1182,7 @@ export interface DiffNode {
   nodeType: NodeType;
   content: string;
   validates: string[];
+  validatedBy: string[];
   blockedBy: string[];
   parentId: string | null;
 }
@@ -1211,7 +1218,7 @@ export interface CreateDraftNodeRequest {
   name: string;
   nodeType?: NodeType;
   content?: string;
-  validates?: string[];
+  validatedBy?: string[];
   blockedBy?: string[];
   x?: number | null;
   y?: number | null;
@@ -1221,7 +1228,7 @@ export interface CreateDraftNodeRequest {
 export interface UpdateDraftNodeRequest {
   name?: string;
   content?: string;
-  validates?: string[];
+  validatedBy?: string[];
   blockedBy?: string[];
   x?: number | null;
   y?: number | null;
@@ -1333,6 +1340,21 @@ export interface DeliveryAttempt {
   startedAt: string;
   completedAt: string | null;
   errorMessage: string | null;
+}
+
+/** Result of validating a delivery target branch */
+export interface DeliveryValidation {
+  hasRemote: boolean;
+  hasForge: boolean;
+  targetExistsOnRemote: boolean;
+  mergeState: MergeState;
+  conflictingFiles: string[];
+  availableActions: Array<'push' | 'pr' | 'merge'>;
+  remoteBranches: string[];
+  remoteUrl: string | null;
+  isLocal: boolean;
+  needsInit: boolean;
+  error: string | null;
 }
 
 /** Status colors for board delivery */

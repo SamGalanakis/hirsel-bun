@@ -36,6 +36,14 @@ impl StartingPoint {
             _ => None,
         }
     }
+
+    /// Get the git remote URL if this is a GitRepo starting point.
+    pub fn git_url(&self) -> Option<&str> {
+        match self {
+            Self::GitRepo { url, .. } => Some(url),
+            _ => None,
+        }
+    }
 }
 
 /// Information about an initialized workspace

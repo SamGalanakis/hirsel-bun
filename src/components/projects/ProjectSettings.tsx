@@ -1,7 +1,7 @@
 /**
  * Project settings modal - Styled to match global SettingsModal
  */
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../../lib/invoke';
 import {
   type Component,
   Show,

@@ -10,6 +10,7 @@ use super::{get_run_state, ResultExt};
 
 /// Get all workers for a run
 /// Uses the orchestrator to support both local and remote modes
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_workers(run_name: String) -> Result<Vec<Worker>, String> {
     let orch = create_orchestrator(None).str_err()?;
@@ -20,6 +21,7 @@ pub async fn get_workers(run_name: String) -> Result<Vec<Worker>, String> {
 ///
 /// Creates a new worker with the given name, sets up its working directory,
 /// and spawns the worker process.
+#[tracing::instrument]
 #[tauri::command]
 pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Worker, String> {
     use crate::cli::config::get_agent_command;
@@ -154,6 +156,7 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
 /// Open an external terminal attached to a worker's tmux session
 ///
 /// This opens a new terminal window running `tmux attach-session` for the worker.
+#[tracing::instrument]
 #[tauri::command]
 pub async fn open_worker_terminal(run_name: String, worker_name: String) -> Result<(), String> {
     use std::process::Command;
@@ -222,6 +225,7 @@ pub async fn open_worker_terminal(run_name: String, worker_name: String) -> Resu
 /// Detach/stop a worker
 ///
 /// Stops the worker process and marks it as paused.
+#[tracing::instrument]
 #[tauri::command]
 pub async fn detach_worker(run_name: String, worker_id: u32) -> Result<(), String> {
     use crate::core::state::WorkerUpdate;
@@ -272,6 +276,7 @@ pub async fn detach_worker(run_name: String, worker_id: u32) -> Result<(), Strin
 ///
 /// Stops the current worker process and spawns a new one.
 /// Uses the orchestrator to support both local and remote modes
+#[tracing::instrument]
 #[tauri::command]
 pub async fn restart_worker(run_name: String, worker_id: u32) -> Result<(), String> {
     let orch = create_orchestrator(None).str_err()?;

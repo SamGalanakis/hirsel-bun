@@ -4,6 +4,7 @@
 
 use super::ResultExt;
 use crate::core::api_types::{RunDetail, RunSummary};
+use crate::core::delta::{bump_generation, get_generation};
 use crate::core::orchestrator::create_orchestrator;
 
 /// Ensure the daemon is running for lifecycle management
@@ -17,6 +18,7 @@ fn ensure_daemon_running() {
 
 /// Get list of all runs
 /// Uses the orchestrator to support both local and remote modes
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_runs() -> Result<Vec<RunSummary>, String> {
     // Ensure daemon is running for lifecycle management
@@ -28,6 +30,7 @@ pub async fn get_runs() -> Result<Vec<RunSummary>, String> {
 
 /// Get detailed information about a specific run
 /// Uses the orchestrator to support both local and remote modes
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_run_detail(run_name: String) -> Result<RunDetail, String> {
     let orch = create_orchestrator(None).str_err()?;
@@ -40,30 +43,40 @@ pub async fn get_run_detail(run_name: String) -> Result<RunDetail, String> {
 
 /// Pause a running run
 /// Uses the orchestrator to support both local and remote modes
+#[tracing::instrument]
 #[tauri::command]
 pub async fn pause_run(run_name: String) -> Result<(), String> {
     let orch = create_orchestrator(None).str_err()?;
-    orch.pause_run(&run_name).await.str_err()
+    orch.pause_run(&run_name).await.str_err()?;
+    bump_generation("runs_gen").await.ok();
+    Ok(())
 }
 
 /// Resume a paused run
 /// Uses the orchestrator to support both local and remote modes
+#[tracing::instrument]
 #[tauri::command]
 pub async fn resume_run(run_name: String) -> Result<(), String> {
     let orch = create_orchestrator(None).str_err()?;
-    orch.resume_run(&run_name, None).await.str_err()
+    orch.resume_run(&run_name, None).await.str_err()?;
+    bump_generation("runs_gen").await.ok();
+    Ok(())
 }
 
 /// Delete a run
 /// Uses the orchestrator to support both local and remote modes
+#[tracing::instrument]
 #[tauri::command]
 pub async fn delete_run(run_name: String) -> Result<(), String> {
     let orch = create_orchestrator(None).str_err()?;
-    orch.delete_run(&run_name).await.str_err()
+    orch.delete_run(&run_name).await.str_err()?;
+    bump_generation("runs_gen").await.ok();
+    Ok(())
 }
 
 /// Delete all runs
 /// Iterates through each run and deletes it properly (killing workers, closing connections)
+#[tracing::instrument]
 #[tauri::command]
 pub async fn delete_all_runs() -> Result<(), String> {
     use crate::core::ops::run::delete_run;
@@ -111,8 +124,30 @@ pub async fn delete_all_runs() -> Result<(), String> {
 /// For remote repos, pushes to the remote. For local repos, creates a local branch.
 /// Returns the branch name on success.
 /// Uses the orchestrator to support both local and remote modes
+#[tracing::instrument]
 #[tauri::command]
 pub async fn deliver_run(run_name: String, branch_name: Option<String>) -> Result<String, String> {
     let orch = create_orchestrator(None).str_err()?;
-    orch.deliver_run(&run_name, branch_name).await.str_err()
+    let result = orch.deliver_run(&run_name, branch_name).await.str_err()?;
+    bump_generation("runs_gen").await.ok();
+    Ok(result)
+}
+
+/// Get runs only if the generation has changed since last check.
+///
+/// Returns None if generation matches (no changes), or Some((runs, new_generation))
+/// if there are updates. This avoids the full 1+4N query cycle on ~80% of polls.
+#[tracing::instrument]
+#[tauri::command]
+pub async fn get_runs_if_changed(
+    last_generation: i64,
+) -> Result<Option<(Vec<RunSummary>, i64)>, String> {
+    ensure_daemon_running();
+    let current = get_generation("runs_gen").await.str_err()?;
+    if current == last_generation {
+        return Ok(None);
+    }
+    let orch = create_orchestrator(None).str_err()?;
+    let runs = orch.list_runs().await.str_err()?;
+    Ok(Some((runs, current)))
 }

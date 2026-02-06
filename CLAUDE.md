@@ -1,227 +1,98 @@
-# Hirsel Development Guidelines
+# Hirsel
 
-## Code Quality Rules
-- **NEVER** leave legacy code paths - consolidate everything
-- **NEVER** add "TODO" or "FIXME" comments for future work
-- **NEVER** leave deprecated or backward-compatibility code
-- **NEVER** duplicate logic across CLI/GUI - use shared abstractions
-- If you're refactoring, FINISH the refactor completely - no half measures
+AI-powered software engineering tool. Users define specs on a visual board (SpecFlow), dispatch work to AI agent workers, monitor progress, and deliver changes via git.
 
-## Documentation
+**Stack:** Rust/Tauri backend, SolidJS/Tailwind v4 frontend, SQLite state, daemon process model.
 
-**Before starting work:** Run `ls docs/` and read relevant sections based on your task:
+## Rules
+- Never leave legacy code paths, TODO/FIXME comments, or deprecated code
+- Never duplicate logic across CLI/GUI — use shared abstractions in `core/ops/`
+- Finish refactors completely — no half measures
+- No backwards compatibility needed — modify schema directly
+- Read `docs/architecture.md` before implementing; update it when adding modules/traits/APIs
 
-| Doc | When to Read |
-|-----|--------------|
-| `architecture.md` | **Always** - module map, traits, data flow, where to add code |
-| `debugging.md` | Troubleshooting issues, understanding logs |
-| `fly-deployment.md` | Remote/Fly.io runner work |
-| `basecoatui.md` | Building UI components |
-| `design-language.md` | Visual styling, colors, typography |
-| `future.md` | Planned improvements (font, git2→gix migration) |
+## Docs
+- `docs/architecture.md` — module map, traits, data flow, schema, API, where to add code (**read first**)
+- `docs/debugging.md` — logs, profiling, reset commands, debug panel
+- `docs/fly-deployment.md` — remote Fly.io runner deployment
+- `docs/basecoatui.md` — Basecoat component patterns (shadcn/ui for vanilla HTML)
+- `docs/design-preview.html` — visual design language (open in browser)
+- `docs/future.md` — planned: gix migration, custom font
 
-**CRITICAL:**
-1. **READ** `docs/architecture.md` before implementing - use Quick Reference to find files
-2. **UPDATE** `docs/architecture.md` when you add/modify modules, traits, or APIs
+## Architecture at a Glance
+- **Daemon** (`hirsel __daemon`) — background singleton managing run lifecycle, worker scaling, eval triggering
+  - Polls every 5s, event-driven scaling via DB flag, auto-exits after 5min idle
+  - PID file: `~/.hirsel/hirsel.pid`, default port 19700 (`HIRSEL_DAEMON_PORT` to override)
+- **Orchestrator trait** — `Local` (direct SQLite), `Daemon` (TCP), `Remote` (HTTP API)
+- **LifecycleManager trait** — event-driven state machine returning actions for daemon
+- **Runner trait** — `Local`, `SSH`, `Fly`, `Composed` worker host implementations
+- **Workers** — spawned with pre-assigned tasks, fresh context per task, no claim_task tool
+- **SpecFlow** — visual board → dispatch → live nodes → workers → eval → delivery
+- **Routes** — parallel exploration branches within a project (independent trees/docs/messages)
+- **Delta dispatch** — draft tree → live tree diffs, persistent project runs
+- **Service workers** — warm background agents (Scribe for docs, ConflictResolver for merges)
 
-## No Backwards Compatibility
-Development project - no database migrations needed. Modify schema directly in `src-tauri/src/core/state/mod.rs`.
+## Run Lifecycle
+- `Draft` → `Working` → `Eval` → `Done` → `Delivered`
+- Also: `Paused` (manual), `Failed` (time limit/error)
+- Workers: `Working` → `Awaiting` → `Paused` → `Error`
+- Live nodes: `Pending` → `Working` → `Done`/`Failed`
 
-**Data locations:**
-```
-~/.hirsel/              # Config, global DB, runs
-~/.local/share/app.hirsel/  # Tauri logs
-```
+## Frontend
+- **SolidJS** — components in `src/components/`, stores in `src/stores/`, hooks in `src/hooks/`
+- **Stores:** AppProvider, ProjectProvider, RunsProvider, SelectionProvider, DeltaProvider, RouteProvider
+- **Icons:** `<Icon name="icon-name" class="w-4 h-4" />` from `src/components/shared`
+- **Toast:** `window.toast.success('msg')` / `window.toast.error('msg')`
+- **Basecoat UI** — shadcn/ui patterns, see `docs/basecoatui.md`
+- **Lucide Icons** — https://lucide.dev/icons/
+- **Graph layout** — ELK.js in `src/lib/elk-layout.ts` for SpecBoard tree rendering
+- **Tauri invoke** — params are camelCase in TS (`projectId`), snake_case in Rust (`project_id`)
 
-**Reset:** `rm -rf ~/.hirsel/runs` (runs only) or `rm -rf ~/.hirsel ~/.local/share/app.hirsel` (full)
+## Backend
+- Core logic: `src-tauri/src/core/` (state, board, delta, runner, lifecycle, orchestrator, etc.)
+- CLI: `src-tauri/src/cli/` — `runs`, `view`, `attach`, `tasks`, `summary`, `deliver`, etc.
+- GUI commands: `src-tauri/src/gui/commands/` — Tauri IPC handlers
+- Daemon: `src-tauri/src/daemon/` — server, lifecycle polling, client
+- Worker: `src-tauri/src/worker/` — ACP client, MCP tools, execution loop
+- Process management: `AcpChild` in `core/acp.rs` — SIGTERM → wait → SIGKILL cleanup
 
-## UI Stack
+## Data Locations
+- `~/.hirsel/` — config, global DB (`hirsel.db`), runs, projects, PID file
+- `~/.hirsel/runs/{name}/` — per-run SQLite, spec.md, eval.md, work dirs
+- `~/.hirsel/projects/{id}/routes/{name}/` — route-scoped docs, board tasks, code
+- `~/.local/share/app.hirsel/` — Tauri logs
+- **Reset:** `rm -rf ~/.hirsel/runs` (runs) or `rm -rf ~/.hirsel ~/.local/share/app.hirsel` (full)
 
-- **SolidJS** - Reactive UI framework (`src/components/`, `src/stores/`, `src/hooks/`)
-- **Basecoat UI** - shadcn/ui patterns for vanilla HTML (https://basecoatui.com)
-- **Lucide Icons** - https://lucide.dev/icons/
-- **Tailwind CSS v4** with custom theme
-
-```tsx
-// Components: src/components/**/*.tsx
-// Stores: src/stores/ (AppProvider, ProjectProvider, RunsProvider, SelectionProvider, DeltaProvider, RouteProvider)
-// Hooks: src/hooks/ (usePolling, useClickOutside, useElapsedTime, useEscapeKey, useGypChat, useModalClosing, useWindowEvent)
-```
-
-**Icons:** Use the `<Icon name="icon-name" />` component from `src/components/shared`. Icons render as inline SVGs - no DOM mutation needed.
-
-```tsx
-import { Icon } from '../shared';
-<Icon name="check" class="w-4 h-4 text-sage" />
-```
-
-**Toast:** `window.toast.success('msg')` / `window.toast.error('msg')`
-
-## Development
-
+## Dev Commands
 ```bash
-./dev.sh                # Run with debug environment
-cargo build             # Build to src-tauri/target/debug/hirsel
-```
-
-**CLI commands:** `runs`, `view <run>`, `attach <run>`, `tasks <run>`, `summary <run>`, `deliver <run>`
-
-## Debugging
-
-See [`docs/debugging.md`](docs/debugging.md) for comprehensive debugging guide.
-
-**Quick reference:**
-```bash
-# View logs in real-time
-tail -f ~/.local/share/app.hirsel/logs/Hirsel.log
-
-# Frontend errors (in dev mode, console.error goes to this log)
-grep "\[Frontend\]" ~/.local/share/app.hirsel/logs/Hirsel.log | tail -20
-
-# Reset everything
-rm -rf ~/.hirsel ~/.local/share/app.hirsel
-```
-
-## Dev Tools
-
-Install dev tools:
-```bash
-cargo install cargo-deny cargo-machete cargo-nextest typos-cli tokei prek
-bun install
-```
-
-Run checks:
-```bash
-bun run lint              # Biome lint
-bun run lint:fix          # Biome lint + fix
-bun run test              # cargo nextest
-cargo deny check          # Dependency audit
-cargo machete             # Find unused deps
-typos                     # Spell check
-tokei                     # LOC stats
-```
-
-**Pre-commit with [prek](https://github.com/j178/prek):**
-```bash
-prek install              # Install hooks
-prek                      # Run on staged files
-prek run --all-files      # Run on all files
-```
-
-Hooks: typos, cargo-fmt, cargo-check, cargo-clippy, cargo-deny, tsc, biome.
-
-## Daemon
-
-The daemon (`hirsel __daemon`) runs as a background process managing run lifecycle:
-- Polls active runs every 5 seconds
-- Triggers eval when all workers become inactive
-- Enforces time limits
-- Processes scribe batches
-
-**Singleton pattern:** One daemon per user. PID file at `~/.hirsel/hirsel.pid` stores PID and binary path.
-
-**Binary mismatch detection:** If daemon was started from a different binary (e.g., debug vs release), it auto-restarts with the current binary when `connect_or_start()` is called.
-
-**Port:** Default 19700, configurable via `HIRSEL_DAEMON_PORT` env var (escape hatch if port conflicts).
-
-## Process Management
-
-Use `AcpChild` for spawning ACP processes - handles process groups and cleanup:
-```rust
-let mut acp_child = AcpChild::spawn(AcpSpawnConfig::new(cmd, dir, "context"))?;
-// Cleanup automatic on drop (SIGTERM → wait → SIGKILL)
+./dev.sh                    # Run dev build
+./dev.sh --profiling        # With backend+frontend profiling
+cargo build                 # Build to src-tauri/target/debug/hirsel
+bun run lint                # Biome lint
+bun run lint:fix            # Biome lint + fix
+bun run test                # cargo nextest
+typos                       # Spell check
+prek                        # Pre-commit hooks on staged files
 ```
 
 ## Cargo Features
-
-| Feature | Use |
-|---------|-----|
-| `gui` | Tauri desktop (default, includes `cli`) |
-| `cli` | Full CLI (includes server + TUI attach) |
-| `server` | HTTP server, daemon |
-| `worker` | Minimal remote worker |
-| `s3-storage` | S3-compatible storage (MinIO, Tigris, AWS S3) |
-
-```bash
-cargo build                                    # Full GUI
-cargo build --no-default-features -F cli       # CLI only
-cargo build --no-default-features -F worker    # Remote worker
-cargo build --features s3-storage              # With S3 storage support
-```
-
-## Fly.io
-
-See [`docs/fly-deployment.md`](docs/fly-deployment.md) for full Fly.io deployment guide.
-
-**Quick start:**
-```bash
-# Coordinator
-fly apps create hirsel-coordinator
-fly secrets set HIRSEL_API_KEY=<secret> ANTHROPIC_API_KEY=<key>
-fly deploy
-
-# Workers app (machines created on-demand)
-fly apps create hirsel-workers
-
-# Usage
-hirsel go my-feature spec.md --profile fly
-```
+- `gui` (default) — Tauri desktop, includes `cli`
+- `cli` — full CLI with server + TUI attach
+- `server` — HTTP server, daemon
+- `worker` — minimal remote worker binary
+- `s3-storage` — S3-compatible storage backend
+- `profiling` — backend tracing-chrome + frontend IPC instrumentation
 
 ## Git Workflow
+- Work on `staging`, merge to `main` for releases
+- Version in `src-tauri/Cargo.toml` + `src-tauri/tauri.conf.json` (keep in sync)
+- Push to `main` triggers auto-tag → release workflow
+- Release needs manual trigger: `gh workflow run release.yml --ref v{version}`
 
-**Always work on `staging`, then merge to `main` for releases.**
-
+## Debugging Quick Ref
 ```bash
-git checkout staging           # All work happens here
-# ... make changes, commit ...
-git push origin staging        # Push to staging
-
-# When ready to release:
-git checkout main
-git merge staging -m "Merge staging for v0.X.X release"
-git push origin main           # Triggers auto-tag → release workflow
-git checkout staging           # Return to staging
-```
-
-## Releases
-
-Version is defined in `src-tauri/Cargo.toml`. Keep `src-tauri/tauri.conf.json` version in sync.
-
-**Release flow:**
-1. Update version in `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`
-2. Commit to `staging`, then merge `staging` → `main`
-3. Auto-tag workflow (`.github/workflows/auto-tag.yml`) creates `v{version}` tag
-4. Release workflow (`.github/workflows/release.yml`) builds and publishes
-5. Manual trigger needed: `gh workflow run release.yml --ref v{version}` (GITHUB_TOKEN can't trigger workflows)
-
-**What gets built:**
-- `hirsel-cli-{version}-linux-amd64` - CLI + server (no GUI)
-- `hirsel-worker-{version}-linux-amd64` - Minimal worker binary
-- Tauri desktop apps: macOS (aarch64, x86_64), Linux (deb, AppImage, rpm)
-
-**Pre-release tags:** Use `v{version}-rc.1` or `v{version}-staging.1` for non-main branches.
-
-**Manual release:** Push tag directly: `git tag v0.4.0 && git push origin v0.4.0`
-
-## Storage
-
-File storage abstraction for local/cloud deployments. Default is local filesystem.
-
-Config (`~/.hirsel/config.toml`):
-```toml
-# S3-compatible storage (MinIO, Tigris, AWS S3)
-[storage]
-files = "s3"
-
-[storage.s3]
-endpoint = "http://localhost:9000"  # MinIO URL
-bucket = "hirsel"
-region = "us-east-1"
-access_key_id = "minioadmin"
-secret_access_key = "minioadmin"
-```
-
-Test with MinIO:
-```bash
-docker run -p 9000:9000 -p 9001:9001 minio/minio server /data --console-address ":9001"
+tail -f ~/.local/share/app.hirsel/logs/Hirsel.log          # Live logs
+grep "\[Frontend\]" ~/.local/share/app.hirsel/logs/Hirsel.log | tail -20  # Frontend errors
+RUST_LOG=debug ./dev.sh                                     # Verbose backend
+pkill -f "hirsel __daemon"                                  # Kill stuck daemon
 ```

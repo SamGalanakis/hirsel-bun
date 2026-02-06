@@ -3,7 +3,7 @@
  *
  * Shows documentation files from workspace or active run with markdown preview.
  */
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../../lib/invoke';
 import {
   type Component,
   For,
@@ -51,14 +51,20 @@ export const DocsPanel: Component = () => {
     }
   );
 
+  const sortedFiles = () => {
+    const d = docs();
+    if (!d) return [];
+    return [...d.files].sort((a, b) => a.name.localeCompare(b.name));
+  };
+
   // Auto-select first file when docs load
   createEffect(() => {
-    const d = docs();
-    if (d && d.files.length > 0) {
+    const files = sortedFiles();
+    if (files.length > 0) {
       const currentSelection = localSelectedFile();
       // Only auto-select if nothing selected or selection not in list
-      if (!currentSelection || !d.files.find(f => f.name === currentSelection)) {
-        setLocalSelectedFile(d.files[0].name);
+      if (!currentSelection || !files.find(f => f.name === currentSelection)) {
+        setLocalSelectedFile(files[0].name);
       }
     }
   });
@@ -75,10 +81,9 @@ export const DocsPanel: Component = () => {
   });
 
   const selectedFile = () => {
-    const d = docs();
     const name = localSelectedFile();
-    if (!d || !name) return null;
-    return d.files.find(f => f.name === name) || null;
+    if (!name) return null;
+    return sortedFiles().find(f => f.name === name) || null;
   };
 
   const handleFileClick = (fileName: string) => {
@@ -119,15 +124,15 @@ export const DocsPanel: Component = () => {
         </div>
       </div>
 
-      {/* Loading state */}
-      <Show when={docs.loading}>
+      {/* Loading state (initial load only) */}
+      <Show when={docs.loading && !docs()}>
         <div class="flex items-center justify-center py-8">
           <Icon name="loader-2" class="w-5 h-5 text-wool-500 animate-spin" />
         </div>
       </Show>
 
       {/* Empty state */}
-      <Show when={!docs.loading && (!docs() || docs()!.files.length === 0)}>
+      <Show when={!docs.loading && (!docs() || sortedFiles().length === 0)}>
         <div class="flex flex-col items-center justify-center py-8 px-4 text-center">
           <Icon name="file-text" class="w-8 h-8 text-wool-600 mb-2" />
           <p class="text-sm text-wool-500">No documentation found</p>
@@ -138,10 +143,10 @@ export const DocsPanel: Component = () => {
       </Show>
 
       {/* File list and preview */}
-      <Show when={!docs.loading && docs() && docs()!.files.length > 0}>
+      <Show when={docs() && sortedFiles().length > 0}>
         {/* Horizontal tab bar */}
         <div class="flex items-center gap-1 px-2 py-1.5 border-b border-pasture-700/50 overflow-x-auto">
-          <For each={docs()!.files}>
+          <For each={sortedFiles()}>
             {(file) => (
               <button
                 type="button"
@@ -161,8 +166,8 @@ export const DocsPanel: Component = () => {
 
         {/* Markdown preview */}
         <div class="flex-1 overflow-auto p-3">
-          <Show when={selectedFile()} keyed>
-            {(file) => <MarkdownContent content={file.content} compact />}
+          <Show when={selectedFile()}>
+            <MarkdownContent content={selectedFile()!.content} compact />
           </Show>
         </div>
       </Show>

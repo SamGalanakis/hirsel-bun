@@ -1,7 +1,7 @@
 /**
  * Settings modal component - Full implementation with Basecoat UI components
  */
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../../lib/invoke';
 import {
   type Component,
   type JSX,

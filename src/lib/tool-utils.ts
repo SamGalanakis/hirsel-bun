@@ -89,10 +89,17 @@ export function isToolWorking(status: string | null | undefined): boolean {
 export function getEffectiveToolStatus(
   hasStarted: boolean,
   latestStatus: string | null | undefined,
+  isFollowedByContent = false,
 ): string {
   // If completed or failed, use that
   if (latestStatus === 'completed' || latestStatus === 'failed') {
     return latestStatus;
+  }
+
+  // If subsequent content exists, the tool must have completed
+  // (the agent can't continue without finishing the tool call)
+  if (isFollowedByContent) {
+    return 'completed';
   }
 
   // If tool has started (tool_start event exists), it's running

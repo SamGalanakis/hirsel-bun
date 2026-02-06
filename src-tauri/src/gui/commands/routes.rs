@@ -5,6 +5,7 @@ use crate::core::route::{CreateRouteRequest, Route, RouteFiles, RouteStore, Rout
 use super::ResultExt;
 
 /// List all routes for a project
+#[tracing::instrument]
 #[tauri::command]
 pub async fn list_routes(project_id: i64) -> Result<Vec<Route>, String> {
     let store = RouteStore::new(project_id).await.str_err()?;
@@ -12,6 +13,7 @@ pub async fn list_routes(project_id: i64) -> Result<Vec<Route>, String> {
 }
 
 /// Get a route by ID
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_route(project_id: i64, route_id: i64) -> Result<Route, String> {
     let store = RouteStore::new(project_id).await.str_err()?;
@@ -19,6 +21,7 @@ pub async fn get_route(project_id: i64, route_id: i64) -> Result<Route, String> 
 }
 
 /// Get a route by name
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_route_by_name(project_id: i64, name: String) -> Result<Option<Route>, String> {
     let store = RouteStore::new(project_id).await.str_err()?;
@@ -26,6 +29,7 @@ pub async fn get_route_by_name(project_id: i64, name: String) -> Result<Option<R
 }
 
 /// Get the route tree for a project
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_route_tree(project_id: i64) -> Result<Vec<RouteTree>, String> {
     let store = RouteStore::new(project_id).await.str_err()?;
@@ -33,6 +37,7 @@ pub async fn get_route_tree(project_id: i64) -> Result<Vec<RouteTree>, String> {
 }
 
 /// Create a new route (fork from parent)
+#[tracing::instrument]
 #[tauri::command]
 pub async fn create_route(
     project_id: i64,
@@ -71,6 +76,7 @@ pub async fn create_route(
 }
 
 /// Delete a route
+#[tracing::instrument]
 #[tauri::command]
 pub async fn delete_route(project_id: i64, route_id: i64) -> Result<(), String> {
     let store = RouteStore::new(project_id).await.str_err()?;
@@ -91,6 +97,7 @@ pub async fn delete_route(project_id: i64, route_id: i64) -> Result<(), String> 
 }
 
 /// Set the active route for a project
+#[tracing::instrument]
 #[tauri::command]
 pub async fn set_active_route(project_id: i64, route_id: i64) -> Result<(), String> {
     // Verify route exists
@@ -113,6 +120,7 @@ pub async fn set_active_route(project_id: i64, route_id: i64) -> Result<(), Stri
 ///
 /// Falls back to the main route if no active route is set.
 /// Creates the main route if no routes exist.
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_active_route(project_id: i64) -> Result<Route, String> {
     let store = RouteStore::new(project_id).await.str_err()?;

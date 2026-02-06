@@ -148,7 +148,8 @@ pub struct DraftNode {
     pub name: String,
     pub node_type: NodeType,
     pub content: String,
-    pub validates: Vec<String>, // For eval nodes: tasks this eval validates
+    pub validates: Vec<String>, // For eval nodes: computed from tasks where validated_by includes this eval
+    pub validated_by: Vec<String>, // For task nodes: eval IDs that validate this task
     pub blocked_by: Vec<String>, // For task nodes: tasks/evals that must complete first
     pub x: Option<f64>,
     pub y: Option<f64>,
@@ -164,8 +165,8 @@ pub struct DraftNodeTree {
     pub name: String,
     pub node_type: NodeType,
     pub content: String,
-    pub validates: Vec<String>,
-    /// Computed inverse of validates - tasks blocked by evals
+    pub validates: Vec<String>, // Computed: tasks where validated_by includes this eval
+    pub validated_by: Vec<String>, // For tasks: which evals validate this task
     #[serde(default)]
     pub blocked_by: Vec<String>,
     pub children: Vec<DraftNodeTree>,
@@ -181,7 +182,8 @@ impl From<DraftNode> for DraftNodeTree {
             node_type: node.node_type,
             content: node.content,
             validates: node.validates,
-            blocked_by: node.blocked_by, // Now stored, not computed
+            validated_by: node.validated_by,
+            blocked_by: node.blocked_by,
             children: vec![],
             x: node.x,
             y: node.y,
@@ -203,7 +205,8 @@ pub struct LiveNode {
     pub content: String,
     pub status: LiveNodeStatus,
     pub source: LiveNodeSource, // Where this node originated (spec, worker, system)
-    pub validates: Vec<String>, // For eval nodes: tasks this eval validates
+    pub validates: Vec<String>, // For eval nodes: computed from tasks where validated_by includes this eval
+    pub validated_by: Vec<String>, // For task nodes: eval IDs that validate this task
     pub blocked_by: Vec<String>, // For task nodes: tasks/evals that must complete first
     pub x: Option<f64>,
     pub y: Option<f64>,
@@ -211,6 +214,7 @@ pub struct LiveNode {
     pub updated_at: String,
     pub completed_at: Option<String>,
     pub last_commit_sha: Option<String>,
+    pub resolves: Option<String>, // For repair tasks: the eval ID this repair resolves
     // Orchestration fields
     pub claimed_by: Option<String>, // Worker currently working on this
     pub claimed_at: Option<String>, // When claimed
@@ -231,9 +235,9 @@ pub struct LiveNodeTree {
     pub node_type: NodeType,
     pub content: String,
     pub status: LiveNodeStatus,
-    pub source: LiveNodeSource, // Where this node originated (spec, worker, system)
+    pub source: LiveNodeSource,
     pub validates: Vec<String>,
-    /// Computed inverse of validates - tasks blocked by evals
+    pub validated_by: Vec<String>,
     #[serde(default)]
     pub blocked_by: Vec<String>,
     pub children: Vec<LiveNodeTree>,
@@ -241,6 +245,7 @@ pub struct LiveNodeTree {
     pub y: Option<f64>,
     pub completed_at: Option<String>,
     pub last_commit_sha: Option<String>,
+    pub resolves: Option<String>,
     // Orchestration fields
     pub claimed_by: Option<String>,
     pub claimed_at: Option<String>,
@@ -262,12 +267,14 @@ impl From<LiveNode> for LiveNodeTree {
             status: node.status,
             source: node.source,
             validates: node.validates,
-            blocked_by: node.blocked_by, // Now stored, not computed
+            validated_by: node.validated_by,
+            blocked_by: node.blocked_by,
             children: vec![],
             x: node.x,
             y: node.y,
             completed_at: node.completed_at,
             last_commit_sha: node.last_commit_sha,
+            resolves: node.resolves,
             claimed_by: node.claimed_by,
             claimed_at: node.claimed_at,
             completed_by: node.completed_by,
@@ -401,6 +408,7 @@ pub struct DiffNode {
     pub node_type: NodeType,
     pub content: String,
     pub validates: Vec<String>,
+    pub validated_by: Vec<String>,
     pub blocked_by: Vec<String>,
     pub parent_id: Option<String>,
 }
@@ -413,6 +421,7 @@ impl From<&DraftNode> for DiffNode {
             node_type: node.node_type,
             content: node.content.clone(),
             validates: node.validates.clone(),
+            validated_by: node.validated_by.clone(),
             blocked_by: node.blocked_by.clone(),
             parent_id: node.parent_id.clone(),
         }
@@ -427,6 +436,7 @@ impl From<&LiveNode> for DiffNode {
             node_type: node.node_type,
             content: node.content.clone(),
             validates: node.validates.clone(),
+            validated_by: node.validated_by.clone(),
             blocked_by: node.blocked_by.clone(),
             parent_id: node.parent_id.clone(),
         }
@@ -658,7 +668,7 @@ pub struct CreateDraftNodeRequest {
     #[serde(default)]
     pub content: String,
     #[serde(default)]
-    pub validates: Vec<String>,
+    pub validated_by: Vec<String>,
     #[serde(default)]
     pub blocked_by: Vec<String>,
     pub x: Option<f64>,
@@ -671,7 +681,7 @@ pub struct CreateDraftNodeRequest {
 pub struct UpdateDraftNodeRequest {
     pub name: Option<String>,
     pub content: Option<String>,
-    pub validates: Option<Vec<String>>,
+    pub validated_by: Option<Vec<String>>,
     pub blocked_by: Option<Vec<String>>,
     pub x: Option<f64>,
     pub y: Option<f64>,

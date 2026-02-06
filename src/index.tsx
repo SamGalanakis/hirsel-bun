@@ -3,9 +3,13 @@
  */
 import { render } from 'solid-js/web';
 import App from './App';
+import { initProfiling } from './lib/profiling';
 
 // Import styles
 import './styles/main.css';
+
+// Initialize profiling (no-op if HIRSEL_PROFILING is not set)
+initProfiling();
 
 // Mount the application
 const root = document.getElementById('app');

@@ -1,13 +1,13 @@
+import { type UnlistenFn, listen } from '@tauri-apps/api/event';
+import { createSignal, onCleanup } from 'solid-js';
+import { createStore, produce } from 'solid-js/store';
 /**
  * Unified Gyp Chat Hook
  *
  * Manages Gyp chat sessions across all contexts (board, run, draft, general).
  * Uses the unified backend GypContextBuilder for consistent prompt and context handling.
  */
-import { invoke } from '@tauri-apps/api/core';
-import { type UnlistenFn, listen } from '@tauri-apps/api/event';
-import { createSignal, onCleanup } from 'solid-js';
-import { createStore, produce } from 'solid-js/store';
+import { invoke } from '../lib/invoke';
 import type {
   ChatEvent,
   ChatMessage,

@@ -1235,5 +1235,4 @@ impl SQLiteState {
             elapsed_minutes,
         })
     }
-
 }

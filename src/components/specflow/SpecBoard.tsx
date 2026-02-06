@@ -16,7 +16,7 @@ import {
   createSignal,
   onCleanup,
 } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../../lib/invoke';
 import { useProject, useRoute } from '../../stores';
 import { useDelta } from '../../stores/delta-context';
 import { Icon } from '../shared';
@@ -102,7 +102,7 @@ function wrapTextToWidth(name: string, width: number): string[] {
 interface EdgeRoute {
   from: string;
   to: string;
-  type: 'blockedBy' | 'validates' | 'hierarchy';
+  type: 'blockedBy' | 'validates' | 'hierarchy' | 'resolves';
   waypoints: [number, number][]; // Full path through all waypoints
 }
 
@@ -230,6 +230,7 @@ const LiveNodeCard: Component<{
   showDelta: boolean;
   selected: boolean;
   onSelect: () => void;
+  nodeMap: Map<string, LiveNodeTree>;
 }> = (props) => {
   const isDeleted = () =>
     props.showDelta && props.diff?.deletedNodes.some((n) => n.id === props.node.id);
@@ -244,6 +245,16 @@ const LiveNodeCard: Component<{
   const isNeedsRepair = () => props.node.status === 'needs_repair';
   const isComplete = () => isDone() || isValidated() || isAwaitingEval();
   const isFailed = () => props.node.status === 'failed';
+  const isClaimable = () => {
+    if (props.node.status !== 'pending') return false;
+    if (props.node.claimedBy) return false;
+    if (props.node.children.length > 0) return false;
+    if (props.node.blockedBy.length === 0) return true;
+    return props.node.blockedBy.every(id => {
+      const blocker = props.nodeMap.get(id);
+      return blocker && (blocker.status === 'done' || blocker.status === 'validated' || blocker.status === 'awaiting_eval');
+    });
+  };
 
   // ==========================================================================
   // Visual Hierarchy - Identical to DraftNodeCard
@@ -296,7 +307,8 @@ const LiveNodeCard: Component<{
     if (isDone() || isAwaitingEval()) return 'var(--glow-done)';
     if (isNeedsRepair()) return 'var(--glow-needs-repair, 0 0 8px rgba(201, 162, 39, 0.4))';
     if (isFailed()) return 'var(--glow-failed)';
-    return undefined;  // pending = no glow
+    if (isClaimable()) return 'var(--glow-claimable)';
+    return undefined;  // pending but blocked = no glow
   };
 
   // Combined shadow: base shadow + status glow
@@ -437,6 +449,17 @@ const DependencyConnectors: Component<{
         >
           <polygon points="0,0 6,2.5 0,5" fill="var(--edge-validates)" />
         </marker>
+        <marker
+          id="arrowhead-resolves"
+          markerWidth="6"
+          markerHeight="5"
+          refX="5"
+          refY="2.5"
+          orient="auto"
+          markerUnits="strokeWidth"
+        >
+          <polygon points="0,0 6,2.5 0,5" fill="var(--edge-resolves)" />
+        </marker>
       </defs>
 
       {/* Hierarchy edges: subtle, structural - rendered first (behind) */}
@@ -474,15 +497,22 @@ const DependencyConnectors: Component<{
             .join(' ');
 
           const isValidates = type === 'validates';
-          const isBlocked = type === 'blockedBy';
+          const isResolves = type === 'resolves';
 
           // BlockedBy: terra/red lines (task depends on task) - with arrowhead
           // Validates: sage/green lines (eval validates task) - with arrowhead
+          // Resolves: golden/yellow lines (repair task -> eval) - with arrowhead
           const strokeColor = isValidates
             ? 'var(--edge-validates)'
-            : 'var(--edge-blocked-by)';
+            : isResolves
+              ? 'var(--edge-resolves)'
+              : 'var(--edge-blocked-by)';
           const strokeWidth = isValidates ? 1 : 1.25;
-          const markerId = isValidates ? 'url(#arrowhead-validates)' : 'url(#arrowhead-blocked)';
+          const markerId = isValidates
+            ? 'url(#arrowhead-validates)'
+            : isResolves
+              ? 'url(#arrowhead-resolves)'
+              : 'url(#arrowhead-blocked)';
 
           return (
             <path
@@ -692,20 +722,38 @@ export const SpecBoard: Component = () => {
     return trees.map((t) => filterTree(t, 1)).filter((n): n is LiveNodeTree => n !== null);
   });
 
+  // Map of all live nodes by ID (for claimable detection)
+  const liveNodeMap = createMemo(() => {
+    const map = new Map<string, LiveNodeTree>();
+    const collect = (nodes: LiveNodeTree[]) => {
+      for (const n of nodes) {
+        map.set(n.id, n);
+        collect(n.children);
+      }
+    };
+    collect(filteredLiveTree());
+    return map;
+  });
+
   // Layout state (computed via ELK.js in frontend)
   const [draftLayoutResult, setDraftLayoutResult] = createSignal<ElkLayoutResult | null>(null);
   const [liveLayoutResult, setLiveLayoutResult] = createSignal<ElkLayoutResult | null>(null);
 
   // Convert tree nodes to ELK input format
-  const treeToLayoutNodes = (trees: (DraftNodeTree | LiveNodeTree)[]): LayoutInputNode[] => {
-    const convert = (node: DraftNodeTree | LiveNodeTree): LayoutInputNode => ({
-      id: node.id,
-      name: node.name,
-      nodeType: node.nodeType,
-      blockedBy: node.blockedBy,
-      validates: node.validates,
-      children: node.children.map(convert),
-    });
+  const treeToLayoutNodes = (
+    trees: (DraftNodeTree | LiveNodeTree)[],
+  ): LayoutInputNode[] => {
+    const convert = (node: DraftNodeTree | LiveNodeTree): LayoutInputNode => {
+      return {
+        id: node.id,
+        name: node.name,
+        nodeType: node.nodeType,
+        blockedBy: node.blockedBy,
+        validates: node.validates,
+        resolves: 'resolves' in node ? node.resolves : null,
+        children: node.children.map(convert),
+      };
+    };
     return trees.map(convert);
   };
 
@@ -910,6 +958,7 @@ export const SpecBoard: Component = () => {
     name: string;
     content: string;
     validates: string[];
+    validatedBy: string[];
     blockedBy: string[];
   }) => {
     const node = editingNode();
@@ -1007,7 +1056,13 @@ export const SpecBoard: Component = () => {
       return;
     }
 
+    const hadLiveTree = hasLiveTree();
     await delta.dispatch();
+
+    // First dispatch: live tree just appeared, switch to both view and center
+    if (!hadLiveTree && hasLiveTree()) {
+      switchView('both');
+    }
   };
 
   const handleOpenInIde = async () => {
@@ -1552,6 +1607,7 @@ export const SpecBoard: Component = () => {
                                   setSelectedNodeId(null);
                                   setViewingLiveNode(node);
                                 }}
+                                nodeMap={liveNodeMap()}
                               />
                             </Show>
                           );
@@ -1969,7 +2025,6 @@ export const SpecBoard: Component = () => {
         <Show when={showDeliveryDialog()}>
           <DeliveryDialog
             onClose={() => setShowDeliveryDialog(false)}
-            defaultBranch="main"
           />
         </Show>
 

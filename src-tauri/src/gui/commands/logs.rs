@@ -21,6 +21,7 @@ pub struct LogResponse {
 }
 
 /// Get eval log file content
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_eval_log(
     run_name: String,
@@ -87,6 +88,7 @@ pub async fn get_eval_log(
 }
 
 /// Get a specific eval's log file content by path
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_eval_log_by_path(
     run_name: String,
@@ -149,6 +151,7 @@ pub async fn get_eval_log_by_path(
 
 /// Get history entries for a run
 /// Uses the orchestrator to support both local and remote modes
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_history(
     run_name: String,
@@ -159,6 +162,7 @@ pub async fn get_history(
 }
 
 /// Get the eval spec (eval.md) content for a run
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_eval_spec(run_name: String) -> Result<Option<String>, String> {
     let run_dir = config::run_dir(&run_name);
@@ -176,6 +180,7 @@ pub async fn get_eval_spec(run_name: String) -> Result<Option<String>, String> {
 
 /// Get evals for a run
 /// Uses the orchestrator to support both local and remote modes
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_evals(run_name: String) -> Result<Vec<Eval>, String> {
     let orch = create_orchestrator(None).str_err()?;

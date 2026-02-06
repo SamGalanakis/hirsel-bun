@@ -3,7 +3,7 @@
  *
  * Shows documentation files with tab navigation and full markdown rendering.
  */
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../../lib/invoke';
 import {
   type Component,
   For,
@@ -58,16 +58,22 @@ export const DocsFullView: Component = () => {
     }
   );
 
+  const sortedFiles = () => {
+    const d = docs();
+    if (!d) return [];
+    return [...d.files].sort((a, b) => a.name.localeCompare(b.name));
+  };
+
   // Set active tab when docs load
   createEffect(() => {
-    const d = docs();
-    if (d && d.files.length > 0) {
+    const files = sortedFiles();
+    if (files.length > 0) {
       // Try to use the selected file from panel, otherwise first file
       const selected = project.selectedDocFile();
-      if (selected && d.files.find(f => f.name === selected)) {
+      if (selected && files.find(f => f.name === selected)) {
         setActiveTab(selected);
       } else {
-        setActiveTab(d.files[0].name);
+        setActiveTab(files[0].name);
       }
     }
   });
@@ -84,10 +90,9 @@ export const DocsFullView: Component = () => {
   });
 
   const activeFile = () => {
-    const d = docs();
     const name = activeTab();
-    if (!d || !name) return null;
-    return d.files.find(f => f.name === name) || null;
+    if (!name) return null;
+    return sortedFiles().find(f => f.name === name) || null;
   };
 
   const handleBack = () => {
@@ -143,7 +148,7 @@ export const DocsFullView: Component = () => {
       </Show>
 
       {/* Empty state */}
-      <Show when={!docs.loading && (!docs() || docs()!.files.length === 0)}>
+      <Show when={!docs.loading && (!docs() || sortedFiles().length === 0)}>
         <div class="flex-1 flex flex-col items-center justify-center">
           <Icon name="file-text" class="w-16 h-16 text-wool-600 mb-4" />
           <h3 class="text-lg font-medium text-wool-300 mb-2">No Documentation</h3>
@@ -154,10 +159,10 @@ export const DocsFullView: Component = () => {
       </Show>
 
       {/* Tabs and content */}
-      <Show when={!docs.loading && docs() && docs()!.files.length > 0}>
+      <Show when={!docs.loading && docs() && sortedFiles().length > 0}>
         {/* Tab bar */}
         <div class="flex items-center gap-1 px-4 py-2 border-b border-pasture-700/50 bg-pasture-800/50 overflow-x-auto">
-          <For each={docs()!.files}>
+          <For each={sortedFiles()}>
             {(file) => (
               <button
                 type="button"

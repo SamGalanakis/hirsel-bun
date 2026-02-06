@@ -1,5 +1,7 @@
 export { BaseModal } from './BaseModal';
 export { Icon } from './Icon';
+export { Markdown } from './Markdown';
+export type { MarkdownProps } from './Markdown';
 export { Toaster } from './Toaster';
 export { DebugPanel } from './DebugPanel';
 export { ThinkingBlock } from './ThinkingBlock';
@@ -7,7 +9,7 @@ export type { ThinkingBlockProps } from './ThinkingBlock';
 export { ToolCard } from './ToolCard';
 export type { ToolCardProps } from './ToolCard';
 export { ToolCluster } from './ToolCluster';
-export type { ClusterToolGroup, ToolClusterProps } from './ToolCluster';
+export type { ToolClusterProps, ToolInfo } from './ToolCluster';
 export { ToolStatusPip } from './ToolStatusPip';
 export type { ToolStatusPipProps } from './ToolStatusPip';
 export { Dropdown } from './Dropdown';

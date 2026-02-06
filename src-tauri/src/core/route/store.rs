@@ -172,7 +172,7 @@ impl RouteStore {
     /// Copy all draft nodes from one route to another
     ///
     /// Since primary key is (id, project_id, route_id), we can copy with the same IDs.
-    /// Also copies the related tables: draft_node_validates, draft_node_blocked_by
+    /// Also copies the related tables: draft_node_validated_by, draft_node_blocked_by
     async fn copy_draft_nodes(&self, from_route_id: i64, to_route_id: i64) -> RouteResult<()> {
         let pool = self.pool().await;
         let now = utc_now();
@@ -200,12 +200,12 @@ impl RouteStore {
 
         let nodes_copied = result.rows_affected();
 
-        // Copy draft_node_validates
+        // Copy draft_node_validated_by
         sqlx::query(
             r#"
-            INSERT INTO draft_node_validates (eval_id, task_id, project_id, route_id)
+            INSERT INTO draft_node_validated_by (eval_id, task_id, project_id, route_id)
             SELECT eval_id, task_id, project_id, ?
-            FROM draft_node_validates
+            FROM draft_node_validated_by
             WHERE project_id = ? AND route_id = ?
             "#,
         )
@@ -339,7 +339,7 @@ impl RouteStore {
     /// Delete all route-scoped data for a route
     async fn delete_route_data(&self, pool: &SqlitePool, route_id: i64) -> RouteResult<()> {
         // Delete draft nodes and relationships
-        sqlx::query("DELETE FROM draft_node_validates WHERE route_id = ?")
+        sqlx::query("DELETE FROM draft_node_validated_by WHERE route_id = ?")
             .bind(route_id)
             .execute(pool)
             .await
@@ -356,7 +356,7 @@ impl RouteStore {
             .ok();
 
         // Delete live nodes and relationships
-        sqlx::query("DELETE FROM live_node_validates WHERE route_id = ?")
+        sqlx::query("DELETE FROM live_node_validated_by WHERE route_id = ?")
             .bind(route_id)
             .execute(pool)
             .await

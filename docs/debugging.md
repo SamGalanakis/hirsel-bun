@@ -157,3 +157,29 @@ grep -i "project\|island\|board" ~/.local/share/app.hirsel/logs/Hirsel.log | tai
 # Note: Adjust timestamp format as needed
 grep "$(date +%Y-%m-%d)" ~/.local/share/app.hirsel/logs/Hirsel.log | tail -100
 ```
+
+## Performance Profiling
+
+Capture backend execution traces and frontend IPC timing:
+
+```bash
+./dev.sh --profiling
+```
+
+Use the app, then close it. Profiling data is saved to `~/.hirsel/profiling/<timestamp>/`:
+- `trace.json` - Backend execution trace (Chrome Trace Format)
+- `frontend.json` - Frontend IPC call timing and Web Vitals
+
+**Viewing backend traces:**
+1. Open https://ui.perfetto.dev
+2. Load `trace.json`
+
+**Text report (both backend + frontend):**
+```bash
+scripts/profiling-report.py                              # most recent session
+scripts/profiling-report.py ~/.hirsel/profiling/<dir>    # specific session
+```
+
+**Environment variables** (set automatically by `dev.sh --profiling`):
+- `HIRSEL_PROFILING=1` - Enables profiling
+- `HIRSEL_PROFILING_DIR=<path>` - Session output directory

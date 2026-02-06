@@ -1,7 +1,8 @@
 /**
  * Notifications dropdown component
  */
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../../lib/invoke';
+import { createPoll } from '../../lib/poll';
 import { type Component, For, Show, createEffect, createSignal, onCleanup } from 'solid-js';
 import { useClickOutside, useEscapeKey } from '../../hooks';
 import type { UnreadNotification } from '../../lib/types';
@@ -34,11 +35,10 @@ export const NotificationsDropdown: Component = () => {
     }
   };
 
-  // Poll for notifications
+  // Poll for notifications — slower when dropdown is closed
   createEffect(() => {
-    fetchNotifications();
-    const interval = setInterval(fetchNotifications, 5000);
-    onCleanup(() => clearInterval(interval));
+    const interval = open() ? 5000 : 30000;
+    createPoll(fetchNotifications, { interval, immediate: true });
   });
 
   const markAllRead = async () => {

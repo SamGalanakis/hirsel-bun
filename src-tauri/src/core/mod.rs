@@ -32,6 +32,8 @@ pub mod eval;
 pub mod files;
 pub mod forge;
 pub mod git;
+#[cfg(feature = "server")]
+pub mod git_http;
 pub mod github;
 pub mod gyp;
 pub mod gyp_chat;
@@ -64,9 +66,8 @@ pub use acp::{
     ACPClientConfig, ACPError, AcpChild, AcpSpawnConfig, MCPServerConfig, SessionUpdate,
 };
 pub use chat_orchestrator::{
-    create_chat_orchestrator, ChatContext, ChatMcpServer, ChatOrchestrator,
-    ChatOrchestratorError, ChatOrchestratorResult, LocalChatOrchestrator,
-    RemoteChatOrchestrator, SessionInfo,
+    create_chat_orchestrator, ChatContext, ChatMcpServer, ChatOrchestrator, ChatOrchestratorError,
+    ChatOrchestratorResult, LocalChatOrchestrator, RemoteChatOrchestrator, SessionInfo,
 };
 pub use chat_session::{
     ChatEvent, ChatSessionConfig, ChatSessionError, ChatSessionManager, PendingPermission,
@@ -122,8 +123,7 @@ pub use conflict_resolver::{
     ConflictResolverResult, ConflictResolverService, ConflictResolverState, ResolutionResult,
 };
 pub use service_worker::{
-    ScribeService, ServiceWorkerError, ServiceWorkerHandle, ServiceWorkerResult,
-    ServiceWorkerType,
+    ScribeService, ServiceWorkerError, ServiceWorkerHandle, ServiceWorkerResult, ServiceWorkerType,
 };
 #[cfg(feature = "s3-storage")]
 pub use snapshot::S3ArchiveStrategy;

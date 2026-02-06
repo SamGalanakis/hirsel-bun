@@ -18,6 +18,7 @@ impl DeltaState {
 
         // Load relationships first
         let validates_map = self.load_draft_validates(pool).await?;
+        let validated_by_map = self.load_draft_validated_by(pool).await?;
         let blocked_by_map = self.load_draft_blocked_by(pool).await?;
 
         let rows = sqlx::query(
@@ -44,6 +45,7 @@ impl DeltaState {
                     node_type: NodeType::from_str(&row.get::<String, _>("node_type")),
                     content: row.get("content"),
                     validates: validates_map.get(&id).cloned().unwrap_or_default(),
+                    validated_by: validated_by_map.get(&id).cloned().unwrap_or_default(),
                     blocked_by: blocked_by_map.get(&id).cloned().unwrap_or_default(),
                     x: row.get("x"),
                     y: row.get("y"),
@@ -61,6 +63,7 @@ impl DeltaState {
         let pool = self.pool().await?;
 
         let validates = self.load_draft_node_validates(pool, id).await?;
+        let validated_by = self.load_draft_node_validated_by(pool, id).await?;
         let blocked_by = self.load_draft_node_blocked_by(pool, id).await?;
 
         let row = sqlx::query(
@@ -84,6 +87,7 @@ impl DeltaState {
             node_type: NodeType::from_str(&row.get::<String, _>("node_type")),
             content: row.get("content"),
             validates,
+            validated_by,
             blocked_by,
             x: row.get("x"),
             y: row.get("y"),
@@ -97,17 +101,11 @@ impl DeltaState {
     /// Validation rules:
     /// - If parent_id is provided, it must reference an existing node
     /// - If parent_id is not provided, auto-assign to root node (if one exists)
-    /// - Eval nodes must have at least one task in validates
     pub async fn create_draft_node(
         &self,
         req: &CreateDraftNodeRequest,
     ) -> DeltaStateResult<DraftNode> {
         let pool = self.pool().await?;
-
-        // Validate: Eval nodes must have non-empty validates
-        if req.node_type == NodeType::Eval && req.validates.is_empty() {
-            return Err(DeltaStateError::EvalValidatesEmpty);
-        }
 
         // Validate parent_id if provided
         if let Some(pid) = &req.parent_id {
@@ -172,13 +170,13 @@ impl DeltaState {
         .execute(pool)
         .await?;
 
-        // Insert validates relationships
-        for task_id in &req.validates {
+        // Insert validated_by relationships (task declares which evals validate it)
+        for eval_id in &req.validated_by {
             sqlx::query(
-                "INSERT INTO draft_node_validates (eval_id, task_id, project_id, route_id) VALUES (?, ?, ?, ?)",
+                "INSERT INTO draft_node_validated_by (eval_id, task_id, project_id, route_id) VALUES (?, ?, ?, ?)",
             )
+            .bind(eval_id)
             .bind(&id)
-            .bind(task_id)
             .bind(self.project_id)
             .bind(self.route_id)
             .execute(pool)
@@ -198,12 +196,11 @@ impl DeltaState {
             .await?;
         }
 
+        self.bump_tree_generation().await?;
         self.get_draft_node(&id).await
     }
 
     /// Update a draft node
-    ///
-    /// Validation: Eval nodes cannot have validates cleared to empty
     ///
     /// Special behavior: If updating a Project (root) node's name, the project
     /// name is also updated to keep them in sync.
@@ -214,17 +211,8 @@ impl DeltaState {
     ) -> DeltaStateResult<DraftNode> {
         let pool = self.pool().await?;
 
-        // Verify exists and get current state
-        let current = self.get_draft_node(id).await?;
-
-        // Validate: Eval nodes cannot have empty validates
-        if current.node_type == NodeType::Eval {
-            if let Some(ref validates) = req.validates {
-                if validates.is_empty() {
-                    return Err(DeltaStateError::EvalValidatesEmpty);
-                }
-            }
-        }
+        // Verify exists
+        let _current = self.get_draft_node(id).await?;
 
         let now = utc_now();
 
@@ -272,22 +260,22 @@ impl DeltaState {
         query = query.bind(id).bind(self.project_id).bind(self.route_id);
         query.execute(pool).await?;
 
-        // Replace validates if provided
-        if let Some(ref validates) = req.validates {
+        // Replace validated_by if provided (task declares which evals validate it)
+        if let Some(ref validated_by) = req.validated_by {
             sqlx::query(
-                "DELETE FROM draft_node_validates WHERE eval_id = ? AND project_id = ? AND route_id = ?",
+                "DELETE FROM draft_node_validated_by WHERE task_id = ? AND project_id = ? AND route_id = ?",
             )
             .bind(id)
             .bind(self.project_id)
             .bind(self.route_id)
             .execute(pool)
             .await?;
-            for task_id in validates {
+            for eval_id in validated_by {
                 sqlx::query(
-                    "INSERT INTO draft_node_validates (eval_id, task_id, project_id, route_id) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO draft_node_validated_by (eval_id, task_id, project_id, route_id) VALUES (?, ?, ?, ?)",
                 )
+                .bind(eval_id)
                 .bind(id)
-                .bind(task_id)
                 .bind(self.project_id)
                 .bind(self.route_id)
                 .execute(pool)
@@ -318,6 +306,7 @@ impl DeltaState {
             }
         }
 
+        self.bump_tree_generation().await?;
         self.get_draft_node(id).await
     }
 
@@ -347,9 +336,9 @@ impl DeltaState {
 
         // Delete all nodes and their relationships (children first due to potential FK constraints)
         for node_id in to_delete.iter().rev() {
-            // Delete validates relationships (both as eval and as referenced task)
+            // Delete validated_by relationships (both as eval and as task)
             sqlx::query(
-                "DELETE FROM draft_node_validates WHERE eval_id = ? AND project_id = ? AND route_id = ?",
+                "DELETE FROM draft_node_validated_by WHERE eval_id = ? AND project_id = ? AND route_id = ?",
             )
             .bind(node_id)
             .bind(self.project_id)
@@ -357,7 +346,7 @@ impl DeltaState {
             .execute(pool)
             .await?;
             sqlx::query(
-                "DELETE FROM draft_node_validates WHERE task_id = ? AND project_id = ? AND route_id = ?",
+                "DELETE FROM draft_node_validated_by WHERE task_id = ? AND project_id = ? AND route_id = ?",
             )
             .bind(node_id)
             .bind(self.project_id)
@@ -390,6 +379,7 @@ impl DeltaState {
                 .await?;
         }
 
+        self.bump_tree_generation().await?;
         Ok(())
     }
 
@@ -399,8 +389,8 @@ impl DeltaState {
     pub async fn reset_tree(&self) -> DeltaStateResult<()> {
         let pool = self.pool().await?;
 
-        // Delete all relationships (root node doesn't have validates/blocked_by)
-        sqlx::query("DELETE FROM draft_node_validates WHERE project_id = ? AND route_id = ?")
+        // Delete all relationships (root node doesn't have validated_by/blocked_by)
+        sqlx::query("DELETE FROM draft_node_validated_by WHERE project_id = ? AND route_id = ?")
             .bind(self.project_id)
             .bind(self.route_id)
             .execute(pool)
@@ -420,6 +410,7 @@ impl DeltaState {
         .execute(pool)
         .await?;
 
+        self.bump_tree_generation().await?;
         Ok(())
     }
 
@@ -468,6 +459,7 @@ impl DeltaState {
         .execute(pool)
         .await?;
 
+        self.bump_tree_generation().await?;
         Ok(())
     }
 
@@ -482,7 +474,7 @@ impl DeltaState {
         name: &str,
         node_type: NodeType,
         content: &str,
-        validates: &[String],
+        validated_by: &[String],
         blocked_by: &[String],
     ) -> DeltaStateResult<DraftNode> {
         // Check if already exists
@@ -540,13 +532,13 @@ impl DeltaState {
         .execute(pool)
         .await?;
 
-        // Insert validates relationships
-        for task_id in validates {
+        // Insert validated_by relationships
+        for eval_id in validated_by {
             sqlx::query(
-                "INSERT INTO draft_node_validates (eval_id, task_id, project_id, route_id) VALUES (?, ?, ?, ?)",
+                "INSERT INTO draft_node_validated_by (eval_id, task_id, project_id, route_id) VALUES (?, ?, ?, ?)",
             )
+            .bind(eval_id)
             .bind(id)
-            .bind(task_id)
             .bind(self.project_id)
             .bind(self.route_id)
             .execute(pool)
@@ -588,6 +580,7 @@ impl DeltaState {
 
         // Load relationships
         let validates_map = self.load_draft_validates(pool).await?;
+        let validated_by_map = self.load_draft_validated_by(pool).await?;
         let blocked_by_map = self.load_draft_blocked_by(pool).await?;
 
         let rows = sqlx::query(
@@ -615,6 +608,7 @@ impl DeltaState {
                     node_type: NodeType::from_str(&row.get::<String, _>("node_type")),
                     content: row.get("content"),
                     validates: validates_map.get(&id).cloned().unwrap_or_default(),
+                    validated_by: validated_by_map.get(&id).cloned().unwrap_or_default(),
                     blocked_by: blocked_by_map.get(&id).cloned().unwrap_or_default(),
                     x: row.get("x"),
                     y: row.get("y"),
@@ -630,7 +624,6 @@ impl DeltaState {
     /// Build tree from flat draft nodes
     ///
     /// Uses recursive approach to ensure all descendants are included.
-    /// blocked_by is now stored per-node, not computed from validates.
     pub fn build_draft_tree(&self, nodes: &[DraftNode]) -> Vec<DraftNodeTree> {
         // Group children by parent
         let mut children_by_parent: HashMap<Option<String>, Vec<&DraftNode>> = HashMap::new();
@@ -666,6 +659,7 @@ impl DeltaState {
                 node_type: node.node_type,
                 content: node.content.clone(),
                 validates: node.validates.clone(),
+                validated_by: node.validated_by.clone(),
                 blocked_by: node.blocked_by.clone(),
                 children,
                 x: node.x,

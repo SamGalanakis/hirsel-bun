@@ -62,31 +62,106 @@ impl GitOperations {
         self.git(&["remote", "get-url", "origin"])
     }
 
+    /// Ensure the origin remote is configured with the given URL.
+    ///
+    /// Adds origin if missing, updates it if it differs from the expected URL.
+    pub fn ensure_remote(&self, url: &str) -> DeliveryResult<()> {
+        match self.remote_url() {
+            Ok(current) if current == url => Ok(()),
+            Ok(_) => {
+                info!("Updating origin remote to {}", url);
+                self.git(&["remote", "set-url", "origin", url])?;
+                Ok(())
+            }
+            Err(_) => {
+                info!("Adding origin remote: {}", url);
+                self.git(&["remote", "add", "origin", url])?;
+                Ok(())
+            }
+        }
+    }
+
+    /// Check if a ref exists (rev-parse --verify)
+    pub fn rev_parse(&self, refspec: &str) -> DeliveryResult<String> {
+        self.git(&["rev-parse", "--verify", refspec])
+    }
+
     /// Fetch from remote
     pub fn fetch(&self, branch: &str) -> DeliveryResult<()> {
         let _ = self.git(&["fetch", "origin", branch]);
         Ok(())
     }
 
-    /// Push branch to remote with upstream tracking
-    pub fn push_branch(&self, branch: Option<&str>) -> DeliveryResult<PushResult> {
-        let branch = match branch {
+    /// Push branch to remote with upstream tracking.
+    ///
+    /// If `delivery_branch` is provided, pushes `HEAD` to that branch name on
+    /// the remote (`git push -u origin HEAD:<delivery_branch>`).  Otherwise
+    /// pushes the current branch by its own name.
+    pub fn push_branch(
+        &self,
+        branch: Option<&str>,
+        delivery_branch: Option<&str>,
+    ) -> DeliveryResult<PushResult> {
+        let remote_branch = match delivery_branch.or(branch) {
             Some(b) => b.to_string(),
             None => self.current_branch()?,
         };
 
-        info!("Pushing branch {} to origin", branch);
+        info!("Pushing HEAD to origin as {}", remote_branch);
 
-        self.git(&["push", "-u", "origin", &branch])?;
+        let refspec = format!("HEAD:{}", remote_branch);
+        self.git(&["push", "-u", "origin", &refspec])?;
 
         let remote_url = self.remote_url()?;
-        let url = self.make_branch_url(&remote_url, &branch);
+        let url = self.make_branch_url(&remote_url, &remote_branch);
 
         Ok(PushResult {
-            branch,
+            branch: remote_branch,
             remote: "origin".to_string(),
             url,
         })
+    }
+
+    /// Validate that a remote URL is reachable and list its branches.
+    pub fn validate_remote(url: &str) -> DeliveryResult<Vec<String>> {
+        let output = Command::new("git")
+            .args(["ls-remote", "--heads", url])
+            .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(DeliveryError::Git(format!(
+                "Remote unreachable: {}",
+                stderr.trim()
+            )));
+        }
+
+        let branches = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| line.split("refs/heads/").nth(1))
+            .map(|s| s.to_string())
+            .collect();
+
+        Ok(branches)
+    }
+
+    /// Initialize a bare-ish git repo at the given path so it can receive pushes.
+    pub fn init_repo(path: &Path) -> DeliveryResult<()> {
+        let output = Command::new("git")
+            .args(["init", "--bare"])
+            .arg(path)
+            .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(DeliveryError::Git(format!(
+                "Failed to init repo: {}",
+                stderr.trim()
+            )));
+        }
+
+        info!("Initialized bare repo at {}", path.display());
+        Ok(())
     }
 
     /// Check merge state by doing a dry-run merge
@@ -280,6 +355,19 @@ impl GitOperations {
         self.git(&["merge", "--abort"])?;
         info!("Aborted merge");
         Ok(())
+    }
+
+    /// List remote branches (strips `origin/` prefix, excludes HEAD)
+    pub fn list_remote_branches(&self) -> DeliveryResult<Vec<String>> {
+        let output = self.git(&["branch", "-r"])?;
+        let branches: Vec<String> = output
+            .lines()
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty() && !line.contains("HEAD"))
+            .filter_map(|line| line.strip_prefix("origin/"))
+            .map(|s| s.to_string())
+            .collect();
+        Ok(branches)
     }
 
     /// Make a URL to view a branch on GitHub

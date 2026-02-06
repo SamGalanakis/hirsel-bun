@@ -71,6 +71,7 @@ impl Default for ChatOrchestratorManager {
 ///
 /// For remote profiles, local OAuth credentials are automatically read
 /// from ~/.claude/.credentials.json and forwarded to the remote server.
+#[tracing::instrument(skip(app, orchestrator_manager))]
 #[tauri::command]
 pub async fn start_chat_session(
     app: tauri::AppHandle,
@@ -154,6 +155,7 @@ pub async fn start_chat_session(
 /// Send a message to an active chat session
 ///
 /// The message will be prefixed with UI context (invisible to user).
+#[tracing::instrument(skip(orchestrator_manager, context))]
 #[tauri::command]
 pub async fn send_chat_message(
     orchestrator_manager: tauri::State<'_, Arc<ChatOrchestratorManager>>,
@@ -173,6 +175,7 @@ pub async fn send_chat_message(
 }
 
 /// Respond to a permission request from a chat session
+#[tracing::instrument(skip(orchestrator_manager))]
 #[tauri::command]
 pub async fn respond_chat_permission(
     orchestrator_manager: tauri::State<'_, Arc<ChatOrchestratorManager>>,
@@ -192,6 +195,7 @@ pub async fn respond_chat_permission(
 }
 
 /// Stop an active chat session
+#[tracing::instrument(skip(orchestrator_manager))]
 #[tauri::command]
 pub async fn stop_chat_session(
     orchestrator_manager: tauri::State<'_, Arc<ChatOrchestratorManager>>,
@@ -209,6 +213,7 @@ pub async fn stop_chat_session(
 }
 
 /// List active chat sessions
+#[tracing::instrument(skip(orchestrator_manager))]
 #[tauri::command]
 pub async fn list_chat_sessions(
     orchestrator_manager: tauri::State<'_, Arc<ChatOrchestratorManager>>,

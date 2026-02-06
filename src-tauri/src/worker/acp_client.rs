@@ -236,6 +236,13 @@ impl Client for HirselClient {
                 // Extract output using shared utility
                 let output = crate::core::acp::extract_tool_output(&update.fields);
 
+                // Infer completion: if we have output but no explicit status, the tool completed
+                let status = if status.is_none() && output.is_some() {
+                    Some(ToolCallStatus::Completed)
+                } else {
+                    status
+                };
+
                 // Write to database
                 if let Some(state) = self.get_state().await {
                     match state
@@ -676,8 +683,10 @@ pub fn build_worker_prompt(
     prompt.push_str("- `delete_task(task_id)` - Delete a worker-created task\n");
     prompt.push_str("  - Only tasks you created can be deleted (not spec tasks)\n");
     prompt.push_str("  - Cannot delete claimed or completed tasks\n");
-    prompt.push_str("- `add_eval(eval_id, name, validates)` - Create eval task\n");
-    prompt.push_str("  - `validates`: Array of task IDs this eval validates\n\n");
+    prompt.push_str("- `add_eval(eval_id, name, validates?)` - Create eval task\n");
+    prompt.push_str(
+        "  - `validates`: Optional array of task IDs — writes validated_by on target tasks\n\n",
+    );
 
     prompt.push_str("### Communication\n");
     prompt

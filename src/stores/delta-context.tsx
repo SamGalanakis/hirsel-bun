@@ -4,7 +4,8 @@
  * Manages the draft/live tree state and delta dispatch operations.
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/invoke';
+import { createPoll } from '../lib/poll';
 import {
   createContext,
   useContext,
@@ -69,8 +70,8 @@ interface DeltaState {
 
   // Delivery actions
   loadDeliveryState: () => Promise<void>;
-  startDelivery: (targetBranch: string, resolveConflicts?: boolean) => Promise<BoardDelivery | null>;
-  completeDelivery: (action: 'push' | 'pr' | 'merge', summary?: string) => Promise<BoardDelivery | null>;
+  startDelivery: (targetBranch: string, resolveConflicts?: boolean, remoteUrl?: string) => Promise<BoardDelivery | null>;
+  completeDelivery: (action: 'push' | 'pr' | 'merge', summary?: string, remoteUrl?: string) => Promise<BoardDelivery | null>;
   retryDelivery: () => Promise<DeliveryAttempt | null>;
   abandonDelivery: () => Promise<boolean>;
 }
@@ -113,6 +114,9 @@ export const DeltaProvider: ParentComponent = (props) => {
   const [dispatchPending, setDispatchPending] = createSignal(false);
   const [showDeltaIndicators, setShowDeltaIndicators] = createSignal(true);
   const [deliveryPending, setDeliveryPending] = createSignal(false);
+
+  // Generation counter for skipping redundant tree polls
+  const [treeGeneration, setTreeGeneration] = createSignal(0);
 
   // Computed
   const hasDiff = () => {
@@ -290,7 +294,8 @@ export const DeltaProvider: ParentComponent = (props) => {
 
   const startDelivery = async (
     targetBranch: string,
-    resolveConflicts = false
+    resolveConflicts = false,
+    remoteUrl?: string
   ): Promise<BoardDelivery | null> => {
     const projectId = project.selectedProjectId();
     const routeId = route.activeRoute()?.id;
@@ -308,6 +313,7 @@ export const DeltaProvider: ParentComponent = (props) => {
         versionId: version.id,
         targetBranch,
         resolveConflicts,
+        remoteUrl: remoteUrl || null,
       });
       setCurrentDelivery(delivery);
       window.toast?.success(`Started delivery for v${version.versionNumber}`);
@@ -323,7 +329,8 @@ export const DeltaProvider: ParentComponent = (props) => {
 
   const completeDelivery = async (
     action: 'push' | 'pr' | 'merge',
-    summary?: string
+    summary?: string,
+    remoteUrl?: string
   ): Promise<BoardDelivery | null> => {
     const projectId = project.selectedProjectId();
     const routeId = route.activeRoute()?.id;
@@ -341,6 +348,7 @@ export const DeltaProvider: ParentComponent = (props) => {
         deliveryId: delivery.id,
         action,
         summary,
+        remoteUrl: remoteUrl || null,
       });
       setCurrentDelivery(updated);
 
@@ -459,43 +467,45 @@ export const DeltaProvider: ParentComponent = (props) => {
     onCleanup(() => window.removeEventListener('route-changed', handleRouteChange));
   });
 
-  // Poll for changes (including Gyp sync)
+  // Poll for changes (generation-aware: skips full fetch if nothing changed)
   createEffect(() => {
     const projectId = project.selectedProjectId();
     const routeId = route.activeRoute()?.id ?? route.routes()[0]?.id;
     if (!projectId || !routeId) return;
 
-    const interval = setInterval(async () => {
-      // Only refresh if not currently dispatching
-      if (dispatchPending()) return;
+    // Reset generation when project/route changes so first poll always fetches
+    setTreeGeneration(0);
 
-      try {
-        // Sync Gyp file changes first
-        await invoke('sync_gyp_changes', { projectId, routeId });
+    createPoll(
+      async () => {
+        if (dispatchPending()) return;
 
-        // Load trees and compare before updating to avoid flicker
-        const response = await invoke<DualTreeResponse>('get_dual_trees', { projectId, routeId });
+        try {
+          const result = await invoke<[DualTreeResponse, number] | null>(
+            'sync_and_get_trees_if_changed',
+            {
+              projectId,
+              routeId,
+              lastGeneration: treeGeneration(),
+            },
+          );
 
-        // Only update if data actually changed (simple JSON comparison)
-        const newDraftJson = JSON.stringify(response.draft);
-        const newLiveJson = JSON.stringify(response.live);
-        const currentDraftJson = JSON.stringify(draftTree());
-        const currentLiveJson = JSON.stringify(liveTree());
+          if (result === null) return; // No changes — skip store updates
 
-        if (newDraftJson !== currentDraftJson || newLiveJson !== currentLiveJson) {
+          const [response, gen] = result;
           batch(() => {
             setDraftTree(response.draft);
             setLiveTree(response.live);
             setDiff(response.diff);
             setProjectRun(response.projectRun);
+            setTreeGeneration(gen);
           });
+        } catch (e) {
+          console.warn('Delta tree poll failed:', e);
         }
-      } catch (e) {
-        console.warn('Delta tree poll failed:', e);
-      }
-    }, 2000);
-
-    onCleanup(() => clearInterval(interval));
+      },
+      { interval: 5000, immediate: false },
+    );
   });
 
   // ==========================================================================

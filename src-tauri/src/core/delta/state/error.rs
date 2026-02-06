@@ -15,8 +15,6 @@ pub enum DeltaStateError {
     ProjectRunNotFound(i64),
     #[error("Parent node not found: {0}")]
     ParentNodeNotFound(String),
-    #[error("Eval nodes must validate at least one task")]
-    EvalValidatesEmpty,
 }
 
 pub type DeltaStateResult<T> = Result<T, DeltaStateError>;

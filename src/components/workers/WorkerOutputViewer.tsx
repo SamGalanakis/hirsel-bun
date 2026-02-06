@@ -1,14 +1,14 @@
 /**
  * Worker output viewer modal with event streaming
  */
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../../lib/invoke';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { type Component, For, Show, createEffect, createSignal, onCleanup } from 'solid-js';
 import { useEscapeKey } from '../../hooks';
 import { createStore, produce } from 'solid-js/store';
 import type { WorkerEvent, WorkerStatus, WorkerStreamEvent } from '../../lib/types';
 import { getEffectiveToolStatus } from '../../lib/tool-utils';
-import { Icon, ThinkingBlock, ToolCard, ToolCluster, type ClusterToolGroup } from '../shared';
+import { Icon, Markdown, ThinkingBlock, ToolCard, ToolCluster, type ToolInfo } from '../shared';
 
 export const WorkerOutputViewer: Component = () => {
   const [visible, setVisible] = createSignal(false);
@@ -145,7 +145,8 @@ export const WorkerOutputViewer: Component = () => {
     type: GroupType;
     content: string;
     events: WorkerEvent[];
-    tools?: ClusterToolGroup[];
+    tools?: ToolInfo[];
+    followedByContent?: boolean;
   };
 
   // Group consecutive text events for display and cluster consecutive tools
@@ -212,14 +213,29 @@ export const WorkerOutputViewer: Component = () => {
     const clustered: EventGroup[] = [];
     let toolBuffer: EventGroup[] = [];
 
+    // Helper to convert tool events to ToolInfo
+    const eventsToToolInfo = (toolEvents: WorkerEvent[]): ToolInfo => {
+      const titleEvent = toolEvents.find((e) => e.toolTitle) ?? toolEvents[0];
+      const latestEvent = toolEvents[toolEvents.length - 1];
+      const hasStarted = toolEvents.some((e) => e.eventType === 'tool_start');
+      return {
+        id: titleEvent?.toolCallId || `tool-${Date.now()}`,
+        title: titleEvent?.toolTitle,
+        kind: titleEvent?.toolKind,
+        status: getEffectiveToolStatus(hasStarted, latestEvent?.toolStatus),
+        input: titleEvent?.toolInput,
+        output: latestEvent?.toolOutput,
+      };
+    };
+
     const flushToolBuffer = () => {
       if (toolBuffer.length >= 2) {
-        // Create a cluster from consecutive tools
+        // Create a cluster from consecutive tools - convert to ToolInfo[]
         clustered.push({
           type: 'tool_cluster',
           content: '',
           events: [],
-          tools: toolBuffer.map((t) => ({ events: t.events })),
+          tools: toolBuffer.map((t) => eventsToToolInfo(t.events)),
         });
       } else if (toolBuffer.length === 1) {
         // Single tool, keep as-is
@@ -237,6 +253,28 @@ export const WorkerOutputViewer: Component = () => {
       }
     }
     flushToolBuffer();
+
+    // Phase 3: Infer completed status for tools followed by other content.
+    // If a tool/cluster is followed by subsequent content, the agent must have
+    // finished it — the agent can't continue without completing the tool call.
+    for (let i = 0; i < clustered.length; i++) {
+      const group = clustered[i];
+      const isLastGroup = i === clustered.length - 1;
+      const hasFollowing = !isLastGroup;
+
+      if (group.type === 'tool_cluster' && group.tools) {
+        for (let j = 0; j < group.tools.length; j++) {
+          const isLastToolInCluster = j === group.tools.length - 1;
+          if (!isLastToolInCluster || hasFollowing) {
+            if (group.tools[j].status === 'in_progress' || group.tools[j].status === 'pending') {
+              group.tools[j].status = 'completed';
+            }
+          }
+        }
+      } else if (group.type === 'tool' && hasFollowing) {
+        group.followedByContent = true;
+      }
+    }
 
     return clustered;
   };
@@ -338,7 +376,7 @@ export const WorkerOutputViewer: Component = () => {
                   <>
                     {/* Text block */}
                     <Show when={group.type === 'text'}>
-                      <div class="text-wool-200 whitespace-pre-wrap">{group.content}</div>
+                      <Markdown content={group.content} class="text-sm text-wool-200" />
                     </Show>
 
                     {/* Thinking block */}
@@ -356,7 +394,9 @@ export const WorkerOutputViewer: Component = () => {
                         const latestEvent = group.events[group.events.length - 1];
                         // Determine effective status: if started but not completed/failed, it's running
                         const hasStarted = group.events.some(e => e.eventType === 'tool_start');
-                        const effectiveStatus = getEffectiveToolStatus(hasStarted, latestEvent?.toolStatus);
+                        const effectiveStatus = getEffectiveToolStatus(
+                          hasStarted, latestEvent?.toolStatus, group.followedByContent === true,
+                        );
                         return (
                           <ToolCard
                             title={titleEvent?.toolTitle}

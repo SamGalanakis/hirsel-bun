@@ -44,6 +44,7 @@ impl DeltaState {
         .await?;
 
         let id = result.last_insert_rowid();
+        self.bump_tree_generation().await?;
         Ok(ProjectRun {
             id,
             project_id: self.project_id,
@@ -69,6 +70,7 @@ impl DeltaState {
             .execute(pool)
             .await?;
 
+        self.bump_tree_generation().await?;
         Ok(())
     }
 

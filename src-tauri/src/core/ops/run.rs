@@ -234,7 +234,7 @@ pub async fn clone_run(config: CloneRunConfig) -> Result<CloneRunResult, OpsErro
         .await
         .ok()
         .flatten()
-        .unwrap_or_else(|| "1".to_string());
+        .unwrap_or_else(|| "5".to_string());
     let time_limit_minutes = source_state.get_time_limit_minutes().await.ok().flatten();
     let human_in_the_loop = source_state.get_human_in_the_loop().await.unwrap_or(true);
     let default_runner = source_state.get_default_runner().await.ok().flatten();

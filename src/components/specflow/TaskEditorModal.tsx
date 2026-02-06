@@ -10,7 +10,7 @@
 
 import { type Component, Show, createSignal, createEffect, onMount, onCleanup } from 'solid-js';
 import { useEscapeKey } from '../../hooks';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../../lib/invoke';
 import { createCodeMirror } from 'solid-codemirror';
 import { EditorView, keymap } from '@codemirror/view';
 import { markdown } from '@codemirror/lang-markdown';
@@ -27,6 +27,7 @@ interface TaskEditorModalProps {
     name: string;
     content: string;
     validates: string[];
+    validatedBy: string[];
     blockedBy: string[];
   }) => Promise<void>;
   onClose: () => void;
@@ -39,6 +40,7 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
   const [name, setName] = createSignal(props.node.name);
   const [content, setContent] = createSignal(props.node.content);
   const [validates, setValidates] = createSignal(props.node.validates.join(', '));
+  const [validatedBy, setValidatedBy] = createSignal(props.node.validatedBy.join(', '));
   const [blockedBy, setBlockedBy] = createSignal(props.node.blockedBy.join(', '));
 
   // UI state
@@ -261,6 +263,10 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
           .split(',')
           .map((s) => s.trim())
           .filter(Boolean),
+        validatedBy: validatedBy()
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
         blockedBy: blockedBy()
           .split(',')
           .map((s) => s.trim())
@@ -472,19 +478,35 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
             </div>
           </Show>
           <Show when={!isEval()}>
-            <div class="flex items-center gap-2">
-              <label for="edit-blocked-by" class="text-xs font-medium w-20" style={{ color: 'var(--amber-500)' }}>
-                Blocked by
-              </label>
-              <input
-                id="edit-blocked-by"
-                type="text"
-                value={blockedBy()}
-                onInput={(e) => setBlockedBy(e.currentTarget.value)}
-                placeholder="task-id-1, task-id-2"
-                class="flex-1 px-2.5 py-1.5 rounded text-xs font-mono bg-pasture-900 text-wool-200 placeholder-wool-600 focus:outline-none focus:ring-1 focus:ring-amber-500/30"
-                style={{ border: '1px solid rgba(212, 165, 116, 0.4)' }}
-              />
+            <div class="flex flex-col gap-1.5">
+              <div class="flex items-center gap-2">
+                <label for="edit-blocked-by" class="text-xs font-medium w-20" style={{ color: 'var(--amber-500)' }}>
+                  Blocked by
+                </label>
+                <input
+                  id="edit-blocked-by"
+                  type="text"
+                  value={blockedBy()}
+                  onInput={(e) => setBlockedBy(e.currentTarget.value)}
+                  placeholder="task-id-1, task-id-2"
+                  class="flex-1 px-2.5 py-1.5 rounded text-xs font-mono bg-pasture-900 text-wool-200 placeholder-wool-600 focus:outline-none focus:ring-1 focus:ring-amber-500/30"
+                  style={{ border: '1px solid rgba(212, 165, 116, 0.4)' }}
+                />
+              </div>
+              <div class="flex items-center gap-2">
+                <label for="edit-validated-by" class="text-xs font-medium w-20" style={{ color: 'var(--sage)' }}>
+                  Validated by
+                </label>
+                <input
+                  id="edit-validated-by"
+                  type="text"
+                  value={validatedBy()}
+                  onInput={(e) => setValidatedBy(e.currentTarget.value)}
+                  placeholder="eval-id-1, eval-id-2"
+                  class="flex-1 px-2.5 py-1.5 rounded text-xs font-mono bg-pasture-900 text-wool-200 placeholder-wool-600 focus:outline-none focus:ring-1 focus:ring-sage/30"
+                  style={{ border: '1px solid rgba(125, 153, 112, 0.4)' }}
+                />
+              </div>
             </div>
           </Show>
         </div>

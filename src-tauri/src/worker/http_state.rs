@@ -540,6 +540,7 @@ impl HttpState {
         blocked_by: Option<Vec<&str>>,
         node_type: &str,
         content: &str,
+        validates: Option<Vec<&str>>,
     ) -> HttpStateResult<()> {
         #[derive(Serialize)]
         struct AddLiveNodeRequest {
@@ -549,6 +550,7 @@ impl HttpState {
             blocked_by: Option<Vec<String>>,
             node_type: String,
             content: String,
+            validates: Option<Vec<String>>,
         }
         let endpoint = self.run_endpoint("/live-nodes");
         let _: SuccessResponse = self
@@ -561,6 +563,7 @@ impl HttpState {
                     blocked_by: blocked_by.map(|b| b.iter().map(|s| s.to_string()).collect()),
                     node_type: node_type.to_string(),
                     content: content.to_string(),
+                    validates: validates.map(|v| v.iter().map(|s| s.to_string()).collect()),
                 },
             )
             .await?;
@@ -1157,8 +1160,10 @@ impl StateAccess for HttpState {
         blocked_by: Option<&[&str]>,
         node_type: &str,
         content: &str,
+        validates: Option<&[&str]>,
     ) -> StateAccessResult<()> {
         let blocked_by_vec = blocked_by.map(|b| b.to_vec());
+        let validates_vec = validates.map(|v| v.to_vec());
         Ok(HttpState::add_live_node(
             self,
             id,
@@ -1167,6 +1172,7 @@ impl StateAccess for HttpState {
             blocked_by_vec,
             node_type,
             content,
+            validates_vec,
         )
         .await?)
     }

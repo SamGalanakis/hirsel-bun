@@ -7,6 +7,7 @@ use super::runs::get_run_detail;
 use super::types::{DraftUpdateRequest, RepoValidation};
 use super::ResultExt;
 use crate::core::api_types::{RunDetail, RunStatus};
+use crate::core::delta::bump_generation;
 use crate::core::draft::{create_workspace_provider, StartingPoint};
 use crate::core::git;
 use crate::core::names::generate_run_name;
@@ -17,6 +18,7 @@ use crate::core::{config, state::SQLiteState};
 ///
 /// Checks if the path/URL is a valid git repository and returns branch information.
 /// Used for git URL validation when creating a draft from a git repository.
+#[tracing::instrument]
 #[tauri::command]
 pub async fn validate_repo(path: String) -> Result<RepoValidation, String> {
     let path = path.trim();
@@ -154,6 +156,7 @@ pub async fn validate_repo(path: String) -> Result<RepoValidation, String> {
 ///
 /// Workspace is NOT created here - it's created when start_draft is called with
 /// the user's chosen starting point.
+#[tracing::instrument]
 #[tauri::command]
 pub async fn create_draft() -> Result<RunDetail, String> {
     use crate::core::Files;
@@ -213,7 +216,7 @@ pub async fn create_draft() -> Result<RunDetail, String> {
 
     // Set defaults
     state
-        .set_worker_scale("1")
+        .set_worker_scale("5")
         .await
         .map_err(|e| format!("Failed to set worker scale: {}", e))?;
     state
@@ -237,7 +240,7 @@ pub async fn create_draft() -> Result<RunDetail, String> {
         project_path: None, // No workspace yet - will be created in start_draft
         remote_url: None,
         branch: None,
-        worker_scale: Some("1".to_string()),
+        worker_scale: Some("5".to_string()),
         time_limit_minutes: None,
         started_at: None,
         summary: None,
@@ -265,6 +268,7 @@ pub async fn create_draft() -> Result<RunDetail, String> {
 ///
 /// Creates a new draft run with the same settings, spec, and eval as the source run.
 /// Does not copy messages, tasks (except scope), workers, or any runtime state.
+#[tracing::instrument]
 #[tauri::command]
 pub async fn clone_run(source_run: String, new_name: String) -> Result<RunDetail, String> {
     // Use the shared ops implementation
@@ -314,6 +318,7 @@ pub async fn clone_run(source_run: String, new_name: String) -> Result<RunDetail
 ///
 /// Allows updating the spec, worker scale, time limit, HITL mode, and project path
 /// before the draft is started.
+#[tracing::instrument]
 #[tauri::command]
 pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Result<(), String> {
     use std::fs;
@@ -423,6 +428,7 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
 ///
 /// Deletes the existing workspace and re-initializes it with a new starting point.
 /// Only works for drafts (not running or completed runs).
+#[tracing::instrument]
 #[tauri::command]
 pub async fn change_starting_point(
     run_name: String,
@@ -495,6 +501,7 @@ pub async fn change_starting_point(
 ///
 /// Creates the workspace based on the starting point, spawns workers,
 /// and transitions the draft to a running state.
+#[tracing::instrument]
 #[tauri::command]
 pub async fn start_draft(
     run_name: String,
@@ -591,7 +598,7 @@ pub async fn start_draft(
         .get_worker_scale()
         .await
         .map_err(|e| format!("Failed to get worker scale: {}", e))?
-        .unwrap_or_else(|| "1".to_string());
+        .unwrap_or_else(|| "5".to_string());
     let scale = WorkerScale::parse(&worker_scale_str)
         .map_err(|e| format!("Invalid worker scale: {}", e))?;
 
@@ -760,6 +767,9 @@ pub async fn start_draft(
             }
         }
     }
+
+    // Bump runs generation so frontend picks up the new run
+    bump_generation("runs_gen").await.ok();
 
     // Return updated run detail
     get_run_detail(run_name).await

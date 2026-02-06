@@ -8,6 +8,7 @@ use crate::core::project::ProjectStore;
 use crate::core::{ProjectMessage, ProjectMessagesStore, ProjectThreadSummary};
 
 /// Get messages for a project thread
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_project_messages(
     project_id: i64,
@@ -23,6 +24,7 @@ pub async fn get_project_messages(
 }
 
 /// Get all threads for a project route with unread counts
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_project_threads(
     project_id: i64,
@@ -36,6 +38,7 @@ pub async fn get_project_threads(
 }
 
 /// Send a message to a project thread
+#[tracing::instrument(skip(content))]
 #[tauri::command]
 pub async fn send_project_message(
     project_id: i64,
@@ -51,6 +54,7 @@ pub async fn send_project_message(
 }
 
 /// Mark messages in a thread as read
+#[tracing::instrument]
 #[tauri::command]
 pub async fn mark_project_messages_read(
     project_id: i64,
@@ -67,6 +71,7 @@ pub async fn mark_project_messages_read(
 /// Get total unread count for a project route
 ///
 /// If route_id is not provided, uses the project's active_route_id.
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_project_unread_count(
     project_id: i64,

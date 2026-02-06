@@ -1,7 +1,8 @@
 /**
  * Project context for managing projects list and selection
  */
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/invoke';
+import { createPoll } from '../lib/poll';
 import {
   type ParentComponent,
   batch,
@@ -319,7 +320,7 @@ export const ProjectProvider: ParentComponent = (props) => {
     onCleanup(() => window.removeEventListener('cancel-project-setup', handler));
   });
 
-  // Poll for unread count when project is selected
+  // Poll for unread count when project is selected (visibility-aware)
   createEffect(() => {
     const projectId = selectedProjectId();
     if (!projectId) {
@@ -327,21 +328,17 @@ export const ProjectProvider: ParentComponent = (props) => {
       return;
     }
 
-    const fetchUnread = async () => {
-      try {
-        const count = await invoke<number>('get_project_unread_count', { projectId });
-        setProjectUnreadCount(count);
-      } catch (e) {
-        console.error('Failed to fetch unread count:', e);
-      }
-    };
-
-    // Initial fetch
-    fetchUnread();
-
-    // Poll every 5 seconds
-    const interval = setInterval(fetchUnread, 5000);
-    onCleanup(() => clearInterval(interval));
+    createPoll(
+      async () => {
+        try {
+          const count = await invoke<number>('get_project_unread_count', { projectId });
+          setProjectUnreadCount(count);
+        } catch (e) {
+          console.error('Failed to fetch unread count:', e);
+        }
+      },
+      { interval: 10000, immediate: true },
+    );
   });
 
   const value: ProjectContextValue = {

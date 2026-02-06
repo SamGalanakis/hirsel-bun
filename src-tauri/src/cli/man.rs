@@ -57,7 +57,6 @@ RUN MANAGEMENT
 SPEC & MODE
     hirsel spec <run>           View run specification
     hirsel spec <run> --edit    Edit spec in $EDITOR
-    hirsel amend <run> <text>   Add amendment to spec
     hirsel mode <run> hitl      Set human-in-the-loop mode
     hirsel mode <run> yolo      Set autonomous mode
 

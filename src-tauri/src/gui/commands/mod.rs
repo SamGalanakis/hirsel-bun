@@ -80,6 +80,7 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
     tauri::generate_handler![
         // Run commands
         runs::get_runs,
+        runs::get_runs_if_changed,
         runs::get_run_detail,
         runs::pause_run,
         runs::resume_run,
@@ -152,12 +153,16 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         chat::list_chat_sessions,
         // Frontend logging (dev mode)
         debug::log_frontend,
+        debug::log_frontend_batch,
         // Debug commands
         debug::get_version,
         debug::get_process_counts,
         debug::kill_orphaned_acp_processes,
         debug::get_daemon_health,
         debug::ensure_daemon_running,
+        debug::get_profiling_enabled,
+        debug::save_profiling_data,
+        debug::get_process_memory,
         // Filesystem commands
         filesystem::pick_folder,
         filesystem::suggest_paths,
@@ -187,6 +192,8 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         delivery::generate_pr_title,
         delivery::generate_pr_body,
         delivery::get_delivery_branch_name,
+        // Delivery validation
+        delivery::validate_delivery_target,
         // Board delivery commands (delta dispatch system)
         delivery::get_board_versions,
         delivery::get_latest_board_version,
@@ -213,6 +220,8 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         delta::complete_revert,
         delta::get_dual_trees,
         delta::sync_gyp_changes,
+        delta::sync_and_get_trees,
+        delta::sync_and_get_trees_if_changed,
         // Docs commands
         docs::get_project_docs,
         // Project Messages (Sheepfold) commands

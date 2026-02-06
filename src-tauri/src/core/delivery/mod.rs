@@ -13,7 +13,7 @@
 //!
 //! ```rust,ignore
 //! let orchestrator = DeliveryOrchestrator::for_project(project_id).await?;
-//! let push_result = orchestrator.push_branch(None)?;
+//! let push_result = orchestrator.push_branch(None, None)?;
 //! let pr = orchestrator.create_pr("main", "Title", "Body").await?;
 //! ```
 

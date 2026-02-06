@@ -9,10 +9,13 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePo
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 use super::config::global_db_path;
+
+/// Ensures the background eviction task is started exactly once
+static EVICTION_STARTED: std::sync::Once = std::sync::Once::new();
 
 pub type DbPool = SqlitePool;
 
@@ -20,9 +23,18 @@ pub type DbPool = SqlitePool;
 /// Uses std::sync::OnceLock to avoid async deadlock issues with tokio::sync::OnceCell
 static GLOBAL_POOL: OnceLock<SqlitePool> = OnceLock::new();
 
+/// Per-run database pool entry with last-access tracking for eviction
+struct PoolEntry {
+    pool: SqlitePool,
+    last_accessed: Instant,
+}
+
 /// Per-run database pools
-static RUN_POOLS: tokio::sync::OnceCell<Arc<RwLock<HashMap<String, SqlitePool>>>> =
+static RUN_POOLS: tokio::sync::OnceCell<Arc<RwLock<HashMap<String, PoolEntry>>>> =
     tokio::sync::OnceCell::const_new();
+
+/// Evict idle run pools after 10 minutes
+const POOL_EVICTION_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Get the global database pool, initializing if needed.
 ///
@@ -65,17 +77,32 @@ pub async fn run_pool(run_name: &str) -> SqlitePool {
         .get_or_init(|| async { Arc::new(RwLock::new(HashMap::new())) })
         .await;
 
+    // Start background eviction task on first use
+    EVICTION_STARTED.call_once(|| {
+        let pools = pools.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(120)).await;
+                evict_idle_pools(&pools).await;
+            }
+        });
+    });
+
     // Fast path: check if pool exists with read lock
-    if let Some(pool) = pools.read().await.get(run_name) {
-        return pool.clone();
+    {
+        let read = pools.read().await;
+        if let Some(entry) = read.get(run_name) {
+            return entry.pool.clone();
+        }
     }
 
     // Slow path: acquire write lock and re-check (another task may have inserted)
     let mut write = pools.write().await;
 
     // Re-check under write lock to avoid creating duplicate pools
-    if let Some(pool) = write.get(run_name) {
-        return pool.clone();
+    if let Some(entry) = write.get_mut(run_name) {
+        entry.last_accessed = Instant::now();
+        return entry.pool.clone();
     }
 
     // Create and insert atomically under the write lock
@@ -84,8 +111,31 @@ pub async fn run_pool(run_name: &str) -> SqlitePool {
         .await
         .expect("Failed to create run database pool");
 
-    write.insert(run_name.to_string(), pool.clone());
+    write.insert(
+        run_name.to_string(),
+        PoolEntry {
+            pool: pool.clone(),
+            last_accessed: Instant::now(),
+        },
+    );
+
     pool
+}
+
+/// Evict run pools that have been idle for longer than POOL_EVICTION_TIMEOUT
+async fn evict_idle_pools(pools: &Arc<RwLock<HashMap<String, PoolEntry>>>) {
+    let mut write = pools.write().await;
+    let eviction_keys: Vec<String> = write
+        .iter()
+        .filter(|(_, e)| e.last_accessed.elapsed() > POOL_EVICTION_TIMEOUT)
+        .map(|(k, _)| k.clone())
+        .collect();
+    for key in eviction_keys {
+        if let Some(entry) = write.remove(&key) {
+            tracing::debug!("Evicting idle run pool: {}", key);
+            entry.pool.close().await;
+        }
+    }
 }
 
 /// Close a per-run database pool.
@@ -94,8 +144,8 @@ pub async fn run_pool(run_name: &str) -> SqlitePool {
 pub async fn close_run_pool(run_name: &str) {
     if let Some(pools) = RUN_POOLS.get() {
         let mut write = pools.write().await;
-        if let Some(pool) = write.remove(run_name) {
-            pool.close().await;
+        if let Some(entry) = write.remove(run_name) {
+            entry.pool.close().await;
         }
     }
 }

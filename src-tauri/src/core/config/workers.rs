@@ -51,7 +51,7 @@ impl WorkerScale {
 
 impl Default for WorkerScale {
     fn default() -> Self {
-        Self { max: 1 }
+        Self { max: 5 }
     }
 }
 

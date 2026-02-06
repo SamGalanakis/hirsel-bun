@@ -14,6 +14,7 @@ use std::time::Instant;
 
 /// Get application configuration
 /// Uses the orchestrator to support both local and remote modes
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_config() -> Result<ConfigResponse, String> {
     let orch = create_orchestrator(None).str_err()?;
@@ -25,12 +26,13 @@ pub async fn get_config() -> Result<ConfigResponse, String> {
 /// Returns default values that projects inherit when they don't have
 /// project-specific settings. This allows the UI to show what values
 /// will be used when a project setting is empty.
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_config_defaults() -> Result<ConfigDefaults, String> {
     let (cfg, _) = config::Config::load().unwrap_or_else(|_| (config::Config::default(), vec![]));
 
     Ok(ConfigDefaults {
-        worker_scale: "1".to_string(),
+        worker_scale: "5".to_string(),
         time_limit_minutes: None,
         human_in_the_loop: cfg.human_in_the_loop,
         runners: cfg.runner_names(),
@@ -39,6 +41,7 @@ pub async fn get_config_defaults() -> Result<ConfigDefaults, String> {
 }
 
 /// Save application configuration
+#[tracing::instrument(skip(updates))]
 #[tauri::command]
 pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
     let config_path = config::hirsel_dir().join("config.toml");
@@ -144,6 +147,7 @@ pub struct TailscaleInfo {
 }
 
 /// Get Tailscale connection info for this machine
+#[tracing::instrument]
 #[tauri::command]
 pub fn get_tailscale_info() -> Result<TailscaleInfo, String> {
     if !is_tailscale_connected() {
@@ -177,6 +181,7 @@ pub struct SshCheckResult {
 /// Check if an SSH runner is reachable
 ///
 /// Runs: ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new {host} echo ok
+#[tracing::instrument]
 #[tauri::command]
 pub async fn check_ssh_runner(
     host: String,

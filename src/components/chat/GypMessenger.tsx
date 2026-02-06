@@ -18,7 +18,7 @@ import { Portal } from 'solid-js/web';
 import type { ChatMessage, ChatToolCall, PendingPermission } from '../../lib/types';
 import { useApp, useProject, useRuns } from '../../stores';
 import { useGypChat, type GypChatContext } from '../../hooks/use-gyp-chat';
-import { Icon, ThinkingBlock, ToolCard } from '../shared';
+import { Icon, Markdown, ThinkingBlock, ToolCard, ToolCluster, type ToolInfo } from '../shared';
 
 const PANEL_WIDTH = 440;
 const PANEL_HEIGHT = 520;
@@ -404,9 +404,7 @@ export const GypMessenger: Component = () => {
                     </div>
                   </Show>
                   <Show when={chat.currentMessage()?.content}>
-                    <div class="whitespace-pre-wrap break-words text-wool-300">
-                      {chat.currentMessage()?.content}
-                    </div>
+                    <Markdown content={chat.currentMessage()?.content || ''} class="text-sm text-wool-300" />
                   </Show>
                   <Show when={!chat.currentMessage()?.content}>
                     <div class="flex items-center gap-2">
@@ -569,25 +567,37 @@ const MessageBubble: Component<{
 
         {/* Content */}
         <Show when={props.message.content}>
-          <p class="text-sm whitespace-pre-wrap break-words">{props.message.content}</p>
+          <Markdown content={props.message.content} class="text-sm" />
         </Show>
 
-        {/* Tool calls - redesigned as craft-style cards */}
+        {/* Tool calls - cluster if 2+, single card otherwise */}
         <Show when={props.message.toolCalls?.length}>
-          <div class="mt-2 flex flex-wrap gap-1.5">
-            <For each={props.message.toolCalls}>
-              {(tc) => (
-                <ToolCard
-                  title={tc.title}
-                  kind={tc.kind}
-                  status={tc.status}
-                  input={tc.input}
-                  output={tc.output}
-                  expanded={props.expandedTools.has(tc.id)}
-                  onToggle={() => props.onToggleTool(tc.id)}
-                />
-              )}
-            </For>
+          <div class="mt-2">
+            <Show when={(props.message.toolCalls?.length || 0) >= 2}>
+              {/* Cluster multiple tools */}
+              <ToolCluster
+                tools={props.message.toolCalls!.map((tc): ToolInfo => ({
+                  id: tc.id,
+                  title: tc.title,
+                  kind: tc.kind,
+                  status: tc.status,
+                  input: tc.input,
+                  output: tc.output,
+                }))}
+              />
+            </Show>
+            <Show when={(props.message.toolCalls?.length || 0) === 1}>
+              {/* Single tool - show as card */}
+              <ToolCard
+                title={props.message.toolCalls![0].title}
+                kind={props.message.toolCalls![0].kind}
+                status={props.message.toolCalls![0].status}
+                input={props.message.toolCalls![0].input}
+                output={props.message.toolCalls![0].output}
+                expanded={props.expandedTools.has(props.message.toolCalls![0].id)}
+                onToggle={() => props.onToggleTool(props.message.toolCalls![0].id)}
+              />
+            </Show>
           </div>
         </Show>
       </div>

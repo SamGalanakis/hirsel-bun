@@ -1195,6 +1195,7 @@ pub struct AddLiveNodeRequest {
     pub blocked_by: Option<Vec<String>>,
     pub node_type: String,
     pub content: String,
+    pub validates: Option<Vec<String>>,
 }
 
 /// Add a live node from a worker
@@ -1237,6 +1238,11 @@ pub async fn add_live_node(
         .as_ref()
         .map(|v| v.iter().map(|s| s.as_str()).collect());
 
+    let validates: Option<Vec<&str>> = body
+        .validates
+        .as_ref()
+        .map(|v| v.iter().map(|s| s.as_str()).collect());
+
     delta_state
         .create_live_node_from_worker(
             &body.id,
@@ -1245,6 +1251,7 @@ pub async fn add_live_node(
             blocked_by.as_deref(),
             node_type,
             &body.content,
+            validates.as_deref(),
         )
         .await?;
 

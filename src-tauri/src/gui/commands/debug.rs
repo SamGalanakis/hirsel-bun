@@ -18,6 +18,7 @@ pub struct VersionInfo {
 }
 
 /// Get version and build information
+#[tracing::instrument]
 #[tauri::command]
 pub fn get_version() -> VersionInfo {
     VersionInfo {
@@ -41,7 +42,21 @@ pub async fn log_frontend(level: String, message: String) {
     }
 }
 
+/// Batch-log multiple frontend messages in a single IPC call
+#[tauri::command]
+pub async fn log_frontend_batch(entries: Vec<(String, String)>) {
+    for (level, message) in entries {
+        match level.as_str() {
+            "ERROR" => tracing::error!("[Frontend] {}", message),
+            "WARN" => tracing::warn!("[Frontend] {}", message),
+            "DEBUG" => tracing::debug!("[Frontend] {}", message),
+            _ => tracing::info!("[Frontend] {}", message),
+        }
+    }
+}
+
 /// Count claude and acp related processes (for debug panel)
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_process_counts() -> Result<serde_json::Value, String> {
     #[cfg(unix)]
@@ -109,6 +124,7 @@ pub async fn get_process_counts() -> Result<serde_json::Value, String> {
 }
 
 /// Kill orphaned ACP bridge processes (debug panel utility)
+#[tracing::instrument]
 #[tauri::command]
 pub async fn kill_orphaned_acp_processes() -> Result<serde_json::Value, String> {
     #[cfg(unix)]
@@ -159,6 +175,7 @@ pub struct DaemonHealth {
 ///
 /// Checks if daemon is running and returns its version info.
 /// If daemon is not running, returns running=false with error message.
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_daemon_health() -> DaemonHealth {
     let port = daemon::get_daemon_port();
@@ -228,7 +245,56 @@ pub async fn get_daemon_health() -> DaemonHealth {
     }
 }
 
+/// Check if profiling mode is active (HIRSEL_PROFILING=1)
+#[tauri::command]
+pub fn get_profiling_enabled() -> bool {
+    std::env::var("HIRSEL_PROFILING").as_deref() == Ok("1")
+}
+
+/// Save frontend profiling data to the current profiling session directory.
+///
+/// Receives JSON metrics from the frontend and writes them to frontend.json.
+#[tauri::command]
+pub async fn save_profiling_data(data: String) -> Result<String, String> {
+    let profiling_dir = std::env::var("HIRSEL_PROFILING_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| crate::core::hirsel_dir().join("profiling"));
+    std::fs::create_dir_all(&profiling_dir)
+        .map_err(|e| format!("Failed to create profiling directory: {}", e))?;
+
+    let path = profiling_dir.join("frontend.json");
+
+    std::fs::write(&path, &data).map_err(|e| format!("Failed to write profiling data: {}", e))?;
+
+    tracing::info!("[profiling] Saved frontend data to {}", path.display());
+    Ok(path.display().to_string())
+}
+
+/// Get current process RSS in MB (for profiling memory tracking)
+#[tauri::command]
+pub fn get_process_memory() -> Option<f64> {
+    #[cfg(unix)]
+    {
+        // Read from /proc/self/statm - field 1 is RSS in pages
+        if let Ok(statm) = std::fs::read_to_string("/proc/self/statm") {
+            if let Some(rss_pages) = statm.split_whitespace().nth(1) {
+                if let Ok(pages) = rss_pages.parse::<u64>() {
+                    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64;
+                    let rss_mb = (pages * page_size) as f64 / 1024.0 / 1024.0;
+                    return Some((rss_mb * 100.0).round() / 100.0);
+                }
+            }
+        }
+        None
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
 /// Start or restart the daemon
+#[tracing::instrument]
 #[tauri::command]
 pub async fn ensure_daemon_running() -> Result<DaemonHealth, String> {
     use crate::core::orchestrator::DaemonOrchestrator;

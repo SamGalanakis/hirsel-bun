@@ -433,15 +433,6 @@ pub struct TimeInfo {
     pub percent_remaining: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Amendment {
-    pub id: i64,
-    pub message: String,
-    pub timestamp: String,
-    pub author: String,
-    pub spec_hash: String,
-}
-
 /// Summary data for displaying a run in a list (optimized fetch)
 /// Note: Task counts come from DeltaState.live_nodes for project runs
 #[derive(Debug, Clone, Serialize, Deserialize)]

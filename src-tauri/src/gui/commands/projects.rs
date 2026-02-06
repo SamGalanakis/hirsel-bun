@@ -10,6 +10,7 @@ use crate::core::project::{CreateProjectRequest, Project, ProjectStore, UpdatePr
 use crate::core::state::SQLiteState;
 
 /// List all projects, sorted by most recently created
+#[tracing::instrument]
 #[tauri::command]
 pub async fn list_projects() -> Result<Vec<Project>, String> {
     let store = ProjectStore::open().await.str_err()?;
@@ -17,6 +18,7 @@ pub async fn list_projects() -> Result<Vec<Project>, String> {
 }
 
 /// Get a project by ID
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_project(project_id: i64) -> Result<Project, String> {
     let store = ProjectStore::open().await.str_err()?;
@@ -24,6 +26,7 @@ pub async fn get_project(project_id: i64) -> Result<Project, String> {
 }
 
 /// Create a new project from a local folder path
+#[tracing::instrument]
 #[tauri::command]
 pub async fn create_project_from_path(
     path: String,
@@ -93,6 +96,7 @@ pub async fn create_project_from_path(
 }
 
 /// Create a new project with a name and starting point
+#[tracing::instrument]
 #[tauri::command]
 pub async fn create_project(
     name: String,
@@ -143,6 +147,7 @@ pub async fn create_project(
 /// Accepts all project fields including run settings (worker_scale, time_limit_minutes,
 /// human_in_the_loop, runner). When run settings change, they are
 /// also propagated to any active run for this project.
+#[tracing::instrument]
 #[tauri::command]
 pub async fn update_project(
     project_id: i64,
@@ -252,6 +257,7 @@ async fn propagate_settings_to_active_run(
 }
 
 /// Update a project's name
+#[tracing::instrument]
 #[tauri::command]
 pub async fn update_project_name(project_id: i64, name: String) -> Result<Project, String> {
     let store = ProjectStore::open().await.str_err()?;
@@ -275,6 +281,7 @@ pub async fn update_project_name(project_id: i64, name: String) -> Result<Projec
 }
 
 /// Delete a project (removes from list, doesn't delete files)
+#[tracing::instrument]
 #[tauri::command]
 pub async fn delete_project(project_id: i64) -> Result<(), String> {
     let store = ProjectStore::open().await.str_err()?;

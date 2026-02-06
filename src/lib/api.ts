@@ -6,8 +6,8 @@
  * and provide type-safe interfaces.
  */
 
-import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { invoke } from './invoke';
 import { toast } from './toast';
 import type {
   ApiResult,

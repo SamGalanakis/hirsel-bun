@@ -27,16 +27,16 @@ CREATE INDEX IF NOT EXISTS idx_draft_nodes_project ON draft_nodes(project_id);
 CREATE INDEX IF NOT EXISTS idx_draft_nodes_route ON draft_nodes(route_id);
 CREATE INDEX IF NOT EXISTS idx_draft_nodes_parent ON draft_nodes(parent_id);
 
-CREATE TABLE IF NOT EXISTS draft_node_validates (
+CREATE TABLE IF NOT EXISTS draft_node_validated_by (
     eval_id TEXT NOT NULL,
     task_id TEXT NOT NULL,
     project_id INTEGER NOT NULL,
     route_id INTEGER NOT NULL,
     PRIMARY KEY (project_id, route_id, eval_id, task_id)
 );
-CREATE INDEX IF NOT EXISTS idx_draft_validates_eval ON draft_node_validates(eval_id);
-CREATE INDEX IF NOT EXISTS idx_draft_validates_task ON draft_node_validates(task_id);
-CREATE INDEX IF NOT EXISTS idx_draft_validates_route ON draft_node_validates(route_id);
+CREATE INDEX IF NOT EXISTS idx_draft_validated_by_eval ON draft_node_validated_by(eval_id);
+CREATE INDEX IF NOT EXISTS idx_draft_validated_by_task ON draft_node_validated_by(task_id);
+CREATE INDEX IF NOT EXISTS idx_draft_validated_by_route ON draft_node_validated_by(route_id);
 
 CREATE TABLE IF NOT EXISTS draft_node_blocked_by (
     node_id TEXT NOT NULL,
@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS live_nodes (
     updated_at TEXT NOT NULL,
     completed_at TEXT,
     last_commit_sha TEXT,
+    resolves TEXT,
     -- Orchestration fields
     claimed_by TEXT,
     claimed_at TEXT,
@@ -84,16 +85,16 @@ CREATE INDEX IF NOT EXISTS idx_live_nodes_project_status ON live_nodes(project_i
 CREATE INDEX IF NOT EXISTS idx_live_nodes_route_status ON live_nodes(route_id, status);
 CREATE INDEX IF NOT EXISTS idx_live_nodes_claimed ON live_nodes(project_id, claimed_by) WHERE status = 'working';
 
-CREATE TABLE IF NOT EXISTS live_node_validates (
+CREATE TABLE IF NOT EXISTS live_node_validated_by (
     eval_id TEXT NOT NULL,
     task_id TEXT NOT NULL,
     project_id INTEGER NOT NULL,
     route_id INTEGER NOT NULL,
     PRIMARY KEY (project_id, route_id, eval_id, task_id)
 );
-CREATE INDEX IF NOT EXISTS idx_live_validates_eval ON live_node_validates(eval_id);
-CREATE INDEX IF NOT EXISTS idx_live_validates_task ON live_node_validates(task_id);
-CREATE INDEX IF NOT EXISTS idx_live_validates_route ON live_node_validates(route_id);
+CREATE INDEX IF NOT EXISTS idx_live_validated_by_eval ON live_node_validated_by(eval_id);
+CREATE INDEX IF NOT EXISTS idx_live_validated_by_task ON live_node_validated_by(task_id);
+CREATE INDEX IF NOT EXISTS idx_live_validated_by_route ON live_node_validated_by(route_id);
 
 CREATE TABLE IF NOT EXISTS live_node_blocked_by (
     node_id TEXT NOT NULL,
@@ -188,6 +189,11 @@ CREATE TABLE IF NOT EXISTS delivery_attempts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_delivery_attempts_delivery ON delivery_attempts(delivery_id);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value INTEGER NOT NULL DEFAULT 0
+);
 "#;
 
 static SCHEMA_INIT: OnceCell<()> = OnceCell::const_new();

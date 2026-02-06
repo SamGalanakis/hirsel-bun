@@ -15,6 +15,7 @@ use crate::core::ProjectMessagesStore;
 
 /// Get messages for a thread
 /// Uses the orchestrator to support both local and remote modes
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_messages(
     run_name: String,
@@ -27,6 +28,7 @@ pub async fn get_messages(
 
 /// Get all threads for a run
 /// Uses the orchestrator to support both local and remote modes
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_threads(run_name: String) -> Result<Vec<ThreadSummary>, String> {
     let orch = create_orchestrator(None).str_err()?;
@@ -35,6 +37,7 @@ pub async fn get_threads(run_name: String) -> Result<Vec<ThreadSummary>, String>
 
 /// Get all unread notifications across all projects
 /// Uses project-level messages (Sheepfold) for notifications
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_all_unread_notifications() -> Result<UnreadNotificationsResponse, String> {
     // Get runs from project_runs table (source of truth)
@@ -154,6 +157,7 @@ pub async fn get_all_unread_notifications() -> Result<UnreadNotificationsRespons
 
 /// Send a message to a thread
 /// Uses the orchestrator to support both local and remote modes
+#[tracing::instrument]
 #[tauri::command]
 pub async fn send_message(
     run_name: String,
@@ -168,6 +172,7 @@ pub async fn send_message(
 
 /// Mark messages as read
 /// This uses project-level messages (Sheepfold)
+#[tracing::instrument]
 #[tauri::command]
 pub async fn mark_messages_read(
     run_name: String,

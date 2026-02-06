@@ -215,6 +215,7 @@ impl DeltaDispatchService {
                     None,
                     NodeType::Task,
                     &scope_content,
+                    None, // validates - not used for scope
                 )
                 .await?;
             info!("Created scope live node with content");

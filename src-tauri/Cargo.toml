@@ -38,6 +38,9 @@ s3-storage = ["dep:aws-sdk-s3", "dep:aws-config", "dep:tempfile"]
 # Development features (debug logging, etc.)
 dev = ["dep:tracing-subscriber"]
 
+# Profiling (tracing-chrome output for Perfetto UI)
+profiling = ["dev", "dep:tracing-chrome"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [], optional = true }
 chrono = "0.4"
@@ -99,7 +102,12 @@ aws-config = { version = "1", features = ["behavior-version-latest"], optional =
 tempfile = { version = "3", optional = true }
 
 # Development/debugging (feature-gated)
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "registry"], optional = true }
+tracing-chrome = { version = "0.7", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
+
+[profile.profiling]
+inherits = "release"
+debug = true

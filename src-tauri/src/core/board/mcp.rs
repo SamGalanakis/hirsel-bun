@@ -90,6 +90,11 @@ fn get_tools() -> Vec<Tool> {
                         "items": { "type": "string" },
                         "description": "Task IDs this depends on"
                     },
+                    "validated_by": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Eval IDs that validate this task. Task is Validated only when ALL listed evals pass."
+                    },
                     "parent_id": {
                         "type": "string",
                         "description": "Parent task ID for subtasks (null = root)"
@@ -108,7 +113,7 @@ fn get_tools() -> Vec<Tool> {
         },
         Tool {
             name: "board_eval",
-            description: "Create or update an eval. Omit 'id' to create new. Returns the new/updated eval ID and file path.",
+            description: "Create or update an eval. Omit 'id' to create new. Returns the new/updated eval ID and file path. 'validates' is convenience sugar — when provided, writes validated_by on each referenced task.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -123,7 +128,7 @@ fn get_tools() -> Vec<Tool> {
                     "validates": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Task IDs this eval validates (required for create)"
+                        "description": "Task IDs this eval validates (convenience sugar — writes validated_by on target tasks). Optional for global/e2e evals."
                     },
                     "content": {
                         "type": "string",
@@ -424,6 +429,13 @@ impl BoardMcpServer {
                     .collect()
             })
         });
+        let validated_by: Option<Vec<String>> = args.get("validated_by").and_then(|v| {
+            v.as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+        });
         let parent_id = args.get("parent_id").and_then(|v| v.as_str());
         let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -443,13 +455,29 @@ impl BoardMcpServer {
             }
         }
 
+        // Validate validated_by references exist (must be eval nodes)
+        if let Some(ref evals) = validated_by {
+            let valid_ids = self.get_valid_node_ids();
+            for eval_id in evals {
+                if !valid_ids.contains(eval_id) {
+                    return Ok(json!({
+                        "success": false,
+                        "message": format!("Eval '{}' not found in validated_by list", eval_id),
+                        "reason": "invalid_reference",
+                        "valid_node_ids": valid_ids
+                    })
+                    .to_string());
+                }
+            }
+        }
+
         if let Some(existing_id) = id {
             // Update existing task
-            self.update_task(existing_id, name, blocked_by, parent_id)
+            self.update_task(existing_id, name, blocked_by, validated_by, parent_id)
         } else {
             // Create new task
             let name = name.ok_or("'name' required for new task")?;
-            self.create_task(name, blocked_by, parent_id, content)
+            self.create_task(name, blocked_by, validated_by, parent_id, content)
         }
     }
 
@@ -458,6 +486,7 @@ impl BoardMcpServer {
         &mut self,
         name: &str,
         blocked_by: Option<Vec<String>>,
+        validated_by: Option<Vec<String>>,
         parent_id: Option<&str>,
         content: &str,
     ) -> Result<String, String> {
@@ -468,7 +497,7 @@ impl BoardMcpServer {
             name: name.to_string(),
             node_type: NodeType::Task,
             content: content.to_string(),
-            validates: vec![],
+            validated_by: validated_by.unwrap_or_default(),
             blocked_by: blocked_by.unwrap_or_default(),
             x: None,
             y: None,
@@ -496,6 +525,7 @@ impl BoardMcpServer {
         id: &str,
         name: Option<&str>,
         blocked_by: Option<Vec<String>>,
+        validated_by: Option<Vec<String>>,
         parent_id: Option<&str>,
     ) -> Result<String, String> {
         use crate::core::delta::UpdateDraftNodeRequest;
@@ -521,7 +551,7 @@ impl BoardMcpServer {
         let req = UpdateDraftNodeRequest {
             name: name.map(String::from),
             content: None, // Content edited via files
-            validates: None,
+            validated_by,
             blocked_by,
             x: None,
             y: None,
@@ -566,6 +596,10 @@ impl BoardMcpServer {
     }
 
     /// Handle board_eval - create or update an eval
+    ///
+    /// `validates` is optional convenience sugar — when provided, writes `validated_by`
+    /// on each referenced task, pointing back to this eval. Evals with no `validates`
+    /// are global/e2e evals scheduled via `blocked_by`.
     fn handle_eval(&mut self, args: Value) -> Result<String, String> {
         let id = args.get("id").and_then(|v| v.as_str());
         let name = args.get("name").and_then(|v| v.as_str());
@@ -600,29 +634,28 @@ impl BoardMcpServer {
         } else {
             // Create new eval
             let name = name.ok_or("'name' required for new eval")?;
-            let validates = validates.ok_or("'validates' required for new eval")?;
-            if validates.is_empty() {
-                return Err("'validates' must contain at least one task ID".to_string());
-            }
-            self.create_eval(name, validates, content)
+            self.create_eval(name, validates.unwrap_or_default(), content)
         }
     }
 
     /// Create a new eval
+    ///
+    /// The eval node itself has no validated_by. If `validates` is provided (convenience sugar),
+    /// we update each target task's validated_by to include this eval.
     fn create_eval(
         &mut self,
         name: &str,
         validates: Vec<String>,
         content: &str,
     ) -> Result<String, String> {
-        use crate::core::delta::CreateDraftNodeRequest;
+        use crate::core::delta::{CreateDraftNodeRequest, UpdateDraftNodeRequest};
 
         let req = CreateDraftNodeRequest {
             parent_id: None, // Evals are always at root level
             name: name.to_string(),
             node_type: NodeType::Eval,
             content: content.to_string(),
-            validates: validates.clone(),
+            validated_by: vec![], // Evals don't have validated_by
             blocked_by: vec![],
             x: None,
             y: None,
@@ -631,21 +664,49 @@ impl BoardMcpServer {
         let node = block_on(self.state().create_draft_node(&req)).map_err(|e| e.to_string())?;
         let file_path = self.write_content_file(&node.id, content)?;
 
+        // Write validated_by on each target task (convenience sugar)
+        for task_id in &validates {
+            let task = match block_on(self.state().get_draft_node(task_id)) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            let mut new_validated_by = task.validated_by.clone();
+            if !new_validated_by.contains(&node.id) {
+                new_validated_by.push(node.id.clone());
+            }
+            let update = UpdateDraftNodeRequest {
+                validated_by: Some(new_validated_by),
+                ..Default::default()
+            };
+            let _ = block_on(self.state().update_draft_node(task_id, &update));
+        }
+
         // Re-export to sync board files
         self.sync_export()?;
 
-        let validates_str = validates.join(", ");
+        let msg = if validates.is_empty() {
+            format!("Created global eval '{}'", name)
+        } else {
+            format!(
+                "Created eval '{}' validating: {}",
+                name,
+                validates.join(", ")
+            )
+        };
         Ok(json!({
             "success": true,
             "action": "created",
             "id": node.id,
             "file": file_path,
-            "message": format!("Created eval '{}' validating: {}", name, validates_str)
+            "message": msg
         })
         .to_string())
     }
 
     /// Update an existing eval
+    ///
+    /// If `validates` is provided (convenience sugar), we update each target task's
+    /// validated_by to include this eval. This replaces the previous set of validated tasks.
     fn update_eval(
         &mut self,
         id: &str,
@@ -665,23 +726,54 @@ impl BoardMcpServer {
             .to_string());
         }
 
-        // Validate: cannot clear validates to empty
-        if let Some(ref v) = validates {
-            if v.is_empty() {
-                return Err("Eval must validate at least one task".to_string());
-            }
-        }
-
+        // Update eval node itself (name only — evals don't have validated_by)
         let req = UpdateDraftNodeRequest {
             name: name.map(String::from),
-            content: None,
-            validates,
-            blocked_by: None,
-            x: None,
-            y: None,
+            ..Default::default()
         };
 
         block_on(self.state().update_draft_node(id, &req)).map_err(|e| e.to_string())?;
+
+        // If validates provided, update validated_by on target tasks (convenience sugar)
+        if let Some(ref task_ids) = validates {
+            // First, remove this eval from any tasks that currently reference it
+            let all_nodes = block_on(self.state().get_draft_nodes()).map_err(|e| e.to_string())?;
+            for node in &all_nodes {
+                if node.node_type == NodeType::Task && node.validated_by.contains(&id.to_string()) {
+                    // If this task is NOT in the new validates list, remove the eval
+                    if !task_ids.contains(&node.id) {
+                        let new_vb: Vec<String> = node
+                            .validated_by
+                            .iter()
+                            .filter(|e| e.as_str() != id)
+                            .cloned()
+                            .collect();
+                        let update = UpdateDraftNodeRequest {
+                            validated_by: Some(new_vb),
+                            ..Default::default()
+                        };
+                        let _ = block_on(self.state().update_draft_node(&node.id, &update));
+                    }
+                }
+            }
+
+            // Then, add this eval to each target task's validated_by
+            for task_id in task_ids {
+                let task = match block_on(self.state().get_draft_node(task_id)) {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                let mut new_validated_by = task.validated_by.clone();
+                if !new_validated_by.contains(&id.to_string()) {
+                    new_validated_by.push(id.to_string());
+                }
+                let update = UpdateDraftNodeRequest {
+                    validated_by: Some(new_validated_by),
+                    ..Default::default()
+                };
+                let _ = block_on(self.state().update_draft_node(task_id, &update));
+            }
+        }
 
         // Re-export to sync board files
         self.sync_export()?;

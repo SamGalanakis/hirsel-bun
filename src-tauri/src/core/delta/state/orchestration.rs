@@ -29,6 +29,14 @@ impl DeltaState {
             )));
         }
 
+        // Defense-in-depth: verify node is not blocked before claiming
+        if self.is_node_blocked(id).await? {
+            return Err(DeltaStateError::LiveNodeNotFound(format!(
+                "Node '{}' is blocked and cannot be claimed",
+                id
+            )));
+        }
+
         sqlx::query(
             "UPDATE live_nodes SET status = ?, claimed_by = ?, claimed_at = ?, updated_at = ? WHERE id = ? AND project_id = ? AND route_id = ?",
         )
@@ -42,6 +50,7 @@ impl DeltaState {
         .execute(pool)
         .await?;
 
+        self.bump_tree_generation().await?;
         self.get_live_node(id).await
     }
 
@@ -61,6 +70,7 @@ impl DeltaState {
         .execute(pool)
         .await?;
 
+        self.bump_tree_generation().await?;
         Ok(())
     }
 
@@ -110,19 +120,15 @@ impl DeltaState {
         // Propagate status up to parent
         self.propagate_parent_status(id).await?;
 
-        // Check if this is a repair task completing (source=System, parent is eval)
-        if node.source == LiveNodeSource::System {
-            if let Some(parent_id) = &node.parent_id {
-                let parent = self.get_live_node(parent_id).await?;
-                if parent.node_type == NodeType::Eval {
-                    self.handle_repair_completion(id, parent_id).await?;
-                }
-            }
+        // Check if this is a repair task completing (resolves an eval)
+        if let Some(eval_id) = &node.resolves {
+            self.handle_repair_completion(id, eval_id).await?;
         }
 
         // Check if all live nodes are complete -> pause project run
         self.check_project_run_completion().await?;
 
+        self.bump_tree_generation().await?;
         self.get_live_node(id).await
     }
 
@@ -151,11 +157,11 @@ impl DeltaState {
         Ok(())
     }
 
-    /// Check if a node has a validating eval
+    /// Check if a task has a validating eval (any eval in validated_by)
     pub async fn has_validating_eval(&self, node_id: &str) -> DeltaStateResult<bool> {
         let pool = self.pool().await?;
         let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM live_node_validates WHERE task_id = ? AND project_id = ? AND route_id = ?",
+            "SELECT COUNT(*) FROM live_node_validated_by WHERE task_id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(node_id)
         .bind(self.project_id)
@@ -165,33 +171,18 @@ impl DeltaState {
         Ok(count > 0)
     }
 
-    /// Check if two nodes share at least one validating eval
-    ///
-    /// If nodes share a validating eval, they're in the same validation group.
-    /// The blocker only needs to be Done (not Validated) because the shared
-    /// eval will validate them together.
-    pub async fn share_validating_eval(
-        &self,
-        node_a: &str,
-        node_b: &str,
-    ) -> DeltaStateResult<bool> {
+    /// Get all eval IDs that validate a given task
+    pub async fn get_evals_for_task(&self, task_id: &str) -> DeltaStateResult<Vec<String>> {
         let pool = self.pool().await?;
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM live_node_validates v1
-             INNER JOIN live_node_validates v2
-               ON v1.eval_id = v2.eval_id
-               AND v1.project_id = v2.project_id
-               AND v1.route_id = v2.route_id
-             WHERE v1.task_id = ? AND v2.task_id = ?
-               AND v1.project_id = ? AND v1.route_id = ?",
+        let ids: Vec<String> = sqlx::query_scalar(
+            "SELECT eval_id FROM live_node_validated_by WHERE task_id = ? AND project_id = ? AND route_id = ?",
         )
-        .bind(node_a)
-        .bind(node_b)
+        .bind(task_id)
         .bind(self.project_id)
         .bind(self.route_id)
-        .fetch_one(pool)
+        .fetch_all(pool)
         .await?;
-        Ok(count > 0)
+        Ok(ids)
     }
 
     /// Propagate status changes up to parent nodes.
@@ -336,7 +327,7 @@ impl DeltaState {
     pub async fn get_validated_nodes(&self, eval_id: &str) -> DeltaStateResult<Vec<String>> {
         let pool = self.pool().await?;
         let node_ids: Vec<String> = sqlx::query_scalar(
-            "SELECT task_id FROM live_node_validates WHERE eval_id = ? AND project_id = ? AND route_id = ?",
+            "SELECT task_id FROM live_node_validated_by WHERE eval_id = ? AND project_id = ? AND route_id = ?",
         )
         .bind(eval_id)
         .bind(self.project_id)
@@ -387,20 +378,43 @@ impl DeltaState {
         .execute(pool)
         .await?;
 
-        // Validate all nodes in the validates list
+        // For each validated task, check if ALL its evals have passed before marking Validated
         for node_id in &validated_node_ids {
-            sqlx::query(
-                "UPDATE live_nodes SET status = ?, updated_at = ? WHERE id = ? AND project_id = ? AND route_id = ? AND status IN (?, ?)",
-            )
-            .bind(LiveNodeStatus::Validated.as_str())
-            .bind(&now)
-            .bind(node_id)
-            .bind(self.project_id)
-            .bind(self.route_id)
-            .bind(LiveNodeStatus::Done.as_str())
-            .bind(LiveNodeStatus::AwaitingEval.as_str())
-            .execute(pool)
-            .await?;
+            let eval_ids = self.get_evals_for_task(node_id).await?;
+            let all_passed = if eval_ids.is_empty() {
+                true
+            } else {
+                let mut all = true;
+                for eid in &eval_ids {
+                    let eval_node = match self.get_live_node(eid).await {
+                        Ok(n) => n,
+                        Err(_) => {
+                            all = false;
+                            break;
+                        }
+                    };
+                    if eval_node.eval_result != Some(EvalResult::Pass) {
+                        all = false;
+                        break;
+                    }
+                }
+                all
+            };
+
+            if all_passed {
+                sqlx::query(
+                    "UPDATE live_nodes SET status = ?, updated_at = ? WHERE id = ? AND project_id = ? AND route_id = ? AND status IN (?, ?)",
+                )
+                .bind(LiveNodeStatus::Validated.as_str())
+                .bind(&now)
+                .bind(node_id)
+                .bind(self.project_id)
+                .bind(self.route_id)
+                .bind(LiveNodeStatus::Done.as_str())
+                .bind(LiveNodeStatus::AwaitingEval.as_str())
+                .execute(pool)
+                .await?;
+            }
         }
 
         // Propagate status up for each validated task
@@ -414,6 +428,7 @@ impl DeltaState {
         // Check if all live nodes are complete -> pause project run
         self.check_project_run_completion().await?;
 
+        self.bump_tree_generation().await?;
         Ok(())
     }
 
@@ -450,20 +465,20 @@ impl DeltaState {
         // Get validated nodes before creating repair
         let validated_node_ids = self.get_validated_nodes(eval_id).await?;
 
-        // Create repair node as child of eval
+        // Create repair node that resolves the eval (no parent_id)
         let repair_id = format!("{}-repair-{}", eval_id, now.replace([':', '-', '.'], ""));
         let repair_name = format!("Repair: {}", feedback.chars().take(50).collect::<String>());
 
         sqlx::query(
-            "INSERT INTO live_nodes (id, project_id, route_id, parent_id, position, name, node_type, content, status, source, created_at, updated_at)
-             VALUES (?, ?, ?, ?, 0, ?, 'task', ?, 'pending', 'system', ?, ?)",
+            "INSERT INTO live_nodes (id, project_id, route_id, parent_id, position, name, node_type, content, status, source, resolves, created_at, updated_at)
+             VALUES (?, ?, ?, NULL, 0, ?, 'task', ?, 'pending', 'system', ?, ?, ?)",
         )
         .bind(&repair_id)
         .bind(self.project_id)
         .bind(self.route_id)
-        .bind(eval_id)
         .bind(&repair_name)
         .bind(feedback)
+        .bind(eval_id)
         .bind(&now)
         .bind(&now)
         .execute(pool)
@@ -511,52 +526,60 @@ impl DeltaState {
             .await?;
         }
 
+        self.bump_tree_generation().await?;
         Ok(repair_id)
     }
 
     /// Check if a node is blocked
     ///
     /// For task nodes:
-    /// - If blocker has no validating eval: blocker must be Done
-    /// - If blocker has validating eval AND shares it with current node: blocker must be Done/AwaitingEval
-    /// - If blocker has validating eval but different group: blocker must be Validated
+    /// - If blocker has validated_by entries: require Validated
+    /// - If blocker has no validated_by: require Done|Validated
     ///
-    /// For eval nodes: validated nodes must be Done/AwaitingEval/Validated
+    /// For eval nodes:
+    /// - Get tasks where validated_by includes this eval
+    /// - Non-empty (targeted eval): all must be Done|AwaitingEval|Validated
+    /// - Empty (global eval): check blocked_by only. If also empty → not blocked
     pub async fn is_node_blocked(&self, node_id: &str) -> DeltaStateResult<bool> {
         let node = self.get_live_node(node_id).await?;
 
         match node.node_type {
             NodeType::Task => {
-                // Check blocked_by relationships
                 if node.blocked_by.is_empty() {
                     return Ok(false);
                 }
 
                 for blocker_id in &node.blocked_by {
-                    // If we can't find the blocker, treat as blocked
-                    // (blocker might not exist yet or was deleted)
                     let blocker = match self.get_live_node(blocker_id).await {
                         Ok(b) => b,
-                        Err(_) => return Ok(true), // Can't find blocker = blocked
+                        Err(_) => {
+                            tracing::debug!(
+                                "is_node_blocked({}): blocker '{}' not found, treating as blocked",
+                                node_id,
+                                blocker_id
+                            );
+                            return Ok(true);
+                        }
                     };
 
-                    let is_blocking = if self.has_validating_eval(blocker_id).await? {
-                        // If current node and blocker share a validating eval, they're
-                        // in the same validation group. Blocker just needs work complete.
-                        if self.share_validating_eval(&node.id, blocker_id).await? {
-                            !matches!(
-                                blocker.status,
-                                LiveNodeStatus::Done
-                                    | LiveNodeStatus::AwaitingEval
-                                    | LiveNodeStatus::Validated
-                            )
-                        } else {
-                            // Different validation groups: must be fully Validated
-                            blocker.status != LiveNodeStatus::Validated
-                        }
+                    let has_eval = self.has_validating_eval(blocker_id).await?;
+                    let is_blocking = if has_eval {
+                        // Blocker has validated_by entries → must be Validated
+                        blocker.status != LiveNodeStatus::Validated
                     } else {
+                        // Blocker has no validated_by → must be Done or Validated
                         !blocker.status.is_complete()
                     };
+
+                    tracing::debug!(
+                        "is_node_blocked({}): blocker='{}' status={:?} has_eval={} is_blocking={}",
+                        node_id,
+                        blocker_id,
+                        blocker.status,
+                        has_eval,
+                        is_blocking
+                    );
+
                     if is_blocking {
                         return Ok(true);
                     }
@@ -564,18 +587,28 @@ impl DeltaState {
                 Ok(false)
             }
             NodeType::Eval => {
-                // Check if validated nodes are ready
+                // Get tasks where validated_by includes this eval (targeted eval)
                 let validates = self.get_validated_nodes(node_id).await?;
+
                 if validates.is_empty() {
-                    return Ok(true); // Eval with no validates is blocked
+                    // Global eval: check blocked_by only. If also empty → not blocked (immediately claimable)
+                    for blocker_id in &node.blocked_by {
+                        let blocker = match self.get_live_node(blocker_id).await {
+                            Ok(b) => b,
+                            Err(_) => return Ok(true),
+                        };
+                        if !blocker.status.is_complete() {
+                            return Ok(true);
+                        }
+                    }
+                    return Ok(false);
                 }
 
+                // Targeted eval: all validated tasks must be Done|AwaitingEval|Validated
                 for task_id in &validates {
-                    // If we can't find the validated task, treat as blocked
-                    // (task might not exist yet or was deleted)
                     let task = match self.get_live_node(task_id).await {
                         Ok(t) => t,
-                        Err(_) => return Ok(true), // Can't find task = blocked
+                        Err(_) => return Ok(true),
                     };
 
                     let is_ready = matches!(
@@ -591,12 +624,10 @@ impl DeltaState {
 
                 // Also check blocked_by (for repair flow)
                 for blocker_id in &node.blocked_by {
-                    // If we can't find the blocker, treat as blocked
                     let blocker = match self.get_live_node(blocker_id).await {
                         Ok(b) => b,
-                        Err(_) => return Ok(true), // Can't find blocker = blocked
+                        Err(_) => return Ok(true),
                     };
-
                     if !blocker.status.is_complete() {
                         return Ok(true);
                     }
@@ -701,6 +732,7 @@ impl DeltaState {
         .execute(pool)
         .await?;
 
+        self.bump_tree_generation().await?;
         Ok(())
     }
 

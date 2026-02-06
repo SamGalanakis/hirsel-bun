@@ -111,6 +111,7 @@ pub enum WorkerStreamEvent {
 ///
 /// Returns events since `after_id` for efficient polling.
 /// On first call, pass `after_id: null` to get recent events.
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_worker_events(
     run_name: String,
@@ -173,6 +174,7 @@ pub async fn get_worker_events(
 }
 
 /// Clear worker events (for cleanup when attaching/detaching)
+#[tracing::instrument]
 #[tauri::command]
 pub async fn clear_worker_events(run_name: String, worker_name: String) -> Result<(), String> {
     // Return Ok if run doesn't exist (graceful handling)
@@ -193,6 +195,7 @@ pub async fn clear_worker_events(run_name: String, worker_name: String) -> Resul
 ///
 /// This fetches historical events first, then polls for new ones.
 /// Events are emitted as `worker-event` Tauri events.
+#[tracing::instrument(skip(app, stream_manager))]
 #[tauri::command]
 pub async fn start_worker_event_stream(
     app: tauri::AppHandle,
@@ -414,6 +417,7 @@ pub async fn start_worker_event_stream(
 }
 
 /// Stop streaming worker events
+#[tracing::instrument(skip(stream_manager))]
 #[tauri::command]
 pub async fn stop_worker_event_stream(
     stream_manager: tauri::State<'_, std::sync::Arc<WorkerEventStreamManager>>,

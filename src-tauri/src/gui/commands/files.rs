@@ -5,6 +5,7 @@
 use crate::core::config;
 
 /// Read the spec.md file for a run
+#[tracing::instrument]
 #[tauri::command]
 pub async fn read_spec_file(run_name: String) -> Result<String, String> {
     let spec_path = config::run_dir(&run_name).join("spec.md");
@@ -15,6 +16,7 @@ pub async fn read_spec_file(run_name: String) -> Result<String, String> {
 }
 
 /// Write the spec.md file for a run
+#[tracing::instrument(skip(content))]
 #[tauri::command]
 pub async fn write_spec_file(run_name: String, content: String) -> Result<(), String> {
     let spec_path = config::run_dir(&run_name).join("spec.md");
@@ -22,6 +24,7 @@ pub async fn write_spec_file(run_name: String, content: String) -> Result<(), St
 }
 
 /// Read the eval.md file for a run
+#[tracing::instrument]
 #[tauri::command]
 pub async fn read_eval_file(run_name: String) -> Result<String, String> {
     let eval_path = config::run_dir(&run_name).join("eval.md");
@@ -32,6 +35,7 @@ pub async fn read_eval_file(run_name: String) -> Result<String, String> {
 }
 
 /// Write the eval.md file for a run
+#[tracing::instrument(skip(content))]
 #[tauri::command]
 pub async fn write_eval_file(run_name: String, content: String) -> Result<(), String> {
     let eval_path = config::run_dir(&run_name).join("eval.md");
@@ -41,6 +45,7 @@ pub async fn write_eval_file(run_name: String, content: String) -> Result<(), St
 /// Save an asset file (image, etc.) to a run's assets directory
 ///
 /// Returns the filename that was saved (may differ from original if name conflict)
+#[tracing::instrument(skip(data))]
 #[tauri::command]
 pub async fn save_asset(
     run_name: String,
@@ -101,6 +106,7 @@ fn find_unique_asset_filename(dir: &std::path::Path, filename: &str) -> String {
 
 /// Import a file from a filesystem path into a run's assets directory
 /// Used by drag-and-drop from native file manager
+#[tracing::instrument]
 #[tauri::command]
 pub async fn import_asset_from_path(run_name: String, file_path: String) -> Result<String, String> {
     use crate::core::files::Files;
@@ -143,6 +149,7 @@ pub async fn import_asset_from_path(run_name: String, file_path: String) -> Resu
 }
 
 /// Open the assets folder for a run in the system file browser
+#[tracing::instrument]
 #[tauri::command]
 pub async fn open_assets_folder(run_name: String) -> Result<(), String> {
     use crate::core::files::Files;
@@ -187,6 +194,7 @@ pub async fn open_assets_folder(run_name: String) -> Result<(), String> {
 }
 
 /// Get the assets base URL for a run (for rendering images in markdown)
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_assets_path(run_name: String) -> Result<String, String> {
     use crate::core::files::Files;
@@ -205,6 +213,7 @@ pub async fn get_assets_path(run_name: String) -> Result<String, String> {
 /// Save an asset file to a project's assets directory
 ///
 /// Returns the filename that was saved (may differ from original if name conflict)
+#[tracing::instrument(skip(data))]
 #[tauri::command]
 pub async fn save_project_asset(
     project_id: i64,
@@ -228,6 +237,7 @@ pub async fn save_project_asset(
 }
 
 /// Get the assets directory path for a project
+#[tracing::instrument]
 #[tauri::command]
 pub async fn get_project_assets_path(project_id: i64) -> Result<String, String> {
     let assets_dir = config::project_assets_dir(project_id);
@@ -235,6 +245,7 @@ pub async fn get_project_assets_path(project_id: i64) -> Result<String, String> 
 }
 
 /// Open the assets folder for a project in the system file browser
+#[tracing::instrument]
 #[tauri::command]
 pub async fn open_project_assets_folder(project_id: i64) -> Result<(), String> {
     use std::process::Command;

@@ -22,6 +22,30 @@ use sqlx::SqlitePool;
 use crate::core::db::global_pool;
 use crate::core::names::slugify;
 
+/// Get a generation counter value (returns 0 if not set)
+pub async fn get_generation(key: &str) -> Result<i64, DeltaStateError> {
+    let pool = global_pool().await;
+    ensure_schema(pool).await?;
+    let val: Option<i64> = sqlx::query_scalar("SELECT value FROM meta WHERE key = ?")
+        .bind(key)
+        .fetch_optional(pool)
+        .await?;
+    Ok(val.unwrap_or(0))
+}
+
+/// Atomically increment a generation counter
+pub async fn bump_generation(key: &str) -> Result<(), DeltaStateError> {
+    let pool = global_pool().await;
+    ensure_schema(pool).await?;
+    sqlx::query(
+        "INSERT INTO meta (key, value) VALUES (?, 1) ON CONFLICT(key) DO UPDATE SET value = value + 1",
+    )
+    .bind(key)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// State manager for delta operations
 ///
 /// Manages draft and live trees for a specific project+route combination.
@@ -58,6 +82,16 @@ impl DeltaState {
         let pool = global_pool().await;
         ensure_schema(pool).await?;
         Ok(pool)
+    }
+
+    /// Get the tree generation counter for this project+route
+    pub async fn tree_generation(&self) -> DeltaStateResult<i64> {
+        get_generation(&format!("trees:{}:{}", self.project_id, self.route_id)).await
+    }
+
+    /// Bump the tree generation counter for this project+route
+    pub async fn bump_tree_generation(&self) -> DeltaStateResult<()> {
+        bump_generation(&format!("trees:{}:{}", self.project_id, self.route_id)).await
     }
 
     /// Generate a unique slug ID (unique within this project)

@@ -27,6 +27,7 @@ export interface LayoutInputNode {
   nodeType: 'task' | 'eval' | 'project';
   blockedBy: string[];
   validates: string[];
+  resolves: string | null;
   children: LayoutInputNode[];
 }
 
@@ -43,7 +44,7 @@ export interface LayoutNodePosition {
 export interface LayoutEdgeRoute {
   fromId: string;
   toId: string;
-  edgeType: 'blockedBy' | 'validates' | 'hierarchy';
+  edgeType: 'blockedBy' | 'validates' | 'hierarchy' | 'resolves';
   waypoints: [number, number][];
 }
 
@@ -204,6 +205,22 @@ function buildElkGraph(nodes: LayoutInputNode[]): ElkNode {
     }
   }
 
+  // Add resolves edges: repair node -> eval it resolves
+  for (const node of allNodes) {
+    if (node.resolves && nodeIds.has(node.resolves)) {
+      const key = `${node.id}->${node.resolves}`;
+      if (!edgeSet.has(key)) {
+        edgeSet.add(key);
+        edges.push({
+          id: `e${edgeIndex++}`,
+          sources: [node.id],
+          targets: [node.resolves],
+          labels: [{ text: 'resolves' }],
+        });
+      }
+    }
+  }
+
   return {
     id: 'root',
     layoutOptions: LAYOUT_OPTIONS,
@@ -335,12 +352,14 @@ function transformResult(elkResult: ElkNode): ElkLayoutResult {
       if (waypoints.length >= 2) {
         // Determine edge type from label
         const labelText = edge.labels?.[0]?.text;
-        const edgeType: 'blockedBy' | 'validates' | 'hierarchy' =
+        const edgeType: 'blockedBy' | 'validates' | 'hierarchy' | 'resolves' =
           labelText === 'validates'
             ? 'validates'
             : labelText === 'hierarchy'
               ? 'hierarchy'
-              : 'blockedBy';
+              : labelText === 'resolves'
+                ? 'resolves'
+                : 'blockedBy';
         edges.push({
           fromId: edge.sources[0],
           toId: edge.targets[0],

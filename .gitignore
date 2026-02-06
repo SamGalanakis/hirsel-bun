@@ -29,6 +29,9 @@ bun.lock
 *.swp
 *.swo
 
+# Profiling
+.profiling/
+
 # Python
 __pycache__/
 *.pyc

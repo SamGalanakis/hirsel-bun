@@ -185,7 +185,7 @@ pub struct GypChatMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigDefaults {
-    /// Default worker scale (typically "1")
+    /// Default worker scale (typically "5")
     pub worker_scale: String,
     /// Default time limit in minutes (None = no limit)
     pub time_limit_minutes: Option<i64>,

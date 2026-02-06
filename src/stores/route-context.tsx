@@ -4,7 +4,7 @@
  * Routes allow users to fork their board at any point and explore
  * different implementation approaches without losing work.
  */
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/invoke';
 import {
   type ParentComponent,
   batch,
