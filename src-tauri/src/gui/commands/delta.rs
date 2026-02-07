@@ -1,79 +1,110 @@
-//! Delta dispatch Tauri commands
+//! Board tree Tauri commands
 //!
-//! Commands for the unified board with draft/live trees and delta dispatch.
+//! Commands for the unified board tree with feature/task/check nodes and dispatch.
 //! All commands are scoped to a specific route within a project.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use super::ResultExt;
+use crate::core::config;
 use crate::core::delta::{
-    bump_generation, CreateDraftNodeRequest, DeltaDispatchService, DeltaExporter, DeltaRunner,
-    DeltaState, DraftNodeTree, LiveNodeTree, ProjectRun, SyncResult, TreeDiff,
-    UpdateDraftNodeRequest,
+    bump_generation, BoardNode, BoardNodeTree, CreateBoardNodeRequest, DeltaDispatchService,
+    DeltaExporter, DeltaState, ProjectRun, SyncResult, UpdateBoardNodeRequest,
 };
-use crate::core::orchestrator::DaemonOrchestrator;
+use crate::core::orchestrator::{
+    create_local_orchestrator, DaemonOrchestrator, Orchestrator, StartRunRequest,
+};
+use crate::core::project::ProjectStore;
+use crate::core::state::SQLiteState;
+
+// =============================================================================
+// Response Types
+// =============================================================================
+
+/// Response containing the board tree, project run, and generation counter
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoardTreeResponse {
+    tree: Vec<BoardNodeTree>,
+    project_run: Option<ProjectRun>,
+    generation: i64,
+}
+
+/// Dispatch result for frontend
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchResponse {
+    pub run_name: String,
+    pub node_count: usize,
+    pub feature_count: usize,
+    pub plan_task_count: usize,
+    pub version_number: i32,
+    pub version_id: i64,
+}
 
 // =============================================================================
 // Tree Operations
 // =============================================================================
 
-/// Get the draft tree for a project route
+/// Get the board tree for a project route
 #[tracing::instrument]
 #[tauri::command]
-pub async fn get_draft_tree(project_id: i64, route_id: i64) -> Result<Vec<DraftNodeTree>, String> {
+pub async fn get_board_tree(project_id: i64, route_id: i64) -> Result<BoardTreeResponse, String> {
+    let dispatch = DeltaDispatchService::new(project_id, route_id);
     let state = DeltaState::with_route(project_id, route_id);
-    state.get_draft_tree().await.str_err()
+
+    let tree = dispatch.get_tree().await.str_err()?;
+    let project_run = dispatch.get_project_run().await.str_err()?;
+    let generation = state.tree_generation().await.str_err()?;
+
+    Ok(BoardTreeResponse {
+        tree,
+        project_run,
+        generation,
+    })
 }
 
-/// Get the live tree for a project route
+/// Create a new board node
 #[tracing::instrument]
 #[tauri::command]
-pub async fn get_live_tree(project_id: i64, route_id: i64) -> Result<Vec<LiveNodeTree>, String> {
-    let state = DeltaState::with_route(project_id, route_id);
-    state.get_live_tree().await.str_err()
-}
-
-/// Create a new draft node
-#[tracing::instrument]
-#[tauri::command]
-pub async fn create_draft_node(
+pub async fn create_board_node(
     project_id: i64,
     route_id: i64,
-    request: CreateDraftNodeRequest,
-) -> Result<crate::core::delta::DraftNode, String> {
+    request: CreateBoardNodeRequest,
+) -> Result<BoardNode, String> {
     let state = DeltaState::with_route(project_id, route_id);
-    state.create_draft_node(&request).await.str_err()
+    state.create_node(&request).await.str_err()
 }
 
-/// Update a draft node
+/// Update a board node
 #[tracing::instrument]
 #[tauri::command]
-pub async fn update_draft_node(
+pub async fn update_board_node(
     project_id: i64,
     route_id: i64,
     node_id: String,
-    request: UpdateDraftNodeRequest,
-) -> Result<crate::core::delta::DraftNode, String> {
+    request: UpdateBoardNodeRequest,
+) -> Result<BoardNode, String> {
     let state = DeltaState::with_route(project_id, route_id);
-    state.update_draft_node(&node_id, &request).await.str_err()
+    state.update_node(&node_id, &request).await.str_err()
 }
 
-/// Delete a draft node
+/// Delete a board node
 #[tracing::instrument]
 #[tauri::command]
-pub async fn delete_draft_node(
+pub async fn delete_board_node(
     project_id: i64,
     route_id: i64,
     node_id: String,
 ) -> Result<(), String> {
     let state = DeltaState::with_route(project_id, route_id);
-    state.delete_draft_node(&node_id).await.str_err()
+    state.delete_node(&node_id).await.str_err()
 }
 
-/// Move a draft node to a new parent/position
+/// Move a board node to a new parent/position
 #[tracing::instrument]
 #[tauri::command]
-pub async fn move_draft_node(
+pub async fn move_board_node(
     project_id: i64,
     route_id: i64,
     node_id: String,
@@ -82,12 +113,12 @@ pub async fn move_draft_node(
 ) -> Result<(), String> {
     let state = DeltaState::with_route(project_id, route_id);
     state
-        .move_draft_node(&node_id, new_parent_id.as_deref(), new_position)
+        .move_node(&node_id, new_parent_id.as_deref(), new_position)
         .await
         .str_err()
 }
 
-/// Reset project tree - delete all draft nodes except the root
+/// Reset project tree - delete all board nodes except the root
 #[tracing::instrument]
 #[tauri::command]
 pub async fn reset_project_tree(project_id: i64, route_id: i64) -> Result<(), String> {
@@ -96,98 +127,68 @@ pub async fn reset_project_tree(project_id: i64, route_id: i64) -> Result<(), St
 }
 
 // =============================================================================
-// Diff Operations
-// =============================================================================
-
-/// Compute the diff between draft and live trees
-#[tracing::instrument]
-#[tauri::command]
-pub async fn compute_tree_diff(project_id: i64, route_id: i64) -> Result<TreeDiff, String> {
-    let service = DeltaDispatchService::new(project_id, route_id);
-    service.get_diff().await.str_err()
-}
-
-/// Get a human-readable diff summary
-#[tracing::instrument]
-#[tauri::command]
-pub async fn get_diff_summary(project_id: i64, route_id: i64) -> Result<String, String> {
-    let service = DeltaDispatchService::new(project_id, route_id);
-    service.get_diff_summary().await.str_err()
-}
-
-// =============================================================================
 // Dispatch Operations
 // =============================================================================
 
-/// Dispatch result for frontend
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DispatchResponse {
-    pub run_name: String,
-    pub batch_id: i64,
-    pub delta_count: usize,
-    pub diff_summary: String,
-}
-
-/// Dispatch deltas - create delta tasks and start/resume run
+/// Dispatch board features - set features to pending, create plan tasks, start run
 ///
 /// This command:
-/// 1. Dispatches deltas (creates run record, delta submissions, live nodes)
-/// 2. Uses DeltaRunner to process pending submissions via orchestrator
-///    - Creates the run directory and workspace if needed
-///    - Adds all delta tasks to the run database
-///    - Spawns workers to process the tasks
+/// 1. Finds draft feature nodes and sets them to pending
+/// 2. Creates __plan tasks as children of each feature
+/// 3. Gets or creates the persistent project run
+/// 4. Creates a board version
+/// 5. Ensures the daemon is running for orchestration
 #[tracing::instrument]
 #[tauri::command]
-pub async fn dispatch_deltas(project_id: i64, route_id: i64) -> Result<DispatchResponse, String> {
-    // 1. Dispatch creates global DB records (delta_submissions, live_nodes)
+pub async fn dispatch_board(project_id: i64, route_id: i64) -> Result<DispatchResponse, String> {
     let service = DeltaDispatchService::new(project_id, route_id);
     let result = service.dispatch().await.str_err()?;
 
-    // 2. Use DeltaRunner to process pending submissions via orchestrator
-    let runner = DeltaRunner::new(project_id, route_id);
-    let orchestrator = DaemonOrchestrator::connect_or_start()
-        .map_err(|e| format!("Failed to connect to daemon: {}", e))?;
+    // Bootstrap per-run infrastructure so the daemon can manage the run
+    let run_db_path = config::run_dir(&result.run_name).join("hirsel.db");
+    if !run_db_path.exists() {
+        // First dispatch: create per-run DB, workspace, and spawn first worker
+        let store = ProjectStore::open().await.str_err()?;
+        let project = store.get_project(project_id).await.str_err()?;
 
-    runner
-        .process_pending(&orchestrator)
-        .await
-        .map_err(|e| format!("Failed to process delta dispatch: {}", e))?;
+        let orchestrator = create_local_orchestrator().str_err()?;
+        orchestrator
+            .start_run(StartRunRequest {
+                name: result.run_name.clone(),
+                project_id,
+                route_id: Some(route_id),
+                spec: String::new(),
+                starting_point: None,
+                eval: None,
+                worker_scale: project.worker_scale.as_deref().and_then(|s| s.parse().ok()),
+                time_limit_minutes: project.time_limit_minutes,
+                human_in_the_loop: Some(project.human_in_the_loop),
+                runner: project.runner.clone(),
+                worker_runners: None,
+                tailscale_oauth: None,
+            })
+            .await
+            .str_err()?;
+    } else {
+        // Re-dispatch: signal daemon to spawn workers for new tasks
+        let state = SQLiteState::new(&result.run_name).await.str_err()?;
+        state.request_scaling_check().await.str_err()?;
+    }
+
+    // Ensure daemon is running for lifecycle management
+    let _orchestrator =
+        DaemonOrchestrator::connect_or_start().context("Failed to connect to daemon")?;
 
     bump_generation("runs_gen").await.ok();
 
     Ok(DispatchResponse {
         run_name: result.run_name,
-        batch_id: result.batch_id,
-        delta_count: result.delta_count,
-        diff_summary: result.diff_summary,
+        node_count: result.node_count,
+        feature_count: result.feature_count,
+        plan_task_count: result.plan_task_count,
+        version_number: result.version_number,
+        version_id: result.version_id,
     })
-}
-
-/// Preview dispatch without executing
-#[tracing::instrument]
-#[tauri::command]
-pub async fn preview_delta_dispatch(
-    project_id: i64,
-    route_id: i64,
-) -> Result<DeltaDispatchPreviewResponse, String> {
-    let service = DeltaDispatchService::new(project_id, route_id);
-    let preview = service.preview().await.str_err()?;
-
-    Ok(DeltaDispatchPreviewResponse {
-        diff: preview.diff,
-        task_count: preview.tasks.len(),
-        has_existing_run: preview.has_existing_run,
-    })
-}
-
-/// Preview response for frontend
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeltaDispatchPreviewResponse {
-    pub diff: TreeDiff,
-    pub task_count: usize,
-    pub has_existing_run: bool,
 }
 
 // =============================================================================
@@ -202,10 +203,10 @@ pub async fn get_project_run(project_id: i64, route_id: i64) -> Result<Option<Pr
     service.get_project_run().await.str_err()
 }
 
-/// Complete a live node (mark as done/failed)
+/// Complete a board node (mark as done/failed)
 #[tracing::instrument]
 #[tauri::command]
-pub async fn complete_live_node(
+pub async fn complete_board_node(
     project_id: i64,
     route_id: i64,
     node_id: String,
@@ -214,66 +215,19 @@ pub async fn complete_live_node(
 ) -> Result<(), String> {
     let service = DeltaDispatchService::new(project_id, route_id);
     service
-        .complete_live_node(&node_id, success, commit_sha.as_deref())
+        .complete_node(&node_id, success, commit_sha.as_deref())
         .await
         .str_err()
 }
 
-/// Complete a revert operation (delete the live node)
-#[tracing::instrument]
-#[tauri::command]
-pub async fn complete_revert(
-    project_id: i64,
-    route_id: i64,
-    node_id: String,
-) -> Result<(), String> {
-    let service = DeltaDispatchService::new(project_id, route_id);
-    service.complete_revert(&node_id).await.str_err()
-}
-
-// =============================================================================
-// Both Trees Response (for UI)
-// =============================================================================
-
-/// Response containing both draft and live trees
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DualTreeResponse {
-    pub draft: Vec<DraftNodeTree>,
-    pub live: Vec<LiveNodeTree>,
-    pub diff: TreeDiff,
-    pub project_run: Option<ProjectRun>,
-}
-
-/// Get both trees in one call (more efficient for UI)
-#[tracing::instrument]
-#[tauri::command]
-pub async fn get_dual_trees(project_id: i64, route_id: i64) -> Result<DualTreeResponse, String> {
-    let service = DeltaDispatchService::new(project_id, route_id);
-
-    let draft = service.get_draft_tree().await.str_err()?;
-    // Return flat live nodes - frontend builds tree structure using draft hierarchy
-    // (project nodes are UI-only and don't exist in live_nodes table)
-    let live_nodes = service.state().get_live_nodes().await.str_err()?;
-    let live: Vec<LiveNodeTree> = live_nodes.into_iter().map(|n| n.into()).collect();
-    let diff = service.get_diff().await.str_err()?;
-    let project_run = service.get_project_run().await.str_err()?;
-
-    Ok(DualTreeResponse {
-        draft,
-        live,
-        diff,
-        project_run,
-    })
-}
 // =============================================================================
 // Gyp Sync Operations
 // =============================================================================
 
-/// Sync changes from Gyp JSON files back to the database
+/// Sync changes from Gyp content files back to the database
 ///
 /// This should be called periodically while Gyp is active to pick up
-/// changes made by the agent to the board JSON files.
+/// changes made by the agent to the board content files.
 #[tracing::instrument]
 #[tauri::command]
 pub async fn sync_gyp_changes(project_id: i64, route_id: i64) -> Result<SyncResult, String> {
@@ -283,49 +237,48 @@ pub async fn sync_gyp_changes(project_id: i64, route_id: i64) -> Result<SyncResu
         .map_err(|e| format!("Sync failed: {}", e))
 }
 
-/// Combined sync + get_dual_trees in one IPC call.
+/// Combined sync + get board tree in one IPC call.
 ///
-/// Syncs Gyp file changes, then returns both trees, diff, and project run.
+/// Syncs Gyp file changes, then returns the board tree and project run.
 /// Eliminates the need for two sequential IPC round-trips per poll cycle.
 #[tracing::instrument]
 #[tauri::command]
 pub async fn sync_and_get_trees(
     project_id: i64,
     route_id: i64,
-) -> Result<DualTreeResponse, String> {
+) -> Result<BoardTreeResponse, String> {
     // 1. Sync Gyp file changes
     let mut exporter = DeltaExporter::new(project_id, route_id);
     let _ = exporter
         .sync_file_changes()
         .map_err(|e| format!("Sync failed: {}", e));
 
-    // 2. Fetch both trees
-    let service = DeltaDispatchService::new(project_id, route_id);
-    let draft = service.get_draft_tree().await.str_err()?;
-    let live_nodes = service.state().get_live_nodes().await.str_err()?;
-    let live: Vec<LiveNodeTree> = live_nodes.into_iter().map(|n| n.into()).collect();
-    let diff = service.get_diff().await.str_err()?;
-    let project_run = service.get_project_run().await.str_err()?;
+    // 2. Fetch board tree
+    let dispatch = DeltaDispatchService::new(project_id, route_id);
+    let state = DeltaState::with_route(project_id, route_id);
 
-    Ok(DualTreeResponse {
-        draft,
-        live,
-        diff,
+    let tree = dispatch.get_tree().await.str_err()?;
+    let project_run = dispatch.get_project_run().await.str_err()?;
+    let generation = state.tree_generation().await.str_err()?;
+
+    Ok(BoardTreeResponse {
+        tree,
         project_run,
+        generation,
     })
 }
 
-/// Generation-aware sync + get trees — skips full fetch if nothing changed.
+/// Generation-aware sync + get tree -- skips full fetch if nothing changed.
 ///
 /// Returns None if the tree generation matches last_generation (no changes),
-/// or Some((response, new_generation)) if trees were modified since last check.
+/// or Some(response) if trees were modified since last check.
 #[tracing::instrument]
 #[tauri::command]
-pub async fn sync_and_get_trees_if_changed(
+pub async fn sync_and_get_tree_if_changed(
     project_id: i64,
     route_id: i64,
     last_generation: i64,
-) -> Result<Option<(DualTreeResponse, i64)>, String> {
+) -> Result<Option<BoardTreeResponse>, String> {
     // Always sync Gyp file changes (may bump generation if content differs)
     let mut exporter = DeltaExporter::new(project_id, route_id);
     let _ = exporter.sync_file_changes();
@@ -336,21 +289,14 @@ pub async fn sync_and_get_trees_if_changed(
         return Ok(None);
     }
 
-    // Generation changed — fetch full trees
-    let service = DeltaDispatchService::new(project_id, route_id);
-    let draft = service.get_draft_tree().await.str_err()?;
-    let live_nodes = service.state().get_live_nodes().await.str_err()?;
-    let live: Vec<LiveNodeTree> = live_nodes.into_iter().map(|n| n.into()).collect();
-    let diff = service.get_diff().await.str_err()?;
-    let project_run = service.get_project_run().await.str_err()?;
+    // Generation changed -- fetch full tree
+    let dispatch = DeltaDispatchService::new(project_id, route_id);
+    let tree = dispatch.get_tree().await.str_err()?;
+    let project_run = dispatch.get_project_run().await.str_err()?;
 
-    Ok(Some((
-        DualTreeResponse {
-            draft,
-            live,
-            diff,
-            project_run,
-        },
-        current,
-    )))
+    Ok(Some(BoardTreeResponse {
+        tree,
+        project_run,
+        generation: current,
+    }))
 }

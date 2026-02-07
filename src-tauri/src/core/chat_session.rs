@@ -73,7 +73,7 @@ pub struct UIContext {
     pub selected_run: Option<String>,
     /// Currently selected worker name
     pub selected_worker: Option<String>,
-    /// Current UI section (e.g., "tasks", "workers", "eval", "spec", "chat")
+    /// Current UI section (e.g., "tasks", "workers", "eval", "features", "chat")
     pub ui_section: String,
     /// Additional context (e.g., selected task ID)
     pub extra: Option<HashMap<String, String>>,

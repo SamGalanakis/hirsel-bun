@@ -24,7 +24,8 @@ const elk = new ELK();
 export interface LayoutInputNode {
   id: string;
   name: string;
-  nodeType: 'task' | 'eval' | 'project';
+  kind: 'feature' | 'task' | 'check';
+  isRoot: boolean;
   blockedBy: string[];
   validates: string[];
   resolves: string | null;
@@ -96,19 +97,27 @@ const LAYOUT_OPTIONS: LayoutOptions = {
 // Helper Functions
 // =============================================================================
 
-function calculateNodeDimensions(name: string): { width: number; height: number } {
-  const idealWidth = name.length * CHAR_WIDTH + TEXT_PADDING;
+function calculateNodeDimensions(name: string, isRoot = false): { width: number; height: number } {
+  // Root nodes use slightly wider char width (11px italic font) and more padding
+  const charWidth = isRoot ? 6.4 : CHAR_WIDTH;
+  const padding = isRoot ? 28 : TEXT_PADDING;
+  const minWidth = isRoot ? 80 : MIN_NODE_WIDTH;
+  const maxWidth = isRoot ? 220 : MAX_NODE_WIDTH;
+  const singleHeight = isRoot ? 34 : SINGLE_LINE_HEIGHT;
+  const multiHeight = isRoot ? 48 : MULTI_LINE_HEIGHT;
 
-  if (idealWidth <= MAX_NODE_WIDTH) {
-    return { width: Math.max(MIN_NODE_WIDTH, idealWidth), height: SINGLE_LINE_HEIGHT };
+  const idealWidth = name.length * charWidth + padding;
+
+  if (idealWidth <= maxWidth) {
+    return { width: Math.max(minWidth, idealWidth), height: singleHeight };
   }
 
-  const charsPerLine = Math.floor((MAX_NODE_WIDTH - TEXT_PADDING) / CHAR_WIDTH);
+  const charsPerLine = Math.floor((maxWidth - padding) / charWidth);
   const lines = Math.min(MAX_LINES, Math.ceil(name.length / charsPerLine));
 
   return {
-    width: MAX_NODE_WIDTH,
-    height: lines > 1 ? MULTI_LINE_HEIGHT : SINGLE_LINE_HEIGHT,
+    width: maxWidth,
+    height: lines > 1 ? multiHeight : singleHeight,
   };
 }
 
@@ -133,7 +142,7 @@ function buildElkGraph(nodes: LayoutInputNode[]): ElkNode {
 
   // Build ELK children
   const elkChildren: ElkNode[] = allNodes.map((node) => {
-    const dims = calculateNodeDimensions(node.name);
+    const dims = calculateNodeDimensions(node.name, node.isRoot);
     return {
       id: node.id,
       width: dims.width,
@@ -166,10 +175,10 @@ function buildElkGraph(nodes: LayoutInputNode[]): ElkNode {
     addTreeEdges(root);
   }
 
-  // Add validates edges: task -> eval (eval depends on task completing)
-  // This ensures evals are placed BELOW the tasks they validate
+  // Add validates edges: node -> check (check depends on node completing)
+  // This ensures checks are placed BELOW the nodes they validate
   for (const node of allNodes) {
-    if (node.nodeType === 'eval') {
+    if (node.kind === 'check') {
       for (const validatedId of node.validates) {
         if (nodeIds.has(validatedId)) {
           const key = `${validatedId}->${node.id}`;

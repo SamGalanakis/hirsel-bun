@@ -570,6 +570,15 @@ pub fn build_worker_prompt(
 
     let mut prompt = String::new();
 
+    // Plan worker system prompt (injected before generic worker instructions)
+    if assigned_task_id
+        .map(|id| id.starts_with("__plan_"))
+        .unwrap_or(false)
+    {
+        prompt.push_str(crate::core::constants::PLAN_WORKER_SYSTEM_PROMPT);
+        prompt.push_str("\n\n---\n\n");
+    }
+
     // Header
     prompt.push_str("# Hirsel Worker Mode\n\n");
     prompt.push_str("You are an autonomous worker executing a defined task.\n\n");
@@ -683,9 +692,9 @@ pub fn build_worker_prompt(
     prompt.push_str("- `delete_task(task_id)` - Delete a worker-created task\n");
     prompt.push_str("  - Only tasks you created can be deleted (not spec tasks)\n");
     prompt.push_str("  - Cannot delete claimed or completed tasks\n");
-    prompt.push_str("- `add_eval(eval_id, name, validates?)` - Create eval task\n");
+    prompt.push_str("- `add_check(check_id, name, validates?)` - Create check task\n");
     prompt.push_str(
-        "  - `validates`: Optional array of task IDs — writes validated_by on target tasks\n\n",
+        "  - `validates`: Optional array of node IDs — writes checked_by on target nodes\n\n",
     );
 
     prompt.push_str("### Communication\n");
@@ -710,9 +719,9 @@ pub fn build_worker_prompt(
     prompt.push_str("  - You'll exit and be respawned with a new task if available\n");
     prompt.push_str("- `time_status` - Check time limit status\n\n");
 
-    prompt.push_str("### Eval Operations\n");
-    prompt.push_str("- `eval_pass()` - Mark eval as passed (only for eval tasks)\n");
-    prompt.push_str("- `eval_fail(feedback)` - Mark eval as failed with feedback\n\n");
+    prompt.push_str("### Check Operations\n");
+    prompt.push_str("- `check_pass()` - Mark check as passed (only for check tasks)\n");
+    prompt.push_str("- `check_fail(feedback)` - Mark check as failed with feedback\n\n");
 
     // Task statuses
     prompt.push_str("## Task Workflow\n\n");

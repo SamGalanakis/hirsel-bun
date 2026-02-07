@@ -1,9 +1,8 @@
 //! Delivery commands
 //!
 //! Commands for delivering run changes to git branches and PRs.
-//! Also includes board delivery commands for the delta dispatch system.
+//! Also includes board delivery commands for the board dispatch system.
 
-use super::get_run_work_dir;
 use super::ResultExt;
 use crate::core::config::Config;
 use crate::core::delivery::{
@@ -31,15 +30,13 @@ pub async fn get_delivery_state(
     run_name: String,
     target_branch: String,
 ) -> Result<DeliveryState, String> {
-    let work_dir = get_run_work_dir(&run_name)?;
-
     // Get branch_off_commit from run state
     let branch_off_commit = match SQLiteState::new(&run_name).await {
         Ok(state) => state.get_branch_off_commit().await.ok().flatten(),
         Err(_) => None,
     };
 
-    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir, None).str_err()?;
+    let orchestrator = DeliveryOrchestrator::from_run_name(&run_name, None).str_err()?;
 
     orchestrator
         .get_delivery_state(&target_branch, branch_off_commit.as_deref())
@@ -51,9 +48,7 @@ pub async fn get_delivery_state(
 #[tracing::instrument]
 #[tauri::command]
 pub async fn check_merge_state(run_name: String, target_branch: String) -> Result<String, String> {
-    let work_dir = get_run_work_dir(&run_name)?;
-
-    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir, None).str_err()?;
+    let orchestrator = DeliveryOrchestrator::from_run_name(&run_name, None).str_err()?;
 
     let state = orchestrator.check_merge_state(&target_branch).str_err()?;
 
@@ -67,9 +62,7 @@ pub async fn get_conflicting_files(
     run_name: String,
     target_branch: String,
 ) -> Result<Vec<String>, String> {
-    let work_dir = get_run_work_dir(&run_name)?;
-
-    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir, None).str_err()?;
+    let orchestrator = DeliveryOrchestrator::from_run_name(&run_name, None).str_err()?;
 
     orchestrator.get_conflicting_files(&target_branch).str_err()
 }
@@ -82,9 +75,7 @@ pub async fn check_staleness(
     target_branch: String,
     branch_off_commit: String,
 ) -> Result<u32, String> {
-    let work_dir = get_run_work_dir(&run_name)?;
-
-    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir, None).str_err()?;
+    let orchestrator = DeliveryOrchestrator::from_run_name(&run_name, None).str_err()?;
 
     orchestrator
         .check_staleness(&target_branch, &branch_off_commit)
@@ -95,9 +86,7 @@ pub async fn check_staleness(
 #[tracing::instrument]
 #[tauri::command]
 pub async fn push_run_branch(run_name: String) -> Result<PushResult, String> {
-    let work_dir = get_run_work_dir(&run_name)?;
-
-    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir, None).str_err()?;
+    let orchestrator = DeliveryOrchestrator::from_run_name(&run_name, None).str_err()?;
 
     orchestrator.push_branch(None, None).str_err()
 }
@@ -111,9 +100,7 @@ pub async fn create_run_pr(
     title: String,
     body: String,
 ) -> Result<PrInfo, String> {
-    let work_dir = get_run_work_dir(&run_name)?;
-
-    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir, None).str_err()?;
+    let orchestrator = DeliveryOrchestrator::from_run_name(&run_name, None).str_err()?;
 
     orchestrator
         .create_pr(&target_branch, &title, &body)
@@ -130,10 +117,9 @@ pub async fn auto_merge_run(
     title: String,
     body: String,
 ) -> Result<MergeResult, String> {
-    let work_dir = get_run_work_dir(&run_name)?;
     let config = Config::load().map(|(c, _)| c).unwrap_or_default();
 
-    let orchestrator = DeliveryOrchestrator::from_work_dir(&work_dir, None).str_err()?;
+    let orchestrator = DeliveryOrchestrator::from_run_name(&run_name, None).str_err()?;
 
     orchestrator
         .auto_merge_with_resolution(&target_branch, &title, &body, config, None)
@@ -195,32 +181,13 @@ pub struct DeliveryValidation {
 fn resolve_remote(remote_url: Option<&str>) -> Option<String> {
     if let Some(url) = remote_url {
         if !url.is_empty() {
-            return Some(normalise_local_remote(url));
+            return Some(crate::core::system::normalise_local_remote(url));
         }
     }
     None
 }
 
-/// If a remote looks like a local filesystem path, convert to `file://` URL.
-fn normalise_local_remote(url: &str) -> String {
-    if url.starts_with('/') {
-        format!("file://{}", url)
-    } else if url.starts_with('~') {
-        if let Some(home) = dirs::home_dir() {
-            let expanded = url.replacen('~', &home.to_string_lossy(), 1);
-            format!("file://{}", expanded)
-        } else {
-            url.to_string()
-        }
-    } else {
-        url.to_string()
-    }
-}
-
-/// Check whether a remote URL points to a local path.
-fn is_local_remote(url: &str) -> bool {
-    url.starts_with('/') || url.starts_with('~') || url.starts_with("file://")
-}
+use crate::core::system::is_local_remote;
 
 /// Validate a delivery target branch for a project's workspace
 #[tracing::instrument]
@@ -344,7 +311,7 @@ pub async fn validate_delivery_target(
 }
 
 // =============================================================================
-// Board Delivery Commands (Delta Dispatch System)
+// Board Delivery Commands
 // =============================================================================
 
 /// Get all board versions for a project

@@ -529,39 +529,39 @@ impl HttpState {
     }
 
     // =========================================================================
-    // Board Integration (Live Nodes)
+    // Board Integration (Nodes)
     // =========================================================================
 
-    pub async fn add_live_node(
+    pub async fn add_node(
         &self,
         id: &str,
         name: &str,
         parent_id: Option<&str>,
         blocked_by: Option<Vec<&str>>,
-        node_type: &str,
+        kind: &str,
         content: &str,
         validates: Option<Vec<&str>>,
     ) -> HttpStateResult<()> {
         #[derive(Serialize)]
-        struct AddLiveNodeRequest {
+        struct AddNodeRequest {
             id: String,
             name: String,
             parent_id: Option<String>,
             blocked_by: Option<Vec<String>>,
-            node_type: String,
+            kind: String,
             content: String,
             validates: Option<Vec<String>>,
         }
-        let endpoint = self.run_endpoint("/live-nodes");
+        let endpoint = self.run_endpoint("/nodes");
         let _: SuccessResponse = self
             .post(
                 &endpoint,
-                &AddLiveNodeRequest {
+                &AddNodeRequest {
                     id: id.to_string(),
                     name: name.to_string(),
                     parent_id: parent_id.map(|s| s.to_string()),
                     blocked_by: blocked_by.map(|b| b.iter().map(|s| s.to_string()).collect()),
-                    node_type: node_type.to_string(),
+                    kind: kind.to_string(),
                     content: content.to_string(),
                     validates: validates.map(|v| v.iter().map(|s| s.to_string()).collect()),
                 },
@@ -570,16 +570,16 @@ impl HttpState {
         Ok(())
     }
 
-    pub async fn claim_live_node(
+    pub async fn claim_node(
         &self,
         id: &str,
         worker_name: &str,
-    ) -> HttpStateResult<crate::core::delta::LiveNode> {
+    ) -> HttpStateResult<crate::core::delta::BoardNode> {
         #[derive(Serialize)]
         struct ClaimRequest {
             worker_name: String,
         }
-        let endpoint = self.run_endpoint(&format!("/live-nodes/{}/claim", id));
+        let endpoint = self.run_endpoint(&format!("/nodes/{}/claim", id));
         self.post(
             &endpoint,
             &ClaimRequest {
@@ -589,16 +589,16 @@ impl HttpState {
         .await
     }
 
-    pub async fn complete_live_node(
+    pub async fn complete_node(
         &self,
         id: &str,
         worker_name: &str,
-    ) -> HttpStateResult<crate::core::delta::LiveNode> {
+    ) -> HttpStateResult<crate::core::delta::BoardNode> {
         #[derive(Serialize)]
         struct CompleteRequest {
             worker_name: String,
         }
-        let endpoint = self.run_endpoint(&format!("/live-nodes/{}/complete", id));
+        let endpoint = self.run_endpoint(&format!("/nodes/{}/complete", id));
         self.post(
             &endpoint,
             &CompleteRequest {
@@ -608,73 +608,67 @@ impl HttpState {
         .await
     }
 
-    pub async fn unclaim_live_node(&self, id: &str) -> HttpStateResult<()> {
+    pub async fn unclaim_node(&self, id: &str) -> HttpStateResult<()> {
         #[derive(Serialize)]
         struct Empty {}
-        let endpoint = self.run_endpoint(&format!("/live-nodes/{}/unclaim", id));
+        let endpoint = self.run_endpoint(&format!("/nodes/{}/unclaim", id));
         let _: SuccessResponse = self.post(&endpoint, &Empty {}).await?;
         Ok(())
     }
 
-    pub async fn get_claimable_live_nodes(
-        &self,
-    ) -> HttpStateResult<Vec<crate::core::delta::LiveNode>> {
+    pub async fn get_claimable_nodes(&self) -> HttpStateResult<Vec<crate::core::delta::BoardNode>> {
         #[derive(Deserialize)]
         struct NodesResponse {
-            nodes: Vec<crate::core::delta::LiveNode>,
+            nodes: Vec<crate::core::delta::BoardNode>,
         }
-        let endpoint = self.run_endpoint("/live-nodes/claimable");
+        let endpoint = self.run_endpoint("/nodes/claimable");
         let result: NodesResponse = self.get(&endpoint).await?;
         Ok(result.nodes)
     }
 
-    pub async fn get_claimed_live_node(
+    pub async fn get_claimed_node(
         &self,
         worker_name: &str,
-    ) -> HttpStateResult<Option<crate::core::delta::LiveNode>> {
+    ) -> HttpStateResult<Option<crate::core::delta::BoardNode>> {
         #[derive(Deserialize)]
         struct NodeResponse {
-            node: Option<crate::core::delta::LiveNode>,
+            node: Option<crate::core::delta::BoardNode>,
         }
         let endpoint = self.run_endpoint(&format!("/workers/{}/claimed-node", worker_name));
         let result: NodeResponse = self.get(&endpoint).await?;
         Ok(result.node)
     }
 
-    pub async fn get_live_nodes(&self) -> HttpStateResult<Vec<crate::core::delta::LiveNode>> {
+    pub async fn get_nodes(&self) -> HttpStateResult<Vec<crate::core::delta::BoardNode>> {
         #[derive(Deserialize)]
         struct NodesResponse {
-            nodes: Vec<crate::core::delta::LiveNode>,
+            nodes: Vec<crate::core::delta::BoardNode>,
         }
-        let endpoint = self.run_endpoint("/live-nodes");
+        let endpoint = self.run_endpoint("/nodes");
         let result: NodesResponse = self.get(&endpoint).await?;
         Ok(result.nodes)
     }
 
-    pub async fn is_live_node_blocked(&self, id: &str) -> HttpStateResult<bool> {
+    pub async fn is_node_blocked(&self, id: &str) -> HttpStateResult<bool> {
         #[derive(Deserialize)]
         struct BlockedResponse {
             blocked: bool,
         }
-        let endpoint = self.run_endpoint(&format!("/live-nodes/{}/blocked", id));
+        let endpoint = self.run_endpoint(&format!("/nodes/{}/blocked", id));
         let result: BlockedResponse = self.get(&endpoint).await?;
         Ok(result.blocked)
     }
 
-    pub async fn live_node_eval_pass(
-        &self,
-        eval_id: &str,
-        worker_name: &str,
-    ) -> HttpStateResult<()> {
+    pub async fn node_check_pass(&self, check_id: &str, worker_name: &str) -> HttpStateResult<()> {
         #[derive(Serialize)]
-        struct EvalPassRequest {
+        struct CheckPassRequest {
             worker_name: String,
         }
-        let endpoint = self.run_endpoint(&format!("/live-nodes/{}/eval-pass", eval_id));
+        let endpoint = self.run_endpoint(&format!("/nodes/{}/check-pass", check_id));
         let _: SuccessResponse = self
             .post(
                 &endpoint,
-                &EvalPassRequest {
+                &CheckPassRequest {
                     worker_name: worker_name.to_string(),
                 },
             )
@@ -682,26 +676,26 @@ impl HttpState {
         Ok(())
     }
 
-    pub async fn live_node_eval_fail(
+    pub async fn node_check_fail(
         &self,
-        eval_id: &str,
+        check_id: &str,
         worker_name: &str,
         feedback: &str,
     ) -> HttpStateResult<String> {
         #[derive(Serialize)]
-        struct EvalFailRequest {
+        struct CheckFailRequest {
             worker_name: String,
             feedback: String,
         }
         #[derive(Deserialize)]
-        struct EvalFailResponse {
+        struct CheckFailResponse {
             repair_node_id: String,
         }
-        let endpoint = self.run_endpoint(&format!("/live-nodes/{}/eval-fail", eval_id));
-        let result: EvalFailResponse = self
+        let endpoint = self.run_endpoint(&format!("/nodes/{}/check-fail", check_id));
+        let result: CheckFailResponse = self
             .post(
                 &endpoint,
-                &EvalFailRequest {
+                &CheckFailRequest {
                     worker_name: worker_name.to_string(),
                     feedback: feedback.to_string(),
                 },
@@ -710,12 +704,12 @@ impl HttpState {
         Ok(result.repair_node_id)
     }
 
-    pub async fn set_live_node_tokens(&self, id: &str, tokens: i64) -> HttpStateResult<()> {
+    pub async fn set_node_tokens(&self, id: &str, tokens: i64) -> HttpStateResult<()> {
         #[derive(Serialize)]
         struct TokensRequest {
             tokens: i64,
         }
-        let endpoint = self.run_endpoint(&format!("/live-nodes/{}/tokens", id));
+        let endpoint = self.run_endpoint(&format!("/nodes/{}/tokens", id));
         let _: SuccessResponse = self.post(&endpoint, &TokensRequest { tokens }).await?;
         Ok(())
     }
@@ -725,13 +719,13 @@ impl HttpState {
         struct ValidatedNodesResponse {
             node_ids: Vec<String>,
         }
-        let endpoint = self.run_endpoint(&format!("/live-nodes/{}/validated", eval_id));
+        let endpoint = self.run_endpoint(&format!("/nodes/{}/validated", eval_id));
         let result: ValidatedNodesResponse = self.get(&endpoint).await?;
         Ok(result.node_ids)
     }
 
-    pub async fn delete_live_node(&self, id: &str) -> HttpStateResult<()> {
-        let endpoint = self.run_endpoint(&format!("/live-nodes/{}", id));
+    pub async fn delete_node(&self, id: &str) -> HttpStateResult<()> {
+        let endpoint = self.run_endpoint(&format!("/nodes/{}", id));
         self.delete_request(&endpoint).await
     }
 
@@ -1152,92 +1146,92 @@ impl StateAccess for HttpState {
         Ok(HttpState::get_project_id(self).await?)
     }
 
-    async fn add_live_node(
+    async fn add_node(
         &self,
         id: &str,
         name: &str,
         parent_id: Option<&str>,
         blocked_by: Option<&[&str]>,
-        node_type: &str,
+        kind: &str,
         content: &str,
         validates: Option<&[&str]>,
     ) -> StateAccessResult<()> {
         let blocked_by_vec = blocked_by.map(|b| b.to_vec());
         let validates_vec = validates.map(|v| v.to_vec());
-        Ok(HttpState::add_live_node(
+        Ok(HttpState::add_node(
             self,
             id,
             name,
             parent_id,
             blocked_by_vec,
-            node_type,
+            kind,
             content,
             validates_vec,
         )
         .await?)
     }
 
-    async fn claim_live_node(
+    async fn claim_node(
         &self,
         id: &str,
         worker_name: &str,
-    ) -> StateAccessResult<crate::core::delta::LiveNode> {
-        Ok(HttpState::claim_live_node(self, id, worker_name).await?)
+    ) -> StateAccessResult<crate::core::delta::BoardNode> {
+        Ok(HttpState::claim_node(self, id, worker_name).await?)
     }
 
-    async fn complete_live_node(
+    async fn complete_node(
         &self,
         id: &str,
         worker_name: &str,
-    ) -> StateAccessResult<crate::core::delta::LiveNode> {
-        Ok(HttpState::complete_live_node(self, id, worker_name).await?)
+    ) -> StateAccessResult<crate::core::delta::BoardNode> {
+        Ok(HttpState::complete_node(self, id, worker_name).await?)
     }
 
-    async fn unclaim_live_node(&self, id: &str) -> StateAccessResult<()> {
-        Ok(HttpState::unclaim_live_node(self, id).await?)
+    async fn unclaim_node(&self, id: &str) -> StateAccessResult<()> {
+        Ok(HttpState::unclaim_node(self, id).await?)
     }
 
-    async fn get_claimed_live_node(
+    async fn get_claimed_node(
         &self,
         worker_name: &str,
-    ) -> StateAccessResult<Option<crate::core::delta::LiveNode>> {
-        Ok(HttpState::get_claimed_live_node(self, worker_name).await?)
+    ) -> StateAccessResult<Option<crate::core::delta::BoardNode>> {
+        Ok(HttpState::get_claimed_node(self, worker_name).await?)
     }
 
-    async fn get_claimable_nodes(&self) -> StateAccessResult<Vec<crate::core::delta::LiveNode>> {
-        Ok(HttpState::get_claimable_live_nodes(self).await?)
+    async fn get_claimable_nodes(&self) -> StateAccessResult<Vec<crate::core::delta::BoardNode>> {
+        Ok(HttpState::get_claimable_nodes(self).await?)
     }
 
-    async fn get_live_nodes(&self) -> StateAccessResult<Vec<crate::core::delta::LiveNode>> {
-        Ok(HttpState::get_live_nodes(self).await?)
+    async fn get_nodes(&self) -> StateAccessResult<Vec<crate::core::delta::BoardNode>> {
+        Ok(HttpState::get_nodes(self).await?)
     }
 
-    async fn is_live_node_blocked(&self, id: &str) -> StateAccessResult<bool> {
-        Ok(HttpState::is_live_node_blocked(self, id).await?)
+    async fn is_node_blocked(&self, id: &str) -> StateAccessResult<bool> {
+        Ok(HttpState::is_node_blocked(self, id).await?)
     }
 
-    async fn live_node_eval_pass(&self, eval_id: &str, worker_name: &str) -> StateAccessResult<()> {
-        Ok(HttpState::live_node_eval_pass(self, eval_id, worker_name).await?)
+    async fn node_check_pass(&self, check_id: &str, worker_name: &str) -> StateAccessResult<()> {
+        Ok(HttpState::node_check_pass(self, check_id, worker_name).await?)
     }
 
-    async fn live_node_eval_fail(
+    async fn node_check_fail(
         &self,
-        eval_id: &str,
+        check_id: &str,
         worker_name: &str,
         feedback: &str,
     ) -> StateAccessResult<String> {
-        Ok(HttpState::live_node_eval_fail(self, eval_id, worker_name, feedback).await?)
+        Ok(HttpState::node_check_fail(self, check_id, worker_name, feedback).await?)
     }
 
-    async fn set_live_node_tokens(&self, id: &str, tokens: i64) -> StateAccessResult<()> {
-        Ok(HttpState::set_live_node_tokens(self, id, tokens).await?)
+    async fn set_node_tokens(&self, id: &str, tokens: i64) -> StateAccessResult<()> {
+        Ok(HttpState::set_node_tokens(self, id, tokens).await?)
     }
 
     async fn get_validated_nodes(&self, eval_id: &str) -> StateAccessResult<Vec<String>> {
         Ok(HttpState::get_validated_nodes(self, eval_id).await?)
     }
 
-    async fn delete_live_node(&self, id: &str) -> StateAccessResult<()> {
-        Ok(HttpState::delete_live_node(self, id).await?)
+    async fn delete_node(&self, id: &str) -> StateAccessResult<()> {
+        Ok(HttpState::delete_node(self, id).await?)
     }
 }

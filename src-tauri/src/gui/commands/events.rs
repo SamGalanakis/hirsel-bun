@@ -11,7 +11,7 @@ use tracing::info;
 use crate::core::api_types::{WorkerEventResponse, WorkerEventsResponse};
 use crate::core::{config, state::SQLiteState};
 
-use super::get_run_state;
+use super::{get_run_state, ResultExt};
 
 /// Manages active worker event streams
 pub struct WorkerEventStreamManager {
@@ -135,7 +135,7 @@ pub async fn get_worker_events(
     let events = state
         .get_worker_events(&worker_name, after_id, limit)
         .await
-        .map_err(|e| format!("Failed to get worker events: {}", e))?;
+        .context("Failed to get worker events")?;
 
     let last_id = events.last().map(|e| e.id);
 
@@ -186,7 +186,7 @@ pub async fn clear_worker_events(run_name: String, worker_name: String) -> Resul
     state
         .clear_worker_events(&worker_name)
         .await
-        .map_err(|e| format!("Failed to clear worker events: {}", e))?;
+        .context("Failed to clear worker events")?;
 
     Ok(())
 }

@@ -2,6 +2,7 @@
 //!
 //! Commands for reading/writing spec and eval files, and managing assets.
 
+use super::ResultExt;
 use crate::core::config;
 
 /// Read the spec.md file for a run
@@ -12,7 +13,7 @@ pub async fn read_spec_file(run_name: String) -> Result<String, String> {
     if !spec_path.exists() {
         return Ok(String::new());
     }
-    std::fs::read_to_string(&spec_path).map_err(|e| format!("Failed to read spec file: {}", e))
+    std::fs::read_to_string(&spec_path).context("Failed to read spec file")
 }
 
 /// Write the spec.md file for a run
@@ -20,7 +21,7 @@ pub async fn read_spec_file(run_name: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn write_spec_file(run_name: String, content: String) -> Result<(), String> {
     let spec_path = config::run_dir(&run_name).join("spec.md");
-    std::fs::write(&spec_path, &content).map_err(|e| format!("Failed to write spec file: {}", e))
+    std::fs::write(&spec_path, &content).context("Failed to write spec file")
 }
 
 /// Read the eval.md file for a run
@@ -31,7 +32,7 @@ pub async fn read_eval_file(run_name: String) -> Result<String, String> {
     if !eval_path.exists() {
         return Ok(String::new());
     }
-    std::fs::read_to_string(&eval_path).map_err(|e| format!("Failed to read eval file: {}", e))
+    std::fs::read_to_string(&eval_path).context("Failed to read eval file")
 }
 
 /// Write the eval.md file for a run
@@ -39,7 +40,7 @@ pub async fn read_eval_file(run_name: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn write_eval_file(run_name: String, content: String) -> Result<(), String> {
     let eval_path = config::run_dir(&run_name).join("eval.md");
-    std::fs::write(&eval_path, &content).map_err(|e| format!("Failed to write eval file: {}", e))
+    std::fs::write(&eval_path, &content).context("Failed to write eval file")
 }
 
 /// Save an asset file (image, etc.) to a run's assets directory
@@ -63,45 +64,16 @@ pub async fn save_asset(
     let assets_dir = files.assets();
 
     // Create assets directory if it doesn't exist
-    std::fs::create_dir_all(&assets_dir)
-        .map_err(|e| format!("Failed to create assets directory: {}", e))?;
+    std::fs::create_dir_all(&assets_dir).context("Failed to create assets directory")?;
 
     // Find a unique filename
-    let dest_filename = find_unique_asset_filename(&assets_dir, &filename);
+    let dest_filename = crate::core::system::find_unique_asset_filename(&assets_dir, &filename);
     let dest_path = assets_dir.join(&dest_filename);
 
     // Write the file
-    std::fs::write(&dest_path, &data).map_err(|e| format!("Failed to write asset: {}", e))?;
+    std::fs::write(&dest_path, &data).context("Failed to write asset")?;
 
     Ok(dest_filename)
-}
-
-/// Find a unique filename in the assets directory
-fn find_unique_asset_filename(dir: &std::path::Path, filename: &str) -> String {
-    let dest = dir.join(filename);
-    if !dest.exists() {
-        return filename.to_string();
-    }
-
-    let path = std::path::Path::new(filename);
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(filename);
-    let ext = path.extension().and_then(|s| s.to_str());
-
-    let mut counter = 1;
-    loop {
-        let new_name = match ext {
-            Some(e) => format!("{}-{}.{}", stem, counter, e),
-            None => format!("{}-{}", stem, counter),
-        };
-
-        if !dir.join(&new_name).exists() {
-            return new_name;
-        }
-        counter += 1;
-    }
 }
 
 /// Import a file from a filesystem path into a run's assets directory
@@ -135,15 +107,14 @@ pub async fn import_asset_from_path(run_name: String, file_path: String) -> Resu
     let assets_dir = files.assets();
 
     // Create assets directory if it doesn't exist
-    std::fs::create_dir_all(&assets_dir)
-        .map_err(|e| format!("Failed to create assets directory: {}", e))?;
+    std::fs::create_dir_all(&assets_dir).context("Failed to create assets directory")?;
 
     // Find a unique filename
-    let dest_filename = find_unique_asset_filename(&assets_dir, &filename);
+    let dest_filename = crate::core::system::find_unique_asset_filename(&assets_dir, &filename);
     let dest_path = assets_dir.join(&dest_filename);
 
     // Copy the file
-    std::fs::copy(&source_path, &dest_path).map_err(|e| format!("Failed to copy asset: {}", e))?;
+    std::fs::copy(&source_path, &dest_path).context("Failed to copy asset")?;
 
     Ok(dest_filename)
 }
@@ -153,7 +124,6 @@ pub async fn import_asset_from_path(run_name: String, file_path: String) -> Resu
 #[tauri::command]
 pub async fn open_assets_folder(run_name: String) -> Result<(), String> {
     use crate::core::files::Files;
-    use std::process::Command;
 
     let run_dir = config::run_dir(&run_name);
     if !run_dir.exists() {
@@ -164,33 +134,9 @@ pub async fn open_assets_folder(run_name: String) -> Result<(), String> {
     let assets_dir = files.assets();
 
     // Create assets directory if it doesn't exist
-    std::fs::create_dir_all(&assets_dir)
-        .map_err(|e| format!("Failed to create assets directory: {}", e))?;
+    std::fs::create_dir_all(&assets_dir).context("Failed to create assets directory")?;
 
-    // Open in system file browser (cross-platform)
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg(&assets_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open assets folder: {}", e))?;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        Command::new("xdg-open")
-            .arg(&assets_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open assets folder: {}", e))?;
-    }
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("explorer")
-            .arg(&assets_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open assets folder: {}", e))?;
-    }
-
-    Ok(())
+    crate::core::system::open_in_file_browser(&assets_dir)
 }
 
 /// Get the assets base URL for a run (for rendering images in markdown)
@@ -223,15 +169,14 @@ pub async fn save_project_asset(
     let assets_dir = config::project_assets_dir(project_id);
 
     // Create assets directory if it doesn't exist
-    std::fs::create_dir_all(&assets_dir)
-        .map_err(|e| format!("Failed to create assets directory: {}", e))?;
+    std::fs::create_dir_all(&assets_dir).context("Failed to create assets directory")?;
 
     // Find a unique filename
-    let dest_filename = find_unique_asset_filename(&assets_dir, &filename);
+    let dest_filename = crate::core::system::find_unique_asset_filename(&assets_dir, &filename);
     let dest_path = assets_dir.join(&dest_filename);
 
     // Write the file
-    std::fs::write(&dest_path, &data).map_err(|e| format!("Failed to write asset: {}", e))?;
+    std::fs::write(&dest_path, &data).context("Failed to write asset")?;
 
     Ok(dest_filename)
 }
@@ -248,36 +193,10 @@ pub async fn get_project_assets_path(project_id: i64) -> Result<String, String> 
 #[tracing::instrument]
 #[tauri::command]
 pub async fn open_project_assets_folder(project_id: i64) -> Result<(), String> {
-    use std::process::Command;
-
     let assets_dir = config::project_assets_dir(project_id);
 
     // Create assets directory if it doesn't exist
-    std::fs::create_dir_all(&assets_dir)
-        .map_err(|e| format!("Failed to create assets directory: {}", e))?;
+    std::fs::create_dir_all(&assets_dir).context("Failed to create assets directory")?;
 
-    // Open in system file browser (cross-platform)
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg(&assets_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open assets folder: {}", e))?;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        Command::new("xdg-open")
-            .arg(&assets_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open assets folder: {}", e))?;
-    }
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("explorer")
-            .arg(&assets_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open assets folder: {}", e))?;
-    }
-
-    Ok(())
+    crate::core::system::open_in_file_browser(&assets_dir)
 }

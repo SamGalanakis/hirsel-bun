@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 
+use super::ResultExt;
 use crate::core::{
     create_chat_orchestrator, create_workspace_provider, get_local_oauth_credentials, ChatContext,
     ChatEvent, ChatOrchestrator, ChatSessionManager, LocalChatOrchestrator, UIContext,
@@ -45,8 +46,8 @@ impl ChatOrchestratorManager {
 
         // For other profiles, check if we have a cached remote orchestrator
         // or create a new one
-        let orchestrator = create_chat_orchestrator(profile)
-            .map_err(|e| format!("Failed to create orchestrator: {}", e))?;
+        let orchestrator =
+            create_chat_orchestrator(profile).context("Failed to create orchestrator")?;
         Ok(Arc::from(orchestrator))
     }
 
@@ -117,7 +118,7 @@ pub async fn start_chat_session(
     let session_info = orchestrator
         .start_session(context)
         .await
-        .map_err(|e| format!("Failed to start chat session: {}", e))?;
+        .context("Failed to start chat session")?;
 
     let session_id = session_info.session_id.clone();
 
@@ -125,7 +126,7 @@ pub async fn start_chat_session(
     let mut event_stream = orchestrator
         .subscribe_events(&session_id)
         .await
-        .map_err(|e| format!("Failed to subscribe to events: {}", e))?;
+        .context("Failed to subscribe to events")?;
 
     let session_id_clone = session_id.clone();
     let app_clone = app.clone();
@@ -171,7 +172,7 @@ pub async fn send_chat_message(
     orchestrator
         .send_message(&session_id, &content, context)
         .await
-        .map_err(|e| format!("Failed to send message: {}", e))
+        .context("Failed to send message")
 }
 
 /// Respond to a permission request from a chat session
@@ -191,7 +192,7 @@ pub async fn respond_chat_permission(
     orchestrator
         .respond_permission(&session_id, &request_id, &option_id)
         .await
-        .map_err(|e| format!("Failed to respond to permission: {}", e))
+        .context("Failed to respond to permission")
 }
 
 /// Stop an active chat session
@@ -209,7 +210,7 @@ pub async fn stop_chat_session(
     orchestrator
         .stop_session(&session_id)
         .await
-        .map_err(|e| format!("Failed to stop session: {}", e))
+        .context("Failed to stop session")
 }
 
 /// List active chat sessions
@@ -226,5 +227,5 @@ pub async fn list_chat_sessions(
     orchestrator
         .list_sessions()
         .await
-        .map_err(|e| format!("Failed to list sessions: {}", e))
+        .context("Failed to list sessions")
 }

@@ -7,7 +7,7 @@
 
 use crate::cli::helpers::block_on;
 use crate::core::config;
-use crate::core::delta::{DeltaState, LiveNodeStatus};
+use crate::core::delta::{BoardNodeStatus, DeltaState};
 use crate::core::state::{SQLiteState, StateError};
 use serde::Serialize;
 
@@ -70,16 +70,16 @@ pub fn run_summary(
     let status = block_on(state.status()).map_err(SummaryError::State)?;
     let workers = block_on(state.get_workers()).map_err(SummaryError::State)?;
 
-    // Get task stats from live_nodes if available (project run), otherwise fallback to empty
+    // Get task stats from board nodes if available (project run), otherwise fallback to empty
     let (tasks_completed, tasks_total) = if let Ok(Some(project_id)) =
         block_on(state.get_project_id())
     {
         let route_id = block_on(state.get_route_id()).unwrap_or(0);
         let delta_state = DeltaState::with_route(project_id, route_id);
-        if let Ok(nodes) = block_on(delta_state.get_live_nodes()) {
+        if let Ok(nodes) = block_on(delta_state.get_nodes()) {
             let completed = nodes
                 .iter()
-                .filter(|n| matches!(n.status, LiveNodeStatus::Done | LiveNodeStatus::Validated))
+                .filter(|n| matches!(n.status, BoardNodeStatus::Done | BoardNodeStatus::Validated))
                 .count();
             (completed, nodes.len())
         } else {
@@ -132,18 +132,18 @@ pub fn run_summary(
 
 /// Generate a summary of the run's work.
 fn generate_summary(state: &SQLiteState, run_name: &str) -> Result<String, SummaryError> {
-    use crate::core::delta::LiveNode;
+    use crate::core::delta::BoardNode;
 
     let status = block_on(state.status()).map_err(SummaryError::State)?;
     let workers = block_on(state.get_workers()).map_err(SummaryError::State)?;
     let history = block_on(state.get_history(100)).map_err(SummaryError::State)?;
     let request = block_on(state.get_request()).map_err(SummaryError::State)?;
 
-    // Get nodes from live_nodes if available
-    let nodes: Vec<LiveNode> = if let Ok(Some(project_id)) = block_on(state.get_project_id()) {
+    // Get nodes from board if available
+    let nodes: Vec<BoardNode> = if let Ok(Some(project_id)) = block_on(state.get_project_id()) {
         let route_id = block_on(state.get_route_id()).unwrap_or(0);
         let delta_state = DeltaState::with_route(project_id, route_id);
-        block_on(delta_state.get_live_nodes()).unwrap_or_default()
+        block_on(delta_state.get_nodes()).unwrap_or_default()
     } else {
         vec![]
     };
@@ -164,14 +164,14 @@ fn generate_summary(state: &SQLiteState, run_name: &str) -> Result<String, Summa
     summary.push_str("## Status\n");
     summary.push_str(&format!("Final status: {}\n\n", status));
 
-    // Task summary using live_nodes
+    // Task summary using board nodes
     let nodes_done: Vec<_> = nodes
         .iter()
-        .filter(|n| matches!(n.status, LiveNodeStatus::Done | LiveNodeStatus::Validated))
+        .filter(|n| matches!(n.status, BoardNodeStatus::Done | BoardNodeStatus::Validated))
         .collect();
     let nodes_pending: Vec<_> = nodes
         .iter()
-        .filter(|n| n.status == LiveNodeStatus::Pending)
+        .filter(|n| n.status == BoardNodeStatus::Pending)
         .collect();
 
     summary.push_str("## Tasks Completed\n");

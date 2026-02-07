@@ -43,17 +43,15 @@ pub async fn get_eval_log(
         });
     }
 
-    let metadata = std::fs::metadata(&log_path)
-        .map_err(|e| format!("Failed to read eval log metadata: {}", e))?;
+    let metadata = std::fs::metadata(&log_path).context("Failed to read eval log metadata")?;
     let file_size = metadata.len();
 
-    let mut file =
-        std::fs::File::open(&log_path).map_err(|e| format!("Failed to open eval log: {}", e))?;
+    let mut file = std::fs::File::open(&log_path).context("Failed to open eval log")?;
 
     let _start_offset = if let Some(offset) = from_offset {
         if offset < file_size {
             file.seek(SeekFrom::Start(offset))
-                .map_err(|e| format!("Failed to seek in eval log: {}", e))?;
+                .context("Failed to seek in eval log")?;
             offset
         } else {
             return Ok(LogResponse {
@@ -69,7 +67,7 @@ pub async fn get_eval_log(
 
     let mut content = String::new();
     file.read_to_string(&mut content)
-        .map_err(|e| format!("Failed to read eval log: {}", e))?;
+        .context("Failed to read eval log")?;
 
     if let (Some(limit), None) = (lines, from_offset) {
         let limit = limit as usize;
@@ -103,7 +101,7 @@ pub async fn get_eval_log_by_path(
     let log_path = PathBuf::from(&log_file);
     let canonical_run_dir = run_dir
         .canonicalize()
-        .map_err(|e| format!("Failed to resolve run directory: {}", e))?;
+        .context("Failed to resolve run directory")?;
 
     // If log_file is a relative path, resolve it relative to run_dir
     let resolved_log_path = if log_path.is_relative() {
@@ -130,16 +128,14 @@ pub async fn get_eval_log_by_path(
         });
     }
 
-    let metadata = std::fs::metadata(&canonical_log_path)
-        .map_err(|e| format!("Failed to read log metadata: {}", e))?;
+    let metadata = std::fs::metadata(&canonical_log_path).context("Failed to read log metadata")?;
     let file_size = metadata.len();
 
-    let mut file = std::fs::File::open(&canonical_log_path)
-        .map_err(|e| format!("Failed to open log file: {}", e))?;
+    let mut file = std::fs::File::open(&canonical_log_path).context("Failed to open log file")?;
 
     let mut content = String::new();
     file.read_to_string(&mut content)
-        .map_err(|e| format!("Failed to read log file: {}", e))?;
+        .context("Failed to read log file")?;
 
     Ok(LogResponse {
         content,
@@ -172,8 +168,7 @@ pub async fn get_eval_spec(run_name: String) -> Result<Option<String>, String> {
         return Ok(None);
     }
 
-    let content = std::fs::read_to_string(&eval_spec_path)
-        .map_err(|e| format!("Failed to read eval spec: {}", e))?;
+    let content = std::fs::read_to_string(&eval_spec_path).context("Failed to read eval spec")?;
 
     Ok(Some(content))
 }

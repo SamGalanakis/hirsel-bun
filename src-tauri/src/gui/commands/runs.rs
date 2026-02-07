@@ -4,7 +4,9 @@
 
 use super::ResultExt;
 use crate::core::api_types::{RunDetail, RunSummary};
-use crate::core::delta::{bump_generation, get_generation};
+use crate::core::delta::{
+    bump_generation, get_generation, update_project_run_status_by_name, ProjectRunStatus,
+};
 use crate::core::orchestrator::create_orchestrator;
 
 /// Ensure the daemon is running for lifecycle management
@@ -48,6 +50,9 @@ pub async fn get_run_detail(run_name: String) -> Result<RunDetail, String> {
 pub async fn pause_run(run_name: String) -> Result<(), String> {
     let orch = create_orchestrator(None).str_err()?;
     orch.pause_run(&run_name).await.str_err()?;
+    update_project_run_status_by_name(&run_name, ProjectRunStatus::Paused)
+        .await
+        .ok();
     bump_generation("runs_gen").await.ok();
     Ok(())
 }
@@ -59,6 +64,9 @@ pub async fn pause_run(run_name: String) -> Result<(), String> {
 pub async fn resume_run(run_name: String) -> Result<(), String> {
     let orch = create_orchestrator(None).str_err()?;
     orch.resume_run(&run_name, None).await.str_err()?;
+    update_project_run_status_by_name(&run_name, ProjectRunStatus::Working)
+        .await
+        .ok();
     bump_generation("runs_gen").await.ok();
     Ok(())
 }
@@ -88,8 +96,7 @@ pub async fn delete_all_runs() -> Result<(), String> {
     }
 
     // Get list of run names
-    let entries = std::fs::read_dir(&runs_dir)
-        .map_err(|e| format!("Failed to read runs directory: {}", e))?;
+    let entries = std::fs::read_dir(&runs_dir).context("Failed to read runs directory")?;
 
     let run_names: Vec<String> = entries
         .filter_map(|entry| {

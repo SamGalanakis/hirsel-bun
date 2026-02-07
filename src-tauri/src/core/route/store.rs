@@ -77,6 +77,7 @@ impl RouteStore {
     /// Create the main route for a new project
     ///
     /// Returns the route ID. Idempotent - returns existing main route if one exists.
+    /// Also creates a root feature node for the route's board tree.
     pub async fn create_main_route(&self) -> RouteResult<Route> {
         let pool = self.pool().await;
 
@@ -95,13 +96,61 @@ impl RouteStore {
         .execute(pool)
         .await?;
 
-        let id = result.last_insert_rowid();
-        self.get_route(id).await
+        let route_id = result.last_insert_rowid();
+        let route = self.get_route(route_id).await?;
+
+        // Create root feature node for the board tree
+        self.create_root_node(route_id).await?;
+
+        Ok(route)
+    }
+
+    /// Create the root feature node for a route's board tree.
+    ///
+    /// The root node is named after the project and cannot be deleted.
+    /// Idempotent via `create_node_with_id`.
+    async fn create_root_node(&self, route_id: i64) -> RouteResult<()> {
+        use crate::core::delta::types::{BoardNodeSource, BoardNodeStatus, NodeKind};
+        use crate::core::delta::DeltaState;
+
+        let pool = self.pool().await;
+
+        // Get project name for the root node
+        let project_name: String = sqlx::query_scalar("SELECT name FROM projects WHERE id = ?")
+            .bind(self.project_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|_| RouteError::ProjectNotFound(self.project_id))?;
+
+        // Kebab-case slug for root node ID
+        let root_id = project_name
+            .to_lowercase()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join("-");
+
+        let delta_state = DeltaState::with_route(self.project_id, route_id);
+        delta_state
+            .create_node_with_id(
+                &root_id,
+                None, // no parent — this IS the root
+                &project_name,
+                NodeKind::Feature,
+                BoardNodeSource::System,
+                "",
+                BoardNodeStatus::Draft,
+                &[],
+                &[],
+            )
+            .await
+            .map_err(|e| RouteError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        Ok(())
     }
 
     /// Create a new route
     ///
-    /// If parent_route_id is specified, copies all draft nodes from the parent route.
+    /// If parent_route_id is specified, copies all board nodes from the parent route.
     pub async fn create_route(&self, req: &CreateRouteRequest) -> RouteResult<Route> {
         let pool = self.pool().await;
 
@@ -145,10 +194,10 @@ impl RouteStore {
             tracing::warn!("Failed to initialize route directories: {}", e);
         }
 
-        // Fork: Copy draft nodes and files from parent route
+        // Fork: Copy board nodes and files from parent route
         if let Some(parent_route_id) = req.parent_route_id {
-            // Copy draft nodes in database
-            self.copy_draft_nodes(parent_route_id, new_route_id).await?;
+            // Copy board nodes in database
+            self.copy_board_nodes(parent_route_id, new_route_id).await?;
 
             // Copy files from parent route
             if let Ok(parent_route) = self.get_route(parent_route_id).await {
@@ -169,25 +218,25 @@ impl RouteStore {
         self.get_route(new_route_id).await
     }
 
-    /// Copy all draft nodes from one route to another
+    /// Copy all board nodes from one route to another
     ///
     /// Since primary key is (id, project_id, route_id), we can copy with the same IDs.
-    /// Also copies the related tables: draft_node_validated_by, draft_node_blocked_by
-    async fn copy_draft_nodes(&self, from_route_id: i64, to_route_id: i64) -> RouteResult<()> {
+    /// Also copies the related tables: board_node_checked_by, board_node_blocked_by
+    async fn copy_board_nodes(&self, from_route_id: i64, to_route_id: i64) -> RouteResult<()> {
         let pool = self.pool().await;
         let now = utc_now();
 
-        // Copy draft_nodes - same IDs, different route_id
+        // Copy board_nodes - same IDs, different route_id
         let result = sqlx::query(
             r#"
-            INSERT INTO draft_nodes (
-                id, project_id, route_id, parent_id, position, name, node_type, content,
+            INSERT INTO board_nodes (
+                id, project_id, route_id, parent_id, position, name, kind, source, content, status,
                 x, y, created_at, updated_at
             )
             SELECT
-                id, project_id, ?, parent_id, position, name, node_type, content,
+                id, project_id, ?, parent_id, position, name, kind, source, content, status,
                 x, y, created_at, ?
-            FROM draft_nodes
+            FROM board_nodes
             WHERE project_id = ? AND route_id = ?
             "#,
         )
@@ -200,12 +249,12 @@ impl RouteStore {
 
         let nodes_copied = result.rows_affected();
 
-        // Copy draft_node_validated_by
+        // Copy board_node_checked_by
         sqlx::query(
             r#"
-            INSERT INTO draft_node_validated_by (eval_id, task_id, project_id, route_id)
-            SELECT eval_id, task_id, project_id, ?
-            FROM draft_node_validated_by
+            INSERT INTO board_node_checked_by (check_id, node_id, project_id, route_id)
+            SELECT check_id, node_id, project_id, ?
+            FROM board_node_checked_by
             WHERE project_id = ? AND route_id = ?
             "#,
         )
@@ -215,12 +264,12 @@ impl RouteStore {
         .execute(pool)
         .await?;
 
-        // Copy draft_node_blocked_by
+        // Copy board_node_blocked_by
         sqlx::query(
             r#"
-            INSERT INTO draft_node_blocked_by (node_id, blocker_id, project_id, route_id)
+            INSERT INTO board_node_blocked_by (node_id, blocker_id, project_id, route_id)
             SELECT node_id, blocker_id, project_id, ?
-            FROM draft_node_blocked_by
+            FROM board_node_blocked_by
             WHERE project_id = ? AND route_id = ?
             "#,
         )
@@ -231,7 +280,7 @@ impl RouteStore {
         .await?;
 
         tracing::info!(
-            "Copied {} draft nodes from route {} to route {} for project {}",
+            "Copied {} board nodes from route {} to route {} for project {}",
             nodes_copied,
             from_route_id,
             to_route_id,
@@ -338,35 +387,18 @@ impl RouteStore {
 
     /// Delete all route-scoped data for a route
     async fn delete_route_data(&self, pool: &SqlitePool, route_id: i64) -> RouteResult<()> {
-        // Delete draft nodes and relationships
-        sqlx::query("DELETE FROM draft_node_validated_by WHERE route_id = ?")
+        // Delete board nodes and relationships
+        sqlx::query("DELETE FROM board_node_checked_by WHERE route_id = ?")
             .bind(route_id)
             .execute(pool)
             .await
             .ok();
-        sqlx::query("DELETE FROM draft_node_blocked_by WHERE route_id = ?")
+        sqlx::query("DELETE FROM board_node_blocked_by WHERE route_id = ?")
             .bind(route_id)
             .execute(pool)
             .await
             .ok();
-        sqlx::query("DELETE FROM draft_nodes WHERE route_id = ?")
-            .bind(route_id)
-            .execute(pool)
-            .await
-            .ok();
-
-        // Delete live nodes and relationships
-        sqlx::query("DELETE FROM live_node_validated_by WHERE route_id = ?")
-            .bind(route_id)
-            .execute(pool)
-            .await
-            .ok();
-        sqlx::query("DELETE FROM live_node_blocked_by WHERE route_id = ?")
-            .bind(route_id)
-            .execute(pool)
-            .await
-            .ok();
-        sqlx::query("DELETE FROM live_nodes WHERE route_id = ?")
+        sqlx::query("DELETE FROM board_nodes WHERE route_id = ?")
             .bind(route_id)
             .execute(pool)
             .await
@@ -398,13 +430,6 @@ impl RouteStore {
 
         // Delete project messages
         sqlx::query("DELETE FROM project_messages WHERE route_id = ?")
-            .bind(route_id)
-            .execute(pool)
-            .await
-            .ok();
-
-        // Delete delta submissions
-        sqlx::query("DELETE FROM delta_submissions WHERE route_id = ?")
             .bind(route_id)
             .execute(pool)
             .await

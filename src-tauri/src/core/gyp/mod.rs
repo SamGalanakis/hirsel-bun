@@ -252,7 +252,7 @@ Use these hirsel MCP tools (NOT CLI commands):
 - `msg_send` - Send message to workers
 - `msg_read` - Read messages from workers
 
-For spec/eval editing, use Read/Edit/Write tools on files in the workspace."#
+For feature/check editing, use Read/Edit/Write tools on files in the workspace."#
             .to_string()
     }
 
@@ -329,57 +329,77 @@ Use these hirsel MCP tools to manage board structure:
 ### Board Structure
 
 **`board_view`** - View the full board structure
-- No parameters. Returns JSON with all tasks and evals for current route.
+- No parameters. Returns JSON with all features, tasks, and checks.
 
-**`board_task`** - Create or update a task
+**`board_feature`** - Create or update a feature (high-level goal)
+- Create: `{ name, blocked_by?, validated_by?, parent_id?, content? }` → returns new ID and file path
+- Update: `{ id, name?, blocked_by?, validated_by?, parent_id? }`
+- Features are dispatch units. On dispatch, each feature gets a plan worker that decomposes it.
+- Use for broad objectives: "Add OAuth authentication", "Refactor database layer"
+
+**`board_task`** - Create or update an implementation task
 - Create: `{ name, blocked_by?, parent_id?, validated_by?, content? }` → returns new ID and file path
 - Update: `{ id, name?, blocked_by?, parent_id?, validated_by? }`
-- `validated_by`: eval IDs that check this task's work. Task is Validated only when ALL listed evals pass.
+- Tasks skip planning — dispatched directly to workers.
+- Use for specific, detailed changes the user has fully specified.
 
-**`board_eval`** - Create or update an eval (validation task)
+**`board_check`** - Create or update a check (validation)
 - Create: `{ name, validates?, content? }` → returns new ID and file path
 - Update: `{ id, validates? }`
-- `validates` is convenience sugar — writes `validated_by` on each referenced task. Optional for global/e2e evals.
+- `validates` is convenience sugar — writes `validated_by` on each referenced feature/task. Optional for global/e2e checks.
 
-**`board_delete`** - Delete a task or eval
-- `{ id }` → removes node, deletes file, cleans up references
+**`board_delete`** - Delete a node
+- `{ id }` → removes node, deletes file, cleans up references. Root nodes cannot be deleted.
 
 ## Content Editing
 
-Task/eval content lives in markdown files:
+Node content lives in markdown files:
 - Location: `board/tasks/{id}.md`
 - Edit these files directly with Read/Write tools
 - Changes sync automatically
 
-## Task Dependencies
+## Dependencies
 
-**`blocked_by`:** Tasks that must complete before this task can start
-- Example: `["setup-db", "config-env"]` means this task waits for both
-- If a blocker has `validated_by` evals, downstream waits for Validated (all evals pass)
+**`blocked_by`:** Nodes that must complete before this node can start
+- Example: `["setup-db", "config-env"]` means this node waits for both
+- If a blocker has `validated_by` checks, downstream waits for Validated (all checks pass)
 - If a blocker has no `validated_by`, downstream waits for Done
 
-**`validated_by`:** (Tasks only) Eval IDs that validate this task
-- Example: `["test-auth"]` means task is Validated only when that eval passes
-- Multiple evals: task is Validated only when ALL pass
+**`validated_by`:** (Features and tasks) Check IDs that validate this node
+- Example: `["test-auth"]` means the node is Validated only when that check passes
+- Multiple checks: node is Validated only when ALL pass
 
-**Two types of evals:**
-- **Targeted evals** — validate specific tasks. Set `validated_by` on tasks pointing to these evals, or use `validates` on the eval as sugar. Eval runs when its target tasks are done.
-- **Global/E2E evals** — project-level validation. Do NOT list in any task's `validated_by`. Schedule via `blocked_by`. Do not gate individual task status.
+**Two types of checks:**
+- **Targeted checks** — validate specific features or tasks. Set `validated_by` on targets pointing to these checks, or use `validates` on the check as sugar. Check runs when its target nodes are done.
+- **Global/E2E checks** — project-level validation. Do NOT list in any node's `validated_by`. Schedule via `blocked_by`. Do not gate individual node status.
 
-**Key:** Top-level project evals (e2e tests, integration tests) should NOT be listed in any task's `validated_by`. They run independently via `blocked_by` and validate the project holistically.
+**Key:** Top-level project checks (e2e tests, integration tests) should NOT be listed in any node's `validated_by`. They run independently via `blocked_by` and validate the project holistically.
 
 ## Routes (Parallel Exploration)
 
 Routes allow forking the board to explore different approaches:
 - Each route is an independent copy of the board state
 - The "main" route is the default starting point
-- Forked routes inherit tasks from their parent at fork time
+- Forked routes inherit nodes from their parent at fork time
 - Use `board_routes` to see available routes, `board_switch_route` to change
+
+## When to Use Features vs Tasks
+
+**Default to `board_feature`** for top-level items. Features get plan workers that:
+- Read the codebase to understand what exists
+- Decompose features into implementation tasks
+- Set up dependencies between tasks
+- Create check criteria
+
+**Use `board_task`** only when:
+- The user has given very specific implementation instructions
+- You're adding a small, targeted change (e.g., "fix typo in README")
+- The user explicitly asks for direct tasks instead of features
 
 ## Workflow
 
 1. Call `board_view` to see current board structure
-2. Use `board_task`/`board_eval` to create or modify structure
+2. Use `board_feature` for goals, `board_task` for specific changes, `board_check` for validation
 3. Edit `board/tasks/{id}.md` files for detailed content
 4. (Optional) Use routes to explore alternatives without losing work
 
@@ -398,11 +418,12 @@ Routes allow forking the board to explore different approaches:
             GypScope::Run { .. } => "\n- Use hirsel MCP tools, NOT CLI commands",
             GypScope::Board { .. } => {
                 r#"
-- Use hirsel MCP tools for board structure (board_view, board_task, board_eval, board_delete)
+- Use hirsel MCP tools for board structure (board_view, board_feature, board_task, board_check, board_delete)
 - Use board_routes/board_switch_route for route management
 - Edit content files directly at board/tasks/{id}.md
-- DON'T list tasks/evals in chat - the user sees them in the board visualization
-- After editing, just confirm briefly (e.g., "Done. Added 10 tasks and 5 evals.")"#
+- DON'T list tasks/checks in chat - the user sees them in the board visualization
+- After editing, just confirm briefly (e.g., "Done. Added 10 tasks and 5 checks.")
+- Always parent tasks and checks under a feature so they appear connected in the tree. Only omit parent_id for truly global/cross-feature checks."#
             }
         };
 
@@ -578,7 +599,7 @@ mod tests {
         assert!(config.system_prompt.contains("MCP tools"));
         // Concise data model summary
         assert!(config.system_prompt.contains("tasks"));
-        assert!(config.system_prompt.contains("evals"));
+        assert!(config.system_prompt.contains("checks"));
         assert_eq!(config.working_dir, PathBuf::from("/home/user/myproject"));
         assert_eq!(config.history_scope.project_id, Some(42));
     }

@@ -2,7 +2,7 @@
 //!
 //! Commands for managing workers: listing, attaching, detaching, opening terminal, and restarting.
 
-use crate::core::api_types::{SheepConfig, Worker, WorkerLocation, WorkerStatus};
+use crate::core::api_types::{SheepConfig, Worker, WorkerLocation};
 use crate::core::config;
 use crate::core::orchestrator::create_orchestrator;
 
@@ -47,15 +47,12 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
     let project_path_str = state
         .get_project_path()
         .await
-        .map_err(|e| format!("Failed to get project path: {}", e))?
+        .context("Failed to get project path")?
         .ok_or_else(|| "No project path configured".to_string())?;
     let project_path = std::path::PathBuf::from(&project_path_str);
 
     // Get existing workers to determine if multi-worker
-    let workers = state
-        .get_workers()
-        .await
-        .map_err(|e| format!("Failed to get workers: {}", e))?;
+    let workers = state.get_workers().await.context("Failed to get workers")?;
     let is_multi_worker = !workers.is_empty();
 
     // Create worker clone/worktree
@@ -68,13 +65,13 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
         Some(&staging_dir),
         &runs_dir,
     )
-    .map_err(|e| format!("Failed to create worker clone: {}", e))?;
+    .context("Failed to create worker clone")?;
 
     // Add worker to state
     state
         .add_worker(&worker_name, worker_dir.to_str().unwrap_or("."), "local")
         .await
-        .map_err(|e| format!("Failed to add worker: {}", e))?;
+        .context("Failed to add worker")?;
 
     // Create worker chat file
     let files = Files::new(&run_dir);
@@ -121,7 +118,7 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
     let worker = state
         .get_worker(&worker_name)
         .await
-        .map_err(|e| format!("Failed to get worker: {}", e))?
+        .context("Failed to get worker")?
         .ok_or_else(|| "Worker not found after creation".to_string())?;
 
     Ok(Worker {
@@ -129,12 +126,7 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
         name: worker.name.clone(),
         pid: worker.pid.map(|p| p as u32),
         session_id: worker.session_id,
-        status: match worker.status {
-            crate::core::state::WorkerStatus::Working => WorkerStatus::Working,
-            crate::core::state::WorkerStatus::Awaiting => WorkerStatus::Awaiting,
-            crate::core::state::WorkerStatus::Paused => WorkerStatus::Paused,
-            crate::core::state::WorkerStatus::Error => WorkerStatus::Error,
-        },
+        status: worker.status.into(),
         work_dir: worker.work_dir,
         waiting_thread: worker.waiting_thread,
         location: WorkerLocation::Local,
@@ -164,10 +156,7 @@ pub async fn open_worker_terminal(run_name: String, worker_name: String) -> Resu
     let state = get_run_state(&run_name).await?;
 
     // Verify worker exists
-    let workers = state
-        .get_workers()
-        .await
-        .map_err(|e| format!("Failed to get workers: {}", e))?;
+    let workers = state.get_workers().await.context("Failed to get workers")?;
 
     if !workers.iter().any(|w| w.name == worker_name) {
         return Err(format!("Worker '{}' not found", worker_name));
@@ -234,10 +223,7 @@ pub async fn detach_worker(run_name: String, worker_id: u32) -> Result<(), Strin
     let state = get_run_state(&run_name).await?;
 
     // Find the worker by ID
-    let workers = state
-        .get_workers()
-        .await
-        .map_err(|e| format!("Failed to get workers: {}", e))?;
+    let workers = state.get_workers().await.context("Failed to get workers")?;
 
     let worker = workers
         .iter()
@@ -266,7 +252,7 @@ pub async fn detach_worker(run_name: String, worker_id: u32) -> Result<(), Strin
             },
         )
         .await
-        .map_err(|e| format!("Failed to update worker: {}", e))?;
+        .context("Failed to update worker")?;
 
     tracing::info!("Detached worker {} from run {}", worker.name, run_name);
     Ok(())

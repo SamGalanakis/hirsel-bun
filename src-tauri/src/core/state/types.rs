@@ -434,7 +434,7 @@ pub struct TimeInfo {
 }
 
 /// Summary data for displaying a run in a list (optimized fetch)
-/// Note: Task counts come from DeltaState.live_nodes for project runs
+/// Note: Task counts come from DeltaState.board_nodes for project runs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunStateSummary {
     pub status: Status,

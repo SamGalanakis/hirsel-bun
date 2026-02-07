@@ -22,6 +22,7 @@ import {
   sendProjectMessage,
 } from '../../lib/api';
 import { Icon, SheepAvatar } from '../shared';
+import { amber } from '../../lib/theme-colors';
 
 export const MessagingPanel: Component = () => {
   const project = useProject();
@@ -284,7 +285,7 @@ export const MessagingPanel: Component = () => {
           <div class="flex flex-col items-center justify-center py-12 text-center">
             <div
               class="w-12 h-12 rounded-full flex items-center justify-center mb-3"
-              style={{ background: 'rgba(212, 165, 116, 0.08)' }}
+              style={{ background: amber(0.08) }}
             >
               <Icon name="message-circle" class="w-6 h-6 text-wool-600" />
             </div>
@@ -340,10 +341,10 @@ export const MessagingPanel: Component = () => {
                   class="max-w-[75%] rounded-xl px-3 py-2"
                   style={{
                     background: isUser()
-                      ? 'linear-gradient(135deg, rgba(212, 165, 116, 0.18), rgba(212, 165, 116, 0.12))'
+                      ? `linear-gradient(135deg, ${amber(0.18)}, ${amber(0.12)})`
                       : 'rgba(45, 45, 45, 0.8)',
                     border: isUser()
-                      ? '1px solid rgba(212, 165, 116, 0.25)'
+                      ? `1px solid ${amber(0.25)}`
                       : '1px solid rgba(64, 64, 64, 0.5)',
                   }}
                 >

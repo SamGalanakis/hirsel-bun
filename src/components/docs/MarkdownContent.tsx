@@ -8,7 +8,8 @@ export const MarkdownContent: Component<{ content: string; compact?: boolean }> 
   const html = createMemo(() => {
     if (!props.content) return '';
     try {
-      return DOMPurify.sanitize(marked.parse(props.content, { async: false }) as string);
+      const normalized = props.content.replace(/\\n/g, '\n');
+      return DOMPurify.sanitize(marked.parse(normalized, { async: false }) as string);
     } catch {
       return '';
     }

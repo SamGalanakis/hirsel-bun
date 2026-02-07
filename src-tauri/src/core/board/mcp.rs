@@ -6,21 +6,22 @@
 //!
 //! ## Tools
 //!
-//! - `board_view` - View full board structure with task IDs and file paths
-//! - `board_task` - Create or update a task
-//! - `board_eval` - Create or update an eval
-//! - `board_delete` - Delete a task or eval
+//! - `board_view` - View full board structure with node IDs and file paths
+//! - `board_feature` - Create or update a feature (high-level goal, dispatch unit)
+//! - `board_task` - Create or update a task (specific implementation work)
+//! - `board_check` - Create or update a check (validation)
+//! - `board_delete` - Delete a node
 //!
 //! ## Content Editing
 //!
-//! Task/eval content lives in markdown files at `board/tasks/{id}.md`.
+//! Node content lives in markdown files at `board/tasks/{id}.md`.
 //! The agent edits these files directly with Read/Write tools.
 
 use serde_json::{json, Value};
 use std::future::Future;
 use std::path::PathBuf;
 
-use crate::core::delta::{DeltaExporter, DeltaState, DraftNodeTree, NodeType};
+use crate::core::delta::{BoardNodeTree, DeltaExporter, DeltaState, NodeKind};
 use crate::core::mcp::{run_mcp_server, McpToolServer, Tool};
 use crate::core::project::ProjectStore;
 use crate::core::route::{RouteFiles, RouteStore};
@@ -64,7 +65,7 @@ fn get_tools() -> Vec<Tool> {
         },
         Tool {
             name: "board_view",
-            description: "View the full board structure with all tasks and evals. Returns JSON with task hierarchy and eval list.",
+            description: "View the full board structure with all features, tasks, and checks. Returns JSON with node hierarchy and check list.",
             input_schema: json!({
                 "type": "object",
                 "properties": {},
@@ -72,8 +73,44 @@ fn get_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "board_feature",
+            description: "Create or update a feature — a high-level goal. On dispatch, each feature gets a dedicated plan worker that decomposes it into implementation tasks and checks.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Existing feature ID (omit for new)"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Feature name (required for create)"
+                    },
+                    "blocked_by": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Node IDs this depends on"
+                    },
+                    "validated_by": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Check IDs that validate this feature. Feature is Validated only when ALL listed checks pass."
+                    },
+                    "parent_id": {
+                        "type": "string",
+                        "description": "Parent node ID (null = root)"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Initial content (create only)"
+                    }
+                },
+                "required": []
+            }),
+        },
+        Tool {
             name: "board_task",
-            description: "Create or update a task. Omit 'id' to create new. Returns the new/updated task ID and file path.",
+            description: "Create or update an implementation task. Omit 'id' to create new. Returns the new/updated task ID and file path. Tasks skip the planning phase — they are dispatched directly to workers.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -93,7 +130,7 @@ fn get_tools() -> Vec<Tool> {
                     "validated_by": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Eval IDs that validate this task. Task is Validated only when ALL listed evals pass."
+                        "description": "Check IDs that validate this task. Task is Validated only when ALL listed checks pass."
                     },
                     "parent_id": {
                         "type": "string",
@@ -112,23 +149,27 @@ fn get_tools() -> Vec<Tool> {
             }),
         },
         Tool {
-            name: "board_eval",
-            description: "Create or update an eval. Omit 'id' to create new. Returns the new/updated eval ID and file path. 'validates' is convenience sugar — when provided, writes validated_by on each referenced task.",
+            name: "board_check",
+            description: "Create or update a check (validation node). Omit 'id' to create new. Returns the new/updated check ID and file path. 'validates' is convenience sugar — when provided, writes validated_by on each referenced feature/task. Parent under a feature for scoped checks; omit parent for global/e2e checks.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "id": {
                         "type": "string",
-                        "description": "Existing eval ID (omit for new)"
+                        "description": "Existing check ID (omit for new)"
                     },
                     "name": {
                         "type": "string",
-                        "description": "Eval name (required for create)"
+                        "description": "Check name (required for create)"
+                    },
+                    "parent_id": {
+                        "type": "string",
+                        "description": "Parent node ID. Place under a feature for scoped checks. Omit for global/e2e checks."
                     },
                     "validates": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Task IDs this eval validates (convenience sugar — writes validated_by on target tasks). Optional for global/e2e evals."
+                        "description": "Feature/task IDs this check validates (convenience sugar — writes validated_by on targets). Optional for global/e2e checks."
                     },
                     "content": {
                         "type": "string",
@@ -140,7 +181,7 @@ fn get_tools() -> Vec<Tool> {
         },
         Tool {
             name: "board_delete",
-            description: "Delete a task or eval by ID. Removes the node and cleans up references.",
+            description: "Delete a node by ID. Removes the node and cleans up references. Root nodes cannot be deleted.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -254,13 +295,13 @@ impl BoardMcpServer {
         Ok(())
     }
 
-    /// Get all valid task IDs (for error messages)
-    fn get_valid_task_ids(&self) -> Vec<String> {
-        block_on(self.state().get_draft_nodes())
+    /// Get all valid feature/task IDs (nodes that checks can validate)
+    fn get_validatable_node_ids(&self) -> Vec<String> {
+        block_on(self.state().get_nodes())
             .map(|nodes| {
                 nodes
                     .iter()
-                    .filter(|n| n.node_type == NodeType::Task)
+                    .filter(|n| n.kind == NodeKind::Task || n.kind == NodeKind::Feature)
                     .map(|n| n.id.clone())
                     .collect()
             })
@@ -269,7 +310,7 @@ impl BoardMcpServer {
 
     /// Get all valid node IDs (tasks and evals)
     fn get_valid_node_ids(&self) -> Vec<String> {
-        block_on(self.state().get_draft_nodes())
+        block_on(self.state().get_nodes())
             .map(|nodes| nodes.iter().map(|n| n.id.clone()).collect())
             .unwrap_or_default()
     }
@@ -350,19 +391,19 @@ impl BoardMcpServer {
 
     /// Handle board_view - returns full board structure
     fn handle_view(&self) -> Result<String, String> {
-        let draft_tree = block_on(self.state().get_draft_tree()).map_err(|e| e.to_string())?;
-        let all_nodes = block_on(self.state().get_draft_nodes()).map_err(|e| e.to_string())?;
+        let board_tree = block_on(self.state().get_tree()).map_err(|e| e.to_string())?;
+        let all_nodes = block_on(self.state().get_nodes()).map_err(|e| e.to_string())?;
 
-        // Convert to view format - root nodes are tasks directly (no project wrapper)
-        let tasks: Vec<Value> = draft_tree
+        // Convert to view format - show features and tasks (not checks, they're listed separately)
+        let tasks: Vec<Value> = board_tree
             .iter()
-            .filter(|n| n.node_type == NodeType::Task)
-            .map(|n| self.tree_to_view_task(n))
+            .filter(|n| n.kind != NodeKind::Check)
+            .map(|n| self.tree_to_view_node(n))
             .collect();
 
-        let evals: Vec<Value> = all_nodes
+        let checks: Vec<Value> = all_nodes
             .iter()
-            .filter(|n| n.node_type == NodeType::Eval)
+            .filter(|n| n.kind == NodeKind::Check)
             .map(|n| {
                 json!({
                     "id": n.id,
@@ -373,49 +414,150 @@ impl BoardMcpServer {
             })
             .collect();
 
-        let task_count = self.count_tasks(&draft_tree);
-        let eval_count = evals.len();
+        let node_count = self.count_nodes(&board_tree);
+        let check_count = checks.len();
 
         Ok(json!({
             "tasks": tasks,
-            "evals": evals,
-            "summary": format!("{} tasks, {} evals", task_count, eval_count)
+            "checks": checks,
+            "summary": format!("{} nodes, {} checks", node_count, check_count)
         })
         .to_string())
     }
 
     /// Convert tree node to view format (recursive)
-    fn tree_to_view_task(&self, node: &DraftNodeTree) -> Value {
+    fn tree_to_view_node(&self, node: &BoardNodeTree) -> Value {
         let children: Vec<Value> = node
             .children
             .iter()
-            .filter(|c| c.node_type == NodeType::Task)
-            .map(|c| self.tree_to_view_task(c))
+            .filter(|c| c.kind != NodeKind::Check)
+            .map(|c| self.tree_to_view_node(c))
             .collect();
 
         json!({
             "id": node.id,
             "name": node.name,
+            "kind": node.kind.as_str(),
+            "status": node.status.as_str(),
             "blocked_by": node.blocked_by,
             "file": self.node_file_path(&node.id),
             "children": children
         })
     }
 
-    /// Count all tasks in tree (recursive)
-    fn count_tasks(&self, tree: &[DraftNodeTree]) -> usize {
+    /// Count all non-check nodes in tree (recursive)
+    fn count_nodes(&self, tree: &[BoardNodeTree]) -> usize {
         tree.iter()
-            .filter(|n| n.node_type == NodeType::Task)
-            .map(|n| 1 + self.count_task_children(n))
+            .filter(|n| n.kind != NodeKind::Check)
+            .map(|n| 1 + self.count_node_children(n))
             .sum()
     }
 
-    fn count_task_children(&self, node: &DraftNodeTree) -> usize {
+    fn count_node_children(&self, node: &BoardNodeTree) -> usize {
         node.children
             .iter()
-            .filter(|c| c.node_type == NodeType::Task)
-            .map(|c| 1 + self.count_task_children(c))
+            .filter(|c| c.kind != NodeKind::Check)
+            .map(|c| 1 + self.count_node_children(c))
             .sum()
+    }
+
+    /// Handle board_feature - create or update a feature
+    fn handle_feature(&mut self, args: Value) -> Result<String, String> {
+        let id = args.get("id").and_then(|v| v.as_str());
+        let name = args.get("name").and_then(|v| v.as_str());
+        let blocked_by: Option<Vec<String>> = args.get("blocked_by").and_then(|v| {
+            v.as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+        });
+        let validated_by: Option<Vec<String>> = args.get("validated_by").and_then(|v| {
+            v.as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+        });
+        let parent_id = args.get("parent_id").and_then(|v| v.as_str());
+        let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+
+        // Validate blocked_by references exist
+        if let Some(ref deps) = blocked_by {
+            let valid_ids = self.get_valid_node_ids();
+            for dep_id in deps {
+                if !valid_ids.contains(dep_id) {
+                    return Ok(json!({
+                        "success": false,
+                        "message": format!("Node '{}' not found in blocked_by list", dep_id),
+                        "reason": "invalid_reference",
+                        "valid_node_ids": valid_ids
+                    })
+                    .to_string());
+                }
+            }
+        }
+
+        // Validate validated_by references exist (must be check nodes)
+        if let Some(ref checks) = validated_by {
+            let valid_ids = self.get_valid_node_ids();
+            for check_id in checks {
+                if !valid_ids.contains(check_id) {
+                    return Ok(json!({
+                        "success": false,
+                        "message": format!("Check '{}' not found in validated_by list", check_id),
+                        "reason": "invalid_reference",
+                        "valid_node_ids": valid_ids
+                    })
+                    .to_string());
+                }
+            }
+        }
+
+        if let Some(existing_id) = id {
+            self.update_task(existing_id, name, blocked_by, validated_by, parent_id)
+        } else {
+            let name = name.ok_or("'name' required for new feature")?;
+            self.create_feature(name, blocked_by, validated_by, parent_id, content)
+        }
+    }
+
+    /// Create a new feature node
+    fn create_feature(
+        &mut self,
+        name: &str,
+        blocked_by: Option<Vec<String>>,
+        validated_by: Option<Vec<String>>,
+        parent_id: Option<&str>,
+        content: &str,
+    ) -> Result<String, String> {
+        use crate::core::delta::CreateBoardNodeRequest;
+
+        let req = CreateBoardNodeRequest {
+            parent_id: parent_id.map(String::from),
+            name: name.to_string(),
+            kind: NodeKind::Feature,
+            content: content.to_string(),
+            validated_by: validated_by.unwrap_or_default(),
+            blocked_by: blocked_by.unwrap_or_default(),
+            x: None,
+            y: None,
+        };
+
+        let node = block_on(self.state().create_node(&req)).map_err(|e| e.to_string())?;
+        let file_path = self.write_content_file(&node.id, content)?;
+
+        // Re-export to sync board files
+        self.sync_export()?;
+
+        Ok(json!({
+            "success": true,
+            "action": "created",
+            "id": node.id,
+            "file": file_path,
+            "message": format!("Created feature '{}'. Edit {} to add details.", name, file_path)
+        })
+        .to_string())
     }
 
     /// Handle board_task - create or update a task
@@ -448,21 +590,21 @@ impl BoardMcpServer {
                         "success": false,
                         "message": format!("Task '{}' not found in blocked_by list", dep_id),
                         "reason": "invalid_reference",
-                        "valid_task_ids": self.get_valid_task_ids()
+                        "valid_task_ids": self.get_validatable_node_ids()
                     })
                     .to_string());
                 }
             }
         }
 
-        // Validate validated_by references exist (must be eval nodes)
-        if let Some(ref evals) = validated_by {
+        // Validate validated_by references exist (must be check nodes)
+        if let Some(ref checks) = validated_by {
             let valid_ids = self.get_valid_node_ids();
-            for eval_id in evals {
-                if !valid_ids.contains(eval_id) {
+            for check_id in checks {
+                if !valid_ids.contains(check_id) {
                     return Ok(json!({
                         "success": false,
-                        "message": format!("Eval '{}' not found in validated_by list", eval_id),
+                        "message": format!("Check '{}' not found in validated_by list", check_id),
                         "reason": "invalid_reference",
                         "valid_node_ids": valid_ids
                     })
@@ -490,12 +632,12 @@ impl BoardMcpServer {
         parent_id: Option<&str>,
         content: &str,
     ) -> Result<String, String> {
-        use crate::core::delta::CreateDraftNodeRequest;
+        use crate::core::delta::CreateBoardNodeRequest;
 
-        let req = CreateDraftNodeRequest {
+        let req = CreateBoardNodeRequest {
             parent_id: parent_id.map(String::from),
             name: name.to_string(),
-            node_type: NodeType::Task,
+            kind: NodeKind::Task,
             content: content.to_string(),
             validated_by: validated_by.unwrap_or_default(),
             blocked_by: blocked_by.unwrap_or_default(),
@@ -503,7 +645,7 @@ impl BoardMcpServer {
             y: None,
         };
 
-        let node = block_on(self.state().create_draft_node(&req)).map_err(|e| e.to_string())?;
+        let node = block_on(self.state().create_node(&req)).map_err(|e| e.to_string())?;
         let file_path = self.write_content_file(&node.id, content)?;
 
         // Re-export to sync board files
@@ -528,10 +670,10 @@ impl BoardMcpServer {
         validated_by: Option<Vec<String>>,
         parent_id: Option<&str>,
     ) -> Result<String, String> {
-        use crate::core::delta::UpdateDraftNodeRequest;
+        use crate::core::delta::UpdateBoardNodeRequest;
 
         // Get existing node to check for rename
-        let old_node = match block_on(self.state().get_draft_node(id)) {
+        let old_node = match block_on(self.state().get_node(id)) {
             Ok(n) => n,
             Err(_) => {
                 return Ok(json!({
@@ -548,7 +690,7 @@ impl BoardMcpServer {
         let was_renamed = name.map(|n| n != old_node.name).unwrap_or(false);
 
         // Build update request
-        let req = UpdateDraftNodeRequest {
+        let req = UpdateBoardNodeRequest {
             name: name.map(String::from),
             content: None, // Content edited via files
             validated_by,
@@ -557,7 +699,7 @@ impl BoardMcpServer {
             y: None,
         };
 
-        block_on(self.state().update_draft_node(id, &req)).map_err(|e| e.to_string())?;
+        block_on(self.state().update_node(id, &req)).map_err(|e| e.to_string())?;
 
         // Handle parent_id change if specified
         if let Some(new_parent) = parent_id {
@@ -566,7 +708,7 @@ impl BoardMcpServer {
             } else {
                 Some(new_parent)
             };
-            block_on(self.state().move_draft_node(id, new_parent, 0)).map_err(|e| e.to_string())?;
+            block_on(self.state().move_node(id, new_parent, 0)).map_err(|e| e.to_string())?;
         }
 
         // Re-export to sync board files
@@ -595,14 +737,15 @@ impl BoardMcpServer {
         }
     }
 
-    /// Handle board_eval - create or update an eval
+    /// Handle board_check - create or update a check
     ///
     /// `validates` is optional convenience sugar — when provided, writes `validated_by`
-    /// on each referenced task, pointing back to this eval. Evals with no `validates`
-    /// are global/e2e evals scheduled via `blocked_by`.
-    fn handle_eval(&mut self, args: Value) -> Result<String, String> {
+    /// on each referenced node, pointing back to this check. Checks with no `validates`
+    /// are global/e2e checks scheduled via `blocked_by`.
+    fn handle_check(&mut self, args: Value) -> Result<String, String> {
         let id = args.get("id").and_then(|v| v.as_str());
         let name = args.get("name").and_then(|v| v.as_str());
+        let parent_id = args.get("parent_id").and_then(|v| v.as_str());
         let validates: Option<Vec<String>> = args.get("validates").and_then(|v| {
             v.as_array().map(|arr| {
                 arr.iter()
@@ -612,16 +755,16 @@ impl BoardMcpServer {
         });
         let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
 
-        // Validate validates references exist
-        if let Some(ref task_ids) = validates {
-            let valid_ids = self.get_valid_task_ids();
-            for task_id in task_ids {
-                if !valid_ids.contains(task_id) {
+        // Validate validates references exist (must be spec or task nodes)
+        if let Some(ref target_ids) = validates {
+            let valid_ids = self.get_validatable_node_ids();
+            for target_id in target_ids {
+                if !valid_ids.contains(target_id) {
                     return Ok(json!({
                         "success": false,
-                        "message": format!("Cannot validate non-existent task '{}'", task_id),
+                        "message": format!("Cannot validate non-existent node '{}'", target_id),
                         "reason": "invalid_validates_reference",
-                        "valid_task_ids": valid_ids
+                        "valid_ids": valid_ids
                     })
                     .to_string());
                 }
@@ -630,43 +773,52 @@ impl BoardMcpServer {
 
         if let Some(existing_id) = id {
             // Update existing eval
-            self.update_eval(existing_id, name, validates)
+            self.update_check(existing_id, name, validates)
         } else {
             // Create new eval
-            let name = name.ok_or("'name' required for new eval")?;
-            self.create_eval(name, validates.unwrap_or_default(), content)
+            let name = name.ok_or("'name' required for new check")?;
+            self.create_check(name, parent_id, validates.unwrap_or_default(), content)
         }
     }
 
-    /// Create a new eval
+    /// Create a new check
     ///
-    /// The eval node itself has no validated_by. If `validates` is provided (convenience sugar),
-    /// we update each target task's validated_by to include this eval.
-    fn create_eval(
+    /// The check node itself has no validated_by. If `validates` is provided (convenience sugar),
+    /// we update each target node's validated_by to include this check.
+    fn create_check(
         &mut self,
         name: &str,
+        parent_id: Option<&str>,
         validates: Vec<String>,
         content: &str,
     ) -> Result<String, String> {
-        use crate::core::delta::{CreateDraftNodeRequest, UpdateDraftNodeRequest};
+        use crate::core::delta::{CreateBoardNodeRequest, UpdateBoardNodeRequest};
 
-        let req = CreateDraftNodeRequest {
-            parent_id: None, // Evals are always at root level
+        // Auto-parent: if no explicit parent but validates targets exist,
+        // walk up from the first target to find the root feature
+        let resolved_parent = match parent_id {
+            Some(p) => Some(p.to_string()),
+            None if !validates.is_empty() => self.find_root_feature(&validates[0]),
+            None => None,
+        };
+
+        let req = CreateBoardNodeRequest {
+            parent_id: resolved_parent,
             name: name.to_string(),
-            node_type: NodeType::Eval,
+            kind: NodeKind::Check,
             content: content.to_string(),
-            validated_by: vec![], // Evals don't have validated_by
+            validated_by: vec![], // Checks don't have validated_by
             blocked_by: vec![],
             x: None,
             y: None,
         };
 
-        let node = block_on(self.state().create_draft_node(&req)).map_err(|e| e.to_string())?;
+        let node = block_on(self.state().create_node(&req)).map_err(|e| e.to_string())?;
         let file_path = self.write_content_file(&node.id, content)?;
 
         // Write validated_by on each target task (convenience sugar)
         for task_id in &validates {
-            let task = match block_on(self.state().get_draft_node(task_id)) {
+            let task = match block_on(self.state().get_node(task_id)) {
                 Ok(t) => t,
                 Err(_) => continue,
             };
@@ -674,21 +826,21 @@ impl BoardMcpServer {
             if !new_validated_by.contains(&node.id) {
                 new_validated_by.push(node.id.clone());
             }
-            let update = UpdateDraftNodeRequest {
+            let update = UpdateBoardNodeRequest {
                 validated_by: Some(new_validated_by),
                 ..Default::default()
             };
-            let _ = block_on(self.state().update_draft_node(task_id, &update));
+            let _ = block_on(self.state().update_node(task_id, &update));
         }
 
         // Re-export to sync board files
         self.sync_export()?;
 
         let msg = if validates.is_empty() {
-            format!("Created global eval '{}'", name)
+            format!("Created global check '{}'", name)
         } else {
             format!(
-                "Created eval '{}' validating: {}",
+                "Created check '{}' validating: {}",
                 name,
                 validates.join(", ")
             )
@@ -703,63 +855,65 @@ impl BoardMcpServer {
         .to_string())
     }
 
-    /// Update an existing eval
+    /// Update an existing check
     ///
-    /// If `validates` is provided (convenience sugar), we update each target task's
-    /// validated_by to include this eval. This replaces the previous set of validated tasks.
-    fn update_eval(
+    /// If `validates` is provided (convenience sugar), we update each target node's
+    /// validated_by to include this check. This replaces the previous set of validated nodes.
+    fn update_check(
         &mut self,
         id: &str,
         name: Option<&str>,
         validates: Option<Vec<String>>,
     ) -> Result<String, String> {
-        use crate::core::delta::UpdateDraftNodeRequest;
+        use crate::core::delta::UpdateBoardNodeRequest;
 
         // Verify exists
-        if block_on(self.state().get_draft_node(id)).is_err() {
+        if block_on(self.state().get_node(id)).is_err() {
             return Ok(json!({
                 "success": false,
-                "message": format!("Eval '{}' not found", id),
+                "message": format!("Check '{}' not found", id),
                 "reason": "not_found",
-                "hint": "Use board_view to see available eval IDs"
+                "hint": "Use board_view to see available check IDs"
             })
             .to_string());
         }
 
-        // Update eval node itself (name only — evals don't have validated_by)
-        let req = UpdateDraftNodeRequest {
+        // Update check node itself (name only — checks don't have validated_by)
+        let req = UpdateBoardNodeRequest {
             name: name.map(String::from),
             ..Default::default()
         };
 
-        block_on(self.state().update_draft_node(id, &req)).map_err(|e| e.to_string())?;
+        block_on(self.state().update_node(id, &req)).map_err(|e| e.to_string())?;
 
-        // If validates provided, update validated_by on target tasks (convenience sugar)
-        if let Some(ref task_ids) = validates {
-            // First, remove this eval from any tasks that currently reference it
-            let all_nodes = block_on(self.state().get_draft_nodes()).map_err(|e| e.to_string())?;
+        // If validates provided, update validated_by on target nodes (convenience sugar)
+        if let Some(ref target_ids) = validates {
+            // First, remove this check from any nodes that currently reference it
+            let all_nodes = block_on(self.state().get_nodes()).map_err(|e| e.to_string())?;
             for node in &all_nodes {
-                if node.node_type == NodeType::Task && node.validated_by.contains(&id.to_string()) {
-                    // If this task is NOT in the new validates list, remove the eval
-                    if !task_ids.contains(&node.id) {
+                if (node.kind == NodeKind::Task || node.kind == NodeKind::Feature)
+                    && node.validated_by.contains(&id.to_string())
+                {
+                    // If this node is NOT in the new validates list, remove the check
+                    if !target_ids.contains(&node.id) {
                         let new_vb: Vec<String> = node
                             .validated_by
                             .iter()
                             .filter(|e| e.as_str() != id)
                             .cloned()
                             .collect();
-                        let update = UpdateDraftNodeRequest {
+                        let update = UpdateBoardNodeRequest {
                             validated_by: Some(new_vb),
                             ..Default::default()
                         };
-                        let _ = block_on(self.state().update_draft_node(&node.id, &update));
+                        let _ = block_on(self.state().update_node(&node.id, &update));
                     }
                 }
             }
 
-            // Then, add this eval to each target task's validated_by
-            for task_id in task_ids {
-                let task = match block_on(self.state().get_draft_node(task_id)) {
+            // Then, add this check to each target node's validated_by
+            for target_id in target_ids {
+                let task = match block_on(self.state().get_node(target_id)) {
                     Ok(t) => t,
                     Err(_) => continue,
                 };
@@ -767,11 +921,11 @@ impl BoardMcpServer {
                 if !new_validated_by.contains(&id.to_string()) {
                     new_validated_by.push(id.to_string());
                 }
-                let update = UpdateDraftNodeRequest {
+                let update = UpdateBoardNodeRequest {
                     validated_by: Some(new_validated_by),
                     ..Default::default()
                 };
-                let _ = block_on(self.state().update_draft_node(task_id, &update));
+                let _ = block_on(self.state().update_node(target_id, &update));
             }
         }
 
@@ -784,20 +938,20 @@ impl BoardMcpServer {
             "action": "updated",
             "id": id,
             "file": file_path,
-            "message": format!("Updated eval. Content at {}", file_path)
+            "message": format!("Updated check. Content at {}", file_path)
         })
         .to_string())
     }
 
-    /// Handle board_delete - delete a task or eval
+    /// Handle board_delete - delete a node
     fn handle_delete(&mut self, args: Value) -> Result<String, String> {
         let id = args
             .get("id")
             .and_then(|v| v.as_str())
             .ok_or("'id' required")?;
 
-        // Get node to check type and name
-        let node = match block_on(self.state().get_draft_node(id)) {
+        // Get node to check kind and name
+        let node = match block_on(self.state().get_node(id)) {
             Ok(n) => n,
             Err(_) => {
                 return Ok(json!({
@@ -817,7 +971,7 @@ impl BoardMcpServer {
         let refs_cleaned = self.count_references_to(id);
 
         // Delete the node (cascade deletes children)
-        block_on(self.state().delete_draft_node(id)).map_err(|e| e.to_string())?;
+        block_on(self.state().delete_node(id)).map_err(|e| e.to_string())?;
 
         // Delete content file
         self.delete_content_file(id)?;
@@ -838,13 +992,33 @@ impl BoardMcpServer {
 
     /// Count how many nodes reference this node (blocked_by or validates)
     fn count_references_to(&self, id: &str) -> usize {
-        let nodes = block_on(self.state().get_draft_nodes()).unwrap_or_default();
+        let nodes = block_on(self.state().get_nodes()).unwrap_or_default();
         nodes
             .iter()
             .filter(|n| {
                 n.blocked_by.contains(&id.to_string()) || n.validates.contains(&id.to_string())
             })
             .count()
+    }
+
+    /// Walk up the parent chain from a node to find its root feature.
+    /// Returns None if the node has no parent (already root) or not found.
+    fn find_root_feature(&self, node_id: &str) -> Option<String> {
+        let node = block_on(self.state().get_node(node_id)).ok()?;
+        match node.parent_id {
+            Some(ref pid) => {
+                // Recurse up — if parent has a parent, keep going
+                self.find_root_feature(pid).or(Some(pid.clone()))
+            }
+            None => {
+                // This node IS a root — parent the check under it if it's a feature
+                if node.kind == NodeKind::Feature {
+                    Some(node.id)
+                } else {
+                    None
+                }
+            }
+        }
     }
 
     /// Re-export board to sync files
@@ -869,8 +1043,9 @@ impl McpToolServer for BoardMcpServer {
             "board_routes" => self.handle_routes(),
             "board_switch_route" => self.handle_switch_route(&args),
             "board_view" => self.handle_view(),
+            "board_feature" => self.handle_feature(args),
             "board_task" => self.handle_task(args),
-            "board_eval" => self.handle_eval(args),
+            "board_check" => self.handle_check(args),
             "board_delete" => self.handle_delete(args),
             _ => Err(format!("Unknown tool: {}", name)),
         };
@@ -894,14 +1069,15 @@ mod tests {
     #[test]
     fn test_get_tools() {
         let tools = get_tools();
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 7);
 
         let names: Vec<&str> = tools.iter().map(|t| t.name).collect();
         assert!(names.contains(&"board_routes"));
         assert!(names.contains(&"board_switch_route"));
         assert!(names.contains(&"board_view"));
+        assert!(names.contains(&"board_feature"));
         assert!(names.contains(&"board_task"));
-        assert!(names.contains(&"board_eval"));
+        assert!(names.contains(&"board_check"));
         assert!(names.contains(&"board_delete"));
     }
 }

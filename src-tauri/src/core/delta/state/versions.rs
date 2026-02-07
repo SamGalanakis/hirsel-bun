@@ -14,13 +14,11 @@ impl DeltaState {
     /// Create a new board version for this project
     pub async fn create_board_version(
         &self,
-        batch_id: i64,
         description: Option<&str>,
     ) -> DeltaStateResult<BoardVersion> {
         let pool = self.pool().await?;
         let now = utc_now();
 
-        // Get next version number for this project
         let version_number: i32 = {
             let max: Option<i32> = sqlx::query_scalar(
                 "SELECT MAX(version_number) FROM board_versions WHERE project_id = ? AND route_id = ?",
@@ -33,12 +31,11 @@ impl DeltaState {
         };
 
         let result = sqlx::query(
-            "INSERT INTO board_versions (project_id, route_id, batch_id, version_number, created_at, description)
-             VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO board_versions (project_id, route_id, version_number, created_at, description)
+             VALUES (?, ?, ?, ?, ?)",
         )
         .bind(self.project_id)
         .bind(self.route_id)
-        .bind(batch_id)
         .bind(version_number)
         .bind(&now)
         .bind(description)
@@ -49,7 +46,6 @@ impl DeltaState {
         Ok(BoardVersion {
             id,
             project_id: self.project_id,
-            batch_id,
             version_number,
             created_at: now,
             description: description.map(|s| s.to_string()),
@@ -60,7 +56,7 @@ impl DeltaState {
     pub async fn get_board_versions(&self) -> DeltaStateResult<Vec<BoardVersion>> {
         let pool = self.pool().await?;
         let rows = sqlx::query(
-            "SELECT id, project_id, batch_id, version_number, created_at, description
+            "SELECT id, project_id, version_number, created_at, description
              FROM board_versions
              WHERE project_id = ? AND route_id = ?
              ORDER BY version_number DESC",
@@ -82,7 +78,7 @@ impl DeltaState {
     pub async fn get_latest_version(&self) -> DeltaStateResult<Option<BoardVersion>> {
         let pool = self.pool().await?;
         let row = sqlx::query(
-            "SELECT id, project_id, batch_id, version_number, created_at, description
+            "SELECT id, project_id, version_number, created_at, description
              FROM board_versions
              WHERE project_id = ? AND route_id = ?
              ORDER BY version_number DESC
@@ -100,7 +96,7 @@ impl DeltaState {
     pub async fn get_board_version(&self, id: i64) -> DeltaStateResult<BoardVersion> {
         let pool = self.pool().await?;
         let row = sqlx::query(
-            "SELECT id, project_id, batch_id, version_number, created_at, description
+            "SELECT id, project_id, version_number, created_at, description
              FROM board_versions
              WHERE id = ? AND project_id = ? AND route_id = ?",
         )
@@ -109,7 +105,7 @@ impl DeltaState {
         .bind(self.route_id)
         .fetch_optional(pool)
         .await?
-        .ok_or_else(|| DeltaStateError::DraftNodeNotFound(format!("Board version {}", id)))?;
+        .ok_or_else(|| DeltaStateError::NodeNotFound(format!("Board version {}", id)))?;
 
         Ok(self.row_to_board_version(&row))
     }
@@ -118,7 +114,6 @@ impl DeltaState {
         BoardVersion {
             id: row.get("id"),
             project_id: row.get("project_id"),
-            batch_id: row.get("batch_id"),
             version_number: row.get("version_number"),
             created_at: row.get("created_at"),
             description: row.get("description"),

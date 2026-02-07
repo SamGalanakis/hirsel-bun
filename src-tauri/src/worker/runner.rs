@@ -279,18 +279,18 @@ impl WorkerRunner {
     }
 
     // =========================================================================
-    // Task Operations (using live_nodes)
+    // Task Operations (using board_nodes)
     // =========================================================================
 
     /// Get the full task tree with hierarchy and status.
-    /// Returns a hierarchical structure with dependencies using live_nodes.
+    /// Returns a hierarchical structure with dependencies using board_nodes.
     pub fn get_task_tree(&self) -> WorkerResult<String> {
-        use crate::core::delta::{LiveNode, NodeType};
+        use crate::core::delta::{BoardNode, NodeKind};
 
-        let nodes = self.run_async(self.state().get_live_nodes())?;
+        let nodes = self.run_async(self.state().get_nodes())?;
 
         // Build a map for quick lookups
-        let node_map: std::collections::HashMap<String, &LiveNode> =
+        let node_map: std::collections::HashMap<String, &BoardNode> =
             nodes.iter().map(|n| (n.id.clone(), n)).collect();
 
         // Find root nodes (no parent) and build tree structure
@@ -308,14 +308,14 @@ impl WorkerRunner {
         }
 
         fn build_node(
-            node: &LiveNode,
+            node: &BoardNode,
             children_map: &std::collections::HashMap<String, Vec<String>>,
-            node_map: &std::collections::HashMap<String, &LiveNode>,
+            node_map: &std::collections::HashMap<String, &BoardNode>,
             state: &dyn crate::core::state_access::StateAccess,
             runner: &WorkerRunner,
         ) -> serde_json::Value {
             let blocked = runner
-                .run_async(state.is_live_node_blocked(&node.id))
+                .run_async(state.is_node_blocked(&node.id))
                 .unwrap_or(false);
 
             let children: Vec<serde_json::Value> = children_map
@@ -332,7 +332,7 @@ impl WorkerRunner {
             let mut json = serde_json::json!({
                 "id": node.id,
                 "name": node.name,
-                "type": node.node_type.as_str(),
+                "type": node.kind.as_str(),
                 "status": node.status.as_str(),
                 "claimed_by": node.claimed_by,
                 "blocked": blocked,
@@ -342,14 +342,14 @@ impl WorkerRunner {
                 json["blocked_by"] = serde_json::json!(&node.blocked_by);
             }
 
-            if node.node_type == NodeType::Eval {
+            if node.kind == NodeKind::Check {
                 if let Ok(validates) = runner.run_async(state.get_validated_nodes(&node.id)) {
                     if !validates.is_empty() {
                         json["validates"] = serde_json::json!(validates);
                     }
                 }
-                if let Some(result) = &node.eval_result {
-                    json["eval_result"] = serde_json::json!(result.as_str());
+                if let Some(result) = &node.check_result {
+                    json["check_result"] = serde_json::json!(result.as_str());
                 }
             }
 
@@ -384,7 +384,7 @@ impl WorkerRunner {
                 serde_json::json!({
                     "id": n.id,
                     "name": n.name,
-                    "type": n.node_type.as_str(),
+                    "type": n.kind.as_str(),
                     "parent": n.parent_id,
                 })
             })
@@ -401,7 +401,7 @@ impl WorkerRunner {
     /// Get tasks claimed by this worker.
     pub fn get_my_tasks(&self) -> WorkerResult<String> {
         let worker_name = self.config.worker_name.clone();
-        let claimed = self.run_async(self.state().get_claimed_live_node(&worker_name))?;
+        let claimed = self.run_async(self.state().get_claimed_node(&worker_name))?;
 
         let tasks: Vec<serde_json::Value> = claimed
             .into_iter()
@@ -409,7 +409,7 @@ impl WorkerRunner {
                 serde_json::json!({
                     "id": n.id,
                     "name": n.name,
-                    "type": n.node_type.as_str(),
+                    "type": n.kind.as_str(),
                     "status": n.status.as_str(),
                     "claimed_at": n.claimed_at,
                 })
@@ -424,24 +424,24 @@ impl WorkerRunner {
             .map_err(|e| WorkerError::Config(format!("Serialization error: {}", e)))
     }
 
-    /// Get full details for a specific task (live node).
+    /// Get full details for a specific board node.
     pub fn get_task_details(&self, task_id: &str) -> WorkerResult<String> {
-        use crate::core::delta::NodeType;
+        use crate::core::delta::NodeKind;
 
-        let nodes = self.run_async(self.state().get_live_nodes())?;
+        let nodes = self.run_async(self.state().get_nodes())?;
         let node = nodes
             .into_iter()
             .find(|n| n.id == task_id)
             .ok_or_else(|| WorkerError::Config(format!("Task '{}' not found", task_id)))?;
 
         let blocked = self
-            .run_async(self.state().is_live_node_blocked(&node.id))
+            .run_async(self.state().is_node_blocked(&node.id))
             .unwrap_or(false);
 
         let mut output = serde_json::json!({
             "id": node.id,
             "name": node.name,
-            "type": node.node_type.as_str(),
+            "type": node.kind.as_str(),
             "status": node.status.as_str(),
             "claimed_by": node.claimed_by,
             "claimed_at": node.claimed_at,
@@ -460,17 +460,17 @@ impl WorkerRunner {
             output["content"] = serde_json::json!(&node.content);
         }
 
-        if node.node_type == NodeType::Eval {
+        if node.kind == NodeKind::Check {
             if let Ok(validates) = self.run_async(self.state().get_validated_nodes(&node.id)) {
                 if !validates.is_empty() {
                     output["validates"] = serde_json::json!(validates);
                 }
             }
-            if let Some(result) = &node.eval_result {
-                output["eval_result"] = serde_json::json!(result.as_str());
+            if let Some(result) = &node.check_result {
+                output["check_result"] = serde_json::json!(result.as_str());
             }
-            if let Some(feedback) = &node.eval_feedback {
-                output["eval_feedback"] = serde_json::json!(feedback);
+            if let Some(feedback) = &node.check_feedback {
+                output["check_feedback"] = serde_json::json!(feedback);
             }
         }
 
@@ -478,7 +478,7 @@ impl WorkerRunner {
             .map_err(|e| WorkerError::Config(format!("Serialization error: {}", e)))
     }
 
-    /// Mark a task (live node) as done and signal ready for new work.
+    /// Mark a task (board node) as done and signal ready for new work.
     ///
     /// This:
     /// 1. Marks the task as complete (unblocks dependent tasks) - if a task is claimed
@@ -487,7 +487,7 @@ impl WorkerRunner {
     ///
     /// Workers are "dumb" - they do one task, then exit and get respawned.
     ///
-    /// For runs without live_nodes (e.g., CLI runs via `hirsel go`), this will
+    /// For runs without board nodes (e.g., CLI runs via `hirsel go`), this will
     /// just signal completion without completing a specific task.
     pub fn task_done(&self, task_id: Option<&str>) -> WorkerResult<String> {
         let worker_name = self.config.worker_name.clone();
@@ -497,7 +497,7 @@ impl WorkerRunner {
             Some(id) => Some(id.to_string()),
             None => {
                 // Try to get currently claimed node - but don't fail if none
-                self.run_async(self.state().get_claimed_live_node(&worker_name))
+                self.run_async(self.state().get_claimed_node(&worker_name))
                     .ok()
                     .flatten()
                     .map(|node| node.id)
@@ -506,10 +506,10 @@ impl WorkerRunner {
 
         // If we have a task to complete, mark it as done
         if let Some(ref task_id) = tid {
-            // Mark the live node as done
-            if let Err(e) = self.run_async(self.state().complete_live_node(task_id, &worker_name)) {
+            // Mark the node as done
+            if let Err(e) = self.run_async(self.state().complete_node(task_id, &worker_name)) {
                 tracing::warn!(
-                    "[{}] Failed to complete live node '{}': {} (continuing with worker exit)",
+                    "[{}] Failed to complete node '{}': {} (continuing with worker exit)",
                     self.config.worker_name,
                     task_id,
                     e
@@ -532,7 +532,7 @@ impl WorkerRunner {
                 task_id
             );
         } else {
-            // No task was claimed - this is valid for runs without live_nodes (CLI runs)
+            // No task was claimed - this is valid for runs without board nodes (CLI runs)
             tracing::info!(
                 "[{}] No task claimed, setting Awaiting for respawn (CLI run mode)",
                 self.config.worker_name
@@ -569,7 +569,7 @@ impl WorkerRunner {
         .to_string())
     }
 
-    /// Add a new task as a live node.
+    /// Add a new task as a board node.
     pub fn task_add(
         &self,
         task_id: &str,
@@ -579,7 +579,7 @@ impl WorkerRunner {
     ) -> WorkerResult<String> {
         let blocked_refs: Vec<&str> = blocked_by.iter().map(|s| s.as_str()).collect();
 
-        self.run_async(self.state().add_live_node(
+        self.run_async(self.state().add_node(
             task_id,
             name,
             parent,
@@ -588,16 +588,12 @@ impl WorkerRunner {
             } else {
                 Some(blocked_refs.as_slice())
             },
-            "task", // node_type
+            "task", // kind
             "",     // content - empty for worker-added tasks
             None,   // validates - not used for tasks
         ))?;
 
-        tracing::debug!(
-            "[{}] Added live node '{}'",
-            self.config.worker_name,
-            task_id
-        );
+        tracing::debug!("[{}] Added node '{}'", self.config.worker_name, task_id);
 
         // New unblocked task might be claimable - request scaling check
         if blocked_refs.is_empty() {
@@ -617,23 +613,33 @@ impl WorkerRunner {
         .to_string())
     }
 
-    /// Add a new eval task as a live node.
+    /// Add a new check node to the board.
     ///
-    /// The validates list writes validated_by on target live tasks via the junction table.
-    pub fn add_eval(
+    /// The validates list writes validated_by on target nodes via the junction table.
+    /// If no parent is given but validates is non-empty, auto-parents under the
+    /// root feature of the first validated node.
+    pub fn add_check(
         &self,
-        eval_id: &str,
+        check_id: &str,
         name: &str,
+        parent: Option<&str>,
         validates: &[String],
     ) -> WorkerResult<String> {
         let validates_refs: Vec<&str> = validates.iter().map(|s| s.as_str()).collect();
 
-        self.run_async(self.state().add_live_node(
-            eval_id,
+        // Auto-parent: if no explicit parent, walk up from first validated node
+        let resolved_parent = match parent {
+            Some(p) => Some(p.to_string()),
+            None if !validates.is_empty() => self.find_root_feature(&validates[0]),
+            None => None,
+        };
+
+        self.run_async(self.state().add_node(
+            check_id,
             name,
-            None, // No parent
-            None, // No blocked_by (eval uses validates relationship)
-            "eval",
+            resolved_parent.as_deref(),
+            None, // No blocked_by (check uses validates relationship)
+            "check",
             "", // No content
             if validates_refs.is_empty() {
                 None
@@ -644,28 +650,52 @@ impl WorkerRunner {
 
         Ok(serde_json::json!({
             "success": true,
-            "eval_id": eval_id,
+            "check_id": check_id,
             "validates": validates,
         })
         .to_string())
     }
 
-    /// Delete a task (live node) by ID.
+    /// Walk up the parent chain to find the root feature of a node.
+    fn find_root_feature(&self, node_id: &str) -> Option<String> {
+        use crate::core::delta::NodeKind;
+
+        let nodes = self.run_async(self.state().get_nodes()).ok()?;
+        let find = |id: &str| nodes.iter().find(|n| n.id == id);
+
+        let mut current = find(node_id)?;
+        loop {
+            match &current.parent_id {
+                Some(pid) => {
+                    current = find(pid)?;
+                }
+                None => {
+                    return if current.kind == NodeKind::Feature {
+                        Some(current.id.clone())
+                    } else {
+                        None
+                    };
+                }
+            }
+        }
+    }
+
+    /// Delete a task (board node) by ID.
     ///
     /// Only tasks with source='worker' can be deleted (not spec tasks).
     /// Cannot delete tasks that are currently claimed or completed.
     pub fn delete_task(&self, task_id: &str) -> WorkerResult<String> {
-        use crate::core::delta::{LiveNodeSource, LiveNodeStatus};
+        use crate::core::delta::{BoardNodeSource, BoardNodeStatus};
 
         // Get the node first to validate it can be deleted
-        let nodes = self.run_async(self.state().get_live_nodes())?;
+        let nodes = self.run_async(self.state().get_nodes())?;
         let node = nodes
             .iter()
             .find(|n| n.id == task_id)
             .ok_or_else(|| WorkerError::Config(format!("Task '{}' not found", task_id)))?;
 
         // Check if it's a worker-created task
-        if node.source != LiveNodeSource::Worker {
+        if node.source != BoardNodeSource::Worker {
             return Ok(serde_json::json!({
                 "success": false,
                 "error": "Cannot delete spec tasks, only worker-created tasks can be deleted",
@@ -686,7 +716,7 @@ impl WorkerRunner {
         }
 
         // Check if it's already completed
-        if node.status == LiveNodeStatus::Done {
+        if node.status == BoardNodeStatus::Done {
             return Ok(serde_json::json!({
                 "success": false,
                 "error": "Cannot delete a completed task",
@@ -696,13 +726,9 @@ impl WorkerRunner {
         }
 
         // Delete the node
-        self.run_async(self.state().delete_live_node(task_id))?;
+        self.run_async(self.state().delete_node(task_id))?;
 
-        tracing::debug!(
-            "[{}] Deleted live node '{}'",
-            self.config.worker_name,
-            task_id
-        );
+        tracing::debug!("[{}] Deleted node '{}'", self.config.worker_name, task_id);
 
         Ok(serde_json::json!({
             "success": true,
@@ -1033,30 +1059,30 @@ impl WorkerRunner {
     }
 
     // =========================================================================
-    // Eval Operations
+    // Check Operations
     // =========================================================================
 
-    /// Handle eval pass - validates all nodes in the validates list.
-    /// Only available for eval node types.
-    pub fn eval_pass(&self) -> WorkerResult<String> {
-        use crate::core::delta::NodeType;
+    /// Handle check pass - validates all nodes in the validates list.
+    /// Only available for check node types.
+    pub fn check_pass(&self) -> WorkerResult<String> {
+        use crate::core::delta::NodeKind;
 
         let worker_name = self.config.worker_name.clone();
 
-        // Get current node and verify it's an eval
+        // Get current node and verify it's a check
         let node = self
-            .run_async(self.state().get_claimed_live_node(&worker_name))?
+            .run_async(self.state().get_claimed_node(&worker_name))?
             .ok_or(WorkerError::NoTaskClaimed)?;
 
-        if node.node_type != NodeType::Eval {
+        if node.kind != NodeKind::Check {
             return Err(WorkerError::Config(
-                "eval_pass is only available for eval nodes".into(),
+                "check_pass is only available for check nodes".into(),
             ));
         }
 
-        self.run_async(self.state().live_node_eval_pass(&node.id, &worker_name))?;
+        self.run_async(self.state().node_check_pass(&node.id, &worker_name))?;
         tracing::info!(
-            "[{}] eval_pass: marking live node eval {} as passed",
+            "[{}] check_pass: marking check {} as passed",
             self.config.worker_name,
             node.id
         );
@@ -1065,36 +1091,36 @@ impl WorkerRunner {
             "success": true,
             "task_id": node.id,
             "result": "pass",
-            "message": "Eval passed. Validated nodes are now marked as validated.",
+            "message": "Check passed. Validated nodes are now marked as validated.",
         })
         .to_string())
     }
 
-    /// Handle eval fail - creates a repair node as child of the eval.
-    /// Only available for eval node types.
-    pub fn eval_fail(&self, feedback: &str) -> WorkerResult<String> {
-        use crate::core::delta::NodeType;
+    /// Handle check fail - creates a repair node as child of the check.
+    /// Only available for check node types.
+    pub fn check_fail(&self, feedback: &str) -> WorkerResult<String> {
+        use crate::core::delta::NodeKind;
 
         let worker_name = self.config.worker_name.clone();
 
-        // Get current node and verify it's an eval
+        // Get current node and verify it's a check
         let node = self
-            .run_async(self.state().get_claimed_live_node(&worker_name))?
+            .run_async(self.state().get_claimed_node(&worker_name))?
             .ok_or(WorkerError::NoTaskClaimed)?;
 
-        if node.node_type != NodeType::Eval {
+        if node.kind != NodeKind::Check {
             return Err(WorkerError::Config(
-                "eval_fail is only available for eval nodes".into(),
+                "check_fail is only available for check nodes".into(),
             ));
         }
 
-        let repair_id = self.run_async(self.state().live_node_eval_fail(
+        let repair_id = self.run_async(self.state().node_check_fail(
             &node.id,
             &worker_name,
             feedback,
         ))?;
         tracing::info!(
-            "[{}] eval_fail: live node eval {} failed, created repair node {}",
+            "[{}] check_fail: check {} failed, created repair node {}",
             self.config.worker_name,
             node.id,
             repair_id
@@ -1106,7 +1132,7 @@ impl WorkerRunner {
             "result": "fail",
             "repair_task_id": repair_id,
             "feedback": feedback,
-            "message": "Eval failed. A repair node has been created.",
+            "message": "Check failed. A repair node has been created.",
         })
         .to_string())
     }

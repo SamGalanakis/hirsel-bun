@@ -56,9 +56,14 @@ export const ToolCluster: Component<ToolClusterProps> = (props) => {
         <Icon name="layers" class="w-3.5 h-3.5 text-wool-400" />
         <span class="text-wool-300">{toolCount()} tools</span>
 
-        {/* Status pips */}
+        {/* Status pips (max 12, then overflow indicator) */}
         <div class="tool-pips">
-          <For each={toolStatuses()}>{(status) => <ToolStatusPip status={status} />}</For>
+          <For each={toolStatuses().slice(0, 12)}>
+            {(status) => <ToolStatusPip status={status} />}
+          </For>
+          <Show when={toolCount() > 12}>
+            <span class="text-[10px] text-wool-500">+{toolCount() - 12}</span>
+          </Show>
         </div>
 
         {/* Expand indicator */}

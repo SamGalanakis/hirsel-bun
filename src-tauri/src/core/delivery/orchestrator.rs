@@ -98,6 +98,15 @@ impl DeliveryOrchestrator {
         })
     }
 
+    /// Create a delivery orchestrator from a run name.
+    ///
+    /// Resolves the work directory from the run name and delegates to `from_work_dir`.
+    pub fn from_run_name(run_name: &str, expected_remote: Option<&str>) -> DeliveryResult<Self> {
+        let work_dir = crate::gui::commands::get_run_work_dir(run_name)
+            .map_err(DeliveryError::InvalidState)?;
+        Self::from_work_dir(&work_dir, expected_remote)
+    }
+
     /// Create a delivery orchestrator from a work directory path.
     ///
     /// If `expected_remote` is provided and the git repo doesn't have an

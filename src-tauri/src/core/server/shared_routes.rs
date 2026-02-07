@@ -112,50 +112,50 @@ pub fn build_shared_routes() -> Router<Arc<AppState>> {
             "/api/runs/{name}/config/project_id",
             get(routes::get_project_id),
         )
-        // Live nodes - unified task system
+        // Nodes - unified task system
         .route(
-            "/api/runs/{name}/live-nodes",
-            get(routes::get_live_nodes).post(routes::add_live_node),
+            "/api/runs/{name}/nodes",
+            get(routes::get_nodes).post(routes::add_node),
         )
         .route(
-            "/api/runs/{name}/live-nodes/claimable",
-            get(routes::get_claimable_live_nodes),
+            "/api/runs/{name}/nodes/claimable",
+            get(routes::get_claimable_nodes),
         )
         .route(
-            "/api/runs/{name}/live-nodes/{id}/claim",
-            post(routes::claim_live_node),
+            "/api/runs/{name}/nodes/{id}/claim",
+            post(routes::claim_node),
         )
         .route(
-            "/api/runs/{name}/live-nodes/{id}/complete",
-            post(routes::complete_live_node),
+            "/api/runs/{name}/nodes/{id}/complete",
+            post(routes::complete_node),
         )
         .route(
-            "/api/runs/{name}/live-nodes/{id}/unclaim",
-            post(routes::unclaim_live_node),
+            "/api/runs/{name}/nodes/{id}/unclaim",
+            post(routes::unclaim_node),
         )
         .route(
-            "/api/runs/{name}/live-nodes/{id}/blocked",
-            get(routes::is_live_node_blocked),
+            "/api/runs/{name}/nodes/{id}/blocked",
+            get(routes::is_node_blocked),
         )
         .route(
-            "/api/runs/{name}/live-nodes/{id}/eval-pass",
-            post(routes::live_node_eval_pass),
+            "/api/runs/{name}/nodes/{id}/check-pass",
+            post(routes::node_check_pass),
         )
         .route(
-            "/api/runs/{name}/live-nodes/{id}/eval-fail",
-            post(routes::live_node_eval_fail),
+            "/api/runs/{name}/nodes/{id}/check-fail",
+            post(routes::node_check_fail),
         )
         .route(
-            "/api/runs/{name}/live-nodes/{id}/tokens",
-            post(routes::set_live_node_tokens),
+            "/api/runs/{name}/nodes/{id}/tokens",
+            post(routes::set_node_tokens),
         )
         .route(
-            "/api/runs/{name}/live-nodes/{id}/validated",
+            "/api/runs/{name}/nodes/{id}/validated",
             get(routes::get_validated_nodes),
         )
         // Git HTTP backend for remote workers
         .route("/git/{run_name}", any(git_http::git_run_root_handler))
-        .route("/git/{run_name}/*path", any(git_http::git_run_handler))
+        .route("/git/{run_name}/{*path}", any(git_http::git_run_handler))
 }
 
 /// Gyp chat routes (requires separate GypState)

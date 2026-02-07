@@ -14,9 +14,7 @@ use tokio::time::interval;
 
 use crate::core::api_types::RunStatus;
 use crate::core::config::{self, Config};
-use crate::core::delta::{
-    list_working_project_runs, BoardDeliveryStatus, Delivery, DeltaRunner, DeltaState,
-};
+use crate::core::delta::{list_working_project_runs, BoardDeliveryStatus, Delivery, DeltaState};
 use crate::core::lifecycle::{
     LifecycleAction, LifecycleEvent, LifecycleManager, LocalLifecycleManager,
 };
@@ -66,32 +64,14 @@ pub async fn run_polling_loop(state: Arc<AppState>, config: DaemonConfig) {
             }
         }
 
-        // Process working project runs (delta dispatch system)
+        // Process working project runs (track active state)
         if let Ok(project_runs) = list_working_project_runs().await {
-            for (project_id, route_id, run_name) in project_runs {
+            for (_project_id, _route_id, _run_name) in project_runs {
                 has_active_runs = true;
                 last_active = Instant::now();
 
-                // Process delta submissions for this project run
-                let runner = DeltaRunner::new(project_id, route_id);
-                match runner.process_pending(&state.orchestrator).await {
-                    Ok(processed) => {
-                        if processed > 0 {
-                            tracing::info!(
-                                "[Daemon] Processed {} delta submissions for project run '{}'",
-                                processed,
-                                run_name
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "[Daemon] Error processing project run '{}': {}",
-                            run_name,
-                            e
-                        );
-                    }
-                }
+                // Board runs are processed by the first loop (list_runs → process_active_run)
+                // once dispatch_board bootstraps their per-run DB via start_run
             }
         }
 

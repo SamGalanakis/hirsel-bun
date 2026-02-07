@@ -7,6 +7,7 @@
  * - Collapse toggle to minimize to icon rail
  */
 import { type Component, Show, For, createSignal, createEffect, onCleanup } from 'solid-js';
+import { emit } from '../../lib/events';
 import { useApp, useProject, useRoute } from '../../stores';
 import { Icon } from '../shared';
 import type { Route } from '../../lib/types';
@@ -28,7 +29,7 @@ export const LeftDrawer: Component = () => {
 
   const handleFork = () => {
     // Dispatch event to open fork dialog
-    window.dispatchEvent(new CustomEvent('open-fork-dialog'));
+    emit('open-fork-dialog');
   };
 
   const handleOpenChat = () => {

@@ -38,11 +38,15 @@ pub use events::WorkerEventStreamManager;
 /// Provides a concise alternative to `.map_err(|e| e.to_string())` for Tauri commands.
 pub trait ResultExt<T, E: ToString> {
     fn str_err(self) -> Result<T, String>;
+    fn context(self, msg: &str) -> Result<T, String>;
 }
 
 impl<T, E: ToString> ResultExt<T, E> for Result<T, E> {
     fn str_err(self) -> Result<T, String> {
         self.map_err(|e| e.to_string())
+    }
+    fn context(self, msg: &str) -> Result<T, String> {
+        self.map_err(|e| format!("{}: {}", msg, e.to_string()))
     }
 }
 
@@ -54,7 +58,7 @@ pub async fn get_run_state(run_name: &str) -> Result<crate::core::state::SQLiteS
     }
     crate::core::state::SQLiteState::new(run_name)
         .await
-        .map_err(|e| format!("Failed to open database: {}", e))
+        .context("Failed to open database")
 }
 
 /// Helper to get the work directory for a run, with validation
@@ -194,7 +198,7 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         delivery::get_delivery_branch_name,
         // Delivery validation
         delivery::validate_delivery_target,
-        // Board delivery commands (delta dispatch system)
+        // Board delivery commands
         delivery::get_board_versions,
         delivery::get_latest_board_version,
         delivery::get_current_board_delivery,
@@ -203,25 +207,19 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         delivery::get_delivery_attempts,
         delivery::complete_board_delivery,
         delivery::abandon_board_delivery,
-        // Delta dispatch commands (unified board with draft/live trees)
-        delta::get_draft_tree,
-        delta::get_live_tree,
-        delta::create_draft_node,
-        delta::update_draft_node,
-        delta::delete_draft_node,
-        delta::move_draft_node,
+        // Board tree commands (unified board with spec/task/eval nodes)
+        delta::get_board_tree,
+        delta::create_board_node,
+        delta::update_board_node,
+        delta::delete_board_node,
+        delta::move_board_node,
         delta::reset_project_tree,
-        delta::compute_tree_diff,
-        delta::get_diff_summary,
-        delta::dispatch_deltas,
-        delta::preview_delta_dispatch,
+        delta::dispatch_board,
         delta::get_project_run,
-        delta::complete_live_node,
-        delta::complete_revert,
-        delta::get_dual_trees,
+        delta::complete_board_node,
         delta::sync_gyp_changes,
         delta::sync_and_get_trees,
-        delta::sync_and_get_trees_if_changed,
+        delta::sync_and_get_tree_if_changed,
         // Docs commands
         docs::get_project_docs,
         // Project Messages (Sheepfold) commands

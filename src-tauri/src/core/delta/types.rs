@@ -1,9 +1,6 @@
-//! Delta dispatch types
+//! Unified board types
 //!
-//! Types for the unified board with delta-based dispatch system:
-//! - Draft nodes: user-editable tree
-//! - Live nodes: dispatched/working state
-//! - Delta types: implement, modify, revert
+//! Single board_nodes table with kind (feature/task/check) and unified status lifecycle.
 
 use serde::{Deserialize, Serialize};
 
@@ -11,52 +8,57 @@ use serde::{Deserialize, Serialize};
 // Node Types
 // =============================================================================
 
-/// Type of a node in the tree
+/// Kind of a board node
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum NodeType {
+pub enum NodeKind {
+    Feature,
     #[default]
     Task,
-    Eval,
+    Check,
 }
 
-impl NodeType {
+impl NodeKind {
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::Feature => "feature",
             Self::Task => "task",
-            Self::Eval => "eval",
+            Self::Check => "check",
         }
     }
 
     pub fn from_str(s: &str) -> Self {
         match s {
-            "eval" => Self::Eval,
+            "feature" => Self::Feature,
+            "check" => Self::Check,
             _ => Self::Task,
         }
     }
 }
 
-/// Status of a live node
+/// Status of a board node
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum LiveNodeStatus {
+pub enum BoardNodeStatus {
     #[default]
+    Draft,
     Pending,
     Working,
     Done,
-    AwaitingEval, // Work done, waiting for eval
-    Validated,    // Eval passed
-    NeedsRepair,  // Eval failed, needs fix
+    AwaitingCheck,
+    Validated,
+    NeedsRepair,
     Failed,
 }
 
-impl LiveNodeStatus {
+impl BoardNodeStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::Draft => "draft",
             Self::Pending => "pending",
             Self::Working => "working",
             Self::Done => "done",
-            Self::AwaitingEval => "awaiting_eval",
+            Self::AwaitingCheck => "awaiting_check",
             Self::Validated => "validated",
             Self::NeedsRepair => "needs_repair",
             Self::Failed => "failed",
@@ -65,9 +67,10 @@ impl LiveNodeStatus {
 
     pub fn from_str(s: &str) -> Self {
         match s {
+            "draft" => Self::Draft,
             "working" => Self::Working,
             "done" => Self::Done,
-            "awaiting_eval" => Self::AwaitingEval,
+            "awaiting_check" => Self::AwaitingCheck,
             "validated" => Self::Validated,
             "needs_repair" => Self::NeedsRepair,
             "failed" => Self::Failed,
@@ -81,15 +84,15 @@ impl LiveNodeStatus {
     }
 }
 
-/// Eval result for eval nodes
+/// Check result for check nodes
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum EvalResult {
+pub enum CheckResult {
     Pass,
     Fail,
 }
 
-impl EvalResult {
+impl CheckResult {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Pass => "pass",
@@ -106,23 +109,26 @@ impl EvalResult {
     }
 }
 
-/// Source of a live node - where it originated from
+/// Source of a board node - where it originated from
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum LiveNodeSource {
-    /// Created from draft node (has draft_node_id)
+pub enum BoardNodeSource {
+    /// Created by user (feature nodes, manual tasks)
     #[default]
-    Spec,
+    User,
+    /// Created by plan worker (tasks decomposed from specs)
+    Plan,
     /// Added by worker during execution
     Worker,
-    /// System-generated (e.g., repair tasks)
+    /// System-generated (e.g., plan tasks, repair tasks)
     System,
 }
 
-impl LiveNodeSource {
+impl BoardNodeSource {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Spec => "spec",
+            Self::User => "user",
+            Self::Plan => "plan",
             Self::Worker => "worker",
             Self::System => "system",
         }
@@ -130,117 +136,62 @@ impl LiveNodeSource {
 
     pub fn from_str(s: &str) -> Self {
         match s {
+            "plan" => Self::Plan,
             "worker" => Self::Worker,
             "system" => Self::System,
-            _ => Self::Spec,
+            _ => Self::User,
         }
     }
 }
 
-/// A node in the draft tree (user edits freely)
+/// A node in the board tree
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DraftNode {
+pub struct BoardNode {
     pub id: String,
     pub project_id: i64,
     pub parent_id: Option<String>,
     pub position: i32,
     pub name: String,
-    pub node_type: NodeType,
+    pub kind: NodeKind,
+    pub source: BoardNodeSource,
     pub content: String,
-    pub validates: Vec<String>, // For eval nodes: computed from tasks where validated_by includes this eval
-    pub validated_by: Vec<String>, // For task nodes: eval IDs that validate this task
-    pub blocked_by: Vec<String>, // For task nodes: tasks/evals that must complete first
-    pub x: Option<f64>,
-    pub y: Option<f64>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-/// Draft node tree (nested for frontend)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DraftNodeTree {
-    pub id: String,
-    pub name: String,
-    pub node_type: NodeType,
-    pub content: String,
-    pub validates: Vec<String>, // Computed: tasks where validated_by includes this eval
-    pub validated_by: Vec<String>, // For tasks: which evals validate this task
-    #[serde(default)]
+    pub status: BoardNodeStatus,
+    pub validates: Vec<String>,
+    pub validated_by: Vec<String>,
     pub blocked_by: Vec<String>,
-    pub children: Vec<DraftNodeTree>,
-    pub x: Option<f64>,
-    pub y: Option<f64>,
-}
-
-impl From<DraftNode> for DraftNodeTree {
-    fn from(node: DraftNode) -> Self {
-        Self {
-            id: node.id,
-            name: node.name,
-            node_type: node.node_type,
-            content: node.content,
-            validates: node.validates,
-            validated_by: node.validated_by,
-            blocked_by: node.blocked_by,
-            children: vec![],
-            x: node.x,
-            y: node.y,
-        }
-    }
-}
-
-/// A node in the live tree (dispatched state)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LiveNode {
-    pub id: String,
-    pub project_id: i64,
-    pub draft_node_id: Option<String>, // Link to draft (null if deleted from draft or worker-added)
-    pub parent_id: Option<String>,
-    pub position: i32,
-    pub name: String,
-    pub node_type: NodeType,
-    pub content: String,
-    pub status: LiveNodeStatus,
-    pub source: LiveNodeSource, // Where this node originated (spec, worker, system)
-    pub validates: Vec<String>, // For eval nodes: computed from tasks where validated_by includes this eval
-    pub validated_by: Vec<String>, // For task nodes: eval IDs that validate this task
-    pub blocked_by: Vec<String>, // For task nodes: tasks/evals that must complete first
     pub x: Option<f64>,
     pub y: Option<f64>,
     pub created_at: String,
     pub updated_at: String,
     pub completed_at: Option<String>,
     pub last_commit_sha: Option<String>,
-    pub resolves: Option<String>, // For repair tasks: the eval ID this repair resolves
+    pub resolves: Option<String>,
     // Orchestration fields
-    pub claimed_by: Option<String>, // Worker currently working on this
-    pub claimed_at: Option<String>, // When claimed
-    pub completed_by: Option<String>, // Worker who completed it
-    pub eval_result: Option<EvalResult>, // Pass or Fail (for eval nodes)
-    pub eval_feedback: Option<String>, // Feedback on eval failure
-    pub tokens_used: Option<i64>,   // Token tracking
+    pub claimed_by: Option<String>,
+    pub claimed_at: Option<String>,
+    pub completed_by: Option<String>,
+    pub check_result: Option<CheckResult>,
+    pub check_feedback: Option<String>,
+    pub tokens_used: Option<i64>,
 }
 
-/// Live node tree (nested for frontend)
+/// Board node tree (nested for frontend)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LiveNodeTree {
+pub struct BoardNodeTree {
     pub id: String,
-    pub draft_node_id: Option<String>,
     pub parent_id: Option<String>,
     pub name: String,
-    pub node_type: NodeType,
+    pub kind: NodeKind,
+    pub source: BoardNodeSource,
     pub content: String,
-    pub status: LiveNodeStatus,
-    pub source: LiveNodeSource,
+    pub status: BoardNodeStatus,
     pub validates: Vec<String>,
     pub validated_by: Vec<String>,
     #[serde(default)]
     pub blocked_by: Vec<String>,
-    pub children: Vec<LiveNodeTree>,
+    pub children: Vec<BoardNodeTree>,
     pub x: Option<f64>,
     pub y: Option<f64>,
     pub completed_at: Option<String>,
@@ -250,22 +201,21 @@ pub struct LiveNodeTree {
     pub claimed_by: Option<String>,
     pub claimed_at: Option<String>,
     pub completed_by: Option<String>,
-    pub eval_result: Option<EvalResult>,
-    pub eval_feedback: Option<String>,
+    pub check_result: Option<CheckResult>,
+    pub check_feedback: Option<String>,
     pub tokens_used: Option<i64>,
 }
 
-impl From<LiveNode> for LiveNodeTree {
-    fn from(node: LiveNode) -> Self {
+impl From<BoardNode> for BoardNodeTree {
+    fn from(node: BoardNode) -> Self {
         Self {
             id: node.id,
-            draft_node_id: node.draft_node_id,
             parent_id: node.parent_id,
             name: node.name,
-            node_type: node.node_type,
+            kind: node.kind,
+            source: node.source,
             content: node.content,
             status: node.status,
-            source: node.source,
             validates: node.validates,
             validated_by: node.validated_by,
             blocked_by: node.blocked_by,
@@ -278,207 +228,10 @@ impl From<LiveNode> for LiveNodeTree {
             claimed_by: node.claimed_by,
             claimed_at: node.claimed_at,
             completed_by: node.completed_by,
-            eval_result: node.eval_result,
-            eval_feedback: node.eval_feedback,
+            check_result: node.check_result,
+            check_feedback: node.check_feedback,
             tokens_used: node.tokens_used,
         }
-    }
-}
-
-// =============================================================================
-// Delta Types
-// =============================================================================
-
-/// Type of delta operation
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DeltaType {
-    /// New node in draft that doesn't exist in live
-    Implement,
-    /// Existing node modified in draft
-    Modify,
-    /// Node deleted from draft but exists in live (needs revert)
-    Revert,
-}
-
-impl DeltaType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Implement => "implement",
-            Self::Modify => "modify",
-            Self::Revert => "revert",
-        }
-    }
-
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "implement" => Some(Self::Implement),
-            "modify" => Some(Self::Modify),
-            "revert" => Some(Self::Revert),
-            _ => None,
-        }
-    }
-}
-
-/// Status of a delta submission
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum DeltaStatus {
-    #[default]
-    Pending,
-    Processing,
-    Done,
-    Failed,
-}
-
-impl DeltaStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Processing => "processing",
-            Self::Done => "done",
-            Self::Failed => "failed",
-        }
-    }
-
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "processing" => Self::Processing,
-            "done" => Self::Done,
-            "failed" => Self::Failed,
-            _ => Self::Pending,
-        }
-    }
-}
-
-/// A reference for context in delta tasks
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Reference {
-    /// What kind of reference (e.g., "file", "task", "commit")
-    pub ref_type: String,
-    /// The reference value (e.g., file path, task ID, commit SHA)
-    pub value: String,
-    /// Optional description
-    pub description: Option<String>,
-}
-
-/// A delta submission (LLM-generated task for dispatch)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeltaSubmission {
-    pub id: i64,
-    pub project_id: i64,
-    pub batch_id: Option<i64>,
-    pub delta_type: DeltaType,
-    pub draft_node_id: Option<String>,
-    pub live_node_id: Option<String>,
-    pub name: String,
-    pub description: String,
-    pub priority: i32,
-    pub status: DeltaStatus,
-    pub refs: Vec<Reference>,
-    pub created_at: String,
-    pub processed_at: Option<String>,
-}
-
-/// A delta task generated by LLM (before DB insertion)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeltaTask {
-    pub delta_type: DeltaType,
-    pub name: String,
-    pub description: String,
-    pub draft_node_id: Option<String>,
-    pub live_node_id: Option<String>,
-    pub refs: Vec<Reference>,
-    pub priority: i32,
-}
-
-// =============================================================================
-// Diff Types
-// =============================================================================
-
-/// A node in a diff operation
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DiffNode {
-    pub id: String,
-    pub name: String,
-    pub node_type: NodeType,
-    pub content: String,
-    pub validates: Vec<String>,
-    pub validated_by: Vec<String>,
-    pub blocked_by: Vec<String>,
-    pub parent_id: Option<String>,
-}
-
-impl From<&DraftNode> for DiffNode {
-    fn from(node: &DraftNode) -> Self {
-        Self {
-            id: node.id.clone(),
-            name: node.name.clone(),
-            node_type: node.node_type,
-            content: node.content.clone(),
-            validates: node.validates.clone(),
-            validated_by: node.validated_by.clone(),
-            blocked_by: node.blocked_by.clone(),
-            parent_id: node.parent_id.clone(),
-        }
-    }
-}
-
-impl From<&LiveNode> for DiffNode {
-    fn from(node: &LiveNode) -> Self {
-        Self {
-            id: node.id.clone(),
-            name: node.name.clone(),
-            node_type: node.node_type,
-            content: node.content.clone(),
-            validates: node.validates.clone(),
-            validated_by: node.validated_by.clone(),
-            blocked_by: node.blocked_by.clone(),
-            parent_id: node.parent_id.clone(),
-        }
-    }
-}
-
-/// A modified node with old and new state
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModifiedNode {
-    pub draft_node: DiffNode,
-    pub live_node: DiffNode,
-    /// What changed (for display)
-    pub changes: Vec<String>,
-}
-
-/// Result of diffing draft vs live trees
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct TreeDiff {
-    /// Nodes in draft but not in live
-    pub new_nodes: Vec<DiffNode>,
-    /// Nodes in both but with different content
-    pub modified_nodes: Vec<ModifiedNode>,
-    /// Nodes in live but not in draft
-    pub deleted_nodes: Vec<DiffNode>,
-    /// Node IDs that are unchanged
-    pub unchanged_ids: Vec<String>,
-}
-
-impl TreeDiff {
-    pub fn is_empty(&self) -> bool {
-        self.new_nodes.is_empty() && self.modified_nodes.is_empty() && self.deleted_nodes.is_empty()
-    }
-
-    pub fn summary(&self) -> String {
-        format!(
-            "{} new, {} modified, {} deleted",
-            self.new_nodes.len(),
-            self.modified_nodes.len(),
-            self.deleted_nodes.len()
-        )
     }
 }
 
@@ -537,7 +290,6 @@ pub struct ProjectRun {
 pub struct BoardVersion {
     pub id: i64,
     pub project_id: i64,
-    pub batch_id: i64,
     pub version_number: i32,
     pub created_at: String,
     pub description: Option<String>,
@@ -657,14 +409,14 @@ pub struct DeliveryAttempt {
 // Request Types
 // =============================================================================
 
-/// Request to create a draft node
+/// Request to create a board node
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CreateDraftNodeRequest {
+pub struct CreateBoardNodeRequest {
     pub parent_id: Option<String>,
     pub name: String,
     #[serde(default)]
-    pub node_type: NodeType,
+    pub kind: NodeKind,
     #[serde(default)]
     pub content: String,
     #[serde(default)]
@@ -675,10 +427,10 @@ pub struct CreateDraftNodeRequest {
     pub y: Option<f64>,
 }
 
-/// Request to update a draft node
+/// Request to update a board node
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UpdateDraftNodeRequest {
+pub struct UpdateBoardNodeRequest {
     pub name: Option<String>,
     pub content: Option<String>,
     pub validated_by: Option<Vec<String>>,
@@ -692,9 +444,9 @@ pub struct UpdateDraftNodeRequest {
 #[serde(rename_all = "camelCase")]
 pub struct DispatchResult {
     pub run_name: String,
-    pub batch_id: i64,
-    pub delta_count: usize,
-    pub diff_summary: String,
+    pub node_count: usize,
+    pub feature_count: usize,
+    pub plan_task_count: usize,
     pub version_number: i32,
     pub version_id: i64,
 }

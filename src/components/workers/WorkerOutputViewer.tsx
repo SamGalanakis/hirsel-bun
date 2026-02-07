@@ -2,6 +2,7 @@
  * Worker output viewer modal with event streaming
  */
 import { invoke } from '../../lib/invoke';
+import { on } from '../../lib/events';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { type Component, For, Show, createEffect, createSignal, onCleanup } from 'solid-js';
 import { useEscapeKey } from '../../hooks';
@@ -25,15 +26,13 @@ export const WorkerOutputViewer: Component = () => {
 
   // Listen for show-worker-output events
   createEffect(() => {
-    const handler = (e: Event) => {
-      const customEvent = e as CustomEvent<{ runName: string; workerName: string }>;
-      setRunName(customEvent.detail.runName);
-      setWorkerName(customEvent.detail.workerName);
+    const cleanup = on('show-worker-output', (detail) => {
+      setRunName(detail.runName);
+      setWorkerName(detail.workerName);
       setVisible(true);
-    };
+    });
 
-    window.addEventListener('show-worker-output', handler);
-    onCleanup(() => window.removeEventListener('show-worker-output', handler));
+    onCleanup(cleanup);
   });
 
   // Start/stop event stream when modal opens/closes

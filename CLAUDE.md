@@ -27,16 +27,16 @@ AI-powered software engineering tool. Users define specs on a visual board (Spec
 - **LifecycleManager trait** — event-driven state machine returning actions for daemon
 - **Runner trait** — `Local`, `SSH`, `Fly`, `Composed` worker host implementations
 - **Workers** — spawned with pre-assigned tasks, fresh context per task, no claim_task tool
-- **SpecFlow** — visual board → dispatch → live nodes → workers → eval → delivery
+- **SpecFlow** — visual board → dispatch → plan workers → task workers → eval → delivery
 - **Routes** — parallel exploration branches within a project (independent trees/docs/messages)
-- **Delta dispatch** — draft tree → live tree diffs, persistent project runs
+- **Board tree** — single `board_nodes` table: specs (draft) → dispatch → plan tasks → implementation tasks/evals
 - **Service workers** — warm background agents (Scribe for docs, ConflictResolver for merges)
 
 ## Run Lifecycle
 - `Draft` → `Working` → `Eval` → `Done` → `Delivered`
 - Also: `Paused` (manual), `Failed` (time limit/error)
 - Workers: `Working` → `Awaiting` → `Paused` → `Error`
-- Live nodes: `Pending` → `Working` → `Done`/`Failed`
+- Board nodes: `Draft` → `Pending` → `Working` → `Done`/`Failed`/`AwaitingEval`/`Validated`/`NeedsRepair`
 
 ## Frontend
 - **SolidJS** — components in `src/components/`, stores in `src/stores/`, hooks in `src/hooks/`

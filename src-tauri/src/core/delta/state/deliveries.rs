@@ -78,7 +78,7 @@ impl DeltaState {
         .bind(id)
         .fetch_optional(pool)
         .await?
-        .ok_or_else(|| super::DeltaStateError::DraftNodeNotFound(format!("Delivery {}", id)))?;
+        .ok_or_else(|| super::DeltaStateError::NodeNotFound(format!("Delivery {}", id)))?;
 
         Ok(self.row_to_delivery(&row))
     }

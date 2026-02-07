@@ -11,6 +11,7 @@ import {
   onCleanup,
   onMount,
 } from 'solid-js';
+import { on as onEvent } from '../../lib/events';
 import { createStore, produce } from 'solid-js/store';
 
 interface Upgrade {
@@ -332,15 +333,13 @@ export const SheepClicker: Component = () => {
 
   // Listen for shortcut
   createEffect(() => {
-    const handler = (e: Event) => {
-      const customEvent = e as CustomEvent<string>;
-      if (customEvent.detail === 'sheep-game') {
+    const cleanup = onEvent('shortcut-action', (action) => {
+      if (action === 'sheep-game') {
         setVisible(true);
         load();
       }
-    };
-    window.addEventListener('shortcut-action', handler);
-    onCleanup(() => window.removeEventListener('shortcut-action', handler));
+    });
+    onCleanup(cleanup);
   });
 
   // Handle escape key

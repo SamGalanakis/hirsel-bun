@@ -122,10 +122,10 @@ pub async fn get_project_docs(
 fn read_docs_from_dir(dir: &Path) -> Result<Vec<DocFile>, String> {
     let mut files = Vec::new();
 
-    let entries = fs::read_dir(dir).map_err(|e| format!("Failed to read docs directory: {}", e))?;
+    let entries = fs::read_dir(dir).context("Failed to read docs directory")?;
 
     for entry in entries {
-        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+        let entry = entry.context("Failed to read entry")?;
         let path = entry.path();
 
         // Only include markdown files
@@ -134,7 +134,7 @@ fn read_docs_from_dir(dir: &Path) -> Result<Vec<DocFile>, String> {
                 if ext == "md" {
                     if let Some(name) = path.file_name() {
                         let content = fs::read_to_string(&path)
-                            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+                            .context(&format!("Failed to read {}", path.display()))?;
 
                         files.push(DocFile {
                             name: name.to_string_lossy().to_string(),

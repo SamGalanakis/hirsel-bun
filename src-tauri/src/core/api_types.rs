@@ -146,13 +146,13 @@ impl SheepConfig {
         }
     }
 
-    /// Generate deterministic config for an eval agent
-    pub fn for_eval(eval_id: u32) -> Self {
+    /// Generate deterministic config for a check agent
+    pub fn for_check(check_id: u32) -> Self {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
         let mut hasher = DefaultHasher::new();
-        eval_id.hash(&mut hasher);
+        check_id.hash(&mut hasher);
         let hash = hasher.finish();
 
         let bytes = hash.to_le_bytes();
@@ -812,6 +812,18 @@ impl From<crate::core::state::Status> for RunStatus {
 /// Helper function for converting Status (delegates to From impl)
 pub fn convert_status(status: crate::core::state::Status) -> RunStatus {
     status.into()
+}
+
+/// Convert core WorkerStatus to API WorkerStatus
+impl From<crate::core::state::WorkerStatus> for WorkerStatus {
+    fn from(s: crate::core::state::WorkerStatus) -> Self {
+        match s {
+            crate::core::state::WorkerStatus::Working => Self::Working,
+            crate::core::state::WorkerStatus::Awaiting => Self::Awaiting,
+            crate::core::state::WorkerStatus::Paused => Self::Paused,
+            crate::core::state::WorkerStatus::Error => Self::Error,
+        }
+    }
 }
 
 /// Parse an RFC3339 timestamp and return elapsed minutes since then

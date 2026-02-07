@@ -146,3 +146,64 @@ impl DeltaState {
         Ok(runs)
     }
 }
+
+/// Update a project run's status by run name
+///
+/// Used by pause/resume commands that only have the run name, not project+route IDs.
+pub async fn update_project_run_status_by_name(
+    run_name: &str,
+    status: ProjectRunStatus,
+) -> DeltaStateResult<()> {
+    let pool = global_pool().await;
+    ensure_schema(pool).await?;
+
+    let row = sqlx::query("SELECT project_id, route_id FROM project_runs WHERE run_name = ?")
+        .bind(run_name)
+        .fetch_optional(pool)
+        .await?;
+
+    if let Some(row) = row {
+        let project_id: i64 = row.get("project_id");
+        let route_id: i64 = row.get("route_id");
+
+        sqlx::query("UPDATE project_runs SET status = ? WHERE run_name = ?")
+            .bind(status.as_str())
+            .bind(run_name)
+            .execute(pool)
+            .await?;
+
+        // Bump tree generation so the frontend picks up the change
+        let state = DeltaState {
+            project_id,
+            route_id,
+        };
+        state.bump_tree_generation().await?;
+    }
+
+    Ok(())
+}
+
+/// List all working project runs (for daemon polling)
+pub async fn list_working_project_runs() -> DeltaStateResult<Vec<(i64, i64, String)>> {
+    let pool = global_pool().await;
+    ensure_schema(pool).await?;
+
+    let rows = sqlx::query(
+        "SELECT project_id, route_id, run_name FROM project_runs WHERE status = 'working'",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let runs = rows
+        .into_iter()
+        .map(|row| {
+            (
+                row.get::<i64, _>("project_id"),
+                row.get::<i64, _>("route_id"),
+                row.get::<String, _>("run_name"),
+            )
+        })
+        .collect();
+
+    Ok(runs)
+}

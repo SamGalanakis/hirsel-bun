@@ -1,66 +1,23 @@
-//! Database schema for delta tables
+//! Database schema for board tables
 
 use sqlx::SqlitePool;
 use tokio::sync::OnceCell;
 
-/// Schema for delta tables
+/// Schema for board tables
 ///
 /// All route-scoped tables include route_id for isolation between parallel exploration routes.
 pub const SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS draft_nodes (
+CREATE TABLE IF NOT EXISTS board_nodes (
     id TEXT NOT NULL,
     project_id INTEGER NOT NULL,
     route_id INTEGER NOT NULL,
     parent_id TEXT,
     position INTEGER NOT NULL DEFAULT 0,
     name TEXT NOT NULL,
-    node_type TEXT NOT NULL DEFAULT 'task',
+    kind TEXT NOT NULL DEFAULT 'task',
+    source TEXT NOT NULL DEFAULT 'user',
     content TEXT NOT NULL DEFAULT '',
-    x REAL,
-    y REAL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (id, project_id, route_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_draft_nodes_project ON draft_nodes(project_id);
-CREATE INDEX IF NOT EXISTS idx_draft_nodes_route ON draft_nodes(route_id);
-CREATE INDEX IF NOT EXISTS idx_draft_nodes_parent ON draft_nodes(parent_id);
-
-CREATE TABLE IF NOT EXISTS draft_node_validated_by (
-    eval_id TEXT NOT NULL,
-    task_id TEXT NOT NULL,
-    project_id INTEGER NOT NULL,
-    route_id INTEGER NOT NULL,
-    PRIMARY KEY (project_id, route_id, eval_id, task_id)
-);
-CREATE INDEX IF NOT EXISTS idx_draft_validated_by_eval ON draft_node_validated_by(eval_id);
-CREATE INDEX IF NOT EXISTS idx_draft_validated_by_task ON draft_node_validated_by(task_id);
-CREATE INDEX IF NOT EXISTS idx_draft_validated_by_route ON draft_node_validated_by(route_id);
-
-CREATE TABLE IF NOT EXISTS draft_node_blocked_by (
-    node_id TEXT NOT NULL,
-    blocker_id TEXT NOT NULL,
-    project_id INTEGER NOT NULL,
-    route_id INTEGER NOT NULL,
-    PRIMARY KEY (project_id, route_id, node_id, blocker_id)
-);
-CREATE INDEX IF NOT EXISTS idx_draft_blocked_node ON draft_node_blocked_by(node_id);
-CREATE INDEX IF NOT EXISTS idx_draft_blocked_blocker ON draft_node_blocked_by(blocker_id);
-CREATE INDEX IF NOT EXISTS idx_draft_blocked_route ON draft_node_blocked_by(route_id);
-
-CREATE TABLE IF NOT EXISTS live_nodes (
-    id TEXT NOT NULL,
-    project_id INTEGER NOT NULL,
-    route_id INTEGER NOT NULL,
-    draft_node_id TEXT,
-    parent_id TEXT,
-    position INTEGER NOT NULL DEFAULT 0,
-    name TEXT NOT NULL,
-    node_type TEXT NOT NULL DEFAULT 'task',
-    content TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'pending',
-    source TEXT NOT NULL DEFAULT 'spec',
+    status TEXT NOT NULL DEFAULT 'draft',
     x REAL,
     y REAL,
     created_at TEXT NOT NULL,
@@ -72,61 +29,40 @@ CREATE TABLE IF NOT EXISTS live_nodes (
     claimed_by TEXT,
     claimed_at TEXT,
     completed_by TEXT,
-    eval_result TEXT,
-    eval_feedback TEXT,
+    check_result TEXT,
+    check_feedback TEXT,
     tokens_used INTEGER,
     PRIMARY KEY (id, project_id, route_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_live_nodes_project ON live_nodes(project_id);
-CREATE INDEX IF NOT EXISTS idx_live_nodes_route ON live_nodes(route_id);
-CREATE INDEX IF NOT EXISTS idx_live_nodes_parent ON live_nodes(parent_id);
-CREATE INDEX IF NOT EXISTS idx_live_nodes_project_status ON live_nodes(project_id, status);
-CREATE INDEX IF NOT EXISTS idx_live_nodes_route_status ON live_nodes(route_id, status);
-CREATE INDEX IF NOT EXISTS idx_live_nodes_claimed ON live_nodes(project_id, claimed_by) WHERE status = 'working';
+CREATE INDEX IF NOT EXISTS idx_board_nodes_project ON board_nodes(project_id);
+CREATE INDEX IF NOT EXISTS idx_board_nodes_route ON board_nodes(route_id);
+CREATE INDEX IF NOT EXISTS idx_board_nodes_parent ON board_nodes(parent_id);
+CREATE INDEX IF NOT EXISTS idx_board_nodes_project_status ON board_nodes(project_id, status);
+CREATE INDEX IF NOT EXISTS idx_board_nodes_route_status ON board_nodes(route_id, status);
+CREATE INDEX IF NOT EXISTS idx_board_nodes_claimed ON board_nodes(project_id, claimed_by) WHERE status = 'working';
 
-CREATE TABLE IF NOT EXISTS live_node_validated_by (
-    eval_id TEXT NOT NULL,
-    task_id TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS board_node_checked_by (
+    check_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
     project_id INTEGER NOT NULL,
     route_id INTEGER NOT NULL,
-    PRIMARY KEY (project_id, route_id, eval_id, task_id)
+    PRIMARY KEY (project_id, route_id, check_id, node_id)
 );
-CREATE INDEX IF NOT EXISTS idx_live_validated_by_eval ON live_node_validated_by(eval_id);
-CREATE INDEX IF NOT EXISTS idx_live_validated_by_task ON live_node_validated_by(task_id);
-CREATE INDEX IF NOT EXISTS idx_live_validated_by_route ON live_node_validated_by(route_id);
+CREATE INDEX IF NOT EXISTS idx_board_checked_by_check ON board_node_checked_by(check_id);
+CREATE INDEX IF NOT EXISTS idx_board_checked_by_node ON board_node_checked_by(node_id);
+CREATE INDEX IF NOT EXISTS idx_board_checked_by_route ON board_node_checked_by(route_id);
 
-CREATE TABLE IF NOT EXISTS live_node_blocked_by (
+CREATE TABLE IF NOT EXISTS board_node_blocked_by (
     node_id TEXT NOT NULL,
     blocker_id TEXT NOT NULL,
     project_id INTEGER NOT NULL,
     route_id INTEGER NOT NULL,
     PRIMARY KEY (project_id, route_id, node_id, blocker_id)
 );
-CREATE INDEX IF NOT EXISTS idx_live_blocked_node ON live_node_blocked_by(node_id);
-CREATE INDEX IF NOT EXISTS idx_live_blocked_blocker ON live_node_blocked_by(blocker_id);
-CREATE INDEX IF NOT EXISTS idx_live_blocked_route ON live_node_blocked_by(route_id);
-
-CREATE TABLE IF NOT EXISTS delta_submissions (
-    id INTEGER PRIMARY KEY,
-    project_id INTEGER NOT NULL,
-    route_id INTEGER NOT NULL,
-    batch_id INTEGER,
-    delta_type TEXT NOT NULL,
-    draft_node_id TEXT,
-    live_node_id TEXT,
-    name TEXT NOT NULL,
-    description TEXT NOT NULL,
-    priority INTEGER DEFAULT 0,
-    status TEXT NOT NULL DEFAULT 'pending',
-    refs TEXT DEFAULT '[]',
-    created_at TEXT NOT NULL,
-    processed_at TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_delta_submissions_project ON delta_submissions(project_id);
-CREATE INDEX IF NOT EXISTS idx_delta_submissions_route ON delta_submissions(route_id);
-CREATE INDEX IF NOT EXISTS idx_delta_submissions_batch ON delta_submissions(batch_id);
+CREATE INDEX IF NOT EXISTS idx_board_blocked_node ON board_node_blocked_by(node_id);
+CREATE INDEX IF NOT EXISTS idx_board_blocked_blocker ON board_node_blocked_by(blocker_id);
+CREATE INDEX IF NOT EXISTS idx_board_blocked_route ON board_node_blocked_by(route_id);
 
 CREATE TABLE IF NOT EXISTS project_runs (
     id INTEGER PRIMARY KEY,
@@ -146,7 +82,6 @@ CREATE TABLE IF NOT EXISTS board_versions (
     id INTEGER PRIMARY KEY,
     project_id INTEGER NOT NULL,
     route_id INTEGER NOT NULL,
-    batch_id INTEGER NOT NULL,
     version_number INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     description TEXT,

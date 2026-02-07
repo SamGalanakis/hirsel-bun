@@ -41,7 +41,7 @@ const POOL_EVICTION_TIMEOUT: Duration = Duration::from_secs(600);
 /// The global database at `~/.hirsel/hirsel.db` stores:
 /// - Projects
 /// - Credentials
-/// - Delta state (draft/live trees)
+/// - Board state (board tree)
 /// - Gyp chat history
 /// - Project messages
 pub async fn global_pool() -> &'static SqlitePool {

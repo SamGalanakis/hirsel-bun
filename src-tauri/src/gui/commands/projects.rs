@@ -223,7 +223,7 @@ async fn propagate_settings_to_active_run(
         state
             .set_worker_scale(scale)
             .await
-            .map_err(|e| format!("Failed to set worker_scale: {}", e))?;
+            .context("Failed to set worker_scale")?;
         tracing::info!("Propagated worker_scale={} to run {}", scale, run.run_name);
     }
 
@@ -232,7 +232,7 @@ async fn propagate_settings_to_active_run(
         state
             .set_time_limit_minutes(Some(limit))
             .await
-            .map_err(|e| format!("Failed to set time_limit_minutes: {}", e))?;
+            .context("Failed to set time_limit_minutes")?;
         tracing::info!(
             "Propagated time_limit_minutes={} to run {}",
             limit,
@@ -245,7 +245,7 @@ async fn propagate_settings_to_active_run(
         state
             .set_human_in_the_loop(hitl)
             .await
-            .map_err(|e| format!("Failed to set human_in_the_loop: {}", e))?;
+            .context("Failed to set human_in_the_loop")?;
         tracing::info!(
             "Propagated human_in_the_loop={} to run {}",
             hitl,

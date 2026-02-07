@@ -1,10 +1,12 @@
 /**
- * SpecBoard - Canvas-based Delta Board
+ * SpecBoard - Canvas-based Unified Board Tree
  *
- * Renders draft and live trees with:
- * - Compact auto-sized nodes
- * - Single tree before first dispatch, split view after
- * - Draft editable via context menu, live read-only
+ * Renders a single unified board tree where nodes have:
+ * - kind: spec | task | eval
+ * - status: draft | pending | working | done | awaiting_check | validated | needs_repair | failed
+ * - source: user | plan | worker | system
+ *
+ * Draft spec nodes are editable. Dispatched nodes show status via glows/badges.
  */
 
 import {
@@ -17,31 +19,30 @@ import {
   onCleanup,
 } from 'solid-js';
 import { invoke } from '../../lib/invoke';
+import { on as onEvent } from '../../lib/events';
 import { useProject, useRoute } from '../../stores';
 import { useDelta } from '../../stores/delta-context';
 import { Icon } from '../shared';
+import { amber, sage, terra } from '../../lib/theme-colors';
 import { CanvasToolbar } from '../layout/CanvasToolbar';
 import { TaskEditorModal } from './TaskEditorModal';
 import { DeliveryDialog } from './DeliveryDialog';
 import { ForkRouteDialog } from './ForkRouteDialog';
 import { MarkdownContent } from '../docs/MarkdownContent';
 import { computeElkLayout, type LayoutInputNode, type ElkLayoutResult } from '../../lib/elk-layout';
+import { NodeFinder, type NodeFinderItem } from './NodeFinder';
+import { buildFocusIndices, computeFocusSet } from '../../lib/specboard/focus';
+import { contentYToRelative, panForContentPoint, viewportCenterPoint, zoomAroundViewportPoint } from '../../lib/specboard/navigation';
 import type {
-  DraftNodeTree,
-  LiveNodeTree,
-  TreeDiff,
-  NodeType,
-  LiveNodeStatus,
+  BoardNodeTree,
+  NodeKind,
+  BoardNodeStatus,
 } from '../../lib/types';
 
 // =============================================================================
 // Layout Constants
 // =============================================================================
 
-// UI-only constants (not used for layout computation)
-const DIVIDER_WIDTH = 40;
-
-// Text rendering constants (must match what Rust uses)
 const CHAR_WIDTH = 5.8;
 const TEXT_PADDING = 20;
 
@@ -50,25 +51,22 @@ interface NodePosition {
   y: number;
   width: number;
   height: number;
-  lines: string[]; // Wrapped text lines
+  lines: string[];
+  layer: number;
 }
 
 // =============================================================================
 // Helper: Wrap text to fit within a given width
 // =============================================================================
 
-/** Wrap text to fit within the given pixel width (from Rust layout) */
 function wrapTextToWidth(name: string, width: number): string[] {
-  // Derive max chars from width: width = chars * CHAR_WIDTH + TEXT_PADDING
   const maxChars = Math.floor((width - TEXT_PADDING) / CHAR_WIDTH);
-  const charsPerLine = Math.max(8, maxChars); // Minimum 8 chars
+  const charsPerLine = Math.max(8, maxChars);
 
-  // If name fits on one line, use single line
   if (name.length <= charsPerLine) {
     return [name];
   }
 
-  // Wrap text into multiple lines
   const words = name.split(/\s+/);
   const lines: string[] = [];
   let currentLine = '';
@@ -79,16 +77,14 @@ function wrapTextToWidth(name: string, width: number): string[] {
       currentLine = testLine;
     } else {
       if (currentLine) lines.push(currentLine);
-      // If a single word is too long, truncate it
-      currentLine = word.length > charsPerLine ? word.slice(0, charsPerLine - 1) + '…' : word;
+      currentLine = word.length > charsPerLine ? word.slice(0, charsPerLine - 1) + '\u2026' : word;
     }
   }
   if (currentLine) lines.push(currentLine);
 
-  // Cap at 2 lines max
   if (lines.length > 2) {
     lines.length = 2;
-    lines[1] = lines[1].slice(0, -1) + '…';
+    lines[1] = lines[1].slice(0, -1) + '\u2026';
   }
 
   return lines;
@@ -98,173 +94,87 @@ function wrapTextToWidth(name: string, width: number): string[] {
 // Layout Types
 // =============================================================================
 
-/** Computed edge route with waypoints */
 interface EdgeRoute {
   from: string;
   to: string;
   type: 'blockedBy' | 'validates' | 'hierarchy' | 'resolves';
-  waypoints: [number, number][]; // Full path through all waypoints
+  waypoints: [number, number][];
 }
 
 interface LayoutTreeResult {
   positions: Map<string, NodePosition>;
   width: number;
   height: number;
-  evalsWithValidates: { id: string; validates: string[] }[];
+  checksWithValidates: { id: string; validates: string[] }[];
   edgeRoutes: EdgeRoute[];
 }
 
 // =============================================================================
-// Node Card Components
+// Node Card Component (unified — renders based on kind + status)
 // =============================================================================
 
-const DraftNodeCard: Component<{
-  node: DraftNodeTree;
+const BoardNodeCard: Component<{
+  node: BoardNodeTree;
   position: NodePosition;
-  diff: TreeDiff | null;
-  showDelta: boolean;
   selected: boolean;
+  dimmed: boolean;
+  collapsed: boolean;
+  hiddenCounts: {
+    working: number;
+    pending: number;
+    done: number;
+    needsRepair: number;
+    failed: number;
+    checks: number;
+  } | null;
   onSelect: () => void;
   onDoubleClick: () => void;
   onContextMenu: (e: MouseEvent) => void;
+  onEnterScope: () => void;
+  onToggleCollapse: () => void;
+  nodeMap: Map<string, BoardNodeTree>;
 }> = (props) => {
-  const isNew = () =>
-    props.showDelta && props.diff?.newNodes.some((n) => n.id === props.node.id);
-  const isModified = () =>
-    props.showDelta && props.diff?.modifiedNodes.some((m) => m.draftNode.id === props.node.id);
-  const isEval = () => props.node.nodeType === 'eval';
-  const isContainer = () => !isEval() && props.node.children.length > 0;
-  const isMultiLine = () => props.position.lines.length > 1;
-
-  // ==========================================================================
-  // Visual Hierarchy - Distinguished by SHAPE, BORDER, and GRADIENT
-  // NO color for delta status - colors reserved for live status only
-  // ==========================================================================
-
-  // EVAL: The gate/checkpoint - DASHED border, sage-tinted (green) to match validates edges
-  const evalStyles = () => ({
-    bg: 'var(--node-eval-bg)',
-    border: props.selected ? 'var(--node-eval-border-selected)' : 'var(--node-eval-border)',
-    borderWidth: '1px',
-    borderStyle: 'dashed',
-    textColor: 'var(--wool-300)',
-    radius: '5px',
-    boxShadow: props.selected
-      ? '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.03)'
-      : '0 2px 4px rgba(0,0,0,0.25)',
-  });
-
-  // CONTAINER: Organizational grouping - ghost style, recedes visually
-  const containerStyles = () => ({
-    bg: 'transparent',
-    border: props.selected ? 'var(--wool-500)' : 'var(--wool-700)',
-    borderWidth: '1px',
-    borderStyle: 'dashed',
-    textColor: 'var(--wool-500)',
-    radius: '5px',
-    boxShadow: 'none',
-  });
-
-  // TASK: The sheep - warmer, more grounded gradient
-  const taskStyles = () => ({
-    bg: 'var(--node-task-bg)',
-    border: props.selected ? 'var(--node-task-border-selected)' : 'var(--node-task-border)',
-    borderWidth: '1px',
-    borderStyle: 'solid',
-    textColor: 'var(--wool-300)',
-    radius: '5px',
-    boxShadow: props.selected
-      ? '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.03)'
-      : '0 2px 4px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.02)',
-  });
-
-  const styles = () => isEval() ? evalStyles() : isContainer() ? containerStyles() : taskStyles();
-
-  return (
-    <div
-      class={`absolute cursor-pointer group ${props.selected ? 'z-10' : ''}`}
-      style={{
-        left: `${props.position.x}px`,
-        top: `${props.position.y}px`,
-        width: `${props.position.width}px`,
-        height: `${props.position.height}px`,
-      }}
-      onClick={() => props.onSelect()}
-      onDblClick={() => props.onDoubleClick()}
-      onContextMenu={(e) => props.onContextMenu(e)}
-    >
-      <div
-        class={`h-full flex items-center justify-center px-2 relative ${isMultiLine() ? 'flex-col py-1' : ''}`}
-        style={{
-          background: styles().bg,
-          border: `${styles().borderWidth} ${styles().borderStyle} ${styles().border}`,
-          'border-radius': styles().radius,
-          'box-shadow': styles().boxShadow,
-        }}
-      >
-        {/* Name text - centered */}
-        <div class={`min-w-0 ${isMultiLine() ? 'flex flex-col gap-0.5 items-center' : ''}`}>
-          <For each={props.position.lines}>
-            {(line) => (
-              <span
-                class="text-[10px] truncate leading-tight block font-medium text-center"
-                style={{ color: styles().textColor }}
-              >
-                {line}
-              </span>
-            )}
-          </For>
-        </div>
-      </div>
-      {/* Connection anchor indicators (visible on hover) */}
-      <div class="absolute left-1/2 -bottom-1 w-1.5 h-1.5 rounded-full bg-wool-600/50 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity" />
-      <div class="absolute left-1/2 -top-1 w-1.5 h-1.5 rounded-full bg-wool-600/50 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity" />
-    </div>
-  );
-};
-
-const LiveNodeCard: Component<{
-  node: LiveNodeTree;
-  position: NodePosition;
-  diff: TreeDiff | null;
-  showDelta: boolean;
-  selected: boolean;
-  onSelect: () => void;
-  nodeMap: Map<string, LiveNodeTree>;
-}> = (props) => {
-  const isDeleted = () =>
-    props.showDelta && props.diff?.deletedNodes.some((n) => n.id === props.node.id);
-  const isEval = () => props.node.nodeType === 'eval';
-  // Container: task with children (organizational grouping - cannot be claimed)
-  const isContainer = () => !isEval() && props.node.children.length > 0;
+  const isDraft = () => props.node.status === 'draft';
+  const isCheck = () => props.node.kind === 'check';
+  const isFeature = () => props.node.kind === 'feature';
+  const isRoot = () => props.node.parentId === null && props.node.kind === 'feature';
+  const isFeatureNode = () => props.node.kind === 'feature' && !isRoot();
   const isMultiLine = () => props.position.lines.length > 1;
   const isWorking = () => props.node.status === 'working';
   const isDone = () => props.node.status === 'done';
-  const isAwaitingEval = () => props.node.status === 'awaiting_eval';
+  const isAwaitingCheck = () => props.node.status === 'awaiting_check';
   const isValidated = () => props.node.status === 'validated';
   const isNeedsRepair = () => props.node.status === 'needs_repair';
-  const isComplete = () => isDone() || isValidated() || isAwaitingEval();
+  const isComplete = () => isDone() || isValidated() || isAwaitingCheck();
   const isFailed = () => props.node.status === 'failed';
   const isClaimable = () => {
     if (props.node.status !== 'pending') return false;
     if (props.node.claimedBy) return false;
     if (props.node.children.length > 0) return false;
+
+    // Check nodes with no explicit validates targets are blocked
+    // until all non-check siblings (or all non-check nodes if root-level) are done
+    if (isCheck() && props.node.validates.length === 0) {
+      const isWorkDone = (s: string) => s === 'done' || s === 'validated' || s === 'awaiting_check';
+      for (const [, n] of props.nodeMap) {
+        if (n.id === props.node.id || n.kind === 'check' || n.status === 'draft') continue;
+        // If has same parent (sibling) or root-level check (all nodes are scope)
+        const sameScope = props.node.parentId === null || n.parentId === props.node.parentId;
+        if (sameScope && !isWorkDone(n.status)) return false;
+      }
+    }
+
     if (props.node.blockedBy.length === 0) return true;
     return props.node.blockedBy.every(id => {
       const blocker = props.nodeMap.get(id);
-      return blocker && (blocker.status === 'done' || blocker.status === 'validated' || blocker.status === 'awaiting_eval');
+      return blocker && (blocker.status === 'done' || blocker.status === 'validated' || blocker.status === 'awaiting_check');
     });
   };
 
-  // ==========================================================================
-  // Visual Hierarchy - Identical to DraftNodeCard
-  // Status shown via subtle external glow only (no internal changes)
-  // ==========================================================================
-
-  // EVAL: The gate/checkpoint - DASHED border, sage-tinted (green) to match validates edges
-  const evalStyles = () => ({
-    bg: 'var(--node-eval-bg)',
-    border: props.selected ? 'var(--node-eval-border-selected)' : 'var(--node-eval-border)',
+  // CHECK: dashed border, sage-tinted
+  const checkStyles = () => ({
+    bg: 'var(--node-check-bg)',
+    border: props.selected ? 'var(--node-check-border-selected)' : 'var(--node-check-border)',
     borderWidth: '1px',
     borderStyle: 'dashed',
     textColor: 'var(--wool-300)',
@@ -274,18 +184,31 @@ const LiveNodeCard: Component<{
       : '0 2px 4px rgba(0,0,0,0.25)',
   });
 
-  // CONTAINER: Organizational grouping - ghost style, recedes visually
-  const containerStyles = () => ({
-    bg: 'transparent',
-    border: props.selected ? 'var(--wool-500)' : 'var(--wool-700)',
-    borderWidth: '1px',
-    borderStyle: 'dashed',
-    textColor: 'var(--wool-500)',
-    radius: '5px',
-    boxShadow: 'none',
+  // ROOT (project origin): warm amber cornerstone
+  const rootStyles = () => ({
+    bg: 'var(--node-root-bg)',
+    border: props.selected ? 'var(--node-root-border-selected)' : 'var(--node-root-border)',
+    borderWidth: '1.5px',
+    borderStyle: 'solid',
+    textColor: 'var(--wool-100)',
+    radius: '6px',
+    boxShadow: props.selected ? 'var(--node-root-glow-selected)' : 'var(--node-root-glow)',
   });
 
-  // TASK: The sheep - warmer, more grounded gradient
+  // FEATURE (kind=feature, non-root): warm solid card with accent
+  const featureStyles = () => ({
+    bg: 'var(--node-feature-bg)',
+    border: props.selected ? 'var(--node-feature-border-selected)' : 'var(--node-feature-border)',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    textColor: 'var(--wool-200)',
+    radius: '5px',
+    boxShadow: props.selected
+      ? '0 3px 10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.02)'
+      : '0 1px 3px rgba(0,0,0,0.2)',
+  });
+
+  // TASK / SPEC leaf: solid card
   const taskStyles = () => ({
     bg: 'var(--node-task-bg)',
     border: props.selected ? 'var(--node-task-border-selected)' : 'var(--node-task-border)',
@@ -298,20 +221,20 @@ const LiveNodeCard: Component<{
       : '0 2px 4px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.02)',
   });
 
-  const styles = () => isEval() ? evalStyles() : isContainer() ? containerStyles() : taskStyles();
+  const styles = () => isCheck() ? checkStyles() : isRoot() ? rootStyles() : isFeatureNode() ? featureStyles() : taskStyles();
 
-  // Status glow - external indicator that doesn't affect card dimensions
+  // Status glow — only for dispatched (non-draft) nodes
   const statusGlow = () => {
+    if (isDraft()) return undefined;
     if (isWorking()) return 'var(--glow-working)';
     if (isValidated()) return 'var(--glow-validated, var(--glow-done))';
-    if (isDone() || isAwaitingEval()) return 'var(--glow-done)';
+    if (isDone() || isAwaitingCheck()) return 'var(--glow-done)';
     if (isNeedsRepair()) return 'var(--glow-needs-repair, 0 0 8px rgba(201, 162, 39, 0.4))';
     if (isFailed()) return 'var(--glow-failed)';
     if (isClaimable()) return 'var(--glow-claimable)';
-    return undefined;  // pending but blocked = no glow
+    return undefined;
   };
 
-  // Combined shadow: base shadow + status glow
   const combinedShadow = () => {
     const shadows: string[] = [styles().boxShadow];
     const glow = statusGlow();
@@ -327,24 +250,70 @@ const LiveNodeCard: Component<{
         top: `${props.position.y}px`,
         width: `${props.position.width}px`,
         height: `${props.position.height}px`,
+        opacity: props.dimmed ? 0.18 : 1,
+        filter: props.dimmed ? 'saturate(0.85)' : undefined,
+        transition: 'opacity 140ms ease-out, filter 140ms ease-out',
       }}
       onClick={() => props.onSelect()}
+      onDblClick={() => props.onDoubleClick()}
+      onContextMenu={(e) => props.onContextMenu(e)}
     >
       <div
-        class={`h-full flex items-center justify-center px-2 relative ${isDeleted() ? 'opacity-40' : ''} ${isMultiLine() ? 'flex-col py-1' : ''}`}
+        class={`h-full flex items-center justify-center px-2 relative ${isMultiLine() ? 'flex-col py-1' : ''}`}
         style={{
           background: styles().bg,
-          border: `${styles().borderWidth} ${styles().borderStyle} ${isDeleted() ? 'rgba(196, 92, 74, 0.4)' : styles().border}`,
+          border: `${styles().borderWidth} ${styles().borderStyle} ${styles().border}`,
           'border-radius': styles().radius,
           'box-shadow': combinedShadow(),
+          transform: props.selected ? 'translateY(-1px)' : undefined,
+          transition: 'transform 160ms ease-out, box-shadow 160ms ease-out',
         }}
       >
-        {/* Name text - centered */}
+        {/* Collapse chevron (features only) */}
+        <Show when={isFeature() && !isDraft()}>
+          <button
+            type="button"
+            class="absolute left-1 top-1 w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+            style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.06)' }}
+            title={props.collapsed ? 'Expand' : 'Collapse'}
+            onClick={(e) => { e.stopPropagation(); props.onToggleCollapse(); }}
+          >
+            <Icon name={props.collapsed ? 'chevron-right' : 'chevron-down'} class="w-3 h-3 text-wool-500" />
+          </button>
+        </Show>
+
+        {/* Enter scope (features only) */}
+        <Show when={isFeature() && !isDraft()}>
+          <button
+            type="button"
+            class="absolute right-1 top-1 w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+            style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.06)' }}
+            title="Focus this feature"
+            onClick={(e) => { e.stopPropagation(); props.onEnterScope(); }}
+          >
+            <Icon name="corner-down-right" class="w-3 h-3 text-wool-500" />
+          </button>
+        </Show>
+
+        {/* Root accent bar */}
+        <Show when={isRoot()}>
+          <div class="absolute inset-x-0 top-0 h-[1.5px] rounded-t" style={{ background: 'linear-gradient(90deg, transparent 10%, var(--amber-600) 50%, transparent 90%)' }} />
+        </Show>
+        {/* Feature left accent bar */}
+        <Show when={isFeatureNode()}>
+          <div class="absolute inset-y-0 left-0 w-[1.5px] rounded-l"
+            style={{ background: 'linear-gradient(180deg, transparent 15%, var(--amber-700) 50%, transparent 85%)' }} />
+        </Show>
+        {/* Name text */}
         <div class={`min-w-0 ${isMultiLine() ? 'flex flex-col gap-0.5 items-center' : ''}`}>
           <For each={props.position.lines}>
             {(line) => (
               <span
-                class="text-[10px] truncate leading-tight block font-medium text-center"
+                class={`truncate leading-tight block text-center ${
+                  isRoot() ? 'text-[11px] font-semibold italic'
+                  : isFeatureNode() ? 'text-[11px] font-medium'
+                  : 'text-[10px] font-medium'
+                }`}
                 style={{ color: styles().textColor }}
               >
                 {line}
@@ -352,10 +321,55 @@ const LiveNodeCard: Component<{
             )}
           </For>
         </div>
+
+        {/* Collapsed counts chips */}
+        <Show when={props.collapsed && props.hiddenCounts}>
+          {(counts) => (
+            <div
+              class="absolute -bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 px-1.5 py-0.5 rounded-full"
+              style={{
+                background: 'rgba(20,20,22,0.92)',
+                border: '1px solid rgba(255,255,255,0.08)',
+                'box-shadow': '0 6px 18px rgba(0,0,0,0.35)',
+              }}
+            >
+              <Show when={counts().working > 0}>
+                <span class="px-1.5 py-0.5 rounded-full text-[9px] font-medium" style={{ color: 'var(--amber-400)', background: 'rgba(212,165,116,0.12)' }}>
+                  W {counts().working}
+                </span>
+              </Show>
+              <Show when={counts().pending > 0}>
+                <span class="px-1.5 py-0.5 rounded-full text-[9px] font-medium" style={{ color: 'var(--wool-400)', background: 'rgba(255,255,255,0.06)' }}>
+                  P {counts().pending}
+                </span>
+              </Show>
+              <Show when={counts().done > 0}>
+                <span class="px-1.5 py-0.5 rounded-full text-[9px] font-medium" style={{ color: 'var(--sage-light, var(--sage))', background: 'rgba(125,153,112,0.14)' }}>
+                  D {counts().done}
+                </span>
+              </Show>
+              <Show when={counts().needsRepair > 0}>
+                <span class="px-1.5 py-0.5 rounded-full text-[9px] font-medium" style={{ color: 'var(--golden-light, var(--golden))', background: 'rgba(201,162,39,0.14)' }}>
+                  R {counts().needsRepair}
+                </span>
+              </Show>
+              <Show when={counts().failed > 0}>
+                <span class="px-1.5 py-0.5 rounded-full text-[9px] font-medium" style={{ color: 'var(--terra-light, var(--terra))', background: 'rgba(196,92,74,0.14)' }}>
+                  F {counts().failed}
+                </span>
+              </Show>
+              <Show when={counts().checks > 0}>
+                <span class="px-1.5 py-0.5 rounded-full text-[9px] font-medium" style={{ color: 'var(--sage)', background: 'rgba(85,115,75,0.12)' }}>
+                  C {counts().checks}
+                </span>
+              </Show>
+            </div>
+          )}
+        </Show>
       </div>
 
-      {/* Status corner badge */}
-      <Show when={isComplete() || isFailed() || isWorking() || isNeedsRepair()}>
+      {/* Status corner badge — only for non-draft nodes */}
+      <Show when={!isDraft() && (isComplete() || isFailed() || isWorking() || isNeedsRepair())}>
         <div
           class="absolute -top-1 -right-1 flex items-center justify-center rounded-full"
           style={{
@@ -365,20 +379,17 @@ const LiveNodeCard: Component<{
             'box-shadow': '0 1px 3px rgba(0,0,0,0.3)',
           }}
         >
-          {/* Done or awaiting eval: single check */}
-          <Show when={isDone() || isAwaitingEval()}>
+          <Show when={isDone() || isAwaitingCheck()}>
             <svg class="w-2.5 h-2.5 text-pasture-900" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
               <path d="M20 6 9 17l-5-5" />
             </svg>
           </Show>
-          {/* Validated: double check (verified) */}
           <Show when={isValidated()}>
             <svg class="w-2.5 h-2.5 text-pasture-900" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M18 6 7 17l-5-5" />
               <path d="m22 10-7.5 7.5L13 16" />
             </svg>
           </Show>
-          {/* Needs repair: warning/wrench */}
           <Show when={isNeedsRepair()}>
             <svg class="w-2.5 h-2.5 text-pasture-900" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 9v4M12 17h.01" />
@@ -397,15 +408,7 @@ const LiveNodeCard: Component<{
         </div>
       </Show>
 
-      {/* Deleted indicator */}
-      <Show when={isDeleted()}>
-        <div
-          class="absolute left-0 top-1 bottom-1 w-0.5 rounded-full"
-          style={{ background: 'var(--terra)' }}
-        />
-      </Show>
-
-      {/* Connection anchor indicators (visible on hover) */}
+      {/* Connection anchors */}
       <div class="absolute left-1/2 -bottom-1 w-1.5 h-1.5 rounded-full bg-wool-600/50 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity" />
       <div class="absolute left-1/2 -top-1 w-1.5 h-1.5 rounded-full bg-wool-600/50 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity" />
     </div>
@@ -413,192 +416,127 @@ const LiveNodeCard: Component<{
 };
 
 // =============================================================================
-// Dependency Connectors (Polyline through waypoints)
+// Smooth Edge Path Builder
+// =============================================================================
+
+function buildSmoothPath(waypoints: [number, number][]): string {
+  if (waypoints.length < 2) return '';
+  if (waypoints.length === 2) {
+    return `M ${waypoints[0][0]} ${waypoints[0][1]} L ${waypoints[1][0]} ${waypoints[1][1]}`;
+  }
+  const parts: string[] = [`M ${waypoints[0][0]} ${waypoints[0][1]}`];
+  const radius = 6;
+
+  for (let i = 1; i < waypoints.length - 1; i++) {
+    const prev = waypoints[i - 1];
+    const curr = waypoints[i];
+    const next = waypoints[i + 1];
+
+    const dx1 = curr[0] - prev[0];
+    const dy1 = curr[1] - prev[1];
+    const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+    const dx2 = next[0] - curr[0];
+    const dy2 = next[1] - curr[1];
+    const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+
+    const r1 = Math.min(radius, len1 / 2);
+    const r2 = Math.min(radius, len2 / 2);
+
+    const beforeX = curr[0] - (dx1 / len1) * r1;
+    const beforeY = curr[1] - (dy1 / len1) * r1;
+    const afterX = curr[0] + (dx2 / len2) * r2;
+    const afterY = curr[1] + (dy2 / len2) * r2;
+
+    parts.push(`L ${beforeX} ${beforeY}`);
+    parts.push(`Q ${curr[0]} ${curr[1]} ${afterX} ${afterY}`);
+  }
+
+  const last = waypoints[waypoints.length - 1];
+  parts.push(`L ${last[0]} ${last[1]}`);
+  return parts.join(' ');
+}
+
+// =============================================================================
+// Dependency Connectors
 // =============================================================================
 
 const DependencyConnectors: Component<{
   edgeRoutes: EdgeRoute[];
+  edgeToggles: () => { hierarchy: boolean; blockedBy: boolean; validates: boolean; resolves: boolean };
+  focusSet: () => Set<string> | null;
+  selectedNodeId: () => string | null;
 }> = (props) => {
-  // Separate hierarchy edges (render first, behind) from dependency edges
-  const hierarchyEdges = () => props.edgeRoutes.filter(e => e.type === 'hierarchy');
-  const dependencyEdges = () => props.edgeRoutes.filter(e => e.type !== 'hierarchy');
+  const shouldShowEdge = (e: EdgeRoute) => {
+    const toggles = props.edgeToggles();
+    const focus = props.focusSet();
+    const selected = props.selectedNodeId();
+
+    // Hide edges outside focus lens.
+    if (focus) {
+      if (!focus.has(e.from) || !focus.has(e.to)) return false;
+    }
+
+    if (e.type === 'hierarchy') return toggles.hierarchy;
+
+    const toggleOn =
+      e.type === 'blockedBy' ? toggles.blockedBy
+      : e.type === 'validates' ? toggles.validates
+      : toggles.resolves;
+
+    // Selection override: if dependency toggles are off, still show deps touching selected.
+    if (!toggleOn && selected) {
+      return e.from === selected || e.to === selected;
+    }
+    return toggleOn;
+  };
+
+  const hierarchyEdges = () => props.edgeRoutes.filter(e => e.type === 'hierarchy' && shouldShowEdge(e));
+  const dependencyEdges = () => props.edgeRoutes.filter(e => e.type !== 'hierarchy' && shouldShowEdge(e));
 
   return (
     <svg class="absolute inset-0 pointer-events-none overflow-visible" style={{ 'z-index': 0 }}>
-      {/* Arrowhead markers for blocked-by edges */}
       <defs>
-        <marker
-          id="arrowhead-blocked"
-          markerWidth="6"
-          markerHeight="5"
-          refX="5"
-          refY="2.5"
-          orient="auto"
-          markerUnits="strokeWidth"
-        >
+        <marker id="arrowhead-blocked" markerWidth="6" markerHeight="5" refX="5" refY="2.5" orient="auto" markerUnits="strokeWidth">
           <polygon points="0,0 6,2.5 0,5" fill="var(--edge-blocked-by)" />
         </marker>
-        <marker
-          id="arrowhead-validates"
-          markerWidth="6"
-          markerHeight="5"
-          refX="5"
-          refY="2.5"
-          orient="auto"
-          markerUnits="strokeWidth"
-        >
+        <marker id="arrowhead-validates" markerWidth="6" markerHeight="5" refX="5" refY="2.5" orient="auto" markerUnits="strokeWidth">
           <polygon points="0,0 6,2.5 0,5" fill="var(--edge-validates)" />
         </marker>
-        <marker
-          id="arrowhead-resolves"
-          markerWidth="6"
-          markerHeight="5"
-          refX="5"
-          refY="2.5"
-          orient="auto"
-          markerUnits="strokeWidth"
-        >
+        <marker id="arrowhead-resolves" markerWidth="6" markerHeight="5" refX="5" refY="2.5" orient="auto" markerUnits="strokeWidth">
           <polygon points="0,0 6,2.5 0,5" fill="var(--edge-resolves)" />
         </marker>
       </defs>
 
-      {/* Hierarchy edges: subtle, structural - rendered first (behind) */}
       <For each={hierarchyEdges()}>
         {(edge) => {
           const { waypoints } = edge;
           if (waypoints.length < 2) return null;
-
-          const pathD = waypoints
-            .map((pt, i) => `${i === 0 ? 'M' : 'L'} ${pt[0]} ${pt[1]}`)
-            .join(' ');
-
+          const pathD = buildSmoothPath(waypoints);
           return (
-            <path
-              d={pathD}
-              fill="none"
-              stroke="var(--edge-hierarchy)"
-              stroke-width="1"
-              stroke-dasharray="2 3"
-              stroke-linecap="round"
-              opacity="0.4"
-            />
+            <path d={pathD} fill="none" stroke="var(--edge-hierarchy)" stroke-width="1.2" stroke-linecap="round" opacity="0.5" />
           );
         }}
       </For>
 
-      {/* Dependency edges: blockedBy and validates - rendered on top */}
       <For each={dependencyEdges()}>
         {(edge) => {
           const { waypoints, type } = edge;
           if (waypoints.length < 2) return null;
-
-          const pathD = waypoints
-            .map((pt, i) => `${i === 0 ? 'M' : 'L'} ${pt[0]} ${pt[1]}`)
-            .join(' ');
-
+          const pathD = buildSmoothPath(waypoints);
           const isValidates = type === 'validates';
           const isResolves = type === 'resolves';
-
-          // BlockedBy: terra/red lines (task depends on task) - with arrowhead
-          // Validates: sage/green lines (eval validates task) - with arrowhead
-          // Resolves: golden/yellow lines (repair task -> eval) - with arrowhead
-          const strokeColor = isValidates
-            ? 'var(--edge-validates)'
-            : isResolves
-              ? 'var(--edge-resolves)'
-              : 'var(--edge-blocked-by)';
-          const strokeWidth = isValidates ? 1 : 1.25;
-          const markerId = isValidates
-            ? 'url(#arrowhead-validates)'
-            : isResolves
-              ? 'url(#arrowhead-resolves)'
-              : 'url(#arrowhead-blocked)';
-
+          const strokeColor = isValidates ? 'var(--edge-validates)' : isResolves ? 'var(--edge-resolves)' : 'var(--edge-blocked-by)';
+          const strokeWidth = isValidates ? 0.75 : isResolves ? 1 : 1.25;
+          const strokeOpacity = isValidates ? 0.7 : 1;
+          const markerId = isValidates ? 'url(#arrowhead-validates)' : isResolves ? 'url(#arrowhead-resolves)' : 'url(#arrowhead-blocked)';
           return (
-            <path
-              d={pathD}
-              fill="none"
-              stroke={strokeColor}
-              stroke-width={strokeWidth}
-              marker-end={markerId}
-            />
+            <path d={pathD} fill="none" stroke={strokeColor} stroke-width={strokeWidth} opacity={strokeOpacity} marker-end={markerId} />
           );
         }}
       </For>
     </svg>
   );
 };
-
-
-// =============================================================================
-// Helper: Build Live Tree from Draft Structure
-//
-// Uses draft tree structure to organize live nodes into a hierarchical tree.
-// =============================================================================
-
-/**
- * Build live tree structure from draft tree, matching live nodes to their draft IDs.
- * Also includes worker-added tasks (nodes with source !== 'spec') as children of their parent.
- */
-function buildLiveTreeFromDraft(
-  draftTree: DraftNodeTree[],
-  liveNodes: LiveNodeTree[]
-): LiveNodeTree[] {
-  // Recursively flatten all live nodes into a map by draftNodeId
-  const liveByDraftId = new Map<string, LiveNodeTree>();
-  // Also track all live nodes by their own ID for finding worker-added children
-  const liveById = new Map<string, LiveNodeTree>();
-  // Track children by parent live node ID (for worker-added tasks)
-  const childrenByParentId = new Map<string, LiveNodeTree[]>();
-
-  const flattenLive = (nodes: LiveNodeTree[]) => {
-    for (const node of nodes) {
-      liveById.set(node.id, node);
-      if (node.draftNodeId) {
-        liveByDraftId.set(node.draftNodeId, node);
-      }
-      // Track original children by parent ID
-      if (node.children.length > 0) {
-        childrenByParentId.set(node.id, node.children);
-        flattenLive(node.children);
-      }
-    }
-  };
-  flattenLive(liveNodes);
-
-  // Recursively build tree using draft structure
-  const buildNode = (draft: DraftNodeTree): LiveNodeTree | null => {
-    // Look up corresponding live node by draft ID
-    const live = liveByDraftId.get(draft.id);
-    if (!live) return null; // Not dispatched yet
-
-    // Recursively build children from draft structure
-    const draftChildren = draft.children
-      .map(child => buildNode(child))
-      .filter((n): n is LiveNodeTree => n !== null);
-
-    // Also include worker/system-added children (live nodes with source !== 'spec')
-    const originalChildren = childrenByParentId.get(live.id) || [];
-    const workerAddedChildren = originalChildren.filter(child => child.source !== 'spec');
-
-    return {
-      ...live,
-      children: [...draftChildren, ...workerAddedChildren],
-    };
-  };
-
-  // Build tree for each root in draft structure
-  const treeFromDraft = draftTree
-    .map(root => buildNode(root))
-    .filter((n): n is LiveNodeTree => n !== null);
-
-  // Also include root-level live nodes that have no draftNodeId (like scope task)
-  // These are system/worker-added root nodes that aren't in the draft tree.
-  // We iterate over the original liveNodes roots to find orphans.
-  const orphanRoots = liveNodes.filter(root => !root.draftNodeId);
-
-  return [...treeFromDraft, ...orphanRoots];
-}
 
 // =============================================================================
 // Main Component
@@ -611,14 +549,12 @@ export const SpecBoard: Component = () => {
 
   // Selection state
   const [selectedNodeId, setSelectedNodeId] = createSignal<string | null>(null);
-  const [selectedLiveNodeId, setSelectedLiveNodeId] = createSignal<string | null>(null);
-
-  // View focus state: 'both' shows side-by-side, 'live'/'draft' expands that section
-  const [focusedView, setFocusedView] = createSignal<'both' | 'live' | 'draft'>('both');
+  const [scopeRootId, setScopeRootId] = createSignal<string | null>(null);
+  const [pendingJumpNodeId, setPendingJumpNodeId] = createSignal<string | null>(null);
 
   // Edit modal state
-  const [editingNode, setEditingNode] = createSignal<DraftNodeTree | null>(null);
-  const [viewingLiveNode, setViewingLiveNode] = createSignal<LiveNodeTree | null>(null);
+  const [editingNode, setEditingNode] = createSignal<BoardNodeTree | null>(null);
+  const [viewingNode, setViewingNode] = createSignal<BoardNodeTree | null>(null);
 
   // Delivery dialog state
   const [showDeliveryDialog, setShowDeliveryDialog] = createSignal(false);
@@ -632,7 +568,7 @@ export const SpecBoard: Component = () => {
   // New node prompt
   const [showNewPrompt, setShowNewPrompt] = createSignal(false);
   const [newNodeParentId, setNewNodeParentId] = createSignal<string | null>(null);
-  const [newNodeType, setNewNodeType] = createSignal<NodeType>('task');
+  const [newNodeKind, setNewNodeKind] = createSignal<NodeKind>('feature');
   const [newNodeName, setNewNodeName] = createSignal('');
   let newNodeInputRef: HTMLInputElement | undefined;
 
@@ -640,201 +576,348 @@ export const SpecBoard: Component = () => {
   const [contextMenu, setContextMenu] = createSignal<{
     x: number;
     y: number;
-    node: DraftNodeTree | null;
+    node: BoardNodeTree | null;
     isBackground: boolean;
   } | null>(null);
 
-  // Pan and zoom state (per side)
-  const [draftZoom, setDraftZoom] = createSignal(1);
-  const [liveZoom, setLiveZoom] = createSignal(1);
-  const [draftPan, setDraftPan] = createSignal({ x: 0, y: 0 });
-  const [livePan, setLivePan] = createSignal({ x: 0, y: 0 });
+  // Pan and zoom state
+  const [zoom, setZoom] = createSignal(1);
+  const [pan, setPan] = createSignal({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = createSignal(false);
   const [panStart, setPanStart] = createSignal({ x: 0, y: 0 });
-  const [activePanSide, setActivePanSide] = createSignal<'draft' | 'live' | null>(null);
+  const [autoFitDone, setAutoFitDone] = createSignal(false);
   let canvasRef: HTMLDivElement | undefined;
 
-
-  // Live task filter: controls which nodes are visible in the live tree
-  // 'spec-tasks' = tasks from the spec, 'worker-tasks' = worker-added tasks, 'deleted-nodes' = deleted nodes
+  // Live task filter
   const [liveFilters, setLiveFilters] = createSignal<string[]>(['spec-tasks', 'worker-tasks']);
+  const [granularity, setGranularity] = createSignal<'all' | '2'>('all');
 
-  // Granularity filter: controls depth level of live tree
-  // 'all' = show all nodes, '2' = root + immediate children, '1' = root nodes only
-  const [granularity, setGranularity] = createSignal<'all' | '2' | '1'>('all');
-
-  // Build live tree with project hierarchy from draft (project nodes are UI-only)
-  const liveTreeWithProjects = createMemo(() => {
-    // Guard: ensure we have a selected project before accessing delta state
-    if (!project.selectedProject()) return [];
-    return buildLiveTreeFromDraft(delta.draftTree(), delta.liveTree());
+  // Edge toggles (default: only hierarchy)
+  const [edgeToggles, setEdgeToggles] = createSignal({
+    hierarchy: true,
+    blockedBy: false,
+    validates: false,
+    resolves: false,
   });
 
-  // Get draft node IDs to identify deleted nodes (in live but not in draft)
-  const draftNodeIds = createMemo(() => {
-    const ids = new Set<string>();
-    const collectIds = (nodes: DraftNodeTree[]) => {
-      for (const node of nodes) {
-        ids.add(node.id);
-        collectIds(node.children);
+  // Feature collapse state (store as array for easy serialization)
+  const [collapsedFeatureIds, setCollapsedFeatureIds] = createSignal<string[]>([]);
+
+  // Node finder (search + jump)
+  const [finderOpen, setFinderOpen] = createSignal(false);
+  const [finderQuery, setFinderQuery] = createSignal('');
+
+  // Reset auto-fit when scope changes (new "world" size)
+  createEffect(() => {
+    scopeRootId();
+    setAutoFitDone(false);
+  });
+
+  // Re-fit after view-shaping filters change (depth, show filters, collapse).
+  createEffect(() => {
+    granularity();
+    liveFilters().join('|');
+    collapsedFeatureIds().join('|');
+    setAutoFitDone(false);
+  });
+
+  // Scope + filter tree based on filters and granularity (no feature collapse here)
+  const scopedAndFilteredTree = createMemo(() => {
+    const allTrees = delta.boardTree();
+    const scopeId = scopeRootId();
+
+    const findInTrees = (nodes: BoardNodeTree[], id: string): BoardNodeTree | null => {
+      for (const n of nodes) {
+        if (n.id === id) return n;
+        const found = findInTrees(n.children, id);
+        if (found) return found;
       }
+      return null;
     };
-    collectIds(delta.draftTree());
-    return ids;
-  });
 
-  // Filter live tree based on selected filters and granularity
-  const filteredLiveTree = createMemo(() => {
-    const trees = liveTreeWithProjects();
+    const scopedTrees = scopeId ? (() => {
+      const found = findInTrees(allTrees, scopeId);
+      return found ? [found] : allTrees;
+    })() : allTrees;
+
     const filters = liveFilters();
     const showSpecTasks = filters.includes('spec-tasks');
     const showWorkerTasks = filters.includes('worker-tasks');
-    const showDeletedNodes = filters.includes('deleted-nodes');
-    const draftIds = draftNodeIds();
-    const maxDepth = granularity() === 'all' ? Infinity : granularity() === '2' ? 2 : 1;
+    const maxDepth = granularity() === 'all' ? Infinity : 2;
 
-    // Filter recursively based on node type and depth
-    const filterTree = (node: LiveNodeTree, depth: number = 1): LiveNodeTree | null => {
-      const isWorkerAdded = node.source !== 'spec';
-      const isDeleted = node.source === 'spec' && !draftIds.has(node.id);
-      const isSpecTask = node.source === 'spec' && draftIds.has(node.id);
+    const filterTree = (node: BoardNodeTree, depth: number = 1): BoardNodeTree | null => {
+      const isUserNode = node.source === 'user';
+      const isWorkerAdded = node.source === 'worker' || node.source === 'plan';
 
-      // Granularity: don't recurse beyond maxDepth
       const filteredChildren = depth < maxDepth
         ? node.children
             .map((c) => filterTree(c, depth + 1))
-            .filter((n): n is LiveNodeTree => n !== null)
+            .filter((n): n is BoardNodeTree => n !== null)
         : [];
 
-      // Determine if this node should be shown
       let shouldShow = false;
-      if (isDeleted && showDeletedNodes) shouldShow = true;
+      if (isUserNode && showSpecTasks) shouldShow = true;
       if (isWorkerAdded && showWorkerTasks) shouldShow = true;
-      if (isSpecTask && showSpecTasks) shouldShow = true;
+      if (node.source === 'system') shouldShow = showWorkerTasks;
 
-      // Also include if any children passed the filter
       if (shouldShow || filteredChildren.length > 0) {
         return { ...node, children: filteredChildren };
       }
       return null;
     };
 
-    return trees.map((t) => filterTree(t, 1)).filter((n): n is LiveNodeTree => n !== null);
+    return scopedTrees.map((t) => filterTree(t, 1)).filter((n): n is BoardNodeTree => n !== null);
   });
 
-  // Map of all live nodes by ID (for claimable detection)
-  const liveNodeMap = createMemo(() => {
-    const map = new Map<string, LiveNodeTree>();
-    const collect = (nodes: LiveNodeTree[]) => {
+  const hiddenCountsByFeatureId = createMemo(() => {
+    const counts = new Map<string, {
+      working: number;
+      pending: number;
+      done: number;
+      needsRepair: number;
+      failed: number;
+      checks: number;
+    }>();
+
+    const tallyStatus = (status: BoardNodeStatus) => {
+      if (status === 'working') return 'working';
+      if (status === 'pending') return 'pending';
+      if (status === 'needs_repair') return 'needsRepair';
+      if (status === 'failed') return 'failed';
+      // done-ish
+      return 'done';
+    };
+
+    const walk = (node: BoardNodeTree): {
+      working: number;
+      pending: number;
+      done: number;
+      needsRepair: number;
+      failed: number;
+      checks: number;
+    } => {
+      const acc = { working: 0, pending: 0, done: 0, needsRepair: 0, failed: 0, checks: 0 };
+      for (const child of node.children) {
+        const childAcc = walk(child);
+        acc.working += childAcc.working;
+        acc.pending += childAcc.pending;
+        acc.done += childAcc.done;
+        acc.needsRepair += childAcc.needsRepair;
+        acc.failed += childAcc.failed;
+        acc.checks += childAcc.checks;
+      }
+
+      // Count this node (excluding feature itself for feature chips)
+      if (node.kind === 'check') acc.checks += 1;
+      const bucket = tallyStatus(node.status);
+      acc[bucket] += 1;
+
+      if (node.kind === 'feature') {
+        // Exclude the feature node itself from hidden counts.
+        const bucketSelf = tallyStatus(node.status);
+        acc[bucketSelf] -= 1;
+        counts.set(node.id, {
+          working: Math.max(0, acc.working),
+          pending: Math.max(0, acc.pending),
+          done: Math.max(0, acc.done),
+          needsRepair: Math.max(0, acc.needsRepair),
+          failed: Math.max(0, acc.failed),
+          checks: Math.max(0, acc.checks),
+        });
+      }
+
+      return acc;
+    };
+
+    for (const root of scopedAndFilteredTree()) walk(root);
+    return counts;
+  });
+
+  // Apply per-feature collapse for rendering + layout
+  const filteredTree = createMemo(() => {
+    const collapsed = new Set(collapsedFeatureIds());
+    const cloneWithCollapse = (node: BoardNodeTree): BoardNodeTree => {
+      if (node.kind === 'feature' && node.status !== 'draft' && collapsed.has(node.id)) {
+        return { ...node, children: [] };
+      }
+      return { ...node, children: node.children.map(cloneWithCollapse) };
+    };
+    return scopedAndFilteredTree().map(cloneWithCollapse);
+  });
+
+  // Map of all nodes by ID
+  const nodeMap = createMemo(() => {
+    const map = new Map<string, BoardNodeTree>();
+    const collect = (nodes: BoardNodeTree[]) => {
       for (const n of nodes) {
         map.set(n.id, n);
         collect(n.children);
       }
     };
-    collect(filteredLiveTree());
+    collect(filteredTree());
     return map;
   });
 
-  // Layout state (computed via ELK.js in frontend)
-  const [draftLayoutResult, setDraftLayoutResult] = createSignal<ElkLayoutResult | null>(null);
-  const [liveLayoutResult, setLiveLayoutResult] = createSignal<ElkLayoutResult | null>(null);
-
-  // Convert tree nodes to ELK input format
-  const treeToLayoutNodes = (
-    trees: (DraftNodeTree | LiveNodeTree)[],
-  ): LayoutInputNode[] => {
-    const convert = (node: DraftNodeTree | LiveNodeTree): LayoutInputNode => {
-      return {
-        id: node.id,
-        name: node.name,
-        nodeType: node.nodeType,
-        blockedBy: node.blockedBy,
-        validates: node.validates,
-        resolves: 'resolves' in node ? node.resolves : null,
-        children: node.children.map(convert),
-      };
+  const uncollapsedNodeMap = createMemo(() => {
+    const map = new Map<string, BoardNodeTree>();
+    const collect = (nodes: BoardNodeTree[]) => {
+      for (const n of nodes) {
+        map.set(n.id, n);
+        collect(n.children);
+      }
     };
-    return trees.map(convert);
+    collect(scopedAndFilteredTree());
+    return map;
+  });
+
+  const scopeName = createMemo(() => {
+    const scopeId = scopeRootId();
+    if (!scopeId) return null;
+    // Prefer the uncollapsed version for name stability.
+    const findInTrees = (nodes: BoardNodeTree[], id: string): BoardNodeTree | null => {
+      for (const n of nodes) {
+        if (n.id === id) return n;
+        const found = findInTrees(n.children, id);
+        if (found) return found;
+      }
+      return null;
+    };
+    const found = findInTrees(delta.boardTree(), scopeId);
+    return found?.name || null;
+  });
+
+  const focusIndices = createMemo(() => buildFocusIndices(nodeMap()));
+  const focusSet = createMemo(() => {
+    const selected = selectedNodeId();
+    if (!selected) return null;
+    const set = computeFocusSet(selected, nodeMap(), focusIndices());
+    return set.size > 0 ? set : null;
+  });
+
+  const isCollapsed = (id: string) => collapsedFeatureIds().includes(id);
+  const toggleCollapse = (id: string) => {
+    setCollapsedFeatureIds((prev) => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
-  // Compute draft layout when tree changes (using ELK.js)
-  createEffect(() => {
-    // Guard: ensure we have a selected project
-    if (!project.selectedProject()) {
-      setDraftLayoutResult(null);
-      return;
+  const expandToNode = (nodeId: string) => {
+    const map = uncollapsedNodeMap();
+    const collapsed = new Set(collapsedFeatureIds());
+    let cur = map.get(nodeId);
+    let changed = false;
+    while (cur?.parentId) {
+      const parent = map.get(cur.parentId);
+      if (!parent) break;
+      if (parent.kind === 'feature' && parent.status !== 'draft' && collapsed.has(parent.id)) {
+        collapsed.delete(parent.id);
+        changed = true;
+      }
+      cur = parent;
     }
-    const trees = delta.draftTree();
-    if (trees.length === 0) {
-      setDraftLayoutResult(null);
-      return;
+    if (changed) setCollapsedFeatureIds([...collapsed]);
+  };
+
+  const finderItems = createMemo<NodeFinderItem[]>(() => {
+    const q = finderQuery().trim().toLowerCase();
+    const items: NodeFinderItem[] = [];
+    for (const [, node] of uncollapsedNodeMap()) {
+      if (node.status === 'draft') continue; // finder is for dispatched navigation
+      const name = (node.name || '').toLowerCase();
+      if (!q || name.includes(q)) {
+        items.push({
+          id: node.id,
+          name: node.name,
+          kind: node.kind,
+          status: node.status,
+          claimedBy: node.claimedBy,
+        });
+      }
     }
-    // Compute layout using ELK.js
-    const layoutNodes = treeToLayoutNodes(trees);
-    computeElkLayout(layoutNodes)
-      .then(setDraftLayoutResult)
-      .catch(e => console.warn('Failed to compute draft layout:', e));
+    // Simple “best effort” ordering: prefix matches first, then alpha.
+    items.sort((a, b) => {
+      if (!q) return a.name.localeCompare(b.name);
+      const ap = a.name.toLowerCase().startsWith(q) ? 0 : 1;
+      const bp = b.name.toLowerCase().startsWith(q) ? 0 : 1;
+      if (ap !== bp) return ap - bp;
+      return a.name.localeCompare(b.name);
+    });
+    return items.slice(0, 80);
   });
 
-  // Compute live layout when tree changes (using ELK.js)
+  // Layout state
+  const [layoutResult, setLayoutResult] = createSignal<ElkLayoutResult | null>(null);
+
+  // Convert tree nodes to ELK input format
+  const treeToLayoutNodes = (trees: BoardNodeTree[]): LayoutInputNode[] => {
+    const convert = (node: BoardNodeTree, isRoot: boolean): LayoutInputNode => ({
+      id: node.id,
+      name: node.name,
+      kind: node.kind,
+      isRoot,
+      blockedBy: node.blockedBy,
+      validates: node.validates,
+      resolves: node.resolves,
+      children: node.children.map(c => convert(c, false)),
+    });
+    return trees.map(t => convert(t, true));
+  };
+
+  // Compute layout when tree changes
   createEffect(() => {
-    // Guard: ensure we have a selected project
     if (!project.selectedProject()) {
-      setLiveLayoutResult(null);
+      setLayoutResult(null);
+      setAutoFitDone(false);
       return;
     }
-    const trees = filteredLiveTree();
+    const trees = filteredTree();
     if (trees.length === 0) {
-      setLiveLayoutResult(null);
+      setLayoutResult(null);
+      setAutoFitDone(false);
       return;
     }
-    // Compute layout using ELK.js
     const layoutNodes = treeToLayoutNodes(trees);
     computeElkLayout(layoutNodes)
-      .then(setLiveLayoutResult)
-      .catch(e => console.warn('Failed to compute live layout:', e));
+      .then(setLayoutResult)
+      .catch(e => console.warn('Failed to compute layout:', e));
   });
 
-  // Transform ELK layout to LayoutTreeResult format for rendering
-  const transformLayout = (
-    elkLayout: ElkLayoutResult | null,
-    trees: DraftNodeTree[] | LiveNodeTree[]
-  ): LayoutTreeResult => {
+  // Auto-fit once after we get a layout for the current view.
+  createEffect(() => {
+    const lr = layoutResult();
+    const trees = filteredTree();
+    if (!lr || trees.length === 0) return;
+    if (autoFitDone()) return;
+    setTimeout(() => {
+      fitToContent();
+      setAutoFitDone(true);
+    }, 0);
+  });
+
+  // Transform ELK layout to rendering format
+  const transformLayout = (elkLayout: ElkLayoutResult | null, trees: BoardNodeTree[]): LayoutTreeResult => {
     const positions = new Map<string, NodePosition>();
     const edgeRoutes: EdgeRoute[] = [];
-    const evalsWithValidates: { id: string; validates: string[] }[] = [];
+    const checksWithValidates: { id: string; validates: string[] }[] = [];
 
     if (!elkLayout || trees.length === 0) {
-      return {
-        positions,
-        width: 0,
-        height: 0,
-        evalsWithValidates,
-        edgeRoutes,
-      };
+      return { positions, width: 0, height: 0, checksWithValidates, edgeRoutes };
     }
 
-    // Build position map, adding text wrapping info
     for (const pos of elkLayout.positions) {
-      if (pos.isDummy) continue; // Skip dummy nodes
-
-      // Find the node to get its name for text wrapping
+      if (pos.isDummy) continue;
       const node = findNodeById(trees, pos.id);
       const name = node?.name || '';
-
       positions.set(pos.id, {
         x: pos.x,
         y: pos.y,
         width: pos.width,
         height: pos.height,
         lines: wrapTextToWidth(name, pos.width),
+        layer: pos.layer,
       });
     }
 
-    // Transform ELK edges to our format - pass waypoints through directly
     for (const edge of elkLayout.edges) {
       if (edge.waypoints.length < 2) continue;
-
       edgeRoutes.push({
         from: edge.fromId,
         to: edge.toId,
@@ -843,11 +926,10 @@ export const SpecBoard: Component = () => {
       });
     }
 
-    // Collect evals with validates
     const flatNodes = flattenTree(trees);
     for (const node of flatNodes) {
-      if (node.nodeType === 'eval' && 'validates' in node && node.validates && node.validates.length > 0) {
-        evalsWithValidates.push({ id: node.id, validates: node.validates as string[] });
+      if (node.kind === 'check' && node.validates && node.validates.length > 0) {
+        checksWithValidates.push({ id: node.id, validates: node.validates });
       }
     }
 
@@ -855,13 +937,12 @@ export const SpecBoard: Component = () => {
       positions,
       width: elkLayout.width,
       height: elkLayout.height,
-      evalsWithValidates,
+      checksWithValidates,
       edgeRoutes,
     };
   };
 
-  // Helper to find node by ID in tree
-  const findNodeById = (trees: (DraftNodeTree | LiveNodeTree)[], id: string): DraftNodeTree | LiveNodeTree | null => {
+  const findNodeById = (trees: BoardNodeTree[], id: string): BoardNodeTree | null => {
     for (const root of trees) {
       if (root.id === id) return root;
       const found = findInChildren(root.children, id);
@@ -870,7 +951,7 @@ export const SpecBoard: Component = () => {
     return null;
   };
 
-  const findInChildren = (children: (DraftNodeTree | LiveNodeTree)[], id: string): DraftNodeTree | LiveNodeTree | null => {
+  const findInChildren = (children: BoardNodeTree[], id: string): BoardNodeTree | null => {
     for (const child of children) {
       if (child.id === id) return child;
       const found = findInChildren(child.children, id);
@@ -879,67 +960,29 @@ export const SpecBoard: Component = () => {
     return null;
   };
 
-  // Helper to flatten tree
-  const flattenTree = (trees: (DraftNodeTree | LiveNodeTree)[]): (DraftNodeTree | LiveNodeTree)[] => {
-    const result: (DraftNodeTree | LiveNodeTree)[] = [];
-    const flatten = (node: DraftNodeTree | LiveNodeTree) => {
+  const flattenTree = (trees: BoardNodeTree[]): BoardNodeTree[] => {
+    const result: BoardNodeTree[] = [];
+    const flatten = (node: BoardNodeTree) => {
       result.push(node);
-      for (const child of node.children) {
-        flatten(child);
-      }
+      for (const child of node.children) flatten(child);
     };
-    for (const tree of trees) {
-      flatten(tree);
-    }
+    for (const tree of trees) flatten(tree);
     return result;
   };
 
-  // Computed layouts from Rust
-  const draftLayout = createMemo(() =>
-    transformLayout(draftLayoutResult(), delta.draftTree())
-  );
+  const layout = createMemo(() => transformLayout(layoutResult(), filteredTree()));
 
-  const liveLayout = createMemo(() =>
-    transformLayout(liveLayoutResult(), filteredLiveTree())
-  );
+  const hasDispatchedNodes = () => delta.hasDispatchedNodes();
 
-  // Check if we have a live tree (post-dispatch)
-  const hasLiveTree = () => liveTreeWithProjects().length > 0;
-
-
-  // Layout constants
-  const SECTION_GAP = 16;     // Gap between sections (horizontal)
-  const TREE_LEFT_MARGIN = 24; // Left margin for tree root
+  const TREE_LEFT_MARGIN = 24;
 
   // ==========================================================================
   // Helpers
   // ==========================================================================
 
-  const flattenDraftTree = (nodes: DraftNodeTree[]): DraftNodeTree[] => {
-    const result: DraftNodeTree[] = [];
-    const flatten = (node: DraftNodeTree) => {
-      result.push(node);
-      node.children.forEach(flatten);
-    };
-    nodes.forEach(flatten);
-    return result;
-  };
-
-  const flattenLiveTree = (nodes: LiveNodeTree[]): LiveNodeTree[] => {
-    const result: LiveNodeTree[] = [];
-    const flatten = (node: LiveNodeTree) => {
-      result.push(node);
-      node.children.forEach(flatten);
-    };
-    nodes.forEach(flatten);
-    return result;
-  };
-
-  const findParentId = (nodes: DraftNodeTree[], targetId: string): string | null => {
+  const findParentId = (nodes: BoardNodeTree[], targetId: string): string | null => {
     for (const node of nodes) {
-      if (node.children.some((c) => c.id === targetId)) {
-        return node.id;
-      }
+      if (node.children.some((c) => c.id === targetId)) return node.id;
       const found = findParentId(node.children, targetId);
       if (found !== null) return found;
     }
@@ -950,8 +993,20 @@ export const SpecBoard: Component = () => {
   // Handlers
   // ==========================================================================
 
-  const handleDoubleClick = (node: DraftNodeTree) => {
-    setEditingNode(node);
+  const handleDoubleClick = (node: BoardNodeTree) => {
+    if (node.status === 'draft') {
+      setEditingNode(node);
+    } else {
+      setViewingNode(node);
+    }
+  };
+
+  const handleFinderSelect = (nodeId: string) => {
+    expandToNode(nodeId);
+    setFinderOpen(false);
+    setFinderQuery('');
+    setSelectedNodeId(nodeId);
+    setPendingJumpNodeId(nodeId);
   };
 
   const handleSaveEdit = async (updates: {
@@ -963,12 +1018,11 @@ export const SpecBoard: Component = () => {
   }) => {
     const node = editingNode();
     if (!node) return;
-
-    await delta.updateDraftNode(node.id, updates);
+    await delta.updateBoardNode(node.id, updates);
     setEditingNode(null);
   };
 
-  const handleContextMenu = (e: MouseEvent, node: DraftNodeTree | null) => {
+  const handleContextMenu = (e: MouseEvent, node: BoardNodeTree | null) => {
     e.preventDefault();
     e.stopPropagation();
     setContextMenu({ x: e.clientX, y: e.clientY, node, isBackground: node === null });
@@ -980,7 +1034,7 @@ export const SpecBoard: Component = () => {
     const cm = contextMenu();
     if (cm && cm.node) {
       setNewNodeParentId(cm.node.id);
-      setNewNodeType('task');
+      setNewNodeKind('task');
       setShowNewPrompt(true);
       hideContextMenu();
       setTimeout(() => newNodeInputRef?.focus(), 50);
@@ -990,8 +1044,8 @@ export const SpecBoard: Component = () => {
   const handleAddSibling = () => {
     const cm = contextMenu();
     if (cm && cm.node) {
-      setNewNodeParentId(findParentId(delta.draftTree(), cm.node.id));
-      setNewNodeType('task');
+      setNewNodeParentId(findParentId(delta.boardTree(), cm.node.id));
+      setNewNodeKind('task');
       setShowNewPrompt(true);
       hideContextMenu();
       setTimeout(() => newNodeInputRef?.focus(), 50);
@@ -1001,30 +1055,30 @@ export const SpecBoard: Component = () => {
   const handleDelete = async () => {
     const cm = contextMenu();
     if (cm && cm.node) {
-      const nodeType = cm.node.nodeType === 'eval' ? 'eval' : 'task';
+      const kindLabel = cm.node.kind;
       const hasChildren = cm.node.children.length > 0;
       const description = hasChildren
         ? `"${cm.node.name}" and all its children`
         : `"${cm.node.name}"`;
-      const confirmed = await window.confirmDialog?.delete(description, nodeType);
+      const confirmed = await window.confirmDialog?.delete(description, kindLabel);
       if (confirmed) {
-        await delta.deleteDraftNode(cm.node.id);
+        await delta.deleteBoardNode(cm.node.id);
       }
       hideContextMenu();
     }
   };
 
-  const handleAddRootTask = () => {
+  const handleAddRootFeature = () => {
     setNewNodeParentId(null);
-    setNewNodeType('task');
+    setNewNodeKind('feature');
     setShowNewPrompt(true);
     hideContextMenu();
     setTimeout(() => newNodeInputRef?.focus(), 50);
   };
 
-  const handleAddRootEval = () => {
+  const handleAddRootCheck = () => {
     setNewNodeParentId(null);
-    setNewNodeType('eval');
+    setNewNodeKind('check');
     setShowNewPrompt(true);
     hideContextMenu();
     setTimeout(() => newNodeInputRef?.focus(), 50);
@@ -1037,10 +1091,10 @@ export const SpecBoard: Component = () => {
       return;
     }
 
-    await delta.createDraftNode({
+    await delta.createBoardNode({
       parentId: newNodeParentId(),
       name,
-      nodeType: newNodeType(),
+      kind: newNodeKind(),
     });
 
     setShowNewPrompt(false);
@@ -1048,21 +1102,13 @@ export const SpecBoard: Component = () => {
   };
 
   const handleDispatch = async () => {
-    // Guard against double-click - check both hasDiff and dispatchPending
-    if (!delta.hasDiff() || delta.dispatchPending()) {
-      if (!delta.hasDiff()) {
-        window.toast?.info('No changes to dispatch');
+    if (!delta.hasDraftNodes() || delta.dispatchPending()) {
+      if (!delta.hasDraftNodes()) {
+        window.toast?.info('No draft nodes to dispatch');
       }
       return;
     }
-
-    const hadLiveTree = hasLiveTree();
     await delta.dispatch();
-
-    // First dispatch: live tree just appeared, switch to both view and center
-    if (!hadLiveTree && hasLiveTree()) {
-      switchView('both');
-    }
   };
 
   const handleOpenInIde = async () => {
@@ -1087,17 +1133,27 @@ export const SpecBoard: Component = () => {
     }
   };
 
-
   // Keyboard shortcuts
   createEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+      const isTyping = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
+
+      if (!isTyping && e.key === '/') {
+        e.preventDefault();
+        if (!finderOpen() && delta.hasDispatchedNodes()) {
+          setFinderOpen(true);
+        }
+        return;
+      }
 
       if (e.key === 'Escape') {
-        if (editingNode()) setEditingNode(null);
+        if (finderOpen()) setFinderOpen(false);
+        else if (editingNode()) setEditingNode(null);
+        else if (viewingNode()) { setViewingNode(null); setSelectedNodeId(null); }
         else if (showNewPrompt()) setShowNewPrompt(false);
         else if (contextMenu()) hideContextMenu();
+        else if (selectedNodeId()) setSelectedNodeId(null);
       }
     };
 
@@ -1107,261 +1163,181 @@ export const SpecBoard: Component = () => {
 
   // Listen for radial menu actions
   createEffect(() => {
-    const handleRadialDispatch = () => handleDispatch();
-    const handleRadialDeliver = () => setShowDeliveryDialog(true);
-    const handleRadialOpenIde = () => handleOpenInIde();
-    const handleOpenForkDialog = () => setShowForkDialog(true);
-
-    window.addEventListener('radial-dispatch', handleRadialDispatch);
-    window.addEventListener('radial-deliver', handleRadialDeliver);
-    window.addEventListener('radial-open-ide', handleRadialOpenIde);
-    window.addEventListener('open-fork-dialog', handleOpenForkDialog);
+    const cleanupDispatch = onEvent('radial-dispatch', () => handleDispatch());
+    const cleanupDeliver = onEvent('radial-deliver', () => setShowDeliveryDialog(true));
+    const cleanupOpenIde = onEvent('radial-open-ide', () => handleOpenInIde());
+    const cleanupForkDialog = onEvent('open-fork-dialog', () => setShowForkDialog(true));
 
     onCleanup(() => {
-      window.removeEventListener('radial-dispatch', handleRadialDispatch);
-      window.removeEventListener('radial-deliver', handleRadialDeliver);
-      window.removeEventListener('radial-open-ide', handleRadialOpenIde);
-      window.removeEventListener('open-fork-dialog', handleOpenForkDialog);
+      cleanupDispatch();
+      cleanupDeliver();
+      cleanupOpenIde();
+      cleanupForkDialog();
     });
   });
 
-  // Detect which side the cursor is over
-  const getSideFromEvent = (e: MouseEvent | WheelEvent): 'draft' | 'live' | null => {
-    const target = e.target as HTMLElement;
-    const section = target.closest('.tree-section');
-    if (!section) return null;
-    return section.classList.contains('draft-section') ? 'draft' : 'live';
-  };
-
-  // Calculate minimum zoom to fit tree within panel
+  // Pan and zoom
   const calcFitZoom = (treeWidth: number, treeHeight: number, panelWidth: number, panelHeight: number): number => {
     if (treeWidth <= 0 || treeHeight <= 0) return 0.25;
-    const padding = TREE_LEFT_MARGIN * 2; // Padding on both sides
+    const padding = TREE_LEFT_MARGIN * 2;
     const availableWidth = Math.max(panelWidth - padding, 100);
     const availableHeight = Math.max(panelHeight - padding, 100);
     const fitZoom = Math.min(availableWidth / treeWidth, availableHeight / treeHeight);
-    // Clamp to reasonable bounds (never smaller than would make tree 50px, never larger than 1)
     return Math.max(0.1, Math.min(1, fitZoom));
   };
 
-  // Pan and zoom handlers (per side)
-  // Trackpad/mouse support:
-  // - Pinch-to-zoom (ctrlKey on wheel) or Ctrl+scroll = zoom centered on cursor
-  // - Two-finger scroll / regular scroll = pan
-  // - Middle mouse / Alt+click drag = pan (legacy)
-  const handleWheel = (e: WheelEvent) => {
-    const side = getSideFromEvent(e);
-    if (!side) return;
-
-    e.preventDefault();
-
-    // Pinch-to-zoom gesture (trackpad) or Ctrl+scroll (mouse) = zoom
-    if (e.ctrlKey) {
-      const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
-
-      if (side === 'draft') {
-        const oldZoom = draftZoom();
-        const section = (e.target as HTMLElement).closest('.tree-section');
-        const layout = draftLayout();
-        const rect = section?.getBoundingClientRect();
-        const minZoom = rect ? calcFitZoom(layout.width, layout.height, rect.width, rect.height) : 0.25;
-        const newZoom = Math.max(minZoom, Math.min(3, oldZoom * zoomFactor));
-        if (section && rect) {
-          const cursorX = e.clientX - rect.left - TREE_LEFT_MARGIN;
-          const cursorY = e.clientY - rect.top - rect.height / 2;
-          const currentPan = draftPan();
-          const contentX = (cursorX - currentPan.x) / oldZoom;
-          const contentY = (cursorY - currentPan.y) / oldZoom;
-          setDraftPan({
-            x: cursorX - contentX * newZoom,
-            y: cursorY - contentY * newZoom,
-          });
-        }
-        setDraftZoom(newZoom);
-      } else {
-        const oldZoom = liveZoom();
-        const section = (e.target as HTMLElement).closest('.tree-section');
-        const layout = liveLayout();
-        const rect = section?.getBoundingClientRect();
-        const minZoom = rect ? calcFitZoom(layout.width, layout.height, rect.width, rect.height) : 0.25;
-        const newZoom = Math.max(minZoom, Math.min(3, oldZoom * zoomFactor));
-        if (section && rect) {
-          const cursorX = e.clientX - rect.left - TREE_LEFT_MARGIN;
-          const cursorY = e.clientY - rect.top - rect.height / 2;
-          const currentPan = livePan();
-          const contentX = (cursorX - currentPan.x) / oldZoom;
-          const contentY = (cursorY - currentPan.y) / oldZoom;
-          setLivePan({
-            x: cursorX - contentX * newZoom,
-            y: cursorY - contentY * newZoom,
-          });
-        }
-        setLiveZoom(newZoom);
-      }
-    } else {
-      // Regular scroll = pan (two-finger swipe on trackpad, scroll wheel on mouse)
-      const section = (e.target as HTMLElement).closest('.tree-section');
-      const rect = section?.getBoundingClientRect();
-
-      if (side === 'draft') {
-        const layout = draftLayout();
-        const rawPan = {
-          x: draftPan().x - e.deltaX,
-          y: draftPan().y - e.deltaY,
-        };
-        const clampedPan = rect
-          ? clampPan(rawPan, layout.width, layout.height, rect.width, rect.height, draftZoom())
-          : rawPan;
-        setDraftPan(clampedPan);
-      } else {
-        const layout = liveLayout();
-        const rawPan = {
-          x: livePan().x - e.deltaX,
-          y: livePan().y - e.deltaY,
-        };
-        const clampedPan = rect
-          ? clampPan(rawPan, layout.width, layout.height, rect.width, rect.height, liveZoom())
-          : rawPan;
-        setLivePan(clampedPan);
-      }
-    }
-  };
-
-  const handleMouseDown = (e: MouseEvent) => {
-    // Middle mouse button or alt+left click for panning
-    if (e.button === 1 || (e.button === 0 && e.altKey)) {
-      const side = getSideFromEvent(e);
-      if (!side) return;
-
-      e.preventDefault();
-      setIsPanning(true);
-      setActivePanSide(side);
-      const pan = side === 'draft' ? draftPan() : livePan();
-      setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
-    }
-  };
-
-  // Clamp pan to keep tree within reasonable bounds
-  // Ensures at least some portion of tree is always visible
   const clampPan = (
-    pan: { x: number; y: number },
+    p: { x: number; y: number },
     treeWidth: number,
     treeHeight: number,
     panelWidth: number,
     panelHeight: number,
-    zoom: number
+    z: number
   ): { x: number; y: number } => {
-    const scaledTreeWidth = treeWidth * zoom;
-    const scaledTreeHeight = treeHeight * zoom;
-
-    // Allow panning such that at least 20% of tree (or 50px) stays visible
+    const scaledTreeWidth = treeWidth * z;
+    const scaledTreeHeight = treeHeight * z;
     const minVisible = Math.max(50, Math.min(scaledTreeWidth, scaledTreeHeight) * 0.2);
-
-    // X bounds: tree can't go further right than showing minVisible on left edge,
-    // and can't go further left than showing minVisible on right edge
     const maxX = panelWidth - minVisible - TREE_LEFT_MARGIN;
     const minX = -(scaledTreeWidth - minVisible);
-
-    // Y bounds: similar for vertical (remember y=0 is centered due to transform)
     const maxY = (panelHeight / 2) - minVisible;
     const minY = -(scaledTreeHeight / 2) + minVisible - (panelHeight / 2);
-
     return {
-      x: Math.max(minX, Math.min(maxX, pan.x)),
-      y: Math.max(minY, Math.min(maxY, pan.y)),
+      x: Math.max(minX, Math.min(maxX, p.x)),
+      y: Math.max(minY, Math.min(maxY, p.y)),
     };
   };
 
+  const fitToContent = () => {
+    const rect = canvasRef?.getBoundingClientRect();
+    if (!rect) return;
+    const l = layout();
+    if (l.width <= 0 || l.height <= 0) return;
+
+    const z = calcFitZoom(l.width, l.height, rect.width, rect.height);
+    const vp = viewportCenterPoint(rect, TREE_LEFT_MARGIN);
+    // X is absolute (origin at left). Y is centered via translateY(-50%) in the transform.
+    const contentCenterRel = { x: l.width / 2, y: 0 };
+    const newPan = panForContentPoint(vp, contentCenterRel, z);
+    const clamped = clampPan(newPan, l.width, l.height, rect.width, rect.height, z);
+    setZoom(z);
+    setPan(clamped);
+  };
+
+  const zoomAroundCenter = (newZoom: number) => {
+    const rect = canvasRef?.getBoundingClientRect();
+    if (!rect) return;
+    const oldZoom = zoom();
+    const vp = viewportCenterPoint(rect, TREE_LEFT_MARGIN);
+    const newPan = zoomAroundViewportPoint(vp, oldZoom, newZoom, pan());
+    const l = layout();
+    const clamped = clampPan(newPan, l.width, l.height, rect.width, rect.height, newZoom);
+    setZoom(newZoom);
+    setPan(clamped);
+  };
+
+  const zoomBy = (factor: number) => {
+    const rect = canvasRef?.getBoundingClientRect();
+    const l = layout();
+    const minZoom = rect ? calcFitZoom(l.width, l.height, rect.width, rect.height) : 0.25;
+    const z = Math.max(minZoom, Math.min(3, zoom() * factor));
+    zoomAroundCenter(z);
+  };
+
+  const centerOnNode = (nodeId: string, targetZoom?: number) => {
+    const rect = canvasRef?.getBoundingClientRect();
+    if (!rect) return;
+    const l = layout();
+    const pos = l.positions.get(nodeId);
+    if (!pos) return;
+
+    const minZoom = calcFitZoom(l.width, l.height, rect.width, rect.height);
+    const desiredZoom = targetZoom !== undefined ? Math.max(minZoom, Math.min(3, targetZoom)) : zoom();
+    const nodeCenter = {
+      x: pos.x + pos.width / 2,
+      y: contentYToRelative(pos.y + pos.height / 2, l.height),
+    };
+    const vp = viewportCenterPoint(rect, TREE_LEFT_MARGIN);
+    const rawPan = panForContentPoint(vp, nodeCenter, desiredZoom);
+    const clamped = clampPan(rawPan, l.width, l.height, rect.width, rect.height, desiredZoom);
+    setZoom(desiredZoom);
+    setPan(clamped);
+  };
+
+  // Perform a pending jump once the layout includes the node (e.g., after expanding a collapsed feature).
+  createEffect(() => {
+    const nodeId = pendingJumpNodeId();
+    if (!nodeId) return;
+    const l = layout();
+    if (!l.positions.has(nodeId)) return;
+    const target = zoom() < 0.6 ? 0.6 : undefined;
+    centerOnNode(nodeId, target);
+    setPendingJumpNodeId(null);
+  });
+
+  const handleWheel = (e: WheelEvent) => {
+    e.preventDefault();
+
+    if (e.ctrlKey) {
+      const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+      const oldZoom = zoom();
+      const section = canvasRef;
+      const rect = section?.getBoundingClientRect();
+      const l = layout();
+      const minZoom = rect ? calcFitZoom(l.width, l.height, rect.width, rect.height) : 0.25;
+      const newZoom = Math.max(minZoom, Math.min(3, oldZoom * zoomFactor));
+      if (rect) {
+        const cursorX = e.clientX - rect.left - TREE_LEFT_MARGIN;
+        const cursorY = e.clientY - rect.top - rect.height / 2;
+        const currentPan = pan();
+        const contentX = (cursorX - currentPan.x) / oldZoom;
+        const contentY = (cursorY - currentPan.y) / oldZoom;
+        setPan({
+          x: cursorX - contentX * newZoom,
+          y: cursorY - contentY * newZoom,
+        });
+      }
+      setZoom(newZoom);
+    } else {
+      const l = layout();
+      const rect = canvasRef?.getBoundingClientRect();
+      const rawPan = {
+        x: pan().x - e.deltaX,
+        y: pan().y - e.deltaY,
+      };
+      const clampedPan = rect
+        ? clampPan(rawPan, l.width, l.height, rect.width, rect.height, zoom())
+        : rawPan;
+      setPan(clampedPan);
+    }
+  };
+
+  const handleMouseDown = (e: MouseEvent) => {
+    if (e.button === 1 || (e.button === 0 && e.altKey)) {
+      e.preventDefault();
+      setIsPanning(true);
+      const p = pan();
+      setPanStart({ x: e.clientX - p.x, y: e.clientY - p.y });
+    }
+  };
+
   const handleMouseMove = (e: MouseEvent) => {
-    if (isPanning() && activePanSide()) {
+    if (isPanning()) {
       const rawPan = {
         x: e.clientX - panStart().x,
         y: e.clientY - panStart().y,
       };
-
-      // Get panel dimensions for clamping
-      const section = document.querySelector(
-        activePanSide() === 'draft' ? '.draft-section' : '.live-section'
-      );
-      const rect = section?.getBoundingClientRect();
-
-      if (activePanSide() === 'draft') {
-        const layout = draftLayout();
-        const clampedPan = rect
-          ? clampPan(rawPan, layout.width, layout.height, rect.width, rect.height, draftZoom())
-          : rawPan;
-        setDraftPan(clampedPan);
-      } else {
-        const layout = liveLayout();
-        const clampedPan = rect
-          ? clampPan(rawPan, layout.width, layout.height, rect.width, rect.height, liveZoom())
-          : rawPan;
-        setLivePan(clampedPan);
-      }
+      const rect = canvasRef?.getBoundingClientRect();
+      const l = layout();
+      const clampedPan = rect
+        ? clampPan(rawPan, l.width, l.height, rect.width, rect.height, zoom())
+        : rawPan;
+      setPan(clampedPan);
     }
   };
 
   const handleMouseUp = () => {
     setIsPanning(false);
-    setActivePanSide(null);
   };
-
-  // Switch view and reset zoom/pan for clean centered view
-  const switchView = (view: 'draft' | 'live' | 'both') => {
-    setFocusedView(view);
-    setDraftZoom(1);
-    setLiveZoom(1);
-
-    // Wait for DOM to update with new panel sizes, then center trees
-    requestAnimationFrame(() => {
-      // Center draft tree
-      if (view === 'draft' || view === 'both') {
-        const draftSection = document.querySelector('.draft-section');
-        if (draftSection) {
-          const rect = draftSection.getBoundingClientRect();
-          const layout = draftLayout();
-          // Center horizontally: (panelWidth - treeWidth) / 2 - TREE_LEFT_MARGIN
-          const centerX = Math.max(0, (rect.width - layout.width) / 2 - TREE_LEFT_MARGIN);
-          setDraftPan({ x: centerX, y: 0 });
-        } else {
-          setDraftPan({ x: 0, y: 0 });
-        }
-      }
-
-      // Center live tree
-      if (view === 'live' || view === 'both') {
-        const liveSection = document.querySelector('.live-section');
-        if (liveSection) {
-          const rect = liveSection.getBoundingClientRect();
-          const layout = liveLayout();
-          const centerX = Math.max(0, (rect.width - layout.width) / 2 - TREE_LEFT_MARGIN);
-          setLivePan({ x: centerX, y: 0 });
-        } else {
-          setLivePan({ x: 0, y: 0 });
-        }
-      }
-    });
-  };
-
-  // Keyboard shortcuts for view switching (d=Draft, l=Live, b=Both)
-  createEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-
-      const key = e.key.toLowerCase();
-      if (key === 'd') {
-        switchView('draft');
-      } else if (key === 'l' && hasLiveTree()) {
-        switchView('live');
-      } else if (key === 'b' && hasLiveTree()) {
-        switchView('both');
-      }
-    };
-
-    document.addEventListener('keydown', handler);
-    onCleanup(() => document.removeEventListener('keydown', handler));
-  });
 
   // ==========================================================================
   // Render
@@ -1372,17 +1348,12 @@ export const SpecBoard: Component = () => {
       <div
         class="w-16 h-16 mb-4 rounded-lg flex items-center justify-center"
         style={{
-          background: 'rgba(212,165,116,0.05)',
-          border: '1px solid rgba(212,165,116,0.1)',
+          background: amber(0.05),
+          border: `1px solid ${amber(0.1)}`,
         }}
       >
         <svg class="w-8 h-8 text-wool-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="1.25"
-            d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-          />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.25" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
         </svg>
       </div>
       <p class="text-sm text-wool-500 mb-4">No project selected</p>
@@ -1390,8 +1361,8 @@ export const SpecBoard: Component = () => {
         onClick={() => project.openProjectSetup()}
         class="px-3 py-1.5 rounded text-[12px] font-medium"
         style={{
-          background: 'rgba(212,165,116,0.15)',
-          border: '1px solid rgba(212,165,116,0.25)',
+          background: amber(0.15),
+          border: `1px solid ${amber(0.25)}`,
           color: 'var(--amber-400)',
         }}
       >
@@ -1405,7 +1376,7 @@ export const SpecBoard: Component = () => {
       class="flex flex-col items-center justify-center h-full text-center"
       onContextMenu={(e) => handleContextMenu(e, null)}
     >
-      <p class="text-[12px] text-wool-600 mb-1">No tasks yet</p>
+      <p class="text-[12px] text-wool-600 mb-1">No specs yet</p>
       <p class="text-[11px] text-wool-700">Right-click to add</p>
     </div>
   );
@@ -1413,26 +1384,35 @@ export const SpecBoard: Component = () => {
   return (
     <Show when={project.selectedProject()} fallback={<NoProjectSelected />}>
       <div class="flex-1 flex flex-col overflow-hidden">
-        {/* Canvas Toolbar - workers, status, live tree filters */}
+        {/* Canvas Toolbar */}
         <CanvasToolbar
           granularity={granularity}
           setGranularity={setGranularity}
           liveFilters={liveFilters}
           setLiveFilters={setLiveFilters}
-          hasLiveTree={hasLiveTree()}
+          edgeToggles={edgeToggles}
+          setEdgeToggles={setEdgeToggles}
+          scopeName={scopeName}
+          clearScope={() => { setScopeRootId(null); setCollapsedFeatureIds([]); setAutoFitDone(false); }}
+          hasLiveTree={hasDispatchedNodes()}
         />
 
         <div class="flex-1 flex flex-col overflow-hidden bg-pasture-900">
-        {/* Canvas Area with Pan/Zoom */}
+        {/* Canvas Area */}
         <div
           ref={canvasRef}
           class="flex-1 overflow-hidden relative"
           style={{
             cursor: isPanning() ? 'grabbing' : 'default',
-            // Subtle dot grid background
-            'background-image': `radial-gradient(circle, rgba(90, 85, 80, 0.15) 1px, transparent 1px)`,
-            'background-size': '24px 24px',
+            'background-image': `radial-gradient(circle, rgba(90, 85, 80, 0.10) 1px, transparent 1px)`,
+            'background-size': '26px 26px',
             'background-position': '12px 12px',
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setSelectedNodeId(null);
+              setViewingNode(null);
+            }
           }}
           onWheel={handleWheel}
           onMouseDown={handleMouseDown}
@@ -1440,186 +1420,130 @@ export const SpecBoard: Component = () => {
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
         >
-          {/* Top-right: View controls - Draft/Live/Both */}
+          {/* Subtle grain overlay */}
           <div
-            class="absolute top-3 right-3 z-20 flex items-center gap-0.5 p-1 rounded-lg"
+            class="absolute inset-0 pointer-events-none"
             style={{
-              background: 'rgba(30, 30, 30, 0.9)',
-              border: '1px solid rgba(64, 64, 64, 0.5)',
-              'box-shadow': '0 2px 8px rgba(0,0,0,0.3)',
+              'background-image': "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E\")",
+              opacity: 0.02,
+              'mix-blend-mode': 'overlay',
             }}
+          />
+
+          {/* Zoom controls */}
+          <div
+            class="absolute bottom-3 right-3 z-20 flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-medium"
+            style={{ background: 'rgba(30, 30, 30, 0.85)', border: '1px solid rgba(64, 64, 64, 0.4)' }}
           >
-            {/* Draft button */}
             <button
-              onClick={() => switchView('draft')}
-              class="px-2.5 py-1 rounded text-[10px] font-medium transition-all"
-              style={{
-                background: focusedView() === 'draft' ? 'rgba(212, 165, 116, 0.25)' : 'transparent',
-                color: focusedView() === 'draft' ? 'var(--amber-400)' : 'var(--wool-500)',
-              }}
-              title="Draft view (D)"
+              type="button"
+              class="px-1.5 py-0.5 rounded hover:bg-white/5 text-wool-500"
+              onClick={fitToContent}
+              title="Fit"
             >
-              Draft
+              Fit
             </button>
-
-            {/* Live button - only show when live tree exists */}
-            <Show when={hasLiveTree()}>
-              <button
-                onClick={() => switchView('live')}
-                class="px-2.5 py-1 rounded text-[10px] font-medium transition-all"
-                style={{
-                  background: focusedView() === 'live' ? 'rgba(138, 133, 128, 0.2)' : 'transparent',
-                  color: focusedView() === 'live' ? 'var(--wool-300)' : 'var(--wool-500)',
-                }}
-                title="Live view (L)"
-              >
-                Live
-              </button>
-
-              {/* Both button */}
-              <button
-                onClick={() => switchView('both')}
-                class="px-2.5 py-1 rounded text-[10px] font-medium transition-all"
-                style={{
-                  background: focusedView() === 'both' ? 'rgba(138, 133, 128, 0.2)' : 'transparent',
-                  color: focusedView() === 'both' ? 'var(--wool-300)' : 'var(--wool-500)',
-                }}
-                title="Both views (B)"
-              >
-                Both
-              </button>
-            </Show>
+            <button type="button" class="w-6 h-5 rounded hover:bg-white/5 text-wool-500" onClick={() => zoomBy(0.9)} title="Zoom out">
+              -
+            </button>
+            <button type="button" class="w-6 h-5 rounded hover:bg-white/5 text-wool-500" onClick={() => zoomBy(1.1)} title="Zoom in">
+              +
+            </button>
+            <button type="button" class="px-1.5 py-0.5 rounded hover:bg-white/5 text-wool-500" onClick={() => zoomAroundCenter(1)} title="100%">
+              100%
+            </button>
+            <span class="text-wool-600 ml-1">{Math.round(zoom() * 100)}%</span>
           </div>
 
-          {/* Bottom-right: Zoom indicator */}
-          <Show when={hasLiveTree()}>
-            <div
-              class="absolute bottom-3 right-3 z-20 flex items-center gap-2 px-2.5 py-1 rounded text-[10px] font-medium"
-              style={{ background: 'rgba(30, 30, 30, 0.85)', border: '1px solid rgba(64, 64, 64, 0.4)' }}
-            >
-              <span style={{ color: 'var(--amber-600)' }}>{Math.round(draftZoom() * 100)}%</span>
-              <span class="text-wool-700">·</span>
-              <span class="text-wool-500">{Math.round(liveZoom() * 100)}%</span>
-            </div>
-          </Show>
-
           <Show
-            when={delta.draftTree().length > 0 || liveTreeWithProjects().length > 0}
+            when={filteredTree().length > 0}
             fallback={<EmptyTreeState />}
           >
-            {/* Split view container - fills viewport */}
+            {/* Single tree container */}
             <div
-              class="absolute inset-0 flex"
-              style={{ gap: `${SECTION_GAP}px`, padding: '8px' }}
+              class="absolute inset-0"
+              style={{ padding: '8px' }}
               onContextMenu={(e) => {
-                // Only show context menu for draft section (live is read-only)
-                if ((e.target as HTMLElement).closest('.draft-section')) {
-                  handleContextMenu(e, null);
-                }
+                handleContextMenu(e, null);
               }}
             >
-              {/* Draft Section (LEFT, or FULL when no live tree) */}
-              <Show when={delta.draftTree().length > 0 && focusedView() !== 'live'}>
+              <div
+                class="tree-section flex-1 rounded-lg relative overflow-hidden h-full"
+                onClick={(e) => {
+                  if (e.target === e.currentTarget) {
+                    setSelectedNodeId(null);
+                    setViewingNode(null);
+                  }
+                }}
+              >
                 <div
-                  class="tree-section draft-section flex-1 rounded-lg relative overflow-hidden"
+                  class="absolute"
                   style={{
-                    // Only show split-view styling when live tree exists
-                    border: hasLiveTree() ? '1px dashed rgba(212, 165, 116, 0.2)' : 'none',
-                    background: hasLiveTree() ? 'rgba(36, 34, 30, 0.3)' : 'transparent',
+                    left: `${TREE_LEFT_MARGIN}px`,
+                    top: '50%',
+                    transform: `translate(${pan().x}px, calc(-50% + ${pan().y}px)) scale(${zoom()})`,
+                    'transform-origin': '0 50%',
                   }}
                 >
-                  {/* Tree content - centered vertically, root at left */}
-                  <div
-                    class="absolute"
-                    style={{
-                      left: `${TREE_LEFT_MARGIN}px`,
-                      top: '50%',
-                      transform: `translate(${draftPan().x}px, calc(-50% + ${draftPan().y}px)) scale(${draftZoom()})`,
-                      'transform-origin': '0 50%',
-                    }}
-                  >
-                    <div class="relative" style={{ width: `${draftLayout().width}px`, height: `${draftLayout().height}px` }}>
-                      {/* Dependency connectors (blocked_by and validates relationships) */}
-                      <DependencyConnectors edgeRoutes={draftLayout().edgeRoutes} />
-                      <For each={flattenDraftTree(delta.draftTree())}>
-                        {(node) => {
-                          const pos = () => draftLayout().positions.get(node.id);
-                          return (
-                            <Show when={pos()}>
-                              <DraftNodeCard
-                                node={node}
-                                position={pos()!}
-                                diff={delta.diff()}
-                                showDelta={delta.showDeltaIndicators()}
-                                selected={selectedNodeId() === node.id}
-                                onSelect={() => {
-                                  setSelectedNodeId(node.id);
-                                  setSelectedLiveNodeId(null);
-                                  setViewingLiveNode(null);
-                                }}
-                                onDoubleClick={() => handleDoubleClick(node)}
-                                onContextMenu={(e) => handleContextMenu(e, node)}
-                              />
-                            </Show>
-                          );
-                        }}
-                      </For>
-                    </div>
+                  <div class="relative" style={{ width: `${layout().width}px`, height: `${layout().height}px` }}>
+                    <DependencyConnectors
+                      edgeRoutes={layout().edgeRoutes}
+                      edgeToggles={edgeToggles}
+                      focusSet={focusSet}
+                      selectedNodeId={selectedNodeId}
+                    />
+                    <For each={flattenTree(filteredTree())}>
+                      {(node) => {
+                        const pos = () => layout().positions.get(node.id);
+                        return (
+                          <Show when={pos()}>
+                            <BoardNodeCard
+                              node={node}
+                              position={pos()!}
+                              selected={selectedNodeId() === node.id}
+                              dimmed={!!focusSet() && !focusSet()!.has(node.id)}
+                              collapsed={node.kind === 'feature' && isCollapsed(node.id)}
+                              hiddenCounts={hiddenCountsByFeatureId().get(node.id) || null}
+                              onSelect={() => {
+                                setSelectedNodeId(node.id);
+                              }}
+                              onDoubleClick={() => handleDoubleClick(node)}
+                              onContextMenu={(e) => {
+                                if (node.status === 'draft') {
+                                  handleContextMenu(e, node);
+                                }
+                              }}
+                              onEnterScope={() => {
+                                if (node.kind === 'feature' && node.status !== 'draft') {
+                                  setScopeRootId(node.id);
+                                  setCollapsedFeatureIds([]);
+                                  setAutoFitDone(false);
+                                }
+                              }}
+                              onToggleCollapse={() => {
+                                if (node.kind === 'feature' && node.status !== 'draft') toggleCollapse(node.id);
+                              }}
+                              nodeMap={nodeMap()}
+                            />
+                          </Show>
+                        );
+                      }}
+                    </For>
                   </div>
                 </div>
-              </Show>
-
-              {/* Live Section (RIGHT) */}
-              <Show when={hasLiveTree() && focusedView() !== 'draft'}>
-                <div
-                  class="tree-section live-section flex-1 rounded-lg relative overflow-hidden"
-                  style={{
-                    border: '1px dashed rgba(90, 85, 80, 0.25)',
-                    background: 'rgba(30, 30, 30, 0.3)',
-                  }}
-                >
-                  {/* Tree content - centered vertically, root at left */}
-                  <div
-                    class="absolute"
-                    style={{
-                      left: `${TREE_LEFT_MARGIN}px`,
-                      top: '50%',
-                      transform: `translate(${livePan().x}px, calc(-50% + ${livePan().y}px)) scale(${liveZoom()})`,
-                      'transform-origin': '0 50%',
-                    }}
-                  >
-                    <div class="relative" style={{ width: `${liveLayout().width}px`, height: `${liveLayout().height}px` }}>
-                      {/* Dependency connectors (blocked_by and validates relationships) */}
-                      <DependencyConnectors edgeRoutes={liveLayout().edgeRoutes} />
-                      <For each={flattenLiveTree(filteredLiveTree())}>
-                        {(node) => {
-                          const pos = () => liveLayout().positions.get(node.id);
-                          return (
-                            <Show when={pos()}>
-                              <LiveNodeCard
-                                node={node}
-                                position={pos()!}
-                                diff={delta.diff()}
-                                showDelta={delta.showDeltaIndicators()}
-                                selected={selectedLiveNodeId() === node.id}
-                                onSelect={() => {
-                                  setSelectedLiveNodeId(node.id);
-                                  setSelectedNodeId(null);
-                                  setViewingLiveNode(node);
-                                }}
-                                nodeMap={liveNodeMap()}
-                              />
-                            </Show>
-                          );
-                        }}
-                      </For>
-                    </div>
-                  </div>
-                </div>
-              </Show>
+              </div>
             </div>
           </Show>
         </div>
+
+        <NodeFinder
+          open={finderOpen()}
+          query={finderQuery()}
+          setQuery={setFinderQuery}
+          items={finderItems()}
+          onSelect={handleFinderSelect}
+          onClose={() => { setFinderOpen(false); setFinderQuery(''); }}
+        />
 
         {/* Context Menu */}
         <Show when={contextMenu()}>
@@ -1638,7 +1562,6 @@ export const SpecBoard: Component = () => {
               'box-shadow': '0 4px 16px rgba(0,0,0,0.4)',
             }}
           >
-            {/* Task/eval node menu */}
             <Show when={contextMenu()!.node}>
               <button class="w-full px-3 py-1.5 text-left text-[11px] text-wool-200 hover:bg-white/5" onClick={handleAddChild}>
                 Add child
@@ -1657,13 +1580,12 @@ export const SpecBoard: Component = () => {
                 Delete
               </button>
             </Show>
-            {/* Background menu */}
             <Show when={contextMenu()!.isBackground}>
-              <button class="w-full px-3 py-1.5 text-left text-[11px] text-wool-200 hover:bg-white/5" onClick={handleAddRootTask}>
-                Add task
+              <button class="w-full px-3 py-1.5 text-left text-[11px] text-wool-200 hover:bg-white/5" onClick={handleAddRootFeature}>
+                Add feature
               </button>
-              <button class="w-full px-3 py-1.5 text-left text-[11px] text-sage hover:bg-sage/10" onClick={handleAddRootEval}>
-                Add eval
+              <button class="w-full px-3 py-1.5 text-left text-[11px] text-sage hover:bg-sage/10" onClick={handleAddRootCheck}>
+                Add check
               </button>
             </Show>
           </div>
@@ -1672,8 +1594,9 @@ export const SpecBoard: Component = () => {
         {/* New Node Prompt */}
         <Show when={showNewPrompt()}>
           {(() => {
-            const isEval = () => newNodeType() === 'eval';
-            const typeLabel = () => (isEval() ? 'Eval' : 'Task');
+            const isCheck = () => newNodeKind() === 'check';
+            const isFeature = () => newNodeKind() === 'feature';
+            const typeLabel = () => isCheck() ? 'Check' : isFeature() ? 'Feature' : 'Task';
 
             return (
               <div
@@ -1689,17 +1612,16 @@ export const SpecBoard: Component = () => {
                     border: '1px solid var(--pasture-600)',
                   }}
                 >
-                  {/* Header */}
                   <div class="p-4 border-b border-pasture-600">
                     <div class="flex items-center gap-3">
                       <div
                         class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
                         style={{
-                          background: isEval() ? 'rgba(125, 153, 112, 0.15)' : 'rgba(212, 165, 116, 0.12)',
-                          border: `1px solid ${isEval() ? 'rgba(125, 153, 112, 0.25)' : 'rgba(212, 165, 116, 0.2)'}`,
+                          background: isCheck() ? sage(0.15) : amber(0.12),
+                          border: `1px solid ${isCheck() ? sage(0.25) : amber(0.2)}`,
                         }}
                       >
-                        <Show when={isEval()} fallback={
+                        <Show when={isCheck()} fallback={
                           <svg class="w-4 h-4" style={{ color: 'var(--amber-500)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                           </svg>
@@ -1712,13 +1634,12 @@ export const SpecBoard: Component = () => {
                       <div>
                         <h2 class="text-sm font-semibold text-wool-100">New {typeLabel()}</h2>
                         <p class="text-xs text-wool-500">
-                          {isEval() ? 'Add an eval' : 'Add a work item'}
+                          {isCheck() ? 'Add a check' : isFeature() ? 'Add a feature' : 'Add a work item'}
                         </p>
                       </div>
                     </div>
                   </div>
 
-                  {/* Content */}
                   <div class="p-4">
                     <form onSubmit={(e) => { e.preventDefault(); handleCreateNode(); }}>
                       <div class="space-y-1.5">
@@ -1730,11 +1651,11 @@ export const SpecBoard: Component = () => {
                           value={newNodeName()}
                           onInput={(e) => setNewNodeName(e.currentTarget.value)}
                           onKeyDown={(e) => { if (e.key === 'Escape') setShowNewPrompt(false); }}
-                          placeholder={isEval() ? 'e.g., API returns valid JSON' : 'e.g., Build authentication flow'}
+                          placeholder={isCheck() ? 'e.g., API returns valid JSON' : isFeature() ? 'e.g., OAuth Authentication' : 'e.g., Build authentication flow'}
                           class="w-full px-3 py-2 rounded-md text-sm bg-pasture-900 border text-wool-100 placeholder-wool-600 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
                           style={{
                             'font-family': 'system-ui, -apple-system, sans-serif',
-                            'border-color': isEval() ? 'rgba(125, 153, 112, 0.4)' : 'var(--pasture-600)',
+                            'border-color': isCheck() ? sage(0.4) : 'var(--pasture-600)',
                           }}
                         />
                         <p class="text-[11px] text-wool-500">Press Enter to create, Escape to cancel</p>
@@ -1742,7 +1663,6 @@ export const SpecBoard: Component = () => {
                     </form>
                   </div>
 
-                  {/* Footer */}
                   <div class="px-4 py-3 border-t border-pasture-600 flex justify-end gap-2">
                     <button
                       onClick={() => setShowNewPrompt(false)}
@@ -1755,9 +1675,9 @@ export const SpecBoard: Component = () => {
                       disabled={!newNodeName().trim()}
                       class="px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-40"
                       style={{
-                        background: isEval() ? 'rgba(125, 153, 112, 0.2)' : 'var(--amber-500)',
-                        color: isEval() ? 'var(--sage)' : 'var(--pasture-900)',
-                        border: isEval() ? '1px solid rgba(125, 153, 112, 0.3)' : 'none',
+                        background: isCheck() ? sage(0.2) : 'var(--amber-500)',
+                        color: isCheck() ? 'var(--sage)' : 'var(--pasture-900)',
+                        border: isCheck() ? `1px solid ${sage(0.3)}` : 'none',
                       }}
                     >
                       Create {typeLabel()}
@@ -1769,7 +1689,7 @@ export const SpecBoard: Component = () => {
           })()}
         </Show>
 
-        {/* Edit Modal (CodeMirror-based) */}
+        {/* Edit Modal (draft nodes only) */}
         <Show when={editingNode()}>
           {(node) => (
             <TaskEditorModal
@@ -1781,18 +1701,22 @@ export const SpecBoard: Component = () => {
           )}
         </Show>
 
-        {/* Live Node Detail Modal (Read-only) */}
-        <Show when={viewingLiveNode()}>
+        {/* Node Detail Modal (non-draft, read-only) */}
+        <Show when={viewingNode()}>
           {(node) => {
-            const nodeType = () => node().nodeType;
-            const isEval = () => nodeType() === 'eval';
-            const typeLabel = () => (isEval() ? 'Eval' : 'Task');
+            const nodeKind = () => node().kind;
+            const isCheck = () => nodeKind() === 'check';
+            const typeLabel = () => isCheck() ? 'Check' : node().kind === 'feature' ? 'Feature' : 'Task';
 
             const statusLabel = () => {
               switch (node().status) {
+                case 'draft': return 'Draft';
                 case 'pending': return 'Pending';
                 case 'working': return 'Working';
                 case 'done': return 'Done';
+                case 'awaiting_check': return 'Awaiting Check';
+                case 'validated': return 'Validated';
+                case 'needs_repair': return 'Needs Repair';
                 case 'failed': return 'Failed';
                 default: return node().status;
               }
@@ -1800,9 +1724,13 @@ export const SpecBoard: Component = () => {
 
             const statusColor = () => {
               switch (node().status) {
+                case 'draft': return 'var(--sky-500)';
                 case 'pending': return 'var(--wool-500)';
                 case 'working': return 'var(--amber-500)';
                 case 'done': return 'var(--sage)';
+                case 'awaiting_check': return 'var(--amber-400)';
+                case 'validated': return 'var(--sage)';
+                case 'needs_repair': return 'var(--golden)';
                 case 'failed': return 'var(--terra)';
                 default: return 'var(--wool-500)';
               }
@@ -1811,26 +1739,27 @@ export const SpecBoard: Component = () => {
             return (
               <div
                 class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-                onClick={(e) => { if (e.target === e.currentTarget) { setViewingLiveNode(null); setSelectedLiveNodeId(null); } }}
+                onClick={(e) => { if (e.target === e.currentTarget) { setViewingNode(null); setSelectedNodeId(null); } }}
               >
                 <div
                   class="w-[560px] max-h-[85vh] flex flex-col rounded-lg shadow-xl"
                   style={{
-                    background: 'var(--pasture-800)',
-                    border: '1px solid var(--pasture-600)',
+                    background: 'linear-gradient(180deg, rgba(36,36,36,0.98) 0%, rgba(26,26,26,0.98) 100%)',
+                    border: '1px solid rgba(255,255,255,0.10)',
+                    'box-shadow': '0 30px 70px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,255,255,0.05)',
+                    'backdrop-filter': 'blur(18px)',
                   }}
                 >
-                  {/* Header */}
-                  <div class="p-4 border-b border-pasture-600 flex items-start justify-between">
+                  <div class="p-4 border-b border-white/5 flex items-start justify-between">
                     <div class="flex items-center gap-3">
                       <div
                         class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
                         style={{
-                          background: isEval() ? 'rgba(125, 153, 112, 0.15)' : 'rgba(212, 165, 116, 0.12)',
-                          border: `1px solid ${isEval() ? 'rgba(125, 153, 112, 0.25)' : 'rgba(212, 165, 116, 0.2)'}`,
+                          background: isCheck() ? sage(0.15) : amber(0.12),
+                          border: `1px solid ${isCheck() ? sage(0.25) : amber(0.2)}`,
                         }}
                       >
-                        <Show when={isEval()} fallback={
+                        <Show when={isCheck()} fallback={
                           <svg class="w-5 h-5" style={{ color: 'var(--amber-500)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                           </svg>
@@ -1844,7 +1773,7 @@ export const SpecBoard: Component = () => {
                         <div class="flex items-center gap-2">
                           <span
                             class="text-[10px] font-medium uppercase tracking-wider"
-                            style={{ color: isEval() ? 'var(--sage)' : 'var(--amber-500)', opacity: 0.8 }}
+                            style={{ color: isCheck() ? 'var(--sage)' : 'var(--amber-500)', opacity: 0.8 }}
                           >
                             {typeLabel()}
                           </span>
@@ -1852,13 +1781,13 @@ export const SpecBoard: Component = () => {
                             {statusLabel()}
                           </span>
                         </div>
-                        <h2 class="text-sm font-semibold text-wool-100 -mt-0.5">
+                        <h2 class={`-mt-0.5 ${node().kind === 'feature' && node().parentId === null ? 'text-[18px] font-semibold italic' : 'text-sm font-semibold'} text-wool-100`}>
                           {node().name || 'Untitled'}
                         </h2>
                       </div>
                     </div>
                     <button
-                      onClick={() => { setViewingLiveNode(null); setSelectedLiveNodeId(null); }}
+                      onClick={() => { setViewingNode(null); setSelectedNodeId(null); }}
                       class="p-1 rounded text-wool-500 hover:text-wool-300 hover:bg-white/5"
                     >
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1867,13 +1796,11 @@ export const SpecBoard: Component = () => {
                     </button>
                   </div>
 
-                  {/* Content */}
                   <div class="p-4 space-y-4 overflow-y-auto flex-1">
-                    {/* Description/Content (read-only, rendered markdown) */}
                     <Show when={node().content}>
                       <div class="space-y-1.5">
                         <label class="text-xs font-medium text-wool-300">
-                          {isEval() ? 'Acceptance Criteria' : 'Description'}
+                          {isCheck() ? 'Acceptance Criteria' : 'Description'}
                         </label>
                         <div
                           class="w-full px-4 py-3 rounded-md bg-pasture-900/50 border border-pasture-700 overflow-auto"
@@ -1884,40 +1811,39 @@ export const SpecBoard: Component = () => {
                       </div>
                     </Show>
 
-                    {/* Validates (eval only) */}
-                    <Show when={isEval() && node().validates.length > 0}>
+                    <Show when={isCheck() && node().validates.length > 0}>
                       <div class="space-y-1.5">
-                        <label class="text-xs font-medium" style={{ color: 'var(--sage)' }}>
-                          Validates Tasks
-                        </label>
+                        <label class="text-xs font-medium" style={{ color: 'var(--sage)' }}>Validates Tasks</label>
                         <div class="flex flex-wrap gap-1.5">
                           <For each={node().validates}>
                             {(taskId) => (
-                              <span
-                                class="px-2 py-0.5 rounded text-xs font-mono"
-                                style={{ background: 'rgba(125, 153, 112, 0.15)', color: 'var(--sage)', border: '1px solid rgba(125, 153, 112, 0.3)' }}
+                              <button
+                                type="button"
+                                class="px-2 py-0.5 rounded-full text-[11px] font-mono hover:brightness-110 transition"
+                                style={{ background: sage(0.14), color: 'var(--sage)', border: `1px solid ${sage(0.28)}` }}
+                                onClick={() => {
+                                  setViewingNode(null);
+                                  setSelectedNodeId(taskId);
+                                  setPendingJumpNodeId(taskId);
+                                }}
                               >
-                                {taskId}
-                              </span>
+                                {uncollapsedNodeMap().get(taskId)?.name || taskId}
+                              </button>
                             )}
                           </For>
                         </div>
                       </div>
                     </Show>
 
-                    {/* Commit SHA (if completed) */}
                     <Show when={node().lastCommitSha}>
                       <div class="space-y-1.5">
                         <label class="text-xs font-medium text-wool-300">Last Commit</label>
-                        <div class="flex items-center gap-2">
-                          <code class="px-2 py-1 rounded text-xs font-mono bg-pasture-900/50 border border-pasture-700 text-wool-300">
-                            {node().lastCommitSha?.slice(0, 7)}
-                          </code>
-                        </div>
+                        <code class="px-2 py-1 rounded text-xs font-mono bg-pasture-900/50 border border-pasture-700 text-wool-300">
+                          {node().lastCommitSha?.slice(0, 7)}
+                        </code>
                       </div>
                     </Show>
 
-                    {/* Completed at (if done) */}
                     <Show when={node().completedAt}>
                       <div class="space-y-1.5">
                         <label class="text-xs font-medium text-wool-300">Completed</label>
@@ -1927,76 +1853,139 @@ export const SpecBoard: Component = () => {
                       </div>
                     </Show>
 
-                    {/* Relationships Section */}
                     <div class="space-y-2 pt-2 border-t border-pasture-700/50">
                       <label class="text-xs font-medium text-wool-400">Relationships</label>
 
-                      {/* Parent */}
-                      <Show when={node().parentId}>
-                        <div class="flex items-center gap-2 text-[11px]">
-                          <span class="text-wool-500 w-16">Parent:</span>
-                          <code class="px-1.5 py-0.5 rounded bg-pasture-900/50 text-wool-300 font-mono">
-                            {node().parentId}
-                          </code>
-                        </div>
-                      </Show>
+                      {(() => {
+                        const pill = (id: string, variant: 'neutral' | 'blocked' | 'validated' | 'worker' | 'parent') => {
+                          const n = uncollapsedNodeMap().get(id);
+                          const name = n?.name || id;
+                          const kind = n?.kind || 'task';
+                          const status = n?.status || null;
+                          const bg =
+                            variant === 'blocked' ? 'rgba(196,92,74,0.12)'
+                            : variant === 'validated' ? 'rgba(125,153,112,0.14)'
+                            : variant === 'worker' ? 'rgba(212,165,116,0.14)'
+                            : 'rgba(255,255,255,0.06)';
+                          const border =
+                            variant === 'blocked' ? 'rgba(196,92,74,0.25)'
+                            : variant === 'validated' ? 'rgba(125,153,112,0.25)'
+                            : variant === 'worker' ? 'rgba(212,165,116,0.25)'
+                            : 'rgba(255,255,255,0.10)';
+                          const fg =
+                            variant === 'blocked' ? 'var(--terra-light)'
+                            : variant === 'validated' ? 'var(--sage-light, var(--sage))'
+                            : variant === 'worker' ? 'var(--amber-300)'
+                            : 'var(--wool-300)';
+                          const kindLetter = kind === 'feature' ? 'F' : kind === 'check' ? 'C' : 'T';
+                          const statusDot =
+                            status === 'working' ? 'var(--amber-500)'
+                            : status === 'done' || status === 'validated' ? 'var(--sage)'
+                            : status === 'needs_repair' ? 'var(--golden)'
+                            : status === 'failed' ? 'var(--terra)'
+                            : status === 'awaiting_check' ? 'var(--amber-400)'
+                            : status === 'pending' ? 'var(--wool-600)'
+                            : null;
+                          return (
+                            <button
+                              type="button"
+                              class="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium max-w-full hover:brightness-110 transition"
+                              style={{ background: bg, border: `1px solid ${border}`, color: fg }}
+                              title={id}
+                              onClick={() => {
+                                setViewingNode(null);
+                                setSelectedNodeId(id);
+                                setPendingJumpNodeId(id);
+                              }}
+                            >
+                              <span class="text-[9px] font-semibold opacity-70">{kindLetter}</span>
+                              <span class="truncate max-w-[220px]">{name}</span>
+                              <Show when={statusDot}>
+                                <span class="w-1.5 h-1.5 rounded-full" style={{ background: statusDot || 'transparent' }} />
+                              </Show>
+                            </button>
+                          );
+                        };
 
-                      {/* Children */}
-                      <Show when={node().children.length > 0}>
-                        <div class="flex items-start gap-2 text-[11px]">
-                          <span class="text-wool-500 w-16 pt-0.5">Children:</span>
-                          <div class="flex flex-wrap gap-1">
-                            <For each={node().children}>
-                              {(child) => (
-                                <code class="px-1.5 py-0.5 rounded bg-pasture-900/50 text-wool-300 font-mono">
-                                  {child.id}
-                                </code>
-                              )}
-                            </For>
-                          </div>
-                        </div>
-                      </Show>
+                        return (
+                          <>
+                            <Show when={node().parentId}>
+                              <div class="flex items-start gap-2 text-[11px]">
+                                <span class="text-wool-500 w-16 pt-0.5">Parent:</span>
+                                <div class="flex flex-wrap gap-1">
+                                  {pill(node().parentId!, 'parent')}
+                                </div>
+                              </div>
+                            </Show>
 
-                      {/* Blocked By */}
-                      <Show when={node().blockedBy.length > 0}>
-                        <div class="flex items-start gap-2 text-[11px]">
-                          <span class="text-wool-500 w-16 pt-0.5">Blocked:</span>
-                          <div class="flex flex-wrap gap-1">
-                            <For each={node().blockedBy}>
-                              {(blockerId) => (
-                                <code class="px-1.5 py-0.5 rounded text-terra/80 font-mono" style={{ background: 'rgba(196, 112, 96, 0.1)' }}>
-                                  {blockerId}
-                                </code>
-                              )}
-                            </For>
-                          </div>
-                        </div>
-                      </Show>
+                            <Show when={node().children.length > 0}>
+                              <div class="flex items-start gap-2 text-[11px]">
+                                <span class="text-wool-500 w-16 pt-0.5">Children:</span>
+                                <div class="flex flex-wrap gap-1">
+                                  <For each={node().children}>
+                                    {(child) => pill(child.id, 'neutral')}
+                                  </For>
+                                </div>
+                              </div>
+                            </Show>
 
-                      {/* Claimed By */}
-                      <Show when={node().claimedBy}>
-                        <div class="flex items-center gap-2 text-[11px]">
-                          <span class="text-wool-500 w-16">Worker:</span>
-                          <code class="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 font-mono">
-                            {node().claimedBy}
-                          </code>
-                        </div>
-                      </Show>
+                            <Show when={node().blockedBy.length > 0}>
+                              <div class="flex items-start gap-2 text-[11px]">
+                                <span class="text-wool-500 w-16 pt-0.5">Blocked:</span>
+                                <div class="flex flex-wrap gap-1">
+                                  <For each={node().blockedBy}>
+                                    {(blockerId) => pill(blockerId, 'blocked')}
+                                  </For>
+                                </div>
+                              </div>
+                            </Show>
+
+                            <Show when={!isCheck() && node().validatedBy.length > 0}>
+                              <div class="flex items-start gap-2 text-[11px]">
+                                <span class="text-wool-500 w-16 pt-0.5">Checks:</span>
+                                <div class="flex flex-wrap gap-1">
+                                  <For each={node().validatedBy}>
+                                    {(checkId) => pill(checkId, 'validated')}
+                                  </For>
+                                </div>
+                              </div>
+                            </Show>
+
+                            <Show when={node().resolves}>
+                              <div class="flex items-start gap-2 text-[11px]">
+                                <span class="text-wool-500 w-16 pt-0.5">Resolves:</span>
+                                <div class="flex flex-wrap gap-1">
+                                  {pill(node().resolves!, 'validated')}
+                                </div>
+                              </div>
+                            </Show>
+
+                            <Show when={node().claimedBy}>
+                              <div class="flex items-start gap-2 text-[11px]">
+                                <span class="text-wool-500 w-16 pt-0.5">Worker:</span>
+                                <div class="flex flex-wrap gap-1">
+                                  <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium"
+                                    style={{ background: 'rgba(212,165,116,0.14)', border: '1px solid rgba(212,165,116,0.25)', color: 'var(--amber-300)' }}
+                                  >
+                                    {node().claimedBy}
+                                  </span>
+                                </div>
+                              </div>
+                            </Show>
+                          </>
+                        );
+                      })()}
                     </div>
 
-                    {/* Node ID */}
                     <div class="space-y-1.5 pt-2 border-t border-pasture-700/50">
                       <label class="text-xs font-medium text-wool-500">Node ID</label>
-                      <code class="block px-2 py-1 rounded text-[10px] font-mono bg-pasture-900/30 border border-pasture-700/50 text-wool-500 truncate">
-                        {node().id}
-                      </code>
+                      <code class="block px-2 py-1 rounded text-[10px] font-mono bg-pasture-900/30 border border-pasture-700/50 text-wool-500 truncate">{node().id}</code>
                     </div>
                   </div>
 
-                  {/* Footer */}
                   <div class="px-4 py-3 border-t border-pasture-600 flex justify-end">
                     <button
-                      onClick={() => { setViewingLiveNode(null); setSelectedLiveNodeId(null); }}
+                      onClick={() => { setViewingNode(null); setSelectedNodeId(null); }}
                       class="px-3 py-1.5 rounded-md text-xs font-medium text-wool-400 hover:text-wool-200 hover:bg-white/5"
                     >
                       Close
@@ -2008,24 +1997,20 @@ export const SpecBoard: Component = () => {
           }}
         </Show>
 
-
         {/* Loading overlay */}
         <Show when={delta.loading()}>
           <div class="absolute inset-0 bg-black/30 flex items-center justify-center">
             <div
               class="w-6 h-6 rounded-full animate-spin"
-              style={{ border: '2px solid rgba(212, 165, 116, 0.2)', 'border-top-color': 'var(--amber-500)' }}
+              style={{ border: `2px solid ${amber(0.2)}`, 'border-top-color': 'var(--amber-500)' }}
             />
           </div>
         </Show>
         </div>
 
-
         {/* Delivery Dialog */}
         <Show when={showDeliveryDialog()}>
-          <DeliveryDialog
-            onClose={() => setShowDeliveryDialog(false)}
-          />
+          <DeliveryDialog onClose={() => setShowDeliveryDialog(false)} />
         </Show>
 
         {/* Fork Route Dialog */}

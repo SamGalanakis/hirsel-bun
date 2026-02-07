@@ -4,6 +4,7 @@
  * Displays as a centered modal dialog over the OneBoard canvas.
  */
 import { invoke } from '../../lib/invoke';
+import { emit } from '../../lib/events';
 import {
   type Component,
   For,
@@ -16,6 +17,7 @@ import {
 import type { RepoValidation, StartingPoint } from '../../lib/types';
 import { useProject } from '../../stores';
 import { Icon } from '../shared';
+import { amber } from '../../lib/theme-colors';
 
 type StartingPointType = 'greenfield' | 'localFolder' | 'gitRepo';
 
@@ -229,9 +231,7 @@ export const ProjectSetup: Component = () => {
         y: position?.y ?? null,
       });
       project.setPendingProjectPosition(null);
-      window.dispatchEvent(
-        new CustomEvent('project-created', { detail: result })
-      );
+      emit('project-created', result);
       window.toast?.success(`Project "${result.name}" created`);
     } catch (e) {
       console.error('Failed to create project:', e);
@@ -335,10 +335,10 @@ export const ProjectSetup: Component = () => {
                 }}
                 style={{
                   background: startingPointType() === 'localFolder'
-                    ? 'linear-gradient(180deg, rgba(212,165,116,0.15) 0%, rgba(212,165,116,0.05) 100%)'
+                    ? `linear-gradient(180deg, ${amber(0.15)} 0%, ${amber(0.05)} 100%)`
                     : 'rgba(26, 26, 26, 0.5)',
                   border: startingPointType() === 'localFolder'
-                    ? '1px solid rgba(212,165,116,0.3)'
+                    ? `1px solid ${amber(0.3)}`
                     : '1px solid rgba(63, 63, 70, 0.5)',
                 }}
                 onClick={() => setStartingPointType('localFolder')}
@@ -368,10 +368,10 @@ export const ProjectSetup: Component = () => {
                 }}
                 style={{
                   background: startingPointType() === 'gitRepo'
-                    ? 'linear-gradient(180deg, rgba(212,165,116,0.15) 0%, rgba(212,165,116,0.05) 100%)'
+                    ? `linear-gradient(180deg, ${amber(0.15)} 0%, ${amber(0.05)} 100%)`
                     : 'rgba(26, 26, 26, 0.5)',
                   border: startingPointType() === 'gitRepo'
-                    ? '1px solid rgba(212,165,116,0.3)'
+                    ? `1px solid ${amber(0.3)}`
                     : '1px solid rgba(63, 63, 70, 0.5)',
                 }}
                 onClick={() => setStartingPointType('gitRepo')}
@@ -401,10 +401,10 @@ export const ProjectSetup: Component = () => {
                 }}
                 style={{
                   background: startingPointType() === 'greenfield'
-                    ? 'linear-gradient(180deg, rgba(212,165,116,0.15) 0%, rgba(212,165,116,0.05) 100%)'
+                    ? `linear-gradient(180deg, ${amber(0.15)} 0%, ${amber(0.05)} 100%)`
                     : 'rgba(26, 26, 26, 0.5)',
                   border: startingPointType() === 'greenfield'
-                    ? '1px solid rgba(212,165,116,0.3)'
+                    ? `1px solid ${amber(0.3)}`
                     : '1px solid rgba(63, 63, 70, 0.5)',
                 }}
                 onClick={() => setStartingPointType('greenfield')}

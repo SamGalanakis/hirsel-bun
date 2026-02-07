@@ -3,18 +3,13 @@
  *
  * Similar to Dropdown but allows multiple selections with checkboxes.
  */
-import { type Component, For, Show, createSignal, createMemo } from 'solid-js';
-import { useModalClosing } from '../../hooks';
+import { type Component, For, Show, createMemo } from 'solid-js';
+import { DropdownShell, type DropdownOption } from './Dropdown';
 import { Icon } from './Icon';
-
-export interface MultiSelectOption {
-  value: string;
-  label: string;
-}
 
 export interface MultiSelectDropdownProps {
   value: string[];
-  options: MultiSelectOption[];
+  options: DropdownOption[];
   onChange: (value: string[]) => void;
   placeholder?: string;
   label?: string; // Static label to show instead of selected values
@@ -22,9 +17,6 @@ export interface MultiSelectDropdownProps {
 }
 
 export const MultiSelectDropdown: Component<MultiSelectDropdownProps> = (props) => {
-  const [open, setOpen] = createSignal(false);
-  let containerRef: HTMLDivElement | undefined;
-
   const selectedCount = createMemo(() => props.value.length);
 
   const displayLabel = createMemo(() => {
@@ -55,19 +47,10 @@ export const MultiSelectDropdown: Component<MultiSelectDropdownProps> = (props) 
     }
   };
 
-  // Close on click outside or escape
-  useModalClosing(() => containerRef, open, () => setOpen(false));
-
   return (
-    <div ref={containerRef} class={`dropdown relative ${props.class || ''}`}>
-      <button
-        type="button"
-        class="btn-outline w-full justify-between"
-        onClick={() => setOpen(!open())}
-        aria-haspopup="listbox"
-        aria-expanded={open()}
-      >
-        <span class="truncate flex-1 text-left flex items-center gap-1.5" classList={{ 'text-muted-foreground': props.value.length === 0 }}>
+    <DropdownShell
+      displayLabel={() => (
+        <span class="flex items-center gap-1.5">
           {displayLabel()}
           <Show when={selectedCount() > 0 && selectedCount() < props.options.length}>
             <span class="px-1.5 py-0.5 text-[10px] rounded-full bg-accent text-accent-foreground">
@@ -75,44 +58,40 @@ export const MultiSelectDropdown: Component<MultiSelectDropdownProps> = (props) 
             </span>
           </Show>
         </span>
-        <Icon name="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0" />
-      </button>
-      <Show when={open()}>
-        <div
-          data-popover
-          class="absolute z-50 mt-1 w-full bg-popover border border-border rounded-md shadow-md py-1 max-h-60 overflow-auto"
-        >
-          <div role="listbox" aria-orientation="vertical" aria-multiselectable="true">
-            <For each={props.options}>
-              {(option) => {
-                const isSelected = () => props.value.includes(option.value);
-                return (
-                  <div
-                    role="option"
-                    aria-selected={isSelected()}
-                    class="px-3 py-2 text-sm cursor-pointer hover:bg-accent flex items-center gap-2"
-                    classList={{ 'bg-accent/50': isSelected() }}
-                    onClick={() => toggleOption(option.value)}
-                  >
-                    <div
-                      class="w-4 h-4 rounded border flex items-center justify-center shrink-0"
-                      classList={{
-                        'bg-primary border-primary': isSelected(),
-                        'border-muted-foreground': !isSelected(),
-                      }}
-                    >
-                      <Show when={isSelected()}>
-                        <Icon name="check" class="w-3 h-3 text-primary-foreground" />
-                      </Show>
-                    </div>
-                    <span>{option.label}</span>
-                  </div>
-                );
-              }}
-            </For>
-          </div>
-        </div>
-      </Show>
-    </div>
+      )}
+      isEmpty={() => props.value.length === 0}
+      class={props.class}
+      multiselectable
+    >
+      {() => (
+        <For each={props.options}>
+          {(option) => {
+            const isSelected = () => props.value.includes(option.value);
+            return (
+              <div
+                role="option"
+                aria-selected={isSelected()}
+                class="px-3 py-2 text-sm cursor-pointer hover:bg-accent flex items-center gap-2"
+                classList={{ 'bg-accent/50': isSelected() }}
+                onClick={() => toggleOption(option.value)}
+              >
+                <div
+                  class="w-4 h-4 rounded border flex items-center justify-center shrink-0"
+                  classList={{
+                    'bg-primary border-primary': isSelected(),
+                    'border-muted-foreground': !isSelected(),
+                  }}
+                >
+                  <Show when={isSelected()}>
+                    <Icon name="check" class="w-3 h-3 text-primary-foreground" />
+                  </Show>
+                </div>
+                <span>{option.label}</span>
+              </div>
+            );
+          }}
+        </For>
+      )}
+    </DropdownShell>
   );
 };

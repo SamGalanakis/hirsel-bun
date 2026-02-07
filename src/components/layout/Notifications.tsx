@@ -4,7 +4,7 @@
 import { invoke } from '../../lib/invoke';
 import { createPoll } from '../../lib/poll';
 import { type Component, For, Show, createEffect, createSignal, onCleanup } from 'solid-js';
-import { useClickOutside, useEscapeKey } from '../../hooks';
+import { useModalClosing } from '../../hooks';
 import type { UnreadNotification } from '../../lib/types';
 import { formatTimeShort } from '../../lib/utils/formatters';
 import { useProject, useRuns } from '../../stores';
@@ -99,12 +99,7 @@ export const NotificationsDropdown: Component = () => {
   // Close on click outside or escape
   let containerRef: HTMLDivElement | undefined;
 
-  useClickOutside(() => containerRef, () => {
-    if (open()) setOpen(false);
-  });
-  useEscapeKey(() => {
-    if (open()) setOpen(false);
-  });
+  useModalClosing(() => containerRef, open, () => setOpen(false));
 
   return (
     <div class="relative" ref={(el) => (containerRef = el)}>

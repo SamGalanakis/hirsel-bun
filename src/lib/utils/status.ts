@@ -153,6 +153,15 @@ export function getStatusLabel(status: RunStatus | string | null | undefined): s
 }
 
 /**
+ * Get box-shadow glow style for a worker based on status
+ */
+export function getWorkerGlowStyle(status: string): string | undefined {
+  if (status === 'working') return '0 0 12px rgba(var(--amber-500-rgb), 0.4)';
+  if (status === 'error') return '0 0 12px rgba(var(--terra-rgb), 0.4)';
+  return undefined;
+}
+
+/**
  * Get CSS class for progress bar based on status
  */
 export function getProgressBarClass(

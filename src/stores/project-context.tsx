@@ -2,6 +2,7 @@
  * Project context for managing projects list and selection
  */
 import { invoke } from '../lib/invoke';
+import { emit, on } from '../lib/events';
 import { createPoll } from '../lib/poll';
 import {
   type ParentComponent,
@@ -172,7 +173,7 @@ export const ProjectProvider: ParentComponent = (props) => {
 
     if (project) {
       localStorage.setItem(STORAGE_KEY, String(project.id));
-      window.dispatchEvent(new CustomEvent('project-selected', { detail: project.id }));
+      emit('project-selected', project.id);
     } else {
       localStorage.removeItem(STORAGE_KEY);
     }
@@ -184,7 +185,7 @@ export const ProjectProvider: ParentComponent = (props) => {
     setShowProjectSettings(false);
     setActiveProjectView('board');
     localStorage.removeItem(STORAGE_KEY);
-    window.dispatchEvent(new CustomEvent('project-deselected'));
+    emit('project-deselected');
   };
 
   const openProjectSetup = () => {
@@ -296,28 +297,23 @@ export const ProjectProvider: ParentComponent = (props) => {
 
   // Listen for project created
   createEffect(() => {
-    const handler = async (e: Event) => {
-      const customEvent = e as CustomEvent<{ id: number; name: string }>;
-      const project = customEvent.detail;
+    const cleanup = on('project-created', async (detail) => {
+      const project = detail as { id: number; name: string };
       if (project) {
         await loadProjects();
         selectProject(project);
         setShowProjectSetup(false);
         setActiveProjectView('board');
       }
-    };
+    });
 
-    window.addEventListener('project-created', handler);
-    onCleanup(() => window.removeEventListener('project-created', handler));
+    onCleanup(cleanup);
   });
 
   // Listen for cancel project setup
   createEffect(() => {
-    const handler = () => {
-      setShowProjectSetup(false);
-    };
-    window.addEventListener('cancel-project-setup', handler);
-    onCleanup(() => window.removeEventListener('cancel-project-setup', handler));
+    const cleanup = on('cancel-project-setup', () => setShowProjectSetup(false));
+    onCleanup(cleanup);
   });
 
   // Poll for unread count when project is selected (visibility-aware)

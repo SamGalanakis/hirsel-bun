@@ -1,20 +1,19 @@
-//! Database operations for draft/live trees and delta submissions
+//! Database operations for the unified board tree
 //!
-//! This module handles all SQLite operations for the delta dispatch system.
+//! This module handles all SQLite operations for board nodes.
 //! It is split into submodules by functional area.
 
 mod deliveries;
-mod draft;
 mod error;
-mod live;
+mod nodes;
 mod orchestration;
 mod relations;
 mod runs;
 mod schema;
-mod submissions;
 mod versions;
 
 pub use error::{DeltaStateError, DeltaStateResult};
+pub use runs::{list_working_project_runs, update_project_run_status_by_name};
 pub use schema::ensure_schema;
 
 use sqlx::SqlitePool;
@@ -46,9 +45,9 @@ pub async fn bump_generation(key: &str) -> Result<(), DeltaStateError> {
     Ok(())
 }
 
-/// State manager for delta operations
+/// State manager for board operations
 ///
-/// Manages draft and live trees for a specific project+route combination.
+/// Manages the unified board tree for a specific project+route combination.
 /// Each route has independent trees, runs, versions, and deliveries.
 pub struct DeltaState {
     project_id: i64,
@@ -56,10 +55,7 @@ pub struct DeltaState {
 }
 
 impl DeltaState {
-    /// Create a delta state manager for a specific project and route
-    ///
-    /// Both project_id and route_id are required - this ensures correct data isolation
-    /// between routes.
+    /// Create a board state manager for a specific project and route
     pub fn with_route(project_id: i64, route_id: i64) -> Self {
         Self {
             project_id,
@@ -94,11 +90,10 @@ impl DeltaState {
         bump_generation(&format!("trees:{}:{}", self.project_id, self.route_id)).await
     }
 
-    /// Generate a unique slug ID (unique within this project)
+    /// Generate a unique slug ID (unique within this project+route)
     pub(crate) async fn generate_slug(
         &self,
         pool: &SqlitePool,
-        table: &str,
         name: &str,
     ) -> DeltaStateResult<String> {
         let base_slug = slugify(name);
@@ -111,10 +106,9 @@ impl DeltaState {
         let mut candidate = slug.clone();
         let mut counter = 1;
         loop {
-            let exists: bool = sqlx::query_scalar(&format!(
-                "SELECT EXISTS(SELECT 1 FROM {} WHERE id = ? AND project_id = ? AND route_id = ?)",
-                table
-            ))
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM board_nodes WHERE id = ? AND project_id = ? AND route_id = ?)",
+            )
             .bind(&candidate)
             .bind(self.project_id)
             .bind(self.route_id)

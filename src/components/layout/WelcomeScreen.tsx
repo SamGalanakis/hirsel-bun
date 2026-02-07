@@ -8,6 +8,7 @@ import { type Component } from 'solid-js';
 import { useProject } from '../../stores';
 import { SheepAvatar } from '../shared';
 import type { SheepConfig } from '../../lib/types';
+import { amber } from '../../lib/theme-colors';
 
 // Some fun sheep configurations for the welcome screen
 const WELCOME_SHEEP: SheepConfig[] = [
@@ -58,7 +59,7 @@ export const WelcomeScreen: Component = () => {
         style={{
           background: 'linear-gradient(135deg, var(--amber-500) 0%, var(--amber-600) 100%)',
           color: 'var(--pasture-900)',
-          'box-shadow': '0 4px 16px rgba(212, 165, 116, 0.3)',
+          'box-shadow': `0 4px 16px ${amber(0.3)}`,
         }}
       >
         <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

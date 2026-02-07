@@ -6,6 +6,8 @@
  * - Catppuccin: Mocha/Macchiato/Frappe (dark) + Latte (light)
  */
 
+import { emit } from './events';
+
 // =============================================================================
 // Theme Definitions
 // =============================================================================
@@ -159,7 +161,7 @@ export function setTheme(themeId: ThemeId): void {
   localStorage.setItem(STORAGE_KEY, themeId);
 
   // Dispatch event for components that need to react
-  window.dispatchEvent(new CustomEvent('theme-changed', { detail: { themeId, theme } }));
+  emit('theme-changed', { themeId, theme });
 }
 
 /**
@@ -300,7 +302,7 @@ export function applySystemTheme(): ThemeId {
     document.documentElement.classList.add('light');
   }
 
-  window.dispatchEvent(new CustomEvent('theme-changed', { detail: { themeId, theme } }));
+  emit('theme-changed', { themeId, theme });
   return themeId;
 }
 

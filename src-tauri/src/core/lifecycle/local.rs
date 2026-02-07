@@ -9,7 +9,7 @@ use super::{
     LifecycleResult, RunStateMachine,
 };
 use crate::core::config::Config;
-use crate::core::delta::{DeltaState, LiveNode, LiveNodeStatus};
+use crate::core::delta::{BoardNode, BoardNodeStatus, DeltaState};
 use crate::core::files::Files;
 use crate::core::runner::{create_lifecycle_runner_for_handle, WorkerHandle};
 use crate::core::snapshot::{
@@ -120,9 +120,9 @@ impl LocalLifecycleManager {
         }
     }
 
-    /// Get claimable nodes (live nodes that can be claimed).
-    /// Uses live nodes from the project's delta state.
-    async fn get_claimable_nodes(&self) -> LifecycleResult<Vec<LiveNode>> {
+    /// Get claimable nodes (board nodes that can be claimed).
+    /// Uses board nodes from the project's delta state.
+    async fn get_claimable_nodes(&self) -> LifecycleResult<Vec<BoardNode>> {
         if let Some(delta_state) = self.get_delta_state().await {
             Ok(delta_state.get_claimable_nodes().await?)
         } else {
@@ -130,22 +130,22 @@ impl LocalLifecycleManager {
         }
     }
 
-    /// Get all live nodes from the project's delta state.
-    async fn get_all_nodes(&self) -> LifecycleResult<Vec<LiveNode>> {
+    /// Get all board nodes from the project's delta state.
+    async fn get_all_nodes(&self) -> LifecycleResult<Vec<BoardNode>> {
         if let Some(delta_state) = self.get_delta_state().await {
-            Ok(delta_state.get_live_nodes().await?)
+            Ok(delta_state.get_nodes().await?)
         } else {
             Ok(vec![])
         }
     }
 
-    /// Claim a live node for a worker.
-    async fn claim_node(&self, node_id: &str, worker_name: &str) -> LifecycleResult<LiveNode> {
+    /// Claim a board node for a worker.
+    async fn claim_node(&self, node_id: &str, worker_name: &str) -> LifecycleResult<BoardNode> {
         let delta_state = self
             .get_delta_state()
             .await
             .ok_or_else(|| LifecycleError::State("Run not linked to project".into()))?;
-        Ok(delta_state.claim_live_node(node_id, worker_name).await?)
+        Ok(delta_state.claim_node(node_id, worker_name).await?)
     }
 
     /// Pick the best node for a worker based on tree-walk distance.
@@ -154,11 +154,11 @@ impl LocalLifecycleManager {
     /// For eval nodes: prefer nodes FAR from the worker's last completed task
     fn pick_node_for_worker(
         &self,
-        claimable: &[LiveNode],
+        claimable: &[BoardNode],
         worker: &crate::core::state::Worker,
-        all_nodes: &[LiveNode],
-    ) -> Option<LiveNode> {
-        use crate::core::delta::NodeType;
+        all_nodes: &[BoardNode],
+    ) -> Option<BoardNode> {
+        use crate::core::delta::NodeKind;
 
         if claimable.is_empty() {
             return None;
@@ -178,12 +178,12 @@ impl LocalLifecycleManager {
             .iter()
             .map(|n| {
                 let dist = distances.get(&n.id).copied().unwrap_or(usize::MAX);
-                let score = match n.node_type {
-                    NodeType::Eval => {
-                        // Eval: prefer FAR (high distance = high score = pick first)
+                let score = match n.kind {
+                    NodeKind::Check => {
+                        // Check: prefer FAR (high distance = high score = pick first)
                         dist
                     }
-                    NodeType::Task => {
+                    NodeKind::Task | NodeKind::Feature => {
                         // Work: prefer CLOSE (low distance = high score)
                         usize::MAX.saturating_sub(dist)
                     }
@@ -200,7 +200,7 @@ impl LocalLifecycleManager {
     /// Calculate tree distances from a given node using BFS.
     fn calculate_node_distances(
         &self,
-        nodes: &[LiveNode],
+        nodes: &[BoardNode],
         from_id: &str,
     ) -> std::collections::HashMap<String, usize> {
         use std::collections::{HashMap, VecDeque};
@@ -820,7 +820,7 @@ impl LocalLifecycleManager {
                 let all_nodes = self.get_all_nodes().await.unwrap_or_default();
                 let task_still_doing = all_nodes
                     .iter()
-                    .any(|n| n.id == *assigned_task_id && n.status == LiveNodeStatus::Working);
+                    .any(|n| n.id == *assigned_task_id && n.status == BoardNodeStatus::Working);
 
                 if task_still_doing {
                     // Get work_dir from database, fallback to standard location
@@ -1213,13 +1213,13 @@ impl LocalLifecycleManager {
             let incomplete_nodes: Vec<_> = nodes
                 .iter()
                 .filter(|n| {
-                    use crate::core::delta::NodeType;
-                    match n.node_type {
-                        NodeType::Task => {
-                            n.status != LiveNodeStatus::Done
-                                && n.status != LiveNodeStatus::Validated
+                    use crate::core::delta::NodeKind;
+                    match n.kind {
+                        NodeKind::Task | NodeKind::Feature => {
+                            n.status != BoardNodeStatus::Done
+                                && n.status != BoardNodeStatus::Validated
                         }
-                        NodeType::Eval => n.status != LiveNodeStatus::Done,
+                        NodeKind::Check => n.status != BoardNodeStatus::Done,
                     }
                 })
                 .collect();

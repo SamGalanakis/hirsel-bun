@@ -7,7 +7,7 @@ import type { WorkerDisplay } from '../../lib/types';
 import { getContextClass } from '../../lib/utils/context-class';
 import { formatTokens } from '../../lib/utils/formatters';
 import { getWorkerStatusConfig } from '../../lib/utils/status';
-import { Icon, SheepAvatar } from '../shared';
+import { Icon, SheepAvatar, StatusDot } from '../shared';
 
 interface WorkerCardProps {
   worker: WorkerDisplay;
@@ -67,10 +67,9 @@ export const WorkerCard: Component<WorkerCardProps> = (props) => {
         </div>
 
         {/* Status dot */}
-        <div
-          class={`absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full ${config().dotColor}`}
-          title={props.worker.status}
-        />
+        <div class="absolute top-1.5 right-1.5" title={props.worker.status}>
+          <StatusDot status={props.worker.status} size="sm" />
+        </div>
       </button>
     );
   }
@@ -86,10 +85,9 @@ export const WorkerCard: Component<WorkerCardProps> = (props) => {
       onDblClick={props.onDoubleClick}
     >
       {/* Status dot */}
-      <div
-        class={`absolute top-2 right-2 w-2 h-2 rounded-full ${config().dotColor}`}
-        title={props.worker.status}
-      />
+      <div class="absolute top-2 right-2" title={props.worker.status}>
+        <StatusDot status={props.worker.status} />
+      </div>
 
       <div class="flex items-start gap-3">
         {/* Sheep avatar */}

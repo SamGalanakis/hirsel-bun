@@ -267,7 +267,7 @@ pub struct StartRunRequest {
     pub name: String,
     /// Project ID (required - all runs belong to a project)
     pub project_id: i64,
-    /// Route ID (for delta dispatch runs)
+    /// Route ID (for board dispatch runs)
     pub route_id: Option<i64>,
     /// Spec content (markdown)
     pub spec: String,

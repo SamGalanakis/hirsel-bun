@@ -58,6 +58,7 @@ pub mod snapshot;
 pub mod state;
 pub mod state_access;
 pub mod storage;
+pub mod system;
 pub mod tailscale;
 pub mod workers;
 
@@ -188,13 +189,12 @@ pub use board::{
     UpdateTaskRequest,
 };
 
-// Delta dispatch (unified board with draft/live trees)
+// Delta dispatch (unified board tree)
 pub use delta::{
-    CreateDraftNodeRequest, DeltaDispatchService, DeltaGenerator, DeltaState, DeltaStatus,
-    DeltaTask, DeltaType, DiffNode, DiffService, DispatchPreview as DeltaDispatchPreview,
-    DispatchResult as DeltaDispatchResult, DraftNode, DraftNodeTree, LiveNode, LiveNodeStatus,
-    LiveNodeTree, ModifiedNode, NodeType, ProjectRun, ProjectRunStatus, Reference, TreeDiff,
-    UpdateDraftNodeRequest,
+    BoardNode, BoardNodeSource, BoardNodeStatus, BoardNodeTree, BoardVersion,
+    CreateBoardNodeRequest, DeltaDispatchService, DeltaState,
+    DispatchResult as DeltaDispatchResult, NodeKind, ProjectRun, ProjectRunStatus,
+    UpdateBoardNodeRequest,
 };
 
 // Route management

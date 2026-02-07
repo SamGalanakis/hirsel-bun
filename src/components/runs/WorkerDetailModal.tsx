@@ -10,7 +10,7 @@ import type { WorkerDisplay } from '../../lib/types';
 import { getContextBarClass, getContextClass, getContextStatus } from '../../lib/utils/context-class';
 import { formatTokens } from '../../lib/utils/formatters';
 import { getWorkerStatusConfig } from '../../lib/utils/status';
-import { BaseModal, Icon, SheepAvatar } from '../shared';
+import { BaseModal, Icon, SheepAvatar, StatusDot } from '../shared';
 
 interface WorkerDetailModalProps {
   worker: WorkerDisplay;
@@ -53,7 +53,7 @@ export const WorkerDetailModal: Component<WorkerDetailModalProps> = (props) => {
             <div class="min-w-0 flex-1">
               <h2 class="text-lg font-semibold text-wool-100 truncate">{props.worker.name}</h2>
               <div class="flex items-center gap-2 mt-1">
-                <span class={`w-2 h-2 rounded-full ${getWorkerStatusConfig(props.worker.status).dotClass}`} />
+                <StatusDot status={props.worker.status} />
                 <span class={`text-sm font-medium ${getWorkerStatusConfig(props.worker.status).color}`}>
                   {getWorkerStatusConfig(props.worker.status).label}
                 </span>

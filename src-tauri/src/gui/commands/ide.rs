@@ -155,12 +155,12 @@ fn launch_editor(editor: &FoundEditor, target_path: &Path) -> Result<(), String>
             Command::new("open")
                 .args(["-a", &editor.path, target_str])
                 .spawn()
-                .map_err(|e| format!("Failed to launch {}: {}", editor.name, e))?;
+                .context(&format!("Failed to launch {}", editor.name))?;
         } else {
             Command::new(&editor.path)
                 .arg(target_str)
                 .spawn()
-                .map_err(|e| format!("Failed to launch {}: {}", editor.name, e))?;
+                .context(&format!("Failed to launch {}", editor.name))?;
         }
     }
 
@@ -169,7 +169,7 @@ fn launch_editor(editor: &FoundEditor, target_path: &Path) -> Result<(), String>
         Command::new(&editor.path)
             .arg(target_str)
             .spawn()
-            .map_err(|e| format!("Failed to launch {}: {}", editor.name, e))?;
+            .context(&format!("Failed to launch {}", editor.name))?;
     }
 
     Ok(())

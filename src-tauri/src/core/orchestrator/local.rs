@@ -80,12 +80,7 @@ impl LocalOrchestrator {
     ) -> Worker {
         use crate::core::metrics;
 
-        let status = match w.status {
-            crate::core::state::WorkerStatus::Working => WorkerStatus::Working,
-            crate::core::state::WorkerStatus::Awaiting => WorkerStatus::Awaiting,
-            crate::core::state::WorkerStatus::Paused => WorkerStatus::Paused,
-            crate::core::state::WorkerStatus::Error => WorkerStatus::Error,
-        };
+        let status: WorkerStatus = w.status.into();
 
         let location = match w.location.as_str() {
             "remote" => WorkerLocation::Remote,
@@ -142,7 +137,7 @@ impl LocalOrchestrator {
             log_file: e.log_file.clone(),
             started_at: e.started_at.clone(),
             finished_at: e.finished_at.clone(),
-            sheep_config: SheepConfig::for_eval(e.id as u32),
+            sheep_config: SheepConfig::for_check(e.id as u32),
         }
     }
 }
@@ -174,10 +169,9 @@ impl Orchestrator for LocalOrchestrator {
                 ProjectRunStatus::Failed => crate::core::api_types::RunStatus::Failed,
             };
 
-            // Get task counts from live_nodes (lightweight count query)
+            // Get task counts from board nodes (lightweight count query)
             let delta_state = DeltaState::with_route(project_id, route_id);
-            let (tasks_done, tasks_total) =
-                delta_state.get_live_node_counts().await.unwrap_or((0, 0));
+            let (tasks_done, tasks_total) = delta_state.get_node_counts().await.unwrap_or((0, 0));
 
             // Get worker counts and other data from per-run DB if available
             let db_path = runs_dir.join(run_name).join("hirsel.db");
@@ -257,14 +251,14 @@ impl Orchestrator for LocalOrchestrator {
         let waiting_reason = state.get_waiting_reason().await.ok().flatten();
         let unread_count = 0u32;
 
-        // Get task counts from live nodes (project runs)
+        // Get task counts from board nodes (project runs)
         let (tasks_done, tasks_total) = match (
             state.get_project_id().await.ok().flatten(),
             state.get_route_id().await.ok(),
         ) {
             (Some(project_id), Some(route_id)) => {
                 let delta_state = DeltaState::with_route(project_id, route_id);
-                if let Ok(nodes) = delta_state.get_live_nodes().await {
+                if let Ok(nodes) = delta_state.get_nodes().await {
                     let done = nodes.iter().filter(|n| n.status.is_complete()).count() as u32;
                     (done, nodes.len() as u32)
                 } else {
@@ -574,7 +568,7 @@ impl Orchestrator for LocalOrchestrator {
 
         let core_workers = state.get_workers().await?;
 
-        // Lightweight query: get only worker->task mapping instead of loading full live tree
+        // Lightweight query: get only worker->task mapping instead of loading full board tree
         let claimed_task_map = match (
             state.get_project_id().await.ok().flatten(),
             state.get_route_id().await.ok(),
@@ -989,7 +983,7 @@ impl Orchestrator for LocalOrchestrator {
             .init_dirs()
             .map_err(|e| OrchestratorError::Other(format!("Failed to init dirs: {}", e)))?;
 
-        // Note: Task content is stored in live nodes and accessed via MCP tools.
+        // Note: Task content is stored in board nodes and accessed via MCP tools.
         // No spec.md or task files are written to disk.
 
         // Initialize workspace from starting_point if provided
@@ -1338,15 +1332,15 @@ impl Orchestrator for LocalOrchestrator {
 
             // Claim task and set assigned_task_id if provided
             if let Some(ref task_id) = task_for_worker {
-                // Use live nodes for project runs
+                // Use board nodes for project runs
                 if let (Some(project_id), Ok(route_id)) = (
                     sqlite_state.get_project_id().await.ok().flatten(),
                     sqlite_state.get_route_id().await,
                 ) {
                     let delta_state = DeltaState::with_route(project_id, route_id);
-                    if let Err(e) = delta_state.claim_live_node(task_id, worker_name).await {
+                    if let Err(e) = delta_state.claim_node(task_id, worker_name).await {
                         tracing::warn!(
-                            "Failed to claim live node {} for worker {}: {}",
+                            "Failed to claim node {} for worker {}: {}",
                             task_id,
                             worker_name,
                             e
@@ -1544,7 +1538,7 @@ impl Orchestrator for LocalOrchestrator {
             .init_dirs()
             .map_err(|e| OrchestratorError::Other(format!("Failed to init dirs: {}", e)))?;
 
-        // Note: Task content is stored in live nodes and accessed via MCP tools.
+        // Note: Task content is stored in board nodes and accessed via MCP tools.
         // No spec.md or task files are written to disk.
 
         // 3.5. Load project and resolve starting_point
@@ -1700,16 +1694,36 @@ impl Orchestrator for LocalOrchestrator {
         let (is_multi_worker, leader_name) = compute_multi_worker_config(&worker_names, scale_max);
         let first_worker = &worker_names[0];
 
-        // Create delta state for live node operations
-        // Pre-claim scope for first worker (scope node created by dispatch)
+        // Pre-claim first available board node for first worker
+        let mut first_assigned_task: Option<String> = None;
         if let Some(route_id) = request.route_id {
             let delta_state = DeltaState::with_route(project.id, route_id);
-            if let Err(e) = delta_state.claim_live_node("scope", first_worker).await {
-                tracing::warn!(
-                    "Failed to pre-claim scope live node for {}: {}",
-                    first_worker,
-                    e
-                );
+            match delta_state.get_claimable_nodes().await {
+                Ok(claimable) => {
+                    if let Some(node) = claimable.first() {
+                        match delta_state.claim_node(&node.id, first_worker).await {
+                            Ok(_) => {
+                                tracing::info!(
+                                    "Pre-claimed node '{}' for {}",
+                                    node.id,
+                                    first_worker
+                                );
+                                first_assigned_task = Some(node.id.clone());
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to pre-claim node '{}' for {}: {}",
+                                    node.id,
+                                    first_worker,
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to get claimable nodes: {}", e);
+                }
             }
         }
 
@@ -1834,9 +1848,9 @@ impl Orchestrator for LocalOrchestrator {
 
                 let runner: Box<dyn Runner> = create_runner(&runner_config);
 
-                // Get assigned task for this worker (first worker gets scope task)
+                // Get assigned task for this worker (first worker gets pre-claimed task)
                 let assigned_task_id = if i == 0 {
-                    Some("scope".to_string())
+                    first_assigned_task.clone()
                 } else {
                     None
                 };

@@ -103,17 +103,8 @@ export function formatFullDateTime(timestamp: string | null | undefined): string
 export function formatElapsedTime(sessionStartedAt: string | null | undefined): string {
   if (!sessionStartedAt) return '';
   const start = parseUtcTimestamp(sessionStartedAt);
-  const now = new Date();
-  const seconds = Math.floor((now.getTime() - start.getTime()) / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  if (hours < 24) return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
-  const days = Math.floor(hours / 24);
-  const hrs = hours % 24;
-  return hrs > 0 ? `${days}d ${hrs}h` : `${days}d`;
+  const minutes = (Date.now() - start.getTime()) / 60000;
+  return formatElapsed(minutes);
 }
 
 /**
@@ -143,37 +134,6 @@ export function calculateTimeProgress(
 ): number {
   if (!limit || !elapsed) return 0;
   return Math.min(100, Math.round((elapsed / limit) * 100));
-}
-
-/**
- * Format duration between two timestamps (or from start to now if end is null)
- * Returns formats like "2m", "1h 15m", "3h", "2d 4h"
- */
-export function formatDuration(
-  startTimestamp: string | null | undefined,
-  endTimestamp: string | null | undefined = null,
-): string {
-  if (!startTimestamp) return '';
-  const start = parseUtcTimestamp(startTimestamp);
-  const end = endTimestamp ? parseUtcTimestamp(endTimestamp) : new Date();
-  const diffMs = end.getTime() - start.getTime();
-  if (diffMs < 0) return '';
-
-  const diffSecs = Math.floor(diffMs / 1000);
-  if (diffSecs < 60) return `${diffSecs}s`;
-
-  const diffMins = Math.floor(diffSecs / 60);
-  if (diffMins < 60) return `${diffMins}m`;
-
-  const diffHours = Math.floor(diffMins / 60);
-  const remMins = diffMins % 60;
-  if (diffHours < 24) {
-    return remMins > 0 ? `${diffHours}h ${remMins}m` : `${diffHours}h`;
-  }
-
-  const diffDays = Math.floor(diffHours / 24);
-  const remHours = diffHours % 24;
-  return remHours > 0 ? `${diffDays}d ${remHours}h` : `${diffDays}d`;
 }
 
 /**

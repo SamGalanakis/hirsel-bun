@@ -9,6 +9,7 @@ import { type Component, Show, createSignal, createEffect } from 'solid-js';
 import { useEscapeKey } from '../../hooks';
 import { useRoute } from '../../stores/route-context';
 import { Icon } from '../shared';
+import { amber } from '../../lib/theme-colors';
 
 interface ForkRouteDialogProps {
   onClose: () => void;
@@ -188,8 +189,8 @@ export const ForkRouteDialog: Component<ForkRouteDialogProps> = (props) => {
               disabled={loading() || !name().trim()}
               class="px-3 py-1.5 rounded text-[11px] font-medium transition-colors disabled:opacity-50"
               style={{
-                background: 'rgba(212, 165, 116, 0.2)',
-                border: '1px solid rgba(212, 165, 116, 0.35)',
+                background: amber(0.2),
+                border: `1px solid ${amber(0.35)}`,
                 color: 'var(--amber-300)',
               }}
             >

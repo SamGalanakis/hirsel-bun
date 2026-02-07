@@ -16,6 +16,7 @@ import {
 } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import type { ChatMessage, ChatToolCall, PendingPermission } from '../../lib/types';
+import { emit, on as onEvent } from '../../lib/events';
 import { useApp, useProject, useRuns } from '../../stores';
 import { useGypChat, type GypChatContext } from '../../hooks/use-gyp-chat';
 import { Icon, Markdown, ThinkingBlock, ToolCard, ToolCluster, type ToolInfo } from '../shared';
@@ -79,7 +80,7 @@ export const GypMessenger: Component = () => {
       // Refresh board when Gyp finishes editing
       const projectId = project.selectedProjectId();
       if (projectId) {
-        window.dispatchEvent(new CustomEvent('board-refresh', { detail: projectId }));
+        emit('board-refresh', projectId);
       }
     },
   });
@@ -153,18 +154,16 @@ export const GypMessenger: Component = () => {
 
   // Listen for gyp-focus-node events from SpecflowBoard
   createEffect(() => {
-    const handler = (e: Event) => {
-      const customEvent = e as CustomEvent<{ id: string; name: string }>;
-      chat.setFocusNode(customEvent.detail.id, customEvent.detail.name);
-    };
-    window.addEventListener('gyp-focus-node', handler);
-    onCleanup(() => window.removeEventListener('gyp-focus-node', handler));
+    const cleanup = onEvent('gyp-focus-node', (detail) => {
+      chat.setFocusNode(detail.id, detail.name);
+    });
+    onCleanup(cleanup);
   });
 
   // Dispatch gyp-editing-islands events when editing state changes
   createEffect(() => {
     const islands = chat.editingIslands();
-    window.dispatchEvent(new CustomEvent('gyp-editing-islands', { detail: islands }));
+    emit('gyp-editing-islands', islands);
   });
 
   // Get context label for display (pastoral/poetic)

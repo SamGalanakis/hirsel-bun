@@ -128,11 +128,10 @@ pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
     }
 
     // Serialize to TOML
-    let toml_str =
-        toml::to_string_pretty(&cfg).map_err(|e| format!("Failed to serialize config: {}", e))?;
+    let toml_str = toml::to_string_pretty(&cfg).context("Failed to serialize config")?;
 
     // Write to file
-    std::fs::write(&config_path, toml_str).map_err(|e| format!("Failed to write config: {}", e))?;
+    std::fs::write(&config_path, toml_str).context("Failed to write config")?;
 
     Ok(())
 }

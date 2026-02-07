@@ -7,9 +7,12 @@
  * Triggered by: ` (tilde/backtick) - configurable in settings
  */
 import { type Component, Show, For, createSignal, createEffect, onCleanup } from 'solid-js';
+import { emit } from '../../lib/events';
 import { useApp, useProject } from '../../stores';
 import { useDelta } from '../../stores/delta-context';
 import { Icon } from '../shared';
+import { findClosestItem, getRadialItemStyle, renderSlicePath } from '../../lib/radial-utils';
+import { amber } from '../../lib/theme-colors';
 
 export const RadialMenu: Component = () => {
   const app = useApp();
@@ -29,32 +32,8 @@ export const RadialMenu: Component = () => {
   const radius = 110;
 
   // Calculate which item is selected based on mouse direction
-  const calculateSelectedItem = (offsetX: number, offsetY: number): { index: number | null; angle: number | null } => {
-    const distance = Math.sqrt(offsetX * offsetX + offsetY * offsetY);
-    if (distance < deadZone) {
-      return { index: null, angle: null }; // In dead zone, nothing selected
-    }
-
-    // Calculate angle from center (0° = right, counter-clockwise)
-    let angle = Math.atan2(-offsetY, offsetX) * (180 / Math.PI);
-    // Convert to 0° = up, clockwise
-    angle = (90 - angle + 360) % 360;
-
-    // Find closest item
-    const items = menuItems();
-    let closestIndex = 0;
-    let closestDiff = 360;
-
-    items.forEach((item, index) => {
-      let diff = Math.abs(item.angle - angle);
-      if (diff > 180) diff = 360 - diff;
-      if (diff < closestDiff) {
-        closestDiff = diff;
-        closestIndex = index;
-      }
-    });
-
-    return { index: closestIndex, angle };
+  const calculateSelectedItem = (offsetX: number, offsetY: number) => {
+    return findClosestItem(offsetX, offsetY, menuItems(), deadZone);
   };
 
   // Handle mouse movement for direction selection
@@ -69,8 +48,8 @@ export const RadialMenu: Component = () => {
 
       setMouseOffset({ x: offsetX, y: offsetY });
       const result = calculateSelectedItem(offsetX, offsetY);
-      setSelectedIndex(result.index);
-      setCurrentAngle(result.angle);
+      setSelectedIndex(result?.index ?? null);
+      setCurrentAngle(result?.angle ?? null);
     };
 
     const handleClick = (e: MouseEvent) => {
@@ -161,31 +140,30 @@ export const RadialMenu: Component = () => {
     });
   });
 
-  // Compute diff badge
-  const diffBadge = () => {
-    if (!delta.hasDiff()) return undefined;
-    const diff = delta.diff();
-    const total =
-      (diff?.newNodes.length || 0) +
-      (diff?.modifiedNodes.length || 0) +
-      (diff?.deletedNodes.length || 0);
+  // Compute draft node count badge
+  const draftBadge = () => {
+    if (!delta.hasDraftNodes()) return undefined;
+    const trees = delta.boardTree();
+    const countDrafts = (nodes: typeof trees): number =>
+      nodes.reduce((sum, n) => sum + (n.status === 'draft' ? 1 : 0) + countDrafts(n.children), 0);
+    const total = countDrafts(trees);
     return total > 0 ? total : undefined;
   };
 
   // Check if deliver is available
   const canDeliver = () => {
-    return delta.liveTree() !== null && delta.liveTree()!.length > 0;
+    return delta.hasDispatchedNodes();
   };
 
   // Action handlers
   const handleDispatch = () => {
     app.closeRadialMenu();
-    window.dispatchEvent(new CustomEvent('radial-dispatch'));
+    emit('radial-dispatch');
   };
 
   const handleDeliver = () => {
     app.closeRadialMenu();
-    window.dispatchEvent(new CustomEvent('radial-deliver'));
+    emit('radial-deliver');
   };
 
   const handleDocs = () => {
@@ -201,7 +179,7 @@ export const RadialMenu: Component = () => {
 
   const handleIde = () => {
     app.closeRadialMenu();
-    window.dispatchEvent(new CustomEvent('radial-open-ide'));
+    emit('radial-open-ide');
   };
 
   const handleSettings = () => {
@@ -221,72 +199,11 @@ export const RadialMenu: Component = () => {
     { id: 'settings', angle: 120, icon: 'settings', label: 'Settings', shortcut: '3', badge: undefined, variant: 'default', disabled: false, onClick: handleSettings },
     { id: 'ide', angle: 180, icon: 'folder-open', label: 'IDE', shortcut: '2', badge: undefined, variant: 'default', disabled: !delta.projectRun(), onClick: handleIde },
     { id: 'docs', angle: 240, icon: 'book-open', label: 'Docs', shortcut: '1', badge: undefined, variant: project.docsOpen() ? 'primary' : 'default', disabled: false, onClick: handleDocs },
-    { id: 'dispatch', angle: 300, icon: 'rocket', label: 'Dispatch', shortcut: '7', badge: diffBadge(), variant: delta.hasDiff() ? 'primary' : 'default', disabled: !delta.hasDiff() || delta.dispatchPending(), onClick: handleDispatch },
+    { id: 'dispatch', angle: 300, icon: 'rocket', label: 'Dispatch', shortcut: '7', badge: draftBadge(), variant: delta.hasDraftNodes() ? 'primary' : 'default', disabled: !delta.hasDraftNodes() || delta.dispatchPending(), onClick: handleDispatch },
   ];
 
   const getItemStyles = (index: number, item: ReturnType<typeof menuItems>[0]) => {
-    const isSelected = selectedIndex() === index;
-    const isDisabled = item.disabled;
-
-    if (isDisabled) {
-      return {
-        bg: 'rgba(25, 25, 25, 0.95)',
-        border: 'rgba(40, 40, 40, 0.8)',
-        color: 'var(--wool-700)',
-        shadow: '0 2px 8px rgba(0, 0, 0, 0.2)',
-      };
-    }
-
-    if (isSelected) {
-      switch (item.variant) {
-        case 'primary':
-          return {
-            bg: 'rgba(212, 165, 116, 0.4)',
-            border: 'rgba(212, 165, 116, 0.9)',
-            color: 'var(--amber-300)',
-            shadow: '0 0 20px rgba(212, 165, 116, 0.5), 0 4px 16px rgba(0, 0, 0, 0.3)',
-          };
-        case 'success':
-          return {
-            bg: 'rgba(125, 153, 112, 0.4)',
-            border: 'rgba(125, 153, 112, 0.9)',
-            color: 'var(--sage)',
-            shadow: '0 0 20px rgba(125, 153, 112, 0.5), 0 4px 16px rgba(0, 0, 0, 0.3)',
-          };
-        default:
-          return {
-            bg: 'rgba(70, 70, 70, 0.95)',
-            border: 'rgba(140, 140, 140, 0.9)',
-            color: 'var(--wool-50)',
-            shadow: '0 0 16px rgba(255, 255, 255, 0.1), 0 4px 16px rgba(0, 0, 0, 0.3)',
-          };
-      }
-    }
-
-    // Not selected
-    switch (item.variant) {
-      case 'primary':
-        return {
-          bg: 'rgba(212, 165, 116, 0.15)',
-          border: 'rgba(212, 165, 116, 0.4)',
-          color: 'var(--amber-400)',
-          shadow: '0 2px 8px rgba(0, 0, 0, 0.2)',
-        };
-      case 'success':
-        return {
-          bg: 'rgba(125, 153, 112, 0.15)',
-          border: 'rgba(125, 153, 112, 0.4)',
-          color: 'var(--sage)',
-          shadow: '0 2px 8px rgba(0, 0, 0, 0.2)',
-        };
-      default:
-        return {
-          bg: 'rgba(35, 35, 35, 0.95)',
-          border: 'rgba(55, 55, 55, 0.8)',
-          color: 'var(--wool-300)',
-          shadow: '0 2px 8px rgba(0, 0, 0, 0.2)',
-        };
-    }
+    return getRadialItemStyle(item.variant, selectedIndex() === index, item.disabled);
   };
 
   return (
@@ -310,7 +227,7 @@ export const RadialMenu: Component = () => {
             left: '50%',
             top: '50%',
             transform: 'translate(-50%, -50%)',
-            background: 'radial-gradient(circle, rgba(212, 165, 116, 0.15) 0%, transparent 70%)',
+            background: `radial-gradient(circle, ${amber(0.15)} 0%, transparent 70%)`,
           }}
         />
         {/* Center ring */}
@@ -318,15 +235,15 @@ export const RadialMenu: Component = () => {
           class="relative w-7 h-7 rounded-full flex items-center justify-center"
           style={{
             background: 'rgba(25, 25, 25, 0.98)',
-            border: '2px solid rgba(212, 165, 116, 0.7)',
-            'box-shadow': '0 0 15px rgba(212, 165, 116, 0.4), inset 0 1px 2px rgba(255, 255, 255, 0.1)',
+            border: `2px solid ${amber(0.7)}`,
+            'box-shadow': `0 0 15px ${amber(0.4)}, inset 0 1px 2px rgba(255, 255, 255, 0.1)`,
           }}
         >
           <div
             class="w-2 h-2 rounded-full"
             style={{
-              background: 'rgba(212, 165, 116, 0.9)',
-              'box-shadow': '0 0 6px rgba(212, 165, 116, 0.8)',
+              background: amber(0.9),
+              'box-shadow': `0 0 6px ${amber(0.8)}`,
             }}
           />
         </div>
@@ -340,8 +257,8 @@ export const RadialMenu: Component = () => {
         <defs>
           {/* Gradient for selected slice */}
           <radialGradient id="selectedSliceGradient" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stop-color="rgba(212, 165, 116, 0.3)" />
-            <stop offset="100%" stop-color="rgba(212, 165, 116, 0.05)" />
+            <stop offset="0%" stop-color={amber(0.3)} />
+            <stop offset="100%" stop-color={amber(0.05)} />
           </radialGradient>
           {/* Glow filter */}
           <filter id="sliceGlow" x="-50%" y="-50%" width="200%" height="200%">
@@ -388,34 +305,16 @@ export const RadialMenu: Component = () => {
             const startAngle = item.angle - sliceAngle / 2;
             const endAngle = item.angle + sliceAngle / 2;
 
-            const startRad = (startAngle - 90) * Math.PI / 180;
-            const endRad = (endAngle - 90) * Math.PI / 180;
             const innerR = 18;
             const outerR = radius - 10;
 
-            const x1 = position().x + Math.cos(startRad) * innerR;
-            const y1 = position().y + Math.sin(startRad) * innerR;
-            const x2 = position().x + Math.cos(startRad) * outerR;
-            const y2 = position().y + Math.sin(startRad) * outerR;
-            const x3 = position().x + Math.cos(endRad) * outerR;
-            const y3 = position().y + Math.sin(endRad) * outerR;
-            const x4 = position().x + Math.cos(endRad) * innerR;
-            const y4 = position().y + Math.sin(endRad) * innerR;
-
-            const path = `
-              M ${x1} ${y1}
-              L ${x2} ${y2}
-              A ${outerR} ${outerR} 0 0 1 ${x3} ${y3}
-              L ${x4} ${y4}
-              A ${innerR} ${innerR} 0 0 0 ${x1} ${y1}
-              Z
-            `;
+            const path = renderSlicePath(position().x, position().y, startAngle, endAngle, innerR, outerR);
 
             return (
               <path
                 d={path}
                 fill="url(#selectedSliceGradient)"
-                stroke="rgba(212, 165, 116, 0.5)"
+                stroke={amber(0.5)}
                 stroke-width="1"
                 filter="url(#sliceGlow)"
               />
@@ -439,7 +338,7 @@ export const RadialMenu: Component = () => {
                 y1={position().y}
                 x2={endX}
                 y2={endY}
-                stroke="rgba(212, 165, 116, 0.8)"
+                stroke={amber(0.8)}
                 stroke-width="2"
                 stroke-linecap="round"
               />

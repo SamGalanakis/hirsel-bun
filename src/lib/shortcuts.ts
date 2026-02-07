@@ -5,6 +5,8 @@
  * conflict detection, and event-driven updates.
  */
 
+import { emit } from './events';
+
 const STORAGE_KEY = 'hirsel-shortcuts';
 
 // =============================================================================
@@ -196,7 +198,7 @@ export function saveShortcuts(shortcuts: ShortcutConfig[]): void {
   }
 
   localStorage.setItem(STORAGE_KEY, JSON.stringify(bindings));
-  window.dispatchEvent(new CustomEvent('shortcuts-changed'));
+  emit('shortcuts-changed');
 }
 
 /**
@@ -204,7 +206,7 @@ export function saveShortcuts(shortcuts: ShortcutConfig[]): void {
  */
 export function resetShortcuts(): void {
   localStorage.removeItem(STORAGE_KEY);
-  window.dispatchEvent(new CustomEvent('shortcuts-changed'));
+  emit('shortcuts-changed');
 }
 
 // =============================================================================

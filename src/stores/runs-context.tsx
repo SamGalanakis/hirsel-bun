@@ -5,6 +5,7 @@
  * instead of polling independently.
  */
 import { invoke } from '../lib/invoke';
+import { emit, on } from '../lib/events';
 import { createPoll } from '../lib/poll';
 import {
   type ParentComponent,
@@ -165,8 +166,8 @@ export const RunsProvider: ParentComponent = (props) => {
       threads: [],
       history: [],
     });
-    window.dispatchEvent(new CustomEvent('run-selected', { detail: null }));
-    window.dispatchEvent(new CustomEvent('draft-selected', { detail: null }));
+    emit('run-selected', null);
+    emit('draft-selected', null);
   };
 
   const setSelectedRun = (runName: string | null) => {
@@ -189,14 +190,14 @@ export const RunsProvider: ParentComponent = (props) => {
     }
 
     // Dispatch events
-    window.dispatchEvent(new CustomEvent('run-selected', { detail: runName }));
+    emit('run-selected', runName);
 
     // Handle draft selection
     const run = state.runs.find((r) => r.name === runName);
     if (run?.status === 'draft') {
-      window.dispatchEvent(new CustomEvent('draft-selected', { detail: runName }));
+      emit('draft-selected', runName);
     } else {
-      window.dispatchEvent(new CustomEvent('draft-selected', { detail: null }));
+      emit('draft-selected', null);
     }
   };
 
@@ -242,9 +243,7 @@ export const RunsProvider: ParentComponent = (props) => {
 
   // Listen for run-selected events from other sources
   createEffect(() => {
-    const handler = (e: Event) => {
-      const customEvent = e as CustomEvent<string | null>;
-      const runName = customEvent.detail;
+    const cleanup = on('run-selected', (runName) => {
       // Only update if different (to avoid loops)
       if (runName !== selectedRun()) {
         setSelectedRunSignal(runName);
@@ -259,10 +258,9 @@ export const RunsProvider: ParentComponent = (props) => {
           });
         }
       }
-    };
+    });
 
-    window.addEventListener('run-selected', handler);
-    onCleanup(() => window.removeEventListener('run-selected', handler));
+    onCleanup(cleanup);
   });
 
   const subscribe = () => {

@@ -259,12 +259,11 @@ pub async fn save_profiling_data(data: String) -> Result<String, String> {
     let profiling_dir = std::env::var("HIRSEL_PROFILING_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| crate::core::hirsel_dir().join("profiling"));
-    std::fs::create_dir_all(&profiling_dir)
-        .map_err(|e| format!("Failed to create profiling directory: {}", e))?;
+    std::fs::create_dir_all(&profiling_dir).context("Failed to create profiling directory")?;
 
     let path = profiling_dir.join("frontend.json");
 
-    std::fs::write(&path, &data).map_err(|e| format!("Failed to write profiling data: {}", e))?;
+    std::fs::write(&path, &data).context("Failed to write profiling data")?;
 
     tracing::info!("[profiling] Saved frontend data to {}", path.display());
     Ok(path.display().to_string())

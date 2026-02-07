@@ -2,6 +2,7 @@
  * Selection context for managing UI selection state
  */
 import { invoke } from '../lib/invoke';
+import { emit, on } from '../lib/events';
 import {
   type ParentComponent,
   createContext,
@@ -102,24 +103,14 @@ export const SelectionProvider: ParentComponent = (props) => {
 
   // Listen for tab switch events
   createEffect(() => {
-    const handler = (e: Event) => {
-      const customEvent = e as CustomEvent<string>;
-      if (customEvent.detail) {
-        setActiveTab(customEvent.detail as TabId);
-      }
-    };
-
-    window.addEventListener('switch-tab', handler);
-    onCleanup(() => window.removeEventListener('switch-tab', handler));
+    const cleanup = on('switch-tab', (tab) => setActiveTab(tab as TabId));
+    onCleanup(cleanup);
   });
 
   // Listen for shortcut actions
   createEffect(() => {
-    const handler = (e: Event) => {
-      const customEvent = e as CustomEvent<ShortcutAction>;
-      const action = customEvent.detail;
-
-      switch (action) {
+    const cleanup = on('shortcut-action', (action) => {
+      switch (action as ShortcutAction) {
         case 'navigate-up':
           navigateRuns(-1);
           break;
@@ -153,10 +144,9 @@ export const SelectionProvider: ParentComponent = (props) => {
           }
           break;
       }
-    };
+    });
 
-    window.addEventListener('shortcut-action', handler);
-    onCleanup(() => window.removeEventListener('shortcut-action', handler));
+    onCleanup(cleanup);
   });
 
   const navigateRuns = (direction: number) => {
@@ -254,11 +244,7 @@ export const SelectionProvider: ParentComponent = (props) => {
     const runName = runsContext.selectedRun();
     if (!runName) return;
 
-    window.dispatchEvent(
-      new CustomEvent('show-worker-output', {
-        detail: { runName, workerName: name },
-      }),
-    );
+    emit('show-worker-output', { runName, workerName: name });
     closeAttachPicker();
   };
 
@@ -269,11 +255,7 @@ export const SelectionProvider: ParentComponent = (props) => {
     // Check if there's a highlighted worker
     const worker = highlightedWorker();
     if (worker) {
-      window.dispatchEvent(
-        new CustomEvent('show-worker-output', {
-          detail: { runName, workerName: worker },
-        }),
-      );
+      emit('show-worker-output', { runName, workerName: worker });
       return;
     }
 

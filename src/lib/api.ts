@@ -730,31 +730,6 @@ export function createPoller<T>(
 }
 
 // =============================================================================
-// Event Helpers
-// =============================================================================
-
-/**
- * Dispatch a custom event for Alpine.js components
- */
-export function dispatchEvent<T>(eventName: string, detail: T): void {
-  window.dispatchEvent(new CustomEvent(eventName, { detail }));
-}
-
-/**
- * Listen for a custom event
- */
-export function onEvent<T>(eventName: string, handler: (detail: T) => void): () => void {
-  const listener = (event: Event) => {
-    handler((event as CustomEvent<T>).detail);
-  };
-
-  window.addEventListener(eventName, listener);
-
-  // Return cleanup function
-  return () => window.removeEventListener(eventName, listener);
-}
-
-// =============================================================================
 // Direct Chat Session API (ACP-based AI chat)
 // =============================================================================
 

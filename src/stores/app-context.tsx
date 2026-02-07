@@ -2,6 +2,7 @@
  * App-wide context for theme, shortcuts, version info
  */
 import { invoke } from '../lib/invoke';
+import { emit, on } from '../lib/events';
 import {
   type ParentComponent,
   createContext,
@@ -123,30 +124,28 @@ export const AppProvider: ParentComponent = (props) => {
 
   // Listen for theme changes
   createEffect(() => {
-    const handler = ((e: CustomEvent<{ themeId: ThemeId; theme: ThemeInfo }>) => {
-      setCurrentTheme(e.detail.themeId);
-      setIsDark(e.detail.theme.isDark);
-    }) as EventListener;
+    const cleanup = on('theme-changed', (detail) => {
+      const { themeId, theme } = detail as { themeId: ThemeId; theme: ThemeInfo };
+      setCurrentTheme(themeId);
+      setIsDark(theme.isDark);
+    });
 
-    window.addEventListener('theme-changed', handler);
-    onCleanup(() => window.removeEventListener('theme-changed', handler));
+    onCleanup(cleanup);
   });
 
   // Listen for shortcuts changes
   createEffect(() => {
-    const handler = () => {
+    const cleanup = on('shortcuts-changed', () => {
       setShortcuts(getShortcuts());
-    };
+    });
 
-    window.addEventListener('shortcuts-changed', handler);
-    onCleanup(() => window.removeEventListener('shortcuts-changed', handler));
+    onCleanup(cleanup);
   });
 
   // Listen for close-settings event
   createEffect(() => {
-    const handler = () => setShowSettings(false);
-    window.addEventListener('close-settings', handler);
-    onCleanup(() => window.removeEventListener('close-settings', handler));
+    const cleanup = on('close-settings', () => setShowSettings(false));
+    onCleanup(cleanup);
   });
 
   // Keyboard shortcuts handler
@@ -201,7 +200,7 @@ export const AppProvider: ParentComponent = (props) => {
         }
         break;
       case 'fullscreen':
-        window.dispatchEvent(new CustomEvent('toggle-activity-fullscreen'));
+        emit('toggle-activity-fullscreen');
         break;
       case 'toggle-ai':
         setAiChatOpen((c) => !c);
@@ -228,7 +227,7 @@ export const AppProvider: ParentComponent = (props) => {
       case 'switch-chat':
       case 'focus-message':
       case 'sheep-game':
-        window.dispatchEvent(new CustomEvent('shortcut-action', { detail: action }));
+        emit('shortcut-action', action);
         break;
     }
   };

@@ -31,7 +31,7 @@ fn get_tools() -> Vec<Tool> {
         // ==========================================================================
         Tool {
             name: "get_task_tree",
-            description: "Get the full task hierarchy with status and dependencies. Returns all tasks and evals in the run.",
+            description: "Get the full task hierarchy with status and dependencies. Returns all tasks and checks in the run.",
             input_schema: json!({
                 "type": "object",
                 "properties": {}
@@ -108,26 +108,30 @@ fn get_tools() -> Vec<Tool> {
             }),
         },
         Tool {
-            name: "add_eval",
-            description: "Create an eval task. If validates is provided, writes validated_by on target tasks. Eval becomes ready when all validated tasks complete. Omit validates for global/e2e evals.",
+            name: "add_check",
+            description: "Create a check (validation node). If validates is provided, writes validated_by on target nodes. Check becomes ready when all validated nodes complete. Parent under the feature for scoped checks; omit parent for global/e2e checks.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "eval_id": {
+                    "check_id": {
                         "type": "string",
-                        "description": "Eval identifier (e.g., 'verify_auth')"
+                        "description": "Check identifier (e.g., 'verify_auth')"
                     },
                     "name": {
                         "type": "string",
-                        "description": "Human-readable eval name"
+                        "description": "Human-readable check name"
+                    },
+                    "parent": {
+                        "type": "string",
+                        "description": "Parent node ID. Use this to place the check under the feature it validates. Omit for global/e2e checks."
                     },
                     "validates": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Task IDs this eval validates (convenience sugar — writes validated_by on each task). Omit for global evals."
+                        "description": "Node IDs this check validates (convenience sugar — writes validated_by on each node). Omit for global checks."
                     }
                 },
-                "required": ["eval_id", "name"]
+                "required": ["check_id", "name"]
             }),
         },
         Tool {
@@ -253,19 +257,19 @@ fn get_tools() -> Vec<Tool> {
             }),
         },
         // ==========================================================================
-        // Eval Operations
+        // Check Operations
         // ==========================================================================
         Tool {
-            name: "eval_pass",
-            description: "Call this when all evaluation criteria pass. Only available for eval tasks. Marks validated tasks as validated.",
+            name: "check_pass",
+            description: "Call this when all validation criteria pass. Only available for check nodes. Marks validated nodes as validated.",
             input_schema: json!({
                 "type": "object",
                 "properties": {}
             }),
         },
         Tool {
-            name: "eval_fail",
-            description: "Call this when evaluation fails. Only available for eval tasks. Provide feedback explaining what failed and how to fix it. Creates a repair task.",
+            name: "check_fail",
+            description: "Call this when validation fails. Only available for check nodes. Provide feedback explaining what failed and how to fix it. Creates a repair task.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -374,15 +378,16 @@ impl McpServer {
                     .task_add(task_id, task_name, parent, &blocked_by)
                     .map(|s| (s, false))
             }
-            "add_eval" => {
-                let eval_id = args
-                    .get("eval_id")
+            "add_check" => {
+                let check_id = args
+                    .get("check_id")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("eval_id is required".into()))?;
-                let eval_name = args
+                    .ok_or_else(|| WorkerError::Config("check_id is required".into()))?;
+                let check_name = args
                     .get("name")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| WorkerError::Config("name is required".into()))?;
+                let parent = args.get("parent").and_then(|v| v.as_str());
                 let validates: Vec<String> = args
                     .get("validates")
                     .and_then(|v| v.as_array())
@@ -394,7 +399,7 @@ impl McpServer {
                     .unwrap_or_default();
 
                 self.runner
-                    .add_eval(eval_id, eval_name, &validates)
+                    .add_check(check_id, check_name, parent, &validates)
                     .map(|s| (s, false))
             }
             "delete_task" => {
@@ -448,14 +453,14 @@ impl McpServer {
             "work_done" => self.runner.work_done().map(|s| (s, true)),
             "time_status" => self.time_status().map(|s| (s, false)),
 
-            // Eval Operations
-            "eval_pass" => self.runner.eval_pass().map(|s| (s, false)),
-            "eval_fail" => {
+            // Check Operations
+            "check_pass" => self.runner.check_pass().map(|s| (s, false)),
+            "check_fail" => {
                 let feedback = args
                     .get("feedback")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| WorkerError::Config("feedback is required".into()))?;
-                self.runner.eval_fail(feedback).map(|s| (s, false))
+                self.runner.check_fail(feedback).map(|s| (s, false))
             }
 
             _ => Err(WorkerError::Config(format!("Unknown tool: {}", name))),
@@ -501,7 +506,7 @@ mod tests {
         assert!(names.contains(&"get_task_details"));
         assert!(names.contains(&"complete_task"));
         assert!(names.contains(&"add_task"));
-        assert!(names.contains(&"add_eval"));
+        assert!(names.contains(&"add_check"));
         assert!(names.contains(&"delete_task"));
         assert!(names.contains(&"list_contacts"));
         assert!(names.contains(&"chat_history"));
@@ -511,8 +516,8 @@ mod tests {
         assert!(names.contains(&"read_docs"));
         assert!(names.contains(&"work_done"));
         assert!(names.contains(&"time_status"));
-        assert!(names.contains(&"eval_pass"));
-        assert!(names.contains(&"eval_fail"));
+        assert!(names.contains(&"check_pass"));
+        assert!(names.contains(&"check_fail"));
     }
 
     #[test]

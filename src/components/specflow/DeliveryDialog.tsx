@@ -16,11 +16,12 @@ import { useEscapeKey } from '../../hooks';
 import { useProject, useRoute } from '../../stores';
 import { useDelta } from '../../stores/delta-context';
 import { Icon, Markdown } from '../shared';
-import { createCodeMirror } from 'solid-codemirror';
+import { amber, sage, terra } from '../../lib/theme-colors';
 import { EditorView, keymap } from '@codemirror/view';
+import { EditorState } from '@codemirror/state';
 import { markdown } from '@codemirror/lang-markdown';
 import { defaultKeymap } from '@codemirror/commands';
-import type { BoardDeliveryStatus, DeliveryValidation, LiveNodeTree } from '../../lib/types';
+import type { BoardDeliveryStatus, DeliveryValidation, BoardNodeTree } from '../../lib/types';
 
 type DeliveryAction = 'push' | 'pr' | 'merge';
 
@@ -79,6 +80,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
 
   // CodeMirror ref
   let editorContainerRef: HTMLDivElement | undefined;
+  let editorView: EditorView | undefined;
 
   // Dark theme for CodeMirror
   const darkTheme = EditorView.theme({
@@ -121,30 +123,33 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
     '.cm-list': { color: 'var(--amber-500)' },
   }, { dark: true });
 
-  // Initialize CodeMirror
+  // Initialize CodeMirror directly (no solid-codemirror wrapper)
   onMount(() => {
-    if (editorContainerRef) {
-      const { ref, createExtension } = createCodeMirror({
-        value: summary(),
-        onValueChange: (value) => {
-          setSummary(value);
-          setSummaryEdited(true);
-        },
-      });
-
-      createExtension(markdown());
-      createExtension(keymap.of(defaultKeymap));
-      createExtension(darkTheme);
-      createExtension(EditorView.lineWrapping);
-
-      ref(editorContainerRef);
-    }
+    if (!editorContainerRef) return;
+    const state = EditorState.create({
+      doc: summary(),
+      extensions: [
+        markdown(),
+        keymap.of(defaultKeymap),
+        darkTheme,
+        EditorView.lineWrapping,
+        EditorView.updateListener.of((update) => {
+          if (update.docChanged) {
+            setSummary(update.state.doc.toString());
+            setSummaryEdited(true);
+          }
+        }),
+      ],
+    });
+    editorView = new EditorView({ state, parent: editorContainerRef });
   });
 
+  onCleanup(() => editorView?.destroy());
+
   // Helper to flatten live tree
-  const flattenTree = (nodes: LiveNodeTree[]): LiveNodeTree[] => {
-    const result: LiveNodeTree[] = [];
-    const flatten = (n: LiveNodeTree) => {
+  const flattenTree = (nodes: BoardNodeTree[]): BoardNodeTree[] => {
+    const result: BoardNodeTree[] = [];
+    const flatten = (n: BoardNodeTree) => {
       result.push(n);
       n.children.forEach(flatten);
     };
@@ -156,9 +161,9 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
   createEffect(() => {
     if (summaryEdited()) return;
 
-    const completedNodes = flattenTree(delta.liveTree())
-      .filter((n) => n.source === 'spec' && !n.parentId)
-      .filter((n) => ['done', 'validated', 'awaiting_eval'].includes(n.status));
+    const completedNodes = flattenTree(delta.boardTree())
+      .filter((n) => n.source === 'user' && !n.parentId)
+      .filter((n) => ['done', 'validated', 'awaiting_check'].includes(n.status));
 
     const lines = completedNodes.map((n) => `- ${n.name}`);
     setSummary(lines.join('\n') || 'No completed tasks');
@@ -492,8 +497,8 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
         <div
           class="flex items-center gap-2 mt-2 px-3 py-2 rounded-lg text-xs"
           style={{
-            background: 'rgba(212, 165, 116, 0.06)',
-            border: '1px solid rgba(212, 165, 116, 0.15)',
+            background: amber(0.06),
+            border: `1px solid ${amber(0.15)}`,
           }}
         >
           <Icon name="alert-triangle" class="w-3.5 h-3.5 text-amber-500" />
@@ -540,8 +545,8 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
             <div
               class="w-10 h-10 rounded-lg flex items-center justify-center"
               style={{
-                background: 'rgba(125, 153, 112, 0.12)',
-                border: '1px solid rgba(125, 153, 112, 0.2)',
+                background: sage(0.12),
+                border: `1px solid ${sage(0.2)}`,
               }}
             >
               <Icon name="package" class="w-5 h-5 text-sage" />
@@ -721,8 +726,8 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
                         <label
                           class="flex items-center gap-3 p-3 rounded-lg transition-all cursor-pointer"
                           style={{
-                            background: deliveryAction() === 'push' ? 'rgba(212, 165, 116, 0.08)' : 'transparent',
-                            border: `1px solid ${deliveryAction() === 'push' ? 'rgba(212, 165, 116, 0.3)' : 'var(--pasture-600)'}`,
+                            background: deliveryAction() === 'push' ? amber(0.08) : 'transparent',
+                            border: `1px solid ${deliveryAction() === 'push' ? amber(0.3) : 'var(--pasture-600)'}`,
                           }}
                         >
                           <input
@@ -790,10 +795,10 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
                           class="flex items-center gap-3 p-3 rounded-lg transition-all cursor-pointer"
                           style={{
                             background: deliveryAction() === 'merge'
-                              ? (isYolomerge() ? 'rgba(212, 165, 116, 0.08)' : 'rgba(125, 153, 112, 0.08)')
+                              ? (isYolomerge() ? amber(0.08) : sage(0.08))
                               : 'transparent',
                             border: `1px solid ${deliveryAction() === 'merge'
-                              ? (isYolomerge() ? 'rgba(212, 165, 116, 0.3)' : 'rgba(125, 153, 112, 0.3)')
+                              ? (isYolomerge() ? amber(0.3) : sage(0.3))
                               : 'var(--pasture-600)'}`,
                           }}
                         >
@@ -997,8 +1002,8 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
                 <div
                   class="p-4 rounded-xl flex items-start gap-3"
                   style={{
-                    background: 'rgba(196, 92, 74, 0.08)',
-                    border: '1px solid rgba(196, 92, 74, 0.2)',
+                    background: terra(0.08),
+                    border: `1px solid ${terra(0.2)}`,
                   }}
                 >
                   <Icon name="alert-triangle" class="w-5 h-5 text-terra flex-shrink-0 mt-0.5" />
@@ -1014,8 +1019,8 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
               <div
                 class="p-4 rounded-xl flex items-start gap-3"
                 style={{
-                  background: 'rgba(196, 92, 74, 0.08)',
-                  border: '1px solid rgba(196, 92, 74, 0.2)',
+                  background: terra(0.08),
+                  border: `1px solid ${terra(0.2)}`,
                 }}
               >
                 <Icon name="alert-triangle" class="w-5 h-5 text-terra flex-shrink-0 mt-0.5" />

@@ -284,79 +284,79 @@ pub trait StateAccess: Send {
     async fn request_scaling_check(&self) -> StateAccessResult<()>;
 
     // =========================================================================
-    // Board Integration (Delta Dispatch)
+    // Board Integration
     // =========================================================================
 
     /// Get the project ID if this run is linked to a board project
     async fn get_project_id(&self) -> StateAccessResult<Option<i64>>;
 
-    /// Add a live node to the board (for worker-added tasks in board runs)
+    /// Add a board node (for worker-added tasks in board runs)
     ///
-    /// This creates a live_node in the global database with source='worker'.
+    /// This creates a board node in the global database with source='worker'.
     /// Only works if the run has a project_id set (is linked to a board).
     /// For eval nodes, `validates` writes validated_by on target tasks.
-    async fn add_live_node(
+    async fn add_node(
         &self,
         id: &str,
         name: &str,
         parent_id: Option<&str>,
         blocked_by: Option<&[&str]>,
-        node_type: &str, // "task" or "eval"
+        kind: &str, // "task" or "eval"
         content: &str,
         validates: Option<&[&str]>,
     ) -> StateAccessResult<()>;
 
-    /// Claim a live node for a worker
-    async fn claim_live_node(
+    /// Claim a node for a worker
+    async fn claim_node(
         &self,
         id: &str,
         worker_name: &str,
-    ) -> StateAccessResult<crate::core::delta::LiveNode>;
+    ) -> StateAccessResult<crate::core::delta::BoardNode>;
 
-    /// Complete a live node
-    async fn complete_live_node(
+    /// Complete a node
+    async fn complete_node(
         &self,
         id: &str,
         worker_name: &str,
-    ) -> StateAccessResult<crate::core::delta::LiveNode>;
+    ) -> StateAccessResult<crate::core::delta::BoardNode>;
 
-    /// Unclaim a live node
-    async fn unclaim_live_node(&self, id: &str) -> StateAccessResult<()>;
+    /// Unclaim a node
+    async fn unclaim_node(&self, id: &str) -> StateAccessResult<()>;
 
-    /// Get the live node currently claimed by a worker
-    async fn get_claimed_live_node(
+    /// Get the node currently claimed by a worker
+    async fn get_claimed_node(
         &self,
         worker_name: &str,
-    ) -> StateAccessResult<Option<crate::core::delta::LiveNode>>;
+    ) -> StateAccessResult<Option<crate::core::delta::BoardNode>>;
 
-    /// Get claimable live nodes
-    async fn get_claimable_nodes(&self) -> StateAccessResult<Vec<crate::core::delta::LiveNode>>;
+    /// Get claimable nodes
+    async fn get_claimable_nodes(&self) -> StateAccessResult<Vec<crate::core::delta::BoardNode>>;
 
-    /// Get all live nodes
-    async fn get_live_nodes(&self) -> StateAccessResult<Vec<crate::core::delta::LiveNode>>;
+    /// Get all nodes
+    async fn get_nodes(&self) -> StateAccessResult<Vec<crate::core::delta::BoardNode>>;
 
-    /// Check if a live node is blocked
-    async fn is_live_node_blocked(&self, id: &str) -> StateAccessResult<bool>;
+    /// Check if a node is blocked
+    async fn is_node_blocked(&self, id: &str) -> StateAccessResult<bool>;
 
-    /// Eval pass - validates all nodes
-    async fn live_node_eval_pass(&self, eval_id: &str, worker_name: &str) -> StateAccessResult<()>;
+    /// Check pass - validates all nodes
+    async fn node_check_pass(&self, check_id: &str, worker_name: &str) -> StateAccessResult<()>;
 
-    /// Eval fail - creates repair node, returns repair node ID
-    async fn live_node_eval_fail(
+    /// Check fail - creates repair node, returns repair node ID
+    async fn node_check_fail(
         &self,
-        eval_id: &str,
+        check_id: &str,
         worker_name: &str,
         feedback: &str,
     ) -> StateAccessResult<String>;
 
-    /// Set tokens used on a live node
-    async fn set_live_node_tokens(&self, id: &str, tokens: i64) -> StateAccessResult<()>;
+    /// Set tokens used on a node
+    async fn set_node_tokens(&self, id: &str, tokens: i64) -> StateAccessResult<()>;
 
-    /// Get all node IDs validated by an eval node
-    async fn get_validated_nodes(&self, eval_id: &str) -> StateAccessResult<Vec<String>>;
+    /// Get all node IDs validated by a check node
+    async fn get_validated_nodes(&self, check_id: &str) -> StateAccessResult<Vec<String>>;
 
-    /// Delete a live node by ID (only worker-created nodes can be deleted)
-    async fn delete_live_node(&self, id: &str) -> StateAccessResult<()>;
+    /// Delete a node by ID (only worker-created nodes can be deleted)
+    async fn delete_node(&self, id: &str) -> StateAccessResult<()>;
 }
 
 // =============================================================================
@@ -734,22 +734,22 @@ impl StateAccess for SQLiteState {
         Ok(SQLiteState::get_project_id(self).await?)
     }
 
-    async fn add_live_node(
+    async fn add_node(
         &self,
         id: &str,
         name: &str,
         parent_id: Option<&str>,
         blocked_by: Option<&[&str]>,
-        node_type: &str,
+        kind: &str,
         content: &str,
         validates: Option<&[&str]>,
     ) -> StateAccessResult<()> {
-        use crate::core::delta::{DeltaState, NodeType};
+        use crate::core::delta::{DeltaState, NodeKind};
 
         // Get project_id and route_id from run state
         let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
-                "Cannot add live node: run is not linked to a board project".to_string(),
+                "Cannot add node: run is not linked to a board project".to_string(),
             )
         })?;
         let route_id = self.get_route_id().await?;
@@ -757,90 +757,86 @@ impl StateAccess for SQLiteState {
         // Create delta state for this project and route
         let delta_state = DeltaState::with_route(project_id, route_id);
 
-        // Parse node type
-        let node_type = NodeType::from_str(node_type);
+        // Parse node kind
+        let kind = NodeKind::from_str(kind);
 
-        // Create the live node
+        // Create the node
         delta_state
-            .create_live_node_from_worker(
-                id, name, parent_id, blocked_by, node_type, content, validates,
-            )
+            .create_node_from_worker(id, name, parent_id, blocked_by, kind, content, validates)
             .await
-            .map_err(|e| {
-                StateAccessError::Database(format!("Failed to create live node: {}", e))
-            })?;
+            .map_err(|e| StateAccessError::Database(format!("Failed to create node: {}", e)))?;
 
         Ok(())
     }
 
-    async fn claim_live_node(
+    async fn claim_node(
         &self,
         id: &str,
         worker_name: &str,
-    ) -> StateAccessResult<crate::core::delta::LiveNode> {
+    ) -> StateAccessResult<crate::core::delta::BoardNode> {
         use crate::core::delta::DeltaState;
 
         let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
-                "Cannot claim live node: run is not linked to a board project".to_string(),
+                "Cannot claim node: run is not linked to a board project".to_string(),
             )
         })?;
         let route_id = self.get_route_id().await?;
 
         let delta_state = DeltaState::with_route(project_id, route_id);
         delta_state
-            .claim_live_node(id, worker_name)
+            .claim_node(id, worker_name)
             .await
-            .map_err(|e| StateAccessError::Database(format!("Failed to claim live node: {}", e)))
+            .map_err(|e| StateAccessError::Database(format!("Failed to claim node: {}", e)))
     }
 
-    async fn complete_live_node(
+    async fn complete_node(
         &self,
         id: &str,
         worker_name: &str,
-    ) -> StateAccessResult<crate::core::delta::LiveNode> {
+    ) -> StateAccessResult<crate::core::delta::BoardNode> {
         use crate::core::delta::DeltaState;
 
         let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
-                "Cannot complete live node: run is not linked to a board project".to_string(),
+                "Cannot complete node: run is not linked to a board project".to_string(),
             )
         })?;
         let route_id = self.get_route_id().await?;
 
         let delta_state = DeltaState::with_route(project_id, route_id);
         delta_state
-            .complete_live_node(id, worker_name)
+            .complete_node(id, worker_name)
             .await
-            .map_err(|e| StateAccessError::Database(format!("Failed to complete live node: {}", e)))
+            .map_err(|e| StateAccessError::Database(format!("Failed to complete node: {}", e)))
     }
 
-    async fn unclaim_live_node(&self, id: &str) -> StateAccessResult<()> {
+    async fn unclaim_node(&self, id: &str) -> StateAccessResult<()> {
         use crate::core::delta::DeltaState;
 
         let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
-                "Cannot unclaim live node: run is not linked to a board project".to_string(),
+                "Cannot unclaim node: run is not linked to a board project".to_string(),
             )
         })?;
         let route_id = self.get_route_id().await?;
 
         let delta_state = DeltaState::with_route(project_id, route_id);
         delta_state
-            .unclaim_live_node(id)
+            .unclaim_node(id)
             .await
-            .map_err(|e| StateAccessError::Database(format!("Failed to unclaim live node: {}", e)))
+            .map_err(|e| StateAccessError::Database(format!("Failed to unclaim node: {}", e)))
     }
 
-    async fn get_claimed_live_node(
+    async fn get_claimed_node(
         &self,
         worker_name: &str,
-    ) -> StateAccessResult<Option<crate::core::delta::LiveNode>> {
+    ) -> StateAccessResult<Option<crate::core::delta::BoardNode>> {
         use crate::core::delta::DeltaState;
 
         let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
-                "Cannot get claimed live node: run is not linked to a board project".to_string(),
+                "Cannot get claimed node: run is not linked to a board project".to_string(),
             )
         })?;
         let route_id = self.get_route_id().await?;
@@ -849,12 +845,10 @@ impl StateAccess for SQLiteState {
         delta_state
             .get_claimed_node_for_worker(worker_name)
             .await
-            .map_err(|e| {
-                StateAccessError::Database(format!("Failed to get claimed live node: {}", e))
-            })
+            .map_err(|e| StateAccessError::Database(format!("Failed to get claimed node: {}", e)))
     }
 
-    async fn get_claimable_nodes(&self) -> StateAccessResult<Vec<crate::core::delta::LiveNode>> {
+    async fn get_claimable_nodes(&self) -> StateAccessResult<Vec<crate::core::delta::BoardNode>> {
         use crate::core::delta::DeltaState;
 
         let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
@@ -870,59 +864,60 @@ impl StateAccess for SQLiteState {
         })
     }
 
-    async fn get_live_nodes(&self) -> StateAccessResult<Vec<crate::core::delta::LiveNode>> {
+    async fn get_nodes(&self) -> StateAccessResult<Vec<crate::core::delta::BoardNode>> {
         use crate::core::delta::DeltaState;
 
         let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
-                "Cannot get live nodes: run is not linked to a board project".to_string(),
+                "Cannot get nodes: run is not linked to a board project".to_string(),
             )
         })?;
         let route_id = self.get_route_id().await?;
 
         let delta_state = DeltaState::with_route(project_id, route_id);
         delta_state
-            .get_live_nodes()
+            .get_nodes()
             .await
-            .map_err(|e| StateAccessError::Database(format!("Failed to get live nodes: {}", e)))
+            .map_err(|e| StateAccessError::Database(format!("Failed to get nodes: {}", e)))
     }
 
-    async fn is_live_node_blocked(&self, id: &str) -> StateAccessResult<bool> {
+    async fn is_node_blocked(&self, id: &str) -> StateAccessResult<bool> {
         use crate::core::delta::DeltaState;
 
         let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
-                "Cannot check live node blocked: run is not linked to a board project".to_string(),
-            )
-        })?;
-        let route_id = self.get_route_id().await?;
-
-        let delta_state = DeltaState::with_route(project_id, route_id);
-        delta_state.is_node_blocked(id).await.map_err(|e| {
-            StateAccessError::Database(format!("Failed to check live node blocked: {}", e))
-        })
-    }
-
-    async fn live_node_eval_pass(&self, eval_id: &str, worker_name: &str) -> StateAccessResult<()> {
-        use crate::core::delta::DeltaState;
-
-        let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
-            StateAccessError::InvalidOperation(
-                "Cannot eval pass: run is not linked to a board project".to_string(),
+                "Cannot check node blocked: run is not linked to a board project".to_string(),
             )
         })?;
         let route_id = self.get_route_id().await?;
 
         let delta_state = DeltaState::with_route(project_id, route_id);
         delta_state
-            .eval_pass(eval_id, worker_name)
+            .is_node_blocked(id)
             .await
-            .map_err(|e| StateAccessError::Database(format!("Failed to eval pass: {}", e)))
+            .map_err(|e| StateAccessError::Database(format!("Failed to check node blocked: {}", e)))
     }
 
-    async fn live_node_eval_fail(
+    async fn node_check_pass(&self, check_id: &str, worker_name: &str) -> StateAccessResult<()> {
+        use crate::core::delta::DeltaState;
+
+        let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
+            StateAccessError::InvalidOperation(
+                "Cannot check pass: run is not linked to a board project".to_string(),
+            )
+        })?;
+        let route_id = self.get_route_id().await?;
+
+        let delta_state = DeltaState::with_route(project_id, route_id);
+        delta_state
+            .check_pass(check_id, worker_name)
+            .await
+            .map_err(|e| StateAccessError::Database(format!("Failed to check pass: {}", e)))
+    }
+
+    async fn node_check_fail(
         &self,
-        eval_id: &str,
+        check_id: &str,
         worker_name: &str,
         feedback: &str,
     ) -> StateAccessResult<String> {
@@ -930,35 +925,36 @@ impl StateAccess for SQLiteState {
 
         let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
-                "Cannot eval fail: run is not linked to a board project".to_string(),
+                "Cannot check fail: run is not linked to a board project".to_string(),
             )
         })?;
         let route_id = self.get_route_id().await?;
 
         let delta_state = DeltaState::with_route(project_id, route_id);
         delta_state
-            .eval_fail(eval_id, worker_name, feedback)
+            .check_fail(check_id, worker_name, feedback)
             .await
-            .map_err(|e| StateAccessError::Database(format!("Failed to eval fail: {}", e)))
+            .map_err(|e| StateAccessError::Database(format!("Failed to check fail: {}", e)))
     }
 
-    async fn set_live_node_tokens(&self, id: &str, tokens: i64) -> StateAccessResult<()> {
+    async fn set_node_tokens(&self, id: &str, tokens: i64) -> StateAccessResult<()> {
         use crate::core::delta::DeltaState;
 
         let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
-                "Cannot set live node tokens: run is not linked to a board project".to_string(),
+                "Cannot set node tokens: run is not linked to a board project".to_string(),
             )
         })?;
         let route_id = self.get_route_id().await?;
 
         let delta_state = DeltaState::with_route(project_id, route_id);
-        delta_state.set_node_tokens(id, tokens).await.map_err(|e| {
-            StateAccessError::Database(format!("Failed to set live node tokens: {}", e))
-        })
+        delta_state
+            .set_node_tokens(id, tokens)
+            .await
+            .map_err(|e| StateAccessError::Database(format!("Failed to set node tokens: {}", e)))
     }
 
-    async fn get_validated_nodes(&self, eval_id: &str) -> StateAccessResult<Vec<String>> {
+    async fn get_validated_nodes(&self, check_id: &str) -> StateAccessResult<Vec<String>> {
         use crate::core::delta::DeltaState;
 
         let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
@@ -969,25 +965,25 @@ impl StateAccess for SQLiteState {
         let route_id = self.get_route_id().await?;
 
         let delta_state = DeltaState::with_route(project_id, route_id);
-        delta_state.get_validated_nodes(eval_id).await.map_err(|e| {
+        delta_state.get_checked_nodes(check_id).await.map_err(|e| {
             StateAccessError::Database(format!("Failed to get validated nodes: {}", e))
         })
     }
 
-    async fn delete_live_node(&self, id: &str) -> StateAccessResult<()> {
+    async fn delete_node(&self, id: &str) -> StateAccessResult<()> {
         use crate::core::delta::DeltaState;
 
         let project_id = SQLiteState::get_project_id(self).await?.ok_or_else(|| {
             StateAccessError::InvalidOperation(
-                "Cannot delete live node: run is not linked to a board project".to_string(),
+                "Cannot delete node: run is not linked to a board project".to_string(),
             )
         })?;
         let route_id = self.get_route_id().await?;
 
         let delta_state = DeltaState::with_route(project_id, route_id);
         delta_state
-            .delete_live_node(id)
+            .delete_node(id)
             .await
-            .map_err(|e| StateAccessError::Database(format!("Failed to delete live node: {}", e)))
+            .map_err(|e| StateAccessError::Database(format!("Failed to delete node: {}", e)))
     }
 }

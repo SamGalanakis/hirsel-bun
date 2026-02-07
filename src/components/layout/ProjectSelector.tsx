@@ -15,6 +15,7 @@ import {
 import { useClickOutside } from '../../hooks';
 import { useProject } from '../../stores';
 import { Icon } from '../shared';
+import { amber } from '../../lib/theme-colors';
 
 interface ProjectSelectorProps {
   /** When true, only renders the dropdown (no trigger button), using fixed positioning */
@@ -332,7 +333,7 @@ export const ProjectSelector: Component<ProjectSelectorProps> = (props) => {
                       <div
                         class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
                         style={{
-                          background: 'linear-gradient(135deg, rgba(251,191,36,0.1) 0%, rgba(212,165,116,0.05) 100%)',
+                          background: `linear-gradient(135deg, rgba(251,191,36,0.1) 0%, ${amber(0.05)} 100%)`,
                           border: '1px solid rgba(251,191,36,0.15)',
                         }}
                       >

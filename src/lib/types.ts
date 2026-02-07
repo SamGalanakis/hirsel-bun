@@ -846,7 +846,7 @@ export interface BoardTask {
  * Task tree (nested, for rendering)
  *
  * Validation Rules:
- * - A task is "validated" if it has a passing eval OR all children are validated
+ * - A task is "validated" if it has a passing check OR all children are validated
  * - Validation propagates up the tree
  */
 export interface TaskTree {
@@ -861,16 +861,16 @@ export interface TaskTree {
 }
 
 /**
- * An eval in the board
+ * A check in the board
  *
- * Evals are flat (not nested) and have a computed validates[] from tasks' validated_by
+ * Checks are flat (not nested) and have a computed validates[] from nodes' checked_by
  */
-export interface BoardEval {
+export interface BoardCheck {
   id: string; // Slug ID (e.g., "api-test")
   name: string;
   status: BoardEvalStatus;
   content: string;
-  validates: string[]; // Computed: task IDs where validated_by includes this eval
+  validates: string[]; // Computed: node IDs where checked_by includes this check
   x: number | null;
   y: number | null;
   createdAt: string;
@@ -897,12 +897,12 @@ export interface BoardSyncResult {
   tasksUpdated: string[];
   /** Tasks that were deleted */
   tasksDeleted: string[];
-  /** Evals that were added */
-  evalsAdded: string[];
-  /** Evals that were updated */
-  evalsUpdated: string[];
-  /** Evals that were deleted */
-  evalsDeleted: string[];
+  /** Checks that were added */
+  checksAdded: string[];
+  /** Checks that were updated */
+  checksUpdated: string[];
+  /** Checks that were deleted */
+  checksDeleted: string[];
 }
 
 /** Status color mapping for tasks */
@@ -913,7 +913,7 @@ export const BOARD_TASK_COLORS: Record<BoardTaskStatus, string> = {
   blocked: 'terra',
 };
 
-/** Status color mapping for evals */
+/** Status color mapping for checks */
 export const BOARD_EVAL_COLORS: Record<BoardEvalStatus, string> = {
   blocked: 'wool-600',
   queued: 'sky-500',
@@ -944,15 +944,15 @@ export interface TaskRun {
 /** Preview of what will be dispatched from a task */
 export interface DispatchPreview {
   taskIds: string[];
-  evalIds: string[];
+  checkIds: string[];
   taskCount: number;
-  evalCount: number;
+  checkCount: number;
 }
 
 /** Board snapshot taken at dispatch time */
 export interface BoardSnapshot {
   tasks: TaskTree[];
-  evals: BoardEval[];
+  checks: BoardCheck[];
   dispatchedAt: string;
 }
 
@@ -969,9 +969,9 @@ export interface DispatchInfo {
   runName: string;
   runPath: string;
   taskIds: string[];
-  evalIds: string[];
-  specContent: string;
-  evalContent?: string;
+  checkIds: string[];
+  featureContent: string;
+  checkContent?: string;
   targetBranch?: string;
   branchOffCommit?: string;
 }
@@ -1057,78 +1057,40 @@ export const MERGE_STATE_ICONS: Record<MergeState, string> = {
 };
 
 // =============================================================================
-// Delta Dispatch Types (Draft/Live Trees)
+// Board Tree Types (Unified Feature/Task/Check Model)
 // =============================================================================
 
-/** Node type in draft/live trees */
-export type NodeType = 'task' | 'eval';
+/** Node kind - feature, task, or check */
+export type NodeKind = 'feature' | 'task' | 'check';
 
-/** Status of a live node */
-export type LiveNodeStatus =
+/** Status of a board node */
+export type BoardNodeStatus =
+  | 'draft'
   | 'pending'
   | 'working'
   | 'done'
-  | 'awaiting_eval'
+  | 'awaiting_check'
   | 'validated'
   | 'needs_repair'
   | 'failed';
 
-/** Source of a live node - where it originated */
-export type LiveNodeSource = 'spec' | 'worker' | 'system';
-
-/** Type of delta operation */
-export type DeltaType = 'implement' | 'modify' | 'revert';
-
-/** Status of a delta submission */
-export type DeltaStatus = 'pending' | 'processing' | 'done' | 'failed';
+/** Source of a board node - where it originated */
+export type BoardNodeSource = 'user' | 'plan' | 'worker' | 'system';
 
 /** Status of a project's persistent run */
 export type ProjectRunStatus = 'paused' | 'working' | 'failed';
 
-/** A node in the draft tree (user edits freely) */
-export interface DraftNode {
+/** A board node (flat, from DB) */
+export interface BoardNode {
   id: string;
   projectId: number;
   parentId: string | null;
   position: number;
   name: string;
-  nodeType: NodeType;
+  kind: NodeKind;
+  source: BoardNodeSource;
   content: string;
-  validates: string[];
-  validatedBy: string[];
-  blockedBy: string[];
-  x: number | null;
-  y: number | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** Draft node tree (nested for rendering) */
-export interface DraftNodeTree {
-  id: string;
-  name: string;
-  nodeType: NodeType;
-  content: string;
-  validates: string[];
-  validatedBy: string[];
-  blockedBy: string[];
-  children: DraftNodeTree[];
-  x: number | null;
-  y: number | null;
-}
-
-/** A node in the live tree (dispatched state) */
-export interface LiveNode {
-  id: string;
-  projectId: number;
-  draftNodeId: string | null;
-  parentId: string | null;
-  position: number;
-  name: string;
-  nodeType: NodeType;
-  content: string;
-  status: LiveNodeStatus;
-  source: LiveNodeSource;
+  status: BoardNodeStatus;
   validates: string[];
   validatedBy: string[];
   blockedBy: string[];
@@ -1139,22 +1101,27 @@ export interface LiveNode {
   completedAt: string | null;
   lastCommitSha: string | null;
   resolves: string | null;
+  claimedBy: string | null;
+  claimedAt: string | null;
+  completedBy: string | null;
+  checkResult: 'pass' | 'fail' | null;
+  checkFeedback: string | null;
+  tokensUsed: number | null;
 }
 
-/** Live node tree (nested for rendering) */
-export interface LiveNodeTree {
+/** Board node tree (nested for rendering) */
+export interface BoardNodeTree {
   id: string;
-  draftNodeId: string | null;
   parentId: string | null;
   name: string;
-  nodeType: NodeType;
+  kind: NodeKind;
+  source: BoardNodeSource;
   content: string;
-  status: LiveNodeStatus;
-  source: LiveNodeSource;
+  status: BoardNodeStatus;
   validates: string[];
   validatedBy: string[];
   blockedBy: string[];
-  children: LiveNodeTree[];
+  children: BoardNodeTree[];
   x: number | null;
   y: number | null;
   completedAt: string | null;
@@ -1163,43 +1130,9 @@ export interface LiveNodeTree {
   claimedBy: string | null;
   claimedAt: string | null;
   completedBy: string | null;
-  evalResult: 'pass' | 'fail' | null;
-  evalFeedback: string | null;
+  checkResult: 'pass' | 'fail' | null;
+  checkFeedback: string | null;
   tokensUsed: number | null;
-}
-
-/** A reference for context in delta tasks */
-export interface Reference {
-  refType: string;
-  value: string;
-  description: string | null;
-}
-
-/** A node in a diff operation */
-export interface DiffNode {
-  id: string;
-  name: string;
-  nodeType: NodeType;
-  content: string;
-  validates: string[];
-  validatedBy: string[];
-  blockedBy: string[];
-  parentId: string | null;
-}
-
-/** A modified node with old and new state */
-export interface ModifiedNode {
-  draftNode: DiffNode;
-  liveNode: DiffNode;
-  changes: string[];
-}
-
-/** Result of diffing draft vs live trees */
-export interface TreeDiff {
-  newNodes: DiffNode[];
-  modifiedNodes: ModifiedNode[];
-  deletedNodes: DiffNode[];
-  unchangedIds: string[];
 }
 
 /** A persistent run for a project */
@@ -1212,11 +1145,11 @@ export interface ProjectRun {
   lastDispatchAt: string | null;
 }
 
-/** Request to create a draft node */
-export interface CreateDraftNodeRequest {
+/** Request to create a board node */
+export interface CreateBoardNodeRequest {
   parentId?: string | null;
   name: string;
-  nodeType?: NodeType;
+  kind?: NodeKind;
   content?: string;
   validatedBy?: string[];
   blockedBy?: string[];
@@ -1224,8 +1157,8 @@ export interface CreateDraftNodeRequest {
   y?: number | null;
 }
 
-/** Request to update a draft node */
-export interface UpdateDraftNodeRequest {
+/** Request to update a board node */
+export interface UpdateBoardNodeRequest {
   name?: string;
   content?: string;
   validatedBy?: string[];
@@ -1235,57 +1168,44 @@ export interface UpdateDraftNodeRequest {
 }
 
 /** Response from dispatch operation */
-export interface DeltaDispatchResponse {
+export interface DispatchResponse {
   runName: string;
-  batchId: number;
-  deltaCount: number;
-  diffSummary: string;
+  nodeCount: number;
+  featureCount: number;
+  planTaskCount: number;
   versionNumber: number;
   versionId: number;
 }
 
-/** Preview response for dispatch */
-export interface DeltaDispatchPreviewResponse {
-  diff: TreeDiff;
-  taskCount: number;
-  hasExistingRun: boolean;
-}
-
-/** Response containing both trees */
-export interface DualTreeResponse {
-  draft: DraftNodeTree[];
-  live: LiveNodeTree[];
-  diff: TreeDiff;
+/** Response containing the board tree */
+export interface BoardTreeResponse {
+  tree: BoardNodeTree[];
   projectRun: ProjectRun | null;
+  generation: number;
 }
 
-/** Status colors for live nodes */
-export const LIVE_NODE_STATUS_COLORS: Record<LiveNodeStatus, string> = {
+/** Status colors for board nodes */
+export const BOARD_NODE_STATUS_COLORS: Record<BoardNodeStatus, string> = {
+  draft: 'sky-500',
   pending: 'wool-500',
   working: 'amber-500',
   done: 'sage',
-  awaiting_eval: 'amber-400',
+  awaiting_check: 'amber-400',
   validated: 'sage',
   needs_repair: 'terra',
   failed: 'terra',
 };
 
-/** Status icons for live nodes */
-export const LIVE_NODE_STATUS_ICONS: Record<LiveNodeStatus, string> = {
+/** Status icons for board nodes */
+export const BOARD_NODE_STATUS_ICONS: Record<BoardNodeStatus, string> = {
+  draft: '\u270e', // ✎
   pending: '\u25cb', // ○
   working: '\u25cf', // ●
   done: '\u2713', // ✓
-  awaiting_eval: '\u25d4', // ◔
+  awaiting_check: '\u25d4', // ◔
   validated: '\u2713', // ✓
   needs_repair: '\u26a0', // ⚠
   failed: '\u2717', // ✗
-};
-
-/** Delta type colors */
-export const DELTA_TYPE_COLORS: Record<DeltaType, string> = {
-  implement: 'sage',
-  modify: 'amber-500',
-  revert: 'terra',
 };
 
 // =============================================================================
@@ -1296,7 +1216,6 @@ export const DELTA_TYPE_COLORS: Record<DeltaType, string> = {
 export interface BoardVersion {
   id: number;
   projectId: number;
-  batchId: number;
   versionNumber: number;
   createdAt: string;
   description: string | null;

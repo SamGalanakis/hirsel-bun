@@ -1,7 +1,7 @@
-//! Delta tree export/import for Gyp agent access
+//! Board tree export/import for Gyp agent access
 //!
 //! Content files live at `routes/{route_name}/board/tasks/{id}.md` for direct editing.
-//! Structure is managed via MCP tools (board_view, board_task, etc.)
+//! Structure is managed via MCP tools (board_view, board_spec, board_task, etc.)
 //!
 //! File structure:
 //! ```text
@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 use super::state::DeltaState;
-use super::types::UpdateDraftNodeRequest;
+use super::types::UpdateBoardNodeRequest;
 use crate::core::route::{RouteFiles, RouteStore};
 
 /// Block on an async future in a sync context.
@@ -112,8 +112,8 @@ impl DeltaExporter {
 
     /// Export content files to tasks/{id}.md
     ///
-    /// Structure is NOT exported - it's managed via MCP tools.
-    /// Only content files are written for agent editing.
+    /// Exports all node kinds (spec/task/eval) for agent editing.
+    /// Structure is managed via MCP tools.
     pub fn export_for_agent(&mut self) -> ExportResult<PathBuf> {
         let board_dir = self.ensure_board_dir()?;
         let tasks_dir = board_dir.join("tasks");
@@ -121,14 +121,13 @@ impl DeltaExporter {
             std::fs::create_dir_all(&tasks_dir)?;
         }
 
-        // Get all draft nodes for content export
-        let all_nodes = block_on(self.state.get_draft_nodes())?;
+        // Get all nodes for content export
+        let all_nodes = block_on(self.state.get_nodes())?;
 
         // Export content files to tasks/ directory
         let mut exported_ids = HashSet::new();
         for node in &all_nodes {
             let content_path = tasks_dir.join(format!("{}.md", node.id));
-            // Only write if file doesn't exist or content differs
             let should_write = match std::fs::read_to_string(&content_path) {
                 Ok(existing) => existing != node.content,
                 Err(_) => true,
@@ -140,7 +139,7 @@ impl DeltaExporter {
             exported_ids.insert(node.id.clone());
         }
 
-        // Clean up stale content files (nodes that no longer exist)
+        // Clean up stale content files
         if let Ok(entries) = std::fs::read_dir(&tasks_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -155,7 +154,7 @@ impl DeltaExporter {
             }
         }
 
-        // Clean up old board.json if it exists (no longer used)
+        // Clean up old board.json if it exists
         let board_json = board_dir.join("board.json");
         if board_json.exists() {
             std::fs::remove_file(&board_json)?;
@@ -177,7 +176,7 @@ impl DeltaExporter {
     /// Sync content changes from tasks/*.md files back to database
     ///
     /// NOTE: Structure is managed via MCP tools - this only syncs content.
-    /// Files that don't match existing nodes are ignored.
+    /// Files that don't match existing node IDs are ignored.
     pub fn sync_file_changes(&mut self) -> ExportResult<SyncResult> {
         let tasks_dir = self.board_dir().join("tasks");
         if !tasks_dir.exists() {
@@ -186,21 +185,17 @@ impl DeltaExporter {
 
         let mut result = SyncResult::default();
 
-        // Read all .md files and sync content to matching nodes
         if let Ok(entries) = std::fs::read_dir(&tasks_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().map(|e| e == "md").unwrap_or(false) {
                     if let Some(node_id) = path.file_stem().and_then(|s| s.to_str()) {
-                        // Try to find matching node in database
-                        if let Ok(existing) = block_on(self.state.get_draft_node(node_id)) {
-                            // Read file content
+                        if let Ok(existing) = block_on(self.state.get_node(node_id)) {
                             if let Ok(file_content) = std::fs::read_to_string(&path) {
-                                // Update if content differs
                                 if existing.content != file_content
-                                    && block_on(self.state.update_draft_node(
+                                    && block_on(self.state.update_node(
                                         node_id,
-                                        &UpdateDraftNodeRequest {
+                                        &UpdateBoardNodeRequest {
                                             content: Some(file_content),
                                             ..Default::default()
                                         },
@@ -211,7 +206,6 @@ impl DeltaExporter {
                                 }
                             }
                         }
-                        // Files without matching nodes are ignored - structure comes from MCP
                     }
                 }
             }

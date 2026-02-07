@@ -5,6 +5,7 @@
  * different implementation approaches without losing work.
  */
 import { invoke } from '../lib/invoke';
+import { emit } from '../lib/events';
 import {
   type ParentComponent,
   batch,
@@ -114,7 +115,7 @@ export const RouteProvider: ParentComponent = (props) => {
       setActiveRouteState(route);
 
       // Emit event for delta context to reload
-      window.dispatchEvent(new CustomEvent('route-changed', { detail: { projectId, routeId } }));
+      emit('route-changed', { projectId, routeId });
 
       return true;
     } catch (e) {

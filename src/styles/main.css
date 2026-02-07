@@ -125,12 +125,15 @@ input[type="number"] {
   /* Accent (shepherd's lantern) */
   --amber-400: #e8c19a;
   --amber-500: #d4a574;
+  --amber-500-rgb: 212, 165, 116;
   --amber-600: #b8895c;
 
   /* Status colors */
   --sage: #7d9970;
+  --sage-rgb: 125, 153, 112;
   --golden: #c9a227;
   --terra: #c45c4a;
+  --terra-rgb: 196, 92, 74;
 
   /* Basecoat/shadcn compatibility */
   --background: #1a1a1a;
@@ -173,12 +176,15 @@ input[type="number"] {
   /* Accent (warm amber) */
   --amber-400: #c4956a;
   --amber-500: #a67c4e;
+  --amber-500-rgb: 166, 124, 78;
   --amber-600: #8a6640;
 
   /* Status colors (good contrast for light bg) */
   --sage: #4a7340;
+  --sage-rgb: 74, 115, 64;
   --golden: #9a7a18;
   --terra: #b84535;
+  --terra-rgb: 184, 69, 53;
 
   /* Basecoat/shadcn compatibility */
   --background: #faf9f7;
@@ -221,12 +227,15 @@ input[type="number"] {
   /* Accent (Peach/Mauve) */
   --amber-400: #f5c2e7; /* Pink */
   --amber-500: #cba6f7; /* Mauve */
+  --amber-500-rgb: 203, 166, 247;
   --amber-600: #f38ba8; /* Red */
 
   /* Status colors */
   --sage: #a6e3a1;   /* Green */
+  --sage-rgb: 166, 227, 161;
   --golden: #f9e2af; /* Yellow */
   --terra: #f38ba8;  /* Red */
+  --terra-rgb: 243, 139, 168;
 
   /* Basecoat/shadcn compatibility */
   --background: #1e1e2e;
@@ -269,12 +278,15 @@ input[type="number"] {
   /* Accent */
   --amber-400: #f5bde6; /* Pink */
   --amber-500: #c6a0f6; /* Mauve */
+  --amber-500-rgb: 198, 160, 246;
   --amber-600: #ed8796; /* Red */
 
   /* Status colors */
   --sage: #a6da95;   /* Green */
+  --sage-rgb: 166, 218, 149;
   --golden: #eed49f; /* Yellow */
   --terra: #ed8796;  /* Red */
+  --terra-rgb: 237, 135, 150;
 
   /* Basecoat/shadcn compatibility */
   --background: #24273a;
@@ -317,12 +329,15 @@ input[type="number"] {
   /* Accent */
   --amber-400: #f4b8e4; /* Pink */
   --amber-500: #ca9ee6; /* Mauve */
+  --amber-500-rgb: 202, 158, 230;
   --amber-600: #e78284; /* Red */
 
   /* Status colors */
   --sage: #a6d189;   /* Green */
+  --sage-rgb: 166, 209, 137;
   --golden: #e5c890; /* Yellow */
   --terra: #e78284;  /* Red */
+  --terra-rgb: 231, 130, 132;
 
   /* Basecoat/shadcn compatibility */
   --background: #303446;
@@ -365,12 +380,15 @@ input[type="number"] {
   /* Accent */
   --amber-400: #ea76cb; /* Pink */
   --amber-500: #8839ef; /* Mauve */
+  --amber-500-rgb: 136, 57, 239;
   --amber-600: #d20f39; /* Red */
 
   /* Status colors */
   --sage: #40a02b;   /* Green */
+  --sage-rgb: 64, 160, 43;
   --golden: #df8e1d; /* Yellow */
   --terra: #d20f39;  /* Red */
+  --terra-rgb: 210, 15, 57;
 
   /* Basecoat/shadcn compatibility */
   --background: #eff1f5;
@@ -3013,14 +3031,26 @@ section.flex-1.flex.flex-col {
    ============================================ */
 :root {
   /* Node card backgrounds (gradients) */
-  --node-eval-bg: linear-gradient(135deg, rgba(38, 45, 40, 0.95) 0%, rgba(32, 38, 34, 0.98) 100%);
+  --node-check-bg: linear-gradient(135deg, rgba(38, 45, 40, 0.95) 0%, rgba(32, 38, 34, 0.98) 100%);
   --node-task-bg: linear-gradient(135deg, rgba(45, 42, 38, 0.95) 0%, rgba(38, 35, 32, 0.98) 100%);
 
   /* Node card borders */
-  --node-eval-border: rgba(70, 100, 65, 0.5);
-  --node-eval-border-selected: rgba(100, 140, 90, 0.6);
+  --node-check-border: rgba(70, 100, 65, 0.6);
+  --node-check-border-selected: rgba(100, 140, 90, 0.7);
   --node-task-border: rgba(90, 85, 78, 0.4);
   --node-task-border-selected: rgba(140, 130, 115, 0.5);
+
+  /* Feature node (kind=feature, non-root) */
+  --node-feature-bg: linear-gradient(145deg, rgba(42, 38, 33, 0.92) 0%, rgba(35, 32, 28, 0.96) 100%);
+  --node-feature-border: rgba(160, 140, 110, 0.3);
+  --node-feature-border-selected: rgba(160, 140, 110, 0.5);
+
+  /* Root node (project origin) */
+  --node-root-bg: linear-gradient(160deg, rgba(50, 44, 36, 0.95) 0%, rgba(38, 34, 28, 0.98) 100%);
+  --node-root-border: rgba(212, 165, 116, 0.35);
+  --node-root-border-selected: rgba(212, 165, 116, 0.6);
+  --node-root-glow: 0 0 16px rgba(212, 165, 116, 0.08), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --node-root-glow-selected: 0 0 20px rgba(212, 165, 116, 0.15), 0 4px 16px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.04);
 
   /* Status glow effects */
   --glow-working: 0 0 12px color-mix(in srgb, var(--amber-500) 40%, transparent);
@@ -3031,7 +3061,7 @@ section.flex-1.flex.flex-col {
   /* Edge stroke colors (dependency connectors) */
   --edge-validates: rgb(85, 115, 75);
   --edge-blocked-by: rgb(145, 85, 70);
-  --edge-hierarchy: rgb(90, 85, 78);
+  --edge-hierarchy: rgb(130, 120, 100);
   --edge-resolves: rgb(180, 150, 40);
 
   /* CodeMirror theme support */
@@ -3043,15 +3073,23 @@ section.flex-1.flex.flex-col {
 :root.light,
 :root[data-theme="light"],
 :root[data-theme="hirsel-light"] {
-  --node-eval-bg: linear-gradient(135deg, rgba(230, 237, 232, 0.95) 0%, rgba(220, 227, 222, 0.98) 100%);
+  --node-check-bg: linear-gradient(135deg, rgba(230, 237, 232, 0.95) 0%, rgba(220, 227, 222, 0.98) 100%);
   --node-task-bg: linear-gradient(135deg, rgba(240, 237, 232, 0.95) 0%, rgba(230, 225, 220, 0.98) 100%);
-  --node-eval-border: rgba(74, 115, 64, 0.4);
-  --node-eval-border-selected: rgba(64, 110, 54, 0.6);
+  --node-check-border: rgba(74, 115, 64, 0.5);
+  --node-check-border-selected: rgba(64, 110, 54, 0.7);
+  --node-feature-bg: linear-gradient(145deg, rgba(242, 236, 228, 0.94) 0%, rgba(235, 230, 222, 0.97) 100%);
+  --node-feature-border: rgba(170, 150, 120, 0.3);
+  --node-feature-border-selected: rgba(170, 150, 120, 0.5);
   --node-task-border: rgba(150, 145, 138, 0.4);
   --node-task-border-selected: rgba(120, 115, 108, 0.6);
+  --node-root-bg: linear-gradient(160deg, rgba(245, 238, 228, 0.97) 0%, rgba(235, 228, 218, 0.98) 100%);
+  --node-root-border: rgba(184, 137, 92, 0.45);
+  --node-root-border-selected: rgba(184, 137, 92, 0.7);
+  --node-root-glow: 0 0 12px rgba(184, 137, 92, 0.06), 0 2px 6px rgba(0, 0, 0, 0.08);
+  --node-root-glow-selected: 0 0 16px rgba(184, 137, 92, 0.12), 0 4px 12px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.5);
   --edge-validates: rgb(74, 115, 64);
   --edge-blocked-by: rgb(184, 69, 53);
-  --edge-hierarchy: rgb(160, 155, 145);
+  --edge-hierarchy: rgb(170, 160, 148);
   --edge-resolves: rgb(180, 150, 40);
   --glow-claimable: 0 0 6px color-mix(in srgb, var(--amber-500) 12%, transparent);
 }
@@ -3912,6 +3950,11 @@ section.flex-1.flex.flex-col {
     opacity: 1;
     transform: translate(-50%, -50%) scale(1);
   }
+}
+
+@keyframes halfmoon-enter {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* ============================================

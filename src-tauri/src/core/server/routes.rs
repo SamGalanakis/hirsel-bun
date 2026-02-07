@@ -1156,7 +1156,7 @@ pub async fn patch_config(
 }
 
 // =============================================================================
-// Board Integration - Live Nodes
+// Board Integration - Nodes
 // =============================================================================
 
 /// Response for project_id endpoint
@@ -1170,7 +1170,7 @@ pub struct ProjectIdResponse {
 /// GET /api/runs/{name}/config/project_id
 ///
 /// Workers use this to determine which project they're working on
-/// so they can add live nodes to the correct project.
+/// so they can add nodes to the correct project.
 pub async fn get_project_id(Path(name): Path<String>) -> Result<Json<ProjectIdResponse>> {
     use crate::core::{config, state::SQLiteState};
 
@@ -1186,29 +1186,29 @@ pub async fn get_project_id(Path(name): Path<String>) -> Result<Json<ProjectIdRe
     Ok(Json(ProjectIdResponse { project_id }))
 }
 
-/// Request body for adding a live node from a worker
+/// Request body for adding a node from a worker
 #[derive(Debug, Deserialize)]
-pub struct AddLiveNodeRequest {
+pub struct AddNodeRequest {
     pub id: String,
     pub name: String,
     pub parent_id: Option<String>,
     pub blocked_by: Option<Vec<String>>,
-    pub node_type: String,
+    pub kind: String,
     pub content: String,
     pub validates: Option<Vec<String>>,
 }
 
-/// Add a live node from a worker
+/// Add a node from a worker
 ///
-/// POST /api/runs/{name}/live-nodes
+/// POST /api/runs/{name}/nodes
 ///
-/// Workers call this to add tasks to the live tree during execution.
+/// Workers call this to add tasks to the board tree during execution.
 /// The node is created with source='worker'.
-pub async fn add_live_node(
+pub async fn add_node(
     Path(name): Path<String>,
-    Json(body): Json<AddLiveNodeRequest>,
+    Json(body): Json<AddNodeRequest>,
 ) -> Result<StatusCode> {
-    use crate::core::delta::{DeltaState, NodeType};
+    use crate::core::delta::{DeltaState, NodeKind};
     use crate::core::{config, state::SQLiteState};
 
     let run_dir = config::run_dir(&name);
@@ -1227,10 +1227,10 @@ pub async fn add_live_node(
         .await
         .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
-    // Parse node type (defaults to Task for unknown types)
-    let node_type = NodeType::from_str(&body.node_type);
+    // Parse node kind (defaults to Task for unknown kinds)
+    let kind = NodeKind::from_str(&body.kind);
 
-    // Create live node via DeltaState
+    // Create node via DeltaState
     let delta_state = DeltaState::with_route(project_id, route_id);
 
     let blocked_by: Option<Vec<&str>> = body
@@ -1244,12 +1244,12 @@ pub async fn add_live_node(
         .map(|v| v.iter().map(|s| s.as_str()).collect());
 
     delta_state
-        .create_live_node_from_worker(
+        .create_node_from_worker(
             &body.id,
             &body.name,
             body.parent_id.as_deref(),
             blocked_by.as_deref(),
-            node_type,
+            kind,
             &body.content,
             validates.as_deref(),
         )
@@ -1258,10 +1258,10 @@ pub async fn add_live_node(
     Ok(StatusCode::CREATED)
 }
 
-/// Get all live nodes for a run
+/// Get all nodes for a run
 ///
-/// GET /api/runs/{name}/live-nodes
-pub async fn get_live_nodes(Path(name): Path<String>) -> Result<Json<LiveNodesResponse>> {
+/// GET /api/runs/{name}/nodes
+pub async fn get_nodes(Path(name): Path<String>) -> Result<Json<NodesResponse>> {
     use crate::core::delta::DeltaState;
     use crate::core::{config, state::SQLiteState};
 
@@ -1281,20 +1281,20 @@ pub async fn get_live_nodes(Path(name): Path<String>) -> Result<Json<LiveNodesRe
         .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
     let delta_state = DeltaState::with_route(project_id, route_id);
-    let nodes = delta_state.get_live_nodes().await?;
+    let nodes = delta_state.get_nodes().await?;
 
-    Ok(Json(LiveNodesResponse { nodes }))
+    Ok(Json(NodesResponse { nodes }))
 }
 
 #[derive(Debug, Serialize)]
-pub struct LiveNodesResponse {
-    pub nodes: Vec<crate::core::delta::LiveNode>,
+pub struct NodesResponse {
+    pub nodes: Vec<crate::core::delta::BoardNode>,
 }
 
-/// Get claimable live nodes for a run
+/// Get claimable nodes for a run
 ///
-/// GET /api/runs/{name}/live-nodes/claimable
-pub async fn get_claimable_live_nodes(Path(name): Path<String>) -> Result<Json<LiveNodesResponse>> {
+/// GET /api/runs/{name}/nodes/claimable
+pub async fn get_claimable_nodes(Path(name): Path<String>) -> Result<Json<NodesResponse>> {
     use crate::core::delta::DeltaState;
     use crate::core::{config, state::SQLiteState};
 
@@ -1316,21 +1316,57 @@ pub async fn get_claimable_live_nodes(Path(name): Path<String>) -> Result<Json<L
     let delta_state = DeltaState::with_route(project_id, route_id);
     let nodes = delta_state.get_claimable_nodes().await?;
 
-    Ok(Json(LiveNodesResponse { nodes }))
+    Ok(Json(NodesResponse { nodes }))
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ClaimLiveNodeRequest {
+pub struct ClaimNodeRequest {
     pub worker_name: String,
 }
 
-/// Claim a live node for a worker
+/// Claim a node for a worker
 ///
-/// POST /api/runs/{name}/live-nodes/{id}/claim
-pub async fn claim_live_node(
+/// POST /api/runs/{name}/nodes/{id}/claim
+pub async fn claim_node(
     Path((name, node_id)): Path<(String, String)>,
-    Json(body): Json<ClaimLiveNodeRequest>,
-) -> Result<Json<crate::core::delta::LiveNode>> {
+    Json(body): Json<ClaimNodeRequest>,
+) -> Result<Json<crate::core::delta::BoardNode>> {
+    use crate::core::delta::DeltaState;
+    use crate::core::{config, state::SQLiteState};
+
+    let run_dir = config::run_dir(&name);
+    if !run_dir.exists() {
+        return Err(OrchestratorError::RunNotFound(name));
+    }
+
+    let state = SQLiteState::new(&name).await?;
+
+    let project_id = state.get_project_id().await?.ok_or_else(|| {
+        OrchestratorError::InvalidOperation("Run is not linked to a project".into())
+    })?;
+    let route_id = state
+        .get_route_id()
+        .await
+        .map_err(|e| OrchestratorError::State(e.to_string()))?;
+
+    let delta_state = DeltaState::with_route(project_id, route_id);
+    let node = delta_state.claim_node(&node_id, &body.worker_name).await?;
+
+    Ok(Json(node))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CompleteNodeRequest {
+    pub worker_name: String,
+}
+
+/// Complete a node
+///
+/// POST /api/runs/{name}/nodes/{id}/complete
+pub async fn complete_node(
+    Path((name, node_id)): Path<(String, String)>,
+    Json(body): Json<CompleteNodeRequest>,
+) -> Result<Json<crate::core::delta::BoardNode>> {
     use crate::core::delta::DeltaState;
     use crate::core::{config, state::SQLiteState};
 
@@ -1351,24 +1387,16 @@ pub async fn claim_live_node(
 
     let delta_state = DeltaState::with_route(project_id, route_id);
     let node = delta_state
-        .claim_live_node(&node_id, &body.worker_name)
+        .complete_node(&node_id, &body.worker_name)
         .await?;
 
     Ok(Json(node))
 }
 
-#[derive(Debug, Deserialize)]
-pub struct CompleteLiveNodeRequest {
-    pub worker_name: String,
-}
-
-/// Complete a live node
+/// Unclaim a node
 ///
-/// POST /api/runs/{name}/live-nodes/{id}/complete
-pub async fn complete_live_node(
-    Path((name, node_id)): Path<(String, String)>,
-    Json(body): Json<CompleteLiveNodeRequest>,
-) -> Result<Json<crate::core::delta::LiveNode>> {
+/// POST /api/runs/{name}/nodes/{id}/unclaim
+pub async fn unclaim_node(Path((name, node_id)): Path<(String, String)>) -> Result<StatusCode> {
     use crate::core::delta::DeltaState;
     use crate::core::{config, state::SQLiteState};
 
@@ -1388,54 +1416,22 @@ pub async fn complete_live_node(
         .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
     let delta_state = DeltaState::with_route(project_id, route_id);
-    let node = delta_state
-        .complete_live_node(&node_id, &body.worker_name)
-        .await?;
-
-    Ok(Json(node))
-}
-
-/// Unclaim a live node
-///
-/// POST /api/runs/{name}/live-nodes/{id}/unclaim
-pub async fn unclaim_live_node(
-    Path((name, node_id)): Path<(String, String)>,
-) -> Result<StatusCode> {
-    use crate::core::delta::DeltaState;
-    use crate::core::{config, state::SQLiteState};
-
-    let run_dir = config::run_dir(&name);
-    if !run_dir.exists() {
-        return Err(OrchestratorError::RunNotFound(name));
-    }
-
-    let state = SQLiteState::new(&name).await?;
-
-    let project_id = state.get_project_id().await?.ok_or_else(|| {
-        OrchestratorError::InvalidOperation("Run is not linked to a project".into())
-    })?;
-    let route_id = state
-        .get_route_id()
-        .await
-        .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-    let delta_state = DeltaState::with_route(project_id, route_id);
-    delta_state.unclaim_live_node(&node_id).await?;
+    delta_state.unclaim_node(&node_id).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Debug, Serialize)]
-pub struct LiveNodeBlockedResponse {
+pub struct NodeBlockedResponse {
     pub blocked: bool,
 }
 
-/// Check if a live node is blocked
+/// Check if a node is blocked
 ///
-/// GET /api/runs/{name}/live-nodes/{id}/blocked
-pub async fn is_live_node_blocked(
+/// GET /api/runs/{name}/nodes/{id}/blocked
+pub async fn is_node_blocked(
     Path((name, node_id)): Path<(String, String)>,
-) -> Result<Json<LiveNodeBlockedResponse>> {
+) -> Result<Json<NodeBlockedResponse>> {
     use crate::core::delta::DeltaState;
     use crate::core::{config, state::SQLiteState};
 
@@ -1457,20 +1453,20 @@ pub async fn is_live_node_blocked(
     let delta_state = DeltaState::with_route(project_id, route_id);
     let blocked = delta_state.is_node_blocked(&node_id).await?;
 
-    Ok(Json(LiveNodeBlockedResponse { blocked }))
+    Ok(Json(NodeBlockedResponse { blocked }))
 }
 
 #[derive(Debug, Deserialize)]
-pub struct EvalPassRequest {
+pub struct CheckPassRequest {
     pub worker_name: String,
 }
 
-/// Mark an eval node as passed
+/// Mark a check node as passed
 ///
-/// POST /api/runs/{name}/live-nodes/{id}/eval-pass
-pub async fn live_node_eval_pass(
-    Path((name, eval_id)): Path<(String, String)>,
-    Json(body): Json<EvalPassRequest>,
+/// POST /api/runs/{name}/nodes/{id}/check-pass
+pub async fn node_check_pass(
+    Path((name, check_id)): Path<(String, String)>,
+    Json(body): Json<CheckPassRequest>,
 ) -> Result<StatusCode> {
     use crate::core::delta::DeltaState;
     use crate::core::{config, state::SQLiteState};
@@ -1491,29 +1487,29 @@ pub async fn live_node_eval_pass(
         .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
     let delta_state = DeltaState::with_route(project_id, route_id);
-    delta_state.eval_pass(&eval_id, &body.worker_name).await?;
+    delta_state.check_pass(&check_id, &body.worker_name).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Debug, Deserialize)]
-pub struct EvalFailRequest {
+pub struct CheckFailRequest {
     pub worker_name: String,
     pub feedback: String,
 }
 
 #[derive(Debug, Serialize)]
-pub struct EvalFailResponse {
+pub struct CheckFailResponse {
     pub repair_node_id: String,
 }
 
-/// Mark an eval node as failed, creating a repair node
+/// Mark a check node as failed, creating a repair node
 ///
-/// POST /api/runs/{name}/live-nodes/{id}/eval-fail
-pub async fn live_node_eval_fail(
-    Path((name, eval_id)): Path<(String, String)>,
-    Json(body): Json<EvalFailRequest>,
-) -> Result<Json<EvalFailResponse>> {
+/// POST /api/runs/{name}/nodes/{id}/check-fail
+pub async fn node_check_fail(
+    Path((name, check_id)): Path<(String, String)>,
+    Json(body): Json<CheckFailRequest>,
+) -> Result<Json<CheckFailResponse>> {
     use crate::core::delta::DeltaState;
     use crate::core::{config, state::SQLiteState};
 
@@ -1534,10 +1530,10 @@ pub async fn live_node_eval_fail(
 
     let delta_state = DeltaState::with_route(project_id, route_id);
     let repair_node_id = delta_state
-        .eval_fail(&eval_id, &body.worker_name, &body.feedback)
+        .check_fail(&check_id, &body.worker_name, &body.feedback)
         .await?;
 
-    Ok(Json(EvalFailResponse { repair_node_id }))
+    Ok(Json(CheckFailResponse { repair_node_id }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1545,10 +1541,10 @@ pub struct SetTokensRequest {
     pub tokens: i64,
 }
 
-/// Set tokens used on a live node
+/// Set tokens used on a node
 ///
-/// POST /api/runs/{name}/live-nodes/{id}/tokens
-pub async fn set_live_node_tokens(
+/// POST /api/runs/{name}/nodes/{id}/tokens
+pub async fn set_node_tokens(
     Path((name, node_id)): Path<(String, String)>,
     Json(body): Json<SetTokensRequest>,
 ) -> Result<StatusCode> {
@@ -1583,7 +1579,7 @@ pub struct ValidatedNodesResponse {
 
 /// Get all node IDs validated by an eval node
 ///
-/// GET /api/runs/{name}/live-nodes/{id}/validated
+/// GET /api/runs/{name}/nodes/{id}/validated
 pub async fn get_validated_nodes(
     Path((name, eval_id)): Path<(String, String)>,
 ) -> Result<Json<ValidatedNodesResponse>> {
@@ -1606,7 +1602,7 @@ pub async fn get_validated_nodes(
         .map_err(|e| OrchestratorError::State(e.to_string()))?;
 
     let delta_state = DeltaState::with_route(project_id, route_id);
-    let node_ids = delta_state.get_validated_nodes(&eval_id).await?;
+    let node_ids = delta_state.get_checked_nodes(&eval_id).await?;
 
     Ok(Json(ValidatedNodesResponse { node_ids }))
 }

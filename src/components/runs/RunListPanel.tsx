@@ -2,6 +2,7 @@
  * Run list sidebar panel
  */
 import { invoke } from '../../lib/invoke';
+import { emit, on } from '../../lib/events';
 import {
   type Component,
   For,
@@ -55,9 +56,8 @@ export const RunListPanel: Component = () => {
 
   // Listen for create-draft events
   createEffect(() => {
-    const handler = () => createNewDraft();
-    window.addEventListener('create-draft', handler);
-    onCleanup(() => window.removeEventListener('create-draft', handler));
+    const cleanup = on('create-draft', () => createNewDraft());
+    onCleanup(cleanup);
   });
 
   const showContextMenu = (e: MouseEvent, run: RunSummary) => {
@@ -182,7 +182,7 @@ export const RunListPanel: Component = () => {
       window.toast?.success(`Draft "${detail.name}" created`);
       await runs.invalidateRuns();
       selectRun(detail.name, 'draft');
-      window.dispatchEvent(new CustomEvent('draft-created'));
+      emit('draft-created');
     } catch (err) {
       window.toast?.error('Failed to create draft');
     }
@@ -191,7 +191,7 @@ export const RunListPanel: Component = () => {
   const selectRun = (name: string, status: string) => {
     runs.setSelectedRun(name);
     if (status === 'draft') {
-      window.dispatchEvent(new CustomEvent('draft-selected', { detail: name }));
+      emit('draft-selected', name);
     }
   };
 

@@ -86,11 +86,11 @@ pub async fn start_gyp_session(
             let project = store.get_project(*project_id).await.str_err()?;
             let route_id = project.active_route_id.unwrap_or(1);
 
-            // Export draft tree to board.json for agent access
+            // Export board tree for agent access
             let mut exporter = DeltaExporter::new(*project_id, route_id);
             exporter
                 .export_for_agent()
-                .map_err(|e| format!("Failed to export draft tree: {}", e))?;
+                .context("Failed to export board tree")?;
 
             (
                 GypContextBuilder::for_board(*project_id, &project.starting_point),
@@ -107,11 +107,11 @@ pub async fn start_gyp_session(
             let project = store.get_project(*project_id).await.str_err()?;
             let route_id = project.active_route_id.unwrap_or(1);
 
-            // Export draft tree to board.json for agent access
+            // Export board tree for agent access
             let mut exporter = DeltaExporter::new(*project_id, route_id);
             exporter
                 .export_for_agent()
-                .map_err(|e| format!("Failed to export draft tree: {}", e))?;
+                .context("Failed to export board tree")?;
 
             (
                 GypContextBuilder::for_board_focused(
@@ -164,7 +164,7 @@ pub async fn start_gyp_session(
     let session_info = orchestrator
         .start_session(chat_context)
         .await
-        .map_err(|e| format!("Failed to start session: {}", e))?;
+        .context("Failed to start session")?;
 
     let session_id = session_info.session_id.clone();
 
@@ -172,7 +172,7 @@ pub async fn start_gyp_session(
     let mut event_stream = orchestrator
         .subscribe_events(&session_id)
         .await
-        .map_err(|e| format!("Failed to subscribe to events: {}", e))?;
+        .context("Failed to subscribe to events")?;
 
     let app_handle = app.clone();
     let sid_clone = session_id.clone();
@@ -279,7 +279,7 @@ pub async fn send_gyp_message(
     orchestrator
         .send_message(&session_id, &message, None)
         .await
-        .map_err(|e| format!("Failed to send message: {}", e))?;
+        .context("Failed to send message")?;
 
     Ok(())
 }
@@ -368,7 +368,7 @@ pub async fn stop_gyp_session(
     orchestrator
         .stop_session(&session_id)
         .await
-        .map_err(|e| format!("Failed to stop session: {}", e))?;
+        .context("Failed to stop session")?;
 
     Ok(())
 }

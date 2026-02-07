@@ -178,51 +178,49 @@ pub async fn create_draft() -> Result<RunDetail, String> {
     }
 
     // Create run directory
-    fs::create_dir_all(&run_dir).map_err(|e| format!("Failed to create run directory: {}", e))?;
+    fs::create_dir_all(&run_dir).context("Failed to create run directory")?;
 
     // Initialize Files helper and create required directories
     let files = Files::new(&run_dir);
-    files
-        .init_dirs()
-        .map_err(|e| format!("Failed to init dirs: {}", e))?;
+    files.init_dirs().context("Failed to init dirs")?;
 
     // Create empty spec.md
     fs::write(
         run_dir.join("spec.md"),
         "# Specification\n\nDescribe the task for the AI workers...\n",
     )
-    .map_err(|e| format!("Failed to create spec file: {}", e))?;
+    .context("Failed to create spec file")?;
 
     // Create empty tasks.md
     fs::write(
         run_dir.join("tasks.md"),
         "# Tasks\n\n| ID | Status | Worker | Name |\n|----|--------|--------|------|\n| scope | TODO | | Scope |\n",
-    ).map_err(|e| format!("Failed to create tasks file: {}", e))?;
+    ).context("Failed to create tasks file")?;
 
     // Initialize database - NO workspace path yet
     let state = SQLiteState::new(&run_name)
         .await
-        .map_err(|e| format!("Failed to create database: {}", e))?;
+        .context("Failed to create database")?;
 
     // Initialize state without workspace path (will be set in start_draft)
     state
         .init_state(None)
         .await
-        .map_err(|e| format!("Failed to init state: {}", e))?;
+        .context("Failed to init state")?;
     state
         .set_status(crate::core::state::Status::Draft)
         .await
-        .map_err(|e| format!("Failed to set draft status: {}", e))?;
+        .context("Failed to set draft status")?;
 
     // Set defaults
     state
         .set_worker_scale("5")
         .await
-        .map_err(|e| format!("Failed to set worker scale: {}", e))?;
+        .context("Failed to set worker scale")?;
     state
         .set_human_in_the_loop(true)
         .await
-        .map_err(|e| format!("Failed to set HITL: {}", e))?;
+        .context("Failed to set HITL")?;
 
     // Return the run detail
     let created_at = chrono::Utc::now().to_rfc3339();
@@ -332,13 +330,10 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
 
     let state = SQLiteState::new(&run_name)
         .await
-        .map_err(|e| format!("Failed to open database: {}", e))?;
+        .context("Failed to open database")?;
 
     // Verify it's a draft
-    let status = state
-        .status()
-        .await
-        .map_err(|e| format!("Failed to get status: {}", e))?;
+    let status = state.status().await.context("Failed to get status")?;
     if status != crate::core::state::Status::Draft {
         return Err("Can only update draft runs".to_string());
     }
@@ -346,11 +341,11 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
     // Update spec
     if let Some(spec) = updates.spec {
         let spec_path = run_dir.join("spec.md");
-        fs::write(&spec_path, &spec).map_err(|e| format!("Failed to write spec: {}", e))?;
+        fs::write(&spec_path, &spec).context("Failed to write spec")?;
         state
             .set_request(Some(&spec))
             .await
-            .map_err(|e| format!("Failed to update request: {}", e))?;
+            .context("Failed to update request")?;
     }
 
     // Update worker scale
@@ -358,7 +353,7 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
         state
             .set_worker_scale(&scale)
             .await
-            .map_err(|e| format!("Failed to update worker scale: {}", e))?;
+            .context("Failed to update worker scale")?;
     }
 
     // Update time limit
@@ -366,7 +361,7 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
         state
             .set_time_limit_minutes(Some(limit))
             .await
-            .map_err(|e| format!("Failed to update time limit: {}", e))?;
+            .context("Failed to update time limit")?;
     }
 
     // Update HITL
@@ -374,7 +369,7 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
         state
             .set_human_in_the_loop(hitl)
             .await
-            .map_err(|e| format!("Failed to update HITL: {}", e))?;
+            .context("Failed to update HITL")?;
     }
 
     // Update project path
@@ -382,7 +377,7 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
         state
             .set_project_path(&path)
             .await
-            .map_err(|e| format!("Failed to update project path: {}", e))?;
+            .context("Failed to update project path")?;
     }
 
     // Update branch
@@ -390,7 +385,7 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
         state
             .set_branch(Some(&branch))
             .await
-            .map_err(|e| format!("Failed to update branch: {}", e))?;
+            .context("Failed to update branch")?;
     }
 
     // Update default runner
@@ -398,7 +393,7 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
         state
             .set_default_runner(Some(&runner))
             .await
-            .map_err(|e| format!("Failed to update runner: {}", e))?;
+            .context("Failed to update runner")?;
     }
 
     // Update per-worker runner assignments
@@ -406,7 +401,7 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
         state
             .set_worker_runners(Some(&worker_runners))
             .await
-            .map_err(|e| format!("Failed to update worker runners: {}", e))?;
+            .context("Failed to update worker runners")?;
     }
 
     // Handle rename if requested
@@ -416,8 +411,7 @@ pub async fn update_draft(run_name: String, updates: DraftUpdateRequest) -> Resu
             if new_run_dir.exists() {
                 return Err(format!("Run '{}' already exists", new_name));
             }
-            fs::rename(&run_dir, &new_run_dir)
-                .map_err(|e| format!("Failed to rename run: {}", e))?;
+            fs::rename(&run_dir, &new_run_dir).context("Failed to rename run")?;
         }
     }
 
@@ -445,13 +439,10 @@ pub async fn change_starting_point(
 
     let state = SQLiteState::new(&run_name)
         .await
-        .map_err(|e| format!("Failed to open database: {}", e))?;
+        .context("Failed to open database")?;
 
     // Verify it's a draft
-    let status = state
-        .status()
-        .await
-        .map_err(|e| format!("Failed to get status: {}", e))?;
+    let status = state.status().await.context("Failed to get status")?;
     if status != crate::core::state::Status::Draft {
         return Err("Can only change starting point for draft runs".to_string());
     }
@@ -459,38 +450,37 @@ pub async fn change_starting_point(
     // Delete existing workspace if it exists
     let workspace_dir = run_dir.join("workspace");
     if workspace_dir.exists() {
-        fs::remove_dir_all(&workspace_dir)
-            .map_err(|e| format!("Failed to remove existing workspace: {}", e))?;
+        fs::remove_dir_all(&workspace_dir).context("Failed to remove existing workspace")?;
     }
 
     // Clear workspace-related state fields
     state
         .clear_project_path()
         .await
-        .map_err(|e| format!("Failed to clear project path: {}", e))?;
+        .context("Failed to clear project path")?;
     state
         .set_branch(None)
         .await
-        .map_err(|e| format!("Failed to clear branch: {}", e))?;
+        .context("Failed to clear branch")?;
 
     // Initialize new workspace
     let workspace = create_workspace_provider(None);
     let workspace_info = workspace
         .init(&run_name, &starting_point)
         .await
-        .map_err(|e| format!("Failed to initialize workspace: {}", e))?;
+        .context("Failed to initialize workspace")?;
 
     // Update state with new workspace info
     state
         .set_project_path(workspace_info.path.to_str().unwrap_or("."))
         .await
-        .map_err(|e| format!("Failed to set project path: {}", e))?;
+        .context("Failed to set project path")?;
 
     if let Some(ref branch) = workspace_info.default_branch {
         state
             .set_branch(Some(branch))
             .await
-            .map_err(|e| format!("Failed to set branch: {}", e))?;
+            .context("Failed to set branch")?;
     }
 
     // Return updated run detail
@@ -524,13 +514,10 @@ pub async fn start_draft(
 
     let state = SQLiteState::new(&run_name)
         .await
-        .map_err(|e| format!("Failed to open database: {}", e))?;
+        .context("Failed to open database")?;
 
     // Verify it's a draft
-    let status = state
-        .status()
-        .await
-        .map_err(|e| format!("Failed to get status: {}", e))?;
+    let status = state.status().await.context("Failed to get status")?;
     if status != crate::core::state::Status::Draft {
         return Err("Can only start draft runs".to_string());
     }
@@ -539,7 +526,7 @@ pub async fn start_draft(
     let existing_workspace = state
         .get_project_path()
         .await
-        .map_err(|e| format!("Failed to get project path: {}", e))?;
+        .context("Failed to get project path")?;
 
     let project_path = if let Some(ref path_str) = existing_workspace {
         // Workspace already exists
@@ -555,7 +542,7 @@ pub async fn start_draft(
             sp
         } else if let Ok(Some(sp_json)) = state.get_starting_point().await {
             serde_json::from_str::<StartingPoint>(&sp_json)
-                .map_err(|e| format!("Failed to parse stored starting_point: {}", e))?
+                .context("Failed to parse stored starting_point")?
         } else {
             StartingPoint::Greenfield
         };
@@ -564,22 +551,22 @@ pub async fn start_draft(
         let workspace_info = workspace
             .init(&run_name, &sp)
             .await
-            .map_err(|e| format!("Failed to initialize workspace: {}", e))?;
+            .context("Failed to initialize workspace")?;
 
         // Store workspace path in state
         state
             .set_project_path(workspace_info.path.to_str().unwrap_or("."))
             .await
-            .map_err(|e| format!("Failed to set project path: {}", e))?;
+            .context("Failed to set project path")?;
 
         // Store starting_point in state (if not already stored)
         if state.get_starting_point().await.ok().flatten().is_none() {
-            let sp_json = serde_json::to_string(&sp)
-                .map_err(|e| format!("Failed to serialize starting_point: {}", e))?;
+            let sp_json =
+                serde_json::to_string(&sp).context("Failed to serialize starting_point")?;
             state
                 .set_starting_point(Some(&sp_json))
                 .await
-                .map_err(|e| format!("Failed to set starting_point: {}", e))?;
+                .context("Failed to set starting_point")?;
         }
 
         // Set branch if available from workspace init
@@ -587,7 +574,7 @@ pub async fn start_draft(
             state
                 .set_branch(Some(branch))
                 .await
-                .map_err(|e| format!("Failed to set branch: {}", e))?;
+                .context("Failed to set branch")?;
         }
 
         workspace_info.path
@@ -597,7 +584,7 @@ pub async fn start_draft(
     let worker_scale_str = state
         .get_worker_scale()
         .await
-        .map_err(|e| format!("Failed to get worker scale: {}", e))?
+        .context("Failed to get worker scale")?
         .unwrap_or_else(|| "5".to_string());
     let scale = WorkerScale::parse(&worker_scale_str)
         .map_err(|e| format!("Invalid worker scale: {}", e))?;
@@ -617,11 +604,11 @@ pub async fn start_draft(
     state
         .set_docs_path(Some(&global_config.scribe_docs_path))
         .await
-        .map_err(|e| format!("Failed to set docs path: {}", e))?;
+        .context("Failed to set docs path")?;
     state
         .set_persist_docs_changes(global_config.scribe_persist_docs_changes)
         .await
-        .map_err(|e| format!("Failed to set persist_docs_changes: {}", e))?;
+        .context("Failed to set persist_docs_changes")?;
 
     // Set up workspace, worker clones, and chats using shared ops
     let setup_config = RunSetupConfig {
@@ -642,24 +629,24 @@ pub async fn start_draft(
         let runner = state
             .get_runner_for_worker(worker_name)
             .await
-            .map_err(|e| format!("Failed to get runner for {}: {}", worker_name, e))?;
+            .context(&format!("Failed to get runner for {}", worker_name))?;
         state
             .add_worker(worker_name, work_dir.to_str().unwrap_or("."), &runner)
             .await
-            .map_err(|e| format!("Failed to register worker {}: {}", worker_name, e))?;
+            .context(&format!("Failed to register worker {}", worker_name))?;
     }
 
     // Set status to working and start time tracking
     state
         .set_status(crate::core::state::Status::Working)
         .await
-        .map_err(|e| format!("Failed to set status: {}", e))?;
+        .context("Failed to set status")?;
 
     // Always set started_at when run starts (for elapsed time calculation)
     state
         .set_started_at(None)
         .await
-        .map_err(|e| format!("Failed to set started_at: {}", e))?;
+        .context("Failed to set started_at")?;
 
     // Save spec content to database for display in Specs tab
     let spec_path = run_dir.join("spec.md");
@@ -708,7 +695,7 @@ pub async fn start_draft(
         let runner_name = state
             .get_runner_for_worker(worker_name)
             .await
-            .map_err(|e| format!("Failed to get runner for {}: {}", worker_name, e))?;
+            .context(&format!("Failed to get runner for {}", worker_name))?;
 
         // Look up runner config from global config
         let runner_config = global_config.get_runner(&runner_name).unwrap_or_default();

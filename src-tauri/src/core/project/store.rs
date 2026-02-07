@@ -402,25 +402,21 @@ impl ProjectStore {
             .execute(pool)
             .await?;
 
-        // Cascade delete delta-related tables (they're in the same DB)
+        // Cascade delete board-related tables (they're in the same DB)
         // These may not exist in older DBs, so ignore errors
-        let _ = sqlx::query("DELETE FROM draft_nodes WHERE project_id = ?")
+        let _ = sqlx::query("DELETE FROM board_node_validated_by WHERE project_id = ?")
             .bind(id)
             .execute(pool)
             .await;
-        let _ = sqlx::query("DELETE FROM live_nodes WHERE project_id = ?")
+        let _ = sqlx::query("DELETE FROM board_node_blocked_by WHERE project_id = ?")
+            .bind(id)
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM board_nodes WHERE project_id = ?")
             .bind(id)
             .execute(pool)
             .await;
         let _ = sqlx::query("DELETE FROM project_runs WHERE project_id = ?")
-            .bind(id)
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("DELETE FROM delta_submissions WHERE project_id = ?")
-            .bind(id)
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("DELETE FROM delta_file_baselines WHERE project_id = ?")
             .bind(id)
             .execute(pool)
             .await;

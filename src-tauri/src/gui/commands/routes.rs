@@ -111,7 +111,7 @@ pub async fn set_active_route(project_id: i64, route_id: i64) -> Result<(), Stri
         .bind(project_id)
         .execute(pool)
         .await
-        .map_err(|e| format!("Failed to set active route: {}", e))?;
+        .context("Failed to set active route")?;
 
     Ok(())
 }

@@ -1,10 +1,12 @@
 /**
  * Delta dispatch state management
  *
- * Manages the draft/live tree state and delta dispatch operations.
+ * Manages the unified board tree state and dispatch operations.
+ * Single tree: features (draft) → dispatch → tasks/checks (pending→working→done).
  */
 
 import { invoke } from '../lib/invoke';
+import { on } from '../lib/events';
 import { createPoll } from '../lib/poll';
 import {
   createContext,
@@ -18,15 +20,13 @@ import {
 import { useProject } from './project-context';
 import { useRoute } from './route-context';
 import type {
-  DraftNodeTree,
-  LiveNodeTree,
-  TreeDiff,
+  BoardNodeTree,
   ProjectRun,
-  DualTreeResponse,
-  CreateDraftNodeRequest,
-  UpdateDraftNodeRequest,
-  DeltaDispatchResponse,
-  DraftNode,
+  BoardTreeResponse,
+  BoardNode,
+  CreateBoardNodeRequest,
+  UpdateBoardNodeRequest,
+  DispatchResponse,
   BoardVersion,
   BoardDelivery,
   DeliveryAttempt,
@@ -38,9 +38,7 @@ import type {
 
 interface DeltaState {
   // Tree data
-  draftTree: () => DraftNodeTree[];
-  liveTree: () => LiveNodeTree[];
-  diff: () => TreeDiff | null;
+  boardTree: () => BoardNodeTree[];
   projectRun: () => ProjectRun | null;
 
   // Delivery state
@@ -51,22 +49,21 @@ interface DeltaState {
   // UI state
   loading: () => boolean;
   dispatchPending: () => boolean;
-  showDeltaIndicators: () => boolean;
   deliveryPending: () => boolean;
 
   // Computed
-  hasDiff: () => boolean;
+  hasDraftNodes: () => boolean;
+  hasDispatchedNodes: () => boolean;
 
   // Actions
-  loadTrees: (projectId: number, routeId: number) => Promise<void>;
-  refreshTrees: () => Promise<void>;
-  createDraftNode: (request: CreateDraftNodeRequest) => Promise<DraftNode | null>;
-  updateDraftNode: (nodeId: string, request: UpdateDraftNodeRequest) => Promise<DraftNode | null>;
-  deleteDraftNode: (nodeId: string) => Promise<boolean>;
-  moveDraftNode: (nodeId: string, newParentId: string | null, newPosition: number) => Promise<boolean>;
+  loadTree: (projectId: number, routeId: number) => Promise<void>;
+  refreshTree: () => Promise<void>;
+  createBoardNode: (request: CreateBoardNodeRequest) => Promise<BoardNode | null>;
+  updateBoardNode: (nodeId: string, request: UpdateBoardNodeRequest) => Promise<BoardNode | null>;
+  deleteBoardNode: (nodeId: string) => Promise<boolean>;
+  moveBoardNode: (nodeId: string, newParentId: string | null, newPosition: number) => Promise<boolean>;
   resetTree: () => Promise<boolean>;
-  dispatch: () => Promise<DeltaDispatchResponse | null>;
-  toggleDeltaIndicators: () => void;
+  dispatch: () => Promise<DispatchResponse | null>;
 
   // Delivery actions
   loadDeliveryState: () => Promise<void>;
@@ -98,10 +95,8 @@ export const DeltaProvider: ParentComponent = (props) => {
   const project = useProject();
   const route = useRoute();
 
-  // Tree state
-  const [draftTree, setDraftTree] = createSignal<DraftNodeTree[]>([]);
-  const [liveTree, setLiveTree] = createSignal<LiveNodeTree[]>([]);
-  const [diff, setDiff] = createSignal<TreeDiff | null>(null);
+  // Tree state (single unified tree)
+  const [boardTree, setBoardTree] = createSignal<BoardNodeTree[]>([]);
   const [projectRun, setProjectRun] = createSignal<ProjectRun | null>(null);
 
   // Delivery state
@@ -112,100 +107,117 @@ export const DeltaProvider: ParentComponent = (props) => {
   // UI state
   const [loading, setLoading] = createSignal(false);
   const [dispatchPending, setDispatchPending] = createSignal(false);
-  const [showDeltaIndicators, setShowDeltaIndicators] = createSignal(true);
   const [deliveryPending, setDeliveryPending] = createSignal(false);
 
   // Generation counter for skipping redundant tree polls
   const [treeGeneration, setTreeGeneration] = createSignal(0);
 
-  // Computed
-  const hasDiff = () => {
-    const d = diff();
-    if (!d) return false;
-    return d.newNodes.length > 0 || d.modifiedNodes.length > 0 || d.deletedNodes.length > 0;
+  // Computed: has any nodes with status=draft
+  const hasDraftNodes = () => {
+    const trees = boardTree();
+    const check = (nodes: BoardNodeTree[]): boolean => {
+      for (const node of nodes) {
+        if (node.status === 'draft') return true;
+        if (check(node.children)) return true;
+      }
+      return false;
+    };
+    return check(trees);
+  };
+
+  // Computed: has any dispatched (non-draft) nodes
+  const hasDispatchedNodes = () => {
+    const trees = boardTree();
+    const check = (nodes: BoardNodeTree[]): boolean => {
+      for (const node of nodes) {
+        if (node.status !== 'draft') return true;
+        if (check(node.children)) return true;
+      }
+      return false;
+    };
+    return check(trees);
   };
 
   // ==========================================================================
   // Actions
   // ==========================================================================
 
-  const loadTrees = async (projectId: number, routeId: number) => {
+  const loadTree = async (projectId: number, routeId: number) => {
     try {
       setLoading(true);
-      const response = await invoke<DualTreeResponse>('get_dual_trees', { projectId, routeId });
+      const response = await invoke<BoardTreeResponse>('get_board_tree', { projectId, routeId });
       batch(() => {
-        setDraftTree(response.draft);
-        setLiveTree(response.live);
-        setDiff(response.diff);
+        setBoardTree(response.tree);
         setProjectRun(response.projectRun);
+        setTreeGeneration(response.generation);
         setLoading(false);
       });
     } catch (e) {
-      console.error('Failed to load trees:', e);
+      console.error('Failed to load board tree:', e);
       setLoading(false);
     }
   };
 
-  const refreshTrees = async () => {
+  const refreshTree = async () => {
     const projectId = project.selectedProjectId();
     const routeId = route.activeRoute()?.id ?? route.routes()[0]?.id;
     if (projectId && routeId) {
-      await loadTrees(projectId, routeId);
+      await loadTree(projectId, routeId);
     }
   };
 
-  const createDraftNode = async (request: CreateDraftNodeRequest): Promise<DraftNode | null> => {
+  const createBoardNode = async (request: CreateBoardNodeRequest): Promise<BoardNode | null> => {
     const projectId = project.selectedProjectId();
     const routeId = route.activeRoute()?.id;
     if (!projectId || !routeId) return null;
 
     try {
-      const node = await invoke<DraftNode>('create_draft_node', { projectId, routeId, request });
-      await refreshTrees();
+      const node = await invoke<BoardNode>('create_board_node', { projectId, routeId, request });
+      await refreshTree();
       return node;
     } catch (e) {
-      console.error('Failed to create draft node:', e);
+      console.error('Failed to create board node:', e);
       window.toast?.error(`Failed to create node: ${e}`);
       return null;
     }
   };
 
-  const updateDraftNode = async (
+  const updateBoardNode = async (
     nodeId: string,
-    request: UpdateDraftNodeRequest
-  ): Promise<DraftNode | null> => {
+    request: UpdateBoardNodeRequest
+  ): Promise<BoardNode | null> => {
     const projectId = project.selectedProjectId();
     const routeId = route.activeRoute()?.id;
     if (!projectId || !routeId) return null;
 
     try {
-      const node = await invoke<DraftNode>('update_draft_node', { projectId, routeId, nodeId, request });
-      await refreshTrees();
+      const node = await invoke<BoardNode>('update_board_node', { projectId, routeId, nodeId, request });
+      await refreshTree();
       return node;
     } catch (e) {
-      console.error('Failed to update draft node:', e);
+      console.error('Failed to update board node:', e);
       window.toast?.error(`Failed to update node: ${e}`);
       return null;
     }
   };
 
-  const deleteDraftNode = async (nodeId: string): Promise<boolean> => {
+  const deleteBoardNode = async (nodeId: string): Promise<boolean> => {
     const projectId = project.selectedProjectId();
     const routeId = route.activeRoute()?.id;
     if (!projectId || !routeId) return false;
 
     try {
-      await invoke('delete_draft_node', { projectId, routeId, nodeId });
-      await refreshTrees();
+      await invoke('delete_board_node', { projectId, routeId, nodeId });
+      await refreshTree();
       return true;
     } catch (e) {
-      console.error('Failed to delete draft node:', e);
+      console.error('Failed to delete board node:', e);
       window.toast?.error(`Failed to delete node: ${e}`);
       return false;
     }
   };
 
-  const moveDraftNode = async (
+  const moveBoardNode = async (
     nodeId: string,
     newParentId: string | null,
     newPosition: number
@@ -215,11 +227,11 @@ export const DeltaProvider: ParentComponent = (props) => {
     if (!projectId || !routeId) return false;
 
     try {
-      await invoke('move_draft_node', { projectId, routeId, nodeId, newParentId, newPosition });
-      await refreshTrees();
+      await invoke('move_board_node', { projectId, routeId, nodeId, newParentId, newPosition });
+      await refreshTree();
       return true;
     } catch (e) {
-      console.error('Failed to move draft node:', e);
+      console.error('Failed to move board node:', e);
       window.toast?.error(`Failed to move node: ${e}`);
       return false;
     }
@@ -232,7 +244,7 @@ export const DeltaProvider: ParentComponent = (props) => {
 
     try {
       await invoke('reset_project_tree', { projectId, routeId });
-      await refreshTrees();
+      await refreshTree();
       window.toast?.success('Tree reset successfully');
       return true;
     } catch (e) {
@@ -242,16 +254,16 @@ export const DeltaProvider: ParentComponent = (props) => {
     }
   };
 
-  const dispatch = async (): Promise<DeltaDispatchResponse | null> => {
+  const dispatch = async (): Promise<DispatchResponse | null> => {
     const projectId = project.selectedProjectId();
     const routeId = route.activeRoute()?.id;
     if (!projectId || !routeId) return null;
 
     try {
       setDispatchPending(true);
-      const response = await invoke<DeltaDispatchResponse>('dispatch_deltas', { projectId, routeId });
-      await refreshTrees();
-      window.toast?.success(`Dispatched ${response.deltaCount} delta tasks`);
+      const response = await invoke<DispatchResponse>('dispatch_board', { projectId, routeId });
+      await refreshTree();
+      window.toast?.success(`Dispatched ${response.nodeCount} nodes`);
       return response;
     } catch (e) {
       console.error('Failed to dispatch:', e);
@@ -260,10 +272,6 @@ export const DeltaProvider: ParentComponent = (props) => {
     } finally {
       setDispatchPending(false);
     }
-  };
-
-  const toggleDeltaIndicators = () => {
-    setShowDeltaIndicators((prev) => !prev);
   };
 
   // ==========================================================================
@@ -421,19 +429,17 @@ export const DeltaProvider: ParentComponent = (props) => {
   // Effects
   // ==========================================================================
 
-  // Load trees and delivery state when project or route changes
+  // Load tree and delivery state when project or route changes
   createEffect(() => {
     const projectId = project.selectedProjectId();
     // Use active route, or fall back to first route in list
     const routeId = route.activeRoute()?.id ?? route.routes()[0]?.id;
     if (projectId && routeId) {
-      loadTrees(projectId, routeId);
+      loadTree(projectId, routeId);
       loadDeliveryState();
     } else if (!projectId) {
       batch(() => {
-        setDraftTree([]);
-        setLiveTree([]);
-        setDiff(null);
+        setBoardTree([]);
         setProjectRun(null);
         setBoardVersions([]);
         setLatestVersion(null);
@@ -442,29 +448,25 @@ export const DeltaProvider: ParentComponent = (props) => {
     }
   });
 
-  // Listen for route changes and reload trees
+  // Listen for route changes and reload tree
   createEffect(() => {
     const projectId = project.selectedProjectId();
     if (!projectId) return;
 
-    const handleRouteChange = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (detail?.projectId === projectId && detail?.routeId) {
-        // Clear current trees to show loading state
+    const cleanup = on('route-changed', (detail) => {
+      if (detail.projectId === projectId && detail.routeId) {
+        // Clear current tree to show loading state
         batch(() => {
-          setDraftTree([]);
-          setLiveTree([]);
-          setDiff(null);
+          setBoardTree([]);
           setProjectRun(null);
         });
-        // Reload trees for new route
-        loadTrees(projectId, detail.routeId);
+        // Reload tree for new route
+        loadTree(projectId, detail.routeId);
         loadDeliveryState();
       }
-    };
+    });
 
-    window.addEventListener('route-changed', handleRouteChange);
-    onCleanup(() => window.removeEventListener('route-changed', handleRouteChange));
+    onCleanup(cleanup);
   });
 
   // Poll for changes (generation-aware: skips full fetch if nothing changed)
@@ -481,8 +483,8 @@ export const DeltaProvider: ParentComponent = (props) => {
         if (dispatchPending()) return;
 
         try {
-          const result = await invoke<[DualTreeResponse, number] | null>(
-            'sync_and_get_trees_if_changed',
+          const result = await invoke<BoardTreeResponse | null>(
+            'sync_and_get_tree_if_changed',
             {
               projectId,
               routeId,
@@ -492,16 +494,13 @@ export const DeltaProvider: ParentComponent = (props) => {
 
           if (result === null) return; // No changes — skip store updates
 
-          const [response, gen] = result;
           batch(() => {
-            setDraftTree(response.draft);
-            setLiveTree(response.live);
-            setDiff(response.diff);
-            setProjectRun(response.projectRun);
-            setTreeGeneration(gen);
+            setBoardTree(result.tree);
+            setProjectRun(result.projectRun);
+            setTreeGeneration(result.generation);
           });
         } catch (e) {
-          console.warn('Delta tree poll failed:', e);
+          console.warn('Board tree poll failed:', e);
         }
       },
       { interval: 5000, immediate: false },
@@ -514,9 +513,7 @@ export const DeltaProvider: ParentComponent = (props) => {
 
   const value: DeltaState = {
     // Tree data
-    draftTree,
-    liveTree,
-    diff,
+    boardTree,
     projectRun,
 
     // Delivery state
@@ -527,22 +524,21 @@ export const DeltaProvider: ParentComponent = (props) => {
     // UI state
     loading,
     dispatchPending,
-    showDeltaIndicators,
     deliveryPending,
 
     // Computed
-    hasDiff,
+    hasDraftNodes,
+    hasDispatchedNodes,
 
     // Tree actions
-    loadTrees,
-    refreshTrees,
-    createDraftNode,
-    updateDraftNode,
-    deleteDraftNode,
-    moveDraftNode,
+    loadTree,
+    refreshTree,
+    createBoardNode,
+    updateBoardNode,
+    deleteBoardNode,
+    moveBoardNode,
     resetTree,
     dispatch,
-    toggleDeltaIndicators,
 
     // Delivery actions
     loadDeliveryState,

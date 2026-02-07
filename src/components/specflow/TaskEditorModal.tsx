@@ -11,17 +11,18 @@
 import { type Component, Show, createSignal, createEffect, onMount, onCleanup } from 'solid-js';
 import { useEscapeKey } from '../../hooks';
 import { invoke } from '../../lib/invoke';
-import { createCodeMirror } from 'solid-codemirror';
 import { EditorView, keymap } from '@codemirror/view';
+import { EditorState } from '@codemirror/state';
 import { markdown } from '@codemirror/lang-markdown';
 import { defaultKeymap } from '@codemirror/commands';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import type { DraftNodeTree, NodeType } from '../../lib/types';
+import type { BoardNodeTree, NodeKind } from '../../lib/types';
 import { Icon } from '../shared';
+import { amber, sage } from '../../lib/theme-colors';
 
 interface TaskEditorModalProps {
-  node: DraftNodeTree;
+  node: BoardNodeTree;
   projectId: number;
   onSave: (updates: {
     name: string;
@@ -38,7 +39,7 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
 
   // Form state
   const [name, setName] = createSignal(props.node.name);
-  const [content, setContent] = createSignal(props.node.content);
+  const [content, setContent] = createSignal(props.node.content.replace(/\\n/g, '\n'));
   const [validates, setValidates] = createSignal(props.node.validates.join(', '));
   const [validatedBy, setValidatedBy] = createSignal(props.node.validatedBy.join(', '));
   const [blockedBy, setBlockedBy] = createSignal(props.node.blockedBy.join(', '));
@@ -93,30 +94,27 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
     '.cm-list': { color: 'var(--amber-500)' },
   }, { dark: true });
 
-  // Initialize CodeMirror
+  // Initialize CodeMirror directly (no solid-codemirror wrapper)
   onMount(() => {
-    if (editorContainerRef) {
-      const { ref, createExtension } = createCodeMirror({
-        value: content(),
-        onValueChange: setContent,
-      });
-
-      createExtension(markdown());
-      createExtension(keymap.of(defaultKeymap));
-      createExtension(darkTheme);
-      createExtension(EditorView.lineWrapping);
-
-      ref(editorContainerRef);
-
-      // Get the view for toolbar operations
-      setTimeout(() => {
-        const view = editorContainerRef?.querySelector('.cm-editor');
-        if (view && (view as any).cmView) {
-          editorView = (view as any).cmView;
-        }
-      }, 100);
-    }
+    if (!editorContainerRef) return;
+    const state = EditorState.create({
+      doc: content(),
+      extensions: [
+        markdown(),
+        keymap.of(defaultKeymap),
+        darkTheme,
+        EditorView.lineWrapping,
+        EditorView.updateListener.of((update) => {
+          if (update.docChanged) {
+            setContent(update.state.doc.toString());
+          }
+        }),
+      ],
+    });
+    editorView = new EditorView({ state, parent: editorContainerRef });
   });
+
+  onCleanup(() => editorView?.destroy());
 
   // Keyboard shortcuts (escape handled by useEscapeKey)
   createEffect(() => {
@@ -287,8 +285,8 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
     return DOMPurify.sanitize(html);
   };
 
-  const isEval = () => props.node.nodeType === 'eval';
-  const typeLabel = () => (isEval() ? 'Eval' : 'Task');
+  const isCheck = () => props.node.kind === 'check';
+  const typeLabel = () => (isCheck() ? 'Check' : 'Task');
 
   return (
     <div
@@ -310,11 +308,11 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
             <div
               class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
               style={{
-                background: isEval() ? 'rgba(125, 153, 112, 0.15)' : 'rgba(212, 165, 116, 0.12)',
-                border: `1px solid ${isEval() ? 'rgba(125, 153, 112, 0.25)' : 'rgba(212, 165, 116, 0.2)'}`,
+                background: isCheck() ? sage(0.15) : amber(0.12),
+                border: `1px solid ${isCheck() ? sage(0.25) : amber(0.2)}`,
               }}
             >
-              <Show when={isEval()} fallback={
+              <Show when={isCheck()} fallback={
                 <Icon name="clipboard-list" size={16} class="text-amber-500" />
               }>
                 <Icon name="check-circle" size={16} class="text-sage" />
@@ -323,7 +321,7 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
             <div>
               <span
                 class="text-[9px] font-medium uppercase tracking-wider"
-                style={{ color: isEval() ? 'var(--sage)' : 'var(--amber-500)', opacity: 0.8 }}
+                style={{ color: isCheck() ? 'var(--sage)' : 'var(--amber-500)', opacity: 0.8 }}
               >
                 Edit {typeLabel()}
               </span>
@@ -461,7 +459,7 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
 
         {/* Blocked By / Validates field */}
         <div class="px-3 py-2 border-t border-pasture-600 flex-shrink-0">
-          <Show when={isEval()}>
+          <Show when={isCheck()}>
             <div class="flex items-center gap-2">
               <label for="edit-validates" class="text-xs font-medium w-20" style={{ color: 'var(--sage)' }}>
                 Validates
@@ -473,11 +471,11 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
                 onInput={(e) => setValidates(e.currentTarget.value)}
                 placeholder="task-id-1, task-id-2"
                 class="flex-1 px-2.5 py-1.5 rounded text-xs font-mono bg-pasture-900 text-wool-200 placeholder-wool-600 focus:outline-none focus:ring-1 focus:ring-sage/30"
-                style={{ border: '1px solid rgba(125, 153, 112, 0.4)' }}
+                style={{ border: `1px solid ${sage(0.4)}` }}
               />
             </div>
           </Show>
-          <Show when={!isEval()}>
+          <Show when={!isCheck()}>
             <div class="flex flex-col gap-1.5">
               <div class="flex items-center gap-2">
                 <label for="edit-blocked-by" class="text-xs font-medium w-20" style={{ color: 'var(--amber-500)' }}>
@@ -490,7 +488,7 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
                   onInput={(e) => setBlockedBy(e.currentTarget.value)}
                   placeholder="task-id-1, task-id-2"
                   class="flex-1 px-2.5 py-1.5 rounded text-xs font-mono bg-pasture-900 text-wool-200 placeholder-wool-600 focus:outline-none focus:ring-1 focus:ring-amber-500/30"
-                  style={{ border: '1px solid rgba(212, 165, 116, 0.4)' }}
+                  style={{ border: `1px solid ${amber(0.4)}` }}
                 />
               </div>
               <div class="flex items-center gap-2">
@@ -504,7 +502,7 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
                   onInput={(e) => setValidatedBy(e.currentTarget.value)}
                   placeholder="eval-id-1, eval-id-2"
                   class="flex-1 px-2.5 py-1.5 rounded text-xs font-mono bg-pasture-900 text-wool-200 placeholder-wool-600 focus:outline-none focus:ring-1 focus:ring-sage/30"
-                  style={{ border: '1px solid rgba(125, 153, 112, 0.4)' }}
+                  style={{ border: `1px solid ${sage(0.4)}` }}
                 />
               </div>
             </div>
@@ -528,9 +526,9 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
               disabled={saving()}
               class="px-3 py-1.5 rounded text-xs font-medium disabled:opacity-40"
               style={{
-                background: isEval() ? 'rgba(125, 153, 112, 0.2)' : 'var(--amber-500)',
-                color: isEval() ? 'var(--sage)' : 'var(--pasture-900)',
-                border: isEval() ? '1px solid rgba(125, 153, 112, 0.3)' : 'none',
+                background: isCheck() ? sage(0.2) : 'var(--amber-500)',
+                color: isCheck() ? 'var(--sage)' : 'var(--pasture-900)',
+                border: isCheck() ? `1px solid ${sage(0.3)}` : 'none',
               }}
             >
               {saving() ? 'Saving...' : 'Save'}
