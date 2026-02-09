@@ -83,8 +83,11 @@ export const RunListItem: Component<RunListItemProps> = (props) => {
               {props.run.tasksDone}/{props.run.tasksTotal}
             </span>
             <span class="text-wool-600">\u2022</span>
-            <span classList={{ 'text-sage': props.run.workersActive > 0 }}>
-              {props.run.workersActive}/{props.run.workersTotal} workers
+            <span
+              classList={{ 'text-sage': props.run.workersActive > 0 }}
+              title={`${props.run.workersActive} active \u00b7 ${props.run.workersTotal} spawned \u00b7 ${props.run.workersDesired} desired`}
+            >
+              {props.run.workersActive}/{props.run.workersDesired} workers
             </span>
           </span>
           <span>{props.getTimeDisplay(props.run)}</span>

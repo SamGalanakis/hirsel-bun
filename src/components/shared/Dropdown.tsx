@@ -1,8 +1,8 @@
 /**
  * Shared Dropdown component - Basecoat-style select dropdown
  */
-import { type Component, type JSX, Show, For, createSignal } from 'solid-js';
-import { useModalClosing } from '../../hooks';
+import { type Component, type JSX, Show, For, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
+import { Portal } from 'solid-js/web';
 import { Icon } from './Icon';
 
 export interface DropdownOption {
@@ -23,9 +23,68 @@ interface DropdownShellProps {
 
 export const DropdownShell: Component<DropdownShellProps> = (props) => {
   const [open, setOpen] = createSignal(false);
+  const [pos, setPos] = createSignal<{ left: number; top: number; width: number }>({
+    left: 0,
+    top: 0,
+    width: 240,
+  });
   let containerRef: HTMLDivElement | undefined;
+  let buttonRef: HTMLButtonElement | undefined;
+  let popoverRef: HTMLDivElement | undefined;
 
-  useModalClosing(() => containerRef, open, () => setOpen(false));
+  const close = () => setOpen(false);
+
+  const updatePosition = () => {
+    const btn = buttonRef;
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    const gutter = 8;
+    const width = Math.max(120, rect.width);
+    let left = rect.left;
+    const top = rect.bottom + 6;
+    // Keep within viewport horizontally.
+    left = Math.max(gutter, Math.min(left, window.innerWidth - width - gutter));
+    setPos({ left, top, width });
+  };
+
+  // Close on click outside (including when popover is portaled to body).
+  onMount(() => {
+    const onPointerDown = (e: PointerEvent) => {
+      if (!open()) return;
+      const t = e.target as Node | null;
+      if (!t) return;
+      const inTrigger = !!containerRef && containerRef.contains(t);
+      const inPopover = !!popoverRef && popoverRef.contains(t);
+      if (!inTrigger && !inPopover) close();
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!open()) return;
+      if (e.key === 'Escape') close();
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown);
+    onCleanup(() => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown);
+    });
+  });
+
+  // Reposition when opened and on viewport changes.
+  createEffect(() => {
+    if (!open()) return;
+    updatePosition();
+    // Second frame helps when fonts/layout settle.
+    requestAnimationFrame(updatePosition);
+  });
+  onMount(() => {
+    const onResize = () => open() && updatePosition();
+    window.addEventListener('resize', onResize);
+    window.addEventListener('scroll', onResize, true);
+    onCleanup(() => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('scroll', onResize, true);
+    });
+  });
 
   const triggerClass = () => props.triggerClass || 'btn-outline w-full justify-between';
   const panelClass = () =>
@@ -33,8 +92,9 @@ export const DropdownShell: Component<DropdownShellProps> = (props) => {
     'absolute z-50 mt-1 w-full bg-popover border border-border rounded-md shadow-md py-1 max-h-60 overflow-auto';
 
   return (
-    <div ref={containerRef} class={`dropdown relative ${props.class || ''}`}>
+    <div ref={containerRef} class={`dropdown ${props.class || ''}`}>
       <button
+        ref={buttonRef}
         type="button"
         class={triggerClass()}
         onClick={() => setOpen(!open())}
@@ -47,14 +107,24 @@ export const DropdownShell: Component<DropdownShellProps> = (props) => {
         <Icon name="chevrons-up-down" class="w-4 h-4 opacity-50 shrink-0" />
       </button>
       <Show when={open()}>
-        <div
-          data-popover
-          class={panelClass()}
-        >
-          <div role="listbox" aria-orientation="vertical" aria-multiselectable={props.multiselectable}>
-            {props.children(() => setOpen(false))}
+        <Portal>
+          <div
+            ref={popoverRef}
+            data-popover
+            class={panelClass()}
+            style={{
+              position: 'fixed',
+              left: `${pos().left}px`,
+              top: `${pos().top}px`,
+              width: `${pos().width}px`,
+              'z-index': 9999,
+            }}
+          >
+            <div role="listbox" aria-orientation="vertical" aria-multiselectable={props.multiselectable}>
+              {props.children(close)}
+            </div>
           </div>
-        </div>
+        </Portal>
       </Show>
     </div>
   );

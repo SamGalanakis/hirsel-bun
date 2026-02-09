@@ -322,6 +322,22 @@ const BoardNodeCard: Component<{
           </For>
         </div>
 
+        {/* Claimed-by pill (shows which worker is on this node) */}
+        <Show when={!isDraft() && props.node.claimedBy}>
+          <div
+            class="absolute -top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full text-[9px] font-medium"
+            style={{
+              background: 'rgba(20,20,22,0.92)',
+              border: `1px solid ${amber(0.28)}`,
+              color: 'var(--amber-300)',
+              'box-shadow': '0 6px 18px rgba(0,0,0,0.35)',
+            }}
+            title={`Claimed by ${props.node.claimedBy}`}
+          >
+            {props.node.claimedBy}
+          </div>
+        </Show>
+
         {/* Collapsed counts chips */}
         <Show when={props.collapsed && props.hiddenCounts}>
           {(counts) => (
@@ -886,10 +902,12 @@ export const SpecBoard: Component = () => {
     const trees = filteredTree();
     if (!lr || trees.length === 0) return;
     if (autoFitDone()) return;
-    setTimeout(() => {
-      fitToContent();
-      setAutoFitDone(true);
-    }, 0);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        fitToContent();
+        setAutoFitDone(true);
+      });
+    });
   });
 
   // Transform ELK layout to rendering format
@@ -1211,12 +1229,31 @@ export const SpecBoard: Component = () => {
     const rect = canvasRef?.getBoundingClientRect();
     if (!rect) return;
     const l = layout();
-    if (l.width <= 0 || l.height <= 0) return;
+    if (l.width <= 0 || l.height <= 0 || l.positions.size === 0) return;
 
-    const z = calcFitZoom(l.width, l.height, rect.width, rect.height);
+    // Fit to actual visible node bounds (more reliable than raw ELK width/height).
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const [, p] of l.positions) {
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x + p.width);
+      maxY = Math.max(maxY, p.y + p.height);
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+      return;
+    }
+
+    const boundsW = Math.max(1, maxX - minX);
+    const boundsH = Math.max(1, maxY - minY);
+    const z = calcFitZoom(boundsW, boundsH, rect.width, rect.height);
     const vp = viewportCenterPoint(rect, TREE_LEFT_MARGIN);
-    // X is absolute (origin at left). Y is centered via translateY(-50%) in the transform.
-    const contentCenterRel = { x: l.width / 2, y: 0 };
+    const contentCenterRel = {
+      x: minX + boundsW / 2,
+      y: contentYToRelative(minY + boundsH / 2, l.height),
+    };
     const newPan = panForContentPoint(vp, contentCenterRel, z);
     const clamped = clampPan(newPan, l.width, l.height, rect.width, rect.height, z);
     setZoom(z);

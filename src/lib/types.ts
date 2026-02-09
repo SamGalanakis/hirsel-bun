@@ -85,6 +85,7 @@ export interface RunSummary {
   tasksTotal: number;
   workersActive: number;
   workersTotal: number;
+  workersDesired: number;
   elapsedMinutes: number;
   timeLimitMinutes: number | null;
   hasUnreadMessages: boolean;
@@ -114,6 +115,7 @@ export interface RunDetail {
   tasksTotal: number;
   workersActive: number;
   workersTotal: number;
+  workersDesired: number;
   elapsedMinutes: number;
   // Runner configuration
   runner: string | null;

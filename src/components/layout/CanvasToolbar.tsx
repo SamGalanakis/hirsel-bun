@@ -62,6 +62,14 @@ export const CanvasToolbar: Component<CanvasToolbarProps> = (props) => {
     return runsCtx.workers();
   };
 
+  const workersSpawned = () => workers().length;
+  const workersActive = () => workers().filter((w) => w.status === 'working').length;
+  const workersDesired = () => {
+    const detail = runsCtx.runDetail();
+    // Prefer explicit desired count from backend; fallback to any known totals.
+    return detail?.workersDesired ?? detail?.workersTotal ?? workersSpawned();
+  };
+
   const [runValid, setRunValid] = createSignal(true);
   const [selectedWorker, setSelectedWorker] = createSignal<WorkerDisplay | null>(null);
   const [halfMoonWorker, setHalfMoonWorker] = createSignal<WorkerDisplay | null>(null);
@@ -123,7 +131,11 @@ export const CanvasToolbar: Component<CanvasToolbarProps> = (props) => {
     if (allComplete) return 'done';
 
     const allPending = liveNodes.every(n => n.status === 'pending');
-    if (run.status === 'working' && allPending) return 'starting';
+    if (run.status === 'working' && allPending) {
+      if (workersSpawned() === 0 && workersDesired() > 0) return 'starting';
+      if (workersSpawned() > 0 && workersActive() === 0) return 'idle';
+      return 'starting';
+    }
 
     if (run.status === 'working' || run.status === 'paused' || run.status === 'failed') {
       return run.status;
@@ -235,7 +247,16 @@ export const CanvasToolbar: Component<CanvasToolbarProps> = (props) => {
                 background: 'rgba(40, 40, 40, 0.5)',
                 border: '1px solid rgba(64, 64, 64, 0.3)',
               }}
+              title={`${workersActive()} active · ${workersSpawned()} spawned · ${workersDesired()} desired`}
             >
+              <div class="hidden sm:flex flex-col leading-none mr-1">
+                <span class="text-[9px] uppercase tracking-wide text-wool-600">Workers</span>
+                <span class="text-[10px] text-wool-400">
+                  {workersActive()}/{workersDesired()}
+                  <span class="text-wool-600"> · </span>
+                  {workersSpawned()} spawned
+                </span>
+              </div>
               <For each={workers().slice(0, 5)}>
                 {(worker, index) => {
                   const glow = () => getWorkerGlowStyle(worker.status);

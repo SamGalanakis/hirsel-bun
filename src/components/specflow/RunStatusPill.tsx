@@ -15,6 +15,7 @@ export const RunStatusPill: Component<RunStatusPillProps> = (props) => {
     switch (props.status) {
       case 'working':
       case 'starting':
+      case 'idle':
         return 'var(--amber-400)';
       case 'done':
         return 'var(--sage)';

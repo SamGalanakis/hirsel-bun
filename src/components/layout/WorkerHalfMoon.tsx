@@ -57,7 +57,7 @@ export const WorkerHalfMoon: Component<WorkerHalfMoonProps> = (props) => {
         }}
       />
       <div
-        class="flex items-center rounded-lg overflow-hidden"
+        class="flex flex-col rounded-lg overflow-hidden"
         style={{
           background: 'var(--pasture-800)',
           border: '1px solid var(--pasture-600)',
@@ -65,6 +65,12 @@ export const WorkerHalfMoon: Component<WorkerHalfMoonProps> = (props) => {
           animation: 'halfmoon-enter 120ms ease-out',
         }}
       >
+        <div class="px-2.5 py-1 border-b border-pasture-700/70">
+          <div class="text-[9px] uppercase tracking-wide text-wool-600">Working on</div>
+          <div class="text-[10px] text-wool-300 max-w-[220px] truncate" title={props.worker.currentTask || 'Idle'}>
+            {props.worker.currentTask || 'Idle'}
+          </div>
+        </div>
         <For each={actions()}>
           {(action) => (
             <button
