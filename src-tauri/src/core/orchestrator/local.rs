@@ -178,6 +178,7 @@ impl Orchestrator for LocalOrchestrator {
             let (
                 workers_active,
                 workers_total,
+                workers_desired,
                 elapsed_minutes,
                 time_limit_minutes,
                 has_unread_messages,
@@ -187,18 +188,19 @@ impl Orchestrator for LocalOrchestrator {
                         (
                             summary.workers_active,
                             summary.workers_total,
+                            summary.workers_desired,
                             summary.elapsed_minutes,
                             summary.time_limit_minutes.map(|m| m as u32),
                             summary.unread_count > 0,
                         )
                     } else {
-                        (0, 0, 0.0, None, false)
+                        (0, 0, 0, 0.0, None, false)
                     }
                 } else {
-                    (0, 0, 0.0, None, false)
+                    (0, 0, 0, 0.0, None, false)
                 }
             } else {
-                (0, 0, 0.0, None, false)
+                (0, 0, 0, 0.0, None, false)
             };
 
             runs.push(RunSummary {
@@ -208,6 +210,7 @@ impl Orchestrator for LocalOrchestrator {
                 tasks_total,
                 workers_active,
                 workers_total,
+                workers_desired,
                 elapsed_minutes,
                 time_limit_minutes,
                 has_unread_messages,
@@ -283,11 +286,13 @@ impl Orchestrator for LocalOrchestrator {
             .iter()
             .filter(|w| w.status == crate::core::state::WorkerStatus::Working)
             .count() as u32;
-        // workers_total is the max scale (for autoscaling display like "1/2"), fallback to actual count
-        let workers_total = worker_scale
+        // workers_total is the actual number of worker records.
+        let workers_total = workers.len() as u32;
+        // workers_desired is derived from worker_scale, falling back to workers_total.
+        let workers_desired = worker_scale
             .as_ref()
             .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(workers.len() as u32);
+            .unwrap_or(workers_total);
 
         // Calculate elapsed minutes
         let elapsed_minutes = if let Ok(Some(time_info)) = state.get_time_info().await {
@@ -329,6 +334,7 @@ impl Orchestrator for LocalOrchestrator {
             tasks_total,
             workers_active,
             workers_total,
+            workers_desired,
             elapsed_minutes,
             agent_type: format!("{:?}", agent_type).to_lowercase(),
             metrics_available,
@@ -568,21 +574,53 @@ impl Orchestrator for LocalOrchestrator {
 
         let core_workers = state.get_workers().await?;
 
-        // Lightweight query: get only worker->task mapping instead of loading full board tree
-        let claimed_task_map = match (
+        // Lightweight mapping: worker_name -> current task name (claimed_by or assigned_task_id fallback)
+        let current_task_map = match (
             state.get_project_id().await.ok().flatten(),
             state.get_route_id().await.ok(),
         ) {
-            (Some(project_id), Some(route_id)) => DeltaState::with_route(project_id, route_id)
-                .get_claimed_task_map()
-                .await
-                .unwrap_or_default(),
+            (Some(project_id), Some(route_id)) => {
+                let delta = DeltaState::with_route(project_id, route_id);
+                let mut map = delta.get_claimed_task_map().await.unwrap_or_default();
+
+                // If a worker has an assigned_task_id but nothing is currently claimed_by them,
+                // surface that as current_task for better diagnostics.
+                let mut assigned_by_worker: HashMap<String, String> = HashMap::new();
+                let mut assigned_ids: Vec<String> = Vec::new();
+                for w in &core_workers {
+                    if map.contains_key(&w.name) {
+                        continue;
+                    }
+                    if let Some(id) = w
+                        .assigned_task_id
+                        .as_ref()
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                    {
+                        assigned_by_worker.insert(w.name.clone(), id.to_string());
+                        assigned_ids.push(id.to_string());
+                    }
+                }
+
+                if !assigned_ids.is_empty() {
+                    let id_to_name = delta
+                        .get_node_name_map(&assigned_ids)
+                        .await
+                        .unwrap_or_default();
+                    for (worker, id) in assigned_by_worker {
+                        let name = id_to_name.get(&id).cloned().unwrap_or(id);
+                        map.insert(worker, name);
+                    }
+                }
+
+                map
+            }
             _ => HashMap::new(),
         };
 
         let workers = core_workers
             .iter()
-            .map(|w| self.convert_worker(w, &claimed_task_map))
+            .map(|w| self.convert_worker(w, &current_task_map))
             .collect();
 
         Ok(workers)
@@ -621,7 +659,7 @@ impl Orchestrator for LocalOrchestrator {
             .update_worker(
                 &worker_data.name,
                 WorkerUpdate {
-                    pid: None,
+                    pid: Some(None),
                     ..Default::default()
                 },
             )
@@ -1459,7 +1497,7 @@ impl Orchestrator for LocalOrchestrator {
                         .update_worker(
                             worker_name,
                             WorkerUpdate {
-                                pid,
+                                pid: pid.map(Some),
                                 runner_id: Some(result.handle.runner_id.clone()),
                                 runner_type: Some(result.handle.runner_type.clone()),
                                 status: Some(crate::core::state::WorkerStatus::Working),
@@ -1880,7 +1918,7 @@ impl Orchestrator for LocalOrchestrator {
                             .update_worker(
                                 worker_name,
                                 WorkerUpdate {
-                                    pid,
+                                    pid: pid.map(Some),
                                     runner_id: Some(result.handle.runner_id.clone()),
                                     runner_type: Some(result.handle.runner_type.clone()),
                                     status: Some(crate::core::state::WorkerStatus::Working),
@@ -2072,7 +2110,7 @@ impl Orchestrator for LocalOrchestrator {
                     .update_worker(
                         worker_name,
                         WorkerUpdate {
-                            pid,
+                            pid: pid.map(Some),
                             runner_id: Some(result.handle.runner_id.clone()),
                             runner_type: Some(result.handle.runner_type.clone()),
                             status: Some(crate::core::state::WorkerStatus::Working),
@@ -2409,7 +2447,7 @@ impl Orchestrator for LocalOrchestrator {
                     .update_worker(
                         worker_name,
                         WorkerUpdate {
-                            pid,
+                            pid: pid.map(Some),
                             runner_id: Some(result.handle.runner_id.clone()),
                             runner_type: Some(result.handle.runner_type.clone()),
                             status: Some(crate::core::state::WorkerStatus::Working),

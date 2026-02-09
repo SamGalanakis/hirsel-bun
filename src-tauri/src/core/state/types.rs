@@ -444,7 +444,10 @@ pub struct RunStateSummary {
     pub time_limit_minutes: Option<i64>,
     pub unread_count: i64,
     pub workers_active: u32,
+    /// Actual number of worker records for this run.
     pub workers_total: u32,
+    /// Desired worker count derived from worker_scale (defaults to workers_total).
+    pub workers_desired: u32,
     pub elapsed_minutes: f64,
 }
 
@@ -518,7 +521,8 @@ pub type StateResult<T> = Result<T, StateError>;
 /// Helper struct for partial worker updates
 #[derive(Default)]
 pub struct WorkerUpdate {
-    pub pid: Option<i64>,
+    /// Worker process PID. Use Some(Some(pid)) to set, Some(None) to clear.
+    pub pid: Option<Option<i64>>,
     pub runner_id: Option<String>,
     pub runner_type: Option<String>,
     pub session_id: Option<String>,

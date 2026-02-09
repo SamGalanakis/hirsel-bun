@@ -186,8 +186,15 @@ impl SQLiteState {
         let mut params: Vec<String> = Vec::new();
 
         if let Some(pid) = updates.pid {
-            set_clauses.push("pid = ?");
-            params.push(pid.to_string());
+            match pid {
+                Some(v) => {
+                    set_clauses.push("pid = ?");
+                    params.push(v.to_string());
+                }
+                None => {
+                    set_clauses.push("pid = NULL");
+                }
+            }
         }
         if let Some(ref runner_id) = updates.runner_id {
             set_clauses.push("runner_id = ?");

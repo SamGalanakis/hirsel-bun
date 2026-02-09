@@ -246,7 +246,7 @@ pub async fn detach_worker(run_name: String, worker_id: u32) -> Result<(), Strin
         .update_worker(
             &worker.name,
             WorkerUpdate {
-                pid: None,
+                pid: Some(None),
                 status: Some(crate::core::state::WorkerStatus::Paused),
                 ..Default::default()
             },

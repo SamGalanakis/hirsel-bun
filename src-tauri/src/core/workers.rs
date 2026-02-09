@@ -208,7 +208,7 @@ pub async fn spawn_worker(
             &config.worker_name,
             WorkerUpdate {
                 status: Some(WorkerStatus::Working),
-                pid: Some(pid as i64),
+                pid: Some(Some(pid as i64)),
                 runner_id: Some(pid.to_string()),
                 runner_type: Some("local".to_string()),
                 ..Default::default()
@@ -276,7 +276,7 @@ pub async fn check_worker_heartbeats(
                     .update_worker(
                         &worker.name,
                         WorkerUpdate {
-                            pid: None,
+                            pid: Some(None),
                             status: Some(WorkerStatus::Error),
                             assigned_task_id: Some(None), // Clear assigned task
                             ..Default::default()
@@ -521,7 +521,7 @@ pub async fn reconcile_stale_workers() -> Vec<(String, String)> {
                         .update_worker(
                             &worker.name,
                             WorkerUpdate {
-                                pid: None,
+                                pid: Some(None),
                                 status: Some(WorkerStatus::Paused),
                                 hitl_waiting: Some(false),
                                 assigned_task_id: Some(None), // Clear assigned task
@@ -563,6 +563,7 @@ pub async fn reconcile_stale_workers() -> Vec<(String, String)> {
                     .update_worker(
                         &worker.name,
                         WorkerUpdate {
+                            pid: Some(None),
                             status: Some(WorkerStatus::Paused),
                             assigned_task_id: Some(None), // Clear assigned task
                             ..Default::default()

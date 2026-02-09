@@ -1194,10 +1194,13 @@ impl SQLiteState {
         let workers_registered: i64 = worker_row.get("total");
         let workers_active: Option<i64> = worker_row.get("active");
 
-        // workers_total is the max scale (from worker_scale), falling back to registered count
-        let workers_total = worker_scale
+        // workers_total is the actual number of worker records for the run.
+        let workers_total = workers_registered as u32;
+
+        // workers_desired is derived from worker_scale, falling back to workers_total.
+        let workers_desired = worker_scale
             .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(workers_registered as u32);
+            .unwrap_or(workers_total);
 
         // Parse status
         let status = super::types::Status::from_str(&status).unwrap_or(super::types::Status::Draft);
@@ -1232,6 +1235,7 @@ impl SQLiteState {
             unread_count: 0, // Always 0 - messaging uses project-level storage
             workers_active: workers_active.unwrap_or(0) as u32,
             workers_total,
+            workers_desired,
             elapsed_minutes,
         })
     }

@@ -859,7 +859,7 @@ impl StateAccess for HttpState {
         Ok(HttpState::update_worker(
             self,
             name,
-            updates.pid,
+            updates.pid.flatten(),
             updates.session_id.as_deref(),
             updates.status,
             updates.waiting_thread.as_deref(),

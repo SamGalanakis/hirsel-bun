@@ -65,6 +65,8 @@ pub struct RunSummary {
     pub tasks_total: u32,
     pub workers_active: u32,
     pub workers_total: u32,
+    /// Desired worker count derived from worker_scale (for UI display).
+    pub workers_desired: u32,
     pub elapsed_minutes: f64,
     pub time_limit_minutes: Option<u32>,
     pub has_unread_messages: bool,
@@ -97,6 +99,8 @@ pub struct RunDetail {
     pub tasks_total: u32,
     pub workers_active: u32,
     pub workers_total: u32,
+    /// Desired worker count derived from worker_scale (for UI display).
+    pub workers_desired: u32,
     pub elapsed_minutes: f64,
     pub agent_type: String,
     pub metrics_available: bool,

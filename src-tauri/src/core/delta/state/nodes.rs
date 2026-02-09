@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use super::{DeltaState, DeltaStateError, DeltaStateResult};
 use crate::core::db::utc_now;
 use crate::core::delta::types::*;
+use sqlx::QueryBuilder;
 
 impl DeltaState {
     // =========================================================================
@@ -191,6 +192,45 @@ impl DeltaState {
                 let claimed_by: String = row.get("claimed_by");
                 let name: String = row.get("name");
                 (claimed_by, name)
+            })
+            .collect())
+    }
+
+    /// Get a lightweight map of node_id -> node_name for a set of IDs.
+    ///
+    /// This is used to display "current task" for workers that have an assigned_task_id
+    /// but whose corresponding board node is not currently marked as working (or cannot
+    /// be found in claimed_by queries).
+    pub async fn get_node_name_map(
+        &self,
+        ids: &[String],
+    ) -> DeltaStateResult<HashMap<String, String>> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let pool = self.pool().await?;
+        let mut qb: QueryBuilder<sqlx::Sqlite> =
+            QueryBuilder::new("SELECT id, name FROM board_nodes WHERE project_id = ");
+        qb.push_bind(self.project_id);
+        qb.push(" AND route_id = ");
+        qb.push_bind(self.route_id);
+        qb.push(" AND id IN (");
+
+        let mut separated = qb.separated(", ");
+        for id in ids {
+            separated.push_bind(id);
+        }
+        separated.push_unseparated(")");
+
+        let rows = qb.build().fetch_all(pool).await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                let id: String = row.get("id");
+                let name: String = row.get("name");
+                (id, name)
             })
             .collect())
     }

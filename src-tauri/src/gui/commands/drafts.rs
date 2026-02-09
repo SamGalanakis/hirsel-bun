@@ -252,6 +252,7 @@ pub async fn create_draft() -> Result<RunDetail, String> {
         tasks_total: 1,
         workers_active: 0,
         workers_total: 0,
+        workers_desired: 5,
         elapsed_minutes: 0.0,
         agent_type: format!("{:?}", agent_type).to_lowercase(),
         metrics_available,
@@ -281,6 +282,8 @@ pub async fn clone_run(source_run: String, new_name: String) -> Result<RunDetail
 
     let created_at = chrono::Utc::now().to_rfc3339();
 
+    let workers_desired = result.worker_scale.parse().unwrap_or(0);
+
     Ok(RunDetail {
         name: result.new_name,
         status: RunStatus::Draft,
@@ -302,6 +305,7 @@ pub async fn clone_run(source_run: String, new_name: String) -> Result<RunDetail
         tasks_total: 1,
         workers_active: 0,
         workers_total: 0,
+        workers_desired,
         elapsed_minutes: 0.0,
         agent_type: format!("{:?}", agent_type).to_lowercase(),
         metrics_available,
@@ -730,7 +734,7 @@ pub async fn start_draft(
                         .update_worker(
                             worker_name,
                             WorkerUpdate {
-                                pid: Some(pid as i64),
+                                pid: Some(Some(pid as i64)),
                                 ..Default::default()
                             },
                         )

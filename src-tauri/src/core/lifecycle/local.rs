@@ -316,7 +316,7 @@ impl LocalLifecycleManager {
                     .update_worker(
                         &worker.name,
                         WorkerUpdate {
-                            pid: None,
+                            pid: Some(None),
                             runner_id: None,
                             ..Default::default()
                         },
@@ -485,7 +485,7 @@ impl LocalLifecycleManager {
                 .update_worker(
                     &worker.name,
                     WorkerUpdate {
-                        pid: None,
+                        pid: Some(None),
                         runner_id: None,
                         status: Some(WorkerStatus::Paused),
                         state_handle: Some(state_handle_json),

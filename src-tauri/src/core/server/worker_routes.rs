@@ -99,7 +99,7 @@ impl UpdateWorkerRequest {
     /// Convert to WorkerUpdate struct
     pub fn to_worker_update(&self) -> WorkerUpdate {
         WorkerUpdate {
-            pid: self.pid,
+            pid: self.pid.map(Some),
             session_id: self.session_id.clone(),
             status: self.parse_status(),
             waiting_thread: self.waiting_thread.clone(),
