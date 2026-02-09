@@ -103,12 +103,18 @@ impl DaemonClient {
             .open(&daemon_log)
             .map(Stdio::from)
             .unwrap_or_else(|_| Stdio::null());
+        let stdout_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&daemon_log)
+            .map(Stdio::from)
+            .unwrap_or_else(|_| Stdio::null());
 
         // Spawn daemon in background, passing port via env var
         let mut cmd = Command::new(&exe);
         cmd.arg("__daemon")
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            .stdout(stdout_file)
             .stderr(stderr_file);
 
         // Give the daemon its own trace file so it doesn't contend with the GUI's trace.json

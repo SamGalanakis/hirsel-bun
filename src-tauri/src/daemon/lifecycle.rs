@@ -144,32 +144,70 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
 
     match status {
         Status::Working => {
+            use crate::core::delta::DeltaState;
+            use crate::core::workers::WorkerScale;
+
+            let workers = lifecycle.state().get_workers().await.unwrap_or_default();
+
             // Check for crashed workers (PID dead but status=Working)
             // This catches workers killed by OOM, SIGKILL, or other unexpected exits
-            if let Ok(workers) = lifecycle.state().get_workers().await {
-                for worker in workers {
-                    if worker.status == crate::core::state::WorkerStatus::Working {
-                        if let Some(pid) = worker.pid {
-                            if !crate::core::runner::local::LocalRunner::is_pid_alive(pid as u32) {
-                                tracing::warn!(
-                                    "[Daemon] Worker '{}' crashed (pid {} dead), marking as Error",
-                                    worker.name,
-                                    pid
-                                );
-                                let _ = lifecycle
-                                    .state()
-                                    .update_worker(
-                                        &worker.name,
-                                        crate::core::state::WorkerUpdate {
-                                            status: Some(crate::core::state::WorkerStatus::Error),
-                                            assigned_task_id: Some(None), // Clear assigned task
-                                            ..Default::default()
-                                        },
-                                    )
-                                    .await;
-                                // Request scaling check so the daemon can respawn or reassign
-                                let _ = lifecycle.state().request_scaling_check().await;
+            for worker in &workers {
+                if worker.status == crate::core::state::WorkerStatus::Working {
+                    if let Some(pid) = worker.pid {
+                        if !crate::core::runner::local::LocalRunner::is_pid_alive(pid as u32) {
+                            tracing::warn!(
+                                "[Daemon] Worker '{}' crashed (pid {} dead), marking as Error",
+                                worker.name,
+                                pid
+                            );
+                            let _ = lifecycle
+                                .state()
+                                .update_worker(
+                                    &worker.name,
+                                    crate::core::state::WorkerUpdate {
+                                        pid: Some(None),
+                                        status: Some(crate::core::state::WorkerStatus::Error),
+                                        assigned_task_id: Some(None), // Clear assigned task
+                                        ..Default::default()
+                                    },
+                                )
+                                .await;
+                            // Request scaling check so the daemon can respawn or reassign
+                            let _ = lifecycle.state().request_scaling_check().await;
+                        }
+                    }
+                }
+            }
+
+            // Awaiting should imply "no process". If an Awaiting worker still has a live PID,
+            // kill it and clear PID so scaling can resume deterministically.
+            for worker in &workers {
+                if worker.status == crate::core::state::WorkerStatus::Awaiting
+                    && !worker.hitl_waiting
+                {
+                    if let Some(pid) = worker.pid {
+                        if crate::core::runner::local::LocalRunner::is_pid_alive(pid as u32) {
+                            tracing::warn!(
+                                "[Daemon] Worker '{}' is Awaiting but pid {} is still alive; sending SIGTERM and clearing pid",
+                                worker.name,
+                                pid
+                            );
+                            #[cfg(unix)]
+                            unsafe {
+                                libc::kill(pid as i32, libc::SIGTERM);
                             }
+
+                            let _ = lifecycle
+                                .state()
+                                .update_worker(
+                                    &worker.name,
+                                    crate::core::state::WorkerUpdate {
+                                        pid: Some(None),
+                                        ..Default::default()
+                                    },
+                                )
+                                .await;
+                            let _ = lifecycle.state().request_scaling_check().await;
                         }
                     }
                 }
@@ -182,8 +220,54 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
                 .await
                 .unwrap_or(false);
 
-            if scaling_requested {
-                // Event-driven scaling evaluation
+            // Heuristic scaling: if there are claimable tasks but no active workers (or idle workers exist),
+            // run scaling evaluation even if a scaling_check wasn't explicitly requested.
+            let heuristic_requested = if !scaling_requested {
+                let active_count = workers
+                    .iter()
+                    .filter(|w| w.status == crate::core::state::WorkerStatus::Working)
+                    .count();
+                let idle_count = workers
+                    .iter()
+                    .filter(|w| {
+                        w.status == crate::core::state::WorkerStatus::Awaiting && !w.hitl_waiting
+                    })
+                    .count();
+
+                let desired_max = lifecycle
+                    .state()
+                    .get_worker_scale()
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|s| WorkerScale::parse(&s))
+                    .map(|s| s.max)
+                    .unwrap_or_else(|| workers.len().max(1));
+
+                if active_count == 0 || idle_count > 0 || workers.len() < desired_max {
+                    match (
+                        lifecycle.state().get_project_id().await.ok().flatten(),
+                        lifecycle.state().get_route_id().await.ok(),
+                    ) {
+                        (Some(project_id), Some(route_id)) => {
+                            let claimable = DeltaState::with_route(project_id, route_id)
+                                .get_claimable_nodes()
+                                .await
+                                .map(|v| v.len())
+                                .unwrap_or(0);
+                            claimable > 0 && active_count < desired_max
+                        }
+                        _ => false,
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if scaling_requested || heuristic_requested {
+                // Event-driven / heuristic scaling evaluation
                 match lifecycle.evaluate_scaling().await {
                     Ok(actions) => {
                         if !actions.is_empty() {
