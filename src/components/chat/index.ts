@@ -1,1 +1,1 @@
-export { GypMessenger, GypMessengerBar } from './GypMessenger';
+export { ShepherdConsole, ShepherdConsoleBar } from './ShepherdConsole';

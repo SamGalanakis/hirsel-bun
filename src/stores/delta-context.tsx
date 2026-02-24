@@ -26,7 +26,7 @@ import type {
   BoardNode,
   CreateBoardNodeRequest,
   UpdateBoardNodeRequest,
-  DispatchResponse,
+  ShepherdRunResponse,
   BoardVersion,
   BoardDelivery,
   DeliveryAttempt,
@@ -48,7 +48,7 @@ interface DeltaState {
 
   // UI state
   loading: () => boolean;
-  dispatchPending: () => boolean;
+  shepherdStartPending: () => boolean;
   deliveryPending: () => boolean;
 
   // Computed
@@ -63,7 +63,7 @@ interface DeltaState {
   deleteBoardNode: (nodeId: string) => Promise<boolean>;
   moveBoardNode: (nodeId: string, newParentId: string | null, newPosition: number) => Promise<boolean>;
   resetTree: () => Promise<boolean>;
-  dispatch: () => Promise<DispatchResponse | null>;
+  startShepherdRun: () => Promise<ShepherdRunResponse | null>;
 
   // Delivery actions
   loadDeliveryState: () => Promise<void>;
@@ -106,7 +106,7 @@ export const DeltaProvider: ParentComponent = (props) => {
 
   // UI state
   const [loading, setLoading] = createSignal(false);
-  const [dispatchPending, setDispatchPending] = createSignal(false);
+  const [shepherdStartPending, setShepherdStartPending] = createSignal(false);
   const [deliveryPending, setDeliveryPending] = createSignal(false);
 
   // Generation counter for skipping redundant tree polls
@@ -254,23 +254,23 @@ export const DeltaProvider: ParentComponent = (props) => {
     }
   };
 
-  const dispatch = async (): Promise<DispatchResponse | null> => {
+  const startShepherdRun = async (): Promise<ShepherdRunResponse | null> => {
     const projectId = project.selectedProjectId();
     const routeId = route.activeRoute()?.id;
     if (!projectId || !routeId) return null;
 
     try {
-      setDispatchPending(true);
-      const response = await invoke<DispatchResponse>('dispatch_board', { projectId, routeId });
+      setShepherdStartPending(true);
+      const response = await invoke<ShepherdRunResponse>('start_shepherd_run', { projectId, routeId });
       await refreshTree();
-      window.toast?.success(`Dispatched ${response.nodeCount} nodes`);
+      window.toast?.success(`Shepherd started ${response.nodeCount} nodes`);
       return response;
     } catch (e) {
-      console.error('Failed to dispatch:', e);
-      window.toast?.error(`Failed to dispatch: ${e}`);
+      console.error('Failed to start Shepherd run:', e);
+      window.toast?.error(`Failed to start Shepherd run: ${e}`);
       return null;
     } finally {
-      setDispatchPending(false);
+      setShepherdStartPending(false);
     }
   };
 
@@ -480,11 +480,11 @@ export const DeltaProvider: ParentComponent = (props) => {
 
     createPoll(
       async () => {
-        if (dispatchPending()) return;
+        if (shepherdStartPending()) return;
 
         try {
           const result = await invoke<BoardTreeResponse | null>(
-            'sync_and_get_tree_if_changed',
+            'sync_and_get_shepherd_view_if_changed',
             {
               projectId,
               routeId,
@@ -523,7 +523,7 @@ export const DeltaProvider: ParentComponent = (props) => {
 
     // UI state
     loading,
-    dispatchPending,
+    shepherdStartPending,
     deliveryPending,
 
     // Computed
@@ -538,7 +538,7 @@ export const DeltaProvider: ParentComponent = (props) => {
     deleteBoardNode,
     moveBoardNode,
     resetTree,
-    dispatch,
+    startShepherdRun,
 
     // Delivery actions
     loadDeliveryState,

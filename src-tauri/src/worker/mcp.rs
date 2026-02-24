@@ -450,7 +450,7 @@ impl McpServer {
             }
 
             // Work Management
-            "work_done" => self.runner.work_done().map(|s| (s, true)),
+            "work_done" => self.runner.task_done(None).map(|s| (s, true)),
             "time_status" => self.time_status().map(|s| (s, false)),
 
             // Check Operations

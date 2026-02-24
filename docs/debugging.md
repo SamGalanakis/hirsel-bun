@@ -115,8 +115,8 @@ pkill -f "hirsel __daemon"
 ## Debug Panel
 
 The GUI has a built-in debug panel (if enabled):
-- Shows process counts (claude, acp, node)
-- Can kill orphaned ACP processes
+- Shows process counts (hirsel worker helpers, node)
+- Can kill orphaned worker helper processes
 - Access via settings or keyboard shortcut
 
 ## MCP Debugging (Dev Builds)

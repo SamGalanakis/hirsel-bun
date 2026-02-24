@@ -9,7 +9,7 @@ use super::{
     LifecycleResult, RunStateMachine,
 };
 use crate::core::config::Config;
-use crate::core::delta::{BoardNode, BoardNodeStatus, DeltaState};
+use crate::core::delta::{BoardNode, BoardNodeStatus, DeltaState, NodeKind};
 use crate::core::files::Files;
 use crate::core::runner::{create_lifecycle_runner_for_handle, WorkerHandle};
 use crate::core::snapshot::{
@@ -20,9 +20,13 @@ use crate::core::state::{FailureReason, SQLiteState, Status, WorkerStatus, Worke
 use crate::core::ProjectMessagesStore;
 // Note: Workers are no longer spawned directly from the lifecycle manager.
 // The daemon handles spawning via the orchestrator, which uses the runner system.
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, info, warn};
+
+static WORKER_NAME_SEQ: AtomicU64 = AtomicU64::new(1);
 
 /// Local lifecycle manager using SQLite state.
 pub struct LocalLifecycleManager {
@@ -148,94 +152,30 @@ impl LocalLifecycleManager {
         Ok(delta_state.claim_node(node_id, worker_name).await?)
     }
 
-    /// Pick the best node for a worker based on tree-walk distance.
-    ///
-    /// For work nodes: prefer nodes CLOSE to the worker's last completed task
-    /// For eval nodes: prefer nodes FAR from the worker's last completed task
-    fn pick_node_for_worker(
-        &self,
-        claimable: &[BoardNode],
-        worker: &crate::core::state::Worker,
-        all_nodes: &[BoardNode],
-    ) -> Option<BoardNode> {
-        use crate::core::delta::NodeKind;
-
-        if claimable.is_empty() {
-            return None;
-        }
-
-        // If no history, just return first node
-        let last_task_id = match &worker.last_task_id {
-            Some(id) => id,
-            None => return Some(claimable[0].clone()),
+    fn claim_priority(node: &BoardNode) -> (u8, u8, i32) {
+        let kind_rank = match node.kind {
+            NodeKind::Check => 0,
+            NodeKind::Task | NodeKind::Plan => 1,
+            NodeKind::Feature => 2,
         };
-
-        // Calculate tree distances from last_task_id using BFS
-        let distances = self.calculate_node_distances(all_nodes, last_task_id);
-
-        // Score each claimable node
-        let mut scored: Vec<_> = claimable
-            .iter()
-            .map(|n| {
-                let dist = distances.get(&n.id).copied().unwrap_or(usize::MAX);
-                let score = match n.kind {
-                    NodeKind::Check => {
-                        // Check: prefer FAR (high distance = high score = pick first)
-                        dist
-                    }
-                    NodeKind::Task | NodeKind::Feature => {
-                        // Work: prefer CLOSE (low distance = high score)
-                        usize::MAX.saturating_sub(dist)
-                    }
-                };
-                (n, score)
-            })
-            .collect();
-
-        // Sort by score descending (highest score first)
-        scored.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
-        scored.first().map(|(n, _)| (*n).clone())
+        (kind_rank, 0, node.position)
     }
 
-    /// Calculate tree distances from a given node using BFS.
-    fn calculate_node_distances(
-        &self,
-        nodes: &[BoardNode],
-        from_id: &str,
-    ) -> std::collections::HashMap<String, usize> {
-        use std::collections::{HashMap, VecDeque};
+    fn pick_best_claimable_node(claimable: &[BoardNode]) -> Option<BoardNode> {
+        let mut sorted = claimable.to_vec();
+        sorted.sort_by_key(Self::claim_priority);
+        sorted.into_iter().next()
+    }
 
-        let mut distances: HashMap<String, usize> = HashMap::new();
-        let mut queue: VecDeque<(String, usize)> = VecDeque::new();
-
-        distances.insert(from_id.to_string(), 0);
-        queue.push_back((from_id.to_string(), 0));
-
-        while let Some((id, dist)) = queue.pop_front() {
-            // Find the current node
-            let node = match nodes.iter().find(|n| n.id == id) {
-                Some(n) => n,
-                None => continue,
-            };
-
-            // Parent edge
-            if let Some(ref parent) = node.parent_id {
-                if !distances.contains_key(parent) {
-                    distances.insert(parent.clone(), dist + 1);
-                    queue.push_back((parent.clone(), dist + 1));
-                }
-            }
-
-            // Child edges
-            for child in nodes.iter().filter(|c| c.parent_id.as_ref() == Some(&id)) {
-                if !distances.contains_key(&child.id) {
-                    distances.insert(child.id.clone(), dist + 1);
-                    queue.push_back((child.id.clone(), dist + 1));
-                }
+    fn generate_ephemeral_worker_name(used: &HashSet<String>) -> String {
+        loop {
+            let base = crate::core::names::generate_worker_name();
+            let seq = WORKER_NAME_SEQ.fetch_add(1, Ordering::Relaxed);
+            let candidate = format!("{}-{:x}", base, seq);
+            if !used.contains(&candidate) {
+                return candidate;
             }
         }
-
-        distances
     }
 
     /// Kill all workers in the run.
@@ -424,7 +364,7 @@ impl LocalLifecycleManager {
                                 handle.storage_id
                             );
                             state_handle.agent_session = Some(AgentSnapshot {
-                                agent_type: "claude".to_string(),
+                                agent_type: "codex".to_string(),
                                 session_id: session_id.clone(),
                                 storage_id: handle.storage_id,
                             });
@@ -439,7 +379,7 @@ impl LocalLifecycleManager {
                 } else {
                     // For no-op strategy, still store the session_id for resume
                     state_handle.agent_session = Some(AgentSnapshot {
-                        agent_type: "claude".to_string(),
+                        agent_type: "codex".to_string(),
                         session_id: session_id.clone(),
                         storage_id: String::new(),
                     });
@@ -505,11 +445,8 @@ impl LocalLifecycleManager {
     /// spawning via the orchestrator using resume_worker(). The orchestrator
     /// will restore snapshots for ephemeral runners.
     async fn resume_awaiting_workers_internal(&self) -> LifecycleResult<Vec<LifecycleAction>> {
-        // Get claimable nodes (needed for awaiting workers)
-        let claimable = self.get_claimable_nodes().await?;
-
-        // Get workers that need to be resumed
         let workers = self.state.get_workers().await?;
+        let all_nodes = self.get_all_nodes().await.unwrap_or_default();
 
         let to_resume: Vec<_> = workers
             .iter()
@@ -518,9 +455,23 @@ impl LocalLifecycleManager {
                 if w.hitl_waiting {
                     return false;
                 }
+
+                let Some(task_id) = w.assigned_task_id.as_ref() else {
+                    return false;
+                };
+
+                let task_still_working = all_nodes.iter().any(|n| {
+                    n.id == *task_id
+                        && n.status == BoardNodeStatus::Working
+                        && n.claimed_by.as_deref() == Some(w.name.as_str())
+                });
+                if !task_still_working {
+                    return false;
+                }
+
                 w.status == WorkerStatus::Paused
                     || w.status == WorkerStatus::Error
-                    || (w.status == WorkerStatus::Awaiting && !claimable.is_empty())
+                    || w.status == WorkerStatus::Awaiting
             })
             .collect();
 
@@ -606,9 +557,23 @@ impl LocalLifecycleManager {
             return Ok(None);
         }
 
-        // Get current workers and claimable nodes
+        // Get current workers and eagerly prune finished ephemeral workers.
         let workers = self.state.get_workers().await?;
-        let current_count = workers.len();
+        for worker in workers.iter().filter(|w| {
+            !w.hitl_waiting && w.status != WorkerStatus::Working && w.assigned_task_id.is_none()
+        }) {
+            if let Err(e) = self.state.delete_worker(&worker.name).await {
+                warn!(
+                    "maybe_scale_up: failed to delete finished worker {}: {}",
+                    worker.name, e
+                );
+            }
+        }
+        let workers = self.state.get_workers().await?;
+        let current_count = workers
+            .iter()
+            .filter(|w| w.status == WorkerStatus::Working || w.assigned_task_id.is_some())
+            .count();
         let claimable = self.get_claimable_nodes().await?;
         let claimable_count = claimable.len();
 
@@ -622,9 +587,7 @@ impl LocalLifecycleManager {
             return Ok(None);
         }
 
-        // Get a new worker name
-        let existing_names: Vec<String> = workers.iter().map(|w| w.name.clone()).collect();
-        let new_name = crate::core::names::get_available_name(&existing_names);
+        let existing_names: HashSet<String> = workers.iter().map(|w| w.name.clone()).collect();
 
         // Get project path
         let project_path_str = match self.state.get_project_path().await? {
@@ -638,6 +601,16 @@ impl LocalLifecycleManager {
         let project_path = PathBuf::from(&project_path_str);
         let staging_dir = self.context.run_dir.join("work").join("staging");
 
+        // Pick the best claimable node to assign to this worker
+        let node = match Self::pick_best_claimable_node(&claimable) {
+            Some(n) => n,
+            None => {
+                warn!("maybe_scale_up: no claimable nodes available (race condition?)");
+                return Ok(None);
+            }
+        };
+        let new_name = Self::generate_ephemeral_worker_name(&existing_names);
+
         // Create worker clone
         let worker_dir = match create_worker_clone(
             &self.context.run_name,
@@ -649,15 +622,6 @@ impl LocalLifecycleManager {
             Ok(dir) => dir,
             Err(e) => {
                 warn!("maybe_scale_up: failed to create worker clone: {}", e);
-                return Ok(None);
-            }
-        };
-
-        // Pick the first claimable node to assign to this worker
-        let node = match claimable.first() {
-            Some(n) => n,
-            None => {
-                warn!("maybe_scale_up: no claimable nodes available (race condition?)");
                 return Ok(None);
             }
         };
@@ -756,177 +720,45 @@ impl LocalLifecycleManager {
         };
         let max_workers = scale.max;
 
-        // Get claimable nodes and workers
-        let claimable = self.get_claimable_nodes().await?;
+        let mut claimable = self.get_claimable_nodes().await?;
+        claimable.sort_by_key(Self::claim_priority);
 
         let workers = self.state.get_workers().await?;
-
-        let active_count = workers
-            .iter()
-            .filter(|w| w.status == WorkerStatus::Working)
-            .count();
-
-        let mut idle_workers: Vec<_> = workers
-            .iter()
-            .filter(|w| w.status == WorkerStatus::Awaiting && !w.hitl_waiting)
-            .collect();
-
+        let all_nodes = self.get_all_nodes().await?;
         let mut actions = vec![];
+        let mut used_names: HashSet<String> = workers.iter().map(|w| w.name.clone()).collect();
 
-        // Scale down: if we have more workers than max_workers, delete excess idle workers
-        // Only delete idle workers (Awaiting, not hitl_waiting, no assigned task)
-        // Never kill working workers
-        let total_workers = workers.len();
-        if total_workers > max_workers {
-            let excess = total_workers - max_workers;
-            let mut deleted_names: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
+        // Ephemeral workers: cleanup idle workers with no active assignment,
+        // and only resume workers that still own a working task.
+        let mut resumed_workers = HashSet::new();
+        for worker in workers.iter().filter(|w| w.status != WorkerStatus::Working) {
+            if worker.hitl_waiting {
+                continue;
+            }
 
-            // Find idle workers without assigned tasks that we can delete
-            for worker in &idle_workers {
-                if deleted_names.len() >= excess {
-                    break;
-                }
-                // Only delete workers that have no assigned task
-                if worker.assigned_task_id.is_none() {
-                    // Delete the worker from the database
-                    // Note: We don't need to kill the process since idle workers have no process
+            let assigned_task_id = match worker.assigned_task_id.as_ref() {
+                Some(task_id) => task_id,
+                None => {
                     if let Err(e) = self.state.delete_worker(&worker.name).await {
                         warn!(
-                            "evaluate_scaling: failed to delete excess worker {}: {}",
+                            "evaluate_scaling: failed to delete finished worker {}: {}",
                             worker.name, e
                         );
                     } else {
-                        info!(
-                            "evaluate_scaling: deleted excess idle worker {} (scaling down to {})",
-                            worker.name, max_workers
-                        );
-                        deleted_names.insert(worker.name.clone());
+                        info!("evaluate_scaling: deleted finished worker {}", worker.name);
+                        used_names.remove(&worker.name);
                     }
-                }
-            }
-
-            // Filter out deleted workers from idle_workers list
-            if !deleted_names.is_empty() {
-                idle_workers.retain(|w| !deleted_names.contains(&w.name));
-            }
-        }
-
-        // First: check for idle workers that ALREADY have an assigned task (status=working)
-        // These need to be respawned immediately without claiming a new task
-        for worker in &idle_workers {
-            if let Some(ref assigned_task_id) = worker.assigned_task_id {
-                // Worker has an assigned task - verify it's still in "working" status
-                let all_nodes = self.get_all_nodes().await.unwrap_or_default();
-                let task_still_doing = all_nodes
-                    .iter()
-                    .any(|n| n.id == *assigned_task_id && n.status == BoardNodeStatus::Working);
-
-                if task_still_doing {
-                    // Get work_dir from database, fallback to standard location
-                    let work_dir = worker
-                        .work_dir
-                        .as_ref()
-                        .filter(|s| !s.is_empty())
-                        .map(PathBuf::from)
-                        .unwrap_or_else(|| self.context.run_dir.join("work").join(&worker.name));
-
-                    actions.push(LifecycleAction::ResumeWorker {
-                        worker_name: worker.name.clone(),
-                        work_dir,
-                        resume_session_id: worker.session_id.clone(),
-                        state_handle: worker
-                            .state_handle
-                            .as_ref()
-                            .and_then(|json| serde_json::from_str::<WorkerStateHandle>(json).ok()),
-                    });
-
-                    info!(
-                        "evaluate_scaling: respawning worker {} with existing assigned task {}",
-                        worker.name, assigned_task_id
-                    );
-                }
-            }
-        }
-
-        // If no claimable tasks, return any actions from existing assignments
-        if claimable.is_empty() {
-            debug!(
-                "evaluate_scaling: no claimable tasks, {} actions from existing assignments",
-                actions.len()
-            );
-            return Ok(actions);
-        }
-
-        // Calculate how many workers we need for claimable tasks
-        let needed = claimable
-            .len()
-            .min(max_workers)
-            .saturating_sub(active_count);
-
-        // Track count of workers already handled (with existing assignments)
-        let existing_actions_count = actions.len();
-
-        // Filter out workers that already have actions (from existing assignments above)
-        // Build a set of worker names that already have actions
-        let workers_with_actions: std::collections::HashSet<String> = actions
-            .iter()
-            .filter_map(|a| match a {
-                LifecycleAction::ResumeWorker { worker_name, .. } => Some(worker_name.clone()),
-                _ => None,
-            })
-            .collect();
-
-        let available_idle_workers: Vec<_> = idle_workers
-            .iter()
-            .filter(|w| !workers_with_actions.contains(&w.name))
-            .collect();
-
-        // Drop the HashSet so we can mutate actions again
-        drop(workers_with_actions);
-
-        if needed == 0 && available_idle_workers.is_empty() {
-            debug!("evaluate_scaling: no additional workers needed");
-            return Ok(actions);
-        }
-
-        let mut nodes_to_assign: Vec<_> = claimable.clone();
-        let all_nodes = self.get_all_nodes().await?;
-
-        // Second: wake available idle workers with NEW nodes from claimable
-        let workers_to_wake = needed.min(available_idle_workers.len());
-        for worker in available_idle_workers.iter().take(workers_to_wake) {
-            if let Some(node) = self.pick_node_for_worker(&nodes_to_assign, worker, &all_nodes) {
-                nodes_to_assign.retain(|n| n.id != node.id);
-
-                // Assign node to worker in database
-                if let Err(e) = self.claim_node(&node.id, &worker.name).await {
-                    warn!(
-                        "evaluate_scaling: failed to claim node {} for worker {}: {}",
-                        node.id, worker.name, e
-                    );
                     continue;
                 }
+            };
 
-                // Update worker's assigned_task_id
-                if let Err(e) = self
-                    .state
-                    .update_worker(
-                        &worker.name,
-                        WorkerUpdate {
-                            assigned_task_id: Some(Some(node.id.clone())),
-                            ..Default::default()
-                        },
-                    )
-                    .await
-                {
-                    warn!(
-                        "evaluate_scaling: failed to update assigned_task_id for worker {}: {}",
-                        worker.name, e
-                    );
-                }
+            let task_is_still_working = all_nodes.iter().any(|n| {
+                n.id == *assigned_task_id
+                    && n.status == BoardNodeStatus::Working
+                    && n.claimed_by.as_deref() == Some(worker.name.as_str())
+            });
 
-                // Get work_dir from database, fallback to standard location
+            if task_is_still_working {
                 let work_dir = worker
                     .work_dir
                     .as_ref()
@@ -943,135 +775,142 @@ impl LocalLifecycleManager {
                         .as_ref()
                         .and_then(|json| serde_json::from_str::<WorkerStateHandle>(json).ok()),
                 });
-
+                resumed_workers.insert(worker.name.clone());
                 info!(
-                    "evaluate_scaling: waking idle worker {} with node {}",
-                    worker.name, node.id
+                    "evaluate_scaling: resuming worker {} for assigned task {}",
+                    worker.name, assigned_task_id
                 );
+            } else if let Err(e) = self.state.delete_worker(&worker.name).await {
+                warn!(
+                    "evaluate_scaling: failed to delete stale worker {}: {}",
+                    worker.name, e
+                );
+            } else {
+                info!(
+                    "evaluate_scaling: deleted stale worker {} (task no longer working)",
+                    worker.name
+                );
+                used_names.remove(&worker.name);
             }
         }
 
-        // Then: spawn new workers for remaining nodes
-        // Account for both:
-        // - existing_actions_count: workers being resumed with their existing assignments
-        // - spawned_count: idle workers woken with new assignments in the loop above
-        let spawned_count = actions.len() - existing_actions_count;
-        let total_resuming = existing_actions_count + spawned_count;
-        let remaining = needed.saturating_sub(total_resuming);
-        if remaining > 0 {
-            let project_path_str = match self.state.get_project_path().await? {
-                Some(p) => p,
-                None => {
-                    warn!("evaluate_scaling: no project path, cannot spawn new workers");
-                    return Ok(actions);
+        if claimable.is_empty() {
+            return Ok(actions);
+        }
+
+        let active_count = workers
+            .iter()
+            .filter(|w| w.status == WorkerStatus::Working)
+            .count();
+        let occupied_slots = active_count + resumed_workers.len();
+        let available_slots = max_workers.saturating_sub(occupied_slots);
+
+        if available_slots == 0 {
+            return Ok(actions);
+        }
+
+        let project_path_str = match self.state.get_project_path().await? {
+            Some(p) => p,
+            None => {
+                warn!("evaluate_scaling: no project path, cannot spawn new workers");
+                return Ok(actions);
+            }
+        };
+
+        let project_path = PathBuf::from(&project_path_str);
+        let staging_dir = self.context.run_dir.join("work").join("staging");
+        let to_spawn = available_slots.min(claimable.len());
+
+        for node in claimable.into_iter().take(to_spawn) {
+            let new_name = Self::generate_ephemeral_worker_name(&used_names);
+            used_names.insert(new_name.clone());
+
+            let worker_dir = match create_worker_clone(
+                &self.context.run_name,
+                &project_path,
+                &new_name,
+                Some(&staging_dir),
+                &self.context.run_dir,
+            ) {
+                Ok(dir) => dir,
+                Err(e) => {
+                    warn!(
+                        "evaluate_scaling: failed to create worker clone for {}: {}",
+                        new_name, e
+                    );
+                    used_names.remove(&new_name);
+                    continue;
                 }
             };
 
-            let project_path = PathBuf::from(&project_path_str);
-            let staging_dir = self.context.run_dir.join("work").join("staging");
-            let existing_names: Vec<String> = workers.iter().map(|w| w.name.clone()).collect();
+            let location = self
+                .state
+                .get_default_runner()
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "local".to_string());
 
-            for _ in 0..remaining {
-                if nodes_to_assign.is_empty() {
-                    break;
-                }
+            if let Err(e) = self
+                .state
+                .add_worker(&new_name, worker_dir.to_str().unwrap_or("."), &location)
+                .await
+            {
+                warn!("evaluate_scaling: failed to add worker {}: {}", new_name, e);
+                used_names.remove(&new_name);
+                continue;
+            }
 
-                // Get node to assign (just take first available for new workers)
-                let node = nodes_to_assign.remove(0);
+            if let Err(e) = self.claim_node(&node.id, &new_name).await {
+                warn!(
+                    "evaluate_scaling: failed to claim node {} for worker {}: {}",
+                    node.id, new_name, e
+                );
+                let _ = self.state.delete_worker(&new_name).await;
+                used_names.remove(&new_name);
+                continue;
+            }
 
-                // Generate new worker name
-                let new_name = crate::core::names::get_available_name(&existing_names);
-
-                // Create worker clone
-                let worker_dir = match create_worker_clone(
-                    &self.context.run_name,
-                    &project_path,
+            if let Err(e) = self
+                .state
+                .update_worker(
                     &new_name,
-                    Some(&staging_dir),
-                    &self.context.run_dir,
-                ) {
-                    Ok(dir) => dir,
-                    Err(e) => {
-                        warn!(
-                            "evaluate_scaling: failed to create worker clone for {}: {}",
-                            new_name, e
-                        );
-                        continue;
-                    }
-                };
-
-                // Add worker to state
-                let location = self
-                    .state
-                    .get_default_runner()
-                    .await
-                    .ok()
-                    .flatten()
-                    .unwrap_or_else(|| "local".to_string());
-
-                if let Err(e) = self
-                    .state
-                    .add_worker(&new_name, worker_dir.to_str().unwrap_or("."), &location)
-                    .await
-                {
-                    warn!("evaluate_scaling: failed to add worker {}: {}", new_name, e);
-                    continue;
-                }
-
-                // Claim node for new worker
-                if let Err(e) = self.claim_node(&node.id, &new_name).await {
-                    warn!(
-                        "evaluate_scaling: failed to claim node {} for new worker {}: {}",
-                        node.id, new_name, e
-                    );
-                    continue;
-                }
-
-                // Set assigned_task_id for new worker
-                if let Err(e) = self
-                    .state
-                    .update_worker(
-                        &new_name,
-                        WorkerUpdate {
-                            assigned_task_id: Some(Some(node.id.clone())),
-                            ..Default::default()
-                        },
-                    )
-                    .await
-                {
-                    warn!(
-                        "evaluate_scaling: failed to set assigned_task_id for {}: {}",
-                        new_name, e
-                    );
-                }
-
-                // Create worker chat file
-                let chat_file = self.files.chats_dir().join(format!("{}.md", new_name));
-                if let Err(e) = std::fs::write(&chat_file, format!("# {} Chat\n\n", new_name)) {
-                    warn!(
-                        "evaluate_scaling: failed to create worker chat for {}: {}",
-                        new_name, e
-                    );
-                }
-
-                // Announce in group chat
-                self.send_system_message(&format!(
-                    "New worker **{}** has joined and is assigned task **{}**.",
-                    new_name, node.id
-                ))
-                .await;
-
-                actions.push(LifecycleAction::SpawnWorker {
-                    worker_name: new_name.clone(),
-                    work_dir: worker_dir,
-                    assigned_task_id: Some(node.id.clone()),
-                });
-
-                info!(
-                    "evaluate_scaling: spawning new worker {} with node {}",
-                    new_name, node.id
+                    WorkerUpdate {
+                        assigned_task_id: Some(Some(node.id.clone())),
+                        ..Default::default()
+                    },
+                )
+                .await
+            {
+                warn!(
+                    "evaluate_scaling: failed to set assigned_task_id for {}: {}",
+                    new_name, e
                 );
             }
+
+            let chat_file = self.files.chats_dir().join(format!("{}.md", new_name));
+            if let Err(e) = std::fs::write(&chat_file, format!("# {} Chat\n\n", new_name)) {
+                warn!(
+                    "evaluate_scaling: failed to create worker chat for {}: {}",
+                    new_name, e
+                );
+            }
+
+            self.send_system_message(&format!(
+                "New worker **{}** has joined and is assigned task **{}**.",
+                new_name, node.id
+            ))
+            .await;
+
+            actions.push(LifecycleAction::SpawnWorker {
+                worker_name: new_name.clone(),
+                work_dir: worker_dir,
+                assigned_task_id: Some(node.id.clone()),
+            });
+            info!(
+                "evaluate_scaling: spawning new worker {} with node {}",
+                new_name, node.id
+            );
         }
 
         Ok(actions)
@@ -1215,7 +1054,7 @@ impl LocalLifecycleManager {
                 .filter(|n| {
                     use crate::core::delta::NodeKind;
                     match n.kind {
-                        NodeKind::Task | NodeKind::Feature => {
+                        NodeKind::Task | NodeKind::Feature | NodeKind::Plan => {
                             n.status != BoardNodeStatus::Done
                                 && n.status != BoardNodeStatus::Validated
                         }
@@ -1605,10 +1444,10 @@ mod tests {
         let ctx = LifecycleContext::new(
             "test-run",
             PathBuf::from("/tmp/test"),
-            vec!["hirsel".to_string(), "__acp-bridge".to_string()],
+            vec!["codex".to_string()],
         );
         assert_eq!(ctx.run_name, "test-run");
         assert_eq!(ctx.run_dir, PathBuf::from("/tmp/test"));
-        assert_eq!(ctx.agent_command.len(), 2);
+        assert_eq!(ctx.agent_command, vec!["codex".to_string()]);
     }
 }

@@ -2260,20 +2260,20 @@ section.flex-1.flex.flex-col {
 }
 
 /* ============================================
-   Gyp Chat - "The Shepherd's Hearth" Design
+   Shepherd Chat - "The Shepherd's Hearth" Design
    ============================================ */
 
-/* Gyp Chat CSS Variables - adapt to theme */
-.gyp-chat-panel {
-  --gyp-glow: rgba(var(--amber-500-rgb, 212, 165, 116), 0.15);
-  --gyp-border-active: rgba(var(--amber-500-rgb, 212, 165, 116), 0.4);
-  --gyp-message-bg: rgba(45, 45, 45, 0.8);
+/* Shepherd Chat CSS Variables - adapt to theme */
+.shepherd-chat-panel {
+  --shepherd-glow: rgba(var(--amber-500-rgb, 212, 165, 116), 0.15);
+  --shepherd-border-active: rgba(var(--amber-500-rgb, 212, 165, 116), 0.4);
+  --shepherd-message-bg: rgba(45, 45, 45, 0.8);
   --user-message-bg: rgba(var(--amber-500-rgb, 212, 165, 116), 0.08);
   --user-message-border: rgba(var(--amber-500-rgb, 212, 165, 116), 0.2);
 }
 
 /* Panel container with warm vignette */
-.gyp-chat-panel {
+.shepherd-chat-panel {
   background: linear-gradient(
     135deg,
     var(--pasture-800) 0%,
@@ -2282,7 +2282,7 @@ section.flex-1.flex.flex-col {
 }
 
 /* Subtle vignette overlay */
-.gyp-chat-panel::before {
+.shepherd-chat-panel::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -2297,7 +2297,7 @@ section.flex-1.flex.flex-col {
 }
 
 /* Noise texture overlay for crafted feel */
-.gyp-chat-panel::after {
+.shepherd-chat-panel::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -2309,41 +2309,41 @@ section.flex-1.flex.flex-col {
 }
 
 /* Ensure content is above overlays */
-.gyp-chat-panel > * {
+.shepherd-chat-panel > * {
   position: relative;
   z-index: 1;
 }
 
 /* Active editing glow effect */
-.gyp-chat-panel.gyp-editing {
+.shepherd-chat-panel.shepherd-editing {
   box-shadow:
-    0 0 0 1px var(--gyp-border-active),
+    0 0 0 1px var(--shepherd-border-active),
     0 0 20px rgba(var(--amber-500-rgb, 212, 165, 116), 0.2),
     inset 0 0 40px rgba(var(--amber-500-rgb, 212, 165, 116), 0.05);
-  animation: gyp-editing-pulse 2s ease-in-out infinite;
+  animation: shepherd-editing-pulse 2s ease-in-out infinite;
 }
 
-@keyframes gyp-editing-pulse {
+@keyframes shepherd-editing-pulse {
   0%, 100% {
     box-shadow:
-      0 0 0 1px var(--gyp-border-active),
+      0 0 0 1px var(--shepherd-border-active),
       0 0 20px rgba(var(--amber-500-rgb, 212, 165, 116), 0.15),
       inset 0 0 40px rgba(var(--amber-500-rgb, 212, 165, 116), 0.03);
   }
   50% {
     box-shadow:
-      0 0 0 1px var(--gyp-border-active),
+      0 0 0 1px var(--shepherd-border-active),
       0 0 30px rgba(var(--amber-500-rgb, 212, 165, 116), 0.25),
       inset 0 0 50px rgba(var(--amber-500-rgb, 212, 165, 116), 0.07);
   }
 }
 
 /* Panel entrance animation */
-.gyp-panel-enter {
-  animation: gyp-panel-slide-up 250ms ease-out;
+.shepherd-panel-enter {
+  animation: shepherd-panel-slide-up 250ms ease-out;
 }
 
-@keyframes gyp-panel-slide-up {
+@keyframes shepherd-panel-slide-up {
   from {
     opacity: 0;
     transform: translateY(16px);
@@ -2355,7 +2355,7 @@ section.flex-1.flex.flex-col {
 }
 
 /* Header divider with gradient fade */
-.gyp-header-divider {
+.shepherd-header-divider {
   height: 1px;
   background: linear-gradient(
     90deg,
@@ -2368,11 +2368,11 @@ section.flex-1.flex.flex-col {
 }
 
 /* Avatar pulse ring for connection status */
-.gyp-avatar-ring {
+.shepherd-avatar-ring {
   position: relative;
 }
 
-.gyp-avatar-ring::after {
+.shepherd-avatar-ring::after {
   content: '';
   position: absolute;
   inset: -3px;
@@ -2381,12 +2381,12 @@ section.flex-1.flex.flex-col {
   transition: border-color 200ms ease-out, opacity 200ms ease-out;
 }
 
-.gyp-avatar-ring.connected::after {
+.shepherd-avatar-ring.connected::after {
   border-color: var(--sage);
   opacity: 0.6;
 }
 
-.gyp-avatar-ring.connecting::after {
+.shepherd-avatar-ring.connecting::after {
   border-color: var(--amber-500);
   animation: avatar-connecting-pulse 1.5s ease-in-out infinite;
 }
@@ -2397,7 +2397,7 @@ section.flex-1.flex.flex-col {
 }
 
 /* Messages area background */
-.gyp-messages-area {
+.shepherd-messages-area {
   background: linear-gradient(
     180deg,
     var(--pasture-900) 0%,
@@ -2406,15 +2406,15 @@ section.flex-1.flex.flex-col {
 }
 
 /* User message bubble */
-.gyp-message-user {
+.shepherd-message-user {
   background-color: rgba(var(--amber-500-rgb, 212, 165, 116), 0.08);
   border: 1px solid rgba(var(--amber-500-rgb, 212, 165, 116), 0.2);
   border-radius: 1rem 1rem 0.25rem 1rem;
   position: relative;
 }
 
-/* Gyp message bubble */
-.gyp-message-assistant {
+/* Shepherd message bubble */
+.shepherd-message-assistant {
   background-color: color-mix(in srgb, var(--pasture-700) 80%, transparent);
   border-left: 2px solid rgba(var(--amber-500-rgb, 212, 165, 116), 0.3);
   border-radius: 0.25rem 1rem 1rem 0.25rem;
@@ -2422,11 +2422,11 @@ section.flex-1.flex.flex-col {
 }
 
 /* Message enter animation */
-.gyp-message-enter {
-  animation: gyp-message-slide-up 200ms ease-out;
+.shepherd-message-enter {
+  animation: shepherd-message-slide-up 200ms ease-out;
 }
 
-@keyframes gyp-message-slide-up {
+@keyframes shepherd-message-slide-up {
   from {
     opacity: 0;
     transform: translateY(8px);
@@ -2438,40 +2438,40 @@ section.flex-1.flex.flex-col {
 }
 
 /* Staggered message animation */
-.gyp-message-stagger {
-  animation: gyp-message-slide-up 200ms ease-out backwards;
+.shepherd-message-stagger {
+  animation: shepherd-message-slide-up 200ms ease-out backwards;
 }
 
-.gyp-message-stagger:nth-child(1) { animation-delay: 0ms; }
-.gyp-message-stagger:nth-child(2) { animation-delay: 50ms; }
-.gyp-message-stagger:nth-child(3) { animation-delay: 100ms; }
+.shepherd-message-stagger:nth-child(1) { animation-delay: 0ms; }
+.shepherd-message-stagger:nth-child(2) { animation-delay: 50ms; }
+.shepherd-message-stagger:nth-child(3) { animation-delay: 100ms; }
 
 /* Thinking ellipsis animation */
-.gyp-thinking-dots {
+.shepherd-thinking-dots {
   display: inline-flex;
   gap: 4px;
   padding: 4px 0;
 }
 
-.gyp-thinking-dots span {
+.shepherd-thinking-dots span {
   width: 4px;
   height: 4px;
   background-color: var(--wool-500);
   border-radius: 50%;
-  animation: gyp-thinking-bounce 1.4s ease-in-out infinite;
+  animation: shepherd-thinking-bounce 1.4s ease-in-out infinite;
 }
 
-.gyp-thinking-dots span:nth-child(1) { animation-delay: 0ms; }
-.gyp-thinking-dots span:nth-child(2) { animation-delay: 160ms; }
-.gyp-thinking-dots span:nth-child(3) { animation-delay: 320ms; }
+.shepherd-thinking-dots span:nth-child(1) { animation-delay: 0ms; }
+.shepherd-thinking-dots span:nth-child(2) { animation-delay: 160ms; }
+.shepherd-thinking-dots span:nth-child(3) { animation-delay: 320ms; }
 
-@keyframes gyp-thinking-bounce {
+@keyframes shepherd-thinking-bounce {
   0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
   30% { transform: translateY(-4px); opacity: 1; }
 }
 
 /* Thinking block - collapsible thought bubble */
-.gyp-thinking-block {
+.shepherd-thinking-block {
   background-color: color-mix(in srgb, var(--pasture-700) 60%, transparent);
   border-left: 2px solid rgba(var(--amber-500-rgb, 212, 165, 116), 0.25);
   border-radius: 0.25rem;
@@ -2479,16 +2479,16 @@ section.flex-1.flex.flex-col {
   transition: max-height 200ms ease-out;
 }
 
-.gyp-thinking-block.collapsed {
+.shepherd-thinking-block.collapsed {
   max-height: 2rem;
 }
 
-.gyp-thinking-block.expanded {
+.shepherd-thinking-block.expanded {
   max-height: 200px;
 }
 
 /* Tool call card - craft aesthetic */
-.gyp-tool-card {
+.shepherd-tool-card {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -2504,7 +2504,7 @@ section.flex-1.flex.flex-col {
 }
 
 /* Tool working state - amber underline animation */
-.gyp-tool-card.working::after {
+.shepherd-tool-card.working::after {
   content: '';
   position: absolute;
   bottom: 0;
@@ -2512,51 +2512,51 @@ section.flex-1.flex.flex-col {
   width: 100%;
   height: 2px;
   background: linear-gradient(90deg, transparent, var(--amber-500), transparent);
-  animation: gyp-tool-working 1.5s ease-in-out infinite;
+  animation: shepherd-tool-working 1.5s ease-in-out infinite;
 }
 
-@keyframes gyp-tool-working {
+@keyframes shepherd-tool-working {
   0% { transform: translateX(-100%); }
   100% { transform: translateX(100%); }
 }
 
 /* Tool completed state - subtle success glow */
-.gyp-tool-card.completed {
+.shepherd-tool-card.completed {
   border-color: rgba(var(--sage-rgb, 125, 153, 112), 0.4);
 }
 
-.gyp-tool-card.completed::after {
+.shepherd-tool-card.completed::after {
   content: '';
   position: absolute;
   inset: 0;
   background: rgba(var(--sage-rgb, 125, 153, 112), 0.1);
-  animation: gyp-tool-complete-flash 400ms ease-out;
+  animation: shepherd-tool-complete-flash 400ms ease-out;
 }
 
-@keyframes gyp-tool-complete-flash {
+@keyframes shepherd-tool-complete-flash {
   from { opacity: 1; }
   to { opacity: 0; }
 }
 
 /* Tool failed state */
-.gyp-tool-card.failed {
+.shepherd-tool-card.failed {
   border-color: rgba(var(--terra-rgb, 196, 92, 74), 0.4);
   background-color: rgba(var(--terra-rgb, 196, 92, 74), 0.1);
 }
 
 /* Tool pending state - distinct from working */
-.gyp-tool-card.pending {
+.shepherd-tool-card.pending {
   border-color: var(--pasture-500);
   opacity: 0.8;
 }
 
 /* Tool card expanded drawer */
-.gyp-tool-drawer {
-  animation: gyp-drawer-expand 200ms ease-out;
+.shepherd-tool-drawer {
+  animation: shepherd-drawer-expand 200ms ease-out;
   transform-origin: top;
 }
 
-@keyframes gyp-drawer-expand {
+@keyframes shepherd-drawer-expand {
   from {
     opacity: 0;
     transform: scaleY(0.9);
@@ -2808,7 +2808,7 @@ section.flex-1.flex.flex-col {
 }
 
 /* Empty state styling */
-.gyp-empty-state {
+.shepherd-empty-state {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2819,40 +2819,40 @@ section.flex-1.flex.flex-col {
 }
 
 /* Avatar breathing animation */
-.gyp-avatar-breathe {
-  animation: gyp-avatar-breathe 4s ease-in-out infinite;
+.shepherd-avatar-breathe {
+  animation: shepherd-avatar-breathe 4s ease-in-out infinite;
 }
 
-@keyframes gyp-avatar-breathe {
+@keyframes shepherd-avatar-breathe {
   0%, 100% { transform: scale(1); }
   50% { transform: scale(1.03); }
 }
 
 /* Decorative dots (like stars) */
-.gyp-decorative-dots {
+.shepherd-decorative-dots {
   display: flex;
   gap: 8px;
   justify-content: center;
 }
 
-.gyp-decorative-dots span {
+.shepherd-decorative-dots span {
   width: 3px;
   height: 3px;
   border-radius: 50%;
   background-color: rgba(var(--amber-500-rgb, 212, 165, 116), 0.4);
-  animation: gyp-dot-twinkle 3s ease-in-out infinite;
+  animation: shepherd-dot-twinkle 3s ease-in-out infinite;
 }
 
-.gyp-decorative-dots span:nth-child(2) { animation-delay: 1s; }
-.gyp-decorative-dots span:nth-child(3) { animation-delay: 2s; }
+.shepherd-decorative-dots span:nth-child(2) { animation-delay: 1s; }
+.shepherd-decorative-dots span:nth-child(3) { animation-delay: 2s; }
 
-@keyframes gyp-dot-twinkle {
+@keyframes shepherd-dot-twinkle {
   0%, 100% { opacity: 0.3; transform: scale(1); }
   50% { opacity: 1; transform: scale(1.2); }
 }
 
 /* Input area styling */
-.gyp-input-area {
+.shepherd-input-area {
   background: linear-gradient(
     0deg,
     var(--pasture-800) 0%,
@@ -2860,24 +2860,24 @@ section.flex-1.flex.flex-col {
   );
 }
 
-.gyp-input-wrapper {
+.shepherd-input-wrapper {
   background-color: color-mix(in srgb, var(--pasture-900) 80%, transparent);
   border: 1px solid var(--pasture-600);
   border-radius: 0.75rem;
   transition: border-color 150ms ease-out, box-shadow 150ms ease-out;
 }
 
-.gyp-input-wrapper:focus-within {
+.shepherd-input-wrapper:focus-within {
   border-color: rgba(var(--amber-500-rgb, 212, 165, 116), 0.5);
   box-shadow: 0 0 0 2px rgba(var(--amber-500-rgb, 212, 165, 116), 0.15);
 }
 
-.gyp-input-wrapper.disabled {
+.shepherd-input-wrapper.disabled {
   opacity: 0.5;
 }
 
 /* Send button with gradient and glow */
-.gyp-send-btn {
+.shepherd-send-btn {
   background: linear-gradient(
     135deg,
     var(--amber-600) 0%,
@@ -2890,27 +2890,27 @@ section.flex-1.flex.flex-col {
   box-shadow: 0 2px 8px rgba(var(--amber-500-rgb, 212, 165, 116), 0.2);
 }
 
-.gyp-send-btn:hover:not(:disabled) {
+.shepherd-send-btn:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(var(--amber-500-rgb, 212, 165, 116), 0.3);
 }
 
-.gyp-send-btn:active:not(:disabled) {
+.shepherd-send-btn:active:not(:disabled) {
   transform: translateY(0);
 }
 
-.gyp-send-btn:disabled {
+.shepherd-send-btn:disabled {
   opacity: 0.3;
   box-shadow: none;
 }
 
 /* Permission modal styling */
-.gyp-permission-overlay {
+.shepherd-permission-overlay {
   background: rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(2px);
 }
 
-.gyp-permission-modal {
+.shepherd-permission-modal {
   background: linear-gradient(
     135deg,
     var(--pasture-800) 0%,
@@ -2919,26 +2919,26 @@ section.flex-1.flex.flex-col {
   border: 1px solid var(--pasture-600);
   border-radius: 1rem;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-  animation: gyp-modal-enter 200ms ease-out;
+  animation: shepherd-modal-enter 200ms ease-out;
   position: relative;
   overflow: visible;
 }
 
-/* Gyp avatar peeking in corner */
-.gyp-permission-modal::before {
+/* Shepherd avatar peeking in corner */
+.shepherd-permission-modal::before {
   content: '';
   position: absolute;
   top: -12px;
   right: 16px;
   width: 32px;
   height: 32px;
-  background-image: url('/gyp.svg');
+  background-image: url('/shepherd.svg');
   background-size: contain;
   background-repeat: no-repeat;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
 }
 
-@keyframes gyp-modal-enter {
+@keyframes shepherd-modal-enter {
   from {
     opacity: 0;
     transform: scale(0.95) translateY(8px);
@@ -2949,7 +2949,7 @@ section.flex-1.flex.flex-col {
   }
 }
 
-.gyp-permission-option {
+.shepherd-permission-option {
   background-color: var(--pasture-700);
   border: 1px solid var(--pasture-600);
   border-radius: 0.5rem;
@@ -2960,12 +2960,12 @@ section.flex-1.flex.flex-col {
   text-align: left;
 }
 
-.gyp-permission-option:hover {
+.shepherd-permission-option:hover {
   background-color: var(--pasture-600);
   border-color: rgba(var(--amber-500-rgb, 212, 165, 116), 0.4);
 }
 
-.gyp-permission-option.primary {
+.shepherd-permission-option.primary {
   background: linear-gradient(
     135deg,
     rgba(var(--amber-500-rgb, 212, 165, 116), 0.2) 0%,
@@ -2974,12 +2974,12 @@ section.flex-1.flex.flex-col {
   border-color: rgba(var(--amber-500-rgb, 212, 165, 116), 0.4);
 }
 
-.gyp-permission-option.primary:hover {
+.shepherd-permission-option.primary:hover {
   border-color: rgba(var(--amber-500-rgb, 212, 165, 116), 0.6);
 }
 
 /* Options menu button */
-.gyp-options-btn {
+.shepherd-options-btn {
   padding: 6px;
   border-radius: 6px;
   color: var(--wool-500);
@@ -2988,13 +2988,13 @@ section.flex-1.flex.flex-col {
   transition: all 150ms ease-out;
 }
 
-.gyp-options-btn:hover {
+.shepherd-options-btn:hover {
   background-color: rgba(var(--amber-500-rgb, 212, 165, 116), 0.15);
   color: var(--wool-300);
 }
 
 /* Focus node indicator */
-.gyp-focus-indicator {
+.shepherd-focus-indicator {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -3007,7 +3007,7 @@ section.flex-1.flex.flex-col {
 }
 
 /* Keyboard hint styling */
-.gyp-keyboard-hints {
+.shepherd-keyboard-hints {
   font-family: 'ET Book', serif;
   font-size: 10px;
   font-style: italic;
@@ -3016,10 +3016,10 @@ section.flex-1.flex.flex-col {
 
 /* Reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
-  .gyp-chat-panel,
-  .gyp-chat-panel *,
-  .gyp-chat-panel::before,
-  .gyp-chat-panel::after {
+  .shepherd-chat-panel,
+  .shepherd-chat-panel *,
+  .shepherd-chat-panel::before,
+  .shepherd-chat-panel::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;

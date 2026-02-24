@@ -8,25 +8,26 @@ use chrono::Utc;
 use std::collections::HashMap;
 
 use super::{
-    CreateRunRequest, CreateRunResponse, HealthResponse, Orchestrator, OrchestratorError,
-    OrchestratorResult, SpawnWorkersResponse, StartRunRequest, TailscaleOAuth, WorkerStateHandle,
+    HealthResponse, Orchestrator, OrchestratorError, OrchestratorResult, StartRunRequest,
+    TailscaleOAuth, WorkerStateHandle,
 };
 use crate::core::api_types::{
-    convert_status, parse_elapsed_minutes, ConfigResponse, Eval, EvalStatus, HistoryEntry, Message,
-    RunDetail, RunSummary, SheepConfig, ThreadSummary, Worker, WorkerEventResponse,
-    WorkerEventsResponse, WorkerLocation, WorkerStatus,
+    convert_status, parse_elapsed_minutes, ConfigResponse, Eval, EvalStatus, HistoryEntry,
+    RunDetail, RunSummary, SheepConfig, Worker, WorkerEventResponse, WorkerEventsResponse,
+    WorkerLocation, WorkerStatus,
 };
 use crate::core::config::{self, Config};
-use crate::core::delta::{DeltaState, ProjectRunStatus};
+use crate::core::delta::{DeltaState, NodeKind, ProjectRunStatus};
 use crate::core::draft::create_workspace_provider;
 use crate::core::names::{get_available_names, slugify};
 use crate::core::ops::{
     compute_multi_worker_config, register_workers, setup_run_workspace, RunSetupConfig,
 };
 use crate::core::project::ProjectStore;
+use crate::core::route::RouteStore;
 use crate::core::runner::{create_runner, Runner, WorkerSpawnConfig as RunnerSpawnConfig};
 use crate::core::state::{SQLiteState, Status, WorkerUpdate};
-use crate::core::{Files, ProjectMessagesStore};
+use crate::core::Files;
 
 /// Get the coordinator's Tailscale hostname if connected to a tailnet.
 ///
@@ -702,6 +703,7 @@ impl Orchestrator for LocalOrchestrator {
             coordinator_url: None,
             tailscale_authkey: None,
             assigned_task_id: worker_data.assigned_task_id.clone(),
+            is_plan_task: false,
         };
 
         spawn_worker(config, &state)
@@ -754,119 +756,6 @@ impl Orchestrator for LocalOrchestrator {
             events,
             last_id,
             worker_status,
-        })
-    }
-
-    // -------------------------------------------------------------------------
-    // Messages
-    // -------------------------------------------------------------------------
-
-    async fn list_threads(&self, run: &str) -> OrchestratorResult<Vec<ThreadSummary>> {
-        let state = self.get_state(run).await?;
-
-        let project_id = state.get_project_id().await?.ok_or_else(|| {
-            OrchestratorError::InvalidOperation("Run not linked to project".into())
-        })?;
-
-        let route_id = state
-            .get_route_id()
-            .await
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-        let store = ProjectMessagesStore::open()
-            .await
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-        let project_threads = store
-            .get_threads(project_id, route_id, "user")
-            .await
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-        let threads = project_threads
-            .into_iter()
-            .map(|t| ThreadSummary {
-                name: t.thread,
-                message_count: t.message_count as u32,
-                unread_count: t.unread_count as u32,
-                last_message: t.last_message,
-                last_timestamp: t.last_timestamp,
-            })
-            .collect();
-
-        Ok(threads)
-    }
-
-    async fn get_messages(&self, run: &str, thread: &str) -> OrchestratorResult<Vec<Message>> {
-        let state = self.get_state(run).await?;
-
-        let project_id = state.get_project_id().await?.ok_or_else(|| {
-            OrchestratorError::InvalidOperation("Run not linked to project".into())
-        })?;
-
-        let route_id = state
-            .get_route_id()
-            .await
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-        let store = ProjectMessagesStore::open()
-            .await
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-        let project_messages = store
-            .get_messages(project_id, route_id, thread, Some(100))
-            .await
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-        let messages = project_messages
-            .into_iter()
-            .map(|m| Message {
-                id: m.id as u32,
-                thread: m.thread,
-                sender: m.sender,
-                content: m.content,
-                waiting: m.waiting,
-                read_by: None,
-                timestamp: m.timestamp,
-            })
-            .collect();
-
-        Ok(messages)
-    }
-
-    async fn send_message(
-        &self,
-        run: &str,
-        thread: &str,
-        content: &str,
-    ) -> OrchestratorResult<Message> {
-        let state = self.get_state(run).await?;
-
-        let project_id = state.get_project_id().await?.ok_or_else(|| {
-            OrchestratorError::InvalidOperation("Run not linked to project".into())
-        })?;
-
-        let route_id = state
-            .get_route_id()
-            .await
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-        let store = ProjectMessagesStore::open()
-            .await
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-        let pm = store
-            .add_message(project_id, route_id, thread, "user", content, false)
-            .await
-            .map_err(|e| OrchestratorError::State(e.to_string()))?;
-
-        Ok(Message {
-            id: pm.id as u32,
-            thread: pm.thread,
-            sender: pm.sender,
-            content: pm.content,
-            waiting: pm.waiting,
-            read_by: None,
-            timestamp: pm.timestamp,
         })
     }
 
@@ -927,7 +816,7 @@ impl Orchestrator for LocalOrchestrator {
             human_in_the_loop: self.config.human_in_the_loop,
             context_warning_threshold: self.config.context_warning_threshold,
             coordinator_port: self.config.coordinator_port,
-            auth: self.config.auth.clone().into(),
+            llm: self.config.llm.clone().into(),
             runners: self
                 .config
                 .runners
@@ -969,218 +858,6 @@ impl Orchestrator for LocalOrchestrator {
             status: "ok".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
         })
-    }
-
-    // -------------------------------------------------------------------------
-    // Run Creation
-    // -------------------------------------------------------------------------
-
-    async fn create_run(&self, request: CreateRunRequest) -> OrchestratorResult<CreateRunResponse> {
-        use crate::core::chats::{create_default_group_chat, create_worker_chat};
-        use crate::core::files::Files;
-        use crate::core::names;
-        use crate::core::state::{SQLiteState, Status};
-
-        // Slugify and validate run name
-        let run_name = slugify(&request.name);
-        if run_name.len() > 50 {
-            return Err(OrchestratorError::InvalidOperation(format!(
-                "Run name too long (max 50 chars): {}...",
-                &run_name[..50]
-            )));
-        }
-
-        // Get run directory
-        let run_dir = config::run_dir(&run_name);
-        if run_dir.exists() {
-            let db_path = run_dir.join("hirsel.db");
-            if db_path.exists() {
-                if let Ok(existing_state) = SQLiteState::new(&run_name).await {
-                    if let Ok(status) = existing_state.status().await {
-                        if status == Status::Working || status == Status::Eval {
-                            return Err(OrchestratorError::InvalidOperation(format!(
-                                "Run '{}' already exists and is active",
-                                run_name
-                            )));
-                        }
-                    }
-                }
-            }
-            // Clean up old run
-            let _ = std::fs::remove_dir_all(&run_dir);
-        }
-
-        // Create run directory
-        std::fs::create_dir_all(&run_dir).map_err(|e| {
-            OrchestratorError::Other(format!("Failed to create run directory: {}", e))
-        })?;
-
-        // Initialize Files
-        let files = Files::new(run_dir.clone());
-        files
-            .init_dirs()
-            .map_err(|e| OrchestratorError::Other(format!("Failed to init dirs: {}", e)))?;
-
-        // Note: Task content is stored in board nodes and accessed via MCP tools.
-        // No spec.md or task files are written to disk.
-
-        // Initialize workspace from starting_point if provided
-        let project_path = if let Some(ref starting_point) = request.starting_point {
-            let workspace = create_workspace_provider(None);
-            let workspace_info = workspace
-                .init(&run_name, starting_point)
-                .await
-                .map_err(|e| {
-                    OrchestratorError::Other(format!("Failed to initialize workspace: {}", e))
-                })?;
-            Some(workspace_info.path)
-        } else {
-            // No starting_point - expect files via upload_files()
-            None
-        };
-
-        // Initialize SQLite state
-        let sqlite_state = SQLiteState::new(&run_name)
-            .await
-            .map_err(|e| OrchestratorError::Other(format!("Failed to create state: {}", e)))?;
-        sqlite_state
-            .init_state(project_path.as_ref().and_then(|p| p.to_str()))
-            .await
-            .map_err(|e| OrchestratorError::Other(format!("Failed to init state: {}", e)))?;
-
-        // Store starting_point in database for cloning
-        if let Some(ref sp) = request.starting_point {
-            let sp_json = serde_json::to_string(sp).map_err(|e| {
-                OrchestratorError::Other(format!("Failed to serialize starting_point: {}", e))
-            })?;
-            sqlite_state
-                .set_starting_point(Some(&sp_json))
-                .await
-                .map_err(|e| {
-                    OrchestratorError::Other(format!("Failed to set starting_point: {}", e))
-                })?;
-        }
-
-        // Set run properties
-        sqlite_state
-            .set_request(Some(&request.spec))
-            .await
-            .map_err(|e| OrchestratorError::Other(format!("Failed to set request: {}", e)))?;
-
-        if let Some(scale) = request.worker_scale {
-            sqlite_state
-                .set_worker_scale(&scale.to_string())
-                .await
-                .map_err(|e| {
-                    OrchestratorError::Other(format!("Failed to set worker scale: {}", e))
-                })?;
-        }
-
-        if let Some(limit) = request.time_limit_minutes {
-            sqlite_state
-                .set_time_limit_minutes(Some(limit as i64))
-                .await
-                .map_err(|e| {
-                    OrchestratorError::Other(format!("Failed to set time limit: {}", e))
-                })?;
-        }
-
-        if let Some(hitl) = request.human_in_the_loop {
-            sqlite_state
-                .set_human_in_the_loop(hitl)
-                .await
-                .map_err(|e| OrchestratorError::Other(format!("Failed to set HITL: {}", e)))?;
-        }
-
-        // Set status to Draft (not spawning workers yet)
-        sqlite_state
-            .set_status(Status::Draft)
-            .await
-            .map_err(|e| OrchestratorError::Other(format!("Failed to set status: {}", e)))?;
-
-        // Create initial worker name
-        let first_worker_name = names::generate_worker_name();
-
-        // Determine multi-worker mode from scale
-        let max_scale = request.worker_scale.unwrap_or(5);
-        let is_multi_worker = max_scale > 1;
-
-        // Create chat files
-        let chats_dir = files.chats_dir();
-        if is_multi_worker {
-            create_default_group_chat(
-                &chats_dir,
-                std::slice::from_ref(&first_worker_name),
-                Some(&first_worker_name),
-            )
-            .map_err(|e| OrchestratorError::Other(format!("Failed to create group chat: {}", e)))?;
-        }
-
-        // Initialize docs directory for scribe system
-        files
-            .init_docs()
-            .map_err(|e| OrchestratorError::Other(format!("Failed to init docs: {}", e)))?;
-
-        create_worker_chat(&chats_dir, &first_worker_name).map_err(|e| {
-            OrchestratorError::Other(format!("Failed to create worker chat: {}", e))
-        })?;
-
-        // Register initial worker (without work_dir - will be set after files upload)
-        sqlite_state
-            .add_worker(&first_worker_name, "", "remote")
-            .await
-            .map_err(|e| OrchestratorError::Other(format!("Failed to register worker: {}", e)))?;
-
-        // Store tailscale OAuth credentials if provided
-        if let Some(ref oauth) = request.tailscale_oauth {
-            let oauth_json = serde_json::to_string(oauth).map_err(|e| {
-                OrchestratorError::Other(format!("Failed to serialize OAuth: {}", e))
-            })?;
-            std::fs::write(run_dir.join(".tailscale_oauth.json"), oauth_json)
-                .map_err(|e| OrchestratorError::Other(format!("Failed to write OAuth: {}", e)))?;
-        }
-
-        tracing::info!(
-            "Created run '{}' with initial worker '{}'",
-            run_name,
-            first_worker_name
-        );
-
-        Ok(CreateRunResponse {
-            name: run_name.clone(),
-            run_dir: run_dir.to_string_lossy().to_string(),
-            files_url: format!("/api/runs/{}/files", run_name),
-        })
-    }
-
-    async fn upload_files(&self, run_name: &str, tarball: Vec<u8>) -> OrchestratorResult<()> {
-        use flate2::read::GzDecoder;
-        use tar::Archive;
-
-        let run_dir = config::run_dir(run_name);
-        if !run_dir.exists() {
-            return Err(OrchestratorError::RunNotFound(run_name.to_string()));
-        }
-
-        // Create work directory
-        let work_dir = run_dir.join("work");
-        std::fs::create_dir_all(&work_dir)
-            .map_err(|e| OrchestratorError::Other(format!("Failed to create work dir: {}", e)))?;
-
-        // Extract tarball
-        let decoder = GzDecoder::new(&tarball[..]);
-        let mut archive = Archive::new(decoder);
-
-        archive
-            .unpack(&work_dir)
-            .map_err(|e| OrchestratorError::Other(format!("Failed to extract tarball: {}", e)))?;
-
-        tracing::info!(
-            "Uploaded files for run '{}' to {}",
-            run_name,
-            work_dir.display()
-        );
-        Ok(())
     }
 
     async fn init_workspace(
@@ -1255,285 +932,6 @@ impl Orchestrator for LocalOrchestrator {
         })
     }
 
-    async fn spawn_workers(
-        &self,
-        run_name: &str,
-        count: u32,
-        assigned_task_id: Option<String>,
-    ) -> OrchestratorResult<SpawnWorkersResponse> {
-        use crate::cli::config::get_agent_command;
-        use crate::core::chats::{create_default_group_chat, create_worker_chat};
-        use crate::core::files::Files;
-        use crate::core::names;
-        use crate::core::runner::{create_runner, Runner, WorkerSpawnConfig as RunnerSpawnConfig};
-        use crate::core::state::{SQLiteState, Status, WorkerUpdate};
-
-        let run_dir = config::run_dir(run_name);
-        if !run_dir.exists() {
-            return Err(OrchestratorError::RunNotFound(run_name.to_string()));
-        }
-
-        let work_dir = run_dir.join("work");
-        if !work_dir.exists() {
-            return Err(OrchestratorError::InvalidOperation(
-                "Work directory not found. Upload files first.".into(),
-            ));
-        }
-
-        // Open state
-        let sqlite_state = SQLiteState::new(run_name)
-            .await
-            .map_err(|e| OrchestratorError::Other(format!("Failed to open state: {}", e)))?;
-
-        // Check run status
-        let status = sqlite_state.status().await?;
-
-        if status != Status::Draft && status != Status::Paused {
-            return Err(OrchestratorError::InvalidOperation(format!(
-                "Cannot spawn workers for run in '{}' status",
-                status
-            )));
-        }
-
-        // Get existing workers
-        let existing_workers = sqlite_state.get_workers().await?;
-
-        let existing_names: Vec<String> = existing_workers.iter().map(|w| w.name.clone()).collect();
-        let is_multi_worker = existing_workers.len() + count as usize > 1;
-
-        // Generate names for new workers
-        let mut new_worker_names: Vec<String> = names::generate_unique_names(count as usize)
-            .into_iter()
-            .filter(|n| !existing_names.contains(n))
-            .take(count as usize)
-            .collect();
-
-        // Need more names if we didn't get enough unique ones
-        if new_worker_names.len() < count as usize {
-            let mut all_used: std::collections::HashSet<String> =
-                existing_names.iter().cloned().collect();
-            all_used.extend(new_worker_names.iter().cloned());
-
-            while new_worker_names.len() < count as usize {
-                let name = names::generate_worker_name();
-                if !all_used.contains(&name) {
-                    all_used.insert(name.clone());
-                    new_worker_names.push(name);
-                }
-            }
-        }
-
-        // Determine leader and teammates
-        let leader_name = existing_workers.first().map(|w| w.name.clone());
-        let all_worker_names: Vec<String> = existing_names
-            .iter()
-            .chain(new_worker_names.iter())
-            .cloned()
-            .collect();
-
-        // Get agent command
-        let agent_command = get_agent_command();
-        let files = Files::new(run_dir.clone());
-        let chats_dir = files.chats_dir();
-
-        // Read tailscale OAuth credentials if present
-        let tailscale_oauth: Option<TailscaleOAuth> =
-            std::fs::read_to_string(run_dir.join(".tailscale_oauth.json"))
-                .ok()
-                .and_then(|s| serde_json::from_str(&s).ok());
-
-        // Create TailscaleClient if OAuth credentials are available
-        let tailscale_client = tailscale_oauth.as_ref().map(|oauth| {
-            crate::core::tailscale::TailscaleClient::new(
-                oauth.client_id.clone(),
-                oauth.client_secret.clone(),
-                oauth.tag.clone(),
-            )
-        });
-
-        // Ensure group chat exists for multi-worker
-        if is_multi_worker && !chats_dir.join("group.md").exists() {
-            let _ =
-                create_default_group_chat(&chats_dir, &all_worker_names, leader_name.as_deref());
-        }
-
-        // Spawn workers
-        let mut spawned_workers = Vec::new();
-
-        for (i, worker_name) in new_worker_names.iter().enumerate() {
-            // First worker gets the provided task (if any)
-            let task_for_worker = if i == 0 {
-                assigned_task_id.clone()
-            } else {
-                None
-            };
-
-            // Claim task and set assigned_task_id if provided
-            if let Some(ref task_id) = task_for_worker {
-                // Use board nodes for project runs
-                if let (Some(project_id), Ok(route_id)) = (
-                    sqlite_state.get_project_id().await.ok().flatten(),
-                    sqlite_state.get_route_id().await,
-                ) {
-                    let delta_state = DeltaState::with_route(project_id, route_id);
-                    if let Err(e) = delta_state.claim_node(task_id, worker_name).await {
-                        tracing::warn!(
-                            "Failed to claim node {} for worker {}: {}",
-                            task_id,
-                            worker_name,
-                            e
-                        );
-                    }
-                }
-                if let Err(e) = sqlite_state
-                    .update_worker(
-                        worker_name,
-                        WorkerUpdate {
-                            assigned_task_id: Some(Some(task_id.clone())),
-                            ..Default::default()
-                        },
-                    )
-                    .await
-                {
-                    tracing::warn!(
-                        "Failed to set assigned_task_id for worker {}: {}",
-                        worker_name,
-                        e
-                    );
-                }
-            }
-            // Create worker chat
-            let _ = create_worker_chat(&chats_dir, worker_name);
-
-            // Register worker
-            sqlite_state
-                .add_worker(worker_name, work_dir.to_str().unwrap_or("."), "remote")
-                .await
-                .map_err(|e| {
-                    OrchestratorError::Other(format!("Failed to register worker: {}", e))
-                })?;
-
-            // Build teammates list (exclude self)
-            let teammates: Option<Vec<String>> = if is_multi_worker {
-                Some(
-                    all_worker_names
-                        .iter()
-                        .filter(|t| *t != worker_name)
-                        .cloned()
-                        .collect(),
-                )
-            } else {
-                None
-            };
-
-            // Get runner config for this worker (from stored configs)
-            let runner_config = sqlite_state
-                .get_runner_config_for_worker(worker_name)
-                .await
-                .unwrap_or_default();
-
-            // Check if local workers are allowed
-            if runner_config.host_type() == "local" && !self.config.allow_local_workers {
-                return Err(OrchestratorError::InvalidOperation(
-                    "Local workers are not allowed on this coordinator. Configure a remote runner (fly, ssh).".to_string()
-                ));
-            }
-
-            // For remote runners (Fly, SSH), determine coordinator URL and Tailscale auth
-            let (coordinator_url, tailscale_authkey) = if runner_config.requires_coordinator_url() {
-                // Validate Tailscale OAuth is configured
-                let Some(ref client) = tailscale_client else {
-                    return Err(OrchestratorError::Config(
-                        "Fly/SSH runner requires Tailscale. Store tailscale_oauth in run config."
-                            .into(),
-                    ));
-                };
-
-                // Validate coordinator is connected to Tailscale
-                let Some(hostname) = get_tailscale_hostname() else {
-                    return Err(OrchestratorError::Config(
-                        "Coordinator must be connected to Tailscale for Fly/SSH runners. Run 'tailscale up' first.".into()
-                    ));
-                };
-
-                // Generate ephemeral auth key for this worker
-                let authkey = client.generate_auth_key(worker_name).await.map_err(|e| {
-                    OrchestratorError::Config(format!(
-                        "Failed to generate Tailscale auth key for '{}': {}",
-                        worker_name, e
-                    ))
-                })?;
-
-                let url = format!("http://{}:{}", hostname, self.config.coordinator_port);
-                (Some(url), Some(authkey))
-            } else {
-                (None, None)
-            };
-
-            let runner: Box<dyn Runner> = create_runner(&runner_config);
-
-            let spawn_config = RunnerSpawnConfig {
-                run_name: run_name.to_string(),
-                worker_name: worker_name.clone(),
-                work_dir: work_dir.clone(),
-                run_dir: run_dir.clone(),
-                agent_command: agent_command.clone(),
-                is_leader: i == 0 && existing_workers.is_empty(), // First new worker is leader if no existing workers
-                leader_name: leader_name.clone(),
-                teammates,
-                resume_session_id: None,
-                env_vars: None,
-                coordinator_url,
-                tailscale_authkey,
-                credentials: None,
-                assigned_task_id: task_for_worker.clone(),
-            };
-
-            match runner.spawn(&spawn_config).await {
-                Ok(result) => {
-                    // Update worker with PID and runner info
-                    let pid = result.pid.map(|p| p as i64);
-                    let _ = sqlite_state
-                        .update_worker(
-                            worker_name,
-                            WorkerUpdate {
-                                pid: pid.map(Some),
-                                runner_id: Some(result.handle.runner_id.clone()),
-                                runner_type: Some(result.handle.runner_type.clone()),
-                                status: Some(crate::core::state::WorkerStatus::Working),
-                                ..Default::default()
-                            },
-                        )
-                        .await;
-                    spawned_workers.push(worker_name.clone());
-                    tracing::info!(
-                        "Spawned worker '{}' (runner_id: {}, runner_type: {}, task: {:?})",
-                        worker_name,
-                        result.handle.runner_id,
-                        result.handle.runner_type,
-                        task_for_worker
-                    );
-                }
-                Err(e) => {
-                    return Err(OrchestratorError::Other(format!(
-                        "Failed to spawn worker '{}': {}",
-                        worker_name, e
-                    )));
-                }
-            }
-        }
-
-        // Update run status to Working if we spawned any workers
-        if !spawned_workers.is_empty() {
-            sqlite_state.set_status(Status::Working).await?;
-            sqlite_state.set_started_at(None).await?;
-        }
-
-        Ok(SpawnWorkersResponse {
-            workers: spawned_workers,
-        })
-    }
-
     async fn start_run(&self, request: StartRunRequest) -> OrchestratorResult<RunDetail> {
         use crate::cli::config::get_agent_command;
 
@@ -1579,17 +977,48 @@ impl Orchestrator for LocalOrchestrator {
         // Note: Task content is stored in board nodes and accessed via MCP tools.
         // No spec.md or task files are written to disk.
 
-        // 3.5. Load project and resolve starting_point
+        // 3.5. Load project/route and resolve starting_point
         let store = ProjectStore::open().await?;
         let project = store
             .get_project(request.project_id)
             .await
             .map_err(|e| OrchestratorError::State(format!("Project not found: {}", e)))?;
 
-        // Resolve starting_point (request overrides project)
+        let route_store = RouteStore::new(request.project_id)
+            .await
+            .map_err(|e| OrchestratorError::State(format!("Failed to open route store: {}", e)))?;
+
+        let route_id = if let Some(route_id) = request.route_id {
+            route_id
+        } else if let Some(route_id) = project.active_route_id {
+            route_id
+        } else {
+            route_store
+                .create_main_route()
+                .await
+                .map_err(|e| {
+                    OrchestratorError::State(format!("Failed to create fallback main route: {}", e))
+                })?
+                .id
+        };
+
+        let route = route_store.get_route(route_id).await.map_err(|e| {
+            OrchestratorError::State(format!("Failed to load route {}: {}", route_id, e))
+        })?;
+
+        // Resolve starting_point (request overrides route default repo)
+        let default_repo_starting_point = route_store
+            .get_default_repo_starting_point(route_id)
+            .await
+            .map_err(|e| {
+                OrchestratorError::State(format!(
+                    "Route has no usable default repo starting point: {}",
+                    e
+                ))
+            })?;
         let starting_point = request
             .starting_point
-            .unwrap_or_else(|| project.starting_point.clone());
+            .unwrap_or(default_repo_starting_point);
 
         // 4. Initialize workspace from starting point
         let workspace = create_workspace_provider(None);
@@ -1620,12 +1049,10 @@ impl Orchestrator for LocalOrchestrator {
             .set_project_name(&project.name)
             .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to set project_name: {}", e)))?;
-        if let Some(route_id) = request.route_id {
-            state
-                .set_route_id(route_id)
-                .await
-                .map_err(|e| OrchestratorError::Other(format!("Failed to set route_id: {}", e)))?;
-        }
+        state
+            .set_route_id(route_id)
+            .await
+            .map_err(|e| OrchestratorError::Other(format!("Failed to set route_id: {}", e)))?;
 
         // Store starting_point in database for cloning
         let sp_json = serde_json::to_string(&starting_point).map_err(|e| {
@@ -1652,13 +1079,19 @@ impl Orchestrator for LocalOrchestrator {
                 .map_err(|e| OrchestratorError::Other(format!("Failed to set branch: {}", e)))?;
         }
 
-        let scale_max = request.worker_scale.unwrap_or(5);
+        let scale_max = request.worker_scale.unwrap_or_else(|| {
+            route
+                .worker_scale
+                .as_deref()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(5)
+        });
         state
             .set_worker_scale(&scale_max.to_string())
             .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to set worker scale: {}", e)))?;
 
-        if let Some(limit) = request.time_limit_minutes {
+        if let Some(limit) = request.time_limit_minutes.or(route.time_limit_minutes) {
             state
                 .set_time_limit_minutes(Some(limit))
                 .await
@@ -1667,14 +1100,16 @@ impl Orchestrator for LocalOrchestrator {
                 })?;
         }
 
-        let hitl = request.human_in_the_loop.unwrap_or(true);
+        let hitl = request.human_in_the_loop.unwrap_or(route.human_in_the_loop);
         state
             .set_human_in_the_loop(hitl)
             .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to set HITL: {}", e)))?;
 
+        let effective_runner = request.runner.clone().or(route.runner.clone());
+
         // Set default runner if specified
-        if let Some(ref runner) = request.runner {
+        if let Some(ref runner) = effective_runner {
             state.set_default_runner(Some(runner)).await.map_err(|e| {
                 OrchestratorError::Other(format!("Failed to set default runner: {}", e))
             })?;
@@ -1696,7 +1131,7 @@ impl Orchestrator for LocalOrchestrator {
             let mut runner_configs = HashMap::new();
 
             // Add default runner config
-            let default_runner_name = request.runner.as_deref().unwrap_or("local");
+            let default_runner_name = effective_runner.as_deref().unwrap_or("local");
             if let Some(config) = self.config.get_runner(default_runner_name) {
                 runner_configs.insert(default_runner_name.to_string(), config);
             }
@@ -1734,44 +1169,40 @@ impl Orchestrator for LocalOrchestrator {
 
         // Pre-claim first available board node for first worker
         let mut first_assigned_task: Option<String> = None;
-        if let Some(route_id) = request.route_id {
-            let delta_state = DeltaState::with_route(project.id, route_id);
-            match delta_state.get_claimable_nodes().await {
-                Ok(claimable) => {
-                    if let Some(node) = claimable.first() {
-                        match delta_state.claim_node(&node.id, first_worker).await {
-                            Ok(_) => {
-                                tracing::info!(
-                                    "Pre-claimed node '{}' for {}",
-                                    node.id,
-                                    first_worker
-                                );
-                                first_assigned_task = Some(node.id.clone());
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Failed to pre-claim node '{}' for {}: {}",
-                                    node.id,
-                                    first_worker,
-                                    e
-                                );
-                            }
+        let mut first_is_plan_task = false;
+        let delta_state = DeltaState::with_route(project.id, route_id);
+        match delta_state.get_claimable_nodes().await {
+            Ok(claimable) => {
+                if let Some(node) = claimable.first() {
+                    match delta_state.claim_node(&node.id, first_worker).await {
+                        Ok(_) => {
+                            tracing::info!("Pre-claimed node '{}' for {}", node.id, first_worker);
+                            first_is_plan_task = node.kind == NodeKind::Plan;
+                            first_assigned_task = Some(node.id.clone());
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to pre-claim node '{}' for {}: {}",
+                                node.id,
+                                first_worker,
+                                e
+                            );
                         }
                     }
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to get claimable nodes: {}", e);
-                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to get claimable nodes: {}", e);
             }
         }
 
-        // Store docs config from global settings
+        // Store docs config from route settings
         state
-            .set_docs_path(Some(&self.config.scribe_docs_path))
+            .set_docs_path(Some(&route.docs_path))
             .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to set docs path: {}", e)))?;
         state
-            .set_persist_docs_changes(self.config.scribe_persist_docs_changes)
+            .set_persist_docs_changes(route.persist_docs_changes)
             .await
             .map_err(|e| {
                 OrchestratorError::Other(format!("Failed to set persist_docs_changes: {}", e))
@@ -1786,14 +1217,14 @@ impl Orchestrator for LocalOrchestrator {
             additional_chat_workers: Vec::new(),
             is_multi_worker,
             leader_name: leader_name.clone(),
-            docs_path: self.config.scribe_docs_path.clone(),
+            docs_path: route.docs_path.clone(),
         };
 
         let setup_result = setup_run_workspace(&setup_config)
             .map_err(|e| OrchestratorError::Other(format!("Failed to setup workspace: {}", e)))?;
 
         // 8. Register workers in state (use runner name as location)
-        let worker_location = request.runner.as_deref().unwrap_or("local");
+        let worker_location = effective_runner.as_deref().unwrap_or("local");
         register_workers(&state, &setup_result.worker_dirs, worker_location)
             .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to register workers: {}", e)))?;
@@ -1804,11 +1235,7 @@ impl Orchestrator for LocalOrchestrator {
 
             // Collect API keys from environment for Docker/remote runners
             let env_vars: HashMap<String, String> = std::env::vars()
-                .filter(|(k, _)| {
-                    k.starts_with("ANTHROPIC_")
-                        || k.starts_with("OPENAI_")
-                        || k.starts_with("CLAUDE_")
-                })
+                .filter(|(k, _)| k.starts_with("OPENAI_") || k.starts_with("CODEX_"))
                 .collect();
 
             // Create Tailscale client if OAuth credentials provided (for remote runners)
@@ -1887,10 +1314,10 @@ impl Orchestrator for LocalOrchestrator {
                 let runner: Box<dyn Runner> = create_runner(&runner_config);
 
                 // Get assigned task for this worker (first worker gets pre-claimed task)
-                let assigned_task_id = if i == 0 {
-                    first_assigned_task.clone()
+                let (assigned_task_id, is_plan_task) = if i == 0 {
+                    (first_assigned_task.clone(), first_is_plan_task)
                 } else {
-                    None
+                    (None, false)
                 };
 
                 let spawn_config = RunnerSpawnConfig {
@@ -1908,6 +1335,7 @@ impl Orchestrator for LocalOrchestrator {
                     tailscale_authkey,
                     credentials: None,
                     assigned_task_id: assigned_task_id.clone(),
+                    is_plan_task,
                 };
 
                 match runner.spawn(&spawn_config).await {
@@ -2071,9 +1499,7 @@ impl Orchestrator for LocalOrchestrator {
 
         // Collect API keys from environment for Docker/remote runners
         let env_vars: HashMap<String, String> = std::env::vars()
-            .filter(|(k, _)| {
-                k.starts_with("ANTHROPIC_") || k.starts_with("OPENAI_") || k.starts_with("CLAUDE_")
-            })
+            .filter(|(k, _)| k.starts_with("OPENAI_") || k.starts_with("CODEX_"))
             .collect();
 
         // Get assigned task from worker record (set by evaluate_scaling before spawn)
@@ -2083,6 +1509,25 @@ impl Orchestrator for LocalOrchestrator {
             .ok()
             .flatten()
             .and_then(|w| w.assigned_task_id);
+
+        // Detect task kind by looking up the assigned node
+        let is_plan_task = if let Some(ref task_id) = assigned_task_id {
+            if let (Some(project_id), Ok(route_id)) = (
+                state.get_project_id().await.ok().flatten(),
+                state.get_route_id().await,
+            ) {
+                let delta = DeltaState::with_route(project_id, route_id);
+                delta
+                    .get_node(task_id)
+                    .await
+                    .map(|n| n.kind == NodeKind::Plan)
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
 
         let spawn_config = RunnerSpawnConfig {
             run_name: run_name.to_string(),
@@ -2099,6 +1544,7 @@ impl Orchestrator for LocalOrchestrator {
             tailscale_authkey,
             credentials: None,
             assigned_task_id,
+            is_plan_task,
         };
 
         // Spawn via runner (handles local/docker/fly/ssh correctly)
@@ -2372,9 +1818,7 @@ impl Orchestrator for LocalOrchestrator {
 
         // Collect API keys from environment for Docker/remote runners
         let env_vars: HashMap<String, String> = std::env::vars()
-            .filter(|(k, _)| {
-                k.starts_with("ANTHROPIC_") || k.starts_with("OPENAI_") || k.starts_with("CLAUDE_")
-            })
+            .filter(|(k, _)| k.starts_with("OPENAI_") || k.starts_with("CODEX_"))
             .collect();
 
         // For remote runners (Fly, SSH), determine coordinator URL and Tailscale auth
@@ -2420,6 +1864,23 @@ impl Orchestrator for LocalOrchestrator {
 
         // Get assigned task from worker record
         let assigned_task_id = worker.assigned_task_id.clone();
+        let is_plan_task = if let Some(ref task_id) = assigned_task_id {
+            if let (Some(project_id), Ok(route_id)) = (
+                state.get_project_id().await.ok().flatten(),
+                state.get_route_id().await,
+            ) {
+                let delta = DeltaState::with_route(project_id, route_id);
+                delta
+                    .get_node(task_id)
+                    .await
+                    .map(|n| n.kind == NodeKind::Plan)
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
 
         let spawn_config = RunnerSpawnConfig {
             run_name: run_name.to_string(),
@@ -2436,6 +1897,7 @@ impl Orchestrator for LocalOrchestrator {
             tailscale_authkey,
             credentials: None,
             assigned_task_id,
+            is_plan_task,
         };
 
         // Spawn via runner
@@ -2548,9 +2010,9 @@ impl Orchestrator for LocalOrchestrator {
         let store = crate::core::project::ProjectStore::open().await?;
         store.delete_project(id).await?;
 
-        // Clear gyp chat messages for this project
-        let gyp_store = crate::core::gyp_chat::GypChatStore::open().await?;
-        gyp_store.clear_project_messages(id).await?;
+        // Clear shepherd chat messages for this project
+        let shepherd_store = crate::core::shepherd_chat::ShepherdChatStore::open().await?;
+        shepherd_store.clear_project_messages(id).await?;
 
         Ok(())
     }

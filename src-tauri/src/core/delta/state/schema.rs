@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS board_nodes (
     kind TEXT NOT NULL DEFAULT 'task',
     source TEXT NOT NULL DEFAULT 'user',
     content TEXT NOT NULL DEFAULT '',
+    difficulty TEXT NOT NULL DEFAULT 'medium',
     status TEXT NOT NULL DEFAULT 'draft',
     x REAL,
     y REAL,
@@ -137,6 +138,17 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     SCHEMA_INIT
         .get_or_try_init(|| async {
             sqlx::raw_sql(SCHEMA).execute(pool).await?;
+            let migration = sqlx::query(
+                "ALTER TABLE board_nodes ADD COLUMN difficulty TEXT NOT NULL DEFAULT 'medium'",
+            )
+            .execute(pool)
+            .await;
+            if let Err(e) = migration {
+                let msg = e.to_string().to_ascii_lowercase();
+                if !msg.contains("duplicate column name") && !msg.contains("already exists") {
+                    return Err(e);
+                }
+            }
             Ok::<(), sqlx::Error>(())
         })
         .await?;

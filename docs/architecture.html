@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hirsel Architecture — Shepherd + Lash</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --font-body: 'Space Grotesk', system-ui, sans-serif;
+      --font-mono: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+
+      --bg: #f5f7fb;
+      --surface: #ffffff;
+      --surface2: #eef2f9;
+      --surface-elevated: #fbfcff;
+      --border: rgba(13, 33, 61, 0.10);
+      --border-bright: rgba(13, 33, 61, 0.22);
+      --text: #0f1f3a;
+      --text-dim: #5f6d86;
+
+      --accent: #2563eb;
+      --accent-dim: rgba(37, 99, 235, 0.10);
+      --node-shepherd: #0f766e;
+      --node-shepherd-dim: rgba(15, 118, 110, 0.10);
+      --node-worker: #b45309;
+      --node-worker-dim: rgba(180, 83, 9, 0.10);
+      --node-store: #7c3aed;
+      --node-store-dim: rgba(124, 58, 237, 0.10);
+      --node-ui: #be185d;
+      --node-ui-dim: rgba(190, 24, 93, 0.10);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #070d18;
+        --surface: #0f1726;
+        --surface2: #111e32;
+        --surface-elevated: #15243d;
+        --border: rgba(190, 210, 255, 0.12);
+        --border-bright: rgba(190, 210, 255, 0.24);
+        --text: #dce8ff;
+        --text-dim: #95a4bf;
+
+        --accent: #60a5fa;
+        --accent-dim: rgba(96, 165, 250, 0.16);
+        --node-shepherd: #2dd4bf;
+        --node-shepherd-dim: rgba(45, 212, 191, 0.16);
+        --node-worker: #fbbf24;
+        --node-worker-dim: rgba(251, 191, 36, 0.16);
+        --node-store: #a78bfa;
+        --node-store-dim: rgba(167, 139, 250, 0.16);
+        --node-ui: #f472b6;
+        --node-ui-dim: rgba(244, 114, 182, 0.16);
+      }
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--bg);
+      background-image:
+        linear-gradient(0deg, transparent 24px, color-mix(in srgb, var(--border) 80%, transparent) 25px),
+        linear-gradient(90deg, transparent 24px, color-mix(in srgb, var(--border) 80%, transparent) 25px),
+        radial-gradient(ellipse at 15% 10%, var(--accent-dim), transparent 60%),
+        radial-gradient(ellipse at 80% 95%, var(--node-store-dim), transparent 55%);
+      background-size: 25px 25px, 25px 25px, auto, auto;
+      color: var(--text);
+      padding: 28px 36px;
+      min-height: 100vh;
+      overflow-wrap: break-word;
+    }
+
+    .wrap {
+      max-width: 1400px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 180px 1fr;
+      gap: 0 36px;
+    }
+
+    .main { min-width: 0; }
+
+    .toc {
+      position: sticky;
+      top: 20px;
+      align-self: start;
+      padding: 14px 0;
+      max-height: calc(100dvh - 40px);
+      overflow-y: auto;
+      grid-row: 1 / -1;
+    }
+
+    .toc-title {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--text-dim);
+      margin-bottom: 10px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .toc a {
+      display: block;
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 11px;
+      padding: 5px 8px;
+      border-radius: 6px;
+      border-left: 2px solid transparent;
+      margin-bottom: 2px;
+      transition: all 0.15s ease;
+    }
+
+    .toc a:hover { color: var(--text); background: var(--surface2); }
+    .toc a.active { color: var(--text); border-left-color: var(--accent); }
+
+    h1 {
+      font-size: clamp(30px, 4.5vw, 46px);
+      letter-spacing: -0.04em;
+      margin-bottom: 8px;
+      text-wrap: balance;
+    }
+
+    .subtitle {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 22px;
+    }
+
+    .hero {
+      background: var(--surface-elevated);
+      border: 1px solid color-mix(in srgb, var(--border) 40%, var(--accent) 60%);
+      box-shadow: 0 8px 28px color-mix(in srgb, var(--accent-dim) 60%, transparent);
+      border-radius: 14px;
+      padding: 22px 24px;
+      margin-bottom: 22px;
+      animation: fadeUp .45s ease both;
+    }
+
+    .hero p {
+      color: var(--text-dim);
+      font-size: 15px;
+      line-height: 1.7;
+      max-width: 1000px;
+    }
+
+    .kpis {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .kpi {
+      min-width: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+
+    .kpi .n {
+      font-family: var(--font-mono);
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 4px;
+    }
+
+    .kpi .t {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--text-dim);
+    }
+
+    .sec-head {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--text-dim);
+      margin: 26px 0 10px;
+      scroll-margin-top: 56px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    .grid > *, .flow > * { min-width: 0; }
+
+    .node {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      animation: fadeUp .45s ease both;
+    }
+
+    .node .label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      margin-bottom: 8px;
+      display: inline-flex;
+      gap: 7px;
+      align-items: center;
+    }
+
+    .node .label::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: currentColor;
+      display: inline-block;
+    }
+
+    .node h3 {
+      font-size: 15px;
+      margin-bottom: 6px;
+    }
+
+    .node p {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+
+    .node ul {
+      list-style: none;
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--text-dim);
+      line-height: 1.8;
+    }
+
+    .node li {
+      position: relative;
+      padding-left: 12px;
+    }
+
+    .node li::before {
+      content: '›';
+      position: absolute;
+      left: 0;
+      color: var(--text-dim);
+    }
+
+    .node code {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      background: var(--accent-dim);
+      color: var(--accent);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+
+    .node--ui { border-left: 3px solid var(--node-ui); }
+    .node--ui .label { color: var(--node-ui); }
+
+    .node--shepherd { border-left: 3px solid var(--node-shepherd); }
+    .node--shepherd .label { color: var(--node-shepherd); }
+
+    .node--worker { border-left: 3px solid var(--node-worker); }
+    .node--worker .label { color: var(--node-worker); }
+
+    .node--store { border-left: 3px solid var(--node-store); }
+    .node--store .label { color: var(--node-store); }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      align-items: stretch;
+      gap: 8px;
+    }
+
+    .step {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+      text-align: center;
+      min-height: 120px;
+    }
+
+    .step .idx {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+    }
+
+    .step .name {
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .step .desc {
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+
+    .arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--border-bright);
+      font-family: var(--font-mono);
+      font-size: 18px;
+      min-height: 120px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      font-size: 12px;
+    }
+
+    thead th {
+      text-align: left;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .10em;
+      color: var(--text-dim);
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 12px;
+      position: sticky;
+      top: 0;
+    }
+
+    tbody td {
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+      vertical-align: top;
+      color: var(--text-dim);
+    }
+
+    tbody tr:nth-child(even) { background: color-mix(in srgb, var(--surface) 88%, var(--surface2) 12%); }
+    tbody tr:hover { background: color-mix(in srgb, var(--surface) 80%, var(--accent-dim) 20%); }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 10px;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      white-space: nowrap;
+      border: 1px solid transparent;
+    }
+
+    .status.ok { color: var(--node-shepherd); background: var(--node-shepherd-dim); border-color: color-mix(in srgb, var(--node-shepherd) 30%, transparent); }
+    .status.warn { color: var(--node-worker); background: var(--node-worker-dim); border-color: color-mix(in srgb, var(--node-worker) 30%, transparent); }
+
+    .callout {
+      margin-top: 10px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 12px 14px;
+      color: var(--text-dim);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-delay: 0ms !important;
+        transition-duration: 0.01ms !important;
+      }
+      html { scroll-behavior: auto; }
+    }
+
+    @media (max-width: 1120px) {
+      .flow {
+        grid-template-columns: 1fr;
+      }
+      .arrow { min-height: 32px; transform: rotate(90deg); }
+    }
+
+    @media (max-width: 1000px) {
+      .wrap { grid-template-columns: 1fr; }
+
+      .toc {
+        position: sticky;
+        top: 0;
+        z-index: 200;
+        max-height: none;
+        display: flex;
+        gap: 4px;
+        align-items: center;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        background: var(--bg);
+        border-bottom: 1px solid var(--border);
+        padding: 10px 0;
+        margin: 0 -36px;
+        padding-left: 36px;
+        padding-right: 36px;
+        grid-row: auto;
+      }
+
+      .toc-title { display: none; }
+
+      .toc a {
+        white-space: nowrap;
+        flex-shrink: 0;
+        border-left: none;
+        border-bottom: 2px solid transparent;
+        border-radius: 4px 4px 0 0;
+        padding: 6px 10px;
+      }
+
+      .toc a.active {
+        border-left: none;
+        border-bottom-color: var(--accent);
+        background: var(--surface);
+      }
+
+      .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid.two, .grid.three, .grid.four { grid-template-columns: 1fr; }
+      .sec-head { scroll-margin-top: 54px; }
+    }
+
+    @media (max-width: 720px) {
+      body { padding: 16px; }
+      .toc { margin: 0 -16px; padding-left: 16px; padding-right: 16px; }
+      .kpis { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav class="toc" id="toc">
+      <div class="toc-title">Contents</div>
+      <a href="#s1">1. Snapshot</a>
+      <a href="#s2">2. Turn Flow</a>
+      <a href="#s3">3. Shepherd Runtime</a>
+      <a href="#s4">4. Worker Runtime</a>
+      <a href="#s5">5. Storage Topology</a>
+      <a href="#s6">6. API Surfaces</a>
+    </nav>
+
+    <div class="main">
+      <h1>Hirsel Runtime Architecture</h1>
+      <p class="subtitle">Shepherd-first orchestration with embedded lash execution</p>
+
+      <section id="s1" class="hero sec-headless">
+        <div class="sec-head" style="margin-top:0">1 — Snapshot</div>
+        <p>
+          The desktop app routes user intent into <code>send_shepherd_message</code>, where Shepherd now spins a real
+          <code>lash-core RuntimeEngine</code> turn. The turn streams incremental events to the UI, executes filesystem/shell
+          tools in a scoped workspace, persists structured chunk history, and supports pasted PNG images through
+          <code>TurnInput.images_png</code>.
+        </p>
+        <div class="kpis">
+          <div class="kpi"><div class="n">1</div><div class="t">Shepherd Runtime Path</div></div>
+          <div class="kpi"><div class="n">8</div><div class="t">Message Chunk Types + Limits</div></div>
+          <div class="kpi"><div class="n">9</div><div class="t">Lash Tool Providers</div></div>
+          <div class="kpi"><div class="n">3</div><div class="t">Chat Scope Modes</div></div>
+        </div>
+      </section>
+
+      <div id="s2" class="sec-head">2 — End-to-End Turn Flow</div>
+      <div class="flow">
+        <div class="step">
+          <div class="idx">STEP 01</div>
+          <div class="name">Frontend Send</div>
+          <div class="desc">SolidJS composes text + image chunks and invokes <code>send_shepherd_message</code>.</div>
+        </div>
+        <div class="arrow">→</div>
+        <div class="step">
+          <div class="idx">STEP 02</div>
+          <div class="name">Scope Resolution</div>
+          <div class="desc">Backend resolves workspace from run state or route files and loads scoped history.</div>
+        </div>
+        <div class="arrow">→</div>
+        <div class="step">
+          <div class="idx">STEP 03</div>
+          <div class="name">Lash Turn</div>
+          <div class="desc">A fresh runtime is built with Codex OAuth provider and composite toolchain.</div>
+        </div>
+        <div class="arrow">→</div>
+        <div class="step">
+          <div class="idx">STEP 04</div>
+          <div class="name">Event Bridge</div>
+          <div class="desc">lash <code>AgentEvent</code> values are mapped to <code>shepherd-event</code> deltas for UI streaming.</div>
+        </div>
+        <div class="arrow">→</div>
+        <div class="step">
+          <div class="idx">STEP 05</div>
+          <div class="name">Chunk Persistence</div>
+          <div class="desc">Validated user/assistant chunks are saved in <code>shepherd_chat_messages</code> by scope.</div>
+        </div>
+      </div>
+
+      <div id="s3" class="sec-head">3 — Shepherd Chat Runtime (GUI Command Layer)</div>
+      <div class="grid three">
+        <article class="node node--shepherd">
+          <div class="label">Session Lifecycle</div>
+          <h3>In-memory session registry</h3>
+          <p>
+            <code>start_shepherd_session</code> allocates UUID sessions. <code>send_shepherd_message</code> enforces active-session checks.
+            <code>stop_shepherd_session</code> emits <code>sessionEnded</code> and clears session state.
+          </p>
+        </article>
+        <article class="node node--shepherd">
+          <div class="label">Structured Chunks</div>
+          <h3>Strong message contract</h3>
+          <p>Chunk payloads are validated before storage and runtime use.</p>
+          <ul>
+            <li><code>text</code>, <code>thinking</code>, <code>tool</code>, <code>image</code></li>
+            <li>Image count limit: 8 per message</li>
+            <li>Image payload limit: 12 MiB base64</li>
+            <li>PNG required for runtime image ingestion</li>
+          </ul>
+        </article>
+        <article class="node node--shepherd">
+          <div class="label">Event Translation</div>
+          <h3>lash → Shepherd UI events</h3>
+          <p>
+            Text and code blocks stream as <code>textDelta</code>/<code>thinkingDelta</code>. Tool calls emit paired
+            <code>toolCallStart</code> and <code>toolCallUpdate</code>. Terminal failures propagate <code>error</code>.
+          </p>
+        </article>
+      </div>
+
+      <div id="s4" class="sec-head">4 — Worker Runtime (Embedded lash)</div>
+      <div class="grid two">
+        <article class="node node--worker">
+          <div class="label">Worker Process</div>
+          <h3>Runtime assembly in <code>worker/lash_runner.rs</code></h3>
+          <ul>
+            <li><code>run_worker</code> builds <code>Session</code>, <code>Agent</code>, and <code>RuntimeEngine</code></li>
+            <li>Composite tools: fs/search/edit/shell + Hirsel MCP operations</li>
+            <li>OAuth credentials from encrypted credential store or env fallback</li>
+            <li>Event sink records tool/text events into per-run SQLite state</li>
+          </ul>
+        </article>
+        <article class="node node--worker">
+          <div class="label">Execution Model</div>
+          <h3>One task context, isolated worker</h3>
+          <p>
+            Workers stay process-isolated and consume assigned tasks from board state. They use MCP operations
+            for task graph mutations, chat, docs, and completion signaling. Orchestration remains separate from
+            worker execution context.
+          </p>
+        </article>
+      </div>
+
+      <div id="s5" class="sec-head">5 — Storage Topology</div>
+      <div class="grid four">
+        <article class="node node--store">
+          <div class="label">Global DB</div>
+          <h3><code>~/.hirsel/hirsel.db</code></h3>
+          <p>Projects, routes, board nodes, credentials, and Shepherd chunk history.</p>
+        </article>
+        <article class="node node--store">
+          <div class="label">Run DB</div>
+          <h3><code>runs/{run}/hirsel.db</code></h3>
+          <p>Per-run worker events, state machine status, and lifecycle records.</p>
+        </article>
+        <article class="node node--store">
+          <div class="label">Route Files</div>
+          <h3><code>projects/{id}/routes/{name}</code></h3>
+          <p>Route-scoped docs, board task content files, and code snapshots.</p>
+        </article>
+        <article class="node node--store">
+          <div class="label">Chat History</div>
+          <h3><code>shepherd_chat_messages</code></h3>
+          <p>Scope-aware history for general, run, and board conversations.</p>
+        </article>
+      </div>
+
+      <div id="s6" class="sec-head">6 — Active API Surfaces</div>
+      <div style="overflow:auto; border-radius:10px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Surface</th>
+              <th>Primary Entry</th>
+              <th>Current Status</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Tauri Shepherd Commands</td>
+              <td><code>src-tauri/src/gui/commands/shepherd.rs</code></td>
+              <td><span class="status ok">Active</span></td>
+              <td>Backed by embedded lash runtime and chunk validation.</td>
+            </tr>
+            <tr>
+              <td>Frontend Chat Hook</td>
+              <td><code>src/hooks/use-shepherd-chat.ts</code></td>
+              <td><span class="status ok">Active</span></td>
+              <td>Sends structured chunks and handles streamed event updates.</td>
+            </tr>
+            <tr>
+              <td>Worker Runtime</td>
+              <td><code>src-tauri/src/worker/lash_runner.rs</code></td>
+              <td><span class="status ok">Active</span></td>
+              <td>Canonical worker agent runtime path.</td>
+            </tr>
+            <tr>
+              <td>Legacy Chat Orchestrator Layer</td>
+              <td><code>core/chat_orchestrator/*</code></td>
+              <td><span class="status warn">Removed</span></td>
+              <td>No longer part of active Shepherd turn execution.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout">
+        This architecture reflects the current implementation where Shepherd chat executes a real lash turn per message,
+        streams event deltas directly to the UI, and persists normalized chunk history. Image paste support is implemented
+        through image chunks and currently ingests PNG payloads into runtime context.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const toc = document.getElementById('toc');
+      const links = toc.querySelectorAll('a');
+      const sections = [];
+
+      links.forEach((link) => {
+        const id = link.getAttribute('href').slice(1);
+        const el = document.getElementById(id);
+        if (el) sections.push({ id, el, link });
+      });
+
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          links.forEach((l) => l.classList.remove('active'));
+          const match = sections.find((s) => s.el === entry.target);
+          if (!match) return;
+          match.link.classList.add('active');
+          if (window.innerWidth <= 1000) {
+            match.link.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+          }
+        });
+      }, { rootMargin: '-10% 0px -80% 0px' });
+
+      sections.forEach((s) => observer.observe(s.el));
+
+      links.forEach((link) => {
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          const id = link.getAttribute('href').slice(1);
+          const el = document.getElementById(id);
+          if (!el) return;
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          history.replaceState(null, '', '#' + id);
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

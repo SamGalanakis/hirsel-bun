@@ -1,5 +1,5 @@
 /**
- * Runs context - manages run list, run detail, workers, threads, history
+ * Runs context - manages run list, run detail, workers, history
  *
  * Centralizes all run-related polling so components can read from the store
  * instead of polling independently.
@@ -20,7 +20,6 @@ import type {
   HistoryEntry,
   RunDetail,
   RunSummary,
-  ThreadSummary,
   WorkerDisplay,
 } from '../lib/types';
 
@@ -28,7 +27,6 @@ interface RunsState {
   runs: RunSummary[];
   runDetail: RunDetail | null;
   workers: WorkerDisplay[];
-  threads: ThreadSummary[];
   history: HistoryEntry[];
 }
 
@@ -37,7 +35,6 @@ interface RunsContextValue {
   runs: () => RunSummary[];
   runDetail: () => RunDetail | null;
   workers: () => WorkerDisplay[];
-  threads: () => ThreadSummary[];
   history: () => HistoryEntry[];
 
   // Selection
@@ -51,7 +48,6 @@ interface RunsContextValue {
   invalidateRuns: () => Promise<void>;
   invalidateRunDetail: () => Promise<void>;
   invalidateWorkers: () => Promise<void>;
-  invalidateThreads: () => Promise<void>;
   invalidateHistory: () => Promise<void>;
 
   // Subscribe/unsubscribe for polling
@@ -69,7 +65,6 @@ export const RunsProvider: ParentComponent = (props) => {
     runs: [],
     runDetail: null,
     workers: [],
-    threads: [],
     history: [],
   });
 
@@ -124,18 +119,6 @@ export const RunsProvider: ParentComponent = (props) => {
     }
   };
 
-  const fetchThreads = async (runName: string) => {
-    try {
-      const threads = await invoke<ThreadSummary[]>('get_threads', { runName });
-      if (selectedRun() === runName) {
-        const filtered = (threads || []).filter((t): t is ThreadSummary => t != null);
-        setState('threads', reconcile(filtered));
-      }
-    } catch {
-      // Errors likely because run was deleted
-    }
-  };
-
   const fetchHistory = async (runName: string) => {
     try {
       const history = await invoke<HistoryEntry[]>('get_history', { runName, limit: 100 });
@@ -152,7 +135,6 @@ export const RunsProvider: ParentComponent = (props) => {
     await Promise.all([
       fetchRunDetail(runName),
       fetchWorkers(runName),
-      fetchThreads(runName),
       fetchHistory(runName),
     ]);
   };
@@ -163,7 +145,6 @@ export const RunsProvider: ParentComponent = (props) => {
     setState({
       runDetail: null,
       workers: [],
-      threads: [],
       history: [],
     });
     emit('run-selected', null);
@@ -180,7 +161,6 @@ export const RunsProvider: ParentComponent = (props) => {
     setState({
       runDetail: null,
       workers: [],
-      threads: [],
       history: [],
     });
 
@@ -253,7 +233,6 @@ export const RunsProvider: ParentComponent = (props) => {
           setState({
             runDetail: null,
             workers: [],
-            threads: [],
             history: [],
           });
         }
@@ -272,7 +251,6 @@ export const RunsProvider: ParentComponent = (props) => {
     runs: () => state.runs,
     runDetail: () => state.runDetail,
     workers: () => state.workers,
-    threads: () => state.threads,
     history: () => state.history,
     selectedRun,
     setSelectedRun,
@@ -288,10 +266,6 @@ export const RunsProvider: ParentComponent = (props) => {
     invalidateWorkers: () => {
       const run = selectedRun();
       return run ? fetchWorkers(run) : Promise.resolve();
-    },
-    invalidateThreads: () => {
-      const run = selectedRun();
-      return run ? fetchThreads(run) : Promise.resolve();
     },
     invalidateHistory: () => {
       const run = selectedRun();

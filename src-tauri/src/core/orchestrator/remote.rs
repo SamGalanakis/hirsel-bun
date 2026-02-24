@@ -7,16 +7,12 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use super::{
-    CreateRunRequest, CreateRunResponse, DeliverRunRequest, HealthResponse, Orchestrator,
-    OrchestratorError, OrchestratorResult, ResumeRunRequest, ResumeWorkerRequest,
-    SendMessageRequest, SpawnSingleWorkerRequest, SpawnWorkersRequest, SpawnWorkersResponse,
-    StartRunRequest,
+    DeliverRunRequest, HealthResponse, Orchestrator, OrchestratorError, OrchestratorResult,
+    ResumeRunRequest, ResumeWorkerRequest, SpawnSingleWorkerRequest, StartRunRequest,
 };
 use crate::core::api_types::{
-    ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, ThreadSummary, Worker,
-    WorkerEventsResponse,
+    ConfigResponse, Eval, HistoryEntry, RunDetail, RunSummary, Worker, WorkerEventsResponse,
 };
-use crate::core::draft::StartingPoint;
 use crate::core::http_client::{AuthenticatedClient, HttpError};
 use crate::core::snapshot::WorkerStateHandle;
 
@@ -208,44 +204,6 @@ impl Orchestrator for RemoteOrchestrator {
     }
 
     // -------------------------------------------------------------------------
-    // Messages
-    // -------------------------------------------------------------------------
-
-    async fn list_threads(&self, run: &str) -> OrchestratorResult<Vec<ThreadSummary>> {
-        self.get(&format!("/api/runs/{}/threads", urlencoding::encode(run)))
-            .await
-    }
-
-    async fn get_messages(&self, run: &str, thread: &str) -> OrchestratorResult<Vec<Message>> {
-        self.get(&format!(
-            "/api/runs/{}/threads/{}/messages",
-            urlencoding::encode(run),
-            urlencoding::encode(thread)
-        ))
-        .await
-    }
-
-    async fn send_message(
-        &self,
-        run: &str,
-        thread: &str,
-        content: &str,
-    ) -> OrchestratorResult<Message> {
-        let body = SendMessageRequest {
-            content: content.to_string(),
-        };
-        self.post(
-            &format!(
-                "/api/runs/{}/threads/{}/messages",
-                urlencoding::encode(run),
-                urlencoding::encode(thread)
-            ),
-            &body,
-        )
-        .await
-    }
-
-    // -------------------------------------------------------------------------
     // Evals
     // -------------------------------------------------------------------------
 
@@ -286,18 +244,6 @@ impl Orchestrator for RemoteOrchestrator {
     // Run Creation
     // -------------------------------------------------------------------------
 
-    async fn create_run(&self, request: CreateRunRequest) -> OrchestratorResult<CreateRunResponse> {
-        self.post("/api/runs", &request).await
-    }
-
-    async fn upload_files(&self, run_name: &str, tarball: Vec<u8>) -> OrchestratorResult<()> {
-        let path = format!("/api/runs/{}/files", urlencoding::encode(run_name));
-        self.client
-            .post_bytes(&path, tarball, "application/gzip")
-            .await
-            .map_err(Self::convert_error)
-    }
-
     async fn init_workspace(
         &self,
         run_name: &str,
@@ -310,69 +256,8 @@ impl Orchestrator for RemoteOrchestrator {
         .await
     }
 
-    async fn spawn_workers(
-        &self,
-        run_name: &str,
-        count: u32,
-        assigned_task_id: Option<String>,
-    ) -> OrchestratorResult<SpawnWorkersResponse> {
-        let body = SpawnWorkersRequest {
-            count,
-            assigned_task_id,
-        };
-        self.post(
-            &format!("/api/runs/{}/spawn", urlencoding::encode(run_name)),
-            &body,
-        )
-        .await
-    }
-
     async fn start_run(&self, request: StartRunRequest) -> OrchestratorResult<RunDetail> {
-        // 1. Create tarball if starting from local folder
-        let tarball = match &request.starting_point {
-            Some(StartingPoint::LocalFolder { path }) => {
-                let project_path = std::path::Path::new(path);
-                Some(create_project_tarball(project_path).map_err(|e| {
-                    OrchestratorError::Other(format!("Failed to create tarball: {}", e))
-                })?)
-            }
-            _ => None,
-        };
-
-        // 2. Convert to CreateRunRequest
-        // For LocalFolder, we upload files separately, so don't include the local path
-        let starting_point_for_server = match &request.starting_point {
-            Some(StartingPoint::LocalFolder { .. }) => None, // Files uploaded via tarball
-            sp => sp.clone(),
-        };
-
-        let create_request = CreateRunRequest {
-            name: request.name.clone(),
-            spec: request.spec,
-            starting_point: starting_point_for_server,
-            runner: request.runner,
-            worker_scale: request.worker_scale,
-            time_limit_minutes: request.time_limit_minutes.map(|m| m as u32),
-            human_in_the_loop: request.human_in_the_loop,
-            eval: request.eval,
-            tailscale_oauth: request.tailscale_oauth,
-        };
-
-        // 3. Create run on remote server
-        let create_response = self.create_run(create_request).await?;
-
-        // 4. Upload files if tarball exists
-        if let Some(tarball) = tarball {
-            self.upload_files(&create_response.name, tarball).await?;
-        }
-
-        // 5. Spawn initial worker with scope task
-        let _ = self
-            .spawn_workers(&create_response.name, 1, Some("scope".to_string()))
-            .await?;
-
-        // 6. Return run detail
-        self.get_run(&create_response.name).await
+        self.post("/api/runs/start", &request).await
     }
 
     async fn spawn_single_worker(
@@ -463,69 +348,4 @@ impl Orchestrator for RemoteOrchestrator {
         self.get(&format!("/api/projects/{}/runs", project_id))
             .await
     }
-}
-
-/// Create a tarball of a project directory, excluding common build artifacts
-fn create_project_tarball(project_path: &std::path::Path) -> Result<Vec<u8>, std::io::Error> {
-    use flate2::write::GzEncoder;
-    use flate2::Compression;
-    use tar::Builder;
-    use walkdir::WalkDir;
-
-    let mut buffer = Vec::new();
-    let encoder = GzEncoder::new(&mut buffer, Compression::fast());
-    let mut builder = Builder::new(encoder);
-
-    // Walk the project directory, excluding common build artifacts
-    for entry in WalkDir::new(project_path)
-        .into_iter()
-        .filter_entry(|e| {
-            let name = e.file_name().to_str().unwrap_or("");
-            // Exclude common build/cache directories and files
-            !matches!(
-                name,
-                "node_modules"
-                    | "target"
-                    | ".git"
-                    | ".venv"
-                    | "__pycache__"
-                    | ".mypy_cache"
-                    | ".pytest_cache"
-                    | "dist"
-                    | "build"
-                    | ".next"
-                    | ".nuxt"
-                    | "coverage"
-                    | ".turbo"
-                    | ".vercel"
-                    | ".netlify"
-            )
-        })
-        .filter_map(|e| e.ok())
-    {
-        let path = entry.path();
-        let relative_path = path.strip_prefix(project_path).unwrap_or(path);
-
-        if path == project_path {
-            continue; // Skip root directory itself
-        }
-
-        if path.is_file() {
-            builder
-                .append_path_with_name(path, relative_path)
-                .map_err(std::io::Error::other)?;
-        } else if path.is_dir() {
-            builder
-                .append_dir(relative_path, path)
-                .map_err(std::io::Error::other)?;
-        }
-    }
-
-    builder
-        .into_inner()
-        .map_err(std::io::Error::other)?
-        .finish()
-        .map_err(std::io::Error::other)?;
-
-    Ok(buffer)
 }

@@ -16,6 +16,7 @@ pub enum NodeKind {
     #[default]
     Task,
     Check,
+    Plan,
 }
 
 impl NodeKind {
@@ -24,6 +25,7 @@ impl NodeKind {
             Self::Feature => "feature",
             Self::Task => "task",
             Self::Check => "check",
+            Self::Plan => "plan",
         }
     }
 
@@ -31,6 +33,7 @@ impl NodeKind {
         match s {
             "feature" => Self::Feature,
             "check" => Self::Check,
+            "plan" => Self::Plan,
             _ => Self::Task,
         }
     }
@@ -78,9 +81,38 @@ impl BoardNodeStatus {
         }
     }
 
-    /// Check if status represents completion (Done or Validated)
+    /// Check if status represents work completion (task output is available).
+    /// AwaitingCheck means the worker finished — the check is a separate validation step.
     pub fn is_complete(&self) -> bool {
-        matches!(self, Self::Done | Self::Validated)
+        matches!(self, Self::Done | Self::AwaitingCheck | Self::Validated)
+    }
+}
+
+/// Difficulty of a board node (maps to worker intelligence level)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BoardNodeDifficulty {
+    Low,
+    #[default]
+    Medium,
+    High,
+}
+
+impl BoardNodeDifficulty {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "low" => Self::Low,
+            "high" => Self::High,
+            _ => Self::Medium,
+        }
     }
 }
 
@@ -156,6 +188,8 @@ pub struct BoardNode {
     pub kind: NodeKind,
     pub source: BoardNodeSource,
     pub content: String,
+    #[serde(default)]
+    pub difficulty: BoardNodeDifficulty,
     pub status: BoardNodeStatus,
     pub validates: Vec<String>,
     pub validated_by: Vec<String>,
@@ -186,6 +220,8 @@ pub struct BoardNodeTree {
     pub kind: NodeKind,
     pub source: BoardNodeSource,
     pub content: String,
+    #[serde(default)]
+    pub difficulty: BoardNodeDifficulty,
     pub status: BoardNodeStatus,
     pub validates: Vec<String>,
     pub validated_by: Vec<String>,
@@ -215,6 +251,7 @@ impl From<BoardNode> for BoardNodeTree {
             kind: node.kind,
             source: node.source,
             content: node.content,
+            difficulty: node.difficulty,
             status: node.status,
             validates: node.validates,
             validated_by: node.validated_by,
@@ -420,6 +457,8 @@ pub struct CreateBoardNodeRequest {
     #[serde(default)]
     pub content: String,
     #[serde(default)]
+    pub difficulty: BoardNodeDifficulty,
+    #[serde(default)]
     pub validated_by: Vec<String>,
     #[serde(default)]
     pub blocked_by: Vec<String>,
@@ -433,6 +472,7 @@ pub struct CreateBoardNodeRequest {
 pub struct UpdateBoardNodeRequest {
     pub name: Option<String>,
     pub content: Option<String>,
+    pub difficulty: Option<BoardNodeDifficulty>,
     pub validated_by: Option<Vec<String>>,
     pub blocked_by: Option<Vec<String>>,
     pub x: Option<f64>,

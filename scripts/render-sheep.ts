@@ -122,7 +122,7 @@ const NOSE_PATH = `M31.85 61.37s6.34-3.1 7.04-1.22c.7 1.88-1.88 3.33-2.91 3.99c-
 const DEFAULT_SKIN_COLOR = '#3D3D3D';
 
 /**
- * Generate Border Collie SVG for Gyp (the AI assistant)
+ * Generate Border Collie SVG for Shepherd (the AI assistant)
  * Based on detailed collie illustration
  */
 function generateCollieSvg(size = 64): string {
@@ -491,7 +491,7 @@ if (gridMode) {
     { config: { hat: 1, fluffiness: 2, bodyWidth: 0, bodyHeight: 0, earPosition: 0, legLength: 0, hueShift: 0, glasses: 0, bowtie: 0 }, status: '#4CAF50' }, // green - working
     { config: { hat: 0, fluffiness: 2, bodyWidth: 0, bodyHeight: 0, earPosition: 0, legLength: 0, hueShift: 0, glasses: 0, bowtie: 0 }, status: '#2196F3' }, // blue - idle
     { config: { hat: 0, fluffiness: 2, bodyWidth: 0, bodyHeight: 0, earPosition: 0, legLength: 0, hueShift: 0, glasses: 0, bowtie: 0 }, status: '#FF9800' }, // orange - waiting
-    { config: { hat: 0, fluffiness: 0, bodyWidth: 0, bodyHeight: 0, earPosition: 0, legLength: 0, hueShift: 0, glasses: 0, bowtie: 0 }, isCollie: true }, // Gyp the collie!
+    { config: { hat: 0, fluffiness: 0, bodyWidth: 0, bodyHeight: 0, earPosition: 0, legLength: 0, hueShift: 0, glasses: 0, bowtie: 0 }, isCollie: true }, // Shepherd the collie!
   ];
 
   const sheepSvgs = variations.map((v: { config: SheepConfig; status?: string; woolColor?: string; isCollie?: boolean }, i) => {

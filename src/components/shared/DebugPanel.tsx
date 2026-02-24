@@ -39,8 +39,7 @@ interface DaemonHealth {
 }
 
 interface ProcessCounts {
-  claude: number;
-  acp: number;
+  hirsel: number;
   node: number;
   details: string;
 }
@@ -114,7 +113,7 @@ export const DebugPanel: Component = () => {
 
   const handleKillOrphanedProcesses = async () => {
     try {
-      await invoke('kill_orphaned_acp_processes');
+      await invoke('kill_orphaned_worker_processes');
       refetchProcesses();
     } catch (e) {
       console.error('Failed to kill orphaned processes:', e);
@@ -274,18 +273,12 @@ export const DebugPanel: Component = () => {
               when={processCounts()}
               fallback={<p class="text-xs text-wool-500">Loading...</p>}
             >
-              <div class="grid grid-cols-3 gap-2 text-xs text-center">
+              <div class="grid grid-cols-2 gap-2 text-xs text-center">
                 <div class="bg-pasture-700/50 rounded p-2">
                   <div class="text-wool-300 font-mono text-lg">
-                    {processCounts()?.claude || 0}
+                    {processCounts()?.hirsel || 0}
                   </div>
-                  <div class="text-wool-500 text-[10px]">Claude</div>
-                </div>
-                <div class="bg-pasture-700/50 rounded p-2">
-                  <div class="text-wool-300 font-mono text-lg">
-                    {processCounts()?.acp || 0}
-                  </div>
-                  <div class="text-wool-500 text-[10px]">ACP</div>
+                  <div class="text-wool-500 text-[10px]">Hirsel</div>
                 </div>
                 <div class="bg-pasture-700/50 rounded p-2">
                   <div class="text-wool-300 font-mono text-lg">

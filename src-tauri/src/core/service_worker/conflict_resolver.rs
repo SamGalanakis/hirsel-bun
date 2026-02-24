@@ -19,22 +19,19 @@ use super::types::{ServiceWorkerBase, ServiceWorkerResult, ServiceWorkerType};
 /// Handles local vs remote execution internally - callers just call `resolve_conflicts()`.
 pub struct ConflictResolverServiceWrapper {
     base: ServiceWorkerBase,
-    agent_command: Vec<String>,
 }
 
 impl ConflictResolverServiceWrapper {
     /// Create a new conflict resolver service
-    pub fn new(config: Config, agent_command: Vec<String>) -> Self {
+    pub fn new(config: Config) -> Self {
         Self {
             base: ServiceWorkerBase::new(config, ServiceWorkerType::ConflictResolver),
-            agent_command,
         }
     }
 
     /// Create a new conflict resolver service with default agent command
     pub fn with_config(config: Config) -> Self {
-        let agent_command = crate::cli::config::get_agent_command();
-        Self::new(config, agent_command)
+        Self::new(config)
     }
 
     /// Resolve conflicts - handles local vs remote internally.
@@ -56,8 +53,7 @@ impl ConflictResolverServiceWrapper {
 
     /// Resolve conflicts locally by calling the resolver directly.
     ///
-    /// Uses spawn_blocking + LocalSet because the resolver uses spawn_local
-    /// for the ACP connection.
+    /// Uses spawn_blocking + LocalSet for isolated async execution.
     async fn resolve_locally(
         &self,
         work_dir: &Path,
@@ -70,7 +66,6 @@ impl ConflictResolverServiceWrapper {
             work_dir.display()
         );
 
-        let agent_command = self.agent_command.clone();
         let work_dir = work_dir.to_path_buf();
         let context = context.to_string();
 
@@ -84,7 +79,7 @@ impl ConflictResolverServiceWrapper {
                 })?;
 
             rt.block_on(async {
-                let resolver = RawConflictResolver::new(agent_command);
+                let resolver = RawConflictResolver::new();
                 tokio::task::LocalSet::new()
                     .run_until(resolver.resolve_conflicts(&work_dir, conflicts, &context))
                     .await

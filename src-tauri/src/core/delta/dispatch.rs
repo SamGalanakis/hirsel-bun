@@ -1,11 +1,10 @@
-//! Board dispatch service
+//! Board activation service used by Shepherd orchestration.
 //!
-//! Orchestrates the dispatch flow:
+//! Orchestrates activation flow:
 //! 1. Find all nodes with status='draft'
-//! 2. For features: set to pending + create __plan task as child
-//! 3. For tasks/checks: set to pending directly
-//! 4. Create/update project_run, board_version
-//! 5. Set run status to working
+//! 2. Set active draft nodes to pending
+//! 3. Create/update project_run, board_version
+//! 4. Set run status to working
 
 use tracing::info;
 
@@ -26,7 +25,7 @@ pub enum DispatchError {
 
 pub type DeltaDispatchResult<T> = Result<T, DispatchError>;
 
-/// Service for dispatching board features to runs
+/// Service for activating board nodes into an active run.
 pub struct DeltaDispatchService {
     state: DeltaState,
 }
@@ -39,14 +38,13 @@ impl DeltaDispatchService {
         }
     }
 
-    /// Execute a full dispatch
+    /// Activate draft nodes for Shepherd orchestration.
     ///
     /// 1. Find all draft nodes
-    /// 2. For features: set to pending + create __plan task as child
-    /// 3. For tasks/checks: set to pending directly
-    /// 4. Get or create persistent run
-    /// 5. Create board version
-    /// 6. Set run status to working
+    /// 2. Set active nodes to pending
+    /// 3. Get or create persistent run
+    /// 4. Create board version
+    /// 5. Set run status to working
     pub async fn dispatch(&self) -> DeltaDispatchResult<DispatchResult> {
         // 1. Find all draft nodes
         let draft_nodes = self.state.get_draft_nodes().await?;
@@ -58,42 +56,16 @@ impl DeltaDispatchService {
         info!("Dispatching {} draft nodes", draft_nodes.len());
 
         let mut feature_count = 0;
-        let mut plan_task_count = 0;
-
-        // 2. Process each draft node based on kind
+        // 2. Activate draft nodes
         for node in &draft_nodes {
             // Set node status to pending
             self.state
                 .update_node_status(&node.id, BoardNodeStatus::Pending, None)
                 .await?;
 
-            // For feature nodes: create a plan task as child
             if node.kind == NodeKind::Feature {
                 feature_count += 1;
-
-                let plan_id = format!("__plan_{}", node.id);
-                self.state
-                    .create_node_with_id(
-                        &plan_id,
-                        Some(&node.id),
-                        &format!("Plan: {}", node.name),
-                        NodeKind::Task,
-                        BoardNodeSource::System,
-                        crate::core::constants::PLAN_TASK_PROMPT,
-                        BoardNodeStatus::Pending,
-                        &[],
-                        &[],
-                    )
-                    .await?;
-
-                plan_task_count += 1;
-                info!("Created plan task {} for feature '{}'", plan_id, node.name);
-
-                // Block the feature on its plan task — children inherit
-                // the block via parent propagation in is_node_blocked
-                self.state.add_blocked_by(&node.id, &plan_id).await?;
             }
-            // Tasks and evals are just set to pending (already done above)
         }
 
         // 3. Get or create persistent run
@@ -124,7 +96,7 @@ impl DeltaDispatchService {
             run_name: run.run_name,
             node_count: draft_nodes.len(),
             feature_count,
-            plan_task_count,
+            plan_task_count: 0,
             version_number: version.version_number,
             version_id: version.id,
         })

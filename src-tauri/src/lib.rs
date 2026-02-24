@@ -374,6 +374,7 @@ fn run_command(
                 resume_session_id: args.resume_session_id,
                 api_url: args.api_url,
                 assigned_task_id: args.assigned_task_id,
+                is_plan_task: args.plan_task,
             };
 
             // Run the async worker in a tokio runtime with signal handling
@@ -449,7 +450,7 @@ fn run_command(
             .map_err(|e| format!("Scribe error: {}", e))?;
         }
         Commands::ServiceWorker(args) => {
-            // Internal command to run service worker (scribe/gyp HTTP server)
+            // Internal command to run service worker HTTP server
             let rt = tokio::runtime::Runtime::new()
                 .map_err(|e| format!("Failed to create runtime: {}", e))?;
             rt.block_on(async {
@@ -486,6 +487,7 @@ fn run_command(
                             wait_for_files: args.wait_for_files,
                             file_receiver_port: args.file_receiver_port,
                             assigned_task_id: args.assigned_task_id,
+                            is_plan_task: args.plan_task,
                         })
                         .await
                     })
@@ -493,12 +495,8 @@ fn run_command(
             })
             .map_err(|e| format!("Remote worker error: {}", e))?;
         }
-        Commands::AcpBridge => {
-            // Run ACP bridge server for Claude CLI
-            cli::acp_bridge::run_acp_bridge().map_err(|e| format!("ACP bridge error: {}", e))?;
-        }
         Commands::BoardMcp => {
-            // Run board MCP server for Gyp
+            // Run board MCP server for Shepherd
             let project_id: i64 = std::env::var("HIRSEL_PROJECT_ID")
                 .map_err(|_| "HIRSEL_PROJECT_ID environment variable required")?
                 .parse()
@@ -618,8 +616,6 @@ fn run_command(
 pub fn run() {
     init_tracing();
 
-    use std::sync::Arc;
-
     let mut builder = tauri::Builder::default();
 
     // When profiling, init_tracing() already set up a global subscriber (fmt + chrome),
@@ -657,20 +653,10 @@ pub fn run() {
         }
     }));
 
-    // Create chat session manager as shared state
-    let chat_manager = Arc::new(core::ChatSessionManager::new());
-
-    // Create chat orchestrator manager from the session manager
-    let chat_orchestrator_manager = Arc::new(gui::ChatOrchestratorManager::from_manager(
-        chat_manager.clone(),
-    ));
-
     // Create worker event stream manager as shared state
-    let worker_stream_manager = Arc::new(gui::WorkerEventStreamManager::new());
+    let worker_stream_manager = std::sync::Arc::new(gui::WorkerEventStreamManager::new());
 
     builder
-        .manage(chat_manager.clone())
-        .manage(chat_orchestrator_manager)
         .manage(worker_stream_manager)
         .invoke_handler(gui::get_handlers())
         .setup(|app| {
@@ -702,12 +688,11 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(move |window, event| {
-            // Clean up GUI-specific processes when main window closes
-            // Workers continue running - they are managed by the daemon
+            // Workers continue running when the UI closes - they are daemon-managed.
             if let tauri::WindowEvent::Destroyed = event {
                 if window.label() == "main" {
                     tracing::info!("[GUI] Main window closed");
-                    cleanup_all_processes(&chat_manager);
+                    cleanup_all_processes();
                 }
             }
         })
@@ -715,51 +700,32 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-/// Clean up GUI-specific processes on exit (chat sessions only)
+/// Clean up GUI-specific processes on exit.
 ///
-/// Workers are NOT killed when the UI closes - they continue running and are
-/// managed by the daemon. This allows users to close the UI while work continues.
+/// Workers are not killed when the UI closes - they continue running and are
+/// managed by the daemon.
 #[cfg(feature = "gui")]
-fn cleanup_all_processes(chat_manager: &std::sync::Arc<core::ChatSessionManager>) {
+fn cleanup_all_processes() {
     tracing::info!("[GUI] Main window closing, cleaning up GUI processes");
-
-    // Stop all active chat sessions (these are GUI-specific)
-    stop_chat_sessions(chat_manager);
-
-    // Workers continue running - they are managed by the daemon
     tracing::info!("[GUI] Cleanup complete (workers continue running)");
 }
 
-#[cfg(feature = "gui")]
-fn stop_chat_sessions(chat_manager: &std::sync::Arc<core::ChatSessionManager>) {
-    tracing::info!("[GUI] Stopping all chat sessions");
-    let rt = tokio::runtime::Runtime::new();
-    if let Ok(rt) = rt {
-        rt.block_on(async {
-            let sessions = chat_manager.list_sessions().await;
-            for session_id in sessions {
-                let _ = chat_manager.stop_session(&session_id).await;
-            }
-        });
-    }
-}
-
-/// Clean up orphaned hirsel __acp-bridge processes from previous dev sessions.
+/// Clean up leftover worker helper processes from previous dev sessions.
 /// This is only compiled in debug builds to handle hot-reload orphans.
 #[cfg(all(feature = "gui", debug_assertions))]
 fn cleanup_orphaned_dev_processes() {
     use std::process::Command;
 
-    tracing::info!("[DEV] Cleaning up orphaned acp-bridge processes from previous sessions");
+    tracing::info!("[DEV] Cleaning up orphaned worker helper processes from previous sessions");
 
-    // Kill all hirsel __acp-bridge processes - they're orphans from previous hot-reload
-    match Command::new("pkill").args(["-f", "__acp-bridge"]).output() {
+    // Kill old hidden helper commands from previous hot-reload sessions.
+    match Command::new("pkill").args(["-f", "__worker-run"]).output() {
         Ok(output) => {
             if output.status.success() {
-                tracing::info!("[DEV] Killed orphaned acp-bridge processes");
+                tracing::info!("[DEV] Killed orphaned worker helper processes");
             } else {
                 // Exit code 1 means no processes matched - that's fine
-                tracing::debug!("[DEV] No orphaned acp-bridge processes found");
+                tracing::debug!("[DEV] No orphaned worker helper processes found");
             }
         }
         Err(e) => {

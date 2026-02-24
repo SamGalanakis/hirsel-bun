@@ -177,7 +177,7 @@ fn execute_reset(
 # See hirsel man for all options
 
 [agent]
-command = ["claude"]
+command = ["hirsel", "__worker-run"]
 "#;
         // Ensure hirsel directory exists
         if let Some(parent) = config_path.parent() {

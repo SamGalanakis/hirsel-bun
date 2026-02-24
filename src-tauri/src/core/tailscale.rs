@@ -47,10 +47,10 @@ pub struct TailscaleClient {
 #[derive(Debug, Deserialize)]
 struct OAuthTokenResponse {
     access_token: String,
-    #[allow(dead_code)]
-    token_type: String,
-    #[allow(dead_code)]
-    expires_in: u64,
+    #[serde(rename = "token_type")]
+    _token_type: String,
+    #[serde(rename = "expires_in")]
+    _expires_in: u64,
 }
 
 /// Auth key creation request

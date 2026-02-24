@@ -7,8 +7,7 @@ use async_trait::async_trait;
 
 use super::{RunManager, RunManagerError, RunManagerResult};
 use crate::core::api_types::{
-    ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, ThreadSummary, Worker,
-    WorkerEventsResponse,
+    ConfigResponse, Eval, HistoryEntry, RunDetail, RunSummary, Worker, WorkerEventsResponse,
 };
 use crate::core::orchestrator::{HealthResponse, Orchestrator, RemoteOrchestrator};
 
@@ -108,36 +107,6 @@ impl RunManager for RemoteRunManager {
     ) -> RunManagerResult<WorkerEventsResponse> {
         self.orchestrator
             .get_worker_events(run, worker, after_id, limit)
-            .await
-            .map_err(|e| RunManagerError::Http(e.to_string()))
-    }
-
-    // =========================================================================
-    // Messages
-    // =========================================================================
-
-    async fn list_threads(&self, run: &str) -> RunManagerResult<Vec<ThreadSummary>> {
-        self.orchestrator
-            .list_threads(run)
-            .await
-            .map_err(|e| RunManagerError::Http(e.to_string()))
-    }
-
-    async fn get_messages(&self, run: &str, thread: &str) -> RunManagerResult<Vec<Message>> {
-        self.orchestrator
-            .get_messages(run, thread)
-            .await
-            .map_err(|e| RunManagerError::Http(e.to_string()))
-    }
-
-    async fn send_message(
-        &self,
-        run: &str,
-        thread: &str,
-        content: &str,
-    ) -> RunManagerResult<Message> {
-        self.orchestrator
-            .send_message(run, thread, content)
             .await
             .map_err(|e| RunManagerError::Http(e.to_string()))
     }

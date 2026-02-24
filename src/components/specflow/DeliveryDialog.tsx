@@ -34,16 +34,29 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
   const project = useProject();
   const route = useRoute();
 
-  // Seed defaults from project configuration
-  const proj = () => project.selectedProject();
+  // Seed defaults from active route configuration
+  const activeRoute = () => route.activeRoute();
+  const defaultRepo = () => {
+    const r = activeRoute();
+    if (!r?.repos?.length) return null;
+    if (r.defaultRepoId) {
+      const selected = r.repos.find((repo) => repo.id === r.defaultRepoId);
+      if (selected) return selected;
+    }
+    return r.repos[0];
+  };
   const projectRepo = () => {
-    const sp = proj()?.startingPoint;
-    if (sp?.url) return sp.url;
-    if (sp?.path) return sp.path;
+    const sp = defaultRepo()?.startingPoint;
+    if (!sp) return '';
+    if (sp.type === 'gitRepo') return sp.url;
+    if (sp.type === 'localFolder') return sp.path;
     return '';
   };
-  const projectBranch = () =>
-    proj()?.targetBranch || proj()?.startingPoint?.branch || 'main';
+  const projectBranch = () => {
+    const sp = defaultRepo()?.startingPoint;
+    const sourceBranch = sp?.type === 'gitRepo' ? sp.branch : null;
+    return activeRoute()?.targetBranch || sourceBranch || 'main';
+  };
 
   // Form state
   const [targetBranch, setTargetBranch] = createSignal(projectBranch());

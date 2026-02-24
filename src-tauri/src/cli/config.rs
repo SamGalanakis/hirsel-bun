@@ -1,7 +1,7 @@
 //! CLI config command implementation.
 //!
-//! Provides agent selection and configuration management for hirsel.
-//! Supports both interactive mode (curses-style menu) and direct agent setting.
+//! Provides codex runtime configuration management for hirsel.
+//! Supports both interactive mode and direct agent setting.
 
 use std::collections::HashMap;
 use std::io::{self, Write};
@@ -24,46 +24,11 @@ pub fn agent_presets() -> HashMap<&'static str, AgentPreset> {
     let mut presets = HashMap::new();
 
     presets.insert(
-        "claude",
-        AgentPreset {
-            command: vec!["claude".into()],
-            description: "Anthropic Claude Code (native)",
-            install_hint: Some("See https://docs.anthropic.com/en/docs/claude-code"),
-        },
-    );
-
-    presets.insert(
-        "gemini",
-        AgentPreset {
-            command: vec!["gemini".into()],
-            description: "Google Gemini CLI",
-            install_hint: None,
-        },
-    );
-
-    presets.insert(
-        "opencode",
-        AgentPreset {
-            command: vec!["opencode".into(), "acp".into()],
-            description: "OpenCode",
-            install_hint: None,
-        },
-    );
-
-    presets.insert(
         "codex",
         AgentPreset {
-            command: vec!["codex".into()],
-            description: "OpenAI Codex CLI",
-            install_hint: Some("npm install -g @zed-industries/codex-acp"),
-        },
-    );
-
-    presets.insert(
-        "goose",
-        AgentPreset {
-            command: vec!["goose".into()],
-            description: "Block Goose",
+            // Single supported runtime entry point.
+            command: vec!["hirsel".into(), "__worker-run".into()],
+            description: "OpenAI Codex (lash-core runtime)",
             install_hint: None,
         },
     );
@@ -129,7 +94,7 @@ pub fn get_current_agent() -> Option<String> {
     None
 }
 
-/// Get the configured agent command, defaulting to claude if not set
+/// Get the configured agent command, defaulting to the lash worker runtime if not set.
 pub fn get_agent_command() -> Vec<String> {
     if let Some(config) = read_config_file() {
         if let Some(agent) = config.get("agent").and_then(|a| a.as_table()) {
@@ -144,13 +109,12 @@ pub fn get_agent_command() -> Vec<String> {
             }
         }
     }
-    // Default to hirsel ACP bridge using our own executable path
-    // This handles both production (installed) and development (debug build) cases
+    // Default to hirsel worker runtime.
     let hirsel_path = std::env::current_exe()
         .ok()
         .and_then(|p| p.to_str().map(String::from))
         .unwrap_or_else(|| "hirsel".to_string());
-    vec![hirsel_path, "__acp-bridge".to_string()]
+    vec![hirsel_path, "__worker-run".to_string()]
 }
 
 /// Check if a command is available in PATH
@@ -180,8 +144,19 @@ pub fn set_agent(agent: &str) -> Result<(), String> {
         format!("Unknown agent: {}. Available: {}", agent, available)
     })?;
 
+    let mut command = preset.command.clone();
+
+    // In development, "hirsel" may not be in PATH. Use current executable path.
+    if command.first().map(|s| s.as_str()) == Some("hirsel") && !command_exists("hirsel") {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(path) = exe.to_str() {
+                command[0] = path.to_string();
+            }
+        }
+    }
+
     // Check if command exists
-    let cmd = &preset.command[0];
+    let cmd = &command[0];
     if !command_exists(cmd) {
         let mut msg = format!("Command not found: {}", cmd);
         if let Some(hint) = preset.install_hint {
@@ -196,7 +171,7 @@ pub fn set_agent(agent: &str) -> Result<(), String> {
     }
 
     // Write config
-    write_config_file(&preset.command).map_err(|e| format!("Failed to write config: {}", e))?;
+    write_config_file(&command).map_err(|e| format!("Failed to write config: {}", e))?;
 
     println!("\n✓ Agent set to {}", agent);
     println!("  {}", preset.description);
@@ -265,15 +240,11 @@ mod tests {
     #[test]
     fn test_agent_presets() {
         let presets = agent_presets();
-        assert!(presets.contains_key("claude"));
-        assert!(presets.contains_key("gemini"));
-        assert!(presets.contains_key("opencode"));
         assert!(presets.contains_key("codex"));
-        assert!(presets.contains_key("goose"));
 
-        let claude = &presets["claude"];
-        assert_eq!(claude.command, vec!["claude"]);
-        assert_eq!(claude.description, "Anthropic Claude Code (native)");
+        let codex = &presets["codex"];
+        assert_eq!(codex.command, vec!["hirsel", "__worker-run"]);
+        assert_eq!(codex.description, "OpenAI Codex (lash-core runtime)");
     }
 
     #[test]

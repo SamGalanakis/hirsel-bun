@@ -11,7 +11,6 @@
 mod auth;
 pub mod board;
 pub mod eval_routes;
-pub mod gyp;
 pub mod routes;
 pub mod shared_routes;
 pub mod worker_routes;
@@ -55,15 +54,12 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
         orchestrator,
         config,
     });
-    let gyp_state = Arc::new(gyp::GypState::new());
-
     // Build the router using shared route builders
-    // Remote server gets: shared routes + config routes + board routes + gyp routes
+    // Remote server gets: shared routes + config routes + board routes
     let app = shared_routes::build_shared_routes()
         .merge(shared_routes::build_config_routes())
         .merge(shared_routes::build_board_routes())
         .with_state(state)
-        .merge(shared_routes::build_gyp_routes().with_state(gyp_state))
         // Apply auth middleware
         .layer(axum::middleware::from_fn_with_state(
             api_key.clone(),

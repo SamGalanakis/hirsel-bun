@@ -3,7 +3,7 @@
 //! This module implements the worker that runs on remote machines
 //! and communicates with the coordinator via HTTP tunnel.
 //!
-//! Remote workers run the same ACP worker loop as local workers,
+//! Remote workers run the same lash worker loop as local workers,
 //! but the MCP server they spawn uses HttpState (via HIRSEL_API_URL)
 //! instead of SQLiteState.
 //!
@@ -11,13 +11,13 @@
 //!
 //! When `wait_for_files` is true, the worker starts an HTTP server
 //! that waits to receive a tarball of project files before starting
-//! the ACP worker loop. This allows the coordinator to push files
+//! the worker loop. This allows the coordinator to push files
 //! directly to the worker instead of the worker pulling them.
 
 use std::path::PathBuf;
 
-use crate::worker::acp_client::{run_worker, WorkerRunConfig};
 use crate::worker::http_state::HttpState;
+use crate::worker::{run_worker, WorkerRunConfig};
 
 /// Configuration for running a remote worker
 pub struct RemoteWorkerConfig<'a> {
@@ -35,12 +35,14 @@ pub struct RemoteWorkerConfig<'a> {
     pub file_receiver_port: Option<u16>,
     /// Assigned task ID (direct task assignment)
     pub assigned_task_id: Option<String>,
+    /// Whether the assigned task is a plan task
+    pub is_plan_task: bool,
 }
 
 /// Run a remote worker that communicates with coordinator via HTTP.
 ///
 /// This is the entry point for `hirsel __remote-worker` on remote machines.
-/// It runs the same ACP worker loop as local workers, but the MCP server
+/// It runs the same worker loop as local workers, but the MCP server
 /// spawned by the agent will detect HIRSEL_API_URL and use HttpState.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_remote_worker(
@@ -65,6 +67,7 @@ pub async fn run_remote_worker(
         wait_for_files: false,
         file_receiver_port: None,
         assigned_task_id: None,
+        is_plan_task: false,
     })
     .await
 }
@@ -157,10 +160,11 @@ pub async fn run_remote_worker_with_config(
         resume_session_id: None,
         api_url: Some(config.api_url.to_string()),
         assigned_task_id: config.assigned_task_id,
+        is_plan_task: config.is_plan_task,
     };
 
     tracing::info!(
-        "Remote worker {} starting ACP worker loop",
+        "Remote worker {} starting lash worker loop",
         config.worker_name
     );
     tracing::info!("Agent command: {:?}", config.agent_command);

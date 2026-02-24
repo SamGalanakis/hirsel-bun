@@ -7,6 +7,7 @@ use crate::core::config;
 use crate::core::delta::DeltaState;
 use crate::core::draft::StartingPoint;
 use crate::core::project::{CreateProjectRequest, Project, ProjectStore, UpdateProjectRequest};
+use crate::core::route::{CreateRouteRepoRequest, RouteStore, UpdateRouteSettingsRequest};
 use crate::core::state::SQLiteState;
 
 /// List all projects, sorted by most recently created
@@ -34,7 +35,6 @@ pub async fn create_project_from_path(
 ) -> Result<Project, String> {
     let store = ProjectStore::open().await.str_err()?;
 
-    // Use folder name as project name if not provided
     let project_name = name.unwrap_or_else(|| {
         std::path::Path::new(&path)
             .file_name()
@@ -42,71 +42,51 @@ pub async fn create_project_from_path(
             .unwrap_or_else(|| "Unnamed Project".to_string())
     });
 
-    // Check if project with this name already exists
-    if let Ok(Some(_)) = store.get_project_by_name(&project_name).await {
-        // Generate unique name by adding suffix
-        let mut unique_name = project_name.clone();
+    let mut final_name = project_name.clone();
+    if let Ok(Some(_)) = store.get_project_by_name(&final_name).await {
+        let base_name = final_name.clone();
         let mut counter = 1;
         while store
-            .get_project_by_name(&unique_name)
+            .get_project_by_name(&final_name)
             .await
             .ok()
             .flatten()
             .is_some()
         {
             counter += 1;
-            unique_name = format!("{} ({})", project_name, counter);
+            final_name = format!("{} ({})", base_name, counter);
         }
-
-        let req = CreateProjectRequest {
-            name: unique_name,
-            starting_point: StartingPoint::LocalFolder { path },
-            worker_scale: None,
-            time_limit_minutes: None,
-            human_in_the_loop: None,
-            docs_path: None,
-            persist_docs_changes: None,
-            description: None,
-            target_branch: None,
-            runner: None,
-            x: None,
-            y: None,
-        };
-        let project = store.create_project(&req).await.str_err()?;
-        return Ok(project);
     }
 
     let req = CreateProjectRequest {
-        name: project_name,
-        starting_point: StartingPoint::LocalFolder { path },
-        worker_scale: None,
-        time_limit_minutes: None,
-        human_in_the_loop: None,
-        docs_path: None,
-        persist_docs_changes: None,
+        name: final_name,
+        repos: vec![CreateRouteRepoRequest {
+            name: Some("local".to_string()),
+            starting_point: StartingPoint::LocalFolder { path },
+            target_branch: Some("main".to_string()),
+            runner: None,
+        }],
+        default_repo_index: Some(0),
         description: None,
-        target_branch: None,
-        runner: None,
         x: None,
         y: None,
     };
 
-    let project = store.create_project(&req).await.str_err()?;
-    Ok(project)
+    store.create_project(&req).await.str_err()
 }
 
-/// Create a new project with a name and starting point
+/// Create a new project with one or more linked repos
 #[tracing::instrument]
 #[tauri::command]
 pub async fn create_project(
     name: String,
-    starting_point: StartingPoint,
+    repos: Vec<CreateRouteRepoRequest>,
+    default_repo_index: Option<usize>,
     x: Option<f64>,
     y: Option<f64>,
 ) -> Result<Project, String> {
     let store = ProjectStore::open().await.str_err()?;
 
-    // Check if project with this name already exists and generate unique name if needed
     let mut project_name = name;
     if let Ok(Some(_)) = store.get_project_by_name(&project_name).await {
         let base_name = project_name.clone();
@@ -125,15 +105,9 @@ pub async fn create_project(
 
     let req = CreateProjectRequest {
         name: project_name,
-        starting_point,
-        worker_scale: None,
-        time_limit_minutes: None,
-        human_in_the_loop: None,
-        docs_path: None,
-        persist_docs_changes: None,
+        repos,
+        default_repo_index,
         description: None,
-        target_branch: None,
-        runner: None,
         x,
         y,
     };
@@ -142,11 +116,11 @@ pub async fn create_project(
     Ok(project)
 }
 
-/// Update a project's fields including run configuration
+/// Update a project's metadata and route-specific run configuration.
 ///
-/// Accepts all project fields including run settings (worker_scale, time_limit_minutes,
-/// human_in_the_loop, runner). When run settings change, they are
-/// also propagated to any active run for this project.
+/// Project fields updated here: x/y, description.
+/// Route fields updated here: worker_scale, time_limit_minutes, human_in_the_loop,
+/// target_branch, runner.
 #[tracing::instrument]
 #[tauri::command]
 pub async fn update_project(
@@ -161,31 +135,50 @@ pub async fn update_project(
     human_in_the_loop: Option<bool>,
     runner: Option<String>,
 ) -> Result<Project, String> {
-    let req = UpdateProjectRequest {
+    let project_req = UpdateProjectRequest {
         name: None,
-        starting_point: None,
-        worker_scale: worker_scale.clone(),
-        time_limit_minutes,
-        human_in_the_loop,
-        docs_path: None,
-        persist_docs_changes: None,
         description,
-        target_branch,
-        runner,
         x,
         y,
     };
 
-    // Update project
     let store = ProjectStore::open().await.str_err()?;
-    let project = store.update_project(project_id, &req).await.str_err()?;
+    let project = store
+        .update_project(project_id, &project_req)
+        .await
+        .str_err()?;
 
-    // Propagate settings to active run if one exists
+    let route_store = RouteStore::new(project_id).await.str_err()?;
+    route_store
+        .update_route_settings(
+            route_id,
+            &UpdateRouteSettingsRequest {
+                worker_scale: worker_scale.clone(),
+                time_limit_minutes,
+                human_in_the_loop,
+                docs_path: None,
+                persist_docs_changes: None,
+                target_branch,
+                runner,
+            },
+        )
+        .await
+        .str_err()?;
+
     if worker_scale.is_some() || time_limit_minutes.is_some() || human_in_the_loop.is_some() {
-        if let Err(e) = propagate_settings_to_active_run(project_id, route_id, &req).await {
+        if let Err(e) = propagate_settings_to_active_run(
+            project_id,
+            route_id,
+            &worker_scale,
+            time_limit_minutes,
+            human_in_the_loop,
+        )
+        .await
+        {
             tracing::warn!(
-                "Failed to propagate settings to active run for project {}: {}",
+                "Failed to propagate settings to active run for project {} route {}: {}",
                 project_id,
+                route_id,
                 e
             );
         }
@@ -194,32 +187,31 @@ pub async fn update_project(
     Ok(project)
 }
 
-/// Propagate project settings to the active run's state
+/// Propagate route settings to the active run's state
 async fn propagate_settings_to_active_run(
     project_id: i64,
     route_id: i64,
-    req: &UpdateProjectRequest,
+    worker_scale: &Option<String>,
+    time_limit_minutes: Option<i64>,
+    human_in_the_loop: Option<bool>,
 ) -> Result<(), String> {
-    // Find the active run for this project
     let delta_state = DeltaState::with_route(project_id, route_id);
     let project_run = delta_state.get_project_run().await.str_err()?;
 
     let Some(run) = project_run else {
-        return Ok(()); // No active run
+        return Ok(());
     };
 
     let run_dir = config::run_dir(&run.run_name);
     let db_path = run_dir.join("hirsel.db");
 
     if !db_path.exists() {
-        return Ok(()); // Run doesn't have a database yet
+        return Ok(());
     }
 
     let state = SQLiteState::new(&run.run_name).await.str_err()?;
 
-    // Propagate worker_scale (scale up allows spawning more workers immediately,
-    // scale down prevents spawning/waking workers beyond the new limit)
-    if let Some(ref scale) = req.worker_scale {
+    if let Some(scale) = worker_scale {
         state
             .set_worker_scale(scale)
             .await
@@ -227,8 +219,7 @@ async fn propagate_settings_to_active_run(
         tracing::info!("Propagated worker_scale={} to run {}", scale, run.run_name);
     }
 
-    // Propagate time_limit_minutes
-    if let Some(limit) = req.time_limit_minutes {
+    if let Some(limit) = time_limit_minutes {
         state
             .set_time_limit_minutes(Some(limit))
             .await
@@ -240,8 +231,7 @@ async fn propagate_settings_to_active_run(
         );
     }
 
-    // Propagate human_in_the_loop
-    if let Some(hitl) = req.human_in_the_loop {
+    if let Some(hitl) = human_in_the_loop {
         state
             .set_human_in_the_loop(hitl)
             .await
@@ -264,15 +254,7 @@ pub async fn update_project_name(project_id: i64, name: String) -> Result<Projec
 
     let req = UpdateProjectRequest {
         name: Some(name),
-        starting_point: None,
-        worker_scale: None,
-        time_limit_minutes: None,
-        human_in_the_loop: None,
-        docs_path: None,
-        persist_docs_changes: None,
         description: None,
-        target_branch: None,
-        runner: None,
         x: None,
         y: None,
     };
@@ -280,7 +262,7 @@ pub async fn update_project_name(project_id: i64, name: String) -> Result<Projec
     store.update_project(project_id, &req).await.str_err()
 }
 
-/// Delete a project (removes from list, doesn't delete files)
+/// Delete a project and all associated data
 #[tracing::instrument]
 #[tauri::command]
 pub async fn delete_project(project_id: i64) -> Result<(), String> {

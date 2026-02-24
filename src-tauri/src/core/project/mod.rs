@@ -1,7 +1,7 @@
 //! Project management module
 //!
-//! Projects are lightweight configuration containers that define a starting point
-//! (git repo + branch, local folder, or greenfield) and default settings for runs.
+//! Projects are lightweight outcome containers. Repository linkage and execution
+//! settings are route-scoped.
 //!
 //! All runs belong to a project. Projects enable:
 //! - Reusable configuration for multiple runs

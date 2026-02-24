@@ -1,6 +1,7 @@
 //! Board tree Tauri commands
 //!
-//! Commands for the unified board tree with feature/task/check nodes and dispatch.
+//! Commands for the unified board tree with feature/task/check nodes and
+//! Shepherd-driven orchestration.
 //! All commands are scoped to a specific route within a project.
 
 use serde::Serialize;
@@ -14,7 +15,7 @@ use crate::core::delta::{
 use crate::core::orchestrator::{
     create_local_orchestrator, DaemonOrchestrator, Orchestrator, StartRunRequest,
 };
-use crate::core::project::ProjectStore;
+use crate::core::route::RouteStore;
 use crate::core::state::SQLiteState;
 
 // =============================================================================
@@ -30,10 +31,10 @@ pub struct BoardTreeResponse {
     generation: i64,
 }
 
-/// Dispatch result for frontend
+/// Shepherd run start result for frontend
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DispatchResponse {
+pub struct ShepherdRunResponse {
     pub run_name: String,
     pub node_count: usize,
     pub feature_count: usize,
@@ -127,20 +128,22 @@ pub async fn reset_project_tree(project_id: i64, route_id: i64) -> Result<(), St
 }
 
 // =============================================================================
-// Dispatch Operations
+// Shepherd Run Operations
 // =============================================================================
 
-/// Dispatch board features - set features to pending, create plan tasks, start run
+/// Start or continue a Shepherd run.
 ///
 /// This command:
-/// 1. Finds draft feature nodes and sets them to pending
-/// 2. Creates __plan tasks as children of each feature
-/// 3. Gets or creates the persistent project run
-/// 4. Creates a board version
-/// 5. Ensures the daemon is running for orchestration
+/// 1. Moves draft nodes into active orchestration state
+/// 2. Gets or creates the persistent project run
+/// 3. Creates a board version snapshot
+/// 4. Ensures daemon-backed orchestration infra is ready
 #[tracing::instrument]
 #[tauri::command]
-pub async fn dispatch_board(project_id: i64, route_id: i64) -> Result<DispatchResponse, String> {
+pub async fn start_shepherd_run(
+    project_id: i64,
+    route_id: i64,
+) -> Result<ShepherdRunResponse, String> {
     let service = DeltaDispatchService::new(project_id, route_id);
     let result = service.dispatch().await.str_err()?;
 
@@ -148,8 +151,8 @@ pub async fn dispatch_board(project_id: i64, route_id: i64) -> Result<DispatchRe
     let run_db_path = config::run_dir(&result.run_name).join("hirsel.db");
     if !run_db_path.exists() {
         // First dispatch: create per-run DB, workspace, and spawn first worker
-        let store = ProjectStore::open().await.str_err()?;
-        let project = store.get_project(project_id).await.str_err()?;
+        let route_store = RouteStore::new(project_id).await.str_err()?;
+        let route = route_store.get_route(route_id).await.str_err()?;
 
         let orchestrator = create_local_orchestrator().str_err()?;
         orchestrator
@@ -160,10 +163,10 @@ pub async fn dispatch_board(project_id: i64, route_id: i64) -> Result<DispatchRe
                 spec: String::new(),
                 starting_point: None,
                 eval: None,
-                worker_scale: project.worker_scale.as_deref().and_then(|s| s.parse().ok()),
-                time_limit_minutes: project.time_limit_minutes,
-                human_in_the_loop: Some(project.human_in_the_loop),
-                runner: project.runner.clone(),
+                worker_scale: route.worker_scale.as_deref().and_then(|s| s.parse().ok()),
+                time_limit_minutes: route.time_limit_minutes,
+                human_in_the_loop: Some(route.human_in_the_loop),
+                runner: route.runner.clone(),
                 worker_runners: None,
                 tailscale_oauth: None,
             })
@@ -181,7 +184,7 @@ pub async fn dispatch_board(project_id: i64, route_id: i64) -> Result<DispatchRe
 
     bump_generation("runs_gen").await.ok();
 
-    Ok(DispatchResponse {
+    Ok(ShepherdRunResponse {
         run_name: result.run_name,
         node_count: result.node_count,
         feature_count: result.feature_count,
@@ -221,16 +224,16 @@ pub async fn complete_board_node(
 }
 
 // =============================================================================
-// Gyp Sync Operations
+// Shepherd Sync Operations
 // =============================================================================
 
-/// Sync changes from Gyp content files back to the database
+/// Sync changes from Shepherd content files back to the database.
 ///
-/// This should be called periodically while Gyp is active to pick up
+/// This should be called periodically while Shepherd is active to pick up
 /// changes made by the agent to the board content files.
 #[tracing::instrument]
 #[tauri::command]
-pub async fn sync_gyp_changes(project_id: i64, route_id: i64) -> Result<SyncResult, String> {
+pub async fn sync_shepherd_changes(project_id: i64, route_id: i64) -> Result<SyncResult, String> {
     let mut exporter = DeltaExporter::new(project_id, route_id);
     exporter
         .sync_file_changes()
@@ -239,15 +242,15 @@ pub async fn sync_gyp_changes(project_id: i64, route_id: i64) -> Result<SyncResu
 
 /// Combined sync + get board tree in one IPC call.
 ///
-/// Syncs Gyp file changes, then returns the board tree and project run.
+/// Syncs Shepherd file changes, then returns the board tree and project run.
 /// Eliminates the need for two sequential IPC round-trips per poll cycle.
 #[tracing::instrument]
 #[tauri::command]
-pub async fn sync_and_get_trees(
+pub async fn sync_and_get_shepherd_view(
     project_id: i64,
     route_id: i64,
 ) -> Result<BoardTreeResponse, String> {
-    // 1. Sync Gyp file changes
+    // 1. Sync Shepherd file changes
     let mut exporter = DeltaExporter::new(project_id, route_id);
     let _ = exporter
         .sync_file_changes()
@@ -274,12 +277,12 @@ pub async fn sync_and_get_trees(
 /// or Some(response) if trees were modified since last check.
 #[tracing::instrument]
 #[tauri::command]
-pub async fn sync_and_get_tree_if_changed(
+pub async fn sync_and_get_shepherd_view_if_changed(
     project_id: i64,
     route_id: i64,
     last_generation: i64,
 ) -> Result<Option<BoardTreeResponse>, String> {
-    // Always sync Gyp file changes (may bump generation if content differs)
+    // Always sync Shepherd file changes (may bump generation if content differs)
     let mut exporter = DeltaExporter::new(project_id, route_id);
     let _ = exporter.sync_file_changes();
 

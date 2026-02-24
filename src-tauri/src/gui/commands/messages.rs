@@ -1,39 +1,14 @@
 //! Message-related commands
 //!
-//! Commands for managing messages: getting messages, threads, sending, and marking as read.
-//!
-//! Note: Run-level messages (orchestrator) are kept for backward compatibility,
-//! but workers now use project-level messages (Sheepfold) for communication.
+//! Commands for unread notification aggregation from project-level messages.
 
 use super::types::{UnreadNotification, UnreadNotificationsResponse};
 use super::ResultExt;
-use crate::core::api_types::{parse_timestamp, Message, ThreadSummary};
+use crate::core::api_types::parse_timestamp;
 use crate::core::delta::DeltaState;
-use crate::core::orchestrator::create_orchestrator;
 use crate::core::project::ProjectStore;
+use crate::core::route::RouteStore;
 use crate::core::ProjectMessagesStore;
-
-/// Get messages for a thread
-/// Uses the orchestrator to support both local and remote modes
-#[tracing::instrument]
-#[tauri::command]
-pub async fn get_messages(
-    run_name: String,
-    thread_name: String,
-    _limit: Option<u32>,
-) -> Result<Vec<Message>, String> {
-    let orch = create_orchestrator(None).str_err()?;
-    orch.get_messages(&run_name, &thread_name).await.str_err()
-}
-
-/// Get all threads for a run
-/// Uses the orchestrator to support both local and remote modes
-#[tracing::instrument]
-#[tauri::command]
-pub async fn get_threads(run_name: String) -> Result<Vec<ThreadSummary>, String> {
-    let orch = create_orchestrator(None).str_err()?;
-    orch.list_threads(&run_name).await.str_err()
-}
 
 /// Get all unread notifications across all projects
 /// Uses project-level messages (Sheepfold) for notifications
@@ -75,7 +50,24 @@ pub async fn get_all_unread_notifications() -> Result<UnreadNotificationsRespons
 
         // Get project to find active_route_id
         let route_id = match project_store.get_project(project_id).await {
-            Ok(p) => p.active_route_id.unwrap_or(1), // Default to route 1 if not set
+            Ok(p) => match p.active_route_id {
+                Some(id) => id,
+                None => {
+                    let store = match RouteStore::new(project_id).await {
+                        Ok(s) => s,
+                        Err(_) => continue,
+                    };
+                    match store
+                        .list_routes()
+                        .await
+                        .ok()
+                        .and_then(|r| r.first().map(|x| x.id))
+                    {
+                        Some(id) => id,
+                        None => continue,
+                    }
+                }
+            },
             Err(_) => continue,
         };
 
@@ -153,52 +145,4 @@ pub async fn get_all_unread_notifications() -> Result<UnreadNotificationsRespons
         notifications: all_notifications,
         total_runs_with_unread: projects_with_unread,
     })
-}
-
-/// Send a message to a thread
-/// Uses the orchestrator to support both local and remote modes
-#[tracing::instrument]
-#[tauri::command]
-pub async fn send_message(
-    run_name: String,
-    thread_name: String,
-    content: String,
-) -> Result<Message, String> {
-    let orch = create_orchestrator(None).str_err()?;
-    orch.send_message(&run_name, &thread_name, &content)
-        .await
-        .str_err()
-}
-
-/// Mark messages as read
-/// This uses project-level messages (Sheepfold)
-#[tracing::instrument]
-#[tauri::command]
-pub async fn mark_messages_read(
-    run_name: String,
-    thread_name: String,
-    _reader: String,
-) -> Result<(), String> {
-    // Get project_id from run
-    let project_runs = DeltaState::list_all_project_runs().await.str_err()?;
-
-    let project_id = project_runs
-        .iter()
-        .find(|(pr, _)| pr.run_name == run_name)
-        .map(|(pr, _)| pr.project_id)
-        .ok_or_else(|| format!("Run '{}' not linked to a project", run_name))?;
-
-    // Get project to find active_route_id
-    let project_store = ProjectStore::open().await.str_err()?;
-    let project = project_store.get_project(project_id).await.str_err()?;
-    let route_id = project.active_route_id.unwrap_or(1);
-
-    let store = ProjectMessagesStore::open().await.str_err()?;
-
-    store
-        .mark_messages_read(project_id, route_id, &thread_name, "user")
-        .await
-        .str_err()?;
-
-    Ok(())
 }

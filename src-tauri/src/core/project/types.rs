@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::draft::StartingPoint;
+use crate::core::route::CreateRouteRepoRequest;
 
 /// Project - a lightweight configuration container for runs
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -12,21 +12,7 @@ pub struct Project {
     pub name: String,
     pub created_at: String,
     pub updated_at: String,
-    pub starting_point: StartingPoint,
-
-    // Default configuration (None = use global defaults)
-    pub worker_scale: Option<String>,
-    pub time_limit_minutes: Option<i64>,
-    pub human_in_the_loop: bool,
-    pub docs_path: String,
-    pub persist_docs_changes: bool,
     pub description: Option<String>,
-
-    // Delivery configuration
-    pub target_branch: Option<String>, // e.g., "staging", "main" - branch for PR/merge delivery
-
-    // Runner configuration
-    pub runner: Option<String>, // Default runner for this project's runs
 
     // Canvas position (for OneBoard portfolio view)
     pub x: Option<f64>,
@@ -41,23 +27,11 @@ pub struct Project {
 #[serde(rename_all = "camelCase")]
 pub struct CreateProjectRequest {
     pub name: String,
-    pub starting_point: StartingPoint,
+    pub repos: Vec<CreateRouteRepoRequest>,
     #[serde(default)]
-    pub worker_scale: Option<String>,
-    #[serde(default)]
-    pub time_limit_minutes: Option<i64>,
-    #[serde(default)]
-    pub human_in_the_loop: Option<bool>,
-    #[serde(default)]
-    pub docs_path: Option<String>,
-    #[serde(default)]
-    pub persist_docs_changes: Option<bool>,
+    pub default_repo_index: Option<usize>,
     #[serde(default)]
     pub description: Option<String>,
-    #[serde(default)]
-    pub target_branch: Option<String>,
-    #[serde(default)]
-    pub runner: Option<String>,
     #[serde(default)]
     pub x: Option<f64>,
     #[serde(default)]
@@ -71,23 +45,7 @@ pub struct UpdateProjectRequest {
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
-    pub starting_point: Option<StartingPoint>,
-    #[serde(default)]
-    pub worker_scale: Option<String>,
-    #[serde(default)]
-    pub time_limit_minutes: Option<i64>,
-    #[serde(default)]
-    pub human_in_the_loop: Option<bool>,
-    #[serde(default)]
-    pub docs_path: Option<String>,
-    #[serde(default)]
-    pub persist_docs_changes: Option<bool>,
-    #[serde(default)]
     pub description: Option<String>,
-    #[serde(default)]
-    pub target_branch: Option<String>,
-    #[serde(default)]
-    pub runner: Option<String>,
     #[serde(default)]
     pub x: Option<f64>,
     #[serde(default)]

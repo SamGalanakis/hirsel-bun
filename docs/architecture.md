@@ -81,7 +81,7 @@ cargo build --features s3-storage               # With S3 support
 |-----------|-----------|---------|
 | `state/` | `mod.rs`, `types.rs`, `run.rs`, `workers.rs`, `messages.rs`, `events.rs`, `evals.rs`, `history.rs`, `scribe.rs` | SQLite state management (per-run) |
 | `project/` | `mod.rs`, `types.rs`, `store.rs` | Project database (global), SpecFlow per-project configuration |
-| `board/` | `mod.rs`, `types.rs`, `storage.rs`, `mcp.rs` | SpecFlow board data (tasks, evals, task tree, file sync, MCP server for Gyp) |
+| `board/` | `mod.rs`, `types.rs`, `storage.rs`, `mcp.rs` | SpecFlow board data (tasks, evals, task tree, file sync, MCP server for Shepherd) |
 | `github/` | `mod.rs` | GitHub API client (octocrab) with auth fallback (env → gh config → hirsel config) |
 | `forge/` | `mod.rs` → `ForgeProvider` trait, `github.rs` | Extensible forge abstraction for PR/merge operations (currently GitHub only) |
 | `dispatch/` | `mod.rs` | Dispatch service: creates runs from board tasks, generates spec/eval, creates work+eval tasks with validated_by relationship |
@@ -92,26 +92,23 @@ cargo build --features s3-storage               # With S3 support
 | `lifecycle/` | `mod.rs` → `LifecycleManager` trait, `local.rs`, `remote.rs`, `transitions.rs` | Event-driven state machine |
 | `runner/` | `types.rs` → `Runner` trait, `local.rs`, `fly.rs`, `ssh.rs`, `composed.rs`, `config.rs`, `setup.rs` | Worker host implementations |
 | `run_manager/` | `mod.rs`, `local.rs`, `remote.rs` | Unified run management wrapping Orchestrator + Lifecycle |
-| `chat_orchestrator/` | `mod.rs` → `ChatOrchestrator` trait, `local.rs`, `remote.rs` | Chat session orchestration (local/remote) |
-| `snapshot/` | `mod.rs`, `archive.rs`, `noop.rs`, `s3.rs`, `claude_session.rs` | Work/session persistence |
+| `snapshot/` | `mod.rs`, `archive.rs`, `noop.rs`, `s3.rs`, `agent_session.rs` | Work/session persistence |
+| `shepherd/` | `mod.rs` | Shepherd orchestration domain primitives (decisions/commands) |
 | `draft/` | `mod.rs`, `types.rs` → `StartingPoint`, `workspace.rs`, `local_workspace.rs`, `s3_workspace.rs` | StartingPoint, workspace init |
 | `config/` | `mod.rs`, `store.rs`, `loader.rs`, `saver.rs`, `types.rs`, `agent.rs`, `storage.rs`, `orchestrator.rs`, `paths.rs` | Config struct, DB storage, profiles, runners |
 | `ops/` | `mod.rs`, `run.rs`, `setup.rs`, `spawn.rs`, `project.rs`, `docs.rs`, `types.rs` | Shared CLI/GUI operations |
-| `server/` | `mod.rs` → `start_server()`, `routes.rs`, `shared_routes.rs`, `auth.rs`, `gyp.rs`, `board.rs`, `worker_routes.rs`, `eval_routes.rs` | HTTP server for remote mode |
-| `eval/` | `mod.rs`, `acp.rs`, `context.rs`, `parser.rs`, `script.rs`, `types.rs` | Eval runner: ACP eval agent, context building, script parsing |
+| `server/` | `mod.rs` → `start_server()`, `routes.rs`, `shared_routes.rs`, `auth.rs`, `board.rs`, `worker_routes.rs`, `eval_routes.rs` | HTTP server for remote mode |
+| `eval/` | `mod.rs`, `runner.rs`, `parser.rs`, `types.rs` | Eval runner and parsing |
 | `storage/` | `mod.rs` | File storage abstraction (local/S3) |
 | `service_worker/` | `mod.rs`, `scribe.rs`, `conflict_resolver.rs`, `types.rs` | Service workers: ScribeService for documentation, ConflictResolverServiceWrapper for merge conflicts |
-| `conflict_resolver/` | `mod.rs`, `client.rs`, `state.rs` | Git conflict resolution with AI agent |
-| `acp_runner.rs` | - | Unified ACP agent runner for scribe, conflict_resolver, compaction, eval |
+| `conflict_resolver/` | `mod.rs`, `state.rs` | Git conflict resolution with AI agent |
 | `db.rs` | - | Shared SQLite connection utilities (open_db, open_global_db, utc_now, etc.) |
 | `error.rs` | - | `HirselError` enum with `ErrorKind` categorization |
-| `acp.rs` | - | Agent Control Protocol types, `AcpChild` process wrapper |
 | `state_access.rs` | - | Worker state abstraction (SQLite vs HTTP) |
-| `chat_session.rs` | - | Chat session management with event channels |
 | `metrics.rs` | - | Session metrics extraction with TTL cache |
 | `files.rs` | - | Run directory file operations |
-| `chats.rs` | - | GypChat message storage |
-| `gyp_chat.rs` | - | Project-level chat history |
+| `chats.rs` | - | Chat message storage |
+| `shepherd_chat.rs` | - | Project-level Shepherd chat history |
 | `project_messages.rs` | - | Sheepfold: route-scoped messaging (Meadow group chat + worker DMs), requires route_id |
 | `api_types.rs` | - | Shared API response types |
 | `git_http.rs` | - | Git Smart HTTP backend for remote worker git access (`#[cfg(feature = "server")]`) |
@@ -122,23 +119,22 @@ cargo build --features s3-storage               # With S3 support
 | `credentials.rs` | - | Encrypted credential store |
 | `git.rs` | - | Git operations |
 | `tailscale.rs` | - | Tailscale integration |
-| `gyp.rs` | - | Unified Gyp context builder and session config |
 
 ### `src-tauri/src/worker/` - Worker Subprocess
 
 | File | Purpose |
 |------|---------|
-| `acp_client.rs` | ACP connection, message handling, prompt building |
-| `runner.rs` | Worker execution loop (`WorkerRunner`), eval_pass/eval_fail handlers |
-| `msg.rs` | Message types and serialization |
+| `common.rs` | Worker prompt and run configuration builders |
+| `lash_runner.rs` | Embedded lash-core runtime bootstrap and event persistence |
+| `runner.rs` | Worker MCP-backed operations (`WorkerRunner`) used by lash tools |
 | `mcp.rs` | MCP server for worker tools (including eval_pass, eval_fail) |
-| `eval_mcp.rs` | MCP server for legacy eval tools |
+| `eval_mcp.rs` | Eval MCP server for evaluation tasks |
 | `remote_runner.rs` | Remote worker entry point |
 | `http_state.rs` | HTTP-based state for remote workers |
-| `file_server.rs` | File upload server for remote workers |
+| `file_server.rs` | File upload server for remote workers (`server`/`worker` feature) |
 
 **MCP Worker Tools** (available to all workers):
-- Live Node Management: `get_task_tree`, `get_available_tasks`, `get_my_tasks`, `get_task_details`, `complete_task`, `add_task`, `add_eval`, `delete_task`
+- Live Node Management: `get_task_tree`, `get_available_tasks`, `get_my_tasks`, `get_task_details`, `complete_task`, `add_task`, `add_check`, `delete_task`
 - Communication: `list_contacts`, `chat_history`, `chat_send`, `chat_unread`
 - Documentation: `scribe`, `read_docs`
 - Work Management: `work_done` (signal ready for next task), `time_status`
@@ -160,16 +156,15 @@ cargo build --features s3-storage               # With S3 support
 | `workers.rs` | `get_workers`, `attach_worker`, `open_worker_terminal`, `detach_worker`, `restart_worker` |
 | `messages.rs` | `get_messages`, `get_threads`, `get_all_unread_notifications`, `send_message`, `mark_messages_read` |
 | `events.rs` | `get_worker_events`, `clear_worker_events`, `start_worker_event_stream`, `stop_worker_event_stream` |
-| `chat.rs` | `start_chat_session`, `send_chat_message`, `respond_chat_permission`, `stop_chat_session`, `list_chat_sessions` |
+| `shepherd.rs` | `start_shepherd_session`, `send_shepherd_message`, `stop_shepherd_session`, `list_shepherd_sessions`, `get_shepherd_history`, `clear_shepherd_history`, `save_shepherd_message` |
 | `config_cmd.rs` | `get_config`, `save_config`, `get_tailscale_info`, `check_ssh_runner` |
 | `credentials.rs` | `store_credential`, `delete_credential`, `has_credential`, `get_credential`, `get_credential_masked` |
 | `files.rs` | `read_spec_file`, `write_spec_file`, `read_eval_file`, `write_eval_file`, `save_asset`, `import_asset_from_path`, `open_assets_folder`, `get_assets_path` |
 | `logs.rs` | `get_eval_log`, `get_eval_log_by_path`, `get_history`, `get_eval_spec`, `get_evals` |
 | `filesystem.rs` | `pick_folder`, `suggest_paths` |
-| `debug.rs` | `log_frontend`, `get_version`, `get_process_counts`, `kill_orphaned_acp_processes`, `get_gyp_chat_history`, `save_gyp_message`, `clear_gyp_chat_history` |
+| `debug.rs` | `log_frontend`, `log_frontend_batch`, `get_version`, `get_process_counts`, `kill_orphaned_worker_processes`, `get_daemon_health`, `get_profiling_enabled` |
 | `projects.rs` | `list_projects`, `get_project`, `create_project_from_path`, `delete_project` |
-| `gyp.rs` | `start_gyp_session`, `send_gyp_message`, `save_gyp_message`, `get_gyp_history`, `clear_gyp_history`, `stop_gyp_session` |
-| `delta.rs` | `get_board_tree`, `create_board_node`, `update_board_node`, `delete_board_node`, `move_board_node`, `reset_project_tree`, `dispatch_board`, `get_project_run`, `complete_board_node`, `sync_and_get_tree_if_changed`, `sync_gyp_changes` |
+| `delta.rs` | `get_board_tree`, `create_board_node`, `update_board_node`, `delete_board_node`, `move_board_node`, `reset_project_tree`, `start_shepherd_run`, `get_project_run`, `complete_board_node`, `sync_shepherd_changes`, `sync_and_get_shepherd_view`, `sync_and_get_shepherd_view_if_changed` |
 | `delivery.rs` | `get_delivery_state`, `check_merge_state`, `get_conflicting_files`, `check_staleness`, `push_run_branch`, `create_run_pr`, `auto_merge_run`, `generate_pr_title`, `generate_pr_body`, `delivery_branch_name`, `get_board_versions`, `get_latest_board_version`, `get_current_board_delivery`, `start_board_delivery`, `get_board_delivery_status`, `retry_board_delivery`, `get_delivery_attempts`, `complete_board_delivery`, `abandon_board_delivery` |
 | `routes.rs` | `list_routes`, `get_route`, `get_route_by_name`, `get_route_tree`, `create_route`, `delete_route`, `set_active_route`, `get_active_route` |
 | `project_messages.rs` | `get_project_messages`, `get_project_threads`, `send_project_message`, `mark_project_messages_read`, `get_project_unread_count` |
@@ -205,7 +200,6 @@ cargo build --features s3-storage               # With S3 support
 | `helpers.rs` | Shared helper functions | - |
 | `tui.rs` | Terminal UI for `attach` command | `cli` |
 | `mod.rs` | `hirsel mode <run>`, `hirsel amend <run>` (inline) | - |
-| `acp_bridge.rs` | `hirsel __acp-bridge` | - |
 | `service_worker.rs` | `hirsel __service-worker --type scribe` | `cli` |
 | `mod.rs` | `hirsel serve` (inline) | `server` |
 
@@ -226,10 +220,10 @@ cargo build --features s3-storage               # With S3 support
 | `components/runs/` | RunListPanel, RunListItem, WorkerCard, WorkerDetailModal, ActivityLog, tabs/ |
 | `components/specflow/` | SpecBoard, DeliveryDialog, RouteSelector, ForkRouteDialog, RunStatusPill, TaskEditorModal |
 | `components/modals/` | SettingsModal, ConfirmDialog, AttachPicker |
-| `components/chat/` | GypMessenger |
+| `components/chat/` | ShepherdConsole |
 | `components/messaging/` | MessagingPanel (right drawer for route-scoped messaging: Meadow group chat + worker DMs) |
 | `stores/` | AppProvider, ProjectProvider, RunsProvider, SelectionProvider, DeltaProvider, RouteProvider |
-| `hooks/` | useClickOutside, useElapsedTime, useEscapeKey, useGypChat, useModalClosing, usePolling, useWindowEvent |
+| `hooks/` | useClickOutside, useElapsedTime, useEscapeKey, useShepherdChat, useModalClosing, usePolling, useWindowEvent |
 | `lib/` | Icons, theme, toast, dev-logger, utils, API helpers |
 | `lib/api.ts` | Tauri invoke wrappers: `safeInvoke`, `safeInvokeWithToast`, polling utilities |
 | `lib/elk-layout.ts` | ELK.js wrapper for hierarchical graph layout with orthogonal edge routing |
@@ -404,27 +398,23 @@ Unified error hierarchy for the codebase.
 - `is_user_error()` distinguishes user errors from system errors
 
 **Error Conversion (From traits):** Common error types implement `From` for automatic conversion:
-- `OrchestratorError`: `From<StateError>`, `From<DeltaStateError>`, `From<ProjectError>`, `From<GypChatError>`, `From<reqwest::Error>`
+- `OrchestratorError`: `From<StateError>`, `From<DeltaStateError>`, `From<ProjectError>`, `From<ShepherdChatError>`, `From<reqwest::Error>`
 - `LifecycleError`: `From<StateError>`, `From<DeltaStateError>`, `From<std::io::Error>`
 - `RunManagerError`: `From<OrchestratorError>`, `From<std::io::Error>`, `From<serde_json::Error>`
 
 This allows using `?` operator directly instead of `.map_err(|e| Error::State(e.to_string()))`.
 
-### Process Management (`src-tauri/src/core/acp.rs`)
+### Process Management (`src-tauri/src/core/process.rs`)
 
-`AcpChild` wraps subprocess lifecycle for clean process management.
+Process-group cleanup utilities keep spawned subprocess trees from leaking.
 
 ```rust
-pub struct AcpChild {
-    child: Child,
-    context: String,
-    pid: Option<u32>,
-}
+pub fn cleanup_process_group(context: &str)
 ```
 
-- Creates process groups on Unix for proper cleanup of child processes
-- Drop impl: SIGTERM → wait with timeout → SIGKILL
-- Used for workers, chat sessions, ACP bridge
+- Used by subprocess entrypoints spawned with `process_group(0)`
+- Sends `SIGTERM`, waits briefly, then sends `SIGKILL` (Unix)
+- Ensures helper grandchildren are terminated before process exit
 
 ### State Access Abstraction (`src-tauri/src/core/state_access.rs`)
 
@@ -477,41 +467,23 @@ impl BoardService {
 - Exports islands as individual JSON files in `~/.hirsel/projects/{id}/board/islands/`
 - Enables AI agents to read/modify board state via file system
 - Import syncs JSON changes back to SQLite database
-- Used by Gyp AI context integration (deferred)
+- Used by Shepherd AI context integration
 
 ---
 
 ## Real-Time Events
 
-### SSE Streaming (`src-tauri/src/core/server/gyp.rs`)
+### Shepherd Event Streaming (`src-tauri/src/gui/commands/shepherd.rs`)
 
-Server-Sent Events for chat/worker updates.
+Tauri event-stream updates from the embedded lash runtime.
 
-- Channel-based: `tokio::sync::mpsc::UnboundedChannel`
-- Event types: `TextDelta`, `ToolCallStart`, `ToolCallDelta`, `ToolCallComplete`, `PermissionRequest`, `SessionComplete`, `Error`
-- Endpoint: `/api/gyp/sessions/{id}/events`
-- GypState manages active sessions with cleanup on disconnect
-
-### ChatOrchestrator Trait (`src-tauri/src/core/chat_orchestrator/mod.rs`)
-
-Mirrors Orchestrator pattern for chat-specific operations.
-
-```rust
-#[async_trait]
-pub trait ChatOrchestrator: Send + Sync {
-    async fn start_session(&self, context: ChatContext) -> ChatOrchestratorResult<String>;
-    async fn stop_session(&self, session_id: &str) -> ChatOrchestratorResult<()>;
-    async fn send_message(&self, session_id: &str, message: &str) -> ChatOrchestratorResult<()>;
-    async fn respond_permission(&self, session_id: &str, response: PermissionResponse) -> ChatOrchestratorResult<()>;
-    async fn list_sessions(&self) -> ChatOrchestratorResult<Vec<SessionInfo>>;
-    fn subscribe(&self, session_id: &str) -> ChatOrchestratorResult<BoxStream<'static, ChatEvent>>;
-}
-```
-
-| Implementation | Location | Use Case |
-|----------------|----------|----------|
-| `LocalChatOrchestrator` | `chat_orchestrator/local.rs` | Direct in-process |
-| `RemoteChatOrchestrator` | `chat_orchestrator/remote.rs` | HTTP + SSE to coordinator |
+- Runtime: `lash-core` (`RuntimeEngine`) executes one Shepherd turn per message
+- Event bridge maps lash `AgentEvent` values to frontend chat events
+- Event types: `TextDelta`, `ThinkingDelta`, `ToolCallStart`, `ToolCallUpdate`, `MessageComplete`, `SessionEnded`, `Error`
+- Event name: `shepherd-event` (Tauri event bus)
+- Sessions are tracked in-memory and cleaned up on stop
+- Message chunks are validated and persisted in `shepherd_chat_messages`
+- Pasted images are accepted as structured chunks and decoded to `TurnInput.images_png` (PNG currently)
 
 ---
 
@@ -599,19 +571,19 @@ EVAL:  Pending → Working → Done (pass) or Failed (fail)
                            creates repair task, parent → NeedsRepair
 ```
 
-### Dispatch Flow
+### Shepherd Start Flow
 
 1. Find spec nodes with `status=Draft`
 2. Set each to `status=Pending`
-3. Create `__plan_{spec_id}` task as child of each spec (kind=Task, source=System, status=Pending)
+3. Shepherd decomposes work dynamically and creates actionable task/eval nodes as needed
 4. Create/update project_run, board_version
-5. Plan workers read parent spec, explore codebase, create implementation tasks + evals as children
+5. Shepherd assigns workers as needed to execute implementation tasks + evals
 
 ---
 
 ## Data Flow
 
-### SpecFlow Board Dispatch
+### SpecFlow Board Start
 
 ```
 SpecFlow Board (GUI)
@@ -619,21 +591,21 @@ SpecFlow Board (GUI)
    ▼ User writes specs (kind=spec, status=draft)
 Board tree (single unified tree)
    │
-   ▼ dispatch_board(projectId, routeId)
+   ▼ start_shepherd_run(projectId, routeId)
 delta.rs command
    │
    ├─► Find all spec nodes with status=draft
    ├─► Set each spec to status=pending
-   ├─► Create __plan_{spec_id} task per spec (kind=task, source=system)
+   ├─► Do not create synthetic `__plan_*` nodes
    ├─► Create board_version snapshot
    ├─► Create/update project_run, set status=working
    │
-   ▼ Plan workers spawned
-Plan worker reads parent spec, explores codebase
+   ▼ Shepherd-driven worker orchestration
+Shepherd reads pending specs, explores codebase
    │
-   ├─► Creates implementation tasks as children of spec
-   ├─► Creates eval nodes with validates relationships
-   ├─► Sets blocked_by relationships between tasks
+   ├─► Creates implementation tasks/evals as needed
+   ├─► Updates validates relationships
+   ├─► Updates blocked_by relationships
    │
    ▼ Implementation workers spawned
 Workers claim pending tasks, execute, complete
@@ -789,7 +761,7 @@ Data that is scoped to a specific route:
 
 Route files stored at `~/.hirsel/projects/{project_id}/routes/{route_name}/`:
 - `docs/` - Route documentation
-- `board/tasks/{id}.md` - Task/eval content files for Gyp editing
+- `board/tasks/{id}.md` - Task/eval content files for Shepherd editing
 - `code/` - Code snapshot directory
 
 ### Route Forking
@@ -819,7 +791,7 @@ This allows independent exploration of different approaches while preserving the
 |-------|-------------|---------|
 | `config` | `key` | Configuration key-value store |
 | `credentials` | `key_type` | Encrypted credential storage |
-| `gyp_chat_messages` | `id` | GYP chat history |
+| `shepherd_chat_messages` | `id` | Shepherd chat history |
 | `projects` | `id` | Project registry |
 | `board_nodes` | `(id, project_id, route_id)` | Unified board tree (specs, tasks, evals) |
 | `board_node_validated_by` | `(eval_id, task_id, project_id, route_id)` | Eval→task validation relationships |
@@ -1164,16 +1136,18 @@ idle_timeout_seconds = 300        # 5 min default
 
 These endpoints proxy requests to `git-http-backend` CGI, resolving `run_name` to `~/.hirsel/runs/{run_name}/work/staging/`. Used by remote workers (SSH, Fly) to clone/fetch/push against the coordinator's staging repo. Mounted in `build_shared_routes()` so both daemon and remote server expose them.
 
-### Gyp Chat Endpoints
+### Shepherd Chat Commands (Tauri IPC)
 
-| Method | Path | Handler |
-|--------|------|---------|
-| GET | `/api/gyp/sessions` | `list_sessions` |
-| POST | `/api/gyp/sessions` | `start_session` |
-| DELETE | `/api/gyp/sessions/{id}` | `stop_session` |
-| POST | `/api/gyp/sessions/{id}/messages` | `send_message` |
-| POST | `/api/gyp/sessions/{id}/permission` | `respond_permission` |
-| GET | `/api/gyp/sessions/{id}/events` | `session_events` (SSE) |
+Shepherd chat is exposed through Tauri commands and Tauri events (not REST routes):
+
+- `start_shepherd_session`
+- `send_shepherd_message`
+- `stop_shepherd_session`
+- `list_shepherd_sessions`
+- `get_shepherd_history`
+- `save_shepherd_message`
+- `clear_shepherd_history`
+- Event stream: `shepherd-event`
 
 ### Adding a REST Endpoint
 
@@ -1182,13 +1156,12 @@ Routes are shared between daemon and remote server via `shared_routes.rs` to avo
 | Builder | Used By | Description |
 |---------|---------|-------------|
 | `build_shared_routes()` | Both | Run ops, workers, tasks, messages, evals, history, assets, git HTTP |
-| `build_gyp_routes()` | Both | Gyp chat sessions (requires `GypState`) |
 | `build_config_routes()` | Remote only | Config CRUD, credentials |
 | `build_board_routes()` | Remote only | Board sync for SpecFlow |
 | Inline routes in `daemon/server.rs` | Daemon only | `/daemon/*`, worker internal API |
 
 **To add a shared endpoint:**
-1. Add handler in `routes.rs` (or appropriate module like `gyp.rs`, `board.rs`)
+1. Add handler in `routes.rs` (or an appropriate module like `board.rs`)
 2. Add route to the appropriate builder in `shared_routes.rs`
 3. Both servers automatically get the new route
 
@@ -1311,7 +1284,7 @@ Service workers (`service_worker/`) manage background services that benefit from
 | Service | Purpose | Default Timeout |
 |---------|---------|-----------------|
 | Scribe | Documentation agent processing learnings | 5 min |
-| ConflictResolver | AI-assisted git merge conflict resolution | 5 min |
+| ConflictResolver | Conflict marker validation/resolution checks | 10 min |
 
 **Architecture:**
 ```
@@ -1337,8 +1310,7 @@ ScribeService.process_batch(run_name)
 **Key files:**
 - `core/service_worker/scribe.rs` - `ScribeService` handles local vs remote internally
 - `core/service_worker/conflict_resolver.rs` - `ConflictResolverServiceWrapper` for merge conflicts
-- `core/conflict_resolver/` - Core conflict resolution logic and ACP client
-- `core/acp_runner.rs` - Shared ACP agent runner used by both services
+- `core/conflict_resolver/` - Core conflict resolution state + validation logic
 - `core/service_worker/types.rs` - `ServiceWorkerType`, `ServiceWorkerHandle`
 - `cli/service_worker.rs` - HTTP server for `__service-worker` command (remote only)
 - `daemon/lifecycle.rs` - Integration in `maybe_process_scribe()`

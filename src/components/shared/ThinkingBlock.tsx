@@ -2,7 +2,7 @@
  * Collapsible thinking block component
  *
  * Displays AI thinking/reasoning with brain icon.
- * Used by both GypMessenger and WorkerOutputViewer.
+ * Used by both ShepherdConsole and WorkerOutputViewer.
  */
 import { Component, Show, createSignal } from 'solid-js';
 import { Icon } from './Icon';
@@ -23,7 +23,7 @@ export const ThinkingBlock: Component<ThinkingBlockProps> = (props) => {
 
   return (
     <div
-      class={`gyp-thinking-block p-2 ${isCollapsible() ? 'cursor-pointer' : ''} ${expanded() ? 'expanded' : 'collapsed'}`}
+      class={`shepherd-thinking-block p-2 ${isCollapsible() ? 'cursor-pointer' : ''} ${expanded() ? 'expanded' : 'collapsed'}`}
       onClick={() => isCollapsible() && setExpanded(!expanded())}
     >
       <div class="flex items-center gap-1.5 text-amber-500/70 text-xs mb-1">

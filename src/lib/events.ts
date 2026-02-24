@@ -10,7 +10,7 @@ type EventMap = {
   'project-created': unknown;
   'cancel-project-setup': undefined;
   'board-refresh': number;
-  'radial-dispatch': undefined;
+  'radial-start-shepherd': undefined;
   'radial-deliver': undefined;
   'radial-open-ide': undefined;
   'open-fork-dialog': undefined;
@@ -20,8 +20,8 @@ type EventMap = {
   'shortcuts-changed': undefined;
   'toggle-activity-fullscreen': undefined;
   'shortcut-action': string;
-  'gyp-focus-node': { id: string; name: string };
-  'gyp-editing-islands': unknown;
+  'shepherd-focus-node': { id: string; name: string };
+  'shepherd-editing-islands': unknown;
 };
 
 export function emit<K extends keyof EventMap>(

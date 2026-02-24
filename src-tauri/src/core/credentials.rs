@@ -60,6 +60,16 @@ pub enum CredentialError {
 
 pub type CredentialResult<T> = Result<T, CredentialError>;
 
+/// Stored Codex OAuth credential bundle.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexOAuthCredentials {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_at: u64,
+    pub account_id: Option<String>,
+}
+
 /// Credentials to forward to agent processes
 ///
 /// These are passed from the GUI client to the orchestrator (local or remote)
@@ -67,10 +77,18 @@ pub type CredentialResult<T> = Result<T, CredentialError>;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ForwardedCredentials {
-    /// OAuth access token for Claude (CLAUDE_ACCESS_TOKEN)
-    pub claude_access_token: Option<String>,
-    /// API key for Anthropic (ANTHROPIC_API_KEY)
-    pub anthropic_api_key: Option<String>,
+    /// API key for OpenAI-compatible auth (OPENAI_API_KEY)
+    pub openai_api_key: Option<String>,
+    /// API key for OpenRouter auth (OPENROUTER_API_KEY)
+    pub openrouter_api_key: Option<String>,
+    /// Codex OAuth access token (CODEX_ACCESS_TOKEN)
+    pub codex_access_token: Option<String>,
+    /// Codex OAuth refresh token (CODEX_REFRESH_TOKEN)
+    pub codex_refresh_token: Option<String>,
+    /// Codex token expiry epoch seconds (CODEX_EXPIRES_AT)
+    pub codex_expires_at: Option<String>,
+    /// Optional Codex account ID (CODEX_ACCOUNT_ID)
+    pub codex_account_id: Option<String>,
 }
 
 impl ForwardedCredentials {
@@ -81,14 +99,23 @@ impl ForwardedCredentials {
 
     /// Check if any credentials are present
     pub fn has_any(&self) -> bool {
-        self.claude_access_token.is_some() || self.anthropic_api_key.is_some()
+        self.openai_api_key.is_some()
+            || self.openrouter_api_key.is_some()
+            || self.codex_access_token.is_some()
+            || self.codex_refresh_token.is_some()
+            || self.codex_expires_at.is_some()
+            || self.codex_account_id.is_some()
     }
 
     /// Merge with another set of credentials, preferring self's values
     pub fn merge(self, other: ForwardedCredentials) -> Self {
         Self {
-            claude_access_token: self.claude_access_token.or(other.claude_access_token),
-            anthropic_api_key: self.anthropic_api_key.or(other.anthropic_api_key),
+            openai_api_key: self.openai_api_key.or(other.openai_api_key),
+            openrouter_api_key: self.openrouter_api_key.or(other.openrouter_api_key),
+            codex_access_token: self.codex_access_token.or(other.codex_access_token),
+            codex_refresh_token: self.codex_refresh_token.or(other.codex_refresh_token),
+            codex_expires_at: self.codex_expires_at.or(other.codex_expires_at),
+            codex_account_id: self.codex_account_id.or(other.codex_account_id),
         }
     }
 }
@@ -259,8 +286,12 @@ impl CredentialStore {
     /// Returns default (empty) credentials for any that are not stored.
     pub async fn load_all(&self) -> ForwardedCredentials {
         ForwardedCredentials {
-            claude_access_token: self.load("oauth_token").await.ok(),
-            anthropic_api_key: self.load("api_key").await.ok(),
+            openai_api_key: self.load("openai_api_key").await.ok(),
+            openrouter_api_key: self.load("openrouter_api_key").await.ok(),
+            codex_access_token: self.load("codex_access_token").await.ok(),
+            codex_refresh_token: self.load("codex_refresh_token").await.ok(),
+            codex_expires_at: self.load("codex_expires_at").await.ok(),
+            codex_account_id: self.load("codex_account_id").await.ok(),
         }
     }
 
@@ -268,40 +299,103 @@ impl CredentialStore {
     ///
     /// Only stores non-None values.
     pub async fn store_all(&self, creds: &ForwardedCredentials) -> CredentialResult<()> {
-        if let Some(ref token) = creds.claude_access_token {
-            self.store("oauth_token", token).await?;
+        if let Some(ref key) = creds.openai_api_key {
+            self.store("openai_api_key", key).await?;
         }
-        if let Some(ref key) = creds.anthropic_api_key {
-            self.store("api_key", key).await?;
+        if let Some(ref key) = creds.openrouter_api_key {
+            self.store("openrouter_api_key", key).await?;
+        }
+        if let Some(ref token) = creds.codex_access_token {
+            self.store("codex_access_token", token).await?;
+        }
+        if let Some(ref token) = creds.codex_refresh_token {
+            self.store("codex_refresh_token", token).await?;
+        }
+        if let Some(ref expires_at) = creds.codex_expires_at {
+            self.store("codex_expires_at", expires_at).await?;
+        }
+        if let Some(ref account_id) = creds.codex_account_id {
+            self.store("codex_account_id", account_id).await?;
         }
         Ok(())
     }
-}
 
-/// Read Claude OAuth credentials from the local ~/.claude/.credentials.json file
-///
-/// This is used by the GUI to read credentials from the user's local machine
-/// before forwarding them to a remote orchestrator.
-pub fn get_local_oauth_credentials() -> Option<ForwardedCredentials> {
-    let creds_path = dirs::home_dir()?.join(".claude").join(".credentials.json");
-    let content = std::fs::read_to_string(&creds_path).ok()?;
-    let data: serde_json::Value = serde_json::from_str(&content).ok()?;
+    /// Store Codex OAuth credentials.
+    pub async fn store_codex_oauth(&self, creds: &CodexOAuthCredentials) -> CredentialResult<()> {
+        self.store("codex_access_token", &creds.access_token)
+            .await?;
+        self.store("codex_refresh_token", &creds.refresh_token)
+            .await?;
+        self.store("codex_expires_at", &creds.expires_at.to_string())
+            .await?;
+        match &creds.account_id {
+            Some(account_id) => self.store("codex_account_id", account_id).await?,
+            None => {
+                let _ = self.delete("codex_account_id").await;
+            }
+        }
+        Ok(())
+    }
 
-    let token = data.get("claudeAiOauth")?.get("accessToken")?.as_str()?;
+    /// Load Codex OAuth credentials.
+    ///
+    /// Returns Ok(None) when required Codex fields are not present.
+    pub async fn load_codex_oauth(&self) -> CredentialResult<Option<CodexOAuthCredentials>> {
+        let access_token = match self.load("codex_access_token").await {
+            Ok(v) => v,
+            Err(CredentialError::NotFound(_)) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let refresh_token = match self.load("codex_refresh_token").await {
+            Ok(v) => v,
+            Err(CredentialError::NotFound(_)) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let expires_at = match self.load("codex_expires_at").await {
+            Ok(v) => v.parse::<u64>().map_err(|e| {
+                CredentialError::Encryption(format!("Invalid codex_expires_at: {}", e))
+            })?,
+            Err(CredentialError::NotFound(_)) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let account_id = self.load("codex_account_id").await.ok();
 
-    Some(ForwardedCredentials {
-        claude_access_token: Some(token.to_string()),
-        anthropic_api_key: None,
-    })
-}
+        Ok(Some(CodexOAuthCredentials {
+            access_token,
+            refresh_token,
+            expires_at,
+            account_id,
+        }))
+    }
 
-/// Read the raw Claude credentials JSON from ~/.claude/.credentials.json
-///
-/// Returns the full JSON content as a string, suitable for passing to containers
-/// or remote workers that need the complete credentials file.
-pub fn get_local_oauth_credentials_raw() -> Option<String> {
-    let creds_path = dirs::home_dir()?.join(".claude").join(".credentials.json");
-    std::fs::read_to_string(&creds_path).ok()
+    /// Delete all Codex OAuth credentials.
+    pub async fn delete_codex_oauth(&self) -> CredentialResult<()> {
+        let _ = self.delete("codex_access_token").await;
+        let _ = self.delete("codex_refresh_token").await;
+        let _ = self.delete("codex_expires_at").await;
+        let _ = self.delete("codex_account_id").await;
+        Ok(())
+    }
+
+    /// Store OpenRouter API key.
+    pub async fn store_openrouter_api_key(&self, api_key: &str) -> CredentialResult<()> {
+        self.store("openrouter_api_key", api_key).await
+    }
+
+    /// Load OpenRouter API key.
+    pub async fn load_openrouter_api_key(&self) -> CredentialResult<Option<String>> {
+        match self.load("openrouter_api_key").await {
+            Ok(v) => Ok(Some(v)),
+            Err(CredentialError::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Delete OpenRouter API key.
+    pub async fn delete_openrouter_api_key(&self) -> CredentialResult<()> {
+        let _ = self.delete("openrouter_api_key").await;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -19,7 +19,7 @@ pub struct SpawnWorkersConfig {
     pub run_name: String,
     /// Path to the run directory
     pub run_dir: PathBuf,
-    /// Agent command to run (e.g., ["hirsel", "__acp-bridge"])
+    /// Agent command to run (e.g., ["codex"])
     pub agent_command: Vec<String>,
     /// Whether this is a multi-worker run
     pub is_multi_worker: bool,
@@ -103,6 +103,7 @@ pub async fn spawn_local_workers(
             coordinator_url: None,
             tailscale_authkey: None,
             assigned_task_id: None,
+            is_plan_task: false,
         };
 
         match spawn_worker(spawn_config, state).await {
@@ -143,13 +144,14 @@ mod tests {
         let config = SpawnWorkersConfig {
             run_name: "test-run".to_string(),
             run_dir: PathBuf::from("/runs/test-run"),
-            agent_command: vec!["hirsel".to_string(), "__acp-bridge".to_string()],
+            agent_command: vec!["codex".to_string()],
             is_multi_worker: true,
             leader_name: Some("alpha".to_string()),
             all_worker_names: vec!["alpha".to_string(), "beta".to_string()],
         };
 
         assert_eq!(config.run_name, "test-run");
+        assert_eq!(config.agent_command, vec!["codex".to_string()]);
         assert!(config.is_multi_worker);
         assert_eq!(config.leader_name, Some("alpha".to_string()));
     }

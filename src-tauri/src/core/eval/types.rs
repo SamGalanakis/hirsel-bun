@@ -31,7 +31,7 @@ pub enum EvalError {
     ProcessFailed(String),
 }
 
-/// Configuration for running an ACP-based eval.
+/// Configuration for running an eval.
 #[derive(Debug, Clone)]
 pub struct EvalAcpConfig {
     pub run_name: String,
@@ -45,7 +45,7 @@ pub struct EvalAcpConfig {
     pub agent_command: Vec<String>,
 }
 
-/// Result of an ACP-based eval.
+/// Result of an eval.
 #[derive(Debug, Clone)]
 pub struct EvalAcpResult {
     pub success: bool,

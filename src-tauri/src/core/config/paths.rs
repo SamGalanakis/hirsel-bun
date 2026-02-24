@@ -30,7 +30,7 @@ pub fn run_exists(run_name: &str) -> bool {
 }
 
 /// Get the path to the global hirsel database (~/.hirsel/hirsel.db)
-/// This stores global data like Gyp chat history that shouldn't be in run DBs
+/// This stores global data like Shepherd chat history that shouldn't be in run DBs
 pub fn global_db_path() -> PathBuf {
     hirsel_dir().join("hirsel.db")
 }

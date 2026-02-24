@@ -1,0 +1,1337 @@
+//! Shepherd chat session commands.
+//!
+//! Replaces legacy Shepherd session command surface with Shepherd-oriented
+//! session lifecycle and history APIs.
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
+
+use base64::Engine;
+use lash_core::provider::Provider;
+use lash_core::tools::{
+    CompositeTools, EditFile, FindReplace, Glob, Grep, Ls, ReadFile, Shell, WriteFile,
+};
+use lash_core::{
+    AgentCapabilities, AgentEvent, AgentStateEnvelope, EventSink, FsInstructionSource, InputItem,
+    Message, MessageRole, Part, PartKind, PruneState, RuntimeConfig, RuntimeEngine, ToolDefinition,
+    ToolParam, ToolProvider, ToolResult, TurnInput,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use tauri::Emitter;
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, warn};
+
+use super::delta;
+use super::ResultExt;
+use crate::core::board::mcp::BoardMcpServer;
+use crate::core::llm_provider;
+use crate::core::mcp::McpToolServer;
+use crate::core::{
+    Config, ProjectStore, RouteFiles, RouteStore, SQLiteState, ShepherdChatMessage,
+    ShepherdChatStore,
+};
+
+#[derive(Debug, Clone)]
+struct ShepherdSession {
+    scope: ShepherdScope,
+    active_turn: Option<CancellationToken>,
+}
+
+static ACTIVE_SESSIONS: OnceLock<StdMutex<HashMap<String, ShepherdSession>>> = OnceLock::new();
+
+fn sessions() -> &'static StdMutex<HashMap<String, ShepherdSession>> {
+    ACTIVE_SESSIONS.get_or_init(|| StdMutex::new(HashMap::new()))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShepherdTaskFocus {
+    pub task_id: String,
+    pub task_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ShepherdScope {
+    #[serde(rename = "general")]
+    General,
+    #[serde(rename = "run")]
+    Run {
+        #[serde(rename = "runName")]
+        run_name: String,
+        #[serde(rename = "workspacePath", default)]
+        workspace_path: String,
+        #[serde(rename = "projectPath", default)]
+        project_path: Option<String>,
+    },
+    #[serde(rename = "board")]
+    Board {
+        #[serde(rename = "projectId")]
+        project_id: i64,
+        #[serde(rename = "workspacePath", default)]
+        workspace_path: Option<String>,
+        #[serde(default)]
+        focus: Option<ShepherdTaskFocus>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum StartShepherdSessionRequest {
+    #[serde(rename = "general")]
+    General,
+    #[serde(rename = "run")]
+    Run {
+        #[serde(rename = "runName")]
+        run_name: String,
+    },
+    #[serde(rename = "board")]
+    Board {
+        #[serde(rename = "projectId")]
+        project_id: i64,
+    },
+    #[serde(rename = "boardFocused")]
+    BoardFocused {
+        #[serde(rename = "projectId")]
+        project_id: i64,
+        #[serde(rename = "taskId")]
+        task_id: String,
+        #[serde(rename = "taskName")]
+        task_name: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartShepherdSessionResponse {
+    pub session_id: String,
+    pub scope: ShepherdScope,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum ShepherdEvent {
+    TextDelta {
+        session_id: String,
+        text: String,
+    },
+    ToolCallStart {
+        session_id: String,
+        tool_call_id: String,
+        title: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        input: Option<String>,
+    },
+    ToolCallUpdate {
+        session_id: String,
+        tool_call_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        status: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        output: Option<String>,
+    },
+    Error {
+        session_id: String,
+        message: String,
+    },
+    MessageComplete {
+        session_id: String,
+    },
+    SessionEnded {
+        session_id: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ShepherdMessageChunk {
+    Text {
+        content: String,
+    },
+    Thinking {
+        content: String,
+    },
+    Tool {
+        id: String,
+        title: String,
+        #[serde(default)]
+        kind: Option<String>,
+        status: String,
+        #[serde(default)]
+        input: Option<String>,
+        #[serde(default)]
+        output: Option<String>,
+    },
+    Image {
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+        #[serde(rename = "dataBase64")]
+        data_base64: String,
+        #[serde(default)]
+        name: Option<String>,
+    },
+}
+
+const MAX_IMAGE_COUNT: usize = 8;
+const MAX_IMAGE_BASE64_CHARS: usize = 12 * 1024 * 1024; // ~9MB raw bytes
+const RUNTIME_HISTORY_LIMIT: usize = 48;
+const RUNTIME_PREVIEW_MAX_CHARS: usize = 1200;
+
+#[derive(Default)]
+struct AssistantDraft {
+    text: String,
+    thinking: String,
+    tools: Vec<ShepherdMessageChunk>,
+    final_message: Option<String>,
+    errored: bool,
+}
+
+struct ShepherdToolProvider {
+    board: Option<StdMutex<BoardMcpServer>>,
+    default_project_id: Option<i64>,
+    active_route_id: StdMutex<Option<i64>>,
+}
+
+impl ShepherdToolProvider {
+    fn new(default_project_id: Option<i64>, default_route_id: Option<i64>) -> Self {
+        let board = default_project_id
+            .map(BoardMcpServer::new)
+            .map(StdMutex::new);
+        Self {
+            board,
+            default_project_id,
+            active_route_id: StdMutex::new(default_route_id),
+        }
+    }
+
+    fn arg_i64(args: &Value, key: &str) -> Option<i64> {
+        args.get(key).and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_u64().map(|n| n as i64))
+                .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+        })
+    }
+
+    fn resolve_project_id(&self, args: &Value) -> Result<i64, String> {
+        if let Some(project_id) = Self::arg_i64(args, "project_id") {
+            return Ok(project_id);
+        }
+        self.default_project_id
+            .ok_or_else(|| "project_id is required outside board/run scope".to_string())
+    }
+
+    fn resolve_route_id(&self, args: &Value) -> Result<i64, String> {
+        if let Some(route_id) = Self::arg_i64(args, "route_id") {
+            return Ok(route_id);
+        }
+        self.active_route_id
+            .lock()
+            .ok()
+            .and_then(|g| *g)
+            .ok_or_else(|| {
+                "route_id is required (call board_routes first if you are unsure)".to_string()
+            })
+    }
+
+    fn schema_type_to_param(ty: &str) -> &'static str {
+        match ty {
+            "integer" => "int",
+            "number" => "float",
+            "boolean" => "bool",
+            "array" => "list",
+            "object" => "dict",
+            _ => "str",
+        }
+    }
+
+    fn mcp_schema_params(schema: &Value) -> Vec<ToolParam> {
+        let required: HashSet<String> = schema
+            .get("required")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(ToOwned::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .map(|props| {
+                props
+                    .iter()
+                    .map(|(name, prop)| {
+                        let param_type = prop
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .map(Self::schema_type_to_param)
+                            .unwrap_or("str");
+                        if required.contains(name) {
+                            ToolParam::typed(name, param_type)
+                        } else {
+                            ToolParam::optional(name, param_type)
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn board_definitions(&self) -> Vec<ToolDefinition> {
+        let Some(board) = &self.board else {
+            return Vec::new();
+        };
+        let Ok(board) = board.lock() else {
+            return Vec::new();
+        };
+        board
+            .tools()
+            .into_iter()
+            .map(|tool| ToolDefinition {
+                name: tool.name.to_string(),
+                description: tool.description.to_string(),
+                params: Self::mcp_schema_params(&tool.input_schema),
+                returns: "dict".to_string(),
+                examples: vec![],
+                hidden: false,
+                inject_into_prompt: true,
+            })
+            .collect()
+    }
+
+    fn execute_board_tool(&self, name: &str, args: &Value) -> ToolResult {
+        let Some(board) = &self.board else {
+            return ToolResult::err(json!({
+                "error": "Board tools require a run or board scoped Shepherd session"
+            }));
+        };
+        let Ok(mut board) = board.lock() else {
+            return ToolResult::err(json!({"error": "Failed to lock board tool server"}));
+        };
+
+        match board.execute(name, args.clone()) {
+            Ok((output, _)) => {
+                if name == "board_switch_route" {
+                    if let Some(route_id) = Self::arg_i64(args, "route_id") {
+                        if let Ok(mut active) = self.active_route_id.lock() {
+                            *active = Some(route_id);
+                        }
+                    }
+                }
+                serde_json::from_str::<Value>(&output)
+                    .map(ToolResult::ok)
+                    .unwrap_or_else(|_| ToolResult::ok(json!(output)))
+            }
+            Err(error) => ToolResult::err(json!({ "error": error })),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ToolProvider for ShepherdToolProvider {
+    fn definitions(&self) -> Vec<ToolDefinition> {
+        let mut defs = self.board_definitions();
+        defs.extend([
+            ToolDefinition {
+                name: "shepherd_start_run".to_string(),
+                description: "Dispatch board nodes and start/continue execution for this route."
+                    .to_string(),
+                params: vec![
+                    ToolParam::optional("project_id", "int"),
+                    ToolParam::optional("route_id", "int"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                hidden: false,
+                inject_into_prompt: true,
+            },
+            ToolDefinition {
+                name: "shepherd_get_project_run".to_string(),
+                description: "Get current run metadata for a project route.".to_string(),
+                params: vec![
+                    ToolParam::optional("project_id", "int"),
+                    ToolParam::optional("route_id", "int"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                hidden: false,
+                inject_into_prompt: true,
+            },
+            ToolDefinition {
+                name: "shepherd_sync_board".to_string(),
+                description: "Sync board/task markdown file edits back into board node state."
+                    .to_string(),
+                params: vec![
+                    ToolParam::optional("project_id", "int"),
+                    ToolParam::optional("route_id", "int"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                hidden: false,
+                inject_into_prompt: true,
+            },
+            ToolDefinition {
+                name: "shepherd_get_board_tree".to_string(),
+                description: "Return the full board tree for a project route.".to_string(),
+                params: vec![
+                    ToolParam::optional("project_id", "int"),
+                    ToolParam::optional("route_id", "int"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                hidden: false,
+                inject_into_prompt: true,
+            },
+        ]);
+        defs
+    }
+
+    async fn execute(&self, name: &str, args: &Value) -> ToolResult {
+        if name.starts_with("board_") {
+            return self.execute_board_tool(name, args);
+        }
+
+        let project_id = match self.resolve_project_id(args) {
+            Ok(v) => v,
+            Err(error) => return ToolResult::err(json!({ "error": error })),
+        };
+        let route_id = match self.resolve_route_id(args) {
+            Ok(v) => v,
+            Err(error) => return ToolResult::err(json!({ "error": error })),
+        };
+
+        match name {
+            "shepherd_start_run" => match delta::start_shepherd_run(project_id, route_id).await {
+                Ok(resp) => ToolResult::ok(json!(resp)),
+                Err(error) => ToolResult::err(json!({ "error": error })),
+            },
+            "shepherd_get_project_run" => {
+                match delta::get_project_run(project_id, route_id).await {
+                    Ok(resp) => ToolResult::ok(json!(resp)),
+                    Err(error) => ToolResult::err(json!({ "error": error })),
+                }
+            }
+            "shepherd_sync_board" => match delta::sync_shepherd_changes(project_id, route_id).await
+            {
+                Ok(resp) => ToolResult::ok(json!(resp)),
+                Err(error) => ToolResult::err(json!({ "error": error })),
+            },
+            "shepherd_get_board_tree" => match delta::get_board_tree(project_id, route_id).await {
+                Ok(resp) => ToolResult::ok(json!(resp)),
+                Err(error) => ToolResult::err(json!({ "error": error })),
+            },
+            _ => ToolResult::err(json!({ "error": format!("Unknown tool: {}", name) })),
+        }
+    }
+}
+
+struct ShepherdLashSink {
+    app: tauri::AppHandle,
+    session_id: String,
+    tool_seq: AtomicU64,
+    draft: Arc<Mutex<AssistantDraft>>,
+}
+
+impl ShepherdLashSink {
+    fn new(app: tauri::AppHandle, session_id: String, draft: Arc<Mutex<AssistantDraft>>) -> Self {
+        Self {
+            app,
+            session_id,
+            draft,
+            tool_seq: AtomicU64::new(1),
+        }
+    }
+
+    fn emit(&self, event: &ShepherdEvent) {
+        if let Err(e) = self.app.emit("shepherd-event", (&self.session_id, event)) {
+            warn!("failed to emit shepherd-event: {}", e);
+        }
+    }
+
+    fn tool_title_kind(name: &str) -> (String, Option<String>) {
+        let mapped = match name {
+            "read_file" => ("Read".to_string(), Some("read".to_string())),
+            "ls" | "glob" | "grep" => ("Search".to_string(), Some("search".to_string())),
+            "edit_file" => ("Edit".to_string(), Some("edit".to_string())),
+            "write_file" | "find_replace" => ("Write".to_string(), Some("write".to_string())),
+            "diff_file" => ("Diff".to_string(), Some("read".to_string())),
+            "shell" | "shell_write" | "shell_status" => {
+                ("Shell".to_string(), Some("execute".to_string()))
+            }
+            "board_routes" => ("Board Routes".to_string(), Some("search".to_string())),
+            "board_switch_route" => ("Switch Route".to_string(), Some("execute".to_string())),
+            "board_view" | "shepherd_get_board_tree" => {
+                ("Board View".to_string(), Some("search".to_string()))
+            }
+            "board_feature" | "board_task" | "board_check" | "board_delete" => {
+                ("Board Edit".to_string(), Some("edit".to_string()))
+            }
+            "shepherd_start_run" => ("Start Run".to_string(), Some("execute".to_string())),
+            "shepherd_get_project_run" => ("Run Status".to_string(), Some("search".to_string())),
+            "shepherd_sync_board" => ("Sync Board".to_string(), Some("execute".to_string())),
+            _ => (name.to_string(), None),
+        };
+        mapped
+    }
+
+    fn sanitize_assistant_text(text: &str) -> String {
+        let out = text
+            .replace("</repl>", "")
+            .replace("<repl>", "")
+            .replace("</repl", "")
+            .replace("<repl", "");
+
+        let mut trimmed = out.trim_end().to_string();
+        for suffix in ["<rep", "<re", "<r", "<"] {
+            if let Some(stripped) = trimmed.strip_suffix(suffix) {
+                trimmed = stripped.trim_end().to_string();
+                break;
+            }
+        }
+        trimmed
+    }
+}
+
+#[async_trait::async_trait]
+impl EventSink for ShepherdLashSink {
+    async fn emit(&self, event: AgentEvent) {
+        match event {
+            AgentEvent::TextDelta { content } => {
+                let sanitized = Self::sanitize_assistant_text(&content);
+                if sanitized.is_empty() {
+                    return;
+                }
+                self.emit(&ShepherdEvent::TextDelta {
+                    session_id: self.session_id.clone(),
+                    text: sanitized.clone(),
+                });
+                let mut draft = self.draft.lock().await;
+                draft.text.push_str(&sanitized);
+            }
+            AgentEvent::CodeBlock { code } => {
+                let _ = code;
+            }
+            AgentEvent::ToolCall {
+                name,
+                args,
+                result,
+                success,
+                ..
+            } => {
+                let tool_call_id = format!(
+                    "shepherd-tool-{}",
+                    self.tool_seq.fetch_add(1, Ordering::Relaxed)
+                );
+                let (title, kind) = Self::tool_title_kind(&name);
+                let input = serde_json::to_string(&args).ok();
+                let output = serde_json::to_string(&result).ok();
+
+                self.emit(&ShepherdEvent::ToolCallStart {
+                    session_id: self.session_id.clone(),
+                    tool_call_id: tool_call_id.clone(),
+                    title: title.clone(),
+                    kind: kind.clone(),
+                    input: input.clone(),
+                });
+
+                let status = if success { "completed" } else { "failed" }.to_string();
+                self.emit(&ShepherdEvent::ToolCallUpdate {
+                    session_id: self.session_id.clone(),
+                    tool_call_id: tool_call_id.clone(),
+                    title: Some(title.clone()),
+                    status: status.clone(),
+                    output: output.clone(),
+                });
+
+                let mut draft = self.draft.lock().await;
+                draft.tools.push(ShepherdMessageChunk::Tool {
+                    id: tool_call_id,
+                    title,
+                    kind,
+                    status,
+                    input,
+                    output,
+                });
+            }
+            AgentEvent::Message { text, kind } => {
+                if kind == "final" {
+                    let sanitized_final = Self::sanitize_assistant_text(&text);
+                    let mut draft = self.draft.lock().await;
+                    if draft.text.trim().is_empty() {
+                        let final_text = sanitized_final.trim().to_string();
+                        if !final_text.is_empty() {
+                            self.emit(&ShepherdEvent::TextDelta {
+                                session_id: self.session_id.clone(),
+                                text: final_text.clone(),
+                            });
+                            draft.text.push_str(&final_text);
+                        }
+                    }
+                    draft.final_message = Some(sanitized_final);
+                }
+            }
+            AgentEvent::Error { message, .. } => {
+                self.emit(&ShepherdEvent::Error {
+                    session_id: self.session_id.clone(),
+                    message: message.clone(),
+                });
+                let mut draft = self.draft.lock().await;
+                draft.errored = true;
+            }
+            AgentEvent::Prompt { .. }
+            | AgentEvent::CodeOutput { .. }
+            | AgentEvent::LlmRequest { .. }
+            | AgentEvent::LlmResponse { .. }
+            | AgentEvent::TokenUsage { .. }
+            | AgentEvent::RetryStatus { .. }
+            | AgentEvent::SubAgentDone { .. }
+            | AgentEvent::Done => {}
+        }
+    }
+}
+
+fn validate_chunks(chunks: &[ShepherdMessageChunk]) -> Result<(), String> {
+    if chunks.is_empty() {
+        return Err("message must contain at least one chunk".to_string());
+    }
+
+    let mut image_count = 0usize;
+    for chunk in chunks {
+        match chunk {
+            ShepherdMessageChunk::Text { content } | ShepherdMessageChunk::Thinking { content } => {
+                if content.trim().is_empty() {
+                    return Err("text/thinking chunk content cannot be empty".to_string());
+                }
+            }
+            ShepherdMessageChunk::Tool {
+                id, title, status, ..
+            } => {
+                if id.trim().is_empty() || title.trim().is_empty() || status.trim().is_empty() {
+                    return Err("tool chunk requires non-empty id/title/status".to_string());
+                }
+            }
+            ShepherdMessageChunk::Image {
+                mime_type,
+                data_base64,
+                ..
+            } => {
+                image_count += 1;
+                if !mime_type.starts_with("image/") {
+                    return Err(format!("invalid image mime type: {}", mime_type));
+                }
+                if data_base64.is_empty() {
+                    return Err("image chunk dataBase64 cannot be empty".to_string());
+                }
+                if data_base64.len() > MAX_IMAGE_BASE64_CHARS {
+                    return Err("image too large for Shepherd message".to_string());
+                }
+            }
+        }
+    }
+
+    if image_count > MAX_IMAGE_COUNT {
+        return Err(format!(
+            "too many images in one message (max {})",
+            MAX_IMAGE_COUNT
+        ));
+    }
+
+    Ok(())
+}
+
+fn chunks_to_json(chunks: &[ShepherdMessageChunk]) -> Result<String, String> {
+    validate_chunks(chunks)?;
+    serde_json::to_string(chunks).map_err(|e| format!("failed to serialize chunks: {}", e))
+}
+
+fn build_user_chunks(
+    content: Option<String>,
+    chunks: Option<Vec<ShepherdMessageChunk>>,
+) -> Result<Vec<ShepherdMessageChunk>, String> {
+    if let Some(chunks) = chunks {
+        validate_chunks(&chunks)?;
+        return Ok(chunks);
+    }
+
+    let text = content.unwrap_or_default().trim().to_string();
+    if text.is_empty() {
+        return Err("message content is empty".to_string());
+    }
+
+    Ok(vec![ShepherdMessageChunk::Text { content: text }])
+}
+
+fn chunk_text(chunks: &[ShepherdMessageChunk]) -> String {
+    chunks
+        .iter()
+        .filter_map(|chunk| match chunk {
+            ShepherdMessageChunk::Text { content } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn chunk_image_count(chunks: &[ShepherdMessageChunk]) -> usize {
+    chunks
+        .iter()
+        .filter(|c| matches!(c, ShepherdMessageChunk::Image { .. }))
+        .count()
+}
+
+fn decode_png_images(chunks: &[ShepherdMessageChunk]) -> Result<Vec<Vec<u8>>, String> {
+    let mut images = Vec::new();
+
+    for chunk in chunks {
+        let ShepherdMessageChunk::Image {
+            mime_type,
+            data_base64,
+            ..
+        } = chunk
+        else {
+            continue;
+        };
+
+        if mime_type != "image/png" {
+            return Err(format!(
+                "Shepherd currently supports pasted PNG images only (got {})",
+                mime_type
+            ));
+        }
+
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(data_base64)
+            .map_err(|e| format!("invalid image dataBase64: {}", e))?;
+        images.push(decoded);
+    }
+
+    Ok(images)
+}
+
+fn parse_chunks_from_json(chunks_json: &str) -> Vec<ShepherdMessageChunk> {
+    serde_json::from_str(chunks_json).unwrap_or_default()
+}
+
+fn truncate_for_runtime(text: &str, max_chars: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let count = trimmed.chars().count();
+    if count <= max_chars {
+        return trimmed.to_string();
+    }
+
+    let mut out = trimmed.chars().take(max_chars).collect::<String>();
+    out.push_str("...");
+    out
+}
+
+fn summarize_chunks_for_runtime(chunks: &[ShepherdMessageChunk]) -> String {
+    let mut text_parts: Vec<String> = Vec::new();
+    let mut image_count = 0usize;
+    let mut tool_notes: Vec<String> = Vec::new();
+
+    for chunk in chunks {
+        match chunk {
+            ShepherdMessageChunk::Text { content } => {
+                let t = content.trim();
+                if !t.is_empty() {
+                    text_parts.push(t.to_string());
+                }
+            }
+            ShepherdMessageChunk::Tool { title, status, .. } => {
+                tool_notes.push(format!("{}({})", title, status));
+            }
+            ShepherdMessageChunk::Image { .. } => {
+                image_count += 1;
+            }
+            ShepherdMessageChunk::Thinking { .. } => {}
+        }
+    }
+
+    let mut out = text_parts.join("\n\n");
+
+    if image_count > 0 {
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str(&format!(
+            "[{} image attachment{}]",
+            image_count,
+            if image_count == 1 { "" } else { "s" }
+        ));
+    }
+
+    if !tool_notes.is_empty() {
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str("[tool activity: ");
+        out.push_str(&tool_notes.join(", "));
+        out.push(']');
+    }
+
+    truncate_for_runtime(&out, RUNTIME_PREVIEW_MAX_CHARS)
+}
+
+fn history_role_to_message_role(role: &str) -> Option<MessageRole> {
+    match role {
+        "user" => Some(MessageRole::User),
+        "assistant" => Some(MessageRole::Assistant),
+        "system" => Some(MessageRole::System),
+        _ => None,
+    }
+}
+
+fn build_runtime_messages(system_prompt: String, history: &[ShepherdChatMessage]) -> Vec<Message> {
+    let mut messages = Vec::with_capacity(history.len() + 1);
+
+    messages.push(Message {
+        id: "m0".to_string(),
+        role: MessageRole::System,
+        parts: vec![Part {
+            id: "m0.p0".to_string(),
+            kind: PartKind::Text,
+            content: system_prompt,
+            prune_state: PruneState::Intact,
+        }],
+    });
+
+    for item in history {
+        let Some(role) = history_role_to_message_role(item.role.as_str()) else {
+            continue;
+        };
+
+        let summary = summarize_chunks_for_runtime(&parse_chunks_from_json(&item.chunks_json));
+        if summary.is_empty() {
+            continue;
+        }
+
+        let message_id = format!("m{}", messages.len());
+        messages.push(Message {
+            id: message_id.clone(),
+            role,
+            parts: vec![Part {
+                id: format!("{}.p0", message_id),
+                kind: PartKind::Text,
+                content: summary,
+                prune_state: PruneState::Intact,
+            }],
+        });
+    }
+
+    messages
+}
+
+fn build_scope(request: StartShepherdSessionRequest) -> ShepherdScope {
+    match request {
+        StartShepherdSessionRequest::General => ShepherdScope::General,
+        StartShepherdSessionRequest::Run { run_name } => ShepherdScope::Run {
+            run_name,
+            workspace_path: String::new(),
+            project_path: None,
+        },
+        StartShepherdSessionRequest::Board { project_id } => ShepherdScope::Board {
+            project_id,
+            workspace_path: None,
+            focus: None,
+        },
+        StartShepherdSessionRequest::BoardFocused {
+            project_id,
+            task_id,
+            task_name,
+        } => ShepherdScope::Board {
+            project_id,
+            workspace_path: None,
+            focus: Some(ShepherdTaskFocus { task_id, task_name }),
+        },
+    }
+}
+
+fn scope_label(scope: &ShepherdScope) -> String {
+    match scope {
+        ShepherdScope::General => "general".to_string(),
+        ShepherdScope::Run { run_name, .. } => format!("run:{}", run_name),
+        ShepherdScope::Board { project_id, .. } => format!("board:{}", project_id),
+    }
+}
+
+fn build_system_prompt(
+    scope: &ShepherdScope,
+    focus: Option<&ShepherdTaskFocus>,
+    cwd: &Path,
+) -> String {
+    let focus_line = match focus {
+        Some(f) => format!("Focus node: {} ({})", f.task_name, f.task_id),
+        None => "Focus node: none".to_string(),
+    };
+
+    format!(
+        "You are Shepherd, the orchestration agent for Hirsel.\n\n\
+        Mission:\n\
+        - Understand user intent and turn it into concrete execution steps.\n\
+        - Decompose work pragmatically and keep recommendations actionable.\n\
+        - Use board tools for board structure (`board_view`, `board_task`, etc.) instead of manual JSON edits.\n\
+        - Use run tools (`shepherd_start_run`, `shepherd_get_project_run`) when execution state must change.\n\
+        - When you edit files, keep changes minimal, safe, and explicit.\n\
+        - Never claim work happened unless you actually executed tools.\n\
+        - If images are attached, inspect them and use them as first-class context.\n\n\
+        Scope: {}\n\
+        {}\n\
+        Workspace root: {}\n\n\
+        Response style:\n\
+        - Be concise and direct.\n\
+        - Prefer concrete next steps over abstract commentary.\n\
+        - Call out assumptions and unknowns when needed.",
+        scope_label(scope),
+        focus_line,
+        cwd.display()
+    )
+}
+
+fn build_user_turn_text(chunks: &[ShepherdMessageChunk]) -> String {
+    let text = chunk_text(chunks).trim().to_string();
+    if !text.is_empty() {
+        return text;
+    }
+
+    let image_count = chunk_image_count(chunks);
+    if image_count > 0 {
+        return format!(
+            "Please inspect the {} attached image{} and help based on what you observe.",
+            image_count,
+            if image_count == 1 { "" } else { "s" }
+        );
+    }
+
+    "Continue.".to_string()
+}
+
+fn build_assistant_chunks(draft: &AssistantDraft) -> Vec<ShepherdMessageChunk> {
+    let mut chunks = Vec::new();
+
+    if !draft.thinking.trim().is_empty() {
+        chunks.push(ShepherdMessageChunk::Thinking {
+            content: draft.thinking.clone(),
+        });
+    }
+
+    let text = if !draft.text.trim().is_empty() {
+        draft.text.clone()
+    } else {
+        draft
+            .final_message
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .unwrap_or_default()
+            .to_string()
+    };
+
+    if !text.trim().is_empty() {
+        chunks.push(ShepherdMessageChunk::Text { content: text });
+    }
+
+    chunks.extend(draft.tools.clone());
+    chunks
+}
+
+async fn load_scope_messages(
+    scope: &ShepherdScope,
+    limit: usize,
+) -> Result<Vec<ShepherdChatMessage>, String> {
+    let store = ShepherdChatStore::open().await.str_err()?;
+
+    let mut messages = match scope {
+        ShepherdScope::General => store.get_messages(None).await.str_err()?,
+        ShepherdScope::Run { run_name, .. } => {
+            store.get_messages(Some(run_name)).await.str_err()?
+        }
+        ShepherdScope::Board { project_id, .. } => store
+            .get_board_messages(*project_id, limit)
+            .await
+            .str_err()?,
+    };
+
+    if !matches!(scope, ShepherdScope::Board { .. }) && messages.len() > limit {
+        let start = messages.len().saturating_sub(limit);
+        messages = messages.split_off(start);
+    }
+
+    Ok(messages)
+}
+
+async fn save_message(scope: &ShepherdScope, role: &str, chunks_json: &str) -> Result<i64, String> {
+    let store = ShepherdChatStore::open().await.str_err()?;
+    match scope {
+        ShepherdScope::General => store.save_message(None, role, chunks_json).await.str_err(),
+        ShepherdScope::Run { run_name, .. } => store
+            .save_message(Some(run_name), role, chunks_json)
+            .await
+            .str_err(),
+        ShepherdScope::Board { project_id, .. } => store
+            .save_board_message(*project_id, role, chunks_json)
+            .await
+            .str_err(),
+    }
+}
+
+async fn resolve_scope_project_id(scope: &ShepherdScope) -> Option<i64> {
+    match scope {
+        ShepherdScope::General => None,
+        ShepherdScope::Board { project_id, .. } => Some(*project_id),
+        ShepherdScope::Run { run_name, .. } => {
+            let state = SQLiteState::new(run_name).await.ok()?;
+            state.get_project_id().await.ok().flatten()
+        }
+    }
+}
+
+async fn resolve_scope_route_id(scope: &ShepherdScope) -> Option<i64> {
+    match scope {
+        ShepherdScope::General => None,
+        ShepherdScope::Run { run_name, .. } => {
+            let state = SQLiteState::new(run_name).await.ok()?;
+            state.get_route_id().await.ok()
+        }
+        ShepherdScope::Board { project_id, .. } => {
+            let project_store = ProjectStore::open().await.ok()?;
+            let project = project_store.get_project(*project_id).await.ok()?;
+            project.active_route_id
+        }
+    }
+}
+
+async fn resolve_scope_workspace(scope: &ShepherdScope) -> Option<PathBuf> {
+    match scope {
+        ShepherdScope::General => None,
+        ShepherdScope::Run {
+            run_name,
+            workspace_path,
+            project_path,
+        } => {
+            if !workspace_path.trim().is_empty() {
+                return Some(PathBuf::from(workspace_path));
+            }
+            if let Some(path) = project_path.as_ref().filter(|p| !p.trim().is_empty()) {
+                return Some(PathBuf::from(path));
+            }
+            if let Ok(state) = SQLiteState::new(run_name).await {
+                if let Ok(Some(path)) = state.get_project_path().await {
+                    return Some(PathBuf::from(path));
+                }
+            }
+            None
+        }
+        ShepherdScope::Board {
+            project_id,
+            workspace_path,
+            ..
+        } => {
+            if let Some(path) = workspace_path.as_ref().filter(|p| !p.trim().is_empty()) {
+                return Some(PathBuf::from(path));
+            }
+
+            let project_store = ProjectStore::open().await.ok()?;
+            let project = project_store.get_project(*project_id).await.ok()?;
+            let route_store = RouteStore::new(*project_id).await.ok()?;
+
+            let route = if let Some(route_id) = project.active_route_id {
+                match route_store.get_route(route_id).await {
+                    Ok(route) => route,
+                    Err(_) => route_store.create_main_route().await.ok()?,
+                }
+            } else {
+                route_store.create_main_route().await.ok()?
+            };
+
+            Some(RouteFiles::new(*project_id, &route.name).route_dir())
+        }
+    }
+}
+
+fn resolve_runtime_cwd(path: Option<PathBuf>) -> PathBuf {
+    let from_scope = path.filter(|p| p.exists() && p.is_dir());
+    if let Some(path) = from_scope {
+        return path;
+    }
+
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+async fn load_shepherd_provider() -> Result<Provider, String> {
+    let (config, _) = Config::load().map_err(|e| format!("failed to load config: {}", e))?;
+    llm_provider::resolve_provider(&config).await
+}
+
+/// Start a Shepherd session.
+#[tauri::command]
+pub async fn start_shepherd_session(
+    request: StartShepherdSessionRequest,
+) -> Result<StartShepherdSessionResponse, String> {
+    let scope = build_scope(request);
+    let session_id = uuid::Uuid::new_v4().to_string();
+
+    sessions()
+        .lock()
+        .map_err(|_| "failed to lock Shepherd session map".to_string())?
+        .insert(
+            session_id.clone(),
+            ShepherdSession {
+                scope: scope.clone(),
+                active_turn: None,
+            },
+        );
+
+    Ok(StartShepherdSessionResponse { session_id, scope })
+}
+
+/// Send a message to Shepherd and stream a lash-core response.
+#[tauri::command]
+pub async fn send_shepherd_message(
+    app: tauri::AppHandle,
+    session_id: String,
+    content: Option<String>,
+    chunks: Option<Vec<ShepherdMessageChunk>>,
+    focus: Option<ShepherdTaskFocus>,
+) -> Result<(), String> {
+    let (scope, cancel) = {
+        let mut guard = sessions()
+            .lock()
+            .map_err(|_| "failed to lock Shepherd session map".to_string())?;
+        let session = guard
+            .get_mut(&session_id)
+            .ok_or_else(|| format!("Unknown Shepherd session: {}", session_id))?;
+
+        if session.active_turn.is_some() {
+            return Err("Shepherd session already has an active turn".to_string());
+        }
+
+        let cancel = CancellationToken::new();
+        session.active_turn = Some(cancel.clone());
+        (session.scope.clone(), cancel)
+    };
+
+    let result = async {
+        let focus = focus.or_else(|| match &scope {
+            ShepherdScope::Board { focus, .. } => focus.clone(),
+            _ => None,
+        });
+
+        let user_chunks = build_user_chunks(content, chunks)?;
+        let user_chunks_json = chunks_to_json(&user_chunks)?;
+        let user_images_png = decode_png_images(&user_chunks)?;
+        let user_turn_text = build_user_turn_text(&user_chunks);
+
+        let history = load_scope_messages(&scope, RUNTIME_HISTORY_LIMIT).await?;
+        let cwd = resolve_runtime_cwd(resolve_scope_workspace(&scope).await);
+        let scope_project_id = resolve_scope_project_id(&scope).await;
+        let scope_route_id = resolve_scope_route_id(&scope).await;
+        let system_prompt = build_system_prompt(&scope, focus.as_ref(), &cwd);
+        let state_messages = build_runtime_messages(system_prompt, &history);
+
+        let tools: Arc<dyn ToolProvider> = Arc::new(
+            CompositeTools::new()
+                .add(Ls)
+                .add(Glob)
+                .add(Grep)
+                .add(ReadFile::new())
+                .add(EditFile)
+                .add(WriteFile)
+                .add(FindReplace)
+                .add(Shell::new().with_cwd(cwd.clone()))
+                .add(ShepherdToolProvider::new(scope_project_id, scope_route_id)),
+        );
+
+        let provider = load_shepherd_provider().await?;
+
+        let (model, _) = provider
+            .default_agent_model("medium")
+            .map(|(m, effort)| (m.to_string(), effort.map(ToOwned::to_owned)))
+            .unwrap_or_else(|| (provider.default_model().to_string(), None));
+
+        let runtime_config = RuntimeConfig {
+            capabilities: AgentCapabilities::default(),
+            model,
+            provider,
+            max_context_tokens: None,
+            include_soul: false,
+            llm_log_path: None,
+            headless: false,
+            prompt_overrides: Vec::new(),
+            instruction_source: Arc::new(FsInstructionSource::new()),
+        };
+
+        let mut state = AgentStateEnvelope::default();
+        state.agent_id = format!("shepherd-{}", session_id);
+        state.messages = state_messages;
+
+        let mut runtime = RuntimeEngine::from_state(runtime_config, tools, state)
+            .await
+            .map_err(|e| format!("failed to create shepherd lash runtime: {}", e))?;
+
+        save_message(&scope, "user", &user_chunks_json).await?;
+
+        let draft = Arc::new(Mutex::new(AssistantDraft::default()));
+        let sink = ShepherdLashSink::new(app.clone(), session_id.clone(), draft.clone());
+
+        let mut turn_items = vec![InputItem::Text {
+            text: user_turn_text.clone(),
+        }];
+        let mut image_blobs: HashMap<String, Vec<u8>> = HashMap::new();
+        for (idx, bytes) in user_images_png.into_iter().enumerate() {
+            let id = format!("image-{}", idx + 1);
+            turn_items.push(InputItem::ImageRef { id: id.clone() });
+            image_blobs.insert(id, bytes);
+        }
+
+        let turn = runtime
+            .run_turn(
+                TurnInput {
+                    items: turn_items,
+                    image_blobs,
+                    mode: None,
+                    plan_file: None,
+                },
+                &sink,
+                cancel,
+            )
+            .await;
+
+        debug!(
+            "shepherd lash turn complete: session={}, done={}, final={}",
+            session_id,
+            turn.done,
+            turn.final_message.is_some()
+        );
+
+        let mut final_draft = draft.lock().await;
+        if final_draft.final_message.is_none() {
+            final_draft.final_message = turn.final_message.clone();
+        }
+
+        if final_draft.errored
+            && final_draft.text.trim().is_empty()
+            && final_draft.final_message.is_none()
+        {
+            return Ok(());
+        }
+
+        let assistant_chunks = build_assistant_chunks(&final_draft);
+        if !assistant_chunks.is_empty() {
+            let assistant_chunks_json = chunks_to_json(&assistant_chunks)?;
+            save_message(&scope, "assistant", &assistant_chunks_json).await?;
+        }
+
+        drop(final_draft);
+
+        app.emit(
+            "shepherd-event",
+            (
+                &session_id,
+                &ShepherdEvent::MessageComplete {
+                    session_id: session_id.clone(),
+                },
+            ),
+        )
+        .map_err(|e| format!("failed to emit shepherd complete event: {}", e))?;
+
+        Ok(())
+    }
+    .await;
+
+    if let Ok(mut guard) = sessions().lock() {
+        if let Some(session) = guard.get_mut(&session_id) {
+            session.active_turn = None;
+        }
+    }
+
+    result
+}
+
+/// Stop an active Shepherd session.
+#[tauri::command]
+pub async fn stop_shepherd_session(
+    app: tauri::AppHandle,
+    session_id: String,
+) -> Result<(), String> {
+    let cancelled = sessions()
+        .lock()
+        .map_err(|_| "failed to lock Shepherd session map".to_string())?
+        .remove(&session_id)
+        .and_then(|s| s.active_turn);
+
+    if let Some(cancel) = cancelled {
+        cancel.cancel();
+    }
+
+    let ended = ShepherdEvent::SessionEnded {
+        session_id: session_id.clone(),
+    };
+    app.emit("shepherd-event", (&session_id, &ended))
+        .map_err(|e| format!("failed to emit shepherd session end event: {}", e))?;
+    Ok(())
+}
+
+/// List active Shepherd sessions.
+#[tauri::command]
+pub async fn list_shepherd_sessions() -> Result<Vec<String>, String> {
+    let guard = sessions()
+        .lock()
+        .map_err(|_| "failed to lock Shepherd session map".to_string())?;
+    Ok(guard.keys().cloned().collect())
+}
+
+/// Get Shepherd chat history for the requested scope.
+#[tauri::command]
+pub async fn get_shepherd_history(
+    scope: ShepherdScope,
+    limit: usize,
+) -> Result<Vec<crate::core::ShepherdChatMessage>, String> {
+    let messages = load_scope_messages(&scope, limit).await?;
+
+    Ok(match scope {
+        ShepherdScope::Board { .. } => messages,
+        _ => messages.into_iter().take(limit).collect(),
+    })
+}
+
+/// Clear Shepherd history for the requested scope.
+#[tauri::command]
+pub async fn clear_shepherd_history(scope: ShepherdScope) -> Result<(), String> {
+    let store = ShepherdChatStore::open().await.str_err()?;
+
+    match scope {
+        ShepherdScope::General => store.clear_messages(None).await.str_err()?,
+        ShepherdScope::Run { run_name, .. } => {
+            store.clear_messages(Some(&run_name)).await.str_err()?
+        }
+        ShepherdScope::Board { project_id, .. } => {
+            store.clear_board_messages(project_id).await.str_err()?
+        }
+    }
+    Ok(())
+}
+
+/// Save a Shepherd message chunk payload.
+#[tauri::command]
+pub async fn save_shepherd_message(
+    scope: ShepherdScope,
+    role: String,
+    chunks_json: String,
+) -> Result<i64, String> {
+    let chunks: Vec<ShepherdMessageChunk> =
+        serde_json::from_str(&chunks_json).map_err(|e| format!("invalid chunk payload: {}", e))?;
+    let normalized = chunks_to_json(&chunks)?;
+    save_message(&scope, &role, &normalized).await
+}

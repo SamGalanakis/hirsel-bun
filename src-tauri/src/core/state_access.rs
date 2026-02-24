@@ -705,14 +705,17 @@ impl StateAccess for SQLiteState {
         &self,
         file: Option<&str>,
     ) -> StateAccessResult<crate::core::files::DocsContent> {
+        use crate::core::storage::create_default_local_storage;
         use crate::core::Files;
 
         // Get run_dir from run_name
         let run_dir = crate::core::config::run_dir(self.run_name());
         let files = Files::new(&run_dir);
+        let storage = create_default_local_storage();
 
         files
-            .read_docs(file)
+            .read_docs_async(&storage, file)
+            .await
             .map_err(|e| StateAccessError::Database(format!("Failed to read docs: {}", e)))
     }
 

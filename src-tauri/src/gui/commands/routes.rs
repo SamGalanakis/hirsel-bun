@@ -1,6 +1,10 @@
 //! Route management commands for project exploration branches
 
-use crate::core::route::{CreateRouteRequest, Route, RouteFiles, RouteStore, RouteTree};
+use crate::core::draft::StartingPoint;
+use crate::core::route::{
+    CreateRouteRepoRequest, CreateRouteRequest, Route, RouteFiles, RouteRepo, RouteStore,
+    RouteTree, UpdateRouteRepoRequest,
+};
 
 use super::ResultExt;
 
@@ -36,6 +40,93 @@ pub async fn get_route_tree(project_id: i64) -> Result<Vec<RouteTree>, String> {
     store.get_route_tree().await.str_err()
 }
 
+/// List repos linked to a route
+#[tracing::instrument]
+#[tauri::command]
+pub async fn list_route_repos(project_id: i64, route_id: i64) -> Result<Vec<RouteRepo>, String> {
+    let store = RouteStore::new(project_id).await.str_err()?;
+    store.list_route_repos(route_id).await.str_err()
+}
+
+/// Add a linked repo to a route
+#[tracing::instrument]
+#[tauri::command]
+pub async fn create_route_repo(
+    project_id: i64,
+    route_id: i64,
+    name: Option<String>,
+    starting_point: StartingPoint,
+    target_branch: Option<String>,
+    runner: Option<String>,
+) -> Result<RouteRepo, String> {
+    let store = RouteStore::new(project_id).await.str_err()?;
+    store
+        .create_route_repo(
+            route_id,
+            &CreateRouteRepoRequest {
+                name,
+                starting_point,
+                target_branch,
+                runner,
+            },
+        )
+        .await
+        .str_err()
+}
+
+/// Update a linked route repo
+#[tracing::instrument]
+#[tauri::command]
+pub async fn update_route_repo(
+    project_id: i64,
+    route_id: i64,
+    repo_id: i64,
+    name: Option<String>,
+    starting_point: Option<StartingPoint>,
+    target_branch: Option<String>,
+    runner: Option<String>,
+    is_archived: Option<bool>,
+) -> Result<RouteRepo, String> {
+    let store = RouteStore::new(project_id).await.str_err()?;
+    store
+        .update_route_repo(
+            route_id,
+            repo_id,
+            &UpdateRouteRepoRequest {
+                name,
+                starting_point,
+                target_branch,
+                runner,
+                is_archived,
+            },
+        )
+        .await
+        .str_err()
+}
+
+/// Archive a route repo
+#[tracing::instrument]
+#[tauri::command]
+pub async fn delete_route_repo(project_id: i64, route_id: i64, repo_id: i64) -> Result<(), String> {
+    let store = RouteStore::new(project_id).await.str_err()?;
+    store.delete_route_repo(route_id, repo_id).await.str_err()
+}
+
+/// Set default repo for route execution/delivery context
+#[tracing::instrument]
+#[tauri::command]
+pub async fn set_default_route_repo(
+    project_id: i64,
+    route_id: i64,
+    repo_id: i64,
+) -> Result<Route, String> {
+    let store = RouteStore::new(project_id).await.str_err()?;
+    store
+        .set_default_route_repo(route_id, repo_id)
+        .await
+        .str_err()
+}
+
 /// Create a new route (fork from parent)
 #[tracing::instrument]
 #[tauri::command]
@@ -48,31 +139,12 @@ pub async fn create_route(
     let store = RouteStore::new(project_id).await.str_err()?;
 
     let req = CreateRouteRequest {
-        name: name.clone(),
+        name,
         parent_route_id,
         parent_version_id,
     };
 
-    let route = store.create_route(&req).await.str_err()?;
-
-    // Initialize route files
-    let route_files = RouteFiles::new(project_id, &route.name);
-    route_files.init_dirs().str_err()?;
-
-    // If forking from a parent route, copy docs and code
-    if let Some(parent_id) = parent_route_id {
-        let parent = store.get_route(parent_id).await.str_err()?;
-        let parent_files = RouteFiles::new(project_id, &parent.name);
-
-        if let Err(e) = route_files.copy_docs_from(&parent_files) {
-            tracing::warn!("Failed to copy docs from parent route: {}", e);
-        }
-        if let Err(e) = route_files.copy_code_from(&parent_files) {
-            tracing::warn!("Failed to copy code from parent route: {}", e);
-        }
-    }
-
-    Ok(route)
+    store.create_route(&req).await.str_err()
 }
 
 /// Delete a route
@@ -81,13 +153,9 @@ pub async fn create_route(
 pub async fn delete_route(project_id: i64, route_id: i64) -> Result<(), String> {
     let store = RouteStore::new(project_id).await.str_err()?;
 
-    // Get route name before deletion for file cleanup
     let route = store.get_route(route_id).await.str_err()?;
-
-    // Delete from database
     store.delete_route(route_id).await.str_err()?;
 
-    // Clean up route files
     let route_files = RouteFiles::new(project_id, &route.name);
     if let Err(e) = route_files.delete() {
         tracing::warn!("Failed to delete route directory: {}", e);
@@ -100,14 +168,13 @@ pub async fn delete_route(project_id: i64, route_id: i64) -> Result<(), String> 
 #[tracing::instrument]
 #[tauri::command]
 pub async fn set_active_route(project_id: i64, route_id: i64) -> Result<(), String> {
-    // Verify route exists
     let store = RouteStore::new(project_id).await.str_err()?;
     let _ = store.get_route(route_id).await.str_err()?;
 
-    // Update project's active_route_id
     let pool = crate::core::db::global_pool().await;
-    sqlx::query("UPDATE projects SET active_route_id = ? WHERE id = ?")
+    sqlx::query("UPDATE projects SET active_route_id = ?, updated_at = ? WHERE id = ?")
         .bind(route_id)
+        .bind(crate::core::db::utc_now())
         .bind(project_id)
         .execute(pool)
         .await
@@ -118,24 +185,41 @@ pub async fn set_active_route(project_id: i64, route_id: i64) -> Result<(), Stri
 
 /// Get the active route for a project
 ///
-/// Falls back to the main route if no active route is set.
-/// Creates the main route if no routes exist.
+/// Falls back to main route if available, otherwise first route. If no routes
+/// exist yet, creates a default main route.
 #[tracing::instrument]
 #[tauri::command]
 pub async fn get_active_route(project_id: i64) -> Result<Route, String> {
     let store = RouteStore::new(project_id).await.str_err()?;
 
-    // Get project to find active_route_id
     let project_store = crate::core::project::ProjectStore::open().await.str_err()?;
     let project = project_store.get_project(project_id).await.str_err()?;
 
-    // If active_route_id is set, use it
     if let Some(route_id) = project.active_route_id {
         if let Ok(route) = store.get_route(route_id).await {
             return Ok(route);
         }
     }
 
-    // Fall back to main route (create if needed)
-    store.create_main_route().await.str_err()
+    let routes = store.list_routes().await.str_err()?;
+    let fallback = if let Some(route) = routes
+        .iter()
+        .find(|r| r.name == "main")
+        .cloned()
+        .or_else(|| routes.first().cloned())
+    {
+        route
+    } else {
+        store.create_main_route().await.str_err()?
+    };
+
+    let pool = crate::core::db::global_pool().await;
+    let _ = sqlx::query("UPDATE projects SET active_route_id = ?, updated_at = ? WHERE id = ?")
+        .bind(fallback.id)
+        .bind(crate::core::db::utc_now())
+        .bind(project_id)
+        .execute(pool)
+        .await;
+
+    Ok(fallback)
 }

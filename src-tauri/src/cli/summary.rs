@@ -74,7 +74,7 @@ pub fn run_summary(
     let (tasks_completed, tasks_total) = if let Ok(Some(project_id)) =
         block_on(state.get_project_id())
     {
-        let route_id = block_on(state.get_route_id()).unwrap_or(0);
+        let route_id = block_on(state.get_route_id()).unwrap_or(1);
         let delta_state = DeltaState::with_route(project_id, route_id);
         if let Ok(nodes) = block_on(delta_state.get_nodes()) {
             let completed = nodes
@@ -141,7 +141,7 @@ fn generate_summary(state: &SQLiteState, run_name: &str) -> Result<String, Summa
 
     // Get nodes from board if available
     let nodes: Vec<BoardNode> = if let Ok(Some(project_id)) = block_on(state.get_project_id()) {
-        let route_id = block_on(state.get_route_id()).unwrap_or(0);
+        let route_id = block_on(state.get_route_id()).unwrap_or(1);
         let delta_state = DeltaState::with_route(project_id, route_id);
         block_on(delta_state.get_nodes()).unwrap_or_default()
     } else {

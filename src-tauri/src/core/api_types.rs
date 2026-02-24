@@ -251,82 +251,55 @@ pub struct Eval {
 }
 
 // =============================================================================
-// Auth Types
+// LLM Config Types
 // =============================================================================
 
-/// Authentication method for frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum AuthMethodResponse {
-    Env,
-    ApiKey,
-    OAuth,
+pub enum LlmProviderResponse {
+    Codex,
+    Openrouter,
 }
 
-impl From<config::AuthMethod> for AuthMethodResponse {
-    fn from(method: config::AuthMethod) -> Self {
-        match method {
-            config::AuthMethod::Env => Self::Env,
-            config::AuthMethod::ApiKey => Self::ApiKey,
-            config::AuthMethod::OAuth => Self::OAuth,
+impl From<config::LlmProvider> for LlmProviderResponse {
+    fn from(value: config::LlmProvider) -> Self {
+        match value {
+            config::LlmProvider::Codex => Self::Codex,
+            config::LlmProvider::Openrouter => Self::Openrouter,
         }
     }
 }
 
-impl From<AuthMethodResponse> for config::AuthMethod {
-    fn from(method: AuthMethodResponse) -> Self {
-        match method {
-            AuthMethodResponse::Env => Self::Env,
-            AuthMethodResponse::ApiKey => Self::ApiKey,
-            AuthMethodResponse::OAuth => Self::OAuth,
+impl From<LlmProviderResponse> for config::LlmProvider {
+    fn from(value: LlmProviderResponse) -> Self {
+        match value {
+            LlmProviderResponse::Codex => Self::Codex,
+            LlmProviderResponse::Openrouter => Self::Openrouter,
         }
     }
 }
 
-/// Agent auth configuration for frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentAuthResponse {
-    pub method: AuthMethodResponse,
-    pub api_key: Option<String>,
-    pub env_var: Option<String>,
+pub struct LlmConfigResponse {
+    pub provider: LlmProviderResponse,
+    pub openrouter_base_url: Option<String>,
 }
 
-impl From<config::AgentAuth> for AgentAuthResponse {
-    fn from(auth: config::AgentAuth) -> Self {
+impl From<config::LlmConfig> for LlmConfigResponse {
+    fn from(value: config::LlmConfig) -> Self {
         Self {
-            method: auth.method.into(),
-            api_key: auth.api_key.map(|k| {
-                if k.len() > 8 {
-                    format!("{}...{}", &k[..4], &k[k.len() - 4..])
-                } else {
-                    "****".to_string()
-                }
-            }),
-            env_var: auth.env_var,
+            provider: value.provider.into(),
+            openrouter_base_url: value.openrouter_base_url,
         }
     }
 }
 
-/// Auth configuration for frontend
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AuthConfigResponse {
-    pub default_method: AuthMethodResponse,
-    pub claude: Option<AgentAuthResponse>,
-    pub gemini: Option<AgentAuthResponse>,
-    pub codex: Option<AgentAuthResponse>,
-    pub goose: Option<AgentAuthResponse>,
-}
-
-impl From<config::AuthConfig> for AuthConfigResponse {
-    fn from(auth: config::AuthConfig) -> Self {
+impl From<LlmConfigResponse> for config::LlmConfig {
+    fn from(value: LlmConfigResponse) -> Self {
         Self {
-            default_method: auth.default_method.into(),
-            claude: auth.claude.map(|a| a.into()),
-            gemini: auth.gemini.map(|a| a.into()),
-            codex: auth.codex.map(|a| a.into()),
-            goose: auth.goose.map(|a| a.into()),
+            provider: value.provider.into(),
+            openrouter_base_url: value.openrouter_base_url,
         }
     }
 }
@@ -753,7 +726,7 @@ pub struct ConfigResponse {
     pub human_in_the_loop: bool,
     pub context_warning_threshold: f64,
     pub coordinator_port: u16,
-    pub auth: AuthConfigResponse,
+    pub llm: LlmConfigResponse,
     pub runners: std::collections::HashMap<String, RunnerConfigResponse>,
     pub default_runner: Option<String>,
     pub worker_runners: std::collections::HashMap<String, String>,
@@ -870,21 +843,28 @@ pub struct AgentConfigRequest {
     pub command: Option<Vec<String>>,
 }
 
-/// Request to update agent auth configuration
+/// Request to update LLM configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentAuthConfigRequest {
-    pub method: AuthMethodResponse,
-    pub api_key: Option<String>,
-    pub env_var: Option<String>,
+pub struct LlmConfigRequest {
+    pub provider: Option<LlmProviderResponse>,
+    pub openrouter_base_url: Option<Option<String>>,
 }
 
-impl From<AgentAuthConfigRequest> for config::AgentAuth {
-    fn from(req: AgentAuthConfigRequest) -> Self {
-        Self {
-            method: req.method.into(),
-            api_key: req.api_key,
-            env_var: req.env_var,
+impl LlmConfigRequest {
+    pub fn apply(self, config: &mut config::LlmConfig) {
+        if let Some(provider) = self.provider {
+            config.provider = provider.into();
+        }
+        if let Some(base_url) = self.openrouter_base_url {
+            config.openrouter_base_url = base_url.and_then(|v| {
+                let trimmed = v.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            });
         }
     }
 }

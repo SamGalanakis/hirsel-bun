@@ -258,6 +258,7 @@ fi
                 config.teammates.as_deref(),
                 &env_vars,
                 &container.image,
+                config.is_plan_task,
             );
 
             let container_id = self.spawn_remote_docker(&docker_script)?;
@@ -290,6 +291,7 @@ fi
                 config.leader_name.as_deref(),
                 config.teammates.as_deref(),
                 &env_vars,
+                config.is_plan_task,
             );
 
             let pid = self.spawn_remote_process(&worker_script)?;

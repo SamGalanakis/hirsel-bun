@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::api_types::{AuthMethodResponse, GitProviderResponse, RunnerConfigResponse};
+use crate::core::api_types::{GitProviderResponse, LlmProviderResponse, RunnerConfigResponse};
 use crate::core::config;
 
 // =============================================================================
@@ -42,34 +42,30 @@ pub struct AgentPreset {
     pub mcp_config: Option<serde_json::Value>,
 }
 
-/// Agent auth update request
+/// LLM config update request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentAuthUpdate {
-    pub method: AuthMethodResponse,
-    pub api_key: Option<String>,
-    pub env_var: Option<String>,
+pub struct LlmConfigUpdate {
+    pub provider: Option<LlmProviderResponse>,
+    pub openrouter_base_url: Option<Option<String>>,
 }
 
-impl From<AgentAuthUpdate> for config::AgentAuth {
-    fn from(update: AgentAuthUpdate) -> Self {
-        Self {
-            method: update.method.into(),
-            api_key: update.api_key,
-            env_var: update.env_var,
+impl LlmConfigUpdate {
+    pub fn apply(self, target: &mut config::LlmConfig) {
+        if let Some(provider) = self.provider {
+            target.provider = provider.into();
+        }
+        if let Some(base_url) = self.openrouter_base_url {
+            target.openrouter_base_url = base_url.and_then(|v| {
+                let trimmed = v.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            });
         }
     }
-}
-
-/// Auth config update request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AuthConfigUpdate {
-    pub default_method: Option<AuthMethodResponse>,
-    pub claude: Option<AgentAuthUpdate>,
-    pub gemini: Option<AgentAuthUpdate>,
-    pub codex: Option<AgentAuthUpdate>,
-    pub goose: Option<AgentAuthUpdate>,
 }
 
 /// Orchestrator profile update request
@@ -119,7 +115,7 @@ pub struct ConfigUpdateRequest {
     pub human_in_the_loop: Option<bool>,
     pub context_warning_threshold: Option<f64>,
     pub coordinator_port: Option<u16>,
-    pub auth: Option<AuthConfigUpdate>,
+    pub llm: Option<LlmConfigUpdate>,
     pub runners: Option<std::collections::HashMap<String, RunnerConfigResponse>>,
     pub default_runner: Option<Option<String>>,
     pub worker_runners: Option<std::collections::HashMap<String, String>>,
@@ -170,10 +166,10 @@ pub struct ParsedLogLine {
     pub tool_input: Option<String>,
 }
 
-/// Gyp chat message
+/// Shepherd chat message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GypChatMessage {
+pub struct ShepherdChatMessage {
     pub role: String,
     pub content: String,
     pub timestamp: String,

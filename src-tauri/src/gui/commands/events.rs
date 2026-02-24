@@ -1,6 +1,6 @@
 //! Worker event streaming commands
 //!
-//! Commands for real-time worker event streaming via ACP.
+//! Commands for real-time worker event streaming.
 
 use serde::Serialize;
 use std::collections::HashMap;

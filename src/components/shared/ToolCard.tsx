@@ -1,7 +1,7 @@
 /**
  * Shared tool call card component
  *
- * Used by both GypMessenger and WorkerOutputViewer for consistent tool display.
+ * Used by both ShepherdConsole and WorkerOutputViewer for consistent tool display.
  */
 
 import { Component, Show } from 'solid-js';
@@ -58,7 +58,7 @@ export const ToolCard: Component<ToolCardProps> = (props) => {
       {/* Card */}
       <button
         onClick={props.onToggle}
-        class={`gyp-tool-card ${statusClass()}`}
+        class={`shepherd-tool-card ${statusClass()}`}
         classList={{
           'text-amber-400': props.status === 'in_progress',
           'text-wool-500': props.status === 'pending',
@@ -87,7 +87,7 @@ export const ToolCard: Component<ToolCardProps> = (props) => {
 
       {/* Expanded drawer */}
       <Show when={props.expanded}>
-        <div class="gyp-tool-drawer absolute left-0 top-full mt-1 z-50 w-72 bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl overflow-hidden">
+        <div class="shepherd-tool-drawer absolute left-0 top-full mt-1 z-50 w-72 bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl overflow-hidden">
           {/* Header */}
           <div class="px-2.5 py-1.5 bg-pasture-700 border-b border-pasture-600 flex items-center justify-between">
             <span class="text-[11px] font-medium text-wool-200 truncate flex-1">

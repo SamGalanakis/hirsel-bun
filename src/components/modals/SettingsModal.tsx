@@ -101,7 +101,7 @@ interface ServiceWorkerConfig {
 interface ServiceWorkers {
   runner?: string;
   scribe?: ServiceWorkerConfig;
-  gyp?: ServiceWorkerConfig;
+  shepherd?: ServiceWorkerConfig;
 }
 
 // Storage config
@@ -134,6 +134,10 @@ interface Settings {
     configuredProviders?: string[];
     defaultProvider?: string;
   };
+  llm?: {
+    provider?: 'codex' | 'openrouter';
+    openrouterBaseUrl?: string;
+  };
 }
 
 interface ProfileHealth {
@@ -146,6 +150,24 @@ interface RunnerHealth {
   error?: string;
 }
 
+interface CodexDeviceStartResponse {
+  deviceAuthId: string;
+  userCode: string;
+  verifyUrl: string;
+  interval: number;
+}
+
+interface CodexDevicePollResponse {
+  status: 'pending' | 'approved';
+  authorizationCode?: string;
+  codeVerifier?: string;
+}
+
+interface CodexDeviceExchangeResponse {
+  status: 'ok';
+  expiresAt: number;
+}
+
 const defaultSettings = (): Settings => ({
   defaultProfile: 'local',
   evalTimeout: 300,
@@ -156,6 +178,10 @@ const defaultSettings = (): Settings => ({
   coordinatorPort: 19700,
   profiles: {},
   runners: {},
+  llm: {
+    provider: 'codex',
+    openrouterBaseUrl: '',
+  },
 });
 
 export const SettingsModal: Component = () => {
@@ -215,12 +241,15 @@ export const SettingsModal: Component = () => {
   // Git state
   const [gitHubToken, setGitHubToken] = createSignal('');
 
-  // Auth state
-  const [selectedAuthProvider, setSelectedAuthProvider] = createSignal<'' | 'claude' | 'gemini' | 'codex' | 'goose'>('');
-  const [selectedAuthMethod, setSelectedAuthMethod] = createSignal<'env' | 'apiKey' | 'oauth'>('env');
-  const [authEnvVar, setAuthEnvVar] = createSignal('');
-  const [authApiKey, setAuthApiKey] = createSignal('');
-  const [testing, setTesting] = createSignal(false);
+  // LLM provider state
+  const [openrouterApiKey, setOpenrouterApiKey] = createSignal('');
+  const [openrouterKeyConfigured, setOpenrouterKeyConfigured] = createSignal(false);
+  const [codexLoggedIn, setCodexLoggedIn] = createSignal(false);
+  const [codexLoginInProgress, setCodexLoginInProgress] = createSignal(false);
+  const [codexLoginStatus, setCodexLoginStatus] = createSignal('');
+  const [codexUserCode, setCodexUserCode] = createSignal('');
+  const [codexVerifyUrl, setCodexVerifyUrl] = createSignal('');
+  const [codexExpiresAt, setCodexExpiresAt] = createSignal<number | null>(null);
 
   // Load settings
   createEffect(() => {
@@ -250,15 +279,95 @@ export const SettingsModal: Component = () => {
   const loadSettings = async () => {
     setLoading(true);
     try {
-      const config = await invoke<{ settings?: Partial<Settings> }>('get_config');
-      if (config.settings) {
-        setSettings({ ...defaultSettings(), ...config.settings });
-      }
+      const config = await invoke<Partial<Settings>>('get_config');
+      setSettings({ ...defaultSettings(), ...config });
+      const hasOpenrouter = await invoke<boolean>('has_credential', {
+        keyType: 'openrouter_api_key',
+      }).catch(() => false);
+      setOpenrouterKeyConfigured(hasOpenrouter);
+      await refreshCodexAuthState();
       setShortcuts(getShortcuts());
     } catch (e) {
       console.error('Failed to load settings:', e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const refreshCodexAuthState = async () => {
+    const [hasAccessToken, hasRefreshToken, expiresAtRaw] = await Promise.all([
+      invoke<boolean>('has_credential', { keyType: 'codex_access_token' }).catch(() => false),
+      invoke<boolean>('has_credential', { keyType: 'codex_refresh_token' }).catch(() => false),
+      invoke<string | null>('get_credential', { keyType: 'codex_expires_at' }).catch(() => null),
+    ]);
+    setCodexLoggedIn(hasAccessToken && hasRefreshToken);
+    const parsed = expiresAtRaw ? Number.parseInt(expiresAtRaw, 10) : NaN;
+    setCodexExpiresAt(Number.isFinite(parsed) ? parsed : null);
+  };
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const loginWithCodex = async () => {
+    if (codexLoginInProgress()) return;
+    setCodexLoginInProgress(true);
+    setCodexLoginStatus('Starting device login...');
+    setCodexUserCode('');
+    setCodexVerifyUrl('');
+
+    try {
+      const start = await invoke<CodexDeviceStartResponse>('codex_device_start_gui');
+      setCodexUserCode(start.userCode);
+      setCodexVerifyUrl(start.verifyUrl);
+      setCodexLoginStatus('Waiting for approval...');
+
+      window.open(start.verifyUrl, '_blank', 'noopener,noreferrer');
+
+      const pollIntervalMs = Math.max(start.interval, 1) * 1000;
+      const deadline = Date.now() + 10 * 60 * 1000;
+      let approvedCode: string | undefined;
+      let approvedVerifier: string | undefined;
+
+      while (Date.now() < deadline) {
+        await sleep(pollIntervalMs);
+        const poll = await invoke<CodexDevicePollResponse>('codex_device_poll_gui', {
+          deviceAuthId: start.deviceAuthId,
+          userCode: start.userCode,
+        });
+
+        if (
+          poll.status === 'approved' &&
+          poll.authorizationCode &&
+          poll.codeVerifier
+        ) {
+          approvedCode = poll.authorizationCode;
+          approvedVerifier = poll.codeVerifier;
+          break;
+        }
+      }
+
+      if (!approvedCode || !approvedVerifier) {
+        throw new Error('Timed out waiting for approval');
+      }
+
+      setCodexLoginStatus('Exchanging authorization...');
+      const exchange = await invoke<CodexDeviceExchangeResponse>('codex_device_exchange_gui', {
+        authorizationCode: approvedCode,
+        codeVerifier: approvedVerifier,
+      });
+
+      if (exchange.status !== 'ok') {
+        throw new Error('Token exchange failed');
+      }
+
+      await refreshCodexAuthState();
+      setCodexLoginStatus('Connected');
+      window.toast?.success('Codex connected');
+    } catch (e) {
+      console.error('Codex login failed:', e);
+      setCodexLoginStatus('Login failed');
+      window.toast?.error(`Codex login failed: ${String(e)}`);
+    } finally {
+      setCodexLoginInProgress(false);
     }
   };
 
@@ -305,7 +414,7 @@ export const SettingsModal: Component = () => {
 
   const isLocalProfile = () => selectedProfile() === 'local';
 
-  const remoteProfileNames = () => Object.keys(settings.profiles);
+  const remoteProfileNames = () => Object.keys(settings.profiles).filter((name) => name !== 'local');
   const runnerNames = () => Object.keys(settings.runners);
   const storageNames = () => Object.keys(settings.storage?.configs || {});
 
@@ -366,34 +475,6 @@ export const SettingsModal: Component = () => {
   const resetAllShortcuts = () => {
     resetShortcuts();
     setShortcuts(getShortcuts());
-  };
-
-  // Auth helpers
-  const getDefaultEnvVar = (provider: string) => {
-    switch (provider) {
-      case 'claude': return 'ANTHROPIC_API_KEY';
-      case 'gemini': return 'GOOGLE_API_KEY';
-      case 'codex': return 'OPENAI_API_KEY';
-      case 'goose': return 'GOOSE_API_KEY';
-      default: return '';
-    }
-  };
-
-  const testConnection = async () => {
-    setTesting(true);
-    try {
-      await invoke('test_agent_connection', {
-        provider: selectedAuthProvider(),
-        method: selectedAuthMethod(),
-        envVar: authEnvVar(),
-        apiKey: authApiKey(),
-      });
-      window.toast?.success('Connection successful');
-    } catch (e) {
-      window.toast?.error(`Connection failed: ${e}`);
-    } finally {
-      setTesting(false);
-    }
   };
 
   // Profile management
@@ -659,8 +740,15 @@ export const SettingsModal: Component = () => {
 
       if (gitHubToken()) {
         await invoke('store_credential', {
-          key: 'github_token',
+          keyType: 'git_github_token',
           value: gitHubToken(),
+        });
+      }
+
+      if (settings.llm?.provider === 'openrouter' && openrouterApiKey().trim()) {
+        await invoke('store_credential', {
+          keyType: 'openrouter_api_key',
+          value: openrouterApiKey().trim(),
         });
       }
 
@@ -693,23 +781,9 @@ export const SettingsModal: Component = () => {
 
   // Dropdown options
   const providerOptions: DropdownOption[] = [
-    { value: '', label: 'Select a provider...' },
-    { value: 'claude', label: 'Claude (Anthropic)' },
-    { value: 'gemini', label: 'Gemini (Google)' },
     { value: 'codex', label: 'Codex (OpenAI)' },
-    { value: 'goose', label: 'Goose' },
+    { value: 'openrouter', label: 'OpenRouter' },
   ];
-
-  const authMethodOptions = (): DropdownOption[] => {
-    const options: DropdownOption[] = [
-      { value: 'env', label: 'Environment Variable' },
-      { value: 'apiKey', label: 'API Key' },
-    ];
-    if (selectedAuthProvider() === 'claude') {
-      options.push({ value: 'oauth', label: 'OAuth' });
-    }
-    return options;
-  };
 
   const pauseOptions: DropdownOption[] = [
     { value: 'sender', label: 'Sender only' },
@@ -1165,7 +1239,7 @@ export const SettingsModal: Component = () => {
                         'text-wool-400 hover:bg-pasture-700/50': profileTab() !== 'agents',
                       }}
                     >
-                      Agents
+                      LLM
                     </button>
                     <button
                       onClick={() => setProfileTab('runners')}
@@ -1302,75 +1376,109 @@ export const SettingsModal: Component = () => {
                       </div>
                     </Show>
 
-                    {/* Agents Tab */}
+                    {/* LLM Tab */}
                     <Show when={profileTab() === 'agents'}>
                       <div class="space-y-6">
                         <div class="space-y-2">
-                          <label class="block text-sm font-medium text-wool-300">Provider</label>
+                          <label class="block text-sm font-medium text-wool-300">LLM Provider</label>
                           <Dropdown
-                            value={selectedAuthProvider()}
+                            value={settings.llm?.provider || 'codex'}
                             options={providerOptions}
-                            onChange={(value) => setSelectedAuthProvider(value as typeof selectedAuthProvider extends () => infer T ? T : never)}
-                            placeholder="Select a provider..."
+                            onChange={(value) => setSettings('llm', 'provider', value as 'codex' | 'openrouter')}
                           />
-                          <p class="text-xs text-wool-500">Select your AI provider to configure authentication.</p>
+                          <p class="text-xs text-wool-500">Used by Lash for both Shepherd chat and worker runtimes.</p>
                         </div>
 
-                        <Show when={selectedAuthProvider()}>
+                        <Show when={settings.llm?.provider === 'codex'}>
                           <div class="space-y-4">
-                            <div class="space-y-2">
-                              <label class="block text-sm font-medium text-wool-300">Authentication Method</label>
-                              <Dropdown
-                                value={selectedAuthMethod()}
-                                options={authMethodOptions()}
-                                onChange={(value) => setSelectedAuthMethod(value as 'env' | 'apiKey' | 'oauth')}
-                              />
-                            </div>
-
                             <div class="p-4 bg-pasture-700/30 rounded-lg space-y-4">
-                              <Show when={selectedAuthMethod() === 'env'}>
-                                <div class="space-y-2">
-                                  <label class="block text-sm text-wool-300">Environment Variable</label>
-                                  <input
-                                    type="text"
-                                    class="input w-full"
-                                    value={authEnvVar()}
-                                    onInput={(e) => setAuthEnvVar(e.currentTarget.value)}
-                                    placeholder={getDefaultEnvVar(selectedAuthProvider())}
-                                  />
-                                  <p class="text-xs text-wool-500">Leave empty to use default.</p>
+                              <div class="flex items-center justify-between gap-3">
+                                <div class="text-sm">
+                                  <p class="text-wool-300">
+                                    Status:{' '}
+                                    <span classList={{
+                                      'text-green-400': codexLoggedIn(),
+                                      'text-amber-400': !codexLoggedIn(),
+                                    }}>
+                                      {codexLoggedIn() ? 'Connected' : 'Not connected'}
+                                    </span>
+                                  </p>
+                                  <Show when={codexExpiresAt()}>
+                                    <p class="text-xs text-wool-500 mt-1">
+                                      Token expiry: {new Date((codexExpiresAt() || 0) * 1000).toLocaleString()}
+                                    </p>
+                                  </Show>
                                 </div>
+                                <button
+                                  type="button"
+                                  class="btn btn-sm"
+                                  disabled={codexLoginInProgress()}
+                                  onClick={loginWithCodex}
+                                >
+                                  <Show when={codexLoginInProgress()} fallback={codexLoggedIn() ? 'Reconnect Codex' : 'Login with Codex'}>
+                                    Connecting...
+                                  </Show>
+                                </button>
+                              </div>
+
+                              <Show when={codexLoginStatus()}>
+                                <p class="text-xs text-wool-500">{codexLoginStatus()}</p>
                               </Show>
 
-                              <Show when={selectedAuthMethod() === 'apiKey'}>
-                                <div class="space-y-2">
-                                  <label class="block text-sm text-wool-300">API Key</label>
-                                  <input
-                                    type="password"
-                                    class="input w-full"
-                                    value={authApiKey()}
-                                    onInput={(e) => setAuthApiKey(e.currentTarget.value)}
-                                    placeholder="••••••••"
-                                  />
-                                </div>
-                              </Show>
-
-                              <Show when={selectedAuthMethod() === 'oauth'}>
-                                <div class="text-sm text-wool-500">
-                                  <p>Uses OAuth credentials from <code class="text-xs bg-pasture-600 px-1 py-0.5 rounded">~/.claude/.credentials.json</code></p>
-                                  <p class="mt-2">Run <code class="bg-pasture-600 px-1 py-0.5 rounded">claude login</code> to authenticate.</p>
+                              <Show when={codexUserCode()}>
+                                <div class="space-y-2 rounded border border-pasture-600 p-3 bg-pasture-800/40">
+                                  <p class="text-xs text-wool-500">Enter this code in your browser:</p>
+                                  <code class="text-sm text-wool-200">{codexUserCode()}</code>
+                                  <Show when={codexVerifyUrl()}>
+                                    <a
+                                      class="text-xs text-amber-400 hover:underline block"
+                                      href={codexVerifyUrl()}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                    >
+                                      Open verification page
+                                    </a>
+                                  </Show>
                                 </div>
                               </Show>
                             </div>
+                          </div>
+                        </Show>
 
-                            <button
-                              type="button"
-                              onClick={testConnection}
-                              disabled={testing()}
-                              class="btn"
-                            >
-                              {testing() ? 'Testing...' : 'Test Connection'}
-                            </button>
+                        <Show when={settings.llm?.provider === 'openrouter'}>
+                          <div class="space-y-4">
+                            <div class="p-4 bg-pasture-700/30 rounded-lg space-y-4">
+                              <div class="space-y-2">
+                                <label class="block text-sm text-wool-300">OpenRouter API Key</label>
+                                <input
+                                  type="password"
+                                  class="input w-full"
+                                  value={openrouterApiKey()}
+                                  onInput={(e) => setOpenrouterApiKey(e.currentTarget.value)}
+                                  placeholder="sk-or-..."
+                                />
+                                <p class="text-xs text-wool-500">
+                                  <Show when={openrouterKeyConfigured()}>
+                                    Key is already configured. Leave blank to keep existing key.
+                                  </Show>
+                                  <Show when={!openrouterKeyConfigured()}>
+                                    Stored encrypted in Hirsel credentials.
+                                  </Show>
+                                </p>
+                              </div>
+
+                              <div class="space-y-2">
+                                <label class="block text-sm text-wool-300">Base URL (optional)</label>
+                                <input
+                                  type="text"
+                                  class="input w-full"
+                                  value={settings.llm?.openrouterBaseUrl || ''}
+                                  onInput={(e) => setSettings('llm', 'openrouterBaseUrl', e.currentTarget.value)}
+                                  placeholder="https://openrouter.ai/api/v1"
+                                />
+                                <p class="text-xs text-wool-500">Leave empty to use OpenRouter default.</p>
+                              </div>
+                            </div>
                           </div>
                         </Show>
                       </div>
@@ -1762,7 +1870,7 @@ export const SettingsModal: Component = () => {
                     <Show when={profileTab() === 'services'}>
                       <div class="space-y-6">
                         <p class="text-sm text-wool-500">
-                          Configure where service workers run. Service workers handle background tasks like documentation (Scribe) and chat assistance (Gyp).
+                          Configure where service workers run. Service workers handle background tasks like documentation (Scribe) and chat assistance (Shepherd).
                         </p>
 
                         {/* Scribe Service Worker */}
@@ -1785,7 +1893,7 @@ export const SettingsModal: Component = () => {
                                 options={runnerSelectOptions()}
                                 onChange={(value) => {
                                   if (!settings.serviceWorkers) {
-                                    setSettings('serviceWorkers', { scribe: {}, gyp: {} });
+                                    setSettings('serviceWorkers', { scribe: {}, shepherd: {} });
                                   }
                                   setSettings('serviceWorkers', 'scribe', 'runner', value || undefined);
                                 }}
@@ -1801,7 +1909,7 @@ export const SettingsModal: Component = () => {
                                 value={settings.serviceWorkers?.scribe?.idleTimeoutSeconds || 300}
                                 onInput={(e) => {
                                   if (!settings.serviceWorkers) {
-                                    setSettings('serviceWorkers', { scribe: {}, gyp: {} });
+                                    setSettings('serviceWorkers', { scribe: {}, shepherd: {} });
                                   }
                                   setSettings('serviceWorkers', 'scribe', 'idleTimeoutSeconds', Number.parseInt(e.currentTarget.value) || undefined);
                                 }}
@@ -1814,14 +1922,14 @@ export const SettingsModal: Component = () => {
                           </div>
                         </div>
 
-                        {/* Gyp Service Worker */}
+                        {/* Shepherd Service Worker */}
                         <div class="rounded-lg border border-pasture-600 p-4">
                           <div class="flex items-center gap-3 mb-4">
                             <span class="flex items-center justify-center w-8 h-8 rounded-lg bg-amber-500/20">
                               <Icon name="message-circle" class="w-4 h-4 text-amber-400" />
                             </span>
                             <div>
-                              <h3 class="font-medium text-wool-200">Gyp</h3>
+                              <h3 class="font-medium text-wool-200">Shepherd</h3>
                               <p class="text-xs text-wool-500">Chat assistant for interactive help</p>
                             </div>
                           </div>
@@ -1830,16 +1938,16 @@ export const SettingsModal: Component = () => {
                             <div class="space-y-2">
                               <label class="block text-sm text-wool-300">Runner</label>
                               <Dropdown
-                                value={settings.serviceWorkers?.gyp?.runner || ''}
+                                value={settings.serviceWorkers?.shepherd?.runner || ''}
                                 options={runnerSelectOptions()}
                                 onChange={(value) => {
                                   if (!settings.serviceWorkers) {
-                                    setSettings('serviceWorkers', { scribe: {}, gyp: {} });
+                                    setSettings('serviceWorkers', { scribe: {}, shepherd: {} });
                                   }
-                                  setSettings('serviceWorkers', 'gyp', 'runner', value || undefined);
+                                  setSettings('serviceWorkers', 'shepherd', 'runner', value || undefined);
                                 }}
                               />
-                              <p class="text-xs text-wool-500">Where to run the Gyp service worker.</p>
+                              <p class="text-xs text-wool-500">Where to run the Shepherd service worker.</p>
                             </div>
 
                             <div class="space-y-2">
@@ -1847,12 +1955,12 @@ export const SettingsModal: Component = () => {
                               <input
                                 type="number"
                                 class="input w-full"
-                                value={settings.serviceWorkers?.gyp?.idleTimeoutSeconds || 300}
+                                value={settings.serviceWorkers?.shepherd?.idleTimeoutSeconds || 300}
                                 onInput={(e) => {
                                   if (!settings.serviceWorkers) {
-                                    setSettings('serviceWorkers', { scribe: {}, gyp: {} });
+                                    setSettings('serviceWorkers', { scribe: {}, shepherd: {} });
                                   }
-                                  setSettings('serviceWorkers', 'gyp', 'idleTimeoutSeconds', Number.parseInt(e.currentTarget.value) || undefined);
+                                  setSettings('serviceWorkers', 'shepherd', 'idleTimeoutSeconds', Number.parseInt(e.currentTarget.value) || undefined);
                                 }}
                                 min={30}
                                 step={30}

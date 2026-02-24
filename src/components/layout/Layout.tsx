@@ -18,7 +18,7 @@ import { WelcomeScreen } from './WelcomeScreen';
 import { ProjectSetup } from '../projects/ProjectSetup';
 import { ProjectSettings } from '../projects/ProjectSettings';
 import { SpecBoard } from '../specflow/SpecBoard';
-import { GypMessenger } from '../chat/GypMessenger';
+import { ShepherdConsole } from '../chat/ShepherdConsole';
 import { WorkerOutputViewer } from '../workers/WorkerOutputViewer';
 import { AttachPicker } from '../modals/AttachPicker';
 import { SettingsModal } from '../modals/SettingsModal';
@@ -95,8 +95,8 @@ export const Layout: Component = () => {
 
       <StatusBar />
 
-      {/* Gyp Messenger (floats above status bar) */}
-      <GypMessenger />
+      {/* Shepherd Console (floats above status bar) */}
+      <ShepherdConsole />
 
       {/* Modals and overlays */}
       <WorkerOutputViewer />

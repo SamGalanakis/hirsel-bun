@@ -1,6 +1,6 @@
-//! Gyp Chat History Storage
+//! Shepherd Chat History Storage
 //!
-//! Stores Gyp (AI assistant) chat history in the global hirsel database.
+//! Stores Shepherd (AI assistant) chat history in the global hirsel database.
 //! Chat history is associated with run names to maintain separate conversations per run.
 
 use serde::{Deserialize, Serialize};
@@ -9,14 +9,14 @@ use tokio::sync::OnceCell;
 
 use super::db::{global_pool, utc_now};
 
-/// Schema for Gyp chat tables
+/// Schema for Shepherd chat tables
 const SCHEMA: &str = r#"
--- Gyp chat messages for persistent per-run AI assistant history
+-- Shepherd chat messages for persistent per-run AI assistant history
 -- Supports three scopes:
 -- 1. project_id=NULL, run_name=NULL → general chat
 -- 2. project_id=X, run_name=NULL → project-level chat
 -- 3. project_id=X, run_name=Y → run-specific chat
-CREATE TABLE IF NOT EXISTS gyp_chat_messages (
+CREATE TABLE IF NOT EXISTS shepherd_chat_messages (
     id INTEGER PRIMARY KEY,
     project_id INTEGER,       -- NULL for general conversations
     run_name TEXT,            -- NULL for project-level or general conversations
@@ -25,9 +25,9 @@ CREATE TABLE IF NOT EXISTS gyp_chat_messages (
     chunks_json TEXT NOT NULL -- JSON-encoded message chunks
 );
 
-CREATE INDEX IF NOT EXISTS idx_gyp_chat_run ON gyp_chat_messages(run_name);
-CREATE INDEX IF NOT EXISTS idx_gyp_chat_project ON gyp_chat_messages(project_id);
-CREATE INDEX IF NOT EXISTS idx_gyp_chat_timestamp ON gyp_chat_messages(timestamp);
+CREATE INDEX IF NOT EXISTS idx_shepherd_chat_run ON shepherd_chat_messages(run_name);
+CREATE INDEX IF NOT EXISTS idx_shepherd_chat_project ON shepherd_chat_messages(project_id);
+CREATE INDEX IF NOT EXISTS idx_shepherd_chat_timestamp ON shepherd_chat_messages(timestamp);
 "#;
 
 static SCHEMA_INIT: OnceCell<()> = OnceCell::const_new();
@@ -42,10 +42,10 @@ async fn ensure_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// Gyp chat message
+/// Shepherd chat message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GypChatMessage {
+pub struct ShepherdChatMessage {
     pub id: i64,
     pub project_id: Option<i64>,
     pub run_name: Option<String>,
@@ -54,23 +54,23 @@ pub struct GypChatMessage {
     pub chunks_json: String,
 }
 
-/// Error type for Gyp chat operations
+/// Error type for Shepherd chat operations
 #[derive(Debug, thiserror::Error)]
-pub enum GypChatError {
+pub enum ShepherdChatError {
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
 
-pub type GypChatResult<T> = Result<T, GypChatError>;
+pub type ShepherdChatResult<T> = Result<T, ShepherdChatError>;
 
-/// Gyp chat storage backed by SQLite
-pub struct GypChatStore;
+/// Shepherd chat storage backed by SQLite
+pub struct ShepherdChatStore;
 
-impl GypChatStore {
-    /// Open the global Gyp chat store
-    pub async fn open() -> GypChatResult<Self> {
+impl ShepherdChatStore {
+    /// Open the global Shepherd chat store
+    pub async fn open() -> ShepherdChatResult<Self> {
         let pool = global_pool().await;
         ensure_schema(pool).await?;
         Ok(Self)
@@ -87,7 +87,7 @@ impl GypChatStore {
         run_name: Option<&str>,
         role: &str,
         chunks_json: &str,
-    ) -> GypChatResult<i64> {
+    ) -> ShepherdChatResult<i64> {
         self.save_message_with_project(None, run_name, role, chunks_json)
             .await
     }
@@ -99,12 +99,12 @@ impl GypChatStore {
         run_name: Option<&str>,
         role: &str,
         chunks_json: &str,
-    ) -> GypChatResult<i64> {
+    ) -> ShepherdChatResult<i64> {
         let pool = self.pool().await;
         let timestamp = utc_now();
 
         let result = sqlx::query(
-            "INSERT INTO gyp_chat_messages (project_id, run_name, role, timestamp, chunks_json) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO shepherd_chat_messages (project_id, run_name, role, timestamp, chunks_json) VALUES (?, ?, ?, ?, ?)",
         )
         .bind(project_id)
         .bind(run_name)
@@ -118,13 +118,16 @@ impl GypChatStore {
     }
 
     /// Get all messages for a run (or no-run if run_name is None)
-    pub async fn get_messages(&self, run_name: Option<&str>) -> GypChatResult<Vec<GypChatMessage>> {
+    pub async fn get_messages(
+        &self,
+        run_name: Option<&str>,
+    ) -> ShepherdChatResult<Vec<ShepherdChatMessage>> {
         let pool = self.pool().await;
 
         let rows = if run_name.is_some() {
             sqlx::query(
                 "SELECT id, project_id, run_name, role, timestamp, chunks_json
-                 FROM gyp_chat_messages
+                 FROM shepherd_chat_messages
                  WHERE run_name = ?
                  ORDER BY timestamp ASC",
             )
@@ -134,7 +137,7 @@ impl GypChatStore {
         } else {
             sqlx::query(
                 "SELECT id, project_id, run_name, role, timestamp, chunks_json
-                 FROM gyp_chat_messages
+                 FROM shepherd_chat_messages
                  WHERE run_name IS NULL AND project_id IS NULL
                  ORDER BY timestamp ASC",
             )
@@ -144,7 +147,7 @@ impl GypChatStore {
 
         let messages = rows
             .into_iter()
-            .map(|row| GypChatMessage {
+            .map(|row| ShepherdChatMessage {
                 id: row.get("id"),
                 project_id: row.get("project_id"),
                 run_name: row.get("run_name"),
@@ -161,12 +164,12 @@ impl GypChatStore {
     pub async fn get_project_messages(
         &self,
         project_id: i64,
-    ) -> GypChatResult<Vec<GypChatMessage>> {
+    ) -> ShepherdChatResult<Vec<ShepherdChatMessage>> {
         let pool = self.pool().await;
 
         let rows = sqlx::query(
             "SELECT id, project_id, run_name, role, timestamp, chunks_json
-             FROM gyp_chat_messages
+             FROM shepherd_chat_messages
              WHERE project_id = ?
              ORDER BY timestamp ASC",
         )
@@ -176,7 +179,7 @@ impl GypChatStore {
 
         let messages = rows
             .into_iter()
-            .map(|row| GypChatMessage {
+            .map(|row| ShepherdChatMessage {
                 id: row.get("id"),
                 project_id: row.get("project_id"),
                 run_name: row.get("run_name"),
@@ -190,17 +193,17 @@ impl GypChatStore {
     }
 
     /// Clear all messages for a run (or no-run if run_name is None)
-    pub async fn clear_messages(&self, run_name: Option<&str>) -> GypChatResult<()> {
+    pub async fn clear_messages(&self, run_name: Option<&str>) -> ShepherdChatResult<()> {
         let pool = self.pool().await;
 
         if run_name.is_some() {
-            sqlx::query("DELETE FROM gyp_chat_messages WHERE run_name = ?")
+            sqlx::query("DELETE FROM shepherd_chat_messages WHERE run_name = ?")
                 .bind(run_name)
                 .execute(pool)
                 .await?;
         } else {
             sqlx::query(
-                "DELETE FROM gyp_chat_messages WHERE run_name IS NULL AND project_id IS NULL",
+                "DELETE FROM shepherd_chat_messages WHERE run_name IS NULL AND project_id IS NULL",
             )
             .execute(pool)
             .await?;
@@ -209,10 +212,10 @@ impl GypChatStore {
     }
 
     /// Clear all messages for a project
-    pub async fn clear_project_messages(&self, project_id: i64) -> GypChatResult<()> {
+    pub async fn clear_project_messages(&self, project_id: i64) -> ShepherdChatResult<()> {
         let pool = self.pool().await;
 
-        sqlx::query("DELETE FROM gyp_chat_messages WHERE project_id = ?")
+        sqlx::query("DELETE FROM shepherd_chat_messages WHERE project_id = ?")
             .bind(project_id)
             .execute(pool)
             .await?;
@@ -220,10 +223,10 @@ impl GypChatStore {
     }
 
     /// Delete all messages for a specific run (used when deleting a run)
-    pub async fn delete_run_messages(&self, run_name: &str) -> GypChatResult<()> {
+    pub async fn delete_run_messages(&self, run_name: &str) -> ShepherdChatResult<()> {
         let pool = self.pool().await;
 
-        sqlx::query("DELETE FROM gyp_chat_messages WHERE run_name = ?")
+        sqlx::query("DELETE FROM shepherd_chat_messages WHERE run_name = ?")
             .bind(run_name)
             .execute(pool)
             .await?;
@@ -240,7 +243,7 @@ impl GypChatStore {
         project_id: i64,
         role: &str,
         chunks_json: &str,
-    ) -> GypChatResult<i64> {
+    ) -> ShepherdChatResult<i64> {
         self.save_message_with_project(Some(project_id), Some("__board__"), role, chunks_json)
             .await
     }
@@ -250,12 +253,12 @@ impl GypChatStore {
         &self,
         project_id: i64,
         limit: usize,
-    ) -> GypChatResult<Vec<GypChatMessage>> {
+    ) -> ShepherdChatResult<Vec<ShepherdChatMessage>> {
         let pool = self.pool().await;
 
         let rows = sqlx::query(
             "SELECT id, project_id, run_name, role, timestamp, chunks_json
-             FROM gyp_chat_messages
+             FROM shepherd_chat_messages
              WHERE project_id = ? AND run_name = '__board__'
              ORDER BY timestamp DESC
              LIMIT ?",
@@ -265,9 +268,9 @@ impl GypChatStore {
         .fetch_all(pool)
         .await?;
 
-        let messages: Vec<GypChatMessage> = rows
+        let messages: Vec<ShepherdChatMessage> = rows
             .into_iter()
-            .map(|row| GypChatMessage {
+            .map(|row| ShepherdChatMessage {
                 id: row.get("id"),
                 project_id: row.get("project_id"),
                 run_name: row.get("run_name"),
@@ -282,11 +285,11 @@ impl GypChatStore {
     }
 
     /// Clear all board chat messages for a project
-    pub async fn clear_board_messages(&self, project_id: i64) -> GypChatResult<()> {
+    pub async fn clear_board_messages(&self, project_id: i64) -> ShepherdChatResult<()> {
         let pool = self.pool().await;
 
         sqlx::query(
-            "DELETE FROM gyp_chat_messages WHERE project_id = ? AND run_name = '__board__'",
+            "DELETE FROM shepherd_chat_messages WHERE project_id = ? AND run_name = '__board__'",
         )
         .bind(project_id)
         .execute(pool)

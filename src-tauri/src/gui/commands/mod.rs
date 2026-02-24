@@ -5,7 +5,6 @@
 //!
 //! Types are designed to match the TypeScript definitions in src/lib/types.ts.
 
-mod chat;
 mod config_cmd;
 mod credentials;
 mod debug;
@@ -16,7 +15,6 @@ mod drafts;
 mod events;
 mod files;
 mod filesystem;
-mod gyp;
 mod ide;
 mod logs;
 mod messages;
@@ -24,6 +22,7 @@ mod project_messages;
 mod projects;
 mod routes;
 mod runs;
+mod shepherd;
 pub mod types;
 mod workers;
 
@@ -74,11 +73,6 @@ pub fn get_run_work_dir(run_name: &str) -> Result<std::path::PathBuf, String> {
     Ok(work_dir)
 }
 
-// Re-export the chat orchestrator manager for state management
-pub use chat::ChatOrchestratorManager;
-
-// GypChatStore is available from crate::core::gyp_chat for modules that need it
-
 /// Generate the Tauri invoke handler with all commands
 pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
@@ -126,21 +120,20 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         // Eval commands
         logs::get_eval_spec,
         logs::get_evals,
-        // Worker events commands (ACP-based streaming)
+        // Worker events commands (streaming)
         events::get_worker_events,
         events::clear_worker_events,
         events::start_worker_event_stream,
         events::stop_worker_event_stream,
         // Message commands
-        messages::get_messages,
-        messages::get_threads,
         messages::get_all_unread_notifications,
-        messages::send_message,
-        messages::mark_messages_read,
         // Config commands
         config_cmd::get_config,
         config_cmd::get_config_defaults,
         config_cmd::save_config,
+        config_cmd::codex_device_start_gui,
+        config_cmd::codex_device_poll_gui,
+        config_cmd::codex_device_exchange_gui,
         config_cmd::get_tailscale_info,
         config_cmd::check_ssh_runner,
         // Credential commands
@@ -149,19 +142,13 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         credentials::has_credential,
         credentials::get_credential,
         credentials::get_credential_masked,
-        // Chat session commands
-        chat::start_chat_session,
-        chat::send_chat_message,
-        chat::respond_chat_permission,
-        chat::stop_chat_session,
-        chat::list_chat_sessions,
         // Frontend logging (dev mode)
         debug::log_frontend,
         debug::log_frontend_batch,
         // Debug commands
         debug::get_version,
         debug::get_process_counts,
-        debug::kill_orphaned_acp_processes,
+        debug::kill_orphaned_worker_processes,
         debug::get_daemon_health,
         debug::ensure_daemon_running,
         debug::get_profiling_enabled,
@@ -178,13 +165,6 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         projects::update_project,
         projects::update_project_name,
         projects::delete_project,
-        // Unified Gyp commands
-        gyp::start_gyp_session,
-        gyp::send_gyp_message,
-        gyp::save_gyp_message,
-        gyp::get_gyp_history,
-        gyp::clear_gyp_history,
-        gyp::stop_gyp_session,
         // Delivery commands (run-based)
         delivery::get_delivery_state,
         delivery::check_merge_state,
@@ -214,12 +194,20 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         delta::delete_board_node,
         delta::move_board_node,
         delta::reset_project_tree,
-        delta::dispatch_board,
+        delta::start_shepherd_run,
         delta::get_project_run,
         delta::complete_board_node,
-        delta::sync_gyp_changes,
-        delta::sync_and_get_trees,
-        delta::sync_and_get_tree_if_changed,
+        delta::sync_shepherd_changes,
+        delta::sync_and_get_shepherd_view,
+        delta::sync_and_get_shepherd_view_if_changed,
+        // Shepherd chat commands
+        shepherd::start_shepherd_session,
+        shepherd::send_shepherd_message,
+        shepherd::stop_shepherd_session,
+        shepherd::list_shepherd_sessions,
+        shepherd::get_shepherd_history,
+        shepherd::clear_shepherd_history,
+        shepherd::save_shepherd_message,
         // Docs commands
         docs::get_project_docs,
         // Project Messages (Sheepfold) commands
@@ -235,6 +223,11 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         routes::get_route,
         routes::get_route_by_name,
         routes::get_route_tree,
+        routes::list_route_repos,
+        routes::create_route_repo,
+        routes::update_route_repo,
+        routes::delete_route_repo,
+        routes::set_default_route_repo,
         routes::create_route,
         routes::delete_route,
         routes::set_active_route,

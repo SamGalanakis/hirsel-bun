@@ -6,8 +6,8 @@ use serde_json::Value;
 /// JSON-RPC 2.0 request structure.
 #[derive(Debug, Deserialize)]
 pub struct JsonRpcRequest {
-    #[allow(dead_code)]
-    pub jsonrpc: String,
+    #[serde(rename = "jsonrpc")]
+    pub _jsonrpc: String,
     pub method: String,
     #[serde(default)]
     pub params: Value,

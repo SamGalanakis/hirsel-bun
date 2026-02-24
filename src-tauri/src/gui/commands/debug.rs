@@ -55,7 +55,7 @@ pub async fn log_frontend_batch(entries: Vec<(String, String)>) {
     }
 }
 
-/// Count claude and acp related processes (for debug panel)
+/// Count worker-related processes (for debug panel).
 #[tracing::instrument]
 #[tauri::command]
 pub async fn get_process_counts() -> Result<serde_json::Value, String> {
@@ -63,24 +63,13 @@ pub async fn get_process_counts() -> Result<serde_json::Value, String> {
     {
         use std::process::Command;
 
-        // Count claude processes
-        let claude_output = Command::new("sh")
+        // Count hirsel worker processes
+        let hirsel_output = Command::new("sh")
             .arg("-c")
-            .arg("ps aux | grep -E '[c]laude' | wc -l")
+            .arg("ps aux | grep -E '[h]irsel .*(__worker-run|__remote-worker)' | wc -l")
             .output()
             .str_err()?;
-        let claude_count: i32 = String::from_utf8_lossy(&claude_output.stdout)
-            .trim()
-            .parse()
-            .unwrap_or(0);
-
-        // Count acp processes
-        let acp_output = Command::new("sh")
-            .arg("-c")
-            .arg("ps aux | grep -E '[a]cp|[c]laude-code-acp' | wc -l")
-            .output()
-            .str_err()?;
-        let acp_count: i32 = String::from_utf8_lossy(&acp_output.stdout)
+        let hirsel_count: i32 = String::from_utf8_lossy(&hirsel_output.stdout)
             .trim()
             .parse()
             .unwrap_or(0);
@@ -99,14 +88,13 @@ pub async fn get_process_counts() -> Result<serde_json::Value, String> {
         // Get detailed process list
         let detail_output = Command::new("sh")
             .arg("-c")
-            .arg("ps aux | grep -E 'claude|acp' | grep -v grep | head -20")
+            .arg("ps aux | grep -E 'hirsel .*(__worker-run|__remote-worker)|node' | grep -v grep | head -20")
             .output()
             .str_err()?;
         let details = String::from_utf8_lossy(&detail_output.stdout).to_string();
 
         Ok(serde_json::json!({
-            "claude": claude_count,
-            "acp": acp_count,
+            "hirsel": hirsel_count,
             "node": node_count,
             "details": details
         }))
@@ -115,26 +103,25 @@ pub async fn get_process_counts() -> Result<serde_json::Value, String> {
     #[cfg(not(unix))]
     {
         Ok(serde_json::json!({
-            "claude": 0,
-            "acp": 0,
+            "hirsel": 0,
             "node": 0,
             "details": "Process counting not supported on this platform"
         }))
     }
 }
 
-/// Kill orphaned ACP bridge processes (debug panel utility)
+/// Kill orphaned worker helper processes (debug panel utility).
 #[tracing::instrument]
 #[tauri::command]
-pub async fn kill_orphaned_acp_processes() -> Result<serde_json::Value, String> {
+pub async fn kill_orphaned_worker_processes() -> Result<serde_json::Value, String> {
     #[cfg(unix)]
     {
         use std::process::Command;
 
-        // Use pkill to kill hirsel __acp-bridge processes
+        // Use pkill to kill stale worker helper processes.
         let output = Command::new("pkill")
             .arg("-f")
-            .arg("__acp-bridge")
+            .arg("__worker-run")
             .output()
             .str_err()?;
 

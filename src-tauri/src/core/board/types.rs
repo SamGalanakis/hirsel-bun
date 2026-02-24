@@ -149,7 +149,7 @@ pub struct Eval {
     pub validates: Vec<String>, // Task IDs this eval validates
     pub x: Option<f64>,
     pub y: Option<f64>,
-    #[serde(skip)] // Internal metadata, not for Gyp
+    #[serde(skip)] // Internal metadata, not for Shepherd
     pub created_at: String,
     #[serde(skip)]
     pub updated_at: String,
@@ -308,7 +308,7 @@ pub struct BoardSnapshot {
 
 /// A task file containing a top-level task tree and related evals
 ///
-/// This is the minimal format Gyp sees - just the task and evals, nothing else.
+/// This is the minimal format Shepherd sees - just the task and evals, nothing else.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskFile {

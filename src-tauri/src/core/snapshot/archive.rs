@@ -1,7 +1,7 @@
 //! Unified archive strategy for directory archival and restoration.
 //!
 //! This module provides the `ArchiveStrategy` trait for archiving both work directories
-//! and agent sessions (e.g., Claude's `.claude` directory) to storage.
+//! and agent sessions (e.g., `.codex`) to storage.
 //!
 //! # Design
 //!

@@ -4,6 +4,7 @@
 import { invoke } from '../../lib/invoke';
 import {
   type Component,
+  For,
   Show,
   createEffect,
   createSignal,
@@ -37,6 +38,7 @@ export const ProjectSettings: Component = () => {
   let nameInputRef: HTMLInputElement | undefined;
 
   const selectedProject = () => project.selectedProject();
+  const selectedRoute = () => route.activeRoute();
 
   // Reset state and load config defaults when modal opens
   createEffect(() => {
@@ -56,16 +58,17 @@ export const ProjectSettings: Component = () => {
     }
   };
 
-  // Sync form values when project changes
+  // Sync form values when active route changes
   createEffect(() => {
     const proj = selectedProject();
-    if (proj) {
+    const activeRoute = selectedRoute();
+    if (proj && activeRoute) {
       setNameValue(proj.name);
-      setWorkerScale(proj.workerScale || '');
-      setTimeLimitMinutes(proj.timeLimitMinutes?.toString() || '');
-      setHumanInTheLoop(proj.humanInTheLoop ?? true);
-      setRunner(proj.runner || '');
-      setTargetBranch(proj.targetBranch || '');
+      setWorkerScale(activeRoute.workerScale || '');
+      setTimeLimitMinutes(activeRoute.timeLimitMinutes?.toString() || '');
+      setHumanInTheLoop(activeRoute.humanInTheLoop ?? true);
+      setRunner(activeRoute.runner || '');
+      setTargetBranch(activeRoute.targetBranch || '');
       setIsDirty(false);
     }
   });
@@ -80,21 +83,31 @@ export const ProjectSettings: Component = () => {
     }
   });
 
-  // Get starting point info
-  const startingPointInfo = () => {
-    const proj = selectedProject();
-    if (!proj?.startingPoint) return null;
-    const sp = proj.startingPoint as StartingPoint;
+  const defaultRepo = () => {
+    const activeRoute = selectedRoute();
+    if (!activeRoute?.repos?.length) return null;
+    if (activeRoute.defaultRepoId) {
+      const selected = activeRoute.repos.find((r) => r.id === activeRoute.defaultRepoId);
+      if (selected) return selected;
+    }
+    return activeRoute.repos[0];
+  };
+
+  // Get default repo info
+  const defaultRepoInfo = () => {
+    const repo = defaultRepo();
+    if (!repo) return null;
+    const sp = repo.startingPoint as StartingPoint;
     if (sp.type === 'greenfield') {
-      return { icon: 'sprout', label: 'Greenfield', detail: 'Empty workspace' };
+      return { icon: 'sprout', label: repo.name, detail: 'Greenfield workspace' };
     }
     if (sp.type === 'localFolder') {
-      return { icon: 'folder', label: 'Local Folder', detail: sp.path };
+      return { icon: 'folder', label: repo.name, detail: sp.path };
     }
     if (sp.type === 'gitRepo') {
       return {
         icon: 'git-branch',
-        label: 'Git Repository',
+        label: repo.name,
         detail: `${sp.url}${sp.branch ? ` @ ${sp.branch}` : ''}`,
       };
     }
@@ -148,7 +161,7 @@ export const ProjectSettings: Component = () => {
 
     // Capture ALL values before any async operation
     const projectId = proj.id;
-    const routeId = route.activeRoute()?.id ?? route.routes()[0]?.id ?? 0;
+    const routeId = selectedRoute()?.id ?? route.routes()[0]?.id ?? 0;
     const settings = {
       workerScale: workerScale() || null,
       timeLimitMinutes: timeLimitMinutes() ? Number.parseInt(timeLimitMinutes(), 10) : null,
@@ -160,6 +173,7 @@ export const ProjectSettings: Component = () => {
     setSaving(true);
     try {
       await project.updateProjectSettings(projectId, routeId, settings);
+      await route.loadRoutes();
       setSaving(false);
       window.toast?.success('Settings saved');
       // Delay close to let reactive updates from updateProjectSettings settle
@@ -306,23 +320,44 @@ export const ProjectSettings: Component = () => {
 
           {/* Scrollable content */}
           <div class="overflow-y-auto flex-1 p-6 space-y-6">
-            {/* Starting Point */}
-            <Show when={startingPointInfo()}>
+            {/* Linked Repos */}
+            <Show when={(selectedRoute()?.repos?.length || 0) > 0}>
               <div>
-                <h4 class="text-sm font-medium text-wool-200 mb-3">Starting Point</h4>
+                <h4 class="text-sm font-medium text-wool-200 mb-3">Linked Repos</h4>
+                <div class="space-y-2 mb-3">
+                  <For each={selectedRoute()?.repos || []}>
+                    {(repo) => (
+                      <div class="bg-pasture-900 rounded-lg p-3 border border-pasture-700 flex items-center justify-between gap-3">
+                        <span class="text-sm text-wool-200 truncate">{repo.name}</span>
+                        <Show when={selectedRoute()?.defaultRepoId === repo.id}>
+                          <span class="text-[11px] px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                            Default
+                          </span>
+                        </Show>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </div>
+            </Show>
+
+            {/* Default Repo */}
+            <Show when={defaultRepoInfo()}>
+              <div>
+                <h4 class="text-sm font-medium text-wool-200 mb-3">Default Repo</h4>
                 <div class="bg-pasture-900 rounded-lg p-3 border border-pasture-700">
                   <div class="flex items-center gap-2 mb-1">
                     <Icon
-                      name={startingPointInfo()?.icon || 'folder'}
+                      name={defaultRepoInfo()?.icon || 'folder'}
                       class="w-4 h-4 text-amber-400/70"
                     />
                     <span class="text-sm font-medium text-wool-200">
-                      {startingPointInfo()?.label}
+                      {defaultRepoInfo()?.label}
                     </span>
                   </div>
-                  <Show when={startingPointInfo()?.detail}>
+                  <Show when={defaultRepoInfo()?.detail}>
                     <p class="text-xs text-wool-500 pl-6 break-all font-mono">
-                      {startingPointInfo()?.detail}
+                      {defaultRepoInfo()?.detail}
                     </p>
                   </Show>
                 </div>

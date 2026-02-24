@@ -7,7 +7,7 @@
 //!
 //! ## Flow
 //!
-//! 1. User creates spec nodes (via UI or Gyp)
+//! 1. User creates spec nodes (via UI or Shepherd)
 //! 2. User clicks "Dispatch"
 //! 3. Spec nodes set to pending, plan tasks created per spec
 //! 4. Plan workers decompose specs into implementation tasks + evals

@@ -11,7 +11,7 @@ use thiserror::Error;
 use tokio::sync::OnceCell;
 
 use super::{
-    AgentConfig, AuthConfig, Config, GitConfig, OrchestratorProfile, ServiceWorkersConfig,
+    AgentConfig, Config, GitConfig, LlmConfig, OrchestratorProfile, ServiceWorkersConfig,
     StorageConfig,
 };
 use crate::core::db::{global_pool, utc_now};
@@ -64,7 +64,7 @@ pub struct PartialConfig {
     pub human_in_the_loop: Option<bool>,
     pub context_warning_threshold: Option<f64>,
     pub coordinator_port: Option<u16>,
-    pub auth: Option<AuthConfig>,
+    pub llm: Option<LlmConfig>,
     pub runners: Option<HashMap<String, RunnerConfig>>,
     pub default_runner: Option<Option<String>>,
     pub worker_runners: Option<HashMap<String, String>>,
@@ -213,11 +213,11 @@ impl ConfigStore {
                         }
                     };
                 }
-                "auth" => {
-                    partial.auth = match serde_json::from_str(&value) {
+                "llm" => {
+                    partial.llm = match serde_json::from_str(&value) {
                         Ok(v) => Some(v),
                         Err(e) => {
-                            tracing::debug!("Failed to parse config 'auth': {}", e);
+                            tracing::debug!("Failed to parse config 'llm': {}", e);
                             None
                         }
                     };
@@ -344,9 +344,11 @@ impl ConfigStore {
         self.set("coordinator_port", &config.coordinator_port.to_string())
             .await?;
 
-        // Auth config
-        self.set("auth", &serde_json::to_string(&config.auth)?)
+        // LLM config
+        self.set("llm", &serde_json::to_string(&config.llm)?)
             .await?;
+        // Purge deprecated auth config key.
+        let _ = self.delete("auth").await;
 
         // Runners
         self.set("runners", &serde_json::to_string(&config.runners)?)

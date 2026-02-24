@@ -428,8 +428,8 @@ impl DeltaState {
         let repair_name = format!("Repair: {}", feedback.chars().take(50).collect::<String>());
 
         sqlx::query(
-            "INSERT INTO board_nodes (id, project_id, route_id, parent_id, position, name, kind, source, content, status, resolves, created_at, updated_at)
-             VALUES (?, ?, ?, NULL, 0, ?, 'task', 'system', ?, 'pending', ?, ?, ?)",
+            "INSERT INTO board_nodes (id, project_id, route_id, parent_id, position, name, kind, source, content, difficulty, status, resolves, created_at, updated_at)
+             VALUES (?, ?, ?, NULL, 0, ?, 'task', 'system', ?, 'high', 'pending', ?, ?, ?)",
         )
         .bind(&repair_id)
         .bind(self.project_id)
@@ -503,7 +503,7 @@ impl DeltaState {
             }
 
             match node.kind {
-                NodeKind::Task | NodeKind::Feature => {
+                NodeKind::Task | NodeKind::Feature | NodeKind::Plan => {
                     if node.blocked_by.is_empty() {
                         return Ok(false);
                     }
@@ -521,12 +521,7 @@ impl DeltaState {
                             }
                         };
 
-                        let has_check = self.has_validating_check(blocker_id).await?;
-                        let is_blocking = if has_check {
-                            blocker.status != BoardNodeStatus::Validated
-                        } else {
-                            !blocker.status.is_complete()
-                        };
+                        let is_blocking = !blocker.status.is_complete();
 
                         if is_blocking {
                             return Ok(true);
@@ -624,7 +619,7 @@ impl DeltaState {
 
             match node.kind {
                 NodeKind::Check => eval_nodes.push(node),
-                NodeKind::Task => work_nodes.push(node),
+                NodeKind::Task | NodeKind::Plan => work_nodes.push(node),
                 NodeKind::Feature => {} // Features are not directly claimable
             }
         }

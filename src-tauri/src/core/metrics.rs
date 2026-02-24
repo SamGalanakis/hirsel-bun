@@ -1,6 +1,6 @@
 //! Session metrics calculation for hirsel.
 //!
-//! This module provides functions to extract metrics from Claude Code
+//! This module provides functions to extract metrics from agent
 //! session files, including turn count, token usage, and context utilization.
 
 use std::collections::HashMap;
@@ -53,14 +53,14 @@ struct Usage {
     cache_read_input_tokens: Option<u64>,
 }
 
-/// Get the path to a Claude session file
+/// Get the path to a session file.
 fn get_session_file(session_id: &str, project_path: &str) -> PathBuf {
-    // Claude stores sessions in ~/.claude/projects/<escaped-path>/<session-id>.jsonl
+    // Legacy location used by prior agent session storage.
     let escaped_path = project_path.replace(['/', '.'], "-");
 
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".claude")
+        .join(".codex")
         .join("projects")
         .join(escaped_path)
         .join(format!("{}.jsonl", session_id))
@@ -68,7 +68,7 @@ fn get_session_file(session_id: &str, project_path: &str) -> PathBuf {
 
 /// Get session metrics for a worker
 ///
-/// This function reads the Claude session file and extracts metrics.
+/// This function reads the session file and extracts metrics.
 /// Results are cached for a short time to avoid repeated file reads.
 pub fn get_session_metrics(session_id: Option<&str>, project_path: Option<&str>) -> SessionMetrics {
     let default = SessionMetrics::default();
@@ -151,10 +151,10 @@ pub fn get_session_metrics(session_id: Option<&str>, project_path: Option<&str>)
         }
     }
 
-    // Calculate context utilization for Claude models
+    // Calculate context utilization for the configured model.
     let config = Config::default();
     let (context_window, context_utilization) = if let Some(model_name) = model.as_ref() {
-        if config.agent.agent_type() != AgentType::Claude {
+        if config.agent.agent_type() == AgentType::Unknown {
             (None, None)
         } else {
             let window = get_context_window(model_name);
@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn test_get_session_file() {
         let path = get_session_file("abc123", "/home/user/project");
-        assert!(path.to_string_lossy().contains(".claude/projects"));
+        assert!(path.to_string_lossy().contains(".codex/projects"));
         assert!(path.to_string_lossy().contains("-home-user-project"));
         assert!(path.to_string_lossy().contains("abc123.jsonl"));
     }

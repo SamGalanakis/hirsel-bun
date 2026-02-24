@@ -1,22 +1,22 @@
-//! Claude session path utilities.
+//! Agent session path utilities.
 //!
-//! Helper functions for locating Claude's session directory.
+//! Helper functions for locating the agent session directory.
 
 use std::path::{Path, PathBuf};
 
-use crate::core::constants::CLAUDE_SESSION_DIR;
+use crate::core::constants::AGENT_SESSION_DIR;
 
-/// Get the path where Claude stores its session data.
+/// Get the path where session data is stored.
 ///
-/// For local: `~/.claude`
-/// For Docker container: `/tmp/home/.claude`
-pub fn claude_session_dir(home_override: Option<&Path>) -> PathBuf {
+/// For local: `~/.codex`
+/// For Docker container: `/tmp/home/.codex`
+pub fn agent_session_dir(home_override: Option<&Path>) -> PathBuf {
     if let Some(home) = home_override {
-        home.join(CLAUDE_SESSION_DIR)
+        home.join(AGENT_SESSION_DIR)
     } else {
         dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("/tmp/home"))
-            .join(CLAUDE_SESSION_DIR)
+            .join(AGENT_SESSION_DIR)
     }
 }
 
@@ -33,11 +33,11 @@ mod tests {
 
     #[test]
     fn test_session_dir() {
-        let dir = claude_session_dir(None);
-        assert!(dir.to_string_lossy().ends_with(".claude"));
+        let dir = agent_session_dir(None);
+        assert!(dir.to_string_lossy().ends_with(".codex"));
 
-        let custom = claude_session_dir(Some(Path::new("/custom/home")));
-        assert_eq!(custom, PathBuf::from("/custom/home/.claude"));
+        let custom = agent_session_dir(Some(Path::new("/custom/home")));
+        assert_eq!(custom, PathBuf::from("/custom/home/.codex"));
     }
 
     #[test]

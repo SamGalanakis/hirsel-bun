@@ -98,8 +98,8 @@ pub fn run(args: &MsgArgs) -> MsgResult<MsgOutput> {
     let project_id = block_on(state.get_project_id())?
         .ok_or_else(|| MsgError::NotLinkedToProject(run_name.clone()))?;
 
-    // Get route_id (defaults to 0 for backwards compatibility)
-    let route_id = block_on(state.get_route_id()).unwrap_or(0);
+    // Get route_id (defaults to main route)
+    let route_id = block_on(state.get_route_id()).unwrap_or(1);
 
     let store = block_on(ProjectMessagesStore::open())
         .map_err(|e| MsgError::ProjectMessages(e.to_string()))?;
@@ -206,7 +206,7 @@ pub fn get_available_threads(run_name: &str) -> MsgResult<Vec<String>> {
     let project_id = block_on(state.get_project_id())?
         .ok_or_else(|| MsgError::NotLinkedToProject(run_name.clone()))?;
 
-    let route_id = block_on(state.get_route_id()).unwrap_or(0);
+    let route_id = block_on(state.get_route_id()).unwrap_or(1);
 
     let store = block_on(ProjectMessagesStore::open())
         .map_err(|e| MsgError::ProjectMessages(e.to_string()))?;

@@ -1,24 +1,22 @@
 //! API route handlers
 
 use axum::{
-    body::Bytes,
     extract::{Path, Query, State},
     http::{header, StatusCode},
     response::IntoResponse,
     Json,
 };
+use lash_core::oauth;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::AppState;
 use crate::core::api_types::{
-    ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, ThreadSummary, Worker,
-    WorkerEventsResponse,
+    ConfigResponse, Eval, HistoryEntry, RunDetail, RunSummary, Worker, WorkerEventsResponse,
 };
 use crate::core::orchestrator::{
-    CreateRunRequest, CreateRunResponse, DeliverRunRequest, HealthResponse, Orchestrator,
-    OrchestratorError, ResumeRunRequest, ResumeWorkerRequest, SendMessageRequest,
-    SpawnSingleWorkerRequest, SpawnWorkersRequest, SpawnWorkersResponse,
+    DeliverRunRequest, HealthResponse, Orchestrator, OrchestratorError, ResumeRunRequest,
+    ResumeWorkerRequest, SpawnSingleWorkerRequest,
 };
 
 /// Convert OrchestratorError to HTTP response
@@ -43,6 +41,10 @@ struct ErrorResponse {
 
 type Result<T> = std::result::Result<T, OrchestratorError>;
 
+const fn default_route_id() -> i64 {
+    1
+}
+
 // =============================================================================
 // Health
 // =============================================================================
@@ -59,14 +61,6 @@ pub async fn health(State(state): State<Arc<AppState>>) -> Result<Json<HealthRes
 pub async fn list_runs(State(state): State<Arc<AppState>>) -> Result<Json<Vec<RunSummary>>> {
     let runs = state.orchestrator.list_runs().await?;
     Ok(Json(runs))
-}
-
-pub async fn create_run(
-    State(state): State<Arc<AppState>>,
-    Json(body): Json<CreateRunRequest>,
-) -> Result<Json<CreateRunResponse>> {
-    let response = state.orchestrator.create_run(body).await?;
-    Ok(Json(response))
 }
 
 pub async fn get_run(
@@ -122,22 +116,6 @@ pub async fn deliver_run(
 // =============================================================================
 // File Transfer
 // =============================================================================
-
-/// Upload working directory as tarball
-///
-/// Accepts a gzipped tar archive of the project files.
-/// Extracts to the run's work directory for workers to use.
-pub async fn upload_files(
-    State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-    body: Bytes,
-) -> Result<StatusCode> {
-    state
-        .orchestrator
-        .upload_files(&name, body.to_vec())
-        .await?;
-    Ok(StatusCode::NO_CONTENT)
-}
 
 /// Initialize or reinitialize workspace for a run
 ///
@@ -219,22 +197,6 @@ pub async fn download_files(
     tracing::info!("Serving files for run '{}' ({} bytes)", name, buffer.len());
 
     Ok(([(header::CONTENT_TYPE, "application/gzip")], buffer))
-}
-
-/// Spawn workers for a run
-///
-/// Creates and starts the specified number of workers.
-/// The run must have files uploaded first.
-pub async fn spawn_workers(
-    State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-    Json(body): Json<SpawnWorkersRequest>,
-) -> Result<Json<SpawnWorkersResponse>> {
-    let response = state
-        .orchestrator
-        .spawn_workers(&name, body.count, body.assigned_task_id)
-        .await?;
-    Ok(Json(response))
 }
 
 /// Start a run (unified entry point for CLI and GUI)
@@ -321,38 +283,6 @@ pub async fn get_worker_events(
 }
 
 // =============================================================================
-// Messages
-// =============================================================================
-
-pub async fn list_threads(
-    State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-) -> Result<Json<Vec<ThreadSummary>>> {
-    let threads = state.orchestrator.list_threads(&name).await?;
-    Ok(Json(threads))
-}
-
-pub async fn get_messages(
-    State(state): State<Arc<AppState>>,
-    Path((name, thread)): Path<(String, String)>,
-) -> Result<Json<Vec<Message>>> {
-    let messages = state.orchestrator.get_messages(&name, &thread).await?;
-    Ok(Json(messages))
-}
-
-pub async fn send_message(
-    State(state): State<Arc<AppState>>,
-    Path((name, thread)): Path<(String, String)>,
-    Json(body): Json<SendMessageRequest>,
-) -> Result<Json<Message>> {
-    let message = state
-        .orchestrator
-        .send_message(&name, &thread, &body.content)
-        .await?;
-    Ok(Json(message))
-}
-
-// =============================================================================
 // Project Messages (Sheepfold)
 //
 // These endpoints are for workers to access project-level messages.
@@ -368,7 +298,7 @@ pub struct ProjectMessageRequest {
     pub content: String,
     #[serde(default)]
     pub waiting: bool,
-    #[serde(default)]
+    #[serde(default = "default_route_id")]
     pub route_id: i64,
 }
 
@@ -416,7 +346,7 @@ pub async fn add_project_message(
 #[derive(Debug, Deserialize)]
 pub struct ProjectMessagesQuery {
     pub limit: Option<i64>,
-    #[serde(default)]
+    #[serde(default = "default_route_id")]
     pub route_id: i64,
 }
 
@@ -436,7 +366,7 @@ pub async fn get_project_messages(
 
 #[derive(Debug, Deserialize)]
 pub struct UnreadMessagesQuery {
-    #[serde(default)]
+    #[serde(default = "default_route_id")]
     pub route_id: i64,
 }
 
@@ -586,6 +516,7 @@ pub struct DocFileResponse {
 
 /// Get all docs with hashes
 pub async fn get_docs(Path(name): Path<String>) -> Result<Json<DocsResponse>> {
+    use crate::core::storage::create_default_local_storage;
     use crate::core::{config, Files};
 
     let run_dir = config::run_dir(&name);
@@ -594,11 +525,14 @@ pub async fn get_docs(Path(name): Path<String>) -> Result<Json<DocsResponse>> {
     }
 
     let files = Files::new(&run_dir);
+    let storage = create_default_local_storage();
     let docs = files
-        .read_docs(None)
+        .read_docs_async(&storage, None)
+        .await
         .map_err(|e| OrchestratorError::Other(format!("Failed to read docs: {}", e)))?;
     let hashes = files
-        .get_docs_hashes()
+        .get_docs_hashes_async(&storage)
+        .await
         .map_err(|e| OrchestratorError::Other(format!("Failed to get hashes: {}", e)))?;
 
     let doc_files = match docs {
@@ -639,6 +573,7 @@ pub async fn sync_docs(
     Path(name): Path<String>,
     Json(body): Json<DocsSyncRequest>,
 ) -> Result<Json<DocsSyncResponse>> {
+    use crate::core::storage::create_default_local_storage;
     use crate::core::{config, Files};
 
     let run_dir = config::run_dir(&name);
@@ -647,11 +582,14 @@ pub async fn sync_docs(
     }
 
     let files = Files::new(&run_dir);
+    let storage = create_default_local_storage();
     let docs = files
-        .read_docs(None)
+        .read_docs_async(&storage, None)
+        .await
         .map_err(|e| OrchestratorError::Other(format!("Failed to read docs: {}", e)))?;
     let server_hashes = files
-        .get_docs_hashes()
+        .get_docs_hashes_async(&storage)
+        .await
         .map_err(|e| OrchestratorError::Other(format!("Failed to get hashes: {}", e)))?;
 
     // Find changed files (hash mismatch or new files)
@@ -726,8 +664,8 @@ pub async fn get_config(State(state): State<Arc<AppState>>) -> Result<Json<Confi
 // =============================================================================
 
 use crate::core::api_types::{
-    mask_credential, AgentAuthConfigRequest, AgentConfigRequest, CredentialStatusResponse,
-    GeneralConfigRequest, GitConfigRequest, RunnerConfigResponse, StoreCredentialRequest,
+    mask_credential, AgentConfigRequest, CredentialStatusResponse, GeneralConfigRequest,
+    GitConfigRequest, LlmConfigRequest, RunnerConfigResponse, StoreCredentialRequest,
 };
 use crate::core::config::OrchestratorProfile;
 use crate::core::credentials::CredentialStore;
@@ -765,35 +703,13 @@ pub async fn patch_agent_config(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Get full auth configuration
-pub async fn get_auth_config(
+/// Patch LLM configuration
+pub async fn patch_llm_config(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<crate::core::api_types::AuthConfigResponse>> {
-    let config = state.config.read().await;
-    Ok(Json(config.auth.clone().into()))
-}
-
-/// Patch auth configuration for a specific agent
-pub async fn patch_agent_auth(
-    State(state): State<Arc<AppState>>,
-    Path(agent): Path<String>,
-    Json(body): Json<AgentAuthConfigRequest>,
+    Json(body): Json<LlmConfigRequest>,
 ) -> Result<StatusCode> {
     let mut config = state.config.write().await;
-    config.update_agent_auth(&agent, body.into());
-    config
-        .save()
-        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-/// Delete auth configuration for a specific agent
-pub async fn delete_agent_auth(
-    State(state): State<Arc<AppState>>,
-    Path(agent): Path<String>,
-) -> Result<StatusCode> {
-    let mut config = state.config.write().await;
-    config.delete_agent_auth(&agent);
+    body.apply(&mut config.llm);
     config
         .save()
         .map_err(|e| OrchestratorError::Config(e.to_string()))?;
@@ -1048,6 +964,117 @@ pub async fn delete_credential(Path(key): Path<String>) -> Result<StatusCode> {
 }
 
 // =============================================================================
+// Codex Device OAuth
+// =============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexDeviceStartResponse {
+    pub device_auth_id: String,
+    pub user_code: String,
+    pub verify_url: String,
+    pub interval: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexDevicePollRequest {
+    pub device_auth_id: String,
+    pub user_code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexDevicePollResponse {
+    pub status: String,
+    pub authorization_code: Option<String>,
+    pub code_verifier: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexDeviceExchangeRequest {
+    pub authorization_code: String,
+    pub code_verifier: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexDeviceExchangeResponse {
+    pub status: String,
+    pub expires_at: u64,
+}
+
+/// Start Codex device-code OAuth flow.
+pub async fn codex_device_start() -> Result<Json<CodexDeviceStartResponse>> {
+    let device = oauth::codex_request_device_code().await.map_err(|e| {
+        OrchestratorError::Other(format!("Failed to start Codex device auth: {}", e))
+    })?;
+
+    Ok(Json(CodexDeviceStartResponse {
+        device_auth_id: device.device_auth_id,
+        user_code: device.user_code,
+        verify_url: oauth::CODEX_DEVICE_VERIFY_URL.to_string(),
+        interval: device.interval,
+    }))
+}
+
+/// Poll Codex device authorization status.
+pub async fn codex_device_poll(
+    Json(body): Json<CodexDevicePollRequest>,
+) -> Result<Json<CodexDevicePollResponse>> {
+    let polled = oauth::codex_poll_device_auth(&body.device_auth_id, &body.user_code)
+        .await
+        .map_err(|e| {
+            OrchestratorError::Other(format!("Failed to poll Codex device auth: {}", e))
+        })?;
+
+    match polled {
+        Some((authorization_code, code_verifier)) => Ok(Json(CodexDevicePollResponse {
+            status: "approved".to_string(),
+            authorization_code: Some(authorization_code),
+            code_verifier: Some(code_verifier),
+        })),
+        None => Ok(Json(CodexDevicePollResponse {
+            status: "pending".to_string(),
+            authorization_code: None,
+            code_verifier: None,
+        })),
+    }
+}
+
+/// Exchange Codex device authorization code for tokens and persist credentials.
+pub async fn codex_device_exchange(
+    Json(body): Json<CodexDeviceExchangeRequest>,
+) -> Result<Json<CodexDeviceExchangeResponse>> {
+    let tokens = oauth::codex_exchange_code(&body.authorization_code, &body.code_verifier)
+        .await
+        .map_err(|e| {
+            OrchestratorError::Other(format!("Failed to exchange Codex auth code: {}", e))
+        })?;
+    let expires_at = tokens.expires_at;
+
+    let store = CredentialStore::open()
+        .await
+        .map_err(|e| OrchestratorError::Other(format!("Failed to open credential store: {}", e)))?;
+
+    store
+        .store_codex_oauth(&crate::core::credentials::CodexOAuthCredentials {
+            access_token: tokens.access_token,
+            refresh_token: tokens.refresh_token,
+            expires_at: tokens.expires_at,
+            account_id: tokens.account_id,
+        })
+        .await
+        .map_err(|e| OrchestratorError::Other(format!("Failed to store Codex tokens: {}", e)))?;
+
+    Ok(Json(CodexDeviceExchangeResponse {
+        status: "ok".to_string(),
+        expires_at,
+    }))
+}
+
+// =============================================================================
 // Config - Full Replace/Merge
 // =============================================================================
 
@@ -1076,7 +1103,7 @@ pub struct PutConfigRequest {
     #[serde(default)]
     pub coordinator_port: Option<u16>,
     #[serde(default)]
-    pub auth: Option<crate::core::config::AuthConfig>,
+    pub llm: Option<crate::core::config::LlmConfig>,
     #[serde(default)]
     pub storage: Option<crate::core::config::StorageConfig>,
 }
@@ -1119,8 +1146,8 @@ pub async fn put_config(
     if let Some(coordinator_port) = body.coordinator_port {
         config.coordinator_port = coordinator_port;
     }
-    if let Some(auth) = body.auth {
-        config.auth = auth;
+    if let Some(llm) = body.llm {
+        config.llm = llm;
     }
     if let Some(storage) = body.storage {
         config.storage = storage;

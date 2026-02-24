@@ -1,7 +1,7 @@
 //! Worker subprocess implementation for hirsel.
 //!
 //! This module implements the worker subprocess that manages an AI coding agent
-//! through the Agent Control Protocol (ACP).
+//! through an embedded lash-core runtime.
 //!
 //! ## Worker Lifecycle
 //!
@@ -16,21 +16,21 @@
 //!    - Heartbeat updates
 //! 6. Signals completion via work_done
 
-pub mod acp_client;
+pub mod common;
 pub mod eval_mcp;
 #[cfg(any(feature = "server", feature = "worker"))]
 pub mod file_server;
 pub mod http_state;
+pub mod lash_runner;
 pub mod mcp;
 pub mod remote_runner;
 pub mod runner;
 
-pub use acp_client::{
-    build_worker_prompt, run_acp_worker, run_worker, HirselClient, WorkerRunConfig,
-};
+pub use common::{build_worker_prompt, WorkerRunConfig};
 pub use eval_mcp::{run_eval_mcp_server, EvalMcpServer};
 #[cfg(any(feature = "server", feature = "worker"))]
 pub use file_server::{start_file_server, FileServerHandle, FILE_RECEIVER_PORT};
+pub use lash_runner::run_worker;
 pub use mcp::{run_mcp_server_main as run_mcp_server, McpServer};
 pub use remote_runner::{run_remote_worker, run_remote_worker_with_config, RemoteWorkerConfig};
 pub use runner::{WorkerConfig, WorkerError, WorkerRunner};

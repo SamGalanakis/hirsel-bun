@@ -7,11 +7,10 @@ import { type Component, For, Show, createEffect, createSignal, onCleanup } from
 import { useModalClosing } from '../../hooks';
 import type { UnreadNotification } from '../../lib/types';
 import { formatTimeShort } from '../../lib/utils/formatters';
-import { useProject, useRuns } from '../../stores';
+import { useProject } from '../../stores';
 import { Icon } from '../shared';
 
 export const NotificationsDropdown: Component = () => {
-  const runs = useRuns();
   const project = useProject();
   const [open, setOpen] = createSignal(false);
   const [notifications, setNotifications] = createSignal<
@@ -51,10 +50,9 @@ export const NotificationsDropdown: Component = () => {
     // Persist each to backend
     for (const n of unreadNotifs) {
       try {
-        await invoke('mark_messages_read', {
-          runName: n.runName,
-          threadName: n.thread,
-          reader: 'user',
+        await invoke('mark_project_messages_read', {
+          projectId: n.projectId,
+          thread: n.thread,
         });
       } catch (e) {
         console.error('Failed to mark notification read:', e);
@@ -71,10 +69,9 @@ export const NotificationsDropdown: Component = () => {
 
     // Persist to backend
     try {
-      await invoke('mark_messages_read', {
-        runName: notification.runName,
-        threadName: notification.thread,
-        reader: 'user',
+      await invoke('mark_project_messages_read', {
+        projectId: notification.projectId,
+        thread: notification.thread,
       });
     } catch (e) {
       console.error('Failed to mark notification read:', e);

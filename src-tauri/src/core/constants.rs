@@ -11,16 +11,7 @@ use std::time::Duration;
 // =============================================================================
 
 /// Context window sizes per model (in tokens)
-pub const CONTEXT_WINDOWS: &[(&str, u32)] = &[
-    ("claude-opus-4-5-20251101", 200_000),
-    ("claude-sonnet-4-5-20251101", 200_000),
-    ("claude-sonnet-4-20250514", 200_000),
-    ("claude-3-5-sonnet-20241022", 200_000),
-    ("claude-3-5-haiku-20241022", 200_000),
-    ("claude-3-opus-20240229", 200_000),
-    ("claude-3-sonnet-20240229", 200_000),
-    ("claude-3-haiku-20240307", 200_000),
-];
+pub const CONTEXT_WINDOWS: &[(&str, u32)] = &[("gpt-5", 200_000), ("gpt-5-mini", 200_000)];
 
 /// Default context window size for unknown models
 pub const DEFAULT_CONTEXT_WINDOW: u32 = 200_000;
@@ -29,8 +20,8 @@ pub const DEFAULT_CONTEXT_WINDOW: u32 = 200_000;
 // Agent Timeouts
 // =============================================================================
 
-/// Default timeout for ACP agent operations (5 minutes)
-pub const DEFAULT_ACP_TIMEOUT_SECS: u64 = 300;
+/// Default timeout for agent operations (5 minutes)
+pub const DEFAULT_AGENT_TIMEOUT_SECS: u64 = 300;
 
 /// Timeout for scribe agent operations (2 minutes)
 pub const SCRIBE_TIMEOUT_SECS: u64 = 120;
@@ -80,8 +71,8 @@ pub const FLY_API_BASE: &str = "https://api.machines.dev/v1";
 // Agent Session Paths
 // =============================================================================
 
-/// Claude's session directory name
-pub const CLAUDE_SESSION_DIR: &str = ".claude";
+/// Agent session directory name.
+pub const AGENT_SESSION_DIR: &str = ".codex";
 
 // =============================================================================
 // Conflict Resolution
@@ -129,10 +120,10 @@ pub const PLAN_TASK_PROMPT: &str = r#"You are a **planning worker** responsible 
 
 ## Your Job
 
-1. Read your parent spec with `get_task_details()` to understand what needs to be built
+1. Read the target feature spec (shown above) with `get_task_details()` to understand what needs to be built
 2. Read project docs with `read_docs()` to understand the codebase
 3. Explore the codebase using filesystem tools to assess what exists vs what's needed
-4. Create implementation tasks as children of the spec (via `add_task()`)
+4. Create implementation tasks as children of the target feature (via `add_task()`)
 5. Create checks to validate the implementation (via `add_check()`) — parent them under the feature they validate so they appear in the tree. Only omit parent for truly global/e2e checks.
 6. Set `blocked_by` relationships between tasks where needed
 7. Use `scribe()` to record your findings for other workers
@@ -161,7 +152,7 @@ When in doubt, add the dependency. Better slow than broken:
 When you've created all implementation tasks and evals with proper dependencies, call `work_done()`.
 Your completion unblocks the implementation tasks you created."#;
 
-/// System prompt injected for plan workers (assigned __plan_* tasks).
+/// System prompt injected for plan workers (assigned plan tasks).
 ///
 /// This complements PLAN_TASK_PROMPT (which workers see via get_task_details)
 /// by providing system-level guidance on decomposition strategy.
@@ -171,7 +162,7 @@ You are a **planning worker**, not an implementation worker. Your job is to deco
 
 ## Workflow
 
-1. **Read the spec** — `get_task_details("<your_task_id>")` to see the feature you're planning
+1. **Read the plan task details** — `get_task_details("<your_task_id>")` to see the target feature you're planning
 2. **Explore the codebase** — understand existing patterns, files, and conventions
 3. **Read project docs** — check docs/ for architecture, patterns, prior art
 4. **Create tasks** — `add_task()` for each implementation unit

@@ -525,7 +525,7 @@ export interface WorkerLogResponse {
 }
 
 // =============================================================================
-// Worker Events Types (ACP-based streaming)
+// Worker Events Types (streaming)
 // =============================================================================
 
 /** Worker event type */
@@ -592,7 +592,7 @@ export type WorkerStreamEvent =
     };
 
 // =============================================================================
-// Direct Chat Session Types (ACP-based AI chat)
+// Direct Chat Session Types
 // =============================================================================
 
 /** UI context injected before user messages */
@@ -603,29 +603,11 @@ export interface UIContext {
   extra?: Record<string, string>;
 }
 
-/** Permission option in a permission request */
-export interface PermissionOption {
-  optionId: string;
-  label: string;
-  kind: string;
-}
-
-/** Pending permission request */
-export interface PendingPermission {
-  requestId: string;
-  sessionId: string;
-  title: string;
-  description: string | null;
-  options: PermissionOption[];
-}
-
 /** Chat event types */
 export type ChatEventType =
   | 'textDelta'
-  | 'thinkingDelta'
   | 'toolCallStart'
   | 'toolCallUpdate'
-  | 'permissionRequest'
   | 'messageComplete'
   | 'error'
   | 'sessionEnded';
@@ -639,12 +621,6 @@ export interface ChatEventBase {
 /** Text delta event */
 export interface TextDeltaEvent extends ChatEventBase {
   type: 'textDelta';
-  text: string;
-}
-
-/** Thinking delta event */
-export interface ThinkingDeltaEvent extends ChatEventBase {
-  type: 'thinkingDelta';
   text: string;
 }
 
@@ -666,12 +642,6 @@ export interface ToolCallUpdateEvent extends ChatEventBase {
   output: string | null;
 }
 
-/** Permission request event */
-export interface PermissionRequestEvent extends ChatEventBase {
-  type: 'permissionRequest';
-  request: PendingPermission;
-}
-
 /** Message complete event */
 export interface MessageCompleteEvent extends ChatEventBase {
   type: 'messageComplete';
@@ -691,16 +661,22 @@ export interface SessionEndedEvent extends ChatEventBase {
 /** Union type for all chat events */
 export type ChatEvent =
   | TextDeltaEvent
-  | ThinkingDeltaEvent
   | ToolCallStartEvent
   | ToolCallUpdateEvent
-  | PermissionRequestEvent
   | MessageCompleteEvent
   | ChatErrorEvent
   | SessionEndedEvent;
 
 /** Chat message role */
 export type ChatMessageRole = 'user' | 'assistant' | 'system';
+
+/** Image attached to a chat message */
+export interface ChatImage {
+  src: string;
+  mimeType?: string;
+  name?: string;
+  dataBase64?: string;
+}
 
 /** Tool call in a message */
 export interface ChatToolCall {
@@ -720,6 +696,7 @@ export interface ChatMessage {
   id: string;
   role: ChatMessageRole;
   content: string;
+  images?: ChatImage[];
   thinking?: string;
   toolCalls?: ChatToolCall[];
   timestamp: Date;
@@ -727,7 +704,7 @@ export interface ChatMessage {
 }
 
 // =============================================================================
-// Gyp Session Types (Unified Gyp Context)
+// Shepherd Session Types
 // =============================================================================
 
 /** Task focus for board context */
@@ -736,23 +713,45 @@ export interface TaskFocus {
   taskName: string;
 }
 
-/** Gyp session scope - determines prompt, working dir, and MCP config */
-export type GypScope =
+/** Image payload accepted by Shepherd send contract */
+export interface ShepherdImageInput {
+  mimeType: string;
+  dataBase64: string;
+  name?: string;
+}
+
+/** Structured Shepherd message chunks */
+export type ShepherdMessageChunk =
+  | { type: 'text'; content: string }
+  | { type: 'thinking'; content: string }
+  | {
+      type: 'tool';
+      id: string;
+      title: string;
+      kind: string | null;
+      status: string;
+      input: string | null;
+      output: string | null;
+    }
+  | ({ type: 'image' } & ShepherdImageInput);
+
+/** Shepherd session scope - determines prompt and context */
+export type ShepherdScope =
   | { type: 'general' }
   | { type: 'run'; runName: string; workspacePath: string; projectPath?: string }
   | { type: 'board'; projectId: number; workspacePath?: string; focus?: TaskFocus };
 
-/** Request to start a Gyp session */
-export type StartGypSessionRequest =
+/** Request to start a Shepherd session */
+export type StartShepherdSessionRequest =
   | { type: 'general' }
   | { type: 'run'; runName: string }
   | { type: 'board'; projectId: number }
   | { type: 'boardFocused'; projectId: number; taskId: string; taskName: string };
 
-/** Response from starting a Gyp session */
-export interface StartGypSessionResponse {
+/** Response from starting a Shepherd session */
+export interface StartShepherdSessionResponse {
   sessionId: string;
-  scope: GypScope;
+  scope: ShepherdScope;
 }
 
 // =============================================================================
@@ -1063,7 +1062,7 @@ export const MERGE_STATE_ICONS: Record<MergeState, string> = {
 // =============================================================================
 
 /** Node kind - feature, task, or check */
-export type NodeKind = 'feature' | 'task' | 'check';
+export type NodeKind = 'feature' | 'task' | 'check' | 'plan';
 
 /** Status of a board node */
 export type BoardNodeStatus =
@@ -1169,8 +1168,8 @@ export interface UpdateBoardNodeRequest {
   y?: number | null;
 }
 
-/** Response from dispatch operation */
-export interface DispatchResponse {
+/** Response from starting Shepherd orchestration */
+export interface ShepherdRunResponse {
   runName: string;
   nodeCount: number;
   featureCount: number;
@@ -1306,6 +1305,20 @@ export const BOARD_DELIVERY_STATUS_ICONS: Record<BoardDeliveryStatus, string> = 
 // Route Types (Parallel Exploration Branches)
 // =============================================================================
 
+/** Repository/workspace linked to a route */
+export interface RouteRepo {
+  id: number;
+  projectId: number;
+  routeId: number;
+  name: string;
+  startingPoint: StartingPoint;
+  targetBranch: string | null;
+  runner: string | null;
+  isArchived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** A route within a project (parallel exploration branch) */
 export interface Route {
   id: number;
@@ -1314,6 +1327,16 @@ export interface Route {
   parentRouteId: number | null;
   parentVersionId: number | null;
   createdAt: string;
+  updatedAt: string;
+  repos: RouteRepo[];
+  defaultRepoId: number | null;
+  workerScale: string | null;
+  timeLimitMinutes: number | null;
+  humanInTheLoop: boolean;
+  docsPath: string;
+  persistDocsChanges: boolean;
+  targetBranch: string | null;
+  runner: string | null;
 }
 
 /** Route with ancestry information for tree display */

@@ -93,10 +93,6 @@ impl Runner for FlyRunner {
         env.insert("HIRSEL_WORKER".to_string(), config.worker_name.clone());
         env.insert("HIRSEL_API_URL".to_string(), coordinator_url.clone());
         env.insert("HIRSEL_REMOTE".to_string(), "1".to_string());
-        env.insert(
-            "ACP_PERMISSION_MODE".to_string(),
-            "bypassPermissions".to_string(),
-        );
 
         // Add forwarded credentials and env vars
         for (k, v) in config.collect_env_vars() {
@@ -105,7 +101,7 @@ impl Runner for FlyRunner {
 
         // Generate init script
         let agent_command_json = serde_json::to_string(&config.agent_command)
-            .unwrap_or_else(|_| "[\"claude\"]".to_string());
+            .unwrap_or_else(|_| "[\"codex\"]".to_string());
 
         let init_script = setup::generate_fly_init_script(
             coordinator_url,
@@ -116,6 +112,7 @@ impl Runner for FlyRunner {
             config.leader_name.as_deref(),
             config.teammates.as_deref(),
             config.assigned_task_id.as_deref(),
+            config.is_plan_task,
         );
 
         // Create machine request

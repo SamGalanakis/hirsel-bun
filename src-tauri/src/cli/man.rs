@@ -118,8 +118,8 @@ WORKER COMMANDS (for AI agents)
 ENVIRONMENT
     HIRSEL_RUN                  Current run name (set for workers)
     HIRSEL_WORKER               Current worker name (set for workers)
-    ANTHROPIC_API_KEY           API key for Claude agent
-    GEMINI_API_KEY              API key for Gemini agent
+    CODEX_ACCESS_TOKEN          Codex OAuth access token (fallback)
+    CODEX_REFRESH_TOKEN         Codex OAuth refresh token (fallback)
 
 FILES
     ~/.hirsel/                  Hirsel root directory
@@ -135,12 +135,8 @@ FILES
                                 Worker worktrees
 
 AGENTS
-    Supported AI coding agents:
-    - claude    Claude Code (default)
-    - gemini    Gemini Code
-    - codex     OpenAI Codex
-    - goose     Goose AI
-    - opencode  OpenCode
+    Supported AI coding agent runtime:
+    - codex     OpenAI Codex (lash-core runtime)
 
     Configure with: hirsel config <agent>
 
@@ -186,15 +182,10 @@ pub fn run_man(args: &ManArgs) -> anyhow::Result<()> {
         println!("\nAGENT-SPECIFIC DOCUMENTATION");
         println!("=============================");
         println!();
-        println!("Claude Code:");
-        println!("  - Requires ANTHROPIC_API_KEY or ~/.claude/.credentials.json");
+        println!("Codex:");
+        println!("  - Requires Codex OAuth login or OPENAI_API_KEY");
         println!("  - Supports MCP server integration");
-        println!("  - Best for complex reasoning tasks");
-        println!();
-        println!("Gemini:");
-        println!("  - Requires GEMINI_API_KEY");
-        println!("  - Fast response times");
-        println!("  - Good for straightforward tasks");
+        println!("  - Runs through the embedded lash-core runtime");
         println!();
     }
 

@@ -1,65 +1,87 @@
 //! Project storage in global SQLite database
 
-use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
+use sqlx::{Row, SqlitePool};
 use tokio::sync::OnceCell;
 
 use super::types::{CreateProjectRequest, Project, UpdateProjectRequest};
 use crate::core::db::{global_pool, utc_now};
-use crate::core::draft::StartingPoint;
+use crate::core::route::{CreateMainRouteRequest, RouteStore};
 
-/// Schema for projects table
+/// Schema for projects table.
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-
-    -- Normalized StartingPoint (no JSON blob)
-    starting_point_type TEXT NOT NULL,  -- 'greenfield' | 'local_folder' | 'git_repo'
-    starting_point_path TEXT,           -- for local_folder
-    starting_point_url TEXT,            -- for git_repo
-    starting_point_branch TEXT,         -- for git_repo
-
-    -- Default configuration (inherited by runs)
-    worker_scale TEXT,
-    time_limit_minutes INTEGER,
-    max_iterations INTEGER,
-    human_in_the_loop INTEGER DEFAULT 1,
-
-    -- Scribe/docs configuration
-    docs_path TEXT DEFAULT 'docs',
-    persist_docs_changes INTEGER DEFAULT 1,
-
-    -- Metadata
     description TEXT,
-
-    -- Delivery configuration
-    target_branch TEXT,  -- Branch for PR/merge delivery (e.g., "staging", "main")
-
-    -- Runner configuration
-    runner TEXT,  -- Default runner for this project's runs
-
-    -- Canvas position (for OneBoard portfolio view)
     x REAL,
     y REAL,
-
-    -- Active route for this project
     active_route_id INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name);
 "#;
 
+const SCHEMA_VERSION_KEY: &str = "project_route_model_version";
+const SCHEMA_VERSION: &str = "2";
+
 static SCHEMA_INIT: OnceCell<()> = OnceCell::const_new();
 
 async fn ensure_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     SCHEMA_INIT
         .get_or_try_init(|| async {
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+            )
+            .execute(pool)
+            .await?;
+
+            let current_version: Option<String> =
+                sqlx::query_scalar("SELECT value FROM app_meta WHERE key = ?")
+                    .bind(SCHEMA_VERSION_KEY)
+                    .fetch_optional(pool)
+                    .await?;
+
+            if current_version.as_deref() != Some(SCHEMA_VERSION) {
+                reset_project_domain(pool).await?;
+                sqlx::query("INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)")
+                    .bind(SCHEMA_VERSION_KEY)
+                    .bind(SCHEMA_VERSION)
+                    .execute(pool)
+                    .await?;
+            }
+
             sqlx::raw_sql(SCHEMA).execute(pool).await?;
             Ok::<(), sqlx::Error>(())
         })
         .await?;
+    Ok(())
+}
+
+/// Hard reset for project/route-owned domain tables.
+///
+/// This is intentionally destructive: route ownership changed and old layouts are
+/// not supported.
+async fn reset_project_domain(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    const RESET_SQL: &str = r#"
+DROP TABLE IF EXISTS project_repos;
+DROP TABLE IF EXISTS route_repos;
+DROP TABLE IF EXISTS routes;
+DROP TABLE IF EXISTS projects;
+DROP TABLE IF EXISTS board_node_checked_by;
+DROP TABLE IF EXISTS board_node_blocked_by;
+DROP TABLE IF EXISTS board_nodes;
+DROP TABLE IF EXISTS project_runs;
+DROP TABLE IF EXISTS board_versions;
+DROP TABLE IF EXISTS delivery_attempts;
+DROP TABLE IF EXISTS deliveries;
+DROP TABLE IF EXISTS project_messages;
+DROP TABLE IF EXISTS project_message_reads;
+DROP TABLE IF EXISTS meta;
+"#;
+
+    sqlx::raw_sql(RESET_SQL).execute(pool).await?;
     Ok(())
 }
 
@@ -76,6 +98,8 @@ pub enum ProjectError {
     AlreadyExists(String),
     #[error("Route error: {0}")]
     Route(#[from] crate::core::route::RouteError),
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
 }
 
 pub type ProjectResult<T> = Result<T, ProjectError>;
@@ -96,11 +120,16 @@ impl ProjectStore {
         global_pool().await
     }
 
-    /// Create a new project
+    /// Create a new project with a seeded main route.
     pub async fn create_project(&self, req: &CreateProjectRequest) -> ProjectResult<Project> {
         let pool = self.pool().await;
 
-        // Check if project with this name already exists
+        if req.repos.is_empty() {
+            return Err(ProjectError::InvalidInput(
+                "Project must include at least one repo".to_string(),
+            ));
+        }
+
         let exists: bool =
             sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE name = ?)")
                 .bind(&req.name)
@@ -112,36 +141,14 @@ impl ProjectStore {
         }
 
         let now = utc_now();
-        let (sp_type, sp_path, sp_url, sp_branch) =
-            Self::normalize_starting_point(&req.starting_point);
-
-        let human_in_the_loop = req.human_in_the_loop.unwrap_or(true);
-        let docs_path = req.docs_path.as_deref().unwrap_or("docs");
-        let persist_docs_changes = req.persist_docs_changes.unwrap_or(true);
-
         let result = sqlx::query(
-            "INSERT INTO projects (
-                name, created_at, updated_at,
-                starting_point_type, starting_point_path, starting_point_url, starting_point_branch,
-                worker_scale, time_limit_minutes, human_in_the_loop,
-                docs_path, persist_docs_changes, description, target_branch, runner, x, y
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO projects (name, created_at, updated_at, description, x, y, active_route_id)
+             VALUES (?, ?, ?, ?, ?, ?, NULL)",
         )
         .bind(&req.name)
         .bind(&now)
         .bind(&now)
-        .bind(&sp_type)
-        .bind(&sp_path)
-        .bind(&sp_url)
-        .bind(&sp_branch)
-        .bind(&req.worker_scale)
-        .bind(req.time_limit_minutes)
-        .bind(human_in_the_loop as i64)
-        .bind(docs_path)
-        .bind(persist_docs_changes as i64)
         .bind(&req.description)
-        .bind(&req.target_branch)
-        .bind(&req.runner)
         .bind(req.x)
         .bind(req.y)
         .execute(pool)
@@ -149,22 +156,27 @@ impl ProjectStore {
 
         let project_id = result.last_insert_rowid();
 
-        // Create the main route for this project
-        let route_store = crate::core::route::RouteStore::new(project_id).await?;
-        let main_route = route_store.create_main_route().await?;
+        let route_store = RouteStore::new(project_id).await?;
+        let main_route = route_store
+            .create_main_route_with_seed(&CreateMainRouteRequest {
+                repos: req.repos.clone(),
+                default_repo_index: req.default_repo_index,
+                worker_scale: None,
+                time_limit_minutes: None,
+                human_in_the_loop: None,
+                docs_path: None,
+                persist_docs_changes: None,
+                target_branch: None,
+                runner: None,
+            })
+            .await?;
 
-        // Set the active route to the main route
-        sqlx::query("UPDATE projects SET active_route_id = ? WHERE id = ?")
+        sqlx::query("UPDATE projects SET active_route_id = ?, updated_at = ? WHERE id = ?")
             .bind(main_route.id)
+            .bind(utc_now())
             .bind(project_id)
             .execute(pool)
             .await?;
-
-        // Initialize route files (docs, board.md, code directories)
-        let route_files = crate::core::route::RouteFiles::new(project_id, &main_route.name);
-        if let Err(e) = route_files.init_dirs() {
-            tracing::warn!("Failed to initialize route directories: {}", e);
-        }
 
         self.get_project(project_id).await
     }
@@ -174,11 +186,7 @@ impl ProjectStore {
         let pool = self.pool().await;
 
         let row = sqlx::query(
-            "SELECT id, name, created_at, updated_at,
-                    starting_point_type, starting_point_path, starting_point_url, starting_point_branch,
-                    worker_scale, time_limit_minutes, human_in_the_loop,
-                    docs_path, persist_docs_changes, description, target_branch, runner, x, y,
-                    active_route_id
+            "SELECT id, name, created_at, updated_at, description, x, y, active_route_id
              FROM projects
              WHERE id = ?",
         )
@@ -187,7 +195,7 @@ impl ProjectStore {
         .await?
         .ok_or_else(|| ProjectError::NotFound(id.to_string()))?;
 
-        Self::row_to_project(&row)
+        Ok(Self::row_to_project(&row))
     }
 
     /// Get a project by name
@@ -195,11 +203,7 @@ impl ProjectStore {
         let pool = self.pool().await;
 
         let row = sqlx::query(
-            "SELECT id, name, created_at, updated_at,
-                    starting_point_type, starting_point_path, starting_point_url, starting_point_branch,
-                    worker_scale, time_limit_minutes, human_in_the_loop,
-                    docs_path, persist_docs_changes, description, target_branch, runner, x, y,
-                    active_route_id
+            "SELECT id, name, created_at, updated_at, description, x, y, active_route_id
              FROM projects
              WHERE name = ?",
         )
@@ -207,10 +211,7 @@ impl ProjectStore {
         .fetch_optional(pool)
         .await?;
 
-        match row {
-            Some(r) => Ok(Some(Self::row_to_project(&r)?)),
-            None => Ok(None),
-        }
+        Ok(row.map(|r| Self::row_to_project(&r)))
     }
 
     /// List all projects
@@ -218,26 +219,17 @@ impl ProjectStore {
         let pool = self.pool().await;
 
         let rows = sqlx::query(
-            "SELECT id, name, created_at, updated_at,
-                    starting_point_type, starting_point_path, starting_point_url, starting_point_branch,
-                    worker_scale, time_limit_minutes, human_in_the_loop,
-                    docs_path, persist_docs_changes, description, target_branch, runner, x, y,
-                    active_route_id
+            "SELECT id, name, created_at, updated_at, description, x, y, active_route_id
              FROM projects
              ORDER BY created_at DESC",
         )
         .fetch_all(pool)
         .await?;
 
-        let mut projects = Vec::with_capacity(rows.len());
-        for row in rows {
-            projects.push(Self::row_to_project(&row)?);
-        }
-
-        Ok(projects)
+        Ok(rows.iter().map(Self::row_to_project).collect())
     }
 
-    /// Update a project
+    /// Update project metadata.
     pub async fn update_project(
         &self,
         id: i64,
@@ -245,12 +237,10 @@ impl ProjectStore {
     ) -> ProjectResult<Project> {
         let pool = self.pool().await;
 
-        // Check if project exists
         let _ = self.get_project(id).await?;
 
         let now = utc_now();
 
-        // Build dynamic UPDATE query based on what's provided
         let mut updates = vec!["updated_at = ?".to_string()];
         let mut bind_index = 2usize;
 
@@ -258,63 +248,14 @@ impl ProjectStore {
             updates.push(format!("name = ?{}", bind_index));
             bind_index += 1;
         }
-
-        if req.starting_point.is_some() {
-            updates.push(format!("starting_point_type = ?{}", bind_index));
-            bind_index += 1;
-            updates.push(format!("starting_point_path = ?{}", bind_index));
-            bind_index += 1;
-            updates.push(format!("starting_point_url = ?{}", bind_index));
-            bind_index += 1;
-            updates.push(format!("starting_point_branch = ?{}", bind_index));
-            bind_index += 1;
-        }
-
-        if req.worker_scale.is_some() {
-            updates.push(format!("worker_scale = ?{}", bind_index));
-            bind_index += 1;
-        }
-
-        if req.time_limit_minutes.is_some() {
-            updates.push(format!("time_limit_minutes = ?{}", bind_index));
-            bind_index += 1;
-        }
-
-        if req.human_in_the_loop.is_some() {
-            updates.push(format!("human_in_the_loop = ?{}", bind_index));
-            bind_index += 1;
-        }
-
-        if req.docs_path.is_some() {
-            updates.push(format!("docs_path = ?{}", bind_index));
-            bind_index += 1;
-        }
-
-        if req.persist_docs_changes.is_some() {
-            updates.push(format!("persist_docs_changes = ?{}", bind_index));
-            bind_index += 1;
-        }
-
         if req.description.is_some() {
             updates.push(format!("description = ?{}", bind_index));
             bind_index += 1;
         }
-
-        if req.target_branch.is_some() {
-            updates.push(format!("target_branch = ?{}", bind_index));
-            bind_index += 1;
-        }
-
-        if req.runner.is_some() {
-            updates.push(format!("runner = ?{}", bind_index));
-            bind_index += 1;
-        }
-
         if req.x.is_some() {
             updates.push(format!("x = ?{}", bind_index));
             bind_index += 1;
         }
-
         if req.y.is_some() {
             updates.push(format!("y = ?{}", bind_index));
             bind_index += 1;
@@ -326,64 +267,22 @@ impl ProjectStore {
             bind_index
         );
 
-        // Build query with bindings
         let mut query = sqlx::query(&sql).bind(&now);
 
         if let Some(ref name) = req.name {
             query = query.bind(name);
         }
-
-        if let Some(ref sp) = req.starting_point {
-            let (sp_type, sp_path, sp_url, sp_branch) = Self::normalize_starting_point(sp);
-            query = query
-                .bind(sp_type)
-                .bind(sp_path)
-                .bind(sp_url)
-                .bind(sp_branch);
+        if let Some(ref description) = req.description {
+            query = query.bind(description);
         }
-
-        if let Some(ref ws) = req.worker_scale {
-            query = query.bind(ws);
-        }
-
-        if let Some(tl) = req.time_limit_minutes {
-            query = query.bind(tl);
-        }
-
-        if let Some(hitl) = req.human_in_the_loop {
-            query = query.bind(hitl as i64);
-        }
-
-        if let Some(ref dp) = req.docs_path {
-            query = query.bind(dp);
-        }
-
-        if let Some(pdc) = req.persist_docs_changes {
-            query = query.bind(pdc as i64);
-        }
-
-        if let Some(ref desc) = req.description {
-            query = query.bind(desc);
-        }
-
-        if let Some(ref tb) = req.target_branch {
-            query = query.bind(tb);
-        }
-
-        if let Some(ref runner) = req.runner {
-            query = query.bind(runner);
-        }
-
         if let Some(x) = req.x {
             query = query.bind(x);
         }
-
         if let Some(y) = req.y {
             query = query.bind(y);
         }
 
         query = query.bind(id);
-
         query.execute(pool).await?;
 
         self.get_project(id).await
@@ -393,18 +292,15 @@ impl ProjectStore {
     pub async fn delete_project(&self, id: i64) -> ProjectResult<()> {
         let pool = self.pool().await;
 
-        // Check if project exists
         let _ = self.get_project(id).await?;
 
-        // Delete from projects table
         sqlx::query("DELETE FROM projects WHERE id = ?")
             .bind(id)
             .execute(pool)
             .await?;
 
-        // Cascade delete board-related tables (they're in the same DB)
-        // These may not exist in older DBs, so ignore errors
-        let _ = sqlx::query("DELETE FROM board_node_validated_by WHERE project_id = ?")
+        // Best-effort cleanup for route-scoped/project-scoped tables
+        let _ = sqlx::query("DELETE FROM board_node_checked_by WHERE project_id = ?")
             .bind(id)
             .execute(pool)
             .await;
@@ -420,13 +316,27 @@ impl ProjectStore {
             .bind(id)
             .execute(pool)
             .await;
+        let _ = sqlx::query("DELETE FROM route_repos WHERE project_id = ?")
+            .bind(id)
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM routes WHERE project_id = ?")
+            .bind(id)
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM project_messages WHERE project_id = ?")
+            .bind(id)
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM project_message_reads WHERE project_id = ?")
+            .bind(id)
+            .execute(pool)
+            .await;
 
-        // Cascade delete gyp chat messages
-        if let Ok(gyp_store) = crate::core::gyp_chat::GypChatStore::open().await {
-            let _ = gyp_store.clear_project_messages(id).await;
+        if let Ok(shepherd_store) = crate::core::shepherd_chat::ShepherdChatStore::open().await {
+            let _ = shepherd_store.clear_project_messages(id).await;
         }
 
-        // Delete project data directory (board, etc.)
         let project_dir = crate::core::config::hirsel_dir()
             .join("projects")
             .join(id.to_string());
@@ -443,64 +353,17 @@ impl ProjectStore {
         Ok(())
     }
 
-    /// Normalize StartingPoint to separate columns
-    fn normalize_starting_point(
-        sp: &StartingPoint,
-    ) -> (String, Option<String>, Option<String>, Option<String>) {
-        match sp {
-            StartingPoint::Greenfield => ("greenfield".to_string(), None, None, None),
-            StartingPoint::LocalFolder { path } => {
-                ("local_folder".to_string(), Some(path.clone()), None, None)
-            }
-            StartingPoint::GitRepo { url, branch } => (
-                "git_repo".to_string(),
-                None,
-                Some(url.clone()),
-                branch.clone(),
-            ),
-        }
-    }
-
-    /// Denormalize database row to StartingPoint
-    fn denormalize_starting_point(row: &SqliteRow) -> ProjectResult<StartingPoint> {
-        let sp_type: String = row.get("starting_point_type");
-        match sp_type.as_str() {
-            "greenfield" => Ok(StartingPoint::Greenfield),
-            "local_folder" => {
-                let path: String = row.get("starting_point_path");
-                Ok(StartingPoint::LocalFolder { path })
-            }
-            "git_repo" => {
-                let url: String = row.get("starting_point_url");
-                let branch: Option<String> = row.get("starting_point_branch");
-                Ok(StartingPoint::GitRepo { url, branch })
-            }
-            _ => Err(ProjectError::Database(sqlx::Error::Decode(
-                "Invalid starting_point_type".into(),
-            ))),
-        }
-    }
-
-    /// Convert database row to Project
-    fn row_to_project(row: &SqliteRow) -> ProjectResult<Project> {
-        Ok(Project {
+    fn row_to_project(row: &sqlx::sqlite::SqliteRow) -> Project {
+        Project {
             id: row.get("id"),
             name: row.get("name"),
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
-            starting_point: Self::denormalize_starting_point(row)?,
-            worker_scale: row.get("worker_scale"),
-            time_limit_minutes: row.get("time_limit_minutes"),
-            human_in_the_loop: row.get::<i64, _>("human_in_the_loop") != 0,
-            docs_path: row.get("docs_path"),
-            persist_docs_changes: row.get::<i64, _>("persist_docs_changes") != 0,
             description: row.get("description"),
-            target_branch: row.get("target_branch"),
-            runner: row.get("runner"),
             x: row.get("x"),
             y: row.get("y"),
             active_route_id: row.get("active_route_id"),
-        })
+        }
     }
 }
 

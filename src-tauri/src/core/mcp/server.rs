@@ -205,7 +205,7 @@ mod tests {
     fn test_handle_initialize() {
         let mut server = TestServer;
         let request = JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
+            _jsonrpc: "2.0".to_string(),
             method: "initialize".to_string(),
             params: json!({}),
             id: Some(json!(1)),
@@ -224,7 +224,7 @@ mod tests {
     fn test_handle_tools_list() {
         let mut server = TestServer;
         let request = JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
+            _jsonrpc: "2.0".to_string(),
             method: "tools/list".to_string(),
             params: json!({}),
             id: Some(json!(1)),
@@ -245,7 +245,7 @@ mod tests {
     fn test_handle_tools_call() {
         let mut server = TestServer;
         let request = JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
+            _jsonrpc: "2.0".to_string(),
             method: "tools/call".to_string(),
             params: json!({
                 "name": "test_tool",
@@ -264,7 +264,7 @@ mod tests {
     fn test_handle_exit_tool() {
         let mut server = TestServer;
         let request = JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
+            _jsonrpc: "2.0".to_string(),
             method: "tools/call".to_string(),
             params: json!({
                 "name": "exit_tool",

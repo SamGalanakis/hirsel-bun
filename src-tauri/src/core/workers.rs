@@ -57,7 +57,7 @@ pub struct SpawnResult {
 /// Spawn a new worker process
 ///
 /// Creates a detached subprocess running the worker runner, which manages
-/// the ACP client and task claim/done cycle.
+/// the task claim/done cycle.
 ///
 /// Note: Worker status is only set to Working AFTER successful spawn and
 /// process alive verification. This prevents race conditions where the
@@ -86,21 +86,29 @@ pub async fn spawn_worker(
 
     // Build environment for worker subprocess BEFORE updating state
     let mut env: HashMap<String, String> = std::env::vars().collect();
-    env.insert(
-        "ACP_PERMISSION_MODE".to_string(),
-        "bypassPermissions".to_string(),
-    );
     env.insert("HIRSEL_WORKER_SUBPROCESS".to_string(), "1".to_string());
     env.insert("HIRSEL_RUN".to_string(), config.run_name.clone());
     env.insert("HIRSEL_WORKER".to_string(), config.worker_name.clone());
 
     // Apply forwarded credentials (for remote orchestrator mode)
     if let Some(ref creds) = config.credentials {
-        if let Some(ref token) = creds.claude_access_token {
-            env.insert("CLAUDE_ACCESS_TOKEN".to_string(), token.clone());
+        if let Some(ref key) = creds.openai_api_key {
+            env.insert("OPENAI_API_KEY".to_string(), key.clone());
         }
-        if let Some(ref key) = creds.anthropic_api_key {
-            env.insert("ANTHROPIC_API_KEY".to_string(), key.clone());
+        if let Some(ref key) = creds.openrouter_api_key {
+            env.insert("OPENROUTER_API_KEY".to_string(), key.clone());
+        }
+        if let Some(ref token) = creds.codex_access_token {
+            env.insert("CODEX_ACCESS_TOKEN".to_string(), token.clone());
+        }
+        if let Some(ref token) = creds.codex_refresh_token {
+            env.insert("CODEX_REFRESH_TOKEN".to_string(), token.clone());
+        }
+        if let Some(ref expires_at) = creds.codex_expires_at {
+            env.insert("CODEX_EXPIRES_AT".to_string(), expires_at.clone());
+        }
+        if let Some(ref account_id) = creds.codex_account_id {
+            env.insert("CODEX_ACCOUNT_ID".to_string(), account_id.clone());
         }
     }
 
@@ -169,7 +177,7 @@ pub async fn spawn_worker(
     {
         use std::os::unix::process::CommandExt;
         // Create a new process group with the child's PID as the group leader
-        // This ensures all descendant processes (hirsel __acp-bridge, claude) are in the same group
+        // This ensures all descendant helper processes are in the same group.
         cmd.process_group(0);
     }
 
@@ -600,19 +608,19 @@ mod tests {
 
     #[test]
     fn test_get_agent_command() {
-        let claude = AgentPreset {
-            command: vec!["claude".to_string()],
-            description: "Claude Code (native)",
-            install_hint: Some("See https://docs.anthropic.com/en/docs/claude-code"),
+        let codex_default = AgentPreset {
+            command: vec!["codex".to_string()],
+            description: "Codex CLI",
+            install_hint: Some("Install Codex CLI"),
         };
-        assert_eq!(get_agent_command(&claude), vec!["claude"]);
+        assert_eq!(get_agent_command(&codex_default), vec!["codex"]);
 
-        let opencode = AgentPreset {
-            command: vec!["opencode".to_string(), "acp".to_string()],
-            description: "OpenCode",
+        let codex = AgentPreset {
+            command: vec!["codex".to_string()],
+            description: "Codex CLI",
             install_hint: None,
         };
-        assert_eq!(get_agent_command(&opencode), vec!["opencode", "acp"]);
+        assert_eq!(get_agent_command(&codex), vec!["codex"]);
     }
 
     #[test]
@@ -632,6 +640,7 @@ mod tests {
             coordinator_url: None,
             tailscale_authkey: None,
             assigned_task_id: None,
+            is_plan_task: false,
         };
 
         assert!(config.is_leader);

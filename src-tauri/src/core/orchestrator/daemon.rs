@@ -6,14 +6,11 @@
 use async_trait::async_trait;
 
 use super::{
-    CreateRunRequest, CreateRunResponse, DeliverRunRequest, HealthResponse, Orchestrator,
-    OrchestratorError, OrchestratorResult, ResumeRunRequest, ResumeWorkerRequest,
-    SendMessageRequest, SpawnSingleWorkerRequest, SpawnWorkersRequest, SpawnWorkersResponse,
-    StartRunRequest,
+    DeliverRunRequest, HealthResponse, Orchestrator, OrchestratorError, OrchestratorResult,
+    ResumeRunRequest, ResumeWorkerRequest, SpawnSingleWorkerRequest, StartRunRequest,
 };
 use crate::core::api_types::{
-    ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, ThreadSummary, Worker,
-    WorkerEventsResponse,
+    ConfigResponse, Eval, HistoryEntry, RunDetail, RunSummary, Worker, WorkerEventsResponse,
 };
 use crate::core::snapshot::WorkerStateHandle;
 use crate::daemon::DaemonClient;
@@ -158,42 +155,6 @@ impl Orchestrator for DaemonOrchestrator {
     }
 
     // -------------------------------------------------------------------------
-    // Messages
-    // -------------------------------------------------------------------------
-
-    async fn list_threads(&self, run: &str) -> OrchestratorResult<Vec<ThreadSummary>> {
-        self.client
-            .get(&format!("/api/runs/{}/threads", run))
-            .await
-            .map_err(|e| OrchestratorError::Other(e.to_string()))
-    }
-
-    async fn get_messages(&self, run: &str, thread: &str) -> OrchestratorResult<Vec<Message>> {
-        self.client
-            .get(&format!("/api/runs/{}/threads/{}/messages", run, thread))
-            .await
-            .map_err(|e| OrchestratorError::Other(e.to_string()))
-    }
-
-    async fn send_message(
-        &self,
-        run: &str,
-        thread: &str,
-        content: &str,
-    ) -> OrchestratorResult<Message> {
-        let request = SendMessageRequest {
-            content: content.to_string(),
-        };
-        self.client
-            .post(
-                &format!("/api/runs/{}/threads/{}/messages", run, thread),
-                request,
-            )
-            .await
-            .map_err(|e| OrchestratorError::Other(e.to_string()))
-    }
-
-    // -------------------------------------------------------------------------
     // Evals
     // -------------------------------------------------------------------------
 
@@ -245,23 +206,9 @@ impl Orchestrator for DaemonOrchestrator {
     // Run Creation
     // -------------------------------------------------------------------------
 
-    async fn create_run(&self, request: CreateRunRequest) -> OrchestratorResult<CreateRunResponse> {
-        self.client
-            .post("/api/runs", request)
-            .await
-            .map_err(|e| OrchestratorError::Other(e.to_string()))
-    }
-
     async fn start_run(&self, request: StartRunRequest) -> OrchestratorResult<RunDetail> {
         self.client
             .post("/api/runs/start", request)
-            .await
-            .map_err(|e| OrchestratorError::Other(e.to_string()))
-    }
-
-    async fn upload_files(&self, run_name: &str, tarball: Vec<u8>) -> OrchestratorResult<()> {
-        self.client
-            .post_bytes(&format!("/api/runs/{}/files", run_name), tarball)
             .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))
     }
@@ -273,22 +220,6 @@ impl Orchestrator for DaemonOrchestrator {
     ) -> OrchestratorResult<super::InitWorkspaceResponse> {
         self.client
             .post(&format!("/api/runs/{}/workspace", run_name), request)
-            .await
-            .map_err(|e| OrchestratorError::Other(e.to_string()))
-    }
-
-    async fn spawn_workers(
-        &self,
-        run_name: &str,
-        count: u32,
-        assigned_task_id: Option<String>,
-    ) -> OrchestratorResult<SpawnWorkersResponse> {
-        let request = SpawnWorkersRequest {
-            count,
-            assigned_task_id,
-        };
-        self.client
-            .post(&format!("/api/runs/{}/spawn", run_name), request)
             .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))
     }

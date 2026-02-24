@@ -94,7 +94,9 @@ tar = "0.4"
 walkdir = "2"
 aes-gcm = "0.10"
 hex = "0.4"
+base64 = "0.22"
 octocrab = "0.49"
+lash-core = { path = "../../lash/lash", features = ["python-bundled"] }
 
 # S3 storage (feature-gated)
 aws-sdk-s3 = { version = "1", optional = true }

@@ -1,4 +1,4 @@
-//! Board tree export/import for Gyp agent access
+//! Board tree export/import for Shepherd agent access
 //!
 //! Content files live at `routes/{route_name}/board/tasks/{id}.md` for direct editing.
 //! Structure is managed via MCP tools (board_view, board_spec, board_task, etc.)
@@ -63,8 +63,6 @@ pub struct SyncResult {
 /// Exporter for content files
 pub struct DeltaExporter {
     project_id: i64,
-    #[allow(dead_code)]
-    route_id: i64,
     route_name: String,
     state: DeltaState,
 }
@@ -86,7 +84,6 @@ impl DeltaExporter {
 
         Self {
             project_id,
-            route_id,
             route_name,
             state: DeltaState::with_route(project_id, route_id),
         }
@@ -152,13 +149,6 @@ impl DeltaExporter {
                     }
                 }
             }
-        }
-
-        // Clean up old board.json if it exists
-        let board_json = board_dir.join("board.json");
-        if board_json.exists() {
-            std::fs::remove_file(&board_json)?;
-            debug!("Removed legacy board.json");
         }
 
         info!(

@@ -723,6 +723,7 @@ pub async fn start_draft(
             tailscale_authkey: None,
             credentials: None,
             assigned_task_id: None,
+            is_plan_task: false,
         };
 
         // Spawn the worker

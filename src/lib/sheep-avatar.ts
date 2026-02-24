@@ -246,10 +246,10 @@ export function getHatName(id: number): string {
 }
 
 /**
- * Gyp (Border Collie) avatar - references the SVG file directly
+ * Shepherd (Border Collie) avatar - references the SVG file directly
  */
 export function generateCollieSvg(size = 64): string {
-  return `<img src="/gyp.svg" width="${size}" height="${size}" alt="Gyp" style="object-fit: contain;" />`;
+  return `<img src="/shepherd.svg" width="${size}" height="${size}" alt="Shepherd" style="object-fit: contain;" />`;
 }
 
 // Export for use in global scope

@@ -16,7 +16,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 use crate::core::config::{paths::hirsel_dir, Config};
 use crate::core::orchestrator::{LocalOrchestrator, Orchestrator};
-use crate::core::server::{gyp, AppState};
+use crate::core::server::AppState;
 
 use super::lifecycle;
 
@@ -124,8 +124,7 @@ pub async fn start_daemon(config: DaemonConfig) -> Result<()> {
     });
 
     // Build router (same routes as core/server but no auth for local daemon)
-    let gyp_state = Arc::new(gyp::GypState::new());
-    let router = build_router(state, gyp_state);
+    let router = build_router(state);
 
     // Bind to TCP port
     // Use 0.0.0.0 to allow connections from Docker containers via host.docker.internal
@@ -162,11 +161,11 @@ pub async fn start_daemon(config: DaemonConfig) -> Result<()> {
 }
 
 /// Build the axum router with all routes
-fn build_router(state: Arc<AppState>, gyp_state: Arc<gyp::GypState>) -> Router {
+fn build_router(state: Arc<AppState>) -> Router {
     use crate::core::server::shared_routes;
 
     // Build the router using shared route builders
-    // Daemon gets: shared routes + daemon-specific routes + gyp routes
+    // Daemon gets: shared routes + daemon-specific routes
     // No auth layer for local daemon - localhost only
     shared_routes::build_shared_routes()
         // Daemon-specific routes
@@ -202,8 +201,6 @@ fn build_router(state: Arc<AppState>, gyp_state: Arc<gyp::GypState>) -> Router {
             post(worker_heartbeat),
         )
         .with_state(state)
-        // Merge Gyp routes (with separate state)
-        .merge(shared_routes::build_gyp_routes().with_state(gyp_state))
         // CORS for browser-based clients
         .layer(
             CorsLayer::new()

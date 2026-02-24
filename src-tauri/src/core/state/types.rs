@@ -344,7 +344,7 @@ impl WorkerEventType {
     }
 }
 
-/// Tool call status (from ACP)
+/// Tool call status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolCallStatus {

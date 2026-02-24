@@ -4,7 +4,7 @@
 import { type Component, Show } from 'solid-js';
 import { useApp, useRuns } from '../../stores';
 import { Icon } from '../shared';
-import { GypMessengerBar } from '../chat/GypMessenger';
+import { ShepherdConsoleBar } from '../chat/ShepherdConsole';
 
 export const StatusBar: Component = () => {
   const app = useApp();
@@ -78,8 +78,8 @@ export const StatusBar: Component = () => {
       {/* Spacer */}
       <div class="flex-1" />
 
-      {/* Gyp Messenger Bar */}
-      <GypMessengerBar />
+      {/* Shepherd Console Bar */}
+      <ShepherdConsoleBar />
     </footer>
   );
 };

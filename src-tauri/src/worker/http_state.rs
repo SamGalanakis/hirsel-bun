@@ -19,8 +19,8 @@ use crate::core::state::{Status, Worker, WorkerStatus};
 /// Generic success response from API endpoints
 #[derive(Deserialize)]
 struct SuccessResponse {
-    #[allow(dead_code)] // Field exists for API compatibility, value not checked
-    success: bool,
+    #[serde(rename = "success")]
+    _success: bool,
 }
 
 // =============================================================================

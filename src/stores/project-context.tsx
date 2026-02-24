@@ -17,21 +17,22 @@ import {
 export interface Project {
   id: number;
   name: string;
-  startingPoint?: { type: string; path?: string; url?: string; branch?: string };
   description?: string;
-  // Run configuration (None = use global defaults)
-  workerScale?: string | null;
-  timeLimitMinutes?: number | null;
-  humanInTheLoop?: boolean;
-  docsPath?: string;
-  persistDocsChanges?: boolean;
-  // Delivery configuration
-  targetBranch?: string | null;
-  // Runner configuration
-  runner?: string | null;
   // Canvas position (for OneBoard portfolio view)
   x?: number | null;
   y?: number | null;
+  activeRouteId?: number | null;
+}
+
+interface RouteSettingsUpdate {
+  workerScale?: string | null;
+  timeLimitMinutes?: number | null;
+  humanInTheLoop?: boolean;
+  runner?: string | null;
+  targetBranch?: string | null;
+  x?: number | null;
+  y?: number | null;
+  description?: string;
 }
 
 interface ProjectContextValue {
@@ -95,7 +96,7 @@ interface ProjectContextValue {
   updateProjectSettings: (
     projectId: number,
     routeId: number,
-    settings: Partial<Project>
+    settings: RouteSettingsUpdate
   ) => Promise<Project | null>;
 }
 
@@ -245,7 +246,7 @@ export const ProjectProvider: ParentComponent = (props) => {
   const updateProjectSettings = async (
     projectId: number,
     routeId: number,
-    settings: Partial<Project>
+    settings: RouteSettingsUpdate
   ): Promise<Project | null> => {
     try {
       const updated = await invoke<Project>('update_project', {

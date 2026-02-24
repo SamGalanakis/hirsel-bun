@@ -7,7 +7,6 @@
 //!
 //! When invoked without arguments, `hirsel` launches the native GUI.
 
-pub mod acp_bridge;
 pub mod asset;
 #[cfg(feature = "cli")]
 pub mod attach;
@@ -203,7 +202,7 @@ pub enum Commands {
     #[command(name = "__scribe", hide = true)]
     Scribe(RunNameArg),
 
-    /// Run service worker (internal, spawned for scribe/gyp remote processing)
+    /// Run service worker (internal, currently used for scribe remote processing)
     #[command(name = "__service-worker", hide = true)]
     ServiceWorker(ServiceWorkerArgs),
 
@@ -211,11 +210,7 @@ pub enum Commands {
     #[command(name = "__remote-worker", hide = true)]
     RemoteWorker(RemoteWorkerArgs),
 
-    /// Run ACP bridge server for Claude CLI (internal, used as agent command)
-    #[command(name = "__acp-bridge", hide = true)]
-    AcpBridge,
-
-    /// Run board MCP server for Gyp (internal, spawned by Gyp for board context)
+    /// Run board MCP server for Shepherd (internal, spawned by Shepherd for board context)
     #[command(name = "__board-mcp", hide = true)]
     BoardMcp,
 
@@ -289,6 +284,10 @@ pub struct InternalWorkerRunArgs {
     /// Assigned task ID (direct task assignment)
     #[arg(long)]
     pub assigned_task_id: Option<String>,
+
+    /// Whether the assigned task is a plan task
+    #[arg(long, default_value = "false")]
+    pub plan_task: bool,
 }
 
 /// Arguments for internal eval run command
@@ -353,6 +352,10 @@ pub struct RemoteWorkerArgs {
     /// Assigned task ID (direct task assignment)
     #[arg(long)]
     pub assigned_task_id: Option<String>,
+
+    /// Whether the assigned task is a plan task
+    #[arg(long, default_value = "false")]
+    pub plan_task: bool,
 }
 
 // ========== Argument structs ==========
@@ -505,7 +508,7 @@ pub struct TaskAddArgs {
 /// Arguments for `hirsel config`
 #[derive(Args, Debug)]
 pub struct ConfigArgs {
-    /// Agent preset to set (claude, gemini, opencode, codex, goose)
+    /// Agent preset to set (codex)
     pub agent: Option<String>,
 }
 
@@ -560,8 +563,8 @@ pub struct ServeArgs {
 /// Arguments for `hirsel __service-worker` (internal)
 #[derive(Args, Debug)]
 pub struct ServiceWorkerArgs {
-    /// Service worker type (scribe or gyp)
-    #[arg(long, value_parser = ["scribe", "gyp"])]
+    /// Service worker type (currently only "scribe")
+    #[arg(long, value_parser = ["scribe"])]
     pub r#type: String,
 
     /// Idle timeout in seconds (worker exits if no activity)
@@ -1109,12 +1112,6 @@ pub fn run_cli() -> anyhow::Result<bool> {
             // This is handled by lib.rs run_cli() for compatibility
             // Should not reach here in normal CLI flow
             eprintln!("Remote worker command should be called via hirsel binary directly");
-            std::process::exit(1);
-        }
-        Commands::AcpBridge => {
-            // This is handled by lib.rs run_cli() for compatibility
-            // Should not reach here in normal CLI flow
-            eprintln!("ACP bridge command should be called via hirsel binary directly");
             std::process::exit(1);
         }
         Commands::BoardMcp => {

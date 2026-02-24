@@ -17,13 +17,12 @@ import type {
   Eval,
   GuiError,
   HistoryEntry,
-  Message,
   RepoValidation,
   RunDetail,
   RunSummary,
+  ShepherdMessageChunk,
   StartingPoint,
-  ThreadSummary,
-  UIContext,
+  TaskFocus,
   Worker,
   WorkerEvent,
   WorkerEventsResponse,
@@ -358,7 +357,7 @@ export async function getEvalLog(
 }
 
 // =============================================================================
-// Worker Events API (ACP-based streaming)
+// Worker Events API (streaming)
 // =============================================================================
 
 /**
@@ -482,46 +481,6 @@ export async function listenWorkerEvents(
     handler(event.payload);
   });
   return unlisten;
-}
-
-// =============================================================================
-// Message/Chat API
-// =============================================================================
-
-/**
- * Get all threads for a run
- */
-export async function getThreads(runName: string): Promise<ThreadSummary[]> {
-  return invoke<ThreadSummary[]>('get_threads', { runName: runName });
-}
-
-/**
- * Get messages for a specific thread
- */
-export async function getMessages(runName: string, threadName: string): Promise<Message[]> {
-  return invoke<Message[]>('get_messages', { runName: runName, threadName: threadName });
-}
-
-/**
- * Send a message to a thread
- */
-export async function sendMessage(
-  runName: string,
-  threadName: string,
-  content: string,
-): Promise<void> {
-  return invoke('send_message', {
-    runName: runName,
-    threadName: threadName,
-    content,
-  });
-}
-
-/**
- * Mark messages as read
- */
-export async function markMessagesRead(runName: string, threadName: string): Promise<void> {
-  return invoke('mark_messages_read', { runName: runName, threadName: threadName, reader: 'user' });
 }
 
 // =============================================================================
@@ -730,13 +689,13 @@ export function createPoller<T>(
 }
 
 // =============================================================================
-// Direct Chat Session API (ACP-based AI chat)
+// Direct Chat Session API
 // =============================================================================
 
 /**
  * Start a new direct chat session with an AI agent
  *
- * @param agentCommand - Command to run the agent (e.g., ["claude", "acp"])
+ * @param agentCommand - Command to run the agent (e.g., ["codex"])
  * @param options - Session options
  * @returns Session ID
  */
@@ -757,40 +716,21 @@ export async function startChatSession(
 }
 
 /**
- * Send a message to a chat session
- *
- * @param sessionId - The session ID
- * @param content - Message content
- * @param context - UI context to inject (invisible to user)
+ * Send a message to a Shepherd session.
  */
-export async function sendChatMessage(
+export async function sendShepherdMessage(
   sessionId: string,
-  content: string,
-  context?: UIContext,
+  options: {
+    content?: string;
+    chunks?: ShepherdMessageChunk[];
+    focus?: TaskFocus;
+  } = {},
 ): Promise<void> {
-  return invoke('send_chat_message', {
+  return invoke('send_shepherd_message', {
     sessionId,
-    content,
-    context,
-  });
-}
-
-/**
- * Respond to a permission request from a chat session
- *
- * @param sessionId - The session ID
- * @param requestId - The permission request ID
- * @param optionId - The selected option ID
- */
-export async function respondChatPermission(
-  sessionId: string,
-  requestId: string,
-  optionId: string,
-): Promise<void> {
-  return invoke('respond_chat_permission', {
-    sessionId,
-    requestId,
-    optionId,
+    content: options.content ?? null,
+    chunks: options.chunks ?? null,
+    focus: options.focus ?? null,
   });
 }
 
@@ -799,15 +739,15 @@ export async function respondChatPermission(
  *
  * @param sessionId - The session ID
  */
-export async function stopChatSession(sessionId: string): Promise<void> {
-  return invoke('stop_chat_session', { sessionId });
+export async function stopShepherdSession(sessionId: string): Promise<void> {
+  return invoke('stop_shepherd_session', { sessionId });
 }
 
 /**
  * List active chat sessions
  */
-export async function listChatSessions(): Promise<string[]> {
-  return invoke<string[]>('list_chat_sessions');
+export async function listShepherdSessions(): Promise<string[]> {
+  return invoke<string[]>('list_shepherd_sessions');
 }
 
 /**
@@ -816,8 +756,10 @@ export async function listChatSessions(): Promise<string[]> {
  * @param handler - Function to handle chat events
  * @returns Cleanup function to stop listening
  */
-export async function listenChatEvents(handler: (event: ChatEvent) => void): Promise<() => void> {
-  const unlisten = await listen<ChatEvent>('chat-event', (event) => {
+export async function listenShepherdEvents(
+  handler: (event: ChatEvent) => void,
+): Promise<() => void> {
+  const unlisten = await listen<ChatEvent>('shepherd-event', (event) => {
     handler(event.payload);
   });
 
@@ -825,11 +767,11 @@ export async function listenChatEvents(handler: (event: ChatEvent) => void): Pro
 }
 
 // =============================================================================
-// Gyp Chat History API
+// Shepherd Chat History API
 // =============================================================================
 
-/** Gyp chat message stored in database */
-export interface GypChatMessage {
+/** Shepherd chat message stored in database */
+export interface ShepherdChatMessage {
   id: number;
   runName: string | null;
   role: string;
@@ -838,38 +780,49 @@ export interface GypChatMessage {
 }
 
 /**
- * Get Gyp chat history for a run (or no-run if null)
+ * Get Shepherd chat history for a run (or no-run if null)
  *
  * @param runName - The run name, or null for no-run conversations
  * @returns Array of saved chat messages
  */
-export async function getGypChatHistory(runName: string | null): Promise<GypChatMessage[]> {
-  return invoke<GypChatMessage[]>('get_gyp_chat_history', { runName });
+export async function getShepherdChatHistory(
+  runName: string | null,
+): Promise<ShepherdChatMessage[]> {
+  return invoke<ShepherdChatMessage[]>('get_shepherd_history', {
+    scope: runName ? { type: 'run', runName, workspacePath: '' } : { type: 'general' },
+    limit: 100,
+  });
 }
 
 /**
- * Save a Gyp chat message for a run (or no-run if null)
+ * Save a Shepherd chat message for a run (or no-run if null)
  *
  * @param runName - The run name, or null for no-run conversations
  * @param role - Message role ('user', 'assistant', 'system')
  * @param chunksJson - JSON-encoded chunks array
  * @returns The saved message ID
  */
-export async function saveGypMessage(
+export async function saveShepherdMessage(
   runName: string | null,
   role: string,
   chunksJson: string,
 ): Promise<number> {
-  return invoke<number>('save_gyp_message', { runName, role, chunksJson });
+  return invoke<number>('save_shepherd_message', {
+    scope: runName ? { type: 'run', runName, workspacePath: '' } : { type: 'general' },
+    role,
+    chunksJson,
+  });
 }
 
 /**
- * Clear Gyp chat history for a run (or no-run if null)
+ * Clear Shepherd chat history for a run (or no-run if null)
  *
  * @param runName - The run name, or null for no-run conversations
  */
-export async function clearGypChatHistory(runName: string | null): Promise<void> {
-  return invoke('clear_gyp_chat_history', { runName });
+export async function clearShepherdChatHistory(runName: string | null): Promise<void> {
+  return invoke('clear_shepherd_history', {
+    scope: runName ? { type: 'run', runName, workspacePath: '' } : { type: 'general' },
+  });
 }
 
 // =============================================================================
@@ -917,7 +870,7 @@ export async function sendProjectMessage(
  */
 export async function markProjectMessagesRead(
   projectId: number,
-  routeId: number,
+  routeId: number | undefined,
   thread: string,
 ): Promise<void> {
   return invoke('mark_project_messages_read', { projectId, routeId, thread });

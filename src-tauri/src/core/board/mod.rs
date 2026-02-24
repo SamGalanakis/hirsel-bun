@@ -2,7 +2,7 @@
 //!
 //! This module provides the BoardService which handles:
 //! - Database operations for tasks and evals
-//! - JSON file export/import for AI agents (Gyp)
+//! - JSON file export/import for AI agents (Shepherd)
 //! - Validation computation
 //!
 //! ## Data Model
@@ -928,7 +928,7 @@ impl BoardService {
         Ok(rows.into_iter().collect())
     }
 
-    // ========== JSON EXPORT/IMPORT FOR GYP ==========
+    // ========== JSON EXPORT/IMPORT FOR SHEPHERD ==========
 
     /// Export board to per-task JSON files and establish baseline
     ///

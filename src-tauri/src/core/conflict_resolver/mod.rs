@@ -1,32 +1,18 @@
-//! Conflict Resolver Service
+//! Conflict resolver service.
 //!
-//! Spawns an ACP agent to resolve git merge conflicts during delivery.
-//! Follows the same pattern as the Scribe service.
-//!
-//! ## How it works
-//!
-//! 1. Delivery service starts a merge that has conflicts
-//! 2. ConflictResolverService is invoked with the list of conflicting files
-//! 3. An ACP agent is spawned in the work directory
-//! 4. Agent receives context about the run and conflicting files
-//! 5. Agent resolves each conflict (removes markers, makes semantic choices)
-//! 6. Service verifies no conflict markers remain
-//! 7. Delivery service completes the merge
+//! For now this module validates/records conflict status but does not perform
+//! automatic AI conflict resolution.
 
-mod client;
 mod state;
 
 use std::path::Path;
-use std::sync::Arc;
+
 use thiserror::Error;
 use tracing::{info, warn};
 
-use crate::core::acp_runner::{AcpAgentRunner, AcpRunnerError};
-use crate::core::constants::{RESOLUTION_TIMEOUT_SECS, RESOLVER_PROMPT};
-pub use client::ConflictResolverClient;
 pub use state::{ConflictResolution, ConflictResolutionStatus, ConflictResolverState};
 
-/// Error type for conflict resolution operations
+/// Error type for conflict resolution operations.
 #[derive(Error, Debug)]
 pub enum ConflictResolverError {
     #[error("Agent failed: {0}")]
@@ -43,105 +29,75 @@ pub enum ConflictResolverError {
     MarkersRemain,
 }
 
-impl From<AcpRunnerError> for ConflictResolverError {
-    fn from(err: AcpRunnerError) -> Self {
-        match err {
-            AcpRunnerError::Timeout(secs) => ConflictResolverError::Timeout(secs),
-            AcpRunnerError::Io(e) => ConflictResolverError::Io(e),
-            other => ConflictResolverError::AgentError(other.to_string()),
-        }
-    }
-}
-
 pub type ConflictResolverResult<T> = Result<T, ConflictResolverError>;
 
-/// Result of conflict resolution
+/// Result of conflict resolution.
 #[derive(Debug)]
 pub struct ResolutionResult {
     pub files_resolved: usize,
     pub success: bool,
 }
 
-/// Service for resolving merge conflicts via AI agent
-pub struct ConflictResolverService {
-    agent_command: Vec<String>,
-}
+/// Service for resolving merge conflicts.
+pub struct ConflictResolverService;
 
 impl ConflictResolverService {
-    /// Create a new conflict resolver service
-    pub fn new(agent_command: Vec<String>) -> Self {
-        Self { agent_command }
+    /// Create a new conflict resolver service.
+    pub fn new() -> Self {
+        Self
     }
 
-    /// Resolve conflicts in the given work directory
+    /// Resolve conflicts in the given work directory.
     ///
-    /// This is the main entry point. It spawns an ACP agent that will
-    /// read the conflicting files, understand the conflicts, and write
-    /// resolved versions.
+    /// Current behavior checks whether markers still exist and returns
+    /// `MarkersRemain` if unresolved files are detected.
     pub async fn resolve_conflicts(
         &self,
         work_dir: &Path,
         conflicts: Vec<String>,
-        context: &str,
+        _context: &str,
     ) -> ConflictResolverResult<ResolutionResult> {
         if conflicts.is_empty() {
             return Err(ConflictResolverError::NoConflicts);
         }
 
-        if self.agent_command.is_empty() {
-            return Err(ConflictResolverError::AgentError(
-                "Empty agent command".to_string(),
-            ));
-        }
-
         info!(
-            "Resolving {} conflicts in {}",
+            "Validating {} conflict files in {}",
             conflicts.len(),
             work_dir.display()
         );
 
-        // Build the prompt
-        let prompt = self.build_prompt(&conflicts, context);
+        let mut unresolved = 0usize;
+        for rel_path in &conflicts {
+            let path = work_dir.join(rel_path);
+            let content = match tokio::fs::read_to_string(&path).await {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!(
+                        "Failed to read conflict candidate {}: {}",
+                        path.display(),
+                        e
+                    );
+                    unresolved += 1;
+                    continue;
+                }
+            };
 
-        // Run the agent
-        let result = self.run_agent(work_dir, &prompt).await;
-
-        match result {
-            Ok(()) => {
-                info!("Conflict resolution completed successfully");
-                Ok(ResolutionResult {
-                    files_resolved: conflicts.len(),
-                    success: true,
-                })
-            }
-            Err(e) => {
-                warn!("Conflict resolution failed: {}", e);
-                Err(e)
+            if content.contains("<<<<<<<")
+                || content.contains("=======")
+                || content.contains(">>>>>>>")
+            {
+                unresolved += 1;
             }
         }
-    }
 
-    /// Build the prompt for the agent
-    fn build_prompt(&self, conflicts: &[String], context: &str) -> String {
-        let files_list = conflicts
-            .iter()
-            .map(|f| format!("- {}", f))
-            .collect::<Vec<_>>()
-            .join("\n");
+        if unresolved > 0 {
+            return Err(ConflictResolverError::MarkersRemain);
+        }
 
-        RESOLVER_PROMPT
-            .replace("{files}", &files_list)
-            .replace("{context}", context)
-    }
-
-    /// Run the ACP agent to resolve conflicts
-    async fn run_agent(&self, work_dir: &Path, prompt: &str) -> ConflictResolverResult<()> {
-        let client = Arc::new(ConflictResolverClient::new(work_dir.to_path_buf()));
-
-        AcpAgentRunner::new(self.agent_command.clone(), work_dir, "conflict-resolver")
-            .timeout_secs(RESOLUTION_TIMEOUT_SECS)
-            .run(client, prompt.to_string())
-            .await
-            .map_err(ConflictResolverError::from)
+        Ok(ResolutionResult {
+            files_resolved: conflicts.len(),
+            success: true,
+        })
     }
 }

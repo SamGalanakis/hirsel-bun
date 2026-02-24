@@ -6,18 +6,12 @@
 //! - Git operations
 //! - Chat/messaging system
 //! - File utilities
-//! - ACP client
 //! - Eval system
 //! - Orchestrator abstraction for local/remote coordination
 
-pub mod acp;
-pub mod acp_runner;
 pub mod api_types;
 pub mod board;
-pub mod chat_orchestrator;
-pub mod chat_session;
 pub mod chats;
-pub mod claude_cli;
 pub mod config;
 pub mod conflict_resolver;
 pub mod constants;
@@ -35,10 +29,9 @@ pub mod git;
 #[cfg(feature = "server")]
 pub mod git_http;
 pub mod github;
-pub mod gyp;
-pub mod gyp_chat;
 pub mod http_client;
 pub mod lifecycle;
+pub mod llm_provider;
 pub mod mcp;
 pub mod metrics;
 pub mod names;
@@ -54,6 +47,8 @@ pub mod scribe;
 #[cfg(feature = "server")]
 pub mod server;
 pub mod service_worker;
+pub mod shepherd;
+pub mod shepherd_chat;
 pub mod snapshot;
 pub mod state;
 pub mod state_access;
@@ -63,31 +58,12 @@ pub mod tailscale;
 pub mod workers;
 
 // Re-export commonly used types
-pub use acp::{
-    ACPClientConfig, ACPError, AcpChild, AcpSpawnConfig, MCPServerConfig, SessionUpdate,
-};
-pub use chat_orchestrator::{
-    create_chat_orchestrator, ChatContext, ChatMcpServer, ChatOrchestrator, ChatOrchestratorError,
-    ChatOrchestratorResult, LocalChatOrchestrator, RemoteChatOrchestrator, SessionInfo,
-};
-pub use chat_session::{
-    ChatEvent, ChatSessionConfig, ChatSessionError, ChatSessionManager, PendingPermission,
-    PermissionOption, PermissionResponse, UIContext,
-};
 pub use chats::{ChatHeader, ChatMode};
-pub use claude_cli::{
-    execute_claude_worker, run_claude_worker, BridgeEvent, ClaudeCliBridge, ClaudeCliConfig,
-    ClaudeCliError, ClaudeWorkerConfig, WorkerResult as ClaudeWorkerResult,
-};
 pub use config::*;
-pub use credentials::{
-    get_local_oauth_credentials, CredentialError, CredentialResult, CredentialStore,
-    ForwardedCredentials,
-};
+pub use credentials::{CredentialError, CredentialResult, CredentialStore, ForwardedCredentials};
 pub use error::{ErrorKind, HirselError, HirselResult};
-pub use eval::{run_eval_acp, run_eval_from_args, EvalAcpConfig, EvalAcpResult, EvalError};
+pub use eval::{run_eval, run_eval_from_args, EvalAcpConfig, EvalAcpResult, EvalError};
 pub use files::Files;
-pub use gyp_chat::{GypChatError, GypChatMessage, GypChatResult, GypChatStore};
 pub use lifecycle::{
     LifecycleAction, LifecycleContext, LifecycleError, LifecycleEvent, LifecycleManager,
     LifecycleResult, LocalLifecycleManager, RemoteLifecycleManager, RunStateMachine,
@@ -117,11 +93,18 @@ pub use runner::{
     WorkerSpawnConfig as RunnerSpawnConfig,
 };
 pub use scribe::{process_scribe_batch, should_process_batch, ScribeBatchResult, ScribeError};
+pub use shepherd::{
+    LocalShepherdEngine, ShepherdCommand, ShepherdCommandStatus, ShepherdCommandType,
+    ShepherdDecision, ShepherdDecisionType, ShepherdEngine,
+};
+pub use shepherd_chat::{
+    ShepherdChatError, ShepherdChatMessage, ShepherdChatResult, ShepherdChatStore,
+};
 
 // Conflict resolver
 pub use conflict_resolver::{
-    ConflictResolution, ConflictResolutionStatus, ConflictResolverClient, ConflictResolverError,
-    ConflictResolverResult, ConflictResolverService, ConflictResolverState, ResolutionResult,
+    ConflictResolution, ConflictResolutionStatus, ConflictResolverError, ConflictResolverResult,
+    ConflictResolverService, ConflictResolverState, ResolutionResult,
 };
 pub use service_worker::{
     ScribeService, ServiceWorkerError, ServiceWorkerHandle, ServiceWorkerResult, ServiceWorkerType,
@@ -151,11 +134,6 @@ pub use draft::S3WorkspaceProvider;
 pub use draft::{
     create_workspace_provider, FileEntry, LocalWorkspaceProvider, StartingPoint, WorkspaceInfo,
     WorkspaceProvider,
-};
-
-// Unified Gyp context builder
-pub use gyp::{
-    GypContextBuilder, GypScope, GypSessionConfig, HistoryScope, McpServerConfig, TaskFocus,
 };
 
 // GitHub client
@@ -191,7 +169,7 @@ pub use board::{
 
 // Delta dispatch (unified board tree)
 pub use delta::{
-    BoardNode, BoardNodeSource, BoardNodeStatus, BoardNodeTree, BoardVersion,
+    BoardNode, BoardNodeDifficulty, BoardNodeSource, BoardNodeStatus, BoardNodeTree, BoardVersion,
     CreateBoardNodeRequest, DeltaDispatchService, DeltaState,
     DispatchResult as DeltaDispatchResult, NodeKind, ProjectRun, ProjectRunStatus,
     UpdateBoardNodeRequest,

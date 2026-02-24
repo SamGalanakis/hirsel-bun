@@ -3,7 +3,7 @@
  *
  * Shows count + status pips, expands to show individual tools.
  * Click on a tool to see its input/output details.
- * Used by both WorkerOutputViewer and GypMessenger.
+ * Used by both WorkerOutputViewer and ShepherdConsole.
  */
 import { Component, For, Show, createSignal } from 'solid-js';
 import { Icon } from './Icon';

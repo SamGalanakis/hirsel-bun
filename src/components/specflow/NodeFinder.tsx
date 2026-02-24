@@ -16,7 +16,7 @@ import { Icon } from '../shared';
 export interface NodeFinderItem {
   id: string;
   name: string;
-  kind: 'feature' | 'task' | 'check';
+  kind: 'feature' | 'task' | 'check' | 'plan';
   status: string;
   claimedBy: string | null;
 }
@@ -37,7 +37,7 @@ export const NodeFinder: Component<{
     navigator.platform.includes('Mac') ? 'Esc' : 'Esc';
 
   const kindLabel = (k: NodeFinderItem['kind']) =>
-    k === 'feature' ? 'Feature' : k === 'check' ? 'Check' : 'Task';
+    k === 'feature' ? 'Milestone' : k === 'check' ? 'Check' : k === 'plan' ? 'Scoping' : 'Issue';
 
   const statusColor = (status: string) => {
     switch (status) {
@@ -49,6 +49,11 @@ export const NodeFinder: Component<{
       case 'failed': return 'var(--terra)';
       default: return 'var(--wool-600)';
     }
+  };
+
+  const statusLabel = (status: string) => {
+    if (status === 'awaiting_check') return 'ready for validation';
+    return status.replace('_', ' ');
   };
 
   const scrollToHighlighted = () => {
@@ -175,7 +180,7 @@ export const NodeFinder: Component<{
                       }}
                     >
                       <span class="text-[9px] font-semibold uppercase tracking-wider text-wool-500">
-                        {item.kind === 'feature' ? 'F' : item.kind === 'check' ? 'C' : 'T'}
+                        {item.kind === 'feature' ? 'M' : item.kind === 'check' ? 'C' : item.kind === 'plan' ? 'S' : 'I'}
                       </span>
                     </div>
 
@@ -187,7 +192,7 @@ export const NodeFinder: Component<{
                         <span>{kindLabel(item.kind)}</span>
                         <span class="inline-flex items-center gap-1">
                           <span class="w-1.5 h-1.5 rounded-full" style={{ background: statusColor(item.status) }} />
-                          <span>{item.status.replace('_', ' ')}</span>
+                          <span>{statusLabel(item.status)}</span>
                         </span>
                         <Show when={item.claimedBy}>
                           <span class="truncate">by {item.claimedBy}</span>

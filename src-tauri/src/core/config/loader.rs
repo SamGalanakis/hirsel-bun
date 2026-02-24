@@ -4,9 +4,9 @@ use std::fs;
 use std::path::Path;
 
 use super::{
-    AgentAuth, AuthConfig, AuthMethod, Config, ConfigError, GitConfig, GitProvider,
-    OrchestratorAccess, OrchestratorMode, OrchestratorProfile, S3Config, ServiceWorkerConfig,
-    ServiceWorkersConfig, StorageBackend, StorageConfig, StorageProvider,
+    Config, ConfigError, GitConfig, GitProvider, LlmConfig, LlmProvider, OrchestratorAccess,
+    OrchestratorMode, OrchestratorProfile, S3Config, ServiceWorkerConfig, ServiceWorkersConfig,
+    StorageBackend, StorageConfig, StorageProvider,
 };
 
 /// Parse an S3Config from a TOML table
@@ -204,8 +204,8 @@ pub fn load_config_file(
         }
     }
 
-    // Load auth configuration
-    load_auth_config(&table, &mut config.auth, &mut warnings);
+    // Load LLM configuration
+    load_llm_config(&table, &mut config.llm);
 
     // Load runners configuration
     if let Some(runners_data) = table.get("runners") {
@@ -286,48 +286,26 @@ pub fn load_config_file(
     Ok(warnings)
 }
 
-fn load_auth_config(table: &toml::Table, auth: &mut AuthConfig, _warnings: &mut Vec<String>) {
-    if let Some(auth_data) = table.get("auth") {
-        if let Some(auth_table) = auth_data.as_table() {
-            if let Some(val) = auth_table.get("default_method") {
-                if let Some(s) = val.as_str() {
-                    if let Ok(method) = s.parse::<AuthMethod>() {
-                        auth.default_method = method;
-                    }
-                }
+fn load_llm_config(table: &toml::Table, llm: &mut LlmConfig) {
+    if let Some(llm_data) = table.get("llm") {
+        if let Some(llm_table) = llm_data.as_table() {
+            if let Some(provider) = llm_table.get("provider").and_then(|v| v.as_str()) {
+                llm.provider = match provider.to_lowercase().as_str() {
+                    "openrouter" => LlmProvider::Openrouter,
+                    _ => LlmProvider::Codex,
+                };
             }
-
-            for agent_name in &["claude", "gemini", "codex", "goose"] {
-                if let Some(agent_auth_data) = auth_table.get(*agent_name) {
-                    if let Some(agent_auth_table) = agent_auth_data.as_table() {
-                        let method_str = agent_auth_table
-                            .get("method")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("env");
-
-                        if let Ok(method) = method_str.parse::<AuthMethod>() {
-                            let agent_auth = AgentAuth {
-                                method,
-                                api_key: agent_auth_table
-                                    .get("api_key")
-                                    .and_then(|v| v.as_str())
-                                    .map(String::from),
-                                env_var: agent_auth_table
-                                    .get("env_var")
-                                    .and_then(|v| v.as_str())
-                                    .map(String::from),
-                            };
-                            match *agent_name {
-                                "claude" => auth.claude = Some(agent_auth),
-                                "gemini" => auth.gemini = Some(agent_auth),
-                                "codex" => auth.codex = Some(agent_auth),
-                                "goose" => auth.goose = Some(agent_auth),
-                                _ => {}
-                            }
-                        }
+            llm.openrouter_base_url = llm_table
+                .get("openrouter_base_url")
+                .and_then(|v| v.as_str())
+                .and_then(|v| {
+                    let trimmed = v.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
                     }
-                }
-            }
+                });
         }
     }
 }
@@ -463,10 +441,10 @@ fn load_service_workers_config(
                 }
             }
 
-            // Load gyp config
-            if let Some(gyp_data) = sw_table.get("gyp") {
-                if let Some(gyp_table) = gyp_data.as_table() {
-                    service_workers.gyp = load_service_worker_entry(gyp_table);
+            // Load shepherd config
+            if let Some(shepherd_data) = sw_table.get("shepherd") {
+                if let Some(shepherd_table) = shepherd_data.as_table() {
+                    service_workers.shepherd = load_service_worker_entry(shepherd_table);
                 }
             }
         }

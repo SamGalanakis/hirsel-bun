@@ -137,8 +137,13 @@ const BoardNodeCard: Component<{
   const isDraft = () => props.node.status === 'draft';
   const isCheck = () => props.node.kind === 'check';
   const isFeature = () => props.node.kind === 'feature';
+  const isPlan = () => props.node.kind === 'plan';
   const isRoot = () => props.node.parentId === null && props.node.kind === 'feature';
   const isFeatureNode = () => props.node.kind === 'feature' && !isRoot();
+  const isBeingPlanned = () => isFeature() && props.node.blockedBy.some(id => {
+    const blocker = props.nodeMap.get(id);
+    return blocker && blocker.kind === 'plan' && blocker.status !== 'done' && blocker.status !== 'failed';
+  });
   const isMultiLine = () => props.position.lines.length > 1;
   const isWorking = () => props.node.status === 'working';
   const isDone = () => props.node.status === 'done';
@@ -170,7 +175,6 @@ const BoardNodeCard: Component<{
       return blocker && (blocker.status === 'done' || blocker.status === 'validated' || blocker.status === 'awaiting_check');
     });
   };
-
   // CHECK: dashed border, sage-tinted
   const checkStyles = () => ({
     bg: 'var(--node-check-bg)',
@@ -221,7 +225,20 @@ const BoardNodeCard: Component<{
       : '0 2px 4px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.02)',
   });
 
-  const styles = () => isCheck() ? checkStyles() : isRoot() ? rootStyles() : isFeatureNode() ? featureStyles() : taskStyles();
+  // PLAN: dimmer, dash-dot border
+  const planStyles = () => ({
+    bg: 'var(--node-task-bg)',
+    border: props.selected ? 'var(--node-task-border-selected)' : 'var(--wool-700)',
+    borderWidth: '1px',
+    borderStyle: 'dashed',
+    textColor: 'var(--wool-400)',
+    radius: '5px',
+    boxShadow: props.selected
+      ? '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.03)'
+      : '0 1px 3px rgba(0,0,0,0.2)',
+  });
+
+  const styles = () => isCheck() ? checkStyles() : isPlan() ? planStyles() : isRoot() ? rootStyles() : isFeatureNode() ? featureStyles() : taskStyles();
 
   // Status glow — only for dispatched (non-draft) nodes
   const statusGlow = () => {
@@ -288,7 +305,7 @@ const BoardNodeCard: Component<{
             type="button"
             class="absolute right-1 top-1 w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
             style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.06)' }}
-            title="Focus this feature"
+            title="Focus this milestone"
             onClick={(e) => { e.stopPropagation(); props.onEnterScope(); }}
           >
             <Icon name="corner-down-right" class="w-3 h-3 text-wool-500" />
@@ -322,19 +339,20 @@ const BoardNodeCard: Component<{
           </For>
         </div>
 
-        {/* Claimed-by pill (shows which worker is on this node) */}
-        <Show when={!isDraft() && props.node.claimedBy}>
+
+        {/* Planning indicator (feature blocked by active plan node) */}
+        <Show when={isBeingPlanned() && !props.collapsed}>
           <div
-            class="absolute -top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full text-[9px] font-medium"
+            class="absolute -bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-medium"
             style={{
               background: 'rgba(20,20,22,0.92)',
-              border: `1px solid ${amber(0.28)}`,
-              color: 'var(--amber-300)',
-              'box-shadow': '0 6px 18px rgba(0,0,0,0.35)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              color: 'var(--wool-400)',
+              'box-shadow': '0 4px 12px rgba(0,0,0,0.3)',
             }}
-            title={`Claimed by ${props.node.claimedBy}`}
           >
-            {props.node.claimedBy}
+            <Icon name="list-tree" class="w-2.5 h-2.5" />
+            <span>Planning</span>
           </div>
         </Show>
 
@@ -382,6 +400,7 @@ const BoardNodeCard: Component<{
             </div>
           )}
         </Show>
+
       </div>
 
       {/* Status corner badge — only for non-draft nodes */}
@@ -605,7 +624,7 @@ export const SpecBoard: Component = () => {
   let canvasRef: HTMLDivElement | undefined;
 
   // Live task filter
-  const [liveFilters, setLiveFilters] = createSignal<string[]>(['spec-tasks', 'worker-tasks']);
+  const [liveFilters, setLiveFilters] = createSignal<string[]>(['spec-tasks', 'worker-tasks', 'plan-tasks']);
   const [granularity, setGranularity] = createSignal<'all' | '2'>('all');
 
   // Edge toggles (default: only hierarchy)
@@ -659,11 +678,13 @@ export const SpecBoard: Component = () => {
     const filters = liveFilters();
     const showSpecTasks = filters.includes('spec-tasks');
     const showWorkerTasks = filters.includes('worker-tasks');
+    const showPlanTasks = filters.includes('plan-tasks');
     const maxDepth = granularity() === 'all' ? Infinity : 2;
 
     const filterTree = (node: BoardNodeTree, depth: number = 1): BoardNodeTree | null => {
       const isUserNode = node.source === 'user';
       const isWorkerAdded = node.source === 'worker' || node.source === 'plan';
+      const isPlanNode = node.kind === 'plan';
 
       const filteredChildren = depth < maxDepth
         ? node.children
@@ -672,9 +693,15 @@ export const SpecBoard: Component = () => {
         : [];
 
       let shouldShow = false;
-      if (isUserNode && showSpecTasks) shouldShow = true;
-      if (isWorkerAdded && showWorkerTasks) shouldShow = true;
-      if (node.source === 'system') shouldShow = showWorkerTasks;
+      if (isPlanNode) {
+        shouldShow = showPlanTasks;
+      } else if (isUserNode && showSpecTasks) {
+        shouldShow = true;
+      } else if (isWorkerAdded && showWorkerTasks) {
+        shouldShow = true;
+      } else if (node.source === 'system') {
+        shouldShow = showWorkerTasks;
+      }
 
       if (shouldShow || filteredChildren.length > 0) {
         return { ...node, children: filteredChildren };
@@ -1119,14 +1146,14 @@ export const SpecBoard: Component = () => {
     setNewNodeName('');
   };
 
-  const handleDispatch = async () => {
-    if (!delta.hasDraftNodes() || delta.dispatchPending()) {
+  const handleStartShepherd = async () => {
+    if (!delta.hasDraftNodes() || delta.shepherdStartPending()) {
       if (!delta.hasDraftNodes()) {
-        window.toast?.info('No draft nodes to dispatch');
+        window.toast?.info('No draft nodes to start');
       }
       return;
     }
-    await delta.dispatch();
+    await delta.startShepherdRun();
   };
 
   const handleOpenInIde = async () => {
@@ -1181,13 +1208,13 @@ export const SpecBoard: Component = () => {
 
   // Listen for radial menu actions
   createEffect(() => {
-    const cleanupDispatch = onEvent('radial-dispatch', () => handleDispatch());
+    const cleanupStart = onEvent('radial-start-shepherd', () => handleStartShepherd());
     const cleanupDeliver = onEvent('radial-deliver', () => setShowDeliveryDialog(true));
     const cleanupOpenIde = onEvent('radial-open-ide', () => handleOpenInIde());
     const cleanupForkDialog = onEvent('open-fork-dialog', () => setShowForkDialog(true));
 
     onCleanup(() => {
-      cleanupDispatch();
+      cleanupStart();
       cleanupDeliver();
       cleanupOpenIde();
       cleanupForkDialog();
@@ -1619,7 +1646,7 @@ export const SpecBoard: Component = () => {
             </Show>
             <Show when={contextMenu()!.isBackground}>
               <button class="w-full px-3 py-1.5 text-left text-[11px] text-wool-200 hover:bg-white/5" onClick={handleAddRootFeature}>
-                Add feature
+                Add milestone
               </button>
               <button class="w-full px-3 py-1.5 text-left text-[11px] text-sage hover:bg-sage/10" onClick={handleAddRootCheck}>
                 Add check
@@ -1633,7 +1660,7 @@ export const SpecBoard: Component = () => {
           {(() => {
             const isCheck = () => newNodeKind() === 'check';
             const isFeature = () => newNodeKind() === 'feature';
-            const typeLabel = () => isCheck() ? 'Check' : isFeature() ? 'Feature' : 'Task';
+            const typeLabel = () => isCheck() ? 'Check' : isFeature() ? 'Milestone' : 'Issue';
 
             return (
               <div
@@ -1671,7 +1698,7 @@ export const SpecBoard: Component = () => {
                       <div>
                         <h2 class="text-sm font-semibold text-wool-100">New {typeLabel()}</h2>
                         <p class="text-xs text-wool-500">
-                          {isCheck() ? 'Add a check' : isFeature() ? 'Add a feature' : 'Add a work item'}
+                          {isCheck() ? 'Add a check' : isFeature() ? 'Add a milestone' : 'Add an issue'}
                         </p>
                       </div>
                     </div>
@@ -1688,7 +1715,7 @@ export const SpecBoard: Component = () => {
                           value={newNodeName()}
                           onInput={(e) => setNewNodeName(e.currentTarget.value)}
                           onKeyDown={(e) => { if (e.key === 'Escape') setShowNewPrompt(false); }}
-                          placeholder={isCheck() ? 'e.g., API returns valid JSON' : isFeature() ? 'e.g., OAuth Authentication' : 'e.g., Build authentication flow'}
+                          placeholder={isCheck() ? 'e.g., API returns valid JSON' : isFeature() ? 'e.g., Improve checkout conversion' : 'e.g., Build authentication flow'}
                           class="w-full px-3 py-2 rounded-md text-sm bg-pasture-900 border text-wool-100 placeholder-wool-600 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
                           style={{
                             'font-family': 'system-ui, -apple-system, sans-serif',
@@ -1743,7 +1770,7 @@ export const SpecBoard: Component = () => {
           {(node) => {
             const nodeKind = () => node().kind;
             const isCheck = () => nodeKind() === 'check';
-            const typeLabel = () => isCheck() ? 'Check' : node().kind === 'feature' ? 'Feature' : 'Task';
+            const typeLabel = () => isCheck() ? 'Check' : node().kind === 'feature' ? 'Milestone' : 'Issue';
 
             const statusLabel = () => {
               switch (node().status) {
@@ -1751,7 +1778,7 @@ export const SpecBoard: Component = () => {
                 case 'pending': return 'Pending';
                 case 'working': return 'Working';
                 case 'done': return 'Done';
-                case 'awaiting_check': return 'Awaiting Check';
+                case 'awaiting_check': return 'Ready for Validation';
                 case 'validated': return 'Validated';
                 case 'needs_repair': return 'Needs Repair';
                 case 'failed': return 'Failed';
@@ -1850,7 +1877,7 @@ export const SpecBoard: Component = () => {
 
                     <Show when={isCheck() && node().validates.length > 0}>
                       <div class="space-y-1.5">
-                        <label class="text-xs font-medium" style={{ color: 'var(--sage)' }}>Validates Tasks</label>
+                        <label class="text-xs font-medium" style={{ color: 'var(--sage)' }}>Validates Issues</label>
                         <div class="flex flex-wrap gap-1.5">
                           <For each={node().validates}>
                             {(taskId) => (
@@ -1914,7 +1941,7 @@ export const SpecBoard: Component = () => {
                             : variant === 'validated' ? 'var(--sage-light, var(--sage))'
                             : variant === 'worker' ? 'var(--amber-300)'
                             : 'var(--wool-300)';
-                          const kindLetter = kind === 'feature' ? 'F' : kind === 'check' ? 'C' : 'T';
+                          const kindLetter = kind === 'feature' ? 'M' : kind === 'check' ? 'C' : 'I';
                           const statusDot =
                             status === 'working' ? 'var(--amber-500)'
                             : status === 'done' || status === 'validated' ? 'var(--sage)'

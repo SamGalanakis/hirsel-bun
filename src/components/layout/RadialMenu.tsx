@@ -156,9 +156,9 @@ export const RadialMenu: Component = () => {
   };
 
   // Action handlers
-  const handleDispatch = () => {
+  const handleStartShepherd = () => {
     app.closeRadialMenu();
-    emit('radial-dispatch');
+    emit('radial-start-shepherd');
   };
 
   const handleDeliver = () => {
@@ -199,7 +199,7 @@ export const RadialMenu: Component = () => {
     { id: 'settings', angle: 120, icon: 'settings', label: 'Settings', shortcut: '3', badge: undefined, variant: 'default', disabled: false, onClick: handleSettings },
     { id: 'ide', angle: 180, icon: 'folder-open', label: 'IDE', shortcut: '2', badge: undefined, variant: 'default', disabled: !delta.projectRun(), onClick: handleIde },
     { id: 'docs', angle: 240, icon: 'book-open', label: 'Docs', shortcut: '1', badge: undefined, variant: project.docsOpen() ? 'primary' : 'default', disabled: false, onClick: handleDocs },
-    { id: 'dispatch', angle: 300, icon: 'rocket', label: 'Dispatch', shortcut: '7', badge: draftBadge(), variant: delta.hasDraftNodes() ? 'primary' : 'default', disabled: !delta.hasDraftNodes() || delta.dispatchPending(), onClick: handleDispatch },
+    { id: 'start-shepherd', angle: 300, icon: 'rocket', label: 'Start', shortcut: '7', badge: draftBadge(), variant: delta.hasDraftNodes() ? 'primary' : 'default', disabled: !delta.hasDraftNodes() || delta.shepherdStartPending(), onClick: handleStartShepherd },
   ];
 
   const getItemStyles = (index: number, item: ReturnType<typeof menuItems>[0]) => {

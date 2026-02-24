@@ -5,6 +5,7 @@
 
 use super::ResultExt;
 use crate::core::project::ProjectStore;
+use crate::core::route::RouteStore;
 use crate::core::{ProjectMessage, ProjectMessagesStore, ProjectThreadSummary};
 
 /// Get messages for a project thread
@@ -58,9 +59,29 @@ pub async fn send_project_message(
 #[tauri::command]
 pub async fn mark_project_messages_read(
     project_id: i64,
-    route_id: i64,
+    route_id: Option<i64>,
     thread: String,
 ) -> Result<(), String> {
+    let route_id = match route_id {
+        Some(id) => id,
+        None => {
+            let project_store = ProjectStore::open().await.str_err()?;
+            let project = project_store.get_project(project_id).await.str_err()?;
+            if let Some(id) = project.active_route_id {
+                id
+            } else {
+                let route_store = RouteStore::new(project_id).await.str_err()?;
+                route_store
+                    .list_routes()
+                    .await
+                    .str_err()?
+                    .first()
+                    .map(|r| r.id)
+                    .ok_or_else(|| "No routes found for project".to_string())?
+            }
+        }
+    };
+
     let store = ProjectMessagesStore::open().await.str_err()?;
     store
         .mark_messages_read(project_id, route_id, &thread, "user")
@@ -83,7 +104,18 @@ pub async fn get_project_unread_count(
         None => {
             let project_store = ProjectStore::open().await.str_err()?;
             let project = project_store.get_project(project_id).await.str_err()?;
-            project.active_route_id.unwrap_or(1)
+            if let Some(id) = project.active_route_id {
+                id
+            } else {
+                let route_store = RouteStore::new(project_id).await.str_err()?;
+                route_store
+                    .list_routes()
+                    .await
+                    .str_err()?
+                    .first()
+                    .map(|r| r.id)
+                    .ok_or_else(|| "No routes found for project".to_string())?
+            }
         }
     };
 

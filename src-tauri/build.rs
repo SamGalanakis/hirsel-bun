@@ -1,6 +1,15 @@
 use std::process::Command;
 
 fn main() {
+    if std::env::var("TARGET")
+        .map(|target| target.contains("linux"))
+        .unwrap_or(false)
+    {
+        // Bundled static Python in lash-core needs Python C API symbols exported
+        // from the host binary so embedded runtime lookups (ctypes.pythonapi) work.
+        println!("cargo:rustc-link-arg=-Wl,--export-dynamic");
+    }
+
     // Get git commit SHA
     let git_sha = Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])

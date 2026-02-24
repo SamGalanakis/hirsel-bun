@@ -6,8 +6,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::core::config::{self, Config};
-use crate::core::gyp_chat::GypChatStore;
 use crate::core::lifecycle::LocalLifecycleManager;
+use crate::core::shepherd_chat::ShepherdChatStore;
 use crate::core::snapshot::{create_archive_strategy, ArchiveHandle, WorkerStateHandle};
 use crate::core::state::SQLiteState;
 use crate::core::Files;
@@ -19,7 +19,7 @@ use super::OpsError;
 ///
 /// This operation:
 /// 1. Kills any running workers
-/// 2. Optionally deletes GypChat messages (GUI)
+/// 2. Optionally deletes ShepherdChat messages (GUI)
 /// 3. Optionally removes the hirsel_work remote from the project (CLI)
 /// 4. Removes the run directory
 ///
@@ -126,10 +126,13 @@ pub async fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsE
         }
     }
 
-    // Delete Gyp chat history
-    if let Ok(store) = GypChatStore::open().await {
+    // Delete Shepherd chat history
+    if let Ok(store) = ShepherdChatStore::open().await {
         if store.delete_run_messages(&config.run_name).await.is_ok() {
-            tracing::debug!("Deleted GypChat messages for run '{}'", config.run_name);
+            tracing::debug!(
+                "Deleted ShepherdChat messages for run '{}'",
+                config.run_name
+            );
         }
     }
 

@@ -24,8 +24,7 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::core::api_types::{
-    ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, ThreadSummary, Worker,
-    WorkerEventsResponse,
+    ConfigResponse, Eval, HistoryEntry, RunDetail, RunSummary, Worker, WorkerEventsResponse,
 };
 use crate::core::config::Config;
 use crate::core::orchestrator::HealthResponse;
@@ -112,19 +111,6 @@ pub trait RunManager: Send + Sync {
         after_id: Option<i64>,
         limit: Option<i64>,
     ) -> RunManagerResult<WorkerEventsResponse>;
-
-    // =========================================================================
-    // Messages
-    // =========================================================================
-
-    async fn list_threads(&self, run: &str) -> RunManagerResult<Vec<ThreadSummary>>;
-    async fn get_messages(&self, run: &str, thread: &str) -> RunManagerResult<Vec<Message>>;
-    async fn send_message(
-        &self,
-        run: &str,
-        thread: &str,
-        content: &str,
-    ) -> RunManagerResult<Message>;
 
     // =========================================================================
     // Evals & History

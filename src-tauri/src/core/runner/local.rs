@@ -48,10 +48,6 @@ impl LocalRunner {
     async fn spawn_bare(&self, config: &WorkerSpawnConfig) -> RunnerResult<SpawnResult> {
         // Build environment for worker subprocess
         let mut env: HashMap<String, String> = std::env::vars().collect();
-        env.insert(
-            "ACP_PERMISSION_MODE".to_string(),
-            "bypassPermissions".to_string(),
-        );
         env.insert("HIRSEL_WORKER_SUBPROCESS".to_string(), "1".to_string());
         env.insert("HIRSEL_RUN".to_string(), config.run_name.clone());
         env.insert("HIRSEL_WORKER".to_string(), config.worker_name.clone());
@@ -117,6 +113,10 @@ impl LocalRunner {
             args.push(task_id.clone());
         }
 
+        if config.is_plan_task {
+            args.push("--plan-task".to_string());
+        }
+
         // Spawn the detached subprocess in its own process group
         // This allows us to kill the entire process tree when stopping workers
         let mut cmd = Command::new(&hirsel_exe);
@@ -131,7 +131,7 @@ impl LocalRunner {
         {
             use std::os::unix::process::CommandExt;
             // Create a new process group with the child's PID as the group leader
-            // This ensures all descendant processes (hirsel __acp-bridge, claude) are in the same group
+            // This ensures all descendant helper processes are in the same group.
             cmd.process_group(0);
         }
 
@@ -160,14 +160,12 @@ impl LocalRunner {
     ///
     /// The container will:
     /// 1. Use mounted hirsel binary (or download from GitHub if not mounted)
-    /// 2. Install Claude CLI
-    /// 3. Run the worker
+    /// 2. Run the worker
     ///
     /// Mounts:
     /// - /work: work directory (project files)
     /// - /hirsel: run directory (spec, db, etc.)
-    /// - /usr/local/bin/hirsel: hirsel binary (from host)
-    /// - /tmp/home/.claude: agent session directory (for pause/resume)
+    /// - /tmp/home: worker home directory for transient state
     async fn spawn_docker(
         &self,
         config: &WorkerSpawnConfig,
@@ -176,8 +174,7 @@ impl LocalRunner {
         let work_dir_str = config.work_dir.to_string_lossy().to_string();
         let run_dir_str = config.run_dir.to_string_lossy().to_string();
 
-        // Create session directory on host for persistent agent sessions
-        // This allows Claude sessions to persist across container restarts
+        // Create worker home directory on host for persistent session state.
         let session_path = config
             .run_dir
             .join("agent-sessions")
@@ -252,12 +249,18 @@ impl LocalRunner {
             worker_cmd_parts.push(format!("--api-url '{}'", url));
         }
 
+        if let Some(ref task_id) = config.assigned_task_id {
+            worker_cmd_parts.push(format!("--assigned-task-id '{}'", task_id));
+        }
+        if config.is_plan_task {
+            worker_cmd_parts.push("--plan-task".to_string());
+        }
+
         let worker_cmd = worker_cmd_parts.join(" ");
 
-        // Build init script that sets up the environment and runs the worker
-        // Downloads hirsel worker binary from GitHub releases and installs claude CLI
+        // Build init script that sets up the environment and runs the worker.
+        // Downloads hirsel worker binary from GitHub releases.
         // Note: Container runs as non-root user, so we install to /tmp and update PATH
-        // Note: $HOME/.claude is mounted from host for session persistence
         let init_script = format!(
             r#"#!/bin/sh
 # Hirsel Docker Worker Init Script
@@ -377,16 +380,10 @@ need_cmd uname
 need_cmd chmod
 need_cmd mkdir
 
-# Set up HOME directory for Claude CLI config
+# Set up HOME directory
 export HOME=/tmp/home
-mkdir -p "$HOME/.claude"
+mkdir -p "$HOME"
 echo "HOME=$HOME"
-
-# Write Claude credentials from env var if provided
-if [ -n "${{CLAUDE_CREDENTIALS_JSON:-}}" ]; then
-    echo "$CLAUDE_CREDENTIALS_JSON" > "$HOME/.claude/.credentials.json"
-    echo "Claude credentials configured"
-fi
 
 # =============================================================================
 # Install hirsel worker binary
@@ -418,39 +415,12 @@ if ! /tmp/bin/hirsel --version; then
 fi
 
 # =============================================================================
-# Install Claude CLI
-# =============================================================================
-
-# Clean up any stale /tmp/claude file (Claude needs this as a directory)
-[ -f /tmp/claude ] && rm -f /tmp/claude
-
-if ! has_cmd claude; then
-    echo "Installing Claude CLI..."
-    CLAUDE_VERSION=$(download "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest")
-    case "$ARCH" in
-        x86_64|amd64) PLATFORM="linux-x64" ;;
-        aarch64|arm64) PLATFORM="linux-arm64" ;;
-    esac
-    CLAUDE_URL="https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/$CLAUDE_VERSION/$PLATFORM/claude"
-    echo "Downloading Claude from: $CLAUDE_URL"
-    download "$CLAUDE_URL" "/tmp/bin/claude"
-    chmod +x /tmp/bin/claude
-fi
-
-# Verify claude
-if ! /tmp/bin/claude --version; then
-    echo "ERROR: claude binary verification failed" >&2
-    exit 1
-fi
-
-# =============================================================================
 # Final setup
 # =============================================================================
 
 echo ""
 echo "Installed tools:"
 echo "  hirsel: $(hirsel --version 2>&1)"
-echo "  claude: $(claude --version 2>&1)"
 
 # Fix git remote to use container path
 cd /work
@@ -493,9 +463,7 @@ exec env HOME=/tmp/home {worker_cmd}
             format!("{}:/work", work_dir_str),
             "-v".to_string(),
             format!("{}:/hirsel", run_dir_str),
-            // Mount session directory as HOME for Claude session persistence across container restarts
-            // This allows pause/resume to work by preserving Claude's session state
-            // Note: Mount to /tmp/home (not /tmp/home/.claude) so both .claude/ and .claude.json are writable
+            // Mount worker HOME for persistent runtime state across restarts.
             "-v".to_string(),
             format!("{}:/tmp/home", session_path_str),
             "-w".to_string(),
@@ -506,10 +474,6 @@ exec env HOME=/tmp/home {worker_cmd}
         // Note: HIRSEL_RUN, HIRSEL_WORKER, HIRSEL_API_URL are passed as CLI args to the worker.
         // The worker sets these as env vars for child processes (MCP server, agent).
         let mut env_to_pass: HashMap<String, String> = HashMap::new();
-        env_to_pass.insert(
-            "ACP_PERMISSION_MODE".to_string(),
-            "bypassPermissions".to_string(),
-        );
         env_to_pass.insert("HIRSEL_WORKER_SUBPROCESS".to_string(), "1".to_string());
         // Set HOME to /tmp/home where we mount the session directory and write credentials
         env_to_pass.insert("HOME".to_string(), "/tmp/home".to_string());
@@ -520,17 +484,10 @@ exec env HOME=/tmp/home {worker_cmd}
             env_to_pass.insert(k.clone(), v.clone());
         }
 
-        // Forward credentials from host if not in config
-        // Priority: config > env var > local OAuth file
-        if !env_to_pass.contains_key("ANTHROPIC_API_KEY") {
-            if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-                env_to_pass.insert("ANTHROPIC_API_KEY".to_string(), key);
-            }
-        }
-        // Pass full credentials JSON for Claude CLI (needs all fields, not just access token)
-        if !env_to_pass.contains_key("CLAUDE_CREDENTIALS_JSON") {
-            if let Some(creds_json) = super::super::credentials::get_local_oauth_credentials_raw() {
-                env_to_pass.insert("CLAUDE_CREDENTIALS_JSON".to_string(), creds_json);
+        // Forward Codex API key from host if not in config.
+        if !env_to_pass.contains_key("OPENAI_API_KEY") {
+            if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+                env_to_pass.insert("OPENAI_API_KEY".to_string(), key);
             }
         }
 

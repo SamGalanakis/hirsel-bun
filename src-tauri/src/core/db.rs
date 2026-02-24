@@ -42,7 +42,7 @@ const POOL_EVICTION_TIMEOUT: Duration = Duration::from_secs(600);
 /// - Projects
 /// - Credentials
 /// - Board state (board tree)
-/// - Gyp chat history
+/// - Shepherd chat history
 /// - Project messages
 pub async fn global_pool() -> &'static SqlitePool {
     // Use get_or_init with blocking initialization to avoid async deadlocks

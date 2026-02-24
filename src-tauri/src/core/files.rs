@@ -5,14 +5,15 @@
 //!
 //! ## Storage Abstraction
 //!
-//! The `Files` struct provides both synchronous methods for backward compatibility
-//! and async methods that work with the `FileStorage` trait for storage-agnostic
-//! operations. For new code, prefer the async methods with `FileStorage`.
+//! The `Files` struct provides path helpers plus async methods that work with the
+//! `FileStorage` trait for storage-agnostic operations. Prefer async methods for
+//! all I/O in new code.
 //!
 //! ```rust,ignore
 //! // Local filesystem (default)
 //! let files = Files::new("/path/to/run");
-//! files.write_spec("# My Spec")?; // sync, local only
+//! let storage = create_default_local_storage();
+//! files.write_spec_async(&storage, "# My Spec").await?;
 //!
 //! // With storage abstraction
 //! let storage = create_file_storage(&config.storage).await?;
@@ -592,6 +593,107 @@ impl Files {
     /// Path to the docs/ directory - contains project documentation.
     pub fn docs_dir(&self) -> PathBuf {
         self.run_dir.join("docs")
+    }
+
+    /// Initialize docs/ using FileStorage.
+    pub async fn init_docs_async(&self, storage: &dyn FileStorage) -> StorageResult<()> {
+        let docs_prefix = self.storage_path("docs");
+        storage.create_dir(&docs_prefix).await?;
+
+        let defaults = [
+            (
+                "architecture.md",
+                "# Architecture\n\nSystem design and module relationships.\n",
+            ),
+            (
+                "patterns.md",
+                "# Patterns\n\nCode patterns and conventions.\n",
+            ),
+            (
+                "gotchas.md",
+                "# Gotchas\n\nPitfalls and things to watch out for.\n",
+            ),
+            (
+                "decisions.md",
+                "# Decisions\n\nKey decisions and rationale.\n",
+            ),
+        ];
+
+        for (name, content) in defaults {
+            let path = self.storage_path(&format!("docs/{}", name));
+            if !storage.exists(&path).await? {
+                storage.write_string(&path, content).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Read docs/ using FileStorage.
+    pub async fn read_docs_async(
+        &self,
+        storage: &dyn FileStorage,
+        file: Option<&str>,
+    ) -> StorageResult<DocsContent> {
+        if let Some(name) = file {
+            let path = self.storage_path(&format!("docs/{}", name));
+            let content = storage.read_string(&path).await?;
+            return Ok(DocsContent::Single {
+                name: name.to_string(),
+                content,
+            });
+        }
+
+        let docs_prefix = self.storage_path("docs/");
+        let mut files = Vec::new();
+        for path in storage.list(&docs_prefix).await? {
+            if !path.ends_with(".md") {
+                continue;
+            }
+
+            let name = path
+                .strip_prefix(&docs_prefix)
+                .unwrap_or(&path)
+                .trim_start_matches('/')
+                .to_string();
+
+            let content = storage.read_string(&path).await?;
+            files.push(DocFile { name, content });
+        }
+        files.sort_by(|a, b| a.name.cmp(&b.name));
+
+        Ok(DocsContent::All { files })
+    }
+
+    /// Compute docs hashes using FileStorage.
+    pub async fn get_docs_hashes_async(
+        &self,
+        storage: &dyn FileStorage,
+    ) -> StorageResult<std::collections::HashMap<String, String>> {
+        use std::collections::HashMap;
+        use std::hash::{Hash, Hasher};
+
+        let docs_prefix = self.storage_path("docs/");
+        let mut hashes = HashMap::new();
+
+        for path in storage.list(&docs_prefix).await? {
+            if !path.ends_with(".md") {
+                continue;
+            }
+
+            let name = path
+                .strip_prefix(&docs_prefix)
+                .unwrap_or(&path)
+                .trim_start_matches('/')
+                .to_string();
+
+            let content = storage.read_string(&path).await?;
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            content.hash(&mut hasher);
+            hashes.insert(name, format!("{:016x}", hasher.finish()));
+        }
+
+        Ok(hashes)
     }
 
     /// Initialize the docs/ directory with default documentation files.

@@ -47,8 +47,7 @@ use thiserror::Error;
 use std::collections::HashMap;
 
 use crate::core::api_types::{
-    ConfigResponse, Eval, HistoryEntry, Message, RunDetail, RunSummary, ThreadSummary, Worker,
-    WorkerEventsResponse,
+    ConfigResponse, Eval, HistoryEntry, RunDetail, RunSummary, Worker, WorkerEventsResponse,
 };
 use crate::core::config::{self, Config};
 use crate::core::draft::StartingPoint;
@@ -103,8 +102,8 @@ impl From<crate::core::project::ProjectError> for OrchestratorError {
     }
 }
 
-impl From<crate::core::gyp_chat::GypChatError> for OrchestratorError {
-    fn from(e: crate::core::gyp_chat::GypChatError) -> Self {
+impl From<crate::core::shepherd_chat::ShepherdChatError> for OrchestratorError {
+    fn from(e: crate::core::shepherd_chat::ShepherdChatError) -> Self {
         OrchestratorError::Other(e.to_string())
     }
 }
@@ -135,13 +134,6 @@ pub struct DeliverRunRequest {
     pub branch: Option<String>,
 }
 
-/// Send message request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SendMessageRequest {
-    pub content: String,
-}
-
 /// Server health response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -158,59 +150,6 @@ pub struct TailscaleOAuth {
     pub client_secret: String,
     #[serde(default)]
     pub tag: Option<String>,
-}
-
-/// Create run request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateRunRequest {
-    /// Name of the run
-    pub name: String,
-    /// Spec content (markdown)
-    pub spec: String,
-    /// Starting point for workspace (how to initialize the work directory)
-    /// If None, expects files to be uploaded via upload_files()
-    pub starting_point: Option<StartingPoint>,
-    /// Optional runner name (default: from server config)
-    pub runner: Option<String>,
-    /// Maximum workers to autoscale to (default: 5)
-    pub worker_scale: Option<u32>,
-    /// Time limit in minutes
-    pub time_limit_minutes: Option<u32>,
-    /// Human-in-the-loop mode
-    pub human_in_the_loop: Option<bool>,
-    /// Eval file content (markdown)
-    pub eval: Option<String>,
-    /// Tailscale OAuth credentials for worker hosts to join tailnet
-    pub tailscale_oauth: Option<TailscaleOAuth>,
-}
-
-/// Create run response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateRunResponse {
-    pub name: String,
-    pub run_dir: String,
-    pub files_url: String,
-}
-
-/// Spawn workers request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SpawnWorkersRequest {
-    /// Number of workers to spawn
-    pub count: u32,
-    /// Task ID to assign to the first spawned worker (for leader spawning)
-    #[serde(default)]
-    pub assigned_task_id: Option<String>,
-}
-
-/// Spawn workers response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SpawnWorkersResponse {
-    /// Names of spawned workers
-    pub workers: Vec<String>,
 }
 
 /// Request to spawn a single worker (used by daemon for lifecycle management)
@@ -345,24 +284,6 @@ pub trait Orchestrator: Send + Sync {
     ) -> OrchestratorResult<WorkerEventsResponse>;
 
     // -------------------------------------------------------------------------
-    // Messages
-    // -------------------------------------------------------------------------
-
-    /// List message threads for a run
-    async fn list_threads(&self, run: &str) -> OrchestratorResult<Vec<ThreadSummary>>;
-
-    /// Get messages in a thread
-    async fn get_messages(&self, run: &str, thread: &str) -> OrchestratorResult<Vec<Message>>;
-
-    /// Send a message to a thread
-    async fn send_message(
-        &self,
-        run: &str,
-        thread: &str,
-        content: &str,
-    ) -> OrchestratorResult<Message>;
-
-    // -------------------------------------------------------------------------
     // Evals
     // -------------------------------------------------------------------------
 
@@ -425,50 +346,6 @@ pub trait Orchestrator: Send + Sync {
     /// List runs for a project
     async fn list_project_runs(&self, project_id: i64) -> OrchestratorResult<Vec<RunSummary>>;
 
-    // -------------------------------------------------------------------------
-    // Run Creation (for CLI/GUI use)
-    // -------------------------------------------------------------------------
-
-    /// Create a new run (sets up directories and state, doesn't spawn workers)
-    ///
-    /// This method creates the run directory, initializes the database,
-    /// writes the spec file, and registers the initial worker. After this,
-    /// call `upload_files()` to provide project files, then `spawn_workers()`.
-    async fn create_run(&self, request: CreateRunRequest) -> OrchestratorResult<CreateRunResponse> {
-        let _ = request;
-        Err(OrchestratorError::Other(
-            "create_run not implemented for this orchestrator".to_string(),
-        ))
-    }
-
-    /// Upload project files for a run (tarball)
-    ///
-    /// For LocalOrchestrator: Extracts tarball to work/ directory
-    /// For RemoteOrchestrator: HTTP POST to server
-    async fn upload_files(&self, run_name: &str, tarball: Vec<u8>) -> OrchestratorResult<()> {
-        let _ = (run_name, tarball);
-        Err(OrchestratorError::Other(
-            "upload_files not implemented for this orchestrator".to_string(),
-        ))
-    }
-
-    /// Spawn workers for a run
-    ///
-    /// Creates and starts the specified number of workers.
-    /// The run must have files uploaded first (for remote workers).
-    /// If `assigned_task_id` is provided, the first spawned worker will be assigned that task.
-    async fn spawn_workers(
-        &self,
-        run_name: &str,
-        count: u32,
-        assigned_task_id: Option<String>,
-    ) -> OrchestratorResult<SpawnWorkersResponse> {
-        let _ = (run_name, count, assigned_task_id);
-        Err(OrchestratorError::Other(
-            "spawn_workers not implemented for this orchestrator".to_string(),
-        ))
-    }
-
     /// Start a run (unified entry point for CLI and GUI)
     ///
     /// This is the preferred method for starting runs as it combines:
@@ -479,9 +356,6 @@ pub trait Orchestrator: Send + Sync {
     /// For LocalOrchestrator: Handles all operations locally
     /// For RemoteOrchestrator: Delegates to server via HTTP
     ///
-    /// Note: The existing `create_run` + `upload_files` + `spawn_workers` flow
-    /// is kept for backward compatibility with remote workers that need
-    /// fine-grained control over the process.
     async fn start_run(&self, request: StartRunRequest) -> OrchestratorResult<RunDetail> {
         let _ = request;
         Err(OrchestratorError::Other(

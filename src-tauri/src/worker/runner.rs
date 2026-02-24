@@ -81,7 +81,7 @@ impl WorkerConfig {
         let agent_command = std::env::var("HIRSEL_AGENT_COMMAND")
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_else(|| vec!["hirsel".to_string(), "__acp-bridge".to_string()]);
+            .unwrap_or_else(|| vec!["hirsel".to_string(), "__worker-run".to_string()]);
 
         // Get run directory - check HIRSEL_RUN_DIR first (for Docker/custom mounts),
         // then fall back to HIRSEL_ROOT/runs/run_name
@@ -1008,19 +1008,6 @@ impl WorkerRunner {
     }
 
     // =========================================================================
-    // Work Done (alias for task_done)
-    // =========================================================================
-
-    /// Signal that worker has completed its task and is ready for new work.
-    ///
-    /// This is an alias for `task_done()` that auto-detects the assigned task.
-    /// Kept for backward compatibility with MCP tools.
-    pub fn work_done(&self) -> WorkerResult<String> {
-        // task_done with None will auto-detect the claimed task
-        self.task_done(None)
-    }
-
-    // =========================================================================
     // Time Status
     // =========================================================================
 
@@ -1052,8 +1039,13 @@ impl WorkerRunner {
     ///
     /// Returns all docs or a specific file from the run's docs/ directory.
     pub fn read_docs(&self, file: Option<&str>) -> WorkerResult<String> {
+        use crate::core::storage::create_default_local_storage;
+
         let files = Files::new(&self.config.run_dir);
-        let docs = files.read_docs(file).map_err(WorkerError::Io)?;
+        let storage = create_default_local_storage();
+        let docs = self
+            .run_async(files.read_docs_async(&storage, file))
+            .map_err(|e| WorkerError::Config(format!("Failed to read docs: {}", e)))?;
 
         Ok(serde_json::to_string(&docs).unwrap_or_else(|_| "{}".to_string()))
     }
@@ -1149,7 +1141,7 @@ impl WorkerRunner {
         }
 
         match command {
-            WorkerCommands::Done => self.work_done(),
+            WorkerCommands::Done => self.task_done(None),
 
             WorkerCommands::Task(task_cmd) => match task_cmd {
                 TaskSubcommands::List => self.get_task_tree(),
@@ -1182,7 +1174,7 @@ mod tests {
             "achilles".into(),
             "test-run".into(),
             PathBuf::from("/tmp/test-run"),
-            vec!["hirsel".to_string(), "__acp-bridge".to_string()],
+            vec!["hirsel".to_string(), "__worker-run".to_string()],
         );
         assert_eq!(config.worker_name, "achilles");
         assert_eq!(config.run_name, "test-run");

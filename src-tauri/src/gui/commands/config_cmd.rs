@@ -6,9 +6,11 @@ use super::types::{ConfigDefaults, ConfigUpdateRequest};
 use super::ResultExt;
 use crate::core::api_types::ConfigResponse;
 use crate::core::config;
+use crate::core::credentials::{CodexOAuthCredentials, CredentialStore};
 use crate::core::orchestrator::create_orchestrator;
 use crate::core::tailscale::{get_tailscale_status, is_tailscale_connected};
-use serde::Serialize;
+use lash_core::oauth;
+use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::time::Instant;
 
@@ -73,23 +75,9 @@ pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
         cfg.coordinator_port = port;
     }
 
-    // Apply auth updates
-    if let Some(auth_update) = updates.auth {
-        if let Some(method) = auth_update.default_method {
-            cfg.auth.default_method = method.into();
-        }
-        if let Some(claude) = auth_update.claude {
-            cfg.auth.claude = Some(claude.into());
-        }
-        if let Some(gemini) = auth_update.gemini {
-            cfg.auth.gemini = Some(gemini.into());
-        }
-        if let Some(codex) = auth_update.codex {
-            cfg.auth.codex = Some(codex.into());
-        }
-        if let Some(goose) = auth_update.goose {
-            cfg.auth.goose = Some(goose.into());
-        }
+    // Apply LLM updates
+    if let Some(llm_update) = updates.llm {
+        llm_update.apply(&mut cfg.llm);
     }
 
     // Apply runners updates (replace entire map if provided)
@@ -134,6 +122,102 @@ pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
     std::fs::write(&config_path, toml_str).context("Failed to write config")?;
 
     Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexDeviceStartResponse {
+    pub device_auth_id: String,
+    pub user_code: String,
+    pub verify_url: String,
+    pub interval: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexDevicePollResponse {
+    pub status: String,
+    pub authorization_code: Option<String>,
+    pub code_verifier: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexDeviceExchangeResponse {
+    pub status: String,
+    pub expires_at: u64,
+}
+
+/// Start Codex device-code OAuth flow for GUI.
+#[tracing::instrument]
+#[tauri::command]
+pub async fn codex_device_start_gui() -> Result<CodexDeviceStartResponse, String> {
+    let device = oauth::codex_request_device_code()
+        .await
+        .map_err(|e| format!("Failed to start Codex device auth: {}", e))?;
+
+    Ok(CodexDeviceStartResponse {
+        device_auth_id: device.device_auth_id,
+        user_code: device.user_code,
+        verify_url: oauth::CODEX_DEVICE_VERIFY_URL.to_string(),
+        interval: device.interval,
+    })
+}
+
+/// Poll Codex device authorization status for GUI.
+#[tracing::instrument(skip(user_code))]
+#[tauri::command]
+pub async fn codex_device_poll_gui(
+    device_auth_id: String,
+    user_code: String,
+) -> Result<CodexDevicePollResponse, String> {
+    let polled = oauth::codex_poll_device_auth(&device_auth_id, &user_code)
+        .await
+        .map_err(|e| format!("Failed to poll Codex device auth: {}", e))?;
+
+    match polled {
+        Some((authorization_code, code_verifier)) => Ok(CodexDevicePollResponse {
+            status: "approved".to_string(),
+            authorization_code: Some(authorization_code),
+            code_verifier: Some(code_verifier),
+        }),
+        None => Ok(CodexDevicePollResponse {
+            status: "pending".to_string(),
+            authorization_code: None,
+            code_verifier: None,
+        }),
+    }
+}
+
+/// Exchange Codex authorization code for tokens and store credentials for GUI.
+#[tracing::instrument(skip(authorization_code, code_verifier))]
+#[tauri::command]
+pub async fn codex_device_exchange_gui(
+    authorization_code: String,
+    code_verifier: String,
+) -> Result<CodexDeviceExchangeResponse, String> {
+    let tokens = oauth::codex_exchange_code(&authorization_code, &code_verifier)
+        .await
+        .map_err(|e| format!("Failed to exchange Codex auth code: {}", e))?;
+
+    let store = CredentialStore::open()
+        .await
+        .map_err(|e| format!("Failed to open credential store: {}", e))?;
+
+    store
+        .store_codex_oauth(&CodexOAuthCredentials {
+            access_token: tokens.access_token,
+            refresh_token: tokens.refresh_token,
+            expires_at: tokens.expires_at,
+            account_id: tokens.account_id,
+        })
+        .await
+        .map_err(|e| format!("Failed to store Codex tokens: {}", e))?;
+
+    Ok(CodexDeviceExchangeResponse {
+        status: "ok".to_string(),
+        expires_at: tokens.expires_at,
+    })
 }
 
 /// Tailscale connection info for the "This Machine" feature

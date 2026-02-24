@@ -286,7 +286,7 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
   };
 
   const isCheck = () => props.node.kind === 'check';
-  const typeLabel = () => (isCheck() ? 'Check' : 'Task');
+  const typeLabel = () => (isCheck() ? 'Check' : 'Issue');
 
   return (
     <div
@@ -469,7 +469,7 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
                 type="text"
                 value={validates()}
                 onInput={(e) => setValidates(e.currentTarget.value)}
-                placeholder="task-id-1, task-id-2"
+                placeholder="issue-id-1, issue-id-2"
                 class="flex-1 px-2.5 py-1.5 rounded text-xs font-mono bg-pasture-900 text-wool-200 placeholder-wool-600 focus:outline-none focus:ring-1 focus:ring-sage/30"
                 style={{ border: `1px solid ${sage(0.4)}` }}
               />
@@ -486,7 +486,7 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
                   type="text"
                   value={blockedBy()}
                   onInput={(e) => setBlockedBy(e.currentTarget.value)}
-                  placeholder="task-id-1, task-id-2"
+                  placeholder="issue-id-1, issue-id-2"
                   class="flex-1 px-2.5 py-1.5 rounded text-xs font-mono bg-pasture-900 text-wool-200 placeholder-wool-600 focus:outline-none focus:ring-1 focus:ring-amber-500/30"
                   style={{ border: `1px solid ${amber(0.4)}` }}
                 />

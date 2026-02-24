@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use super::{
-    AuthMethod, Config, ConfigError, GitProvider, OrchestratorAccess, OrchestratorMode, S3Config,
+    Config, ConfigError, GitProvider, LlmProvider, OrchestratorAccess, OrchestratorMode, S3Config,
     StorageBackend, StorageProvider,
 };
 use crate::core::runner::{HostConfig, HostConfigOrShortcut};
@@ -51,8 +51,8 @@ pub fn save_config(config: &Config, config_path: &Path) -> Result<(), ConfigErro
     ));
     output.push('\n');
 
-    // Auth section
-    write_auth_section(&mut output, config);
+    // LLM section
+    write_llm_section(&mut output, config);
 
     // Runners section
     write_runners_section(&mut output, config);
@@ -116,41 +116,17 @@ pub fn save_config(config: &Config, config_path: &Path) -> Result<(), ConfigErro
     Ok(())
 }
 
-fn write_auth_section(output: &mut String, config: &Config) {
-    output.push_str("[auth]\n");
+fn write_llm_section(output: &mut String, config: &Config) {
+    output.push_str("[llm]\n");
     output.push_str(&format!(
-        "default_method = \"{}\"\n",
-        match config.auth.default_method {
-            AuthMethod::Env => "env",
-            AuthMethod::ApiKey => "api_key",
-            AuthMethod::OAuth => "oauth",
+        "provider = \"{}\"\n",
+        match config.llm.provider {
+            LlmProvider::Codex => "codex",
+            LlmProvider::Openrouter => "openrouter",
         }
     ));
-
-    // Agent-specific auth
-    for (name, auth) in [
-        ("claude", &config.auth.claude),
-        ("gemini", &config.auth.gemini),
-        ("codex", &config.auth.codex),
-        ("goose", &config.auth.goose),
-    ] {
-        if let Some(agent_auth) = auth {
-            output.push_str(&format!("\n[auth.{}]\n", name));
-            output.push_str(&format!(
-                "method = \"{}\"\n",
-                match agent_auth.method {
-                    AuthMethod::Env => "env",
-                    AuthMethod::ApiKey => "api_key",
-                    AuthMethod::OAuth => "oauth",
-                }
-            ));
-            if let Some(ref key) = agent_auth.api_key {
-                output.push_str(&format!("api_key = \"{}\"\n", key));
-            }
-            if let Some(ref var) = agent_auth.env_var {
-                output.push_str(&format!("env_var = \"{}\"\n", var));
-            }
-        }
+    if let Some(base_url) = &config.llm.openrouter_base_url {
+        output.push_str(&format!("openrouter_base_url = \"{}\"\n", base_url));
     }
     output.push('\n');
 }
@@ -334,8 +310,8 @@ fn write_service_workers_section(output: &mut String, config: &Config) {
     let has_content = sw.runner.is_some()
         || sw.scribe.runner.is_some()
         || sw.scribe.idle_timeout_seconds.is_some()
-        || sw.gyp.runner.is_some()
-        || sw.gyp.idle_timeout_seconds.is_some();
+        || sw.shepherd.runner.is_some()
+        || sw.shepherd.idle_timeout_seconds.is_some();
 
     if has_content {
         output.push_str("[service_workers]\n");
@@ -355,13 +331,13 @@ fn write_service_workers_section(output: &mut String, config: &Config) {
             }
         }
 
-        // Gyp section
-        if sw.gyp.runner.is_some() || sw.gyp.idle_timeout_seconds.is_some() {
-            output.push_str("\n[service_workers.gyp]\n");
-            if let Some(ref runner) = sw.gyp.runner {
+        // Shepherd section
+        if sw.shepherd.runner.is_some() || sw.shepherd.idle_timeout_seconds.is_some() {
+            output.push_str("\n[service_workers.shepherd]\n");
+            if let Some(ref runner) = sw.shepherd.runner {
                 output.push_str(&format!("runner = \"{}\"\n", runner));
             }
-            if let Some(timeout) = sw.gyp.idle_timeout_seconds {
+            if let Some(timeout) = sw.shepherd.idle_timeout_seconds {
                 output.push_str(&format!("idle_timeout_seconds = {}\n", timeout));
             }
         }

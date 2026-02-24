@@ -21,14 +21,14 @@
 //! strategy.restore(&handle, &work_dir).await?;
 //! ```
 
+mod agent_session;
 mod archive;
-mod claude_session;
 mod noop;
 #[cfg(feature = "s3-storage")]
 mod s3;
 
+pub use agent_session::{agent_session_dir, host_session_path};
 pub use archive::{ArchiveHandle, ArchiveResult, ArchiveStrategy};
-pub use claude_session::{claude_session_dir, host_session_path};
 pub use noop::NoOpArchiveStrategy;
 #[cfg(feature = "s3-storage")]
 pub use s3::S3ArchiveStrategy;
@@ -51,7 +51,7 @@ pub struct WorkerStateHandle {
     /// Snapshot of the work directory (for ephemeral runners).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub work_dir: Option<WorkDirSnapshot>,
-    /// Snapshot of the agent session (e.g., ~/.claude).
+    /// Snapshot of the agent session (e.g., ~/.codex).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_session: Option<AgentSnapshot>,
 }
@@ -125,11 +125,11 @@ impl WorkDirSnapshot {
 
 /// Snapshot of an agent's session state.
 ///
-/// Used to persist and restore agent session data (e.g., Claude's `.claude` directory)
+/// Used to persist and restore agent session data (e.g., `.codex`)
 /// across pause/resume cycles.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentSnapshot {
-    /// Type of agent (e.g., "claude").
+    /// Type of agent (e.g., "codex").
     pub agent_type: String,
     /// Session ID for resuming the agent session.
     pub session_id: String,
@@ -268,7 +268,7 @@ mod tests {
 
     #[test]
     fn test_agent_snapshot_serialization() {
-        let snapshot = AgentSnapshot::new("claude", "session-123", "s3://bucket/key");
+        let snapshot = AgentSnapshot::new("codex", "session-123", "s3://bucket/key");
 
         let json = serde_json::to_string(&snapshot).unwrap();
         let restored: AgentSnapshot = serde_json::from_str(&json).unwrap();

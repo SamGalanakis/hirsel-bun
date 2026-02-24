@@ -1,4 +1,4 @@
-//! Board MCP server for Gyp agent
+//! Board MCP server for Shepherd agent
 //!
 //! Exposes board structure manipulation via MCP tools. The agent uses these tools
 //! instead of editing board.json directly, which prevents ID collisions and
@@ -301,7 +301,11 @@ impl BoardMcpServer {
             .map(|nodes| {
                 nodes
                     .iter()
-                    .filter(|n| n.kind == NodeKind::Task || n.kind == NodeKind::Feature)
+                    .filter(|n| {
+                        n.kind == NodeKind::Task
+                            || n.kind == NodeKind::Feature
+                            || n.kind == NodeKind::Plan
+                    })
                     .map(|n| n.id.clone())
                     .collect()
             })
@@ -538,6 +542,7 @@ impl BoardMcpServer {
             name: name.to_string(),
             kind: NodeKind::Feature,
             content: content.to_string(),
+            difficulty: crate::core::delta::BoardNodeDifficulty::Medium,
             validated_by: validated_by.unwrap_or_default(),
             blocked_by: blocked_by.unwrap_or_default(),
             x: None,
@@ -639,6 +644,7 @@ impl BoardMcpServer {
             name: name.to_string(),
             kind: NodeKind::Task,
             content: content.to_string(),
+            difficulty: crate::core::delta::BoardNodeDifficulty::Medium,
             validated_by: validated_by.unwrap_or_default(),
             blocked_by: blocked_by.unwrap_or_default(),
             x: None,
@@ -693,6 +699,7 @@ impl BoardMcpServer {
         let req = UpdateBoardNodeRequest {
             name: name.map(String::from),
             content: None, // Content edited via files
+            difficulty: None,
             validated_by,
             blocked_by,
             x: None,
@@ -807,6 +814,7 @@ impl BoardMcpServer {
             name: name.to_string(),
             kind: NodeKind::Check,
             content: content.to_string(),
+            difficulty: crate::core::delta::BoardNodeDifficulty::Medium,
             validated_by: vec![], // Checks don't have validated_by
             blocked_by: vec![],
             x: None,

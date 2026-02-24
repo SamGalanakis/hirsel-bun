@@ -9,8 +9,7 @@ use std::path::Path;
 use super::ResultExt;
 use crate::core::config;
 use crate::core::delta::DeltaState;
-use crate::core::draft::StartingPoint;
-use crate::core::project::ProjectStore;
+use crate::core::route::RouteStore;
 
 /// Source of the documentation
 #[derive(Debug, Clone, Serialize)]
@@ -55,9 +54,8 @@ pub async fn get_project_docs(
     project_id: i64,
     route_id: i64,
 ) -> Result<ProjectDocsResponse, String> {
-    // Get project to find workspace and docs path
-    let store = ProjectStore::open().await.str_err()?;
-    let project = store.get_project(project_id).await.str_err()?;
+    let route_store = RouteStore::new(project_id).await.str_err()?;
+    let route = route_store.get_route(route_id).await.str_err()?;
 
     // Check for active run
     let delta_state = DeltaState::with_route(project_id, route_id);
@@ -87,13 +85,19 @@ pub async fn get_project_docs(
     }
 
     // Fall back to workspace docs
-    let workspace_path = match &project.starting_point {
-        StartingPoint::LocalFolder { path } => Some(path.clone()),
-        StartingPoint::GitRepo { .. } | StartingPoint::Greenfield => None,
+    let default_repo = if let Some(default_id) = route.default_repo_id {
+        route.repos.iter().find(|r| r.id == default_id)
+    } else {
+        route.repos.first()
     };
+    let workspace_path = default_repo.and_then(|repo| match &repo.starting_point {
+        crate::core::draft::StartingPoint::LocalFolder { path } => Some(path.clone()),
+        crate::core::draft::StartingPoint::GitRepo { .. }
+        | crate::core::draft::StartingPoint::Greenfield => None,
+    });
 
     if let Some(workspace) = workspace_path {
-        let docs_dir = Path::new(&workspace).join(&project.docs_path);
+        let docs_dir = Path::new(&workspace).join(&route.docs_path);
         if docs_dir.exists() && docs_dir.is_dir() {
             let files = read_docs_from_dir(&docs_dir)?;
             return Ok(ProjectDocsResponse {

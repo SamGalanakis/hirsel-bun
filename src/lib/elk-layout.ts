@@ -24,7 +24,7 @@ const elk = new ELK();
 export interface LayoutInputNode {
   id: string;
   name: string;
-  kind: 'feature' | 'task' | 'check';
+  kind: 'feature' | 'task' | 'check' | 'plan';
   isRoot: boolean;
   blockedBy: string[];
   validates: string[];

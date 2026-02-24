@@ -9,6 +9,7 @@
 
 mod agent;
 mod git;
+mod llm;
 mod loader;
 mod orchestrator;
 pub mod paths;
@@ -42,11 +43,12 @@ fn block_on<F: Future>(f: F) -> F::Output {
 // Re-export all public types
 pub use agent::AgentConfig;
 pub use git::{GitConfig, GitProvider};
+pub use llm::{LlmConfig, LlmProvider};
 pub use orchestrator::{OrchestratorAccess, OrchestratorMode, OrchestratorProfile};
 pub use paths::{global_db_path, hirsel_dir, project_assets_dir, run_dir, run_exists, runs_dir};
 pub use storage::{S3Config, StorageBackend, StorageConfig, StorageProvider};
 pub use store::{ConfigStore, ConfigStoreError, PartialConfig};
-pub use types::{AgentAuth, AgentType, AuthConfig, AuthMethod};
+pub use types::AgentType;
 pub use workers::WorkerScale;
 
 // Re-export model context window constants
@@ -142,7 +144,7 @@ fn default_scribe_idle_timeout() -> u32 {
     300 // 5 minutes
 }
 
-fn default_gyp_idle_timeout() -> u32 {
+fn default_shepherd_idle_timeout() -> u32 {
     600 // 10 minutes
 }
 
@@ -164,7 +166,7 @@ fn default_profiles() -> HashMap<String, OrchestratorProfile> {
     profiles
 }
 
-/// Configuration for a single service worker (scribe or gyp)
+/// Configuration for a single service worker (scribe or shepherd)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ServiceWorkerConfig {
     /// Runner name override for this service worker
@@ -175,7 +177,7 @@ pub struct ServiceWorkerConfig {
     pub idle_timeout_seconds: Option<u32>,
 }
 
-/// Configuration for service workers (scribe, gyp, conflict_resolver)
+/// Configuration for service workers (scribe, shepherd, conflict_resolver)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ServiceWorkersConfig {
     /// Default runner for all service workers (falls back to local)
@@ -184,9 +186,9 @@ pub struct ServiceWorkersConfig {
     /// Scribe service worker configuration
     #[serde(default)]
     pub scribe: ServiceWorkerConfig,
-    /// Gyp service worker configuration
+    /// Shepherd service worker configuration
     #[serde(default)]
-    pub gyp: ServiceWorkerConfig,
+    pub shepherd: ServiceWorkerConfig,
     /// Conflict resolver service worker configuration
     #[serde(default)]
     pub conflict_resolver: ServiceWorkerConfig,
@@ -198,9 +200,9 @@ impl ServiceWorkersConfig {
         self.scribe.runner.as_deref().or(self.runner.as_deref())
     }
 
-    /// Get the effective runner for gyp
-    pub fn gyp_runner(&self) -> Option<&str> {
-        self.gyp.runner.as_deref().or(self.runner.as_deref())
+    /// Get the effective runner for shepherd
+    pub fn shepherd_runner(&self) -> Option<&str> {
+        self.shepherd.runner.as_deref().or(self.runner.as_deref())
     }
 
     /// Get the idle timeout for scribe in seconds
@@ -210,11 +212,11 @@ impl ServiceWorkersConfig {
             .unwrap_or(default_scribe_idle_timeout())
     }
 
-    /// Get the idle timeout for gyp in seconds
-    pub fn gyp_idle_timeout(&self) -> u32 {
-        self.gyp
+    /// Get the idle timeout for shepherd in seconds
+    pub fn shepherd_idle_timeout(&self) -> u32 {
+        self.shepherd
             .idle_timeout_seconds
-            .unwrap_or(default_gyp_idle_timeout())
+            .unwrap_or(default_shepherd_idle_timeout())
     }
 
     /// Get the effective runner for conflict resolver
@@ -262,7 +264,7 @@ pub struct Config {
     pub coordinator_port: u16,
 
     #[serde(default)]
-    pub auth: AuthConfig,
+    pub llm: LlmConfig,
 
     /// Named runners that can be referenced by workers
     #[serde(default)]
@@ -305,7 +307,7 @@ pub struct Config {
     #[serde(default = "default_scribe_batch_window")]
     pub scribe_batch_window_seconds: u32,
 
-    /// Service workers configuration (scribe, gyp)
+    /// Service workers configuration (scribe, shepherd, conflict_resolver)
     #[serde(default)]
     pub service_workers: ServiceWorkersConfig,
 
@@ -335,7 +337,7 @@ impl Default for Config {
             human_in_the_loop: default_human_in_the_loop(),
             context_warning_threshold: default_context_warning_threshold(),
             coordinator_port: default_coordinator_port(),
-            auth: AuthConfig::default(),
+            llm: LlmConfig::default(),
             runners: HashMap::new(),
             default_runner: None,
             worker_runners: HashMap::new(),
@@ -441,8 +443,8 @@ impl Config {
         if let Some(coordinator_port) = partial.coordinator_port {
             self.coordinator_port = coordinator_port;
         }
-        if let Some(auth) = partial.auth {
-            self.auth = auth;
+        if let Some(llm) = partial.llm {
+            self.llm = llm;
         }
         if let Some(runners) = partial.runners {
             self.runners = runners;
@@ -649,28 +651,6 @@ impl Config {
             self.agent.command = cmd;
         }
     }
-
-    /// Update auth settings for a specific agent
-    pub fn update_agent_auth(&mut self, agent: &str, auth: AgentAuth) {
-        match agent {
-            "claude" => self.auth.claude = Some(auth),
-            "gemini" => self.auth.gemini = Some(auth),
-            "codex" => self.auth.codex = Some(auth),
-            "goose" => self.auth.goose = Some(auth),
-            _ => {}
-        }
-    }
-
-    /// Delete auth settings for a specific agent
-    pub fn delete_agent_auth(&mut self, agent: &str) {
-        match agent {
-            "claude" => self.auth.claude = None,
-            "gemini" => self.auth.gemini = None,
-            "codex" => self.auth.codex = None,
-            "goose" => self.auth.goose = None,
-            _ => {}
-        }
-    }
 }
 
 /// Test utilities for setting up isolated hirsel environments.
@@ -700,8 +680,7 @@ pub mod testing {
 
     /// A test environment with isolated HIRSEL_ROOT.
     pub struct TestEnv {
-        #[allow(dead_code)]
-        temp_dir: TempDir,
+        _temp_dir: TempDir,
         prev_root: Option<String>,
     }
 
@@ -764,7 +743,7 @@ pub mod testing {
             std::env::set_var("HIRSEL_ROOT", temp_dir.path());
 
             TestEnv {
-                temp_dir,
+                _temp_dir: temp_dir,
                 prev_root,
             }
         }

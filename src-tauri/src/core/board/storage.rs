@@ -105,10 +105,7 @@ impl BoardStorage for LocalBoardStorage {
             if path.extension().map(|e| e == "json").unwrap_or(false) {
                 if let Some(stem) = path.file_stem() {
                     let slug = stem.to_string_lossy().to_string();
-                    // Skip legacy board.json
-                    if slug != "board" {
-                        slugs.push(slug);
-                    }
+                    slugs.push(slug);
                 }
             }
         }

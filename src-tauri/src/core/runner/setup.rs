@@ -117,6 +117,7 @@ pub fn generate_worker_start_script(
     leader_name: Option<&str>,
     teammates: Option<&[String]>,
     env_vars: &[(String, String)],
+    is_plan_task: bool,
 ) -> String {
     // Build environment exports
     let mut env_exports = vec![
@@ -124,7 +125,6 @@ pub fn generate_worker_start_script(
         format!(r#"export HIRSEL_WORKER="{}""#, worker_name),
         format!(r#"export HIRSEL_API_URL="{}""#, api_url),
         "export HIRSEL_REMOTE=1".to_string(),
-        "export ACP_PERMISSION_MODE=bypassPermissions".to_string(),
     ];
 
     // Add custom environment variables
@@ -147,6 +147,7 @@ pub fn generate_worker_start_script(
         .map(|t| format!("--teammates '{}'", t.join(",")))
         .filter(|s| !s.is_empty())
         .unwrap_or_default();
+    let plan_task_arg = if is_plan_task { "--plan-task" } else { "" };
 
     format!(
         r#"
@@ -162,7 +163,7 @@ nohup hirsel __remote-worker \
     --worker-name '{worker_name}' \
     --work-dir '{work_dir}' \
     --agent-command '{agent_command}' \
-    {leader_arg} {leader_name_arg} {teammates_arg} \
+    {leader_arg} {leader_name_arg} {teammates_arg} {plan_task_arg} \
     > worker.log 2>&1 &
 echo $!
 "#,
@@ -175,6 +176,7 @@ echo $!
         leader_arg = leader_arg,
         leader_name_arg = leader_name_arg,
         teammates_arg = teammates_arg,
+        plan_task_arg = plan_task_arg,
     )
 }
 
@@ -194,6 +196,7 @@ pub fn generate_docker_worker_script(
     teammates: Option<&[String]>,
     env_vars: &[(String, String)],
     docker_image: &str,
+    is_plan_task: bool,
 ) -> String {
     // Get coordinator version for worker binary compatibility
     let version = crate::version::VERSION;
@@ -204,7 +207,6 @@ pub fn generate_docker_worker_script(
         format!("-e HIRSEL_WORKER={}", worker_name),
         format!("-e HIRSEL_API_URL={}", api_url),
         "-e HIRSEL_REMOTE=1".to_string(),
-        "-e ACP_PERMISSION_MODE=bypassPermissions".to_string(),
         format!("-e HIRSEL_TAG=v{}", version),
         "-e HIRSEL_BINARY_TYPE=worker".to_string(),
     ];
@@ -230,6 +232,7 @@ pub fn generate_docker_worker_script(
         .map(|t| format!("--teammates '{}'", t.join(",")))
         .filter(|s| !s.is_empty())
         .unwrap_or_default();
+    let plan_task_arg = if is_plan_task { "--plan-task" } else { "" };
 
     // Container name for lifecycle management
     let container_name = format!("hirsel-{}-{}", run_name, worker_name);
@@ -253,7 +256,7 @@ exec hirsel __remote-worker \
     --worker-name '{worker_name}' \
     --work-dir '/work' \
     --agent-command '{agent_command}' \
-    {leader_arg} {leader_name_arg} {teammates_arg}
+    {leader_arg} {leader_name_arg} {teammates_arg} {plan_task_arg}
 "#,
         api_url = api_url,
         run_name = run_name,
@@ -262,6 +265,7 @@ exec hirsel __remote-worker \
         leader_arg = leader_arg,
         leader_name_arg = leader_name_arg,
         teammates_arg = teammates_arg,
+        plan_task_arg = plan_task_arg,
     );
 
     // Escape init script for shell embedding
@@ -292,7 +296,7 @@ docker run -d --rm \
 /// It downloads hirsel binary from GitHub releases, installs agent tools,
 /// fetches project files, and starts the worker.
 ///
-/// Note: The worker environment variables (ANTHROPIC_API_KEY, etc.) are passed via Fly's
+/// Note: The worker environment variables (OPENAI_API_KEY, etc.) are passed via Fly's
 /// machine config, not in this script.
 pub fn generate_fly_init_script(
     coordinator_url: &str,
@@ -303,6 +307,7 @@ pub fn generate_fly_init_script(
     leader_name: Option<&str>,
     teammates: Option<&[String]>,
     assigned_task_id: Option<&str>,
+    is_plan_task: bool,
 ) -> String {
     let work_dir = "/work";
     let setup_config = WorkerSetupConfig {
@@ -327,6 +332,7 @@ pub fn generate_fly_init_script(
     let assigned_task_arg = assigned_task_id
         .map(|t| format!("--assigned-task-id '{}'", t))
         .unwrap_or_default();
+    let plan_task_arg = if is_plan_task { "--plan-task" } else { "" };
 
     // Escape agent command for shell
     let agent_command_escaped = agent_command_json.replace('\'', "'\\''");
@@ -357,22 +363,7 @@ export HIRSEL_BINARY_TYPE="worker"
 export HIRSEL_INSTALL_DIR="/usr/local/bin"
 curl -fsSL https://raw.githubusercontent.com/SamGalanakis/hirsel/main/scripts/install-hirsel-worker.sh | bash
 
-# Step 2: Install Node.js and agent tools if not present
-if ! command -v node > /dev/null 2>&1; then
-    echo "Installing Node.js..."
-    if command -v apt-get > /dev/null 2>&1; then
-        apt-get update && apt-get install -y curl ca-certificates
-        curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-        apt-get install -y nodejs
-    elif command -v apk > /dev/null 2>&1; then
-        apk add --no-cache nodejs npm
-    fi
-fi
-
-# Note: The agent (hirsel __acp-bridge) is provided via the Docker container
-# or deployed separately. No npm installation needed.
-
-# Step 3: Create work directory and fetch project files
+# Step 2: Create work directory and fetch project files
 echo "Setting up work directory..."
 mkdir -p {work_dir}
 cd {work_dir}
@@ -381,7 +372,7 @@ echo "Downloading project files from {files_url}..."
 curl -sS -f -H "Authorization: Bearer $HIRSEL_API_KEY" \
     "{files_url}" | tar -xzf -
 
-# Step 4: Initialize git repository
+# Step 3: Initialize git repository
 echo "Initializing git repository..."
 if [ ! -d .git ]; then
     git init
@@ -395,7 +386,7 @@ git config user.email "worker@hirsel.local"
 git config user.name "Hirsel Worker"
 mkdir -p chats
 
-# Step 5: Start worker
+# Step 4: Start worker
 echo "=== Starting Worker ==="
 exec hirsel __remote-worker \
     --api-url '{coordinator_url}' \
@@ -403,7 +394,7 @@ exec hirsel __remote-worker \
     --worker-name '{worker_name}' \
     --work-dir '{work_dir}' \
     --agent-command '{agent_command}' \
-    {leader_arg} {leader_name_arg} {teammates_arg} {assigned_task_arg}
+    {leader_arg} {leader_name_arg} {teammates_arg} {assigned_task_arg} {plan_task_arg}
 "#,
         coordinator_url = coordinator_url,
         run_name = run_name,
@@ -417,6 +408,7 @@ exec hirsel __remote-worker \
         leader_name_arg = leader_name_arg,
         teammates_arg = teammates_arg,
         assigned_task_arg = assigned_task_arg,
+        plan_task_arg = plan_task_arg,
     )
 }
 
@@ -464,15 +456,16 @@ mod tests {
             "http://localhost:19700",
             "my-run",
             "worker-1",
-            "[\"claude\"]",
+            "[\"codex\"]",
             true,
             None,
             None,
-            &[("ANTHROPIC_API_KEY".to_string(), "sk-test".to_string())],
+            &[("OPENAI_API_KEY".to_string(), "sk-test".to_string())],
+            false,
         );
 
         assert!(script.contains("--is-leader"));
-        assert!(script.contains("ANTHROPIC_API_KEY"));
+        assert!(script.contains("OPENAI_API_KEY"));
         assert!(script.contains("nohup hirsel __remote-worker"));
     }
 }

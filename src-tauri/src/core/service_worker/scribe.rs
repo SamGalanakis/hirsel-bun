@@ -49,8 +49,7 @@ impl ScribeService {
 
     /// Process batch locally by calling process_scribe_batch directly.
     ///
-    /// Uses spawn_blocking + LocalSet because process_scribe_batch uses spawn_local
-    /// for the ACP connection.
+    /// Uses spawn_blocking + LocalSet for isolated async execution.
     async fn process_locally(&self, run_name: &str) -> Result<ScribeBatchResult, ScribeError> {
         info!(
             "[ScribeService] Processing batch locally for run '{}'",

@@ -12,9 +12,8 @@ pub struct AgentConfig {
 }
 
 fn default_agent_command() -> Vec<String> {
-    // Use the hirsel ACP bridge which wraps the claude CLI
-    // This provides ACP protocol support for Claude
-    vec!["hirsel".to_string(), "__acp-bridge".to_string()]
+    // Single supported runtime path: embedded lash-core worker runtime.
+    vec!["hirsel".to_string(), "__worker-run".to_string()]
 }
 
 impl Default for AgentConfig {

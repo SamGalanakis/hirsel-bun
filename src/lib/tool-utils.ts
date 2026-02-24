@@ -1,7 +1,7 @@
 /**
  * Shared tool display utilities
  *
- * Used by WorkerOutputViewer and GypMessenger for consistent tool display.
+ * Used by WorkerOutputViewer and ShepherdConsole for consistent tool display.
  */
 
 /** Get icon name based on tool kind */
@@ -83,7 +83,7 @@ export function isToolWorking(status: string | null | undefined): boolean {
 /**
  * Determine effective tool status from events.
  *
- * The ACP protocol doesn't always send explicit `in_progress` status.
+ * Tool events don't always send explicit `in_progress` status.
  * If a tool has started but not completed/failed, it's effectively running.
  */
 export function getEffectiveToolStatus(

@@ -12,15 +12,21 @@ use crate::core::delta::{
     BoardDeliveryStatus, BoardVersion, Delivery, DeliveryAttempt, DeltaState,
 };
 use crate::core::forge::{MergeResult, PrInfo};
-use crate::core::project::ProjectStore;
+use crate::core::route::RouteStore;
 use crate::core::{hirsel_dir, SQLiteState};
 use serde::Serialize;
 
-/// Look up the project's git remote URL from its starting point.
-async fn project_remote_url(project_id: i64) -> Option<String> {
-    let store = ProjectStore::open().await.ok()?;
-    let project = store.get_project(project_id).await.ok()?;
-    project.starting_point.git_url().map(|s| s.to_string())
+/// Look up the route's git remote URL from its default starting point.
+async fn route_remote_url(project_id: i64, route_id: i64) -> Option<String> {
+    let store = RouteStore::new(project_id).await.ok()?;
+    let route = store.get_route(route_id).await.ok()?;
+    let default_repo = if let Some(default_id) = route.default_repo_id {
+        route.repos.iter().find(|r| r.id == default_id)
+    } else {
+        route.repos.first()
+    }?;
+
+    default_repo.starting_point.git_url().map(|s| s.to_string())
 }
 
 /// Get the delivery state for a run
@@ -215,7 +221,7 @@ pub async fn validate_delivery_target(
 
     // Resolve the remote: explicit param → project setting
     let explicit_remote = resolve_remote(remote_url.as_deref());
-    let project_fallback = project_remote_url(project_id).await;
+    let project_fallback = route_remote_url(project_id, route_id).await;
     let effective_remote = explicit_remote.or(project_fallback);
 
     let is_local = effective_remote
@@ -393,7 +399,7 @@ pub async fn start_board_delivery(
 
     // Resolve the remote: explicit param → project setting
     let explicit_remote = resolve_remote(remote_url.as_deref());
-    let project_fallback = project_remote_url(project_id).await;
+    let project_fallback = route_remote_url(project_id, route_id).await;
     let effective_remote = explicit_remote.or(project_fallback);
 
     let is_local = effective_remote
@@ -516,7 +522,7 @@ pub async fn complete_board_delivery(
     let delivery = state.get_delivery(delivery_id).await.str_err()?;
 
     let explicit_remote = resolve_remote(remote_url.as_deref());
-    let project_fallback = project_remote_url(project_id).await;
+    let project_fallback = route_remote_url(project_id, route_id).await;
     let effective_remote = explicit_remote.or(project_fallback);
 
     let orchestrator =

@@ -7,7 +7,7 @@
 //! # Design Principles
 //!
 //! - Operations return structured results, callers format for their context
-//! - Configuration structs allow caller-specific options (e.g., delete_gyp_chat)
+//! - Configuration structs allow caller-specific options (e.g., delete_shepherd_chat)
 //! - No prompting or user interaction - that's the caller's responsibility
 //! - Operations are idempotent where possible
 

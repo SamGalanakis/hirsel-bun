@@ -164,6 +164,7 @@ mod tests {
             tasks_total: 5,
             workers_active: 1,
             workers_total: 2,
+            workers_desired: 2,
             elapsed_minutes: 10.5,
             time_limit_minutes: Some(60),
             has_unread_messages: false,

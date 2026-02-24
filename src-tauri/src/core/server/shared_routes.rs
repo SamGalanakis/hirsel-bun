@@ -9,17 +9,17 @@
 //! | Builder | Used By | Description |
 //! |---------|---------|-------------|
 //! | `build_shared_routes()` | Both | Run ops, workers, tasks, messages, evals, history |
-//! | `build_gyp_routes()` | Both | Gyp chat sessions (separate state) |
+//! | `build_legacy_chat_routes()` | N/A | Removed during lash migration |
 //! | `build_config_routes()` | Remote only | Config CRUD, credentials |
 //! | `build_board_routes()` | Remote only | Board sync for SpecFlow |
 
 use axum::{
-    routing::{any, delete, get, patch, post},
+    routing::{any, get, patch, post},
     Router,
 };
 use std::sync::Arc;
 
-use super::{board, gyp, routes, AppState};
+use super::{board, routes, AppState};
 use crate::core::git_http;
 
 /// Routes shared between daemon and remote server
@@ -30,18 +30,14 @@ pub fn build_shared_routes() -> Router<Arc<AppState>> {
         // Health check
         .route("/health", get(routes::health))
         // Run management
-        .route("/api/runs", get(routes::list_runs).post(routes::create_run))
+        .route("/api/runs", get(routes::list_runs))
         .route("/api/runs/start", post(routes::start_run))
         .route(
             "/api/runs/{name}",
             get(routes::get_run).delete(routes::delete_run),
         )
-        .route(
-            "/api/runs/{name}/files",
-            get(routes::download_files).post(routes::upload_files),
-        )
+        .route("/api/runs/{name}/files", get(routes::download_files))
         .route("/api/runs/{name}/workspace", post(routes::init_workspace))
-        .route("/api/runs/{name}/spawn", post(routes::spawn_workers))
         .route("/api/runs/{name}/pause", post(routes::pause_run))
         .route("/api/runs/{name}/resume", post(routes::resume_run))
         .route("/api/runs/{name}/deliver", post(routes::deliver_run))
@@ -62,12 +58,6 @@ pub fn build_shared_routes() -> Router<Arc<AppState>> {
         .route(
             "/api/runs/{name}/workers/{worker}/events",
             get(routes::get_worker_events),
-        )
-        // Threads and messages (run-level - used by orchestrator/GUI)
-        .route("/api/runs/{name}/threads", get(routes::list_threads))
-        .route(
-            "/api/runs/{name}/threads/{thread}/messages",
-            get(routes::get_messages).post(routes::send_message),
         )
         // Project messages (Sheepfold - used by workers via StateAccess)
         .route(
@@ -102,9 +92,6 @@ pub fn build_shared_routes() -> Router<Arc<AppState>> {
         .route("/api/runs/{name}/evals", get(routes::list_evals))
         // History
         .route("/api/runs/{name}/history", get(routes::get_history))
-        // Assets
-        .route("/api/runs/{name}/assets", post(gyp::upload_asset))
-        .route("/api/runs/{name}/assets-path", get(gyp::get_assets_path))
         // Config - read only (both servers can read)
         .route("/api/config", get(routes::get_config))
         // Board integration - for workers in board runs
@@ -158,23 +145,7 @@ pub fn build_shared_routes() -> Router<Arc<AppState>> {
         .route("/git/{run_name}/{*path}", any(git_http::git_run_handler))
 }
 
-/// Gyp chat routes (requires separate GypState)
-///
-/// These handle the Gyp AI assistant chat functionality.
-pub fn build_gyp_routes() -> Router<Arc<gyp::GypState>> {
-    Router::new()
-        .route(
-            "/api/gyp/sessions",
-            get(gyp::list_sessions).post(gyp::start_session),
-        )
-        .route("/api/gyp/sessions/{id}", delete(gyp::stop_session))
-        .route("/api/gyp/sessions/{id}/messages", post(gyp::send_message))
-        .route(
-            "/api/gyp/sessions/{id}/permission",
-            post(gyp::respond_permission),
-        )
-        .route("/api/gyp/sessions/{id}/events", get(gyp::session_events))
-}
+/// Shepherd routes were removed during lash migration.
 
 /// Config management routes (remote server only)
 ///
@@ -191,11 +162,7 @@ pub fn build_config_routes() -> Router<Arc<AppState>> {
         // Granular config updates
         .route("/api/config/general", patch(routes::patch_general_config))
         .route("/api/config/agent", patch(routes::patch_agent_config))
-        .route("/api/config/auth", get(routes::get_auth_config))
-        .route(
-            "/api/config/auth/{agent}",
-            patch(routes::patch_agent_auth).delete(routes::delete_agent_auth),
-        )
+        .route("/api/config/llm", patch(routes::patch_llm_config))
         .route("/api/config/runners", get(routes::list_runners))
         .route(
             "/api/config/runners/{name}",
@@ -217,6 +184,19 @@ pub fn build_config_routes() -> Router<Arc<AppState>> {
             post(routes::store_credential)
                 .get(routes::get_credential)
                 .delete(routes::delete_credential),
+        )
+        // Codex OAuth device flow
+        .route(
+            "/api/auth/codex/device/start",
+            post(routes::codex_device_start),
+        )
+        .route(
+            "/api/auth/codex/device/poll",
+            post(routes::codex_device_poll),
+        )
+        .route(
+            "/api/auth/codex/device/exchange",
+            post(routes::codex_device_exchange),
         )
 }
 

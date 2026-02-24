@@ -35,3 +35,6 @@ bun.lock
 # Python
 __pycache__/
 *.pyc
+
+# Rust/Cargo build output
+target/

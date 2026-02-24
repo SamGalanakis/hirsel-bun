@@ -97,9 +97,9 @@ impl SQLiteState {
         Ok(())
     }
 
-    /// Set the run status (no validation for backward compatibility)
+    /// Set the run status with transition validation.
     pub async fn set_status(&self, status: Status) -> StateResult<()> {
-        self.set_status_validated(status, false).await
+        self.set_status_validated(status, true).await
     }
 
     /// Initialize the state for a new run

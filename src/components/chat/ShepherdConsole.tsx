@@ -1,5 +1,5 @@
 /**
- * GypMessenger - "The Shepherd's Hearth" chat widget
+ * ShepherdConsole - "The Shepherd's Hearth" chat widget
  *
  * A warm, intimate conversation space that feels like sitting by the fire
  * in a Scottish croft, speaking with your trusted sheepdog companion.
@@ -15,16 +15,34 @@ import {
   onCleanup,
 } from 'solid-js';
 import { Portal } from 'solid-js/web';
-import type { ChatMessage, ChatToolCall, PendingPermission } from '../../lib/types';
+import type {
+  ChatMessage,
+  ShepherdImageInput,
+} from '../../lib/types';
 import { emit, on as onEvent } from '../../lib/events';
 import { useApp, useProject, useRuns } from '../../stores';
-import { useGypChat, type GypChatContext } from '../../hooks/use-gyp-chat';
-import { Icon, Markdown, ThinkingBlock, ToolCard, ToolCluster, type ToolInfo } from '../shared';
+import { useShepherdChat, type ShepherdChatContext } from '../../hooks/use-shepherd-chat';
+import { Icon, Markdown, ToolCard, ToolCluster, type ToolInfo } from '../shared';
 
 const PANEL_WIDTH = 440;
 const PANEL_HEIGHT = 520;
+const MAX_PASTED_IMAGES = 8;
 
-export const GypMessenger: Component = () => {
+interface PendingImage extends ShepherdImageInput {
+  id: string;
+  previewUrl: string;
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Failed to read image'));
+    reader.readAsDataURL(file);
+  });
+}
+
+export const ShepherdConsole: Component = () => {
   const app = useApp();
   const project = useProject();
   const runs = useRuns();
@@ -35,6 +53,7 @@ export const GypMessenger: Component = () => {
 
   const [inputText, setInputText] = createSignal('');
   const [sending, setSending] = createSignal(false);
+  const [pendingImages, setPendingImages] = createSignal<PendingImage[]>([]);
   const [expandedTools, setExpandedTools] = createSignal<Set<string>>(new Set());
   const [menuOpen, setMenuOpen] = createSignal(false);
 
@@ -49,7 +68,7 @@ export const GypMessenger: Component = () => {
   };
 
   // Build context based on current app state
-  const buildContext = (): GypChatContext => {
+  const buildContext = (): ShepherdChatContext => {
     const projectId = project.selectedProjectId();
     const projectName = project.selectedProject()?.name;
     const runName = runs.selectedRun();
@@ -64,9 +83,21 @@ export const GypMessenger: Component = () => {
     // Run selected - check if draft or active run
     if (runName && runDetail) {
       if (runDetail.status === 'draft') {
-        return { type: 'draft', runName, projectId: projectId ?? undefined, projectName };
+        return {
+          type: 'draft',
+          runName,
+          projectId: projectId ?? undefined,
+          projectName,
+          projectPath: runDetail.projectPath,
+        };
       }
-      return { type: 'run', runName, projectId: projectId ?? undefined, projectName };
+      return {
+        type: 'run',
+        runName,
+        projectId: projectId ?? undefined,
+        projectName,
+        projectPath: runDetail.projectPath,
+      };
     }
 
     // General context
@@ -74,10 +105,10 @@ export const GypMessenger: Component = () => {
   };
 
   // Chat hook
-  const chat = useGypChat(buildContext, {
+  const chat = useShepherdChat(buildContext, {
     historyDepth: 20,
     onEditComplete: () => {
-      // Refresh board when Gyp finishes editing
+      // Refresh board when Shepherd finishes editing
       const projectId = project.selectedProjectId();
       if (projectId) {
         emit('board-refresh', projectId);
@@ -135,6 +166,8 @@ export const GypMessenger: Component = () => {
   createEffect(() => {
     if (app.aiChatOpen()) {
       setTimeout(() => inputRef?.focus(), 100);
+    } else if (pendingImages().length > 0) {
+      setPendingImages([]);
     }
   });
 
@@ -152,18 +185,18 @@ export const GypMessenger: Component = () => {
     onCleanup(() => document.removeEventListener('keydown', handler));
   });
 
-  // Listen for gyp-focus-node events from SpecflowBoard
+  // Listen for shepherd-focus-node events from SpecflowBoard
   createEffect(() => {
-    const cleanup = onEvent('gyp-focus-node', (detail) => {
+    const cleanup = onEvent('shepherd-focus-node', (detail) => {
       chat.setFocusNode(detail.id, detail.name);
     });
     onCleanup(cleanup);
   });
 
-  // Dispatch gyp-editing-islands events when editing state changes
+  // Dispatch shepherd-editing-islands events when editing state changes
   createEffect(() => {
     const islands = chat.editingIslands();
-    emit('gyp-editing-islands', islands);
+    emit('shepherd-editing-islands', islands);
   });
 
   // Get context label for display (pastoral/poetic)
@@ -184,15 +217,66 @@ export const GypMessenger: Component = () => {
   // Handle send
   const handleSend = async () => {
     const text = inputText().trim();
-    if (!text || sending()) return;
+    const images = pendingImages();
+    if ((!text && images.length === 0) || sending()) return;
 
     setSending(true);
     setInputText('');
+    setPendingImages([]);
     try {
-      await chat.sendMessage(text);
+      await chat.sendMessage(
+        text,
+        images.map((img) => ({
+          mimeType: img.mimeType,
+          dataBase64: img.dataBase64,
+          name: img.name,
+        })),
+      );
     } finally {
       setSending(false);
     }
+  };
+
+  const removePendingImage = (id: string) => {
+    setPendingImages((prev) => prev.filter((img) => img.id !== id));
+  };
+
+  const handlePaste = (e: ClipboardEvent) => {
+    const items = Array.from(e.clipboardData?.items ?? []);
+    const imageItems = items.filter((item) => item.type.startsWith('image/'));
+    if (imageItems.length === 0) return;
+    e.preventDefault();
+
+    void (async () => {
+      for (const item of imageItems) {
+        const file = item.getAsFile();
+        if (!file) continue;
+        let dataUrl = '';
+        try {
+          dataUrl = await readFileAsDataUrl(file);
+        } catch {
+          continue;
+        }
+
+        const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+        if (!match) continue;
+        const [, mimeType, dataBase64] = match;
+
+        setPendingImages((prev) => {
+          if (prev.length >= MAX_PASTED_IMAGES) return prev;
+          return [
+            ...prev,
+            {
+              id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              mimeType,
+              dataBase64,
+              name: file.name || undefined,
+              previewUrl: dataUrl,
+            },
+          ];
+        });
+      }
+    })();
   };
 
   // Handle key press
@@ -227,36 +311,36 @@ export const GypMessenger: Component = () => {
       {/* Chat Panel (shown when expanded) */}
       <Show when={app.aiChatOpen()}>
         <div
-          class="gyp-chat-panel gyp-panel-enter fixed right-0 bottom-[36px] rounded-t-xl overflow-hidden flex flex-col border border-amber-500/20 border-b-0 shadow-2xl z-[1000]"
+          class="shepherd-chat-panel shepherd-panel-enter fixed right-0 bottom-[36px] rounded-t-xl overflow-hidden flex flex-col border border-amber-500/20 border-b-0 shadow-2xl z-[1000]"
           classList={{
-            'gyp-editing': chat.gypEditing(),
+            'shepherd-editing': chat.shepherdEditing(),
           }}
           style={{
             width: `${PANEL_WIDTH}px`,
             height: `${PANEL_HEIGHT}px`,
           }}
         >
-          {/* Header - "Gyp's Corner" */}
+          {/* Header - "Shepherd's Corner" */}
           <div class="px-4 pt-4 pb-2 shrink-0">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 {/* Larger avatar with connection ring */}
                 <div
-                  class="gyp-avatar-ring"
+                  class="shepherd-avatar-ring"
                   classList={{
                     connected: chat.connected(),
                     connecting: chat.connecting(),
                   }}
                 >
                   <img
-                    src="/gyp.svg"
+                    src="/shepherd.svg"
                     class="w-10 h-10 drop-shadow-md"
-                    alt="Gyp"
+                    alt="Shepherd"
                   />
                 </div>
                 <div class="flex flex-col">
                   <span class="text-base font-semibold text-wool-200" style="font-family: 'ET Book', serif;">
-                    Gyp
+                    Shepherd
                   </span>
                   <span class="text-[11px] italic text-wool-500" style="font-family: 'ET Book', serif;">
                     {contextLabel()}
@@ -267,7 +351,7 @@ export const GypMessenger: Component = () => {
               <div class="flex items-center gap-1">
                 {/* Focus node indicator */}
                 <Show when={chat.context().focusNodeName}>
-                  <div class="gyp-focus-indicator max-w-[140px] mr-2">
+                  <div class="shepherd-focus-indicator max-w-[140px] mr-2">
                     <Icon name="crosshair" class="w-3 h-3" />
                     <span class="truncate">{chat.context().focusNodeName}</span>
                     <button
@@ -285,7 +369,7 @@ export const GypMessenger: Component = () => {
                     ref={menuBtnRef}
                     type="button"
                     onClick={() => setMenuOpen(!menuOpen())}
-                    class="gyp-options-btn"
+                    class="shepherd-options-btn"
                     title="Options"
                     aria-haspopup="listbox"
                     aria-expanded={menuOpen()}
@@ -324,7 +408,7 @@ export const GypMessenger: Component = () => {
 
                 <button
                   onClick={() => app.setAiChatOpen(false)}
-                  class="gyp-options-btn"
+                  class="shepherd-options-btn"
                 >
                   <Icon name="chevron-down" class="w-4 h-4" />
                 </button>
@@ -332,26 +416,26 @@ export const GypMessenger: Component = () => {
             </div>
 
             {/* Decorative divider */}
-            <div class="gyp-header-divider" />
+            <div class="shepherd-header-divider" />
           </div>
 
           {/* Messages Area */}
           <div
             ref={messagesRef}
-            class="gyp-messages-area flex-1 overflow-y-auto px-4 py-3 space-y-3"
+            class="shepherd-messages-area flex-1 overflow-y-auto px-4 py-3 space-y-3"
           >
             {/* Empty state - redesigned */}
             <Show when={chat.connected() && recentMessages().length === 0 && !chat.currentMessage()}>
-              <div class="gyp-empty-state h-full">
+              <div class="shepherd-empty-state h-full">
                 <img
-                  src="/gyp.svg"
-                  class="w-16 h-16 gyp-avatar-breathe opacity-80"
-                  alt="Gyp"
+                  src="/shepherd.svg"
+                  class="w-16 h-16 shepherd-avatar-breathe opacity-80"
+                  alt="Shepherd"
                 />
                 <p class="text-sm italic text-wool-500" style="font-family: 'ET Book', serif;">
-                  Gyp is ready to help
+                  Shepherd is ready to help
                 </p>
-                <div class="gyp-decorative-dots">
+                <div class="shepherd-decorative-dots">
                   <span />
                   <span />
                   <span />
@@ -361,11 +445,11 @@ export const GypMessenger: Component = () => {
 
             {/* Connecting state */}
             <Show when={chat.connecting()}>
-              <div class="gyp-empty-state h-full">
+              <div class="shepherd-empty-state h-full">
                 <img
-                  src="/gyp.svg"
+                  src="/shepherd.svg"
                   class="w-14 h-14 opacity-60"
-                  alt="Gyp"
+                  alt="Shepherd"
                 />
                 <div class="flex items-center gap-2 text-sm text-wool-500">
                   <div class="w-4 h-4 border-2 border-wool-600 border-t-amber-500 rounded-full animate-spin" />
@@ -389,14 +473,14 @@ export const GypMessenger: Component = () => {
 
               {/* Streaming message */}
               <Show when={chat.currentMessage()}>
-                <div class="gyp-message-assistant gyp-message-enter text-sm px-3 py-2.5 mr-8">
-                  <Show when={chat.gypEditing()}>
+                <div class="shepherd-message-assistant shepherd-message-enter text-sm px-3 py-2.5 mr-8">
+                  <Show when={chat.shepherdEditing()}>
                     <div class="flex items-center gap-2 text-[11px] text-amber-400 mb-2">
                       <div class="w-3 h-3 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
                       <span class="italic" style="font-family: 'ET Book', serif;">Working on it...</span>
                     </div>
                   </Show>
-                  <Show when={chat.currentMessage()?.toolCalls?.length && !chat.gypEditing()}>
+                  <Show when={chat.currentMessage()?.toolCalls?.length && !chat.shepherdEditing()}>
                     <div class="flex items-center gap-2 text-[11px] text-wool-500 mb-2">
                       <div class="w-3 h-3 border-2 border-wool-500 border-t-transparent rounded-full animate-spin" />
                       <span class="italic" style="font-family: 'ET Book', serif;">Working...</span>
@@ -405,14 +489,45 @@ export const GypMessenger: Component = () => {
                   <Show when={chat.currentMessage()?.content}>
                     <Markdown content={chat.currentMessage()?.content || ''} class="text-sm text-wool-300" />
                   </Show>
-                  <Show when={!chat.currentMessage()?.content}>
+                  <Show when={!chat.currentMessage()?.content && !(chat.currentMessage()?.toolCalls?.length)}>
                     <div class="flex items-center gap-2">
-                      <span class="italic text-wool-500" style="font-family: 'ET Book', serif;">Gyp is thinking</span>
-                      <div class="gyp-thinking-dots">
+                      <span class="italic text-wool-500" style="font-family: 'ET Book', serif;">Shepherd is thinking</span>
+                      <div class="shepherd-thinking-dots">
                         <span />
                         <span />
                         <span />
                       </div>
+                    </div>
+                  </Show>
+
+                  <Show when={chat.currentMessage()?.toolCalls?.length}>
+                    <div class="mt-2">
+                      <Show when={(chat.currentMessage()?.toolCalls?.length || 0) >= 2}>
+                        <ToolCluster
+                          tools={(chat.currentMessage()?.toolCalls || []).map((tc): ToolInfo => ({
+                            id: tc.id,
+                            title: tc.title,
+                            kind: tc.kind,
+                            status: tc.status,
+                            input: tc.input,
+                            output: tc.output,
+                          }))}
+                        />
+                      </Show>
+                      <Show when={(chat.currentMessage()?.toolCalls?.length || 0) === 1}>
+                        <ToolCard
+                          title={chat.currentMessage()?.toolCalls?.[0]?.title || 'Tool'}
+                          kind={chat.currentMessage()?.toolCalls?.[0]?.kind || null}
+                          status={chat.currentMessage()?.toolCalls?.[0]?.status || 'in_progress'}
+                          input={chat.currentMessage()?.toolCalls?.[0]?.input || null}
+                          output={chat.currentMessage()?.toolCalls?.[0]?.output || null}
+                          expanded={!!chat.currentMessage()?.toolCalls?.[0]?.id && expandedTools().has(chat.currentMessage()!.toolCalls![0].id)}
+                          onToggle={() => {
+                            const id = chat.currentMessage()?.toolCalls?.[0]?.id;
+                            if (id) toggleTool(id);
+                          }}
+                        />
+                      </Show>
                     </div>
                   </Show>
                 </div>
@@ -420,38 +535,66 @@ export const GypMessenger: Component = () => {
             </Show>
           </div>
 
-          {/* Permission modal */}
-          <Show when={chat.pendingPermission()}>
-            <PermissionModal
-              permission={chat.pendingPermission()!}
-              onRespond={chat.respondToPermission}
-            />
-          </Show>
-
           {/* Input Area - "The Fireside" */}
-          <div class="gyp-input-area px-3 pb-3 pt-2 shrink-0 border-t border-pasture-600/50">
+          <div class="shepherd-input-area px-3 pb-3 pt-2 shrink-0 border-t border-pasture-600/50">
+            <Show when={pendingImages().length > 0}>
+              <div class="mb-2">
+                <div class="flex items-center justify-between text-[11px] text-wool-500 mb-1 px-1">
+                  <span>{pendingImages().length} image(s) ready</span>
+                  <span>paste from clipboard</span>
+                </div>
+                <div class="flex gap-2 overflow-x-auto pb-1">
+                  <For each={pendingImages()}>
+                    {(img) => (
+                      <div class="relative shrink-0">
+                        <img
+                          src={img.previewUrl}
+                          alt={img.name || 'pasted image'}
+                          class="w-16 h-16 object-cover rounded border border-pasture-600"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removePendingImage(img.id)}
+                          class="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-pasture-900/90 border border-pasture-600 text-wool-300 hover:text-white flex items-center justify-center"
+                          title="Remove image"
+                        >
+                          <Icon name="x" class="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </div>
+            </Show>
+
             <div
-              class="gyp-input-wrapper relative overflow-hidden"
-              classList={{ disabled: !chat.connected() || chat.gypEditing() }}
+              class="shepherd-input-wrapper relative overflow-hidden"
+              classList={{ disabled: !chat.connected() || chat.shepherdEditing() }}
             >
               <textarea
                 ref={inputRef}
                 value={inputText()}
                 onInput={(e) => setInputText(e.currentTarget.value)}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
                 placeholder={
                   chat.context().focusNodeName
                     ? `Ask about "${chat.context().focusNodeName}"...`
-                    : 'Speak with Gyp...'
+                    : 'Speak with Shepherd...'
                 }
-                disabled={!chat.connected() || chat.gypEditing()}
+                disabled={!chat.connected() || chat.shepherdEditing()}
                 class="w-full h-14 resize-none text-sm text-wool-100 placeholder-wool-600 placeholder:italic focus:outline-none p-3 pr-12 bg-transparent disabled:opacity-50"
                 style="font-family: 'ET Book', serif;"
               />
               <button
                 onClick={handleSend}
-                disabled={!inputText().trim() || !chat.connected() || chat.gypEditing() || sending()}
-                class="gyp-send-btn absolute right-2 bottom-2 w-8 h-8 flex items-center justify-center"
+                disabled={
+                  (!inputText().trim() && pendingImages().length === 0) ||
+                  !chat.connected() ||
+                  chat.shepherdEditing() ||
+                  sending()
+                }
+                class="shepherd-send-btn absolute right-2 bottom-2 w-8 h-8 flex items-center justify-center"
               >
                 <Show when={sending()}>
                   <div class="w-4 h-4 border-2 border-amber-200 border-t-transparent rounded-full animate-spin" />
@@ -461,7 +604,7 @@ export const GypMessenger: Component = () => {
                 </Show>
               </button>
             </div>
-            <div class="gyp-keyboard-hints flex items-center justify-between mt-2 px-1">
+            <div class="shepherd-keyboard-hints flex items-center justify-between mt-2 px-1">
               <span>Enter to send, Shift+Enter for newline</span>
               <span>Esc to close</span>
             </div>
@@ -473,9 +616,9 @@ export const GypMessenger: Component = () => {
 };
 
 /**
- * GypMessengerBar - The part that lives in the StatusBar
+ * ShepherdConsoleBar - The part that lives in the StatusBar
  */
-export const GypMessengerBar: Component = () => {
+export const ShepherdConsoleBar: Component = () => {
   const app = useApp();
   const project = useProject();
   const runs = useRuns();
@@ -510,14 +653,14 @@ export const GypMessengerBar: Component = () => {
     >
       <div class="flex items-center gap-2.5">
         <img
-          src="/gyp.svg"
-          alt="Gyp"
+          src="/shepherd.svg"
+          alt="Shepherd"
           class="w-5 h-5"
           classList={{
             'opacity-60': !app.aiChatOpen(),
           }}
         />
-        <span class="text-xs text-wool-400">Gyp</span>
+        <span class="text-xs text-wool-400">Shepherd</span>
       </div>
 
       {/* Context indicator */}
@@ -548,25 +691,35 @@ const MessageBubble: Component<{
 
   return (
     <div
-      class={`flex gyp-message-enter ${isUser() ? 'justify-end' : 'justify-start'}`}
+      class={`flex shepherd-message-enter ${isUser() ? 'justify-end' : 'justify-start'}`}
     >
       <div
         class={`max-w-[85%] px-3 py-2.5 ${
           isUser()
-            ? 'gyp-message-user text-wool-200 ml-8'
-            : 'gyp-message-assistant text-wool-300 mr-8'
+            ? 'shepherd-message-user text-wool-200 ml-8'
+            : 'shepherd-message-assistant text-wool-300 mr-8'
         }`}
       >
-        {/* Thinking block */}
-        <Show when={props.message.thinking}>
-          <div class="mb-2">
-            <ThinkingBlock content={props.message.thinking!} />
-          </div>
-        </Show>
-
         {/* Content */}
         <Show when={props.message.content}>
           <Markdown content={props.message.content} class="text-sm" />
+        </Show>
+
+        {/* Attached images */}
+        <Show when={props.message.images?.length}>
+          <div class="mt-2 flex flex-wrap gap-2">
+            <For each={props.message.images || []}>
+              {(img) => (
+                <a href={img.src} target="_blank" rel="noreferrer" class="block">
+                  <img
+                    src={img.src}
+                    alt={img.name || 'chat image'}
+                    class="max-w-[180px] max-h-[180px] object-cover rounded border border-pasture-600/70 hover:border-pasture-400 transition-colors"
+                  />
+                </a>
+              )}
+            </For>
+          </div>
         </Show>
 
         {/* Tool calls - cluster if 2+, single card otherwise */}
@@ -599,47 +752,6 @@ const MessageBubble: Component<{
             </Show>
           </div>
         </Show>
-      </div>
-    </div>
-  );
-};
-
-// Permission modal - parchment-style request card
-const PermissionModal: Component<{
-  permission: PendingPermission;
-  onRespond: (optionId: string) => void;
-}> = (props) => {
-  return (
-    <div class="gyp-permission-overlay absolute inset-0 flex items-center justify-center p-4">
-      <div class="gyp-permission-modal w-full max-w-sm">
-        <div class="p-4 border-b border-pasture-600">
-          <h3
-            class="text-sm font-semibold text-wool-100"
-            style="font-family: 'ET Book', serif;"
-          >
-            {props.permission.title}
-          </h3>
-          <Show when={props.permission.description}>
-            <p
-              class="text-xs text-wool-500 mt-1 italic"
-              style="font-family: 'ET Book', serif;"
-            >
-              {props.permission.description}
-            </p>
-          </Show>
-        </div>
-        <div class="p-4 space-y-2">
-          <For each={props.permission.options}>
-            {(option, index) => (
-              <button
-                class={`gyp-permission-option text-sm text-wool-200 ${index() === 0 ? 'primary' : ''}`}
-                onClick={() => props.onRespond(option.optionId)}
-              >
-                {option.label}
-              </button>
-            )}
-          </For>
-        </div>
       </div>
     </div>
   );

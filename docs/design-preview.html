@@ -616,7 +616,7 @@
       transform: translateY(-2px);
     }
 
-    .gyp-current {
+    .shepherd-current {
       background: var(--pasture-700);
     }
 
@@ -1039,9 +1039,9 @@
       <h3>Accessories</h3>
       <div class="avatar-grid" id="accessories-grid"></div>
 
-      <h3>Gyp (AI Assistant)</h3>
+      <h3>Shepherd (AI Assistant)</h3>
       <p style="color: var(--wool-400); margin-bottom: 1rem; font-size: 0.875rem;">Border collie assistant - Noto-style vectorized with transparent background.</p>
-      <div class="avatar-grid" id="gyp-grid"></div>
+      <div class="avatar-grid" id="shepherd-grid"></div>
 
       <h3 style="margin-top: 2rem;">In Context: Worker Cards</h3>
       <div class="worker-card-demo" id="worker-cards-demo"></div>
@@ -1183,19 +1183,19 @@
       accessoriesGrid.appendChild(renderAvatarItem(config, label));
     });
 
-    // Render Gyp grid
-    const gypGrid = document.getElementById('gyp-grid');
+    // Render Shepherd grid
+    const shepherdGrid = document.getElementById('shepherd-grid');
 
-    // Gyp - Border Collie
-    const gypItem = document.createElement('div');
-    gypItem.className = 'avatar-item';
-    gypItem.innerHTML = `
-      <div class="avatar-wrapper gyp-current" style="border-color: var(--amber-500);">
-        <img src="../public/gyp.svg" width="64" height="64" alt="Gyp" style="object-fit: contain;" />
+    // Shepherd - Border Collie
+    const shepherdItem = document.createElement('div');
+    shepherdItem.className = 'avatar-item';
+    shepherdItem.innerHTML = `
+      <div class="avatar-wrapper shepherd-current" style="border-color: var(--amber-500);">
+        <img src="../public/shepherd.svg" width="64" height="64" alt="Shepherd" style="object-fit: contain;" />
       </div>
-      <p>Gyp</p>
+      <p>Shepherd</p>
     `;
-    gypGrid.appendChild(gypItem);
+    shepherdGrid.appendChild(shepherdItem);
 
     // Render worker cards demo
     const workerCardsDemo = document.getElementById('worker-cards-demo');

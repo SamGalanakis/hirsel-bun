@@ -406,10 +406,29 @@ export const CanvasToolbar: Component<CanvasToolbarProps> = (props) => {
                   background: props.liveFilters().includes('worker-tasks') ? amber(0.2) : 'rgba(64, 64, 64, 0.4)',
                   color: props.liveFilters().includes('worker-tasks') ? 'var(--amber-400)' : 'var(--wool-500)',
                 }}
-                title="Tasks added by workers"
+                title="Issues added by workers"
               >
                 <Icon name="sparkles" class="w-3 h-3" />
                 <span>Added</span>
+              </button>
+              <button
+                onClick={() => {
+                  const current = props.liveFilters();
+                  props.setLiveFilters(
+                    current.includes('plan-tasks')
+                      ? current.filter(f => f !== 'plan-tasks')
+                      : [...current, 'plan-tasks']
+                  );
+                }}
+                class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors"
+                style={{
+                  background: props.liveFilters().includes('plan-tasks') ? amber(0.2) : 'rgba(64, 64, 64, 0.4)',
+                  color: props.liveFilters().includes('plan-tasks') ? 'var(--amber-400)' : 'var(--wool-500)',
+                }}
+                title="Scoping tasks"
+              >
+                <Icon name="list-tree" class="w-3 h-3" />
+                <span>Scoping</span>
               </button>
             </div>
           </Show>
