@@ -5,11 +5,9 @@
 //! ~/.hirsel/projects/{project_id}/routes/
 //! ├── main/
 //! │   ├── docs/
-//! │   ├── board.md
 //! │   └── code/
 //! └── feature-v1/
 //!     ├── docs/
-//!     ├── board.md
 //!     └── code/
 //! ```
 
@@ -73,7 +71,6 @@ impl RouteFiles {
     /// Initialize the route directory structure
     pub fn init_dirs(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(self.docs_dir())?;
-        std::fs::create_dir_all(self.board_tasks_dir())?;
         std::fs::create_dir_all(self.code_dir())?;
         Ok(())
     }
@@ -97,24 +94,6 @@ impl RouteFiles {
 
         // Copy all files
         copy_dir_recursive(&source_docs, &target_docs)?;
-
-        Ok(())
-    }
-
-    /// Copy board content files from another route
-    pub fn copy_board_from(&self, source: &RouteFiles) -> std::io::Result<()> {
-        let source_board = source.board_tasks_dir();
-        let target_board = self.board_tasks_dir();
-
-        if !source_board.exists() {
-            return Ok(());
-        }
-
-        // Create target directory
-        std::fs::create_dir_all(&target_board)?;
-
-        // Copy all files
-        copy_dir_recursive(&source_board, &target_board)?;
 
         Ok(())
     }

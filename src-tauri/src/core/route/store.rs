@@ -273,13 +273,19 @@ impl RouteStore {
 
     /// Create a new route by forking a parent route.
     ///
-    /// If parent_route_id is specified, copies all board nodes, repos, files,
+    /// If parent_route_id is specified, copies all board nodes, repos, docs/code files,
     /// and route settings from the parent route.
     pub async fn create_route(&self, req: &CreateRouteRequest) -> RouteResult<Route> {
         let pool = self.pool().await;
+        let name = req.name.trim();
+        if name.is_empty() {
+            return Err(RouteError::InvalidInput(
+                "Route name cannot be empty".to_string(),
+            ));
+        }
 
-        if self.get_route_by_name(&req.name).await?.is_some() {
-            return Err(RouteError::AlreadyExists(req.name.clone()));
+        if self.get_route_by_name(name).await?.is_some() {
+            return Err(RouteError::AlreadyExists(name.to_string()));
         }
 
         let parent_id = if let Some(id) = req.parent_route_id {
@@ -305,7 +311,7 @@ impl RouteStore {
              ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(self.project_id)
-        .bind(&req.name)
+        .bind(name)
         .bind(Some(parent_id))
         .bind(req.parent_version_id)
         .bind(&parent_route.worker_scale)
@@ -331,7 +337,7 @@ impl RouteStore {
             .await?;
 
         // Initialize folder structure for the new route
-        let new_route_files = RouteFiles::new(self.project_id, &req.name);
+        let new_route_files = RouteFiles::new(self.project_id, name);
         if let Err(e) = new_route_files.init_dirs() {
             tracing::warn!("Failed to initialize route directories: {}", e);
         }
@@ -344,10 +350,6 @@ impl RouteStore {
 
         if let Err(e) = new_route_files.copy_docs_from(&parent_files) {
             tracing::warn!("Failed to copy docs from parent route: {}", e);
-        }
-
-        if let Err(e) = new_route_files.copy_board_from(&parent_files) {
-            tracing::warn!("Failed to copy board files from parent route: {}", e);
         }
 
         if let Err(e) = new_route_files.copy_code_from(&parent_files) {
@@ -494,7 +496,7 @@ impl RouteStore {
                     default_repo_id, worker_scale, time_limit_minutes, human_in_the_loop,
                     docs_path, persist_docs_changes, target_branch, runner,
                     created_at, updated_at
-             FROM routes WHERE name = ? AND project_id = ?",
+             FROM routes WHERE lower(name) = lower(?) AND project_id = ?",
         )
         .bind(name)
         .bind(self.project_id)

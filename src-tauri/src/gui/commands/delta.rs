@@ -10,7 +10,7 @@ use super::ResultExt;
 use crate::core::config;
 use crate::core::delta::{
     bump_generation, BoardNode, BoardNodeTree, CreateBoardNodeRequest, DeltaDispatchService,
-    DeltaExporter, DeltaState, ProjectRun, SyncResult, UpdateBoardNodeRequest,
+    DeltaState, ProjectRun, SyncResult, UpdateBoardNodeRequest,
 };
 use crate::core::orchestrator::{
     create_local_orchestrator, DaemonOrchestrator, Orchestrator, StartRunRequest,
@@ -227,36 +227,22 @@ pub async fn complete_board_node(
 // Shepherd Sync Operations
 // =============================================================================
 
-/// Sync changes from Shepherd content files back to the database.
-///
-/// This should be called periodically while Shepherd is active to pick up
-/// changes made by the agent to the board content files.
+/// Legacy no-op sync endpoint (filesystem sync removed).
 #[tracing::instrument]
 #[tauri::command]
 pub async fn sync_shepherd_changes(project_id: i64, route_id: i64) -> Result<SyncResult, String> {
-    let mut exporter = DeltaExporter::new(project_id, route_id);
-    exporter
-        .sync_file_changes()
-        .map_err(|e| format!("Sync failed: {}", e))
+    let _ = (project_id, route_id);
+    Ok(SyncResult::default())
 }
 
-/// Combined sync + get board tree in one IPC call.
-///
-/// Syncs Shepherd file changes, then returns the board tree and project run.
-/// Eliminates the need for two sequential IPC round-trips per poll cycle.
+/// Get board tree + project run in one IPC call.
 #[tracing::instrument]
 #[tauri::command]
 pub async fn sync_and_get_shepherd_view(
     project_id: i64,
     route_id: i64,
 ) -> Result<BoardTreeResponse, String> {
-    // 1. Sync Shepherd file changes
-    let mut exporter = DeltaExporter::new(project_id, route_id);
-    let _ = exporter
-        .sync_file_changes()
-        .map_err(|e| format!("Sync failed: {}", e));
-
-    // 2. Fetch board tree
+    // Filesystem sync removed; board state is DB-first.
     let dispatch = DeltaDispatchService::new(project_id, route_id);
     let state = DeltaState::with_route(project_id, route_id);
 
@@ -282,10 +268,6 @@ pub async fn sync_and_get_shepherd_view_if_changed(
     route_id: i64,
     last_generation: i64,
 ) -> Result<Option<BoardTreeResponse>, String> {
-    // Always sync Shepherd file changes (may bump generation if content differs)
-    let mut exporter = DeltaExporter::new(project_id, route_id);
-    let _ = exporter.sync_file_changes();
-
     let state = DeltaState::with_route(project_id, route_id);
     let current = state.tree_generation().await.str_err()?;
     if current == last_generation {

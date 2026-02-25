@@ -11,7 +11,7 @@
 //! | `build_shared_routes()` | Both | Run ops, workers, tasks, messages, evals, history |
 //! | `build_legacy_chat_routes()` | N/A | Removed during lash migration |
 //! | `build_config_routes()` | Remote only | Config CRUD, credentials |
-//! | `build_board_routes()` | Remote only | Board sync for SpecFlow |
+//! | `build_board_routes()` | Remote only | Reserved (board file sync removed) |
 
 use axum::{
     routing::{any, get, patch, post},
@@ -19,7 +19,7 @@ use axum::{
 };
 use std::sync::Arc;
 
-use super::{board, routes, AppState};
+use super::{routes, AppState};
 use crate::core::git_http;
 
 /// Routes shared between daemon and remote server
@@ -200,23 +200,7 @@ pub fn build_config_routes() -> Router<Arc<AppState>> {
         )
 }
 
-/// Board sync routes (remote server only)
-///
-/// These handle SpecFlow board synchronization.
+/// Board file-sync routes removed (DB-only board editing).
 pub fn build_board_routes() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/api/board/{project_id}/export", post(board::export_board))
-        .route("/api/board/{project_id}/import", post(board::import_board))
-        .route(
-            "/api/board/{project_id}/directory",
-            get(board::get_board_directory),
-        )
-        // Per-task file routes
-        .route("/api/board/{project_id}/tasks", get(board::list_task_files))
-        .route(
-            "/api/board/{project_id}/tasks/{slug}",
-            get(board::get_task_file)
-                .post(board::write_task_file)
-                .delete(board::delete_task_file),
-        )
 }

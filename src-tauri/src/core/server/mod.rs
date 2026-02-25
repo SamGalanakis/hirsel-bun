@@ -9,7 +9,6 @@
 //! - `shared_routes` - Route builders shared with daemon
 
 mod auth;
-pub mod board;
 pub mod eval_routes;
 pub mod routes;
 pub mod shared_routes;

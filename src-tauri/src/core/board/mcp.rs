@@ -6,25 +6,20 @@
 //!
 //! ## Tools
 //!
-//! - `board_view` - View full board structure with node IDs and file paths
+//! - `board_view` - View full board structure with node IDs
 //! - `board_feature` - Create or update a feature (high-level goal, dispatch unit)
 //! - `board_task` - Create or update a task (specific implementation work)
 //! - `board_check` - Create or update a check (validation)
 //! - `board_delete` - Delete a node
-//!
-//! ## Content Editing
-//!
-//! Node content lives in markdown files at `board/tasks/{id}.md`.
-//! The agent edits these files directly with Read/Write tools.
 
 use serde_json::{json, Value};
 use std::future::Future;
-use std::path::PathBuf;
 
-use crate::core::delta::{BoardNodeTree, DeltaExporter, DeltaState, NodeKind};
+use crate::core::delta::{BoardNodeTree, DeltaState, NodeKind};
 use crate::core::mcp::{run_mcp_server, McpToolServer, Tool};
 use crate::core::project::ProjectStore;
-use crate::core::route::{RouteFiles, RouteStore};
+use crate::core::route::CreateRouteRequest;
+use crate::core::route::RouteStore;
 use std::sync::Mutex;
 
 /// Block on an async future in a sync context
@@ -51,7 +46,8 @@ fn get_tools() -> Vec<Tool> {
         },
         Tool {
             name: "board_switch_route",
-            description: "Switch to a different route. All subsequent operations will use this route.",
+            description:
+                "Switch to a different route by ID for this Shepherd session. Use board_set_active_route(name) to persist project active route.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -61,6 +57,38 @@ fn get_tools() -> Vec<Tool> {
                     }
                 },
                 "required": ["route_id"]
+            }),
+        },
+        Tool {
+            name: "board_create_route",
+            description: "Create a new route by name. Forks from parent_route_name when provided; otherwise forks from current route.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Unique route name to create"
+                    },
+                    "parent_route_name": {
+                        "type": "string",
+                        "description": "Existing route name to fork from (defaults to current route)"
+                    }
+                },
+                "required": ["name"]
+            }),
+        },
+        Tool {
+            name: "board_set_active_route",
+            description: "Set project active route by unique route name and switch this session to it.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Existing route name"
+                    }
+                },
+                "required": ["name"]
             }),
         },
         Tool {
@@ -110,7 +138,7 @@ fn get_tools() -> Vec<Tool> {
         },
         Tool {
             name: "board_task",
-            description: "Create or update an implementation task. Omit 'id' to create new. Returns the new/updated task ID and file path. Tasks skip the planning phase — they are dispatched directly to workers.",
+            description: "Create or update an implementation task. Omit 'id' to create new. Returns the new/updated task ID. Tasks skip the planning phase — they are dispatched directly to workers.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -150,7 +178,7 @@ fn get_tools() -> Vec<Tool> {
         },
         Tool {
             name: "board_check",
-            description: "Create or update a check (validation node). Omit 'id' to create new. Returns the new/updated check ID and file path. 'validates' is convenience sugar — when provided, writes validated_by on each referenced feature/task. Parent under a feature for scoped checks; omit parent for global/e2e checks.",
+            description: "Create or update a check (validation node). Omit 'id' to create new. Returns the new/updated check ID. 'validates' is convenience sugar — when provided, writes validated_by on each referenced feature/task. Parent under a feature for scoped checks; omit parent for global/e2e checks.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -193,6 +221,20 @@ fn get_tools() -> Vec<Tool> {
                 "required": ["id"]
             }),
         },
+        Tool {
+            name: "board_requeue_node",
+            description: "Requeue a node by ID (set status back to pending and clear claim/completion metadata).",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "node_id": {
+                        "type": "string",
+                        "description": "Node ID to requeue"
+                    }
+                },
+                "required": ["node_id"]
+            }),
+        },
     ]
 }
 
@@ -200,7 +242,6 @@ fn get_tools() -> Vec<Tool> {
 pub struct BoardMcpServer {
     project_id: i64,
     route_id: Mutex<i64>,
-    route_name: Mutex<String>,
 }
 
 impl BoardMcpServer {
@@ -209,21 +250,18 @@ impl BoardMcpServer {
     /// Uses the project's active route for all operations.
     pub fn new(project_id: i64) -> Self {
         // Look up the project's active route
-        let (route_id, route_name) = block_on(async {
+        let route_id = block_on(async {
             let project_store = ProjectStore::open().await.ok()?;
             let project = project_store.get_project(project_id).await.ok()?;
             let route_id = project.active_route_id?;
 
-            let route_store = RouteStore::new(project_id).await.ok()?;
-            let route = route_store.get_route(route_id).await.ok()?;
-            Some((route_id, route.name))
+            Some(route_id)
         })
-        .unwrap_or((1, "main".to_string()));
+        .unwrap_or(1);
 
         Self {
             project_id,
             route_id: Mutex::new(route_id),
-            route_name: Mutex::new(route_name),
         }
     }
 
@@ -238,61 +276,9 @@ impl BoardMcpServer {
         *self.route_id.lock().unwrap()
     }
 
-    /// Get the current route name
-    fn current_route_name(&self) -> String {
-        self.route_name.lock().unwrap().clone()
-    }
-
     /// Switch to a different route
-    fn switch_route(&self, route_id: i64, route_name: &str) {
+    fn switch_route(&self, route_id: i64) {
         *self.route_id.lock().unwrap() = route_id;
-        *self.route_name.lock().unwrap() = route_name.to_string();
-    }
-
-    /// Get the route directory (route-scoped)
-    fn route_dir(&self) -> PathBuf {
-        RouteFiles::routes_base_dir(self.project_id).join(self.current_route_name())
-    }
-
-    /// Get the board directory path (route-scoped)
-    fn board_dir(&self) -> PathBuf {
-        self.route_dir().join("board")
-    }
-
-    /// Get the tasks directory path
-    fn tasks_dir(&self) -> PathBuf {
-        self.board_dir().join("tasks")
-    }
-
-    /// Ensure tasks directory exists
-    fn ensure_tasks_dir(&self) -> std::io::Result<PathBuf> {
-        let dir = self.tasks_dir();
-        if !dir.exists() {
-            std::fs::create_dir_all(&dir)?;
-        }
-        Ok(dir)
-    }
-
-    /// Get file path for a node
-    fn node_file_path(&self, id: &str) -> String {
-        format!("tasks/{}.md", id)
-    }
-
-    /// Write content file for a node
-    fn write_content_file(&self, id: &str, content: &str) -> Result<String, String> {
-        let tasks_dir = self.ensure_tasks_dir().map_err(|e| e.to_string())?;
-        let file_path = tasks_dir.join(format!("{}.md", id));
-        std::fs::write(&file_path, content).map_err(|e| e.to_string())?;
-        Ok(self.node_file_path(id))
-    }
-
-    /// Delete content file for a node
-    fn delete_content_file(&self, id: &str) -> Result<(), String> {
-        let file_path = self.tasks_dir().join(format!("{}.md", id));
-        if file_path.exists() {
-            std::fs::remove_file(&file_path).map_err(|e| e.to_string())?;
-        }
-        Ok(())
     }
 
     /// Get all valid feature/task IDs (nodes that checks can validate)
@@ -377,14 +363,105 @@ impl BoardMcpServer {
             store.get_route(route_id).await.map_err(|e| e.to_string())
         })?;
 
-        self.switch_route(route_id, &route.name);
-
-        // Re-export for the new route
-        self.sync_export()?;
+        self.switch_route(route_id);
 
         Ok(serde_json::to_string_pretty(&json!({
             "success": true,
             "message": format!("Switched to route '{}' (id: {})", route.name, route.id),
+            "route": {
+                "id": route.id,
+                "name": route.name
+            }
+        }))
+        .unwrap())
+    }
+
+    /// Handle board_create_route - create a new route from parent route name/current route
+    fn handle_create_route(&self, args: &Value) -> Result<String, String> {
+        let name = args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or("name is required")?;
+        let parent_route_name = args
+            .get("parent_route_name")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        let created = block_on(async {
+            let store = RouteStore::new(self.project_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            let parent_route_id = if let Some(parent_name) = parent_route_name {
+                let parent = store
+                    .get_route_by_name(parent_name)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!("Parent route '{}' not found", parent_name))?;
+                parent.id
+            } else {
+                self.current_route_id()
+            };
+
+            let req = CreateRouteRequest {
+                name: name.to_string(),
+                parent_route_id: Some(parent_route_id),
+                parent_version_id: None,
+            };
+
+            store.create_route(&req).await.map_err(|e| e.to_string())
+        })?;
+
+        Ok(serde_json::to_string_pretty(&json!({
+            "success": true,
+            "message": format!("Created route '{}'", created.name),
+            "route": {
+                "id": created.id,
+                "name": created.name,
+                "parent_route_id": created.parent_route_id
+            }
+        }))
+        .unwrap())
+    }
+
+    /// Handle board_set_active_route - set project active route by name
+    fn handle_set_active_route(&self, args: &Value) -> Result<String, String> {
+        let name = args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or("name is required")?;
+
+        let route = block_on(async {
+            let store = RouteStore::new(self.project_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            let route = store
+                .get_route_by_name(name)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("Route '{}' not found", name))?;
+
+            let pool = crate::core::db::global_pool().await;
+            sqlx::query("UPDATE projects SET active_route_id = ?, updated_at = ? WHERE id = ?")
+                .bind(route.id)
+                .bind(crate::core::db::utc_now())
+                .bind(self.project_id)
+                .execute(pool)
+                .await
+                .map_err(|e| format!("Failed to set active route: {}", e))?;
+
+            Ok::<_, String>(route)
+        })?;
+
+        self.switch_route(route.id);
+
+        Ok(serde_json::to_string_pretty(&json!({
+            "success": true,
+            "message": format!("Active route set to '{}'", route.name),
             "route": {
                 "id": route.id,
                 "name": route.name
@@ -412,8 +489,7 @@ impl BoardMcpServer {
                 json!({
                     "id": n.id,
                     "name": n.name,
-                    "validates": n.validates,
-                    "file": self.node_file_path(&n.id)
+                    "validates": n.validates
                 })
             })
             .collect();
@@ -444,7 +520,6 @@ impl BoardMcpServer {
             "kind": node.kind.as_str(),
             "status": node.status.as_str(),
             "blocked_by": node.blocked_by,
-            "file": self.node_file_path(&node.id),
             "children": children
         })
     }
@@ -550,17 +625,12 @@ impl BoardMcpServer {
         };
 
         let node = block_on(self.state().create_node(&req)).map_err(|e| e.to_string())?;
-        let file_path = self.write_content_file(&node.id, content)?;
-
-        // Re-export to sync board files
-        self.sync_export()?;
 
         Ok(json!({
             "success": true,
             "action": "created",
             "id": node.id,
-            "file": file_path,
-            "message": format!("Created feature '{}'. Edit {} to add details.", name, file_path)
+            "message": format!("Created feature '{}'.", name)
         })
         .to_string())
     }
@@ -652,17 +722,12 @@ impl BoardMcpServer {
         };
 
         let node = block_on(self.state().create_node(&req)).map_err(|e| e.to_string())?;
-        let file_path = self.write_content_file(&node.id, content)?;
-
-        // Re-export to sync board files
-        self.sync_export()?;
 
         Ok(json!({
             "success": true,
             "action": "created",
             "id": node.id,
-            "file": file_path,
-            "message": format!("Created task '{}'. Edit {} to add details.", name, file_path)
+            "message": format!("Created task '{}'.", name)
         })
         .to_string())
     }
@@ -698,7 +763,7 @@ impl BoardMcpServer {
         // Build update request
         let req = UpdateBoardNodeRequest {
             name: name.map(String::from),
-            content: None, // Content edited via files
+            content: None, // Content edited via node tools
             difficulty: None,
             validated_by,
             blocked_by,
@@ -718,18 +783,12 @@ impl BoardMcpServer {
             block_on(self.state().move_node(id, new_parent, 0)).map_err(|e| e.to_string())?;
         }
 
-        // Re-export to sync board files
-        self.sync_export()?;
-
-        let file_path = self.node_file_path(id);
-
         if was_renamed {
             Ok(json!({
                 "success": true,
                 "action": "renamed",
                 "id": id,
-                "file": file_path,
-                "message": format!("Renamed to '{}'. Content at {}", name.unwrap(), file_path)
+                "message": format!("Renamed to '{}'.", name.unwrap())
             })
             .to_string())
         } else {
@@ -737,8 +796,7 @@ impl BoardMcpServer {
                 "success": true,
                 "action": "updated",
                 "id": id,
-                "file": file_path,
-                "message": format!("Updated task. Content at {}", file_path)
+                "message": "Updated task."
             })
             .to_string())
         }
@@ -822,7 +880,6 @@ impl BoardMcpServer {
         };
 
         let node = block_on(self.state().create_node(&req)).map_err(|e| e.to_string())?;
-        let file_path = self.write_content_file(&node.id, content)?;
 
         // Write validated_by on each target task (convenience sugar)
         for task_id in &validates {
@@ -841,9 +898,6 @@ impl BoardMcpServer {
             let _ = block_on(self.state().update_node(task_id, &update));
         }
 
-        // Re-export to sync board files
-        self.sync_export()?;
-
         let msg = if validates.is_empty() {
             format!("Created global check '{}'", name)
         } else {
@@ -857,7 +911,6 @@ impl BoardMcpServer {
             "success": true,
             "action": "created",
             "id": node.id,
-            "file": file_path,
             "message": msg
         })
         .to_string())
@@ -937,16 +990,11 @@ impl BoardMcpServer {
             }
         }
 
-        // Re-export to sync board files
-        self.sync_export()?;
-
-        let file_path = self.node_file_path(id);
         Ok(json!({
             "success": true,
             "action": "updated",
             "id": id,
-            "file": file_path,
-            "message": format!("Updated check. Content at {}", file_path)
+            "message": "Updated check."
         })
         .to_string())
     }
@@ -973,7 +1021,6 @@ impl BoardMcpServer {
         };
 
         let node_name = node.name.clone();
-        let file_path = self.node_file_path(id);
 
         // Count references that will be cleaned up
         let refs_cleaned = self.count_references_to(id);
@@ -981,19 +1028,46 @@ impl BoardMcpServer {
         // Delete the node (cascade deletes children)
         block_on(self.state().delete_node(id)).map_err(|e| e.to_string())?;
 
-        // Delete content file
-        self.delete_content_file(id)?;
-
-        // Re-export to sync board files
-        self.sync_export()?;
-
         Ok(json!({
             "success": true,
             "action": "deleted",
             "id": id,
-            "file_deleted": file_path,
             "refs_cleaned": refs_cleaned,
             "message": format!("Deleted '{}'. Removed from {} references.", node_name, refs_cleaned)
+        })
+        .to_string())
+    }
+
+    /// Handle board_requeue_node - reopen node back to pending
+    fn handle_requeue_node(&self, args: &Value) -> Result<String, String> {
+        let node_id = args
+            .get("node_id")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or("node_id is required")?;
+
+        let state = self.state();
+        let node = match block_on(state.get_node(node_id)) {
+            Ok(n) => n,
+            Err(_) => {
+                return Ok(json!({
+                    "success": false,
+                    "message": format!("Node '{}' not found", node_id),
+                    "reason": "not_found",
+                    "hint": "Use board_view to see available node IDs"
+                })
+                .to_string());
+            }
+        };
+
+        block_on(state.reopen_node(node_id)).map_err(|e| e.to_string())?;
+
+        Ok(json!({
+            "success": true,
+            "action": "requeued",
+            "id": node_id,
+            "message": format!("Requeued '{}' back to pending.", node.name)
         })
         .to_string())
     }
@@ -1028,13 +1102,6 @@ impl BoardMcpServer {
             }
         }
     }
-
-    /// Re-export board to sync files
-    fn sync_export(&self) -> Result<(), String> {
-        let mut exporter = DeltaExporter::new(self.project_id, self.current_route_id());
-        exporter.export_for_agent().map_err(|e| e.to_string())?;
-        Ok(())
-    }
 }
 
 impl McpToolServer for BoardMcpServer {
@@ -1050,11 +1117,14 @@ impl McpToolServer for BoardMcpServer {
         let result = match name {
             "board_routes" => self.handle_routes(),
             "board_switch_route" => self.handle_switch_route(&args),
+            "board_create_route" => self.handle_create_route(&args),
+            "board_set_active_route" => self.handle_set_active_route(&args),
             "board_view" => self.handle_view(),
             "board_feature" => self.handle_feature(args),
             "board_task" => self.handle_task(args),
             "board_check" => self.handle_check(args),
             "board_delete" => self.handle_delete(args),
+            "board_requeue_node" => self.handle_requeue_node(&args),
             _ => Err(format!("Unknown tool: {}", name)),
         };
 
@@ -1077,15 +1147,18 @@ mod tests {
     #[test]
     fn test_get_tools() {
         let tools = get_tools();
-        assert_eq!(tools.len(), 7);
+        assert_eq!(tools.len(), 10);
 
         let names: Vec<&str> = tools.iter().map(|t| t.name).collect();
         assert!(names.contains(&"board_routes"));
         assert!(names.contains(&"board_switch_route"));
+        assert!(names.contains(&"board_create_route"));
+        assert!(names.contains(&"board_set_active_route"));
         assert!(names.contains(&"board_view"));
         assert!(names.contains(&"board_feature"));
         assert!(names.contains(&"board_task"));
         assert!(names.contains(&"board_check"));
         assert!(names.contains(&"board_delete"));
+        assert!(names.contains(&"board_requeue_node"));
     }
 }

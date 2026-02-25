@@ -3,16 +3,14 @@
 //! Replaces legacy Shepherd session command surface with Shepherd-oriented
 //! session lifecycle and history APIs.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 
 use base64::Engine;
 use lash_core::provider::Provider;
-use lash_core::tools::{
-    CompositeTools, EditFile, FindReplace, Glob, Grep, Ls, ReadFile, Shell, WriteFile,
-};
+use lash_core::tools::hashline::{self, HashlineEdit};
 use lash_core::{
     AgentCapabilities, AgentEvent, AgentStateEnvelope, EventSink, FsInstructionSource, InputItem,
     Message, MessageRole, Part, PartKind, PruneState, RuntimeConfig, RuntimeEngine, ToolDefinition,
@@ -28,8 +26,10 @@ use tracing::{debug, warn};
 use super::delta;
 use super::ResultExt;
 use crate::core::board::mcp::BoardMcpServer;
+use crate::core::delta::{DeltaState, UpdateBoardNodeRequest};
 use crate::core::llm_provider;
 use crate::core::mcp::McpToolServer;
+use crate::core::orchestrator::create_orchestrator;
 use crate::core::{
     Config, ProjectStore, RouteFiles, RouteStore, SQLiteState, ShepherdChatMessage,
     ShepherdChatStore,
@@ -183,6 +183,9 @@ const MAX_IMAGE_COUNT: usize = 8;
 const MAX_IMAGE_BASE64_CHARS: usize = 12 * 1024 * 1024; // ~9MB raw bytes
 const RUNTIME_HISTORY_LIMIT: usize = 48;
 const RUNTIME_PREVIEW_MAX_CHARS: usize = 1200;
+const NODE_READ_DEFAULT_LIMIT: usize = 2000;
+const NODE_READ_MAX_LINE_LEN: usize = 2000;
+const NODE_TRUNCATION_HINT: &str = "Pass `limit=null` for all lines.";
 
 #[derive(Default)]
 struct AssistantDraft {
@@ -285,6 +288,429 @@ impl ShepherdToolProvider {
             .unwrap_or_default()
     }
 
+    fn parse_offset(args: &Value) -> usize {
+        args.get("offset")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize)
+            .unwrap_or(1)
+            .max(1)
+    }
+
+    fn parse_limit(args: &Value) -> Result<Option<usize>, ToolResult> {
+        match args.get("limit") {
+            None => Ok(Some(NODE_READ_DEFAULT_LIMIT)),
+            Some(v) if v.is_null() => Ok(None),
+            Some(v) => {
+                if let Some(s) = v.as_str() {
+                    if s.eq_ignore_ascii_case("none") {
+                        return Ok(None);
+                    }
+                    return Err(ToolResult::err_fmt(format_args!(
+                        "Invalid limit: expected int, null, or \"none\""
+                    )));
+                }
+                let n = match v.as_u64() {
+                    Some(n) => n,
+                    None => {
+                        return Err(ToolResult::err_fmt(format_args!(
+                            "Invalid limit: expected int, null, or \"none\""
+                        )));
+                    }
+                };
+
+                if n == 0 {
+                    return Err(ToolResult::err_fmt(format_args!(
+                        "Invalid limit: must be >= 1, or use null/\"none\" for no cap"
+                    )));
+                }
+                Ok(Some(n as usize))
+            }
+        }
+    }
+
+    fn parse_hashline_edits(edits: &[Value]) -> Result<Vec<HashlineEdit>, String> {
+        edits
+            .iter()
+            .enumerate()
+            .map(|(idx, edit)| {
+                Self::parse_single_hashline_edit(edit)
+                    .map_err(|e| format!("Edit #{}: {}", idx + 1, e))
+            })
+            .collect()
+    }
+
+    fn parse_single_hashline_edit(edit: &Value) -> Result<HashlineEdit, String> {
+        if let Some(obj) = edit.get("set_line") {
+            let anchor = obj
+                .get("anchor")
+                .and_then(|v| v.as_str())
+                .ok_or("set_line: missing 'anchor'")?
+                .to_string();
+            let new_text = obj
+                .get("new_text")
+                .and_then(|v| v.as_str())
+                .ok_or("set_line: missing 'new_text'")?
+                .to_string();
+            return Ok(HashlineEdit::SetLine { anchor, new_text });
+        }
+
+        if let Some(obj) = edit.get("replace_lines") {
+            let start_anchor = obj
+                .get("start_anchor")
+                .and_then(|v| v.as_str())
+                .ok_or("replace_lines: missing 'start_anchor'")?
+                .to_string();
+            let end_anchor = obj
+                .get("end_anchor")
+                .and_then(|v| v.as_str())
+                .ok_or("replace_lines: missing 'end_anchor'")?
+                .to_string();
+            let new_text = obj
+                .get("new_text")
+                .and_then(|v| v.as_str())
+                .ok_or("replace_lines: missing 'new_text'")?
+                .to_string();
+            return Ok(HashlineEdit::ReplaceLines {
+                start_anchor,
+                end_anchor,
+                new_text,
+            });
+        }
+
+        if let Some(obj) = edit.get("insert_after") {
+            let anchor = obj
+                .get("anchor")
+                .and_then(|v| v.as_str())
+                .ok_or("insert_after: missing 'anchor'")?
+                .to_string();
+            let text = obj
+                .get("text")
+                .and_then(|v| v.as_str())
+                .ok_or("insert_after: missing 'text'")?
+                .to_string();
+            return Ok(HashlineEdit::InsertAfter { anchor, text });
+        }
+
+        if let Some(obj) = edit.get("replace") {
+            let old_text = obj
+                .get("old_text")
+                .and_then(|v| v.as_str())
+                .ok_or("replace: missing 'old_text'")?
+                .to_string();
+            let new_text = obj
+                .get("new_text")
+                .and_then(|v| v.as_str())
+                .ok_or("replace: missing 'new_text'")?
+                .to_string();
+            let all = obj.get("all").and_then(|v| v.as_bool()).unwrap_or(false);
+            return Ok(HashlineEdit::Replace {
+                old_text,
+                new_text,
+                all,
+            });
+        }
+
+        Err(format!(
+            "Unknown edit type. Expected one of: set_line, replace_lines, insert_after, replace. Got: {}",
+            edit
+        ))
+    }
+
+    fn append_truncation_notice(
+        formatted: &mut String,
+        start_idx: usize,
+        end_idx: usize,
+        total_lines: usize,
+    ) {
+        if end_idx >= total_lines {
+            return;
+        }
+        let shown_start = start_idx + 1;
+        let shown_end = end_idx;
+        let omitted = total_lines - end_idx;
+        let next_offset = end_idx + 1;
+        formatted.push_str(&format!(
+            "\n[results truncated: showing lines {}-{} of {} ({} more lines). Use offset={} to continue. {}]",
+            shown_start, shown_end, total_lines, omitted, next_offset, NODE_TRUNCATION_HINT
+        ));
+    }
+
+    fn compact_diff(old: &str, new: &str, target: &str, max_lines: usize) -> String {
+        let diff = similar::TextDiff::from_lines(old, new);
+        let unified = diff
+            .unified_diff()
+            .header(&format!("a/{target}"), &format!("b/{target}"))
+            .to_string();
+        if unified.is_empty() {
+            return String::new();
+        }
+        let lines: Vec<&str> = unified.lines().collect();
+        if lines.len() <= max_lines {
+            unified
+        } else {
+            let mut truncated = lines[..max_lines].join("\n");
+            truncated.push_str(&format!("\n... ({} more lines)", lines.len() - max_lines));
+            truncated
+        }
+    }
+
+    async fn read_node(&self, project_id: i64, route_id: i64, args: &Value) -> ToolResult {
+        let node_id = match args.get("node_id").and_then(|v| v.as_str()).map(str::trim) {
+            Some(id) if !id.is_empty() => id,
+            _ => return ToolResult::err_fmt("Missing required parameter: node_id"),
+        };
+
+        let offset = Self::parse_offset(args);
+        let limit = match Self::parse_limit(args) {
+            Ok(v) => v,
+            Err(error) => return error,
+        };
+
+        let state = DeltaState::with_route(project_id, route_id);
+        let node = match state.get_node(node_id).await {
+            Ok(node) => node,
+            Err(_) => return ToolResult::err_fmt(format_args!("Node does not exist: {}", node_id)),
+        };
+
+        let lines: Vec<&str> = node.content.lines().collect();
+        let total_lines = lines.len();
+        let start_idx = (offset - 1).min(total_lines);
+        let end_idx = match limit {
+            Some(limit) => (start_idx + limit).min(total_lines),
+            None => total_lines,
+        };
+        let selected: Vec<&str> = lines[start_idx..end_idx].to_vec();
+        let truncated_content: String = selected
+            .iter()
+            .map(|line| {
+                if line.len() > NODE_READ_MAX_LINE_LEN {
+                    format!("{}...", &line[..NODE_READ_MAX_LINE_LEN])
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut formatted = hashline::format_hashlines(&truncated_content, offset);
+        Self::append_truncation_notice(&mut formatted, start_idx, end_idx, total_lines);
+
+        ToolResult::ok(json!(formatted))
+    }
+
+    async fn edit_node(&self, project_id: i64, route_id: i64, args: &Value) -> ToolResult {
+        let node_id = match args.get("node_id").and_then(|v| v.as_str()).map(str::trim) {
+            Some(id) if !id.is_empty() => id,
+            _ => return ToolResult::err_fmt("Missing required parameter: node_id"),
+        };
+        let edits_json = match args.get("edits").and_then(|v| v.as_array()) {
+            Some(edits) => edits,
+            None => {
+                return ToolResult::err(json!(
+                    "Missing or invalid 'edits' parameter: expected a list"
+                ));
+            }
+        };
+        let edits = match Self::parse_hashline_edits(edits_json) {
+            Ok(edits) => edits,
+            Err(error) => return ToolResult::err(json!(error)),
+        };
+
+        let state = DeltaState::with_route(project_id, route_id);
+        let node = match state.get_node(node_id).await {
+            Ok(node) => node,
+            Err(_) => return ToolResult::err_fmt(format_args!("Node does not exist: {}", node_id)),
+        };
+
+        let new_content = match hashline::apply_hashline_edits(&node.content, edits) {
+            Ok(content) => content,
+            Err(error) => return ToolResult::err(json!(error)),
+        };
+
+        match state
+            .update_node(
+                node_id,
+                &UpdateBoardNodeRequest {
+                    content: Some(new_content.clone()),
+                    ..Default::default()
+                },
+            )
+            .await
+        {
+            Ok(updated) => ToolResult::ok(json!({
+                "__type__": "edit_result",
+                "summary": format!(
+                    "Applied {} edit(s) to {} ({} lines)",
+                    edits_json.len(),
+                    updated.id,
+                    updated.content.lines().count()
+                ),
+                "diff": Self::compact_diff(&node.content, &new_content, &updated.id, 50)
+            })),
+            Err(error) => ToolResult::err_fmt(format_args!("Failed to write node: {}", error)),
+        }
+    }
+
+    async fn write_node(&self, project_id: i64, route_id: i64, args: &Value) -> ToolResult {
+        let node_id = match args.get("node_id").and_then(|v| v.as_str()).map(str::trim) {
+            Some(id) if !id.is_empty() => id,
+            _ => return ToolResult::err_fmt("Missing required parameter: node_id"),
+        };
+        let content = args
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+
+        let state = DeltaState::with_route(project_id, route_id);
+        match state
+            .update_node(
+                node_id,
+                &UpdateBoardNodeRequest {
+                    content: Some(content.clone()),
+                    ..Default::default()
+                },
+            )
+            .await
+        {
+            Ok(_updated) => ToolResult::ok(json!(format!(
+                "Wrote {} bytes to {}",
+                content.len(),
+                node_id
+            ))),
+            Err(error) => ToolResult::err_fmt(format_args!("Failed to write node: {}", error)),
+        }
+    }
+
+    async fn find_replace_node(&self, project_id: i64, route_id: i64, args: &Value) -> ToolResult {
+        let node_id = match args.get("node_id").and_then(|v| v.as_str()).map(str::trim) {
+            Some(id) if !id.is_empty() => id,
+            _ => return ToolResult::err_fmt("Missing required parameter: node_id"),
+        };
+        let old_text = match args.get("old_text").and_then(|v| v.as_str()) {
+            Some(s) => s,
+            None => return ToolResult::err_fmt("Missing required parameter: old_text"),
+        };
+        let new_text = match args.get("new_text").and_then(|v| v.as_str()) {
+            Some(s) => s,
+            None => return ToolResult::err_fmt("Missing required parameter: new_text"),
+        };
+        let replace_all = args.get("all").and_then(|v| v.as_bool()).unwrap_or(false);
+
+        let state = DeltaState::with_route(project_id, route_id);
+        let node = match state.get_node(node_id).await {
+            Ok(node) => node,
+            Err(_) => return ToolResult::err_fmt(format_args!("Node does not exist: {}", node_id)),
+        };
+
+        if !node.content.contains(old_text) {
+            return ToolResult::err_fmt("old_text not found in node");
+        }
+
+        let (new_content, count) = if replace_all {
+            let count = node.content.matches(old_text).count();
+            (node.content.replace(old_text, new_text), count)
+        } else {
+            (node.content.replacen(old_text, new_text, 1), 1)
+        };
+
+        match state
+            .update_node(
+                node_id,
+                &UpdateBoardNodeRequest {
+                    content: Some(new_content),
+                    ..Default::default()
+                },
+            )
+            .await
+        {
+            Ok(updated) => {
+                let label = if count == 1 {
+                    "1 replacement".to_string()
+                } else {
+                    format!("{} replacements", count)
+                };
+                ToolResult::ok(json!({
+                    "__type__": "edit_result",
+                    "summary": format!("{} made in {}", label, updated.id),
+                    "diff": Self::compact_diff(&node.content, &updated.content, &updated.id, 50),
+                }))
+            }
+            Err(error) => ToolResult::err_fmt(format_args!("Failed to write node: {}", error)),
+        }
+    }
+
+    async fn resolve_run_name(&self, project_id: i64, route_id: i64) -> Result<String, ToolResult> {
+        match delta::get_project_run(project_id, route_id).await {
+            Ok(Some(run)) => Ok(run.run_name),
+            Ok(None) => Err(ToolResult::err(json!({
+                "error": "No run exists for this route. Call shepherd_start_run first."
+            }))),
+            Err(error) => Err(ToolResult::err(json!({ "error": error }))),
+        }
+    }
+
+    async fn shepherd_get_workers(&self, project_id: i64, route_id: i64) -> ToolResult {
+        let run_name = match self.resolve_run_name(project_id, route_id).await {
+            Ok(name) => name,
+            Err(error) => return error,
+        };
+
+        let orch = match create_orchestrator(None) {
+            Ok(orch) => orch,
+            Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
+        };
+
+        match orch.list_workers(&run_name).await {
+            Ok(workers) => ToolResult::ok(json!({
+                "run_name": run_name,
+                "workers": workers
+            })),
+            Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
+        }
+    }
+
+    async fn shepherd_get_worker_events(
+        &self,
+        project_id: i64,
+        route_id: i64,
+        args: &Value,
+    ) -> ToolResult {
+        let worker_name = match args
+            .get("worker_name")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+        {
+            Some(name) if !name.is_empty() => name.to_string(),
+            _ => return ToolResult::err_fmt("Missing required parameter: worker_name"),
+        };
+        let after_id = Self::arg_i64(args, "after_id");
+        let limit = Self::arg_i64(args, "limit");
+
+        let run_name = match self.resolve_run_name(project_id, route_id).await {
+            Ok(name) => name,
+            Err(error) => return error,
+        };
+
+        let orch = match create_orchestrator(None) {
+            Ok(orch) => orch,
+            Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
+        };
+
+        match orch
+            .get_worker_events(&run_name, &worker_name, after_id, limit)
+            .await
+        {
+            Ok(resp) => ToolResult::ok(json!({
+                "run_name": run_name,
+                "worker_name": worker_name,
+                "events": resp.events,
+                "last_id": resp.last_id,
+                "worker_status": resp.worker_status
+            })),
+            Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
+        }
+    }
+
     fn board_definitions(&self) -> Vec<ToolDefinition> {
         let Some(board) = &self.board else {
             return Vec::new();
@@ -319,16 +745,30 @@ impl ShepherdToolProvider {
 
         match board.execute(name, args.clone()) {
             Ok((output, _)) => {
-                if name == "board_switch_route" {
-                    if let Some(route_id) = Self::arg_i64(args, "route_id") {
+                let parsed_output =
+                    serde_json::from_str::<Value>(&output).unwrap_or_else(|_| json!(output));
+
+                if name == "board_switch_route" || name == "board_set_active_route" {
+                    let route_id = if name == "board_switch_route" {
+                        Self::arg_i64(args, "route_id")
+                    } else {
+                        parsed_output
+                            .get("route")
+                            .and_then(|r| r.get("id"))
+                            .and_then(|id| {
+                                id.as_i64()
+                                    .or_else(|| id.as_u64().map(|n| n as i64))
+                                    .or_else(|| id.as_str().and_then(|s| s.parse::<i64>().ok()))
+                            })
+                    };
+                    if let Some(route_id) = route_id {
                         if let Ok(mut active) = self.active_route_id.lock() {
                             *active = Some(route_id);
                         }
                     }
                 }
-                serde_json::from_str::<Value>(&output)
-                    .map(ToolResult::ok)
-                    .unwrap_or_else(|_| ToolResult::ok(json!(output)))
+
+                ToolResult::ok(parsed_output)
             }
             Err(error) => ToolResult::err(json!({ "error": error })),
         }
@@ -366,14 +806,82 @@ impl ToolProvider for ShepherdToolProvider {
                 inject_into_prompt: true,
             },
             ToolDefinition {
-                name: "shepherd_sync_board".to_string(),
-                description: "Sync board/task markdown file edits back into board node state."
-                    .to_string(),
+                name: "shepherd_get_workers".to_string(),
+                description: "List workers for the current run on this route.".to_string(),
                 params: vec![
                     ToolParam::optional("project_id", "int"),
                     ToolParam::optional("route_id", "int"),
                 ],
                 returns: "dict".to_string(),
+                examples: vec![],
+                hidden: false,
+                inject_into_prompt: true,
+            },
+            ToolDefinition {
+                name: "shepherd_get_worker_events".to_string(),
+                description: "Get worker output/tool events for a worker in the current run."
+                    .to_string(),
+                params: vec![
+                    ToolParam::optional("project_id", "int"),
+                    ToolParam::optional("route_id", "int"),
+                    ToolParam::typed("worker_name", "str"),
+                    ToolParam::optional("after_id", "int"),
+                    ToolParam::optional("limit", "int"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                hidden: false,
+                inject_into_prompt: true,
+            },
+            ToolDefinition {
+                name: "read_node".to_string(),
+                description:
+                    "Read node content (hashline format) using node_id instead of file path."
+                        .to_string(),
+                params: vec![
+                    ToolParam::typed("node_id", "str"),
+                    ToolParam::optional("offset", "int"),
+                    ToolParam::optional("limit", "int"),
+                ],
+                returns: "str".to_string(),
+                examples: vec![],
+                hidden: false,
+                inject_into_prompt: true,
+            },
+            ToolDefinition {
+                name: "edit_node".to_string(),
+                description: "Apply hashline edits to node content using node_id.".to_string(),
+                params: vec![
+                    ToolParam::typed("node_id", "str"),
+                    ToolParam::typed("edits", "list"),
+                ],
+                returns: "EditResult".to_string(),
+                examples: vec![],
+                hidden: false,
+                inject_into_prompt: true,
+            },
+            ToolDefinition {
+                name: "write_node".to_string(),
+                description: "Write full node content using node_id.".to_string(),
+                params: vec![
+                    ToolParam::typed("node_id", "str"),
+                    ToolParam::typed("content", "str"),
+                ],
+                returns: "str".to_string(),
+                examples: vec![],
+                hidden: false,
+                inject_into_prompt: true,
+            },
+            ToolDefinition {
+                name: "find_replace_node".to_string(),
+                description: "Exact text replacement in node content.".to_string(),
+                params: vec![
+                    ToolParam::typed("node_id", "str"),
+                    ToolParam::typed("old_text", "str"),
+                    ToolParam::typed("new_text", "str"),
+                    ToolParam::optional("all", "bool"),
+                ],
+                returns: "EditResult".to_string(),
                 examples: vec![],
                 hidden: false,
                 inject_into_prompt: true,
@@ -419,11 +927,15 @@ impl ToolProvider for ShepherdToolProvider {
                     Err(error) => ToolResult::err(json!({ "error": error })),
                 }
             }
-            "shepherd_sync_board" => match delta::sync_shepherd_changes(project_id, route_id).await
-            {
-                Ok(resp) => ToolResult::ok(json!(resp)),
-                Err(error) => ToolResult::err(json!({ "error": error })),
-            },
+            "shepherd_get_workers" => self.shepherd_get_workers(project_id, route_id).await,
+            "shepherd_get_worker_events" => {
+                self.shepherd_get_worker_events(project_id, route_id, args)
+                    .await
+            }
+            "read_node" => self.read_node(project_id, route_id, args).await,
+            "edit_node" => self.edit_node(project_id, route_id, args).await,
+            "write_node" => self.write_node(project_id, route_id, args).await,
+            "find_replace_node" => self.find_replace_node(project_id, route_id, args).await,
             "shepherd_get_board_tree" => match delta::get_board_tree(project_id, route_id).await {
                 Ok(resp) => ToolResult::ok(json!(resp)),
                 Err(error) => ToolResult::err(json!({ "error": error })),
@@ -458,25 +970,28 @@ impl ShepherdLashSink {
 
     fn tool_title_kind(name: &str) -> (String, Option<String>) {
         let mapped = match name {
-            "read_file" => ("Read".to_string(), Some("read".to_string())),
-            "ls" | "glob" | "grep" => ("Search".to_string(), Some("search".to_string())),
-            "edit_file" => ("Edit".to_string(), Some("edit".to_string())),
-            "write_file" | "find_replace" => ("Write".to_string(), Some("write".to_string())),
-            "diff_file" => ("Diff".to_string(), Some("read".to_string())),
-            "shell" | "shell_write" | "shell_status" => {
-                ("Shell".to_string(), Some("execute".to_string()))
-            }
             "board_routes" => ("Board Routes".to_string(), Some("search".to_string())),
             "board_switch_route" => ("Switch Route".to_string(), Some("execute".to_string())),
+            "board_create_route" => ("Create Route".to_string(), Some("execute".to_string())),
+            "board_set_active_route" => {
+                ("Set Active Route".to_string(), Some("execute".to_string()))
+            }
             "board_view" | "shepherd_get_board_tree" => {
                 ("Board View".to_string(), Some("search".to_string()))
             }
-            "board_feature" | "board_task" | "board_check" | "board_delete" => {
-                ("Board Edit".to_string(), Some("edit".to_string()))
+            "board_feature" | "board_task" | "board_check" | "board_delete"
+            | "board_requeue_node" => ("Board Edit".to_string(), Some("edit".to_string())),
+            "read_node" => ("Node Read".to_string(), Some("read".to_string())),
+            "edit_node" | "find_replace_node" => {
+                ("Node Edit".to_string(), Some("edit".to_string()))
             }
+            "write_node" => ("Node Write".to_string(), Some("write".to_string())),
             "shepherd_start_run" => ("Start Run".to_string(), Some("execute".to_string())),
             "shepherd_get_project_run" => ("Run Status".to_string(), Some("search".to_string())),
-            "shepherd_sync_board" => ("Sync Board".to_string(), Some("execute".to_string())),
+            "shepherd_get_workers" => ("Workers".to_string(), Some("search".to_string())),
+            "shepherd_get_worker_events" => {
+                ("Worker Events".to_string(), Some("search".to_string()))
+            }
             _ => (name.to_string(), None),
         };
         mapped
@@ -881,9 +1396,10 @@ fn build_system_prompt(
         Mission:\n\
         - Understand user intent and turn it into concrete execution steps.\n\
         - Decompose work pragmatically and keep recommendations actionable.\n\
-        - Use board tools for board structure (`board_view`, `board_task`, etc.) instead of manual JSON edits.\n\
-        - Use run tools (`shepherd_start_run`, `shepherd_get_project_run`) when execution state must change.\n\
-        - When you edit files, keep changes minimal, safe, and explicit.\n\
+        - Use tools only: do not edit board files directly.\n\
+        - Use board tools for board structure (`board_view`, `board_task`, `board_create_route`, `board_set_active_route`, etc.).\n\
+        - For board node content edits, use only `read_node`, `edit_node`, `write_node`, and `find_replace_node`.\n\
+        - Use run/worker tools (`shepherd_start_run`, `shepherd_get_project_run`, `shepherd_get_workers`, `shepherd_get_worker_events`) for execution lifecycle and observability.\n\
         - Never claim work happened unless you actually executed tools.\n\
         - If images are attached, inspect them and use them as first-class context.\n\n\
         Scope: {}\n\
@@ -1069,6 +1585,41 @@ fn resolve_runtime_cwd(path: Option<PathBuf>) -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
+fn shepherd_board_tool_names() -> &'static [&'static str] {
+    &[
+        "board_routes",
+        "board_switch_route",
+        "board_create_route",
+        "board_set_active_route",
+        "board_view",
+        "board_feature",
+        "board_task",
+        "board_check",
+        "board_delete",
+        "board_requeue_node",
+        "read_node",
+        "edit_node",
+        "write_node",
+        "find_replace_node",
+        "shepherd_start_run",
+        "shepherd_get_project_run",
+        "shepherd_get_workers",
+        "shepherd_get_worker_events",
+        "shepherd_get_board_tree",
+    ]
+}
+
+fn board_only_capabilities() -> AgentCapabilities {
+    let enabled_tools = shepherd_board_tool_names()
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect::<BTreeSet<_>>();
+    AgentCapabilities {
+        enabled_capabilities: BTreeSet::new(),
+        enabled_tools,
+    }
+}
+
 async fn load_shepherd_provider() -> Result<Provider, String> {
     let (config, _) = Config::load().map_err(|e| format!("failed to load config: {}", e))?;
     llm_provider::resolve_provider(&config).await
@@ -1140,18 +1691,8 @@ pub async fn send_shepherd_message(
         let system_prompt = build_system_prompt(&scope, focus.as_ref(), &cwd);
         let state_messages = build_runtime_messages(system_prompt, &history);
 
-        let tools: Arc<dyn ToolProvider> = Arc::new(
-            CompositeTools::new()
-                .add(Ls)
-                .add(Glob)
-                .add(Grep)
-                .add(ReadFile::new())
-                .add(EditFile)
-                .add(WriteFile)
-                .add(FindReplace)
-                .add(Shell::new().with_cwd(cwd.clone()))
-                .add(ShepherdToolProvider::new(scope_project_id, scope_route_id)),
-        );
+        let tools: Arc<dyn ToolProvider> =
+            Arc::new(ShepherdToolProvider::new(scope_project_id, scope_route_id));
 
         let provider = load_shepherd_provider().await?;
 
@@ -1161,7 +1702,7 @@ pub async fn send_shepherd_message(
             .unwrap_or_else(|| (provider.default_model().to_string(), None));
 
         let runtime_config = RuntimeConfig {
-            capabilities: AgentCapabilities::default(),
+            capabilities: board_only_capabilities(),
             model,
             provider,
             max_context_tokens: None,
