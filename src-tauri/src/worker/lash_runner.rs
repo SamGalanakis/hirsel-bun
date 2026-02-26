@@ -544,6 +544,7 @@ pub async fn run_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
         max_context_tokens: None,
         sub_agent: false,
         reasoning_effort,
+        session_id: Some(config.worker_name.clone()),
         max_turns: None,
         include_soul: false,
         llm_log_path: None,
@@ -574,7 +575,7 @@ pub async fn run_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
 
     let sink = DbEventSink::new(config.run_name.clone(), config.worker_name.clone());
     let turn = runtime
-        .run_turn(
+        .stream_turn(
             TurnInput {
                 items: vec![InputItem::Text { text: prompt }],
                 image_blobs: Default::default(),
@@ -584,13 +585,15 @@ pub async fn run_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
             &sink,
             cancel,
         )
-        .await;
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to run lash worker turn: {}", e))?;
 
     debug!(
-        "[{}] lash worker finished (done={}, final={})",
+        "[{}] lash worker finished (status={:?}, reason={:?}, assistant_safe_len={})",
         config.worker_name,
-        turn.done,
-        turn.final_message.is_some()
+        turn.status,
+        turn.done_reason,
+        turn.assistant_output.safe_text.len()
     );
 
     Ok(())

@@ -3762,7 +3762,7 @@ checksum = "bf36173d4167ed999940f804952e6b08197cae5ad5d572eb4db150ce8ad5d58f"
 [[package]]
 name = "lash-core"
 version = "0.1.0"
-source = "git+https://github.com/SamGalanakis/lash?branch=main#a5dcd615abcba7722d5065014c7a80f518e59ec1"
+source = "git+https://github.com/SamGalanakis/lash?branch=main#e15f1075cd912f50d6d1ebaddd9fbb61e1b9f4f5"
 dependencies = [
  "async-trait",
  "base64 0.22.1",

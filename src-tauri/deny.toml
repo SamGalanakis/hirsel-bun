@@ -29,6 +29,8 @@ allow = [
     "CC0-1.0",
     "BSL-1.0",
     "CDLA-Permissive-2.0",
+    # Internal proprietary dependency (lash-core)
+    "LicenseRef-LASH-PROPRIETARY",
 ]
 confidence-threshold = 0.8
 exceptions = []
@@ -41,6 +43,13 @@ registries = []
 [[licenses.clarify]]
 crate = "hirsel"
 expression = "MIT"
+license-files = []
+
+# lash-core currently has no SPDX metadata in Cargo.toml.
+# Treat it as a private/proprietary internal dependency.
+[[licenses.clarify]]
+crate = "lash-core"
+expression = "LicenseRef-LASH-PROPRIETARY"
 license-files = []
 
 [bans]
@@ -58,4 +67,4 @@ skip-tree = []
 unknown-registry = "warn"
 unknown-git = "warn"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+allow-git = ["https://github.com/SamGalanakis/lash"]

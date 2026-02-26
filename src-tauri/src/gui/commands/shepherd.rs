@@ -12,16 +12,17 @@ use base64::Engine;
 use lash_core::provider::Provider;
 use lash_core::tools::hashline::{self, HashlineEdit};
 use lash_core::{
-    AgentCapabilities, AgentEvent, AgentStateEnvelope, EventSink, FsInstructionSource, InputItem,
-    Message, MessageRole, Part, PartKind, PruneState, RuntimeConfig, RuntimeEngine, ToolDefinition,
-    ToolParam, ToolProvider, ToolResult, TurnInput,
+    AgentCapabilities, AgentEvent, AgentStateEnvelope, EventSink, FsInstructionSource, HostProfile,
+    InputItem, Message, MessageRole, OutputState, Part, PartKind, PromptOverrideMode,
+    PromptSectionName, PromptSectionOverride, PruneState, RuntimeConfig, RuntimeEngine,
+    ToolDefinition, ToolParam, ToolProvider, ToolResult, TurnInput, TurnStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::Emitter;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn};
+use tracing::{info, warn};
 
 use super::delta;
 use super::ResultExt;
@@ -35,10 +36,10 @@ use crate::core::{
     ShepherdChatStore,
 };
 
-#[derive(Debug, Clone)]
 struct ShepherdSession {
     scope: ShepherdScope,
     active_turn: Option<CancellationToken>,
+    runtime: Option<RuntimeEngine>,
 }
 
 static ACTIVE_SESSIONS: OnceLock<StdMutex<HashMap<String, ShepherdSession>>> = OnceLock::new();
@@ -192,7 +193,7 @@ struct AssistantDraft {
     text: String,
     thinking: String,
     tools: Vec<ShepherdMessageChunk>,
-    final_message: Option<String>,
+    runtime_output: String,
     errored: bool,
 }
 
@@ -269,7 +270,7 @@ impl ShepherdToolProvider {
             .get("properties")
             .and_then(|v| v.as_object())
             .map(|props| {
-                props
+                let mut entries = props
                     .iter()
                     .map(|(name, prop)| {
                         let param_type = prop
@@ -277,13 +278,26 @@ impl ShepherdToolProvider {
                             .and_then(|v| v.as_str())
                             .map(Self::schema_type_to_param)
                             .unwrap_or("str");
-                        if required.contains(name) {
-                            ToolParam::typed(name, param_type)
+                        (name.clone(), required.contains(name), param_type)
+                    })
+                    .collect::<Vec<_>>();
+
+                // Python wrappers require required args before optional defaults.
+                entries.sort_by(|a, b| {
+                    b.1.cmp(&a.1) // required=true first
+                        .then_with(|| a.0.cmp(&b.0))
+                });
+
+                entries
+                    .into_iter()
+                    .map(|(name, is_required, param_type)| {
+                        if is_required {
+                            ToolParam::typed(&name, param_type)
                         } else {
-                            ToolParam::optional(name, param_type)
+                            ToolParam::optional(&name, param_type)
                         }
                     })
-                    .collect()
+                    .collect::<Vec<_>>()
             })
             .unwrap_or_default()
     }
@@ -822,9 +836,9 @@ impl ToolProvider for ShepherdToolProvider {
                 description: "Get worker output/tool events for a worker in the current run."
                     .to_string(),
                 params: vec![
+                    ToolParam::typed("worker_name", "str"),
                     ToolParam::optional("project_id", "int"),
                     ToolParam::optional("route_id", "int"),
-                    ToolParam::typed("worker_name", "str"),
                     ToolParam::optional("after_id", "int"),
                     ToolParam::optional("limit", "int"),
                 ],
@@ -997,21 +1011,27 @@ impl ShepherdLashSink {
         mapped
     }
 
-    fn sanitize_assistant_text(text: &str) -> String {
-        let out = text
-            .replace("</repl>", "")
-            .replace("<repl>", "")
-            .replace("</repl", "")
-            .replace("<repl", "");
-
-        let mut trimmed = out.trim_end().to_string();
-        for suffix in ["<rep", "<re", "<r", "<"] {
-            if let Some(stripped) = trimmed.strip_suffix(suffix) {
-                trimmed = stripped.trim_end().to_string();
-                break;
-            }
+    fn is_repl_fragment_only(text: &str) -> bool {
+        let trimmed = text.trim();
+        if trimmed.is_empty() || !trimmed.contains('<') {
+            return false;
         }
-        trimmed
+
+        trimmed.chars().all(|c| {
+            matches!(
+                c.to_ascii_lowercase(),
+                '<' | '>' | '/' | 'r' | 'e' | 'p' | 'l' | ' '
+            )
+        })
+    }
+
+    fn sanitize_assistant_text(text: &str) -> String {
+        let out = text.replace("</repl>", "").replace("<repl>", "");
+        if Self::is_repl_fragment_only(&out) {
+            String::new()
+        } else {
+            out
+        }
     }
 }
 
@@ -1024,15 +1044,30 @@ impl EventSink for ShepherdLashSink {
                 if sanitized.is_empty() {
                     return;
                 }
-                self.emit(&ShepherdEvent::TextDelta {
-                    session_id: self.session_id.clone(),
-                    text: sanitized.clone(),
-                });
                 let mut draft = self.draft.lock().await;
                 draft.text.push_str(&sanitized);
             }
             AgentEvent::CodeBlock { code } => {
                 let _ = code;
+            }
+            AgentEvent::CodeOutput { output, error } => {
+                let mut draft = self.draft.lock().await;
+                if !output.trim().is_empty() {
+                    if !draft.runtime_output.is_empty() {
+                        draft.runtime_output.push('\n');
+                    }
+                    draft.runtime_output.push_str(&output);
+                }
+                if let Some(err) = error {
+                    if !err.trim().is_empty() {
+                        if !draft.runtime_output.is_empty() {
+                            draft.runtime_output.push('\n');
+                        }
+                        draft
+                            .runtime_output
+                            .push_str(&format!("Runtime error: {}", err));
+                    }
+                }
             }
             AgentEvent::ToolCall {
                 name,
@@ -1080,17 +1115,9 @@ impl EventSink for ShepherdLashSink {
                 if kind == "final" {
                     let sanitized_final = Self::sanitize_assistant_text(&text);
                     let mut draft = self.draft.lock().await;
-                    if draft.text.trim().is_empty() {
-                        let final_text = sanitized_final.trim().to_string();
-                        if !final_text.is_empty() {
-                            self.emit(&ShepherdEvent::TextDelta {
-                                session_id: self.session_id.clone(),
-                                text: final_text.clone(),
-                            });
-                            draft.text.push_str(&final_text);
-                        }
+                    if draft.text.trim().is_empty() && !sanitized_final.trim().is_empty() {
+                        draft.text.push_str(sanitized_final.trim());
                     }
-                    draft.final_message = Some(sanitized_final);
                 }
             }
             AgentEvent::Error { message, .. } => {
@@ -1102,7 +1129,6 @@ impl EventSink for ShepherdLashSink {
                 draft.errored = true;
             }
             AgentEvent::Prompt { .. }
-            | AgentEvent::CodeOutput { .. }
             | AgentEvent::LlmRequest { .. }
             | AgentEvent::LlmResponse { .. }
             | AgentEvent::TokenUsage { .. }
@@ -1308,19 +1334,8 @@ fn history_role_to_message_role(role: &str) -> Option<MessageRole> {
     }
 }
 
-fn build_runtime_messages(system_prompt: String, history: &[ShepherdChatMessage]) -> Vec<Message> {
-    let mut messages = Vec::with_capacity(history.len() + 1);
-
-    messages.push(Message {
-        id: "m0".to_string(),
-        role: MessageRole::System,
-        parts: vec![Part {
-            id: "m0.p0".to_string(),
-            kind: PartKind::Text,
-            content: system_prompt,
-            prune_state: PruneState::Intact,
-        }],
-    });
+fn build_runtime_messages(history: &[ShepherdChatMessage]) -> Vec<Message> {
+    let mut messages = Vec::with_capacity(history.len());
 
     for item in history {
         let Some(role) = history_role_to_message_role(item.role.as_str()) else {
@@ -1381,7 +1396,7 @@ fn scope_label(scope: &ShepherdScope) -> String {
     }
 }
 
-fn build_system_prompt(
+fn build_scope_guidance(
     scope: &ShepherdScope,
     focus: Option<&ShepherdTaskFocus>,
     cwd: &Path,
@@ -1392,27 +1407,34 @@ fn build_system_prompt(
     };
 
     format!(
-        "You are Shepherd, the orchestration agent for Hirsel.\n\n\
-        Mission:\n\
-        - Understand user intent and turn it into concrete execution steps.\n\
-        - Decompose work pragmatically and keep recommendations actionable.\n\
-        - Use tools only: do not edit board files directly.\n\
-        - Use board tools for board structure (`board_view`, `board_task`, `board_create_route`, `board_set_active_route`, etc.).\n\
-        - For board node content edits, use only `read_node`, `edit_node`, `write_node`, and `find_replace_node`.\n\
-        - Use run/worker tools (`shepherd_start_run`, `shepherd_get_project_run`, `shepherd_get_workers`, `shepherd_get_worker_events`) for execution lifecycle and observability.\n\
-        - Never claim work happened unless you actually executed tools.\n\
-        - If images are attached, inspect them and use them as first-class context.\n\n\
+        "## Hirsel Shepherd Scope\n\n\
         Scope: {}\n\
         {}\n\
         Workspace root: {}\n\n\
-        Response style:\n\
-        - Be concise and direct.\n\
-        - Prefer concrete next steps over abstract commentary.\n\
-        - Call out assumptions and unknowns when needed.",
+        ## Hirsel Constraints\n\n\
+        - For board edits/execution work, use tools; do not edit board files directly.\n\
+        - For simple conversational questions, answer directly in plain language without REPL code.\n\
+        - For board node content edits, use only `read_node`, `edit_node`, `write_node`, and `find_replace_node`.\n\
+        - Never claim work happened unless you actually executed tools.\n\
+        - Never return raw tool payloads (JSON/Python dict/list) as final user-facing output.\n\
+        - Summarize tool outcomes in plain language.\n\
+        - For create/setup/scaffold/build/implement requests, perform at least one mutating board operation before finishing.",
         scope_label(scope),
         focus_line,
         cwd.display()
     )
+}
+
+fn shepherd_prompt_overrides(
+    scope: &ShepherdScope,
+    focus: Option<&ShepherdTaskFocus>,
+    cwd: &Path,
+) -> Vec<PromptSectionOverride> {
+    vec![PromptSectionOverride {
+        section: PromptSectionName::ProjectInstructions,
+        mode: PromptOverrideMode::Append,
+        content: build_scope_guidance(scope, focus, cwd),
+    }]
 }
 
 fn build_user_turn_text(chunks: &[ShepherdMessageChunk]) -> String {
@@ -1433,7 +1455,18 @@ fn build_user_turn_text(chunks: &[ShepherdMessageChunk]) -> String {
     "Continue.".to_string()
 }
 
-fn build_assistant_chunks(draft: &AssistantDraft) -> Vec<ShepherdMessageChunk> {
+fn looks_like_runtime_traceback(text: &str) -> bool {
+    let t = text.trim();
+    if t.is_empty() {
+        return false;
+    }
+    t.contains("Traceback (most recent call last):")
+        || t.contains("Runtime error:")
+        || t.contains("NameError:")
+        || t.contains("File \"repl_")
+}
+
+fn build_assistant_chunks(draft: &AssistantDraft, final_text: &str) -> Vec<ShepherdMessageChunk> {
     let mut chunks = Vec::new();
 
     if !draft.thinking.trim().is_empty() {
@@ -1442,20 +1475,11 @@ fn build_assistant_chunks(draft: &AssistantDraft) -> Vec<ShepherdMessageChunk> {
         });
     }
 
-    let text = if !draft.text.trim().is_empty() {
-        draft.text.clone()
-    } else {
-        draft
-            .final_message
-            .as_deref()
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-            .unwrap_or_default()
-            .to_string()
-    };
-
-    if !text.trim().is_empty() {
-        chunks.push(ShepherdMessageChunk::Text { content: text });
+    let sanitized_text = ShepherdLashSink::sanitize_assistant_text(final_text);
+    if !sanitized_text.trim().is_empty() {
+        chunks.push(ShepherdMessageChunk::Text {
+            content: sanitized_text,
+        });
     }
 
     chunks.extend(draft.tools.clone());
@@ -1641,6 +1665,7 @@ pub async fn start_shepherd_session(
             ShepherdSession {
                 scope: scope.clone(),
                 active_turn: None,
+                runtime: None,
             },
         );
 
@@ -1656,7 +1681,7 @@ pub async fn send_shepherd_message(
     chunks: Option<Vec<ShepherdMessageChunk>>,
     focus: Option<ShepherdTaskFocus>,
 ) -> Result<(), String> {
-    let (scope, cancel) = {
+    let (scope, cancel, mut session_runtime) = {
         let mut guard = sessions()
             .lock()
             .map_err(|_| "failed to lock Shepherd session map".to_string())?;
@@ -1670,7 +1695,7 @@ pub async fn send_shepherd_message(
 
         let cancel = CancellationToken::new();
         session.active_turn = Some(cancel.clone());
-        (session.scope.clone(), cancel)
+        (session.scope.clone(), cancel, session.runtime.take())
     };
 
     let result = async {
@@ -1684,42 +1709,60 @@ pub async fn send_shepherd_message(
         let user_images_png = decode_png_images(&user_chunks)?;
         let user_turn_text = build_user_turn_text(&user_chunks);
 
-        let history = load_scope_messages(&scope, RUNTIME_HISTORY_LIMIT).await?;
+        let history = if session_runtime.is_none() {
+            load_scope_messages(&scope, RUNTIME_HISTORY_LIMIT).await?
+        } else {
+            Vec::new()
+        };
         let cwd = resolve_runtime_cwd(resolve_scope_workspace(&scope).await);
         let scope_project_id = resolve_scope_project_id(&scope).await;
         let scope_route_id = resolve_scope_route_id(&scope).await;
-        let system_prompt = build_system_prompt(&scope, focus.as_ref(), &cwd);
-        let state_messages = build_runtime_messages(system_prompt, &history);
+        let prompt_overrides = shepherd_prompt_overrides(&scope, focus.as_ref(), &cwd);
+        if session_runtime.is_none() {
+            let tools: Arc<dyn ToolProvider> =
+                Arc::new(ShepherdToolProvider::new(scope_project_id, scope_route_id));
+            let provider = load_shepherd_provider().await?;
 
-        let tools: Arc<dyn ToolProvider> =
-            Arc::new(ShepherdToolProvider::new(scope_project_id, scope_route_id));
+            let (model, reasoning_effort) = provider
+                .default_agent_model("high")
+                .map(|(m, effort)| (m.to_string(), effort.map(str::to_string)))
+                .unwrap_or_else(|| {
+                    let model = provider.default_model().to_string();
+                    let effort = provider.reasoning_effort_for_model(&model).map(str::to_string);
+                    (model, effort)
+                });
 
-        let provider = load_shepherd_provider().await?;
+            let runtime_config = RuntimeConfig {
+                capabilities: board_only_capabilities(),
+                model,
+                provider,
+                session_id: Some(session_id.clone()),
+                max_context_tokens: None,
+                include_soul: false,
+                llm_log_path: None,
+                headless: false,
+                host_profile: HostProfile::Embedded,
+                prompt_overrides,
+                base_dir: Some(cwd.clone()),
+                path_resolver: None,
+                sanitizer: Default::default(),
+                termination: Default::default(),
+                instruction_source: Arc::new(FsInstructionSource::new()),
+            };
+            let mut state = AgentStateEnvelope::default();
+            state.agent_id = format!("shepherd-{}", session_id);
+            state.messages = build_runtime_messages(&history);
 
-        let (model, _) = provider
-            .default_agent_model("medium")
-            .map(|(m, effort)| (m.to_string(), effort.map(ToOwned::to_owned)))
-            .unwrap_or_else(|| (provider.default_model().to_string(), None));
+            let mut runtime = RuntimeEngine::from_state(runtime_config, tools, state)
+                .await
+                .map_err(|e| format!("failed to create shepherd lash runtime: {}", e))?;
+            runtime.set_reasoning_effort(reasoning_effort);
+            session_runtime = Some(runtime);
+        }
 
-        let runtime_config = RuntimeConfig {
-            capabilities: board_only_capabilities(),
-            model,
-            provider,
-            max_context_tokens: None,
-            include_soul: false,
-            llm_log_path: None,
-            headless: false,
-            prompt_overrides: Vec::new(),
-            instruction_source: Arc::new(FsInstructionSource::new()),
-        };
-
-        let mut state = AgentStateEnvelope::default();
-        state.agent_id = format!("shepherd-{}", session_id);
-        state.messages = state_messages;
-
-        let mut runtime = RuntimeEngine::from_state(runtime_config, tools, state)
-            .await
-            .map_err(|e| format!("failed to create shepherd lash runtime: {}", e))?;
+        let runtime = session_runtime
+            .as_mut()
+            .ok_or_else(|| "failed to initialize shepherd runtime".to_string())?;
 
         save_message(&scope, "user", &user_chunks_json).await?;
 
@@ -1737,7 +1780,7 @@ pub async fn send_shepherd_message(
         }
 
         let turn = runtime
-            .run_turn(
+            .stream_turn(
                 TurnInput {
                     items: turn_items,
                     image_blobs,
@@ -1745,36 +1788,193 @@ pub async fn send_shepherd_message(
                     plan_file: None,
                 },
                 &sink,
-                cancel,
+                cancel.clone(),
             )
-            .await;
+            .await
+            .map_err(|e| format!("failed to run shepherd turn: {}", e))?;
+        let mut turn = turn;
+        let mut recovered_empty_output = false;
+        let mut recovered_runtime_traceback = false;
 
-        debug!(
-            "shepherd lash turn complete: session={}, done={}, final={}",
-            session_id,
-            turn.done,
-            turn.final_message.is_some()
-        );
+        loop {
+            info!(
+                "shepherd lash turn complete: session={}, status={:?}, reason={:?}, output_state={:?}, safe_len={}, raw_len={}, errors={}",
+                session_id,
+                turn.status,
+                turn.done_reason,
+                turn.assistant_output.state,
+                turn.assistant_output.safe_text.len(),
+                turn.assistant_output.raw_text.len(),
+                turn.errors.len()
+            );
 
-        let mut final_draft = draft.lock().await;
-        if final_draft.final_message.is_none() {
-            final_draft.final_message = turn.final_message.clone();
+            let mut final_draft = draft.lock().await;
+            let streamed_text = ShepherdLashSink::sanitize_assistant_text(final_draft.text.trim());
+            let assembled_text =
+                ShepherdLashSink::sanitize_assistant_text(&turn.assistant_output.safe_text);
+            let runtime_output =
+                ShepherdLashSink::sanitize_assistant_text(&final_draft.runtime_output);
+            let final_text = if !assembled_text.trim().is_empty() {
+                assembled_text.trim().to_string()
+            } else if !streamed_text.trim().is_empty() {
+                streamed_text
+            } else {
+                runtime_output.trim().to_string()
+            };
+
+            if !final_text.is_empty() {
+                app.emit(
+                    "shepherd-event",
+                    (
+                        &session_id,
+                        &ShepherdEvent::TextDelta {
+                            session_id: session_id.clone(),
+                            text: final_text.clone(),
+                        },
+                    ),
+                )
+                .map_err(|e| format!("failed to emit shepherd text delta: {}", e))?;
+                final_draft.text = final_text.clone();
+            }
+            info!(
+                "shepherd draft summary: session={}, text_len={}, final_len={}, errored={}",
+                session_id,
+                final_draft.text.len(),
+                final_text.len(),
+                final_draft.errored
+            );
+
+            if matches!(turn.status, TurnStatus::Failed)
+                && final_text.is_empty()
+                && final_draft.tools.is_empty()
+            {
+                let message = turn
+                    .errors
+                    .first()
+                    .map(|issue| issue.message.clone())
+                    .unwrap_or_else(|| "Shepherd turn failed".to_string());
+                final_draft.errored = true;
+                drop(final_draft);
+                app.emit(
+                    "shepherd-event",
+                    (
+                        &session_id,
+                        &ShepherdEvent::Error {
+                            session_id: session_id.clone(),
+                            message,
+                        },
+                    ),
+                )
+                .map_err(|e| format!("failed to emit shepherd error event: {}", e))?;
+                return Ok(());
+            }
+
+            if matches!(turn.status, TurnStatus::Interrupted) {
+                drop(final_draft);
+                return Ok(());
+            }
+
+            if !recovered_runtime_traceback
+                && matches!(turn.status, TurnStatus::Completed)
+                && (matches!(turn.assistant_output.state, OutputState::TracebackOnly)
+                    || looks_like_runtime_traceback(&final_text))
+            {
+                warn!(
+                    "shepherd runtime traceback surfaced as assistant text; running one recovery pass: session={}, output_state={:?}",
+                    session_id,
+                    turn.assistant_output.state
+                );
+                *final_draft = AssistantDraft::default();
+                drop(final_draft);
+                recovered_runtime_traceback = true;
+                turn = runtime
+                    .stream_turn(
+                        TurnInput {
+                            items: vec![InputItem::Text {
+                                text: "The previous attempt surfaced an internal runtime traceback. Answer the user's most recent message directly in plain language with no code blocks, no repl execution, and no traceback text.".to_string(),
+                            }],
+                            image_blobs: HashMap::new(),
+                            mode: None,
+                            plan_file: None,
+                        },
+                        &sink,
+                        cancel.clone(),
+                    )
+                    .await
+                    .map_err(|e| format!("failed to run shepherd traceback recovery turn: {}", e))?;
+                continue;
+            }
+
+            if !recovered_empty_output
+                && matches!(turn.status, TurnStatus::Completed)
+                && final_text.is_empty()
+                && final_draft.tools.is_empty()
+            {
+                warn!(
+                    "shepherd empty output on completed turn; running one recovery pass: session={}, output_state={:?}, raw_assistant_output={:?}, runtime_output={:?}",
+                    session_id,
+                    turn.assistant_output.state,
+                    turn.assistant_output.raw_text,
+                    final_draft.runtime_output
+                );
+                *final_draft = AssistantDraft::default();
+                drop(final_draft);
+                recovered_empty_output = true;
+                turn = runtime
+                    .stream_turn(
+                        TurnInput {
+                            items: vec![InputItem::Text {
+                                text: "Respond directly to the user's most recent message in plain language. Provide a complete, non-empty answer.".to_string(),
+                            }],
+                            image_blobs: HashMap::new(),
+                            mode: None,
+                            plan_file: None,
+                        },
+                        &sink,
+                        cancel.clone(),
+                    )
+                    .await
+                    .map_err(|e| format!("failed to run shepherd recovery turn: {}", e))?;
+                continue;
+            }
+
+            if final_text.is_empty() && final_draft.tools.is_empty() {
+                warn!(
+                    "shepherd empty sanitized output: session={}, output_state={:?}, raw_assistant_output={:?}, runtime_output={:?}",
+                    session_id,
+                    turn.assistant_output.state,
+                    turn.assistant_output.raw_text,
+                    final_draft.runtime_output
+                );
+                let message = "Shepherd returned no user-visible output for this turn.".to_string();
+                drop(final_draft);
+                app.emit(
+                    "shepherd-event",
+                    (
+                        &session_id,
+                        &ShepherdEvent::Error {
+                            session_id: session_id.clone(),
+                            message,
+                        },
+                    ),
+                )
+                .map_err(|e| format!("failed to emit shepherd error event: {}", e))?;
+                return Ok(());
+            }
+
+            if final_draft.errored && final_text.is_empty() && final_draft.tools.is_empty() {
+                return Ok(());
+            }
+
+            let assistant_chunks = build_assistant_chunks(&final_draft, &final_text);
+            if !assistant_chunks.is_empty() {
+                let assistant_chunks_json = chunks_to_json(&assistant_chunks)?;
+                save_message(&scope, "assistant", &assistant_chunks_json).await?;
+            }
+
+            drop(final_draft);
+            break;
         }
-
-        if final_draft.errored
-            && final_draft.text.trim().is_empty()
-            && final_draft.final_message.is_none()
-        {
-            return Ok(());
-        }
-
-        let assistant_chunks = build_assistant_chunks(&final_draft);
-        if !assistant_chunks.is_empty() {
-            let assistant_chunks_json = chunks_to_json(&assistant_chunks)?;
-            save_message(&scope, "assistant", &assistant_chunks_json).await?;
-        }
-
-        drop(final_draft);
 
         app.emit(
             "shepherd-event",
@@ -1794,6 +1994,9 @@ pub async fn send_shepherd_message(
     if let Ok(mut guard) = sessions().lock() {
         if let Some(session) = guard.get_mut(&session_id) {
             session.active_turn = None;
+            if let Some(runtime) = session_runtime.take() {
+                session.runtime = Some(runtime);
+            }
         }
     }
 

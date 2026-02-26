@@ -105,13 +105,12 @@ export function useShepherdChat(
   const sanitizeAssistantText = (text: string): string => {
     // Lash can surface internal repl delimiters in streamed text in edge cases.
     // Keep UI clean by stripping repl markup/fragments from assistant-visible text.
-    return text
-      .replace(/<\/?repl>/gi, '')
-      .replace(/<\/?repl/gi, '')
-      .replace(/<rep$/gi, '')
-      .replace(/<re$/gi, '')
-      .replace(/<r$/gi, '')
-      .replace(/<$/gi, '');
+    const out = text.replace(/<\/?repl>/gi, '');
+    const trimmed = out.trim().toLowerCase();
+    if (trimmed.includes('<') && /^[<>/repl\s]+$/.test(trimmed)) {
+      return '';
+    }
+    return out;
   };
 
   const errorMessage = (error: unknown): string => {
@@ -281,7 +280,11 @@ export function useShepherdChat(
         }));
 
         // Track file editing
-        if (event.title === 'Edit' || event.title === 'Write') {
+        const isEditTool =
+          event.kind === 'edit' ||
+          event.kind === 'write' ||
+          /\b(edit|write)\b/i.test(event.title || '');
+        if (isEditTool) {
           setShepherdEditing(true);
           // Extract file path if available
           if (event.input) {
@@ -312,12 +315,18 @@ export function useShepherdChat(
 
           // Track completion of edit tools
           if (
-            (tool.title === 'Edit' || tool.title === 'Write') &&
+            (tool.kind === 'edit' ||
+              tool.kind === 'write' ||
+              /\b(edit|write)\b/i.test(tool.title || '')) &&
             (event.status === 'completed' || event.status === 'failed')
           ) {
             // Check if any edit tools still running
             const stillEditing = Array.from(toolsById.values()).some(
-              (t) => (t.title === 'Edit' || t.title === 'Write') && t.status === 'in_progress',
+              (t) =>
+                (t.kind === 'edit' ||
+                  t.kind === 'write' ||
+                  /\b(edit|write)\b/i.test(t.title || '')) &&
+                t.status === 'in_progress',
             );
             if (!stillEditing) {
               setShepherdEditing(false);
@@ -332,15 +341,20 @@ export function useShepherdChat(
         // Finalize message
         const current = currentMessage();
         if (current) {
-          const finalMessage: ChatMessage = {
-            id: current.id || `msg-${Date.now()}`,
-            role: 'assistant',
-            content: sanitizeAssistantText(current.content || ''),
-            thinking: current.thinking,
-            toolCalls: current.toolCalls,
-            timestamp: new Date(),
-          };
-          setMessages(produce((msgs) => msgs.push(finalMessage)));
+          const content = sanitizeAssistantText(current.content || '').trim();
+          const hasTools = (current.toolCalls?.length || 0) > 0;
+          const hasThinking = !!current.thinking?.trim();
+          if (content || hasTools || hasThinking) {
+            const finalMessage: ChatMessage = {
+              id: current.id || `msg-${Date.now()}`,
+              role: 'assistant',
+              content,
+              thinking: current.thinking,
+              toolCalls: current.toolCalls,
+              timestamp: new Date(),
+            };
+            setMessages(produce((msgs) => msgs.push(finalMessage)));
+          }
         }
         setCurrentMessage(null);
         toolsById.clear();
