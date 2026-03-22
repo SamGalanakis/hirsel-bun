@@ -153,7 +153,7 @@ pub async fn get_history(
     run_name: String,
     limit: Option<u32>,
 ) -> Result<Vec<HistoryEntry>, String> {
-    let orch = create_orchestrator(None).str_err()?;
+    let orch = create_orchestrator().str_err()?;
     orch.get_history(&run_name, limit).await.str_err()
 }
 
@@ -178,6 +178,6 @@ pub async fn get_eval_spec(run_name: String) -> Result<Option<String>, String> {
 #[tracing::instrument]
 #[tauri::command]
 pub async fn get_evals(run_name: String) -> Result<Vec<Eval>, String> {
-    let orch = create_orchestrator(None).str_err()?;
+    let orch = create_orchestrator().str_err()?;
     orch.list_evals(&run_name).await.str_err()
 }

@@ -4,7 +4,6 @@ type EventMap = {
   'draft-selected': string | null;
   'draft-created': undefined;
   'create-draft': undefined;
-  'route-changed': { projectId: number; routeId: number };
   'project-selected': number;
   'project-deselected': undefined;
   'project-created': unknown;

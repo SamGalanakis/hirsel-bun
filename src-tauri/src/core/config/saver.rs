@@ -4,10 +4,8 @@ use std::fs;
 use std::path::Path;
 
 use super::{
-    Config, ConfigError, GitProvider, LlmProvider, OrchestratorAccess, OrchestratorMode, S3Config,
-    StorageBackend, StorageProvider,
+    Config, ConfigError, GitProvider, LlmProvider, S3Config, StorageBackend, StorageProvider,
 };
-use crate::core::runner::{HostConfig, HostConfigOrShortcut};
 
 /// Save the configuration to a TOML file.
 ///
@@ -45,20 +43,16 @@ pub fn save_config(config: &Config, config_path: &Path) -> Result<(), ConfigErro
     if let Some(ref runner) = config.default_runner {
         output.push_str(&format!("default_runner = \"{}\"\n", runner));
     }
-    output.push_str(&format!(
-        "default_profile = \"{}\"\n",
-        config.default_profile
-    ));
     output.push('\n');
+
+    // Backend connection
+    write_backend_section(&mut output, config);
 
     // LLM section
     write_llm_section(&mut output, config);
 
     // Runners section
     write_runners_section(&mut output, config);
-
-    // Profiles section
-    write_profiles_section(&mut output, config);
 
     // Git section
     if let Some(ref provider) = config.git.default_provider {
@@ -74,22 +68,6 @@ pub fn save_config(config: &Config, config_path: &Path) -> Result<(), ConfigErro
 
     // Storage section (only write if non-default)
     write_storage_section(&mut output, config);
-
-    // Scribe docs settings (only write if non-default)
-    if config.scribe_docs_path != "docs" || !config.scribe_persist_docs_changes {
-        output.push_str(&format!(
-            "scribe_docs_path = \"{}\"\n",
-            config.scribe_docs_path
-        ));
-        output.push_str(&format!(
-            "scribe_persist_docs_changes = {}\n",
-            config.scribe_persist_docs_changes
-        ));
-        output.push('\n');
-    }
-
-    // Service workers section (only write if configured)
-    write_service_workers_section(&mut output, config);
 
     // Ensure parent directory exists
     if let Some(parent) = config_path.parent() {
@@ -131,66 +109,20 @@ fn write_llm_section(output: &mut String, config: &Config) {
     output.push('\n');
 }
 
+fn write_backend_section(output: &mut String, config: &Config) {
+    output.push_str("[backend]\n");
+    if let Some(url) = &config.backend.url {
+        output.push_str(&format!("url = \"{}\"\n", url));
+    }
+    if let Some(api_key) = &config.backend.api_key {
+        output.push_str(&format!("api_key = \"{}\"\n", api_key));
+    }
+    output.push('\n');
+}
+
 fn write_runners_section(output: &mut String, config: &Config) {
     for (name, runner_config) in &config.runners {
         output.push_str(&format!("[runners.{}]\n", name));
-
-        // Serialize host configuration
-        let host = runner_config.host.resolve();
-        match &runner_config.host {
-            HostConfigOrShortcut::Shortcut(s) => {
-                output.push_str(&format!("host = \"{}\"\n", s));
-            }
-            HostConfigOrShortcut::Full(_) => {
-                // Full host config needs a sub-table
-                match &host {
-                    HostConfig::Local => {
-                        output.push_str(&format!("\n[runners.{}.host]\n", name));
-                        output.push_str("type = \"local\"\n");
-                    }
-                    HostConfig::Client => {
-                        output.push_str(&format!("\n[runners.{}.host]\n", name));
-                        output.push_str("type = \"client\"\n");
-                    }
-                    HostConfig::Ssh(ssh) => {
-                        output.push_str(&format!("\n[runners.{}.host]\n", name));
-                        output.push_str("type = \"ssh\"\n");
-                        output.push_str(&format!("address = \"{}\"\n", ssh.address));
-                        if ssh.port != 22 {
-                            output.push_str(&format!("port = {}\n", ssh.port));
-                        }
-                        if let Some(ref key) = ssh.ssh_key {
-                            output.push_str(&format!("ssh_key = \"{}\"\n", key));
-                        }
-                        output.push_str(&format!("work_base = \"{}\"\n", ssh.work_base));
-                        if let Some(ref loc) = ssh.location {
-                            output.push_str(&format!("location = \"{}\"\n", loc));
-                        }
-                    }
-                    HostConfig::Fly(fly) => {
-                        output.push_str(&format!("\n[runners.{}.host]\n", name));
-                        output.push_str("type = \"fly\"\n");
-                        if let Some(ref token) = fly.api_token {
-                            output.push_str(&format!("api_token = \"{}\"\n", token));
-                        }
-                        output.push_str(&format!("app = \"{}\"\n", fly.app));
-                        if let Some(ref region) = fly.region {
-                            output.push_str(&format!("region = \"{}\"\n", region));
-                        }
-                        if fly.cpu_kind != "shared" {
-                            output.push_str(&format!("cpu_kind = \"{}\"\n", fly.cpu_kind));
-                        }
-                        if fly.cpus != 1 {
-                            output.push_str(&format!("cpus = {}\n", fly.cpus));
-                        }
-                        if fly.memory_mb != 1024 {
-                            output.push_str(&format!("memory_mb = {}\n", fly.memory_mb));
-                        }
-                        output.push_str(&format!("auto_destroy = {}\n", fly.auto_destroy));
-                    }
-                }
-            }
-        }
 
         // Serialize container configuration if present
         if let Some(ref container) = runner_config.container {
@@ -202,54 +134,6 @@ fn write_runners_section(output: &mut String, config: &Config) {
     }
 }
 
-fn write_profiles_section(output: &mut String, config: &Config) {
-    for (name, profile) in &config.profiles {
-        output.push_str(&format!("[profiles.{}]\n", name));
-        output.push_str(&format!(
-            "mode = \"{}\"\n",
-            match profile.mode {
-                OrchestratorMode::Local => "local",
-                OrchestratorMode::Remote => "remote",
-            }
-        ));
-        if let Some(ref url) = profile.url {
-            output.push_str(&format!("url = \"{}\"\n", url));
-        }
-        if let Some(ref key) = profile.api_key {
-            output.push_str(&format!("api_key = \"{}\"\n", key));
-        }
-
-        // Access sub-section
-        match &profile.access {
-            OrchestratorAccess::Direct => {
-                output.push_str("\n[profiles.");
-                output.push_str(name);
-                output.push_str(".access]\n");
-                output.push_str("type = \"direct\"\n");
-            }
-            OrchestratorAccess::Tailscale {
-                oauth_client_id,
-                oauth_client_secret,
-                tag,
-            } => {
-                output.push_str("\n[profiles.");
-                output.push_str(name);
-                output.push_str(".access]\n");
-                output.push_str("type = \"tailscale\"\n");
-                output.push_str(&format!("oauth_client_id = \"{}\"\n", oauth_client_id));
-                output.push_str(&format!(
-                    "oauth_client_secret = \"{}\"\n",
-                    oauth_client_secret
-                ));
-                if let Some(ref t) = tag {
-                    output.push_str(&format!("tag = \"{}\"\n", t));
-                }
-            }
-        }
-        output.push('\n');
-    }
-}
-
 fn write_s3_config(output: &mut String, s3: &S3Config) {
     // Write provider if not default (S3)
     if s3.provider != StorageProvider::S3 {
@@ -257,7 +141,7 @@ fn write_s3_config(output: &mut String, s3: &S3Config) {
             "provider = \"{}\"\n",
             match s3.provider {
                 StorageProvider::S3 => "s3",
-                StorageProvider::Tigris => "tigris",
+                StorageProvider::Minio => "minio",
             }
         ));
     }
@@ -299,47 +183,6 @@ fn write_storage_section(output: &mut String, config: &Config) {
         for (name, s3) in &config.storage.storages {
             output.push_str(&format!("\n[storage.storages.{}]\n", name));
             write_s3_config(output, s3);
-        }
-
-        output.push('\n');
-    }
-}
-
-fn write_service_workers_section(output: &mut String, config: &Config) {
-    let sw = &config.service_workers;
-    let has_content = sw.runner.is_some()
-        || sw.scribe.runner.is_some()
-        || sw.scribe.idle_timeout_seconds.is_some()
-        || sw.shepherd.runner.is_some()
-        || sw.shepherd.idle_timeout_seconds.is_some();
-
-    if has_content {
-        output.push_str("[service_workers]\n");
-
-        if let Some(ref runner) = sw.runner {
-            output.push_str(&format!("runner = \"{}\"\n", runner));
-        }
-
-        // Scribe section
-        if sw.scribe.runner.is_some() || sw.scribe.idle_timeout_seconds.is_some() {
-            output.push_str("\n[service_workers.scribe]\n");
-            if let Some(ref runner) = sw.scribe.runner {
-                output.push_str(&format!("runner = \"{}\"\n", runner));
-            }
-            if let Some(timeout) = sw.scribe.idle_timeout_seconds {
-                output.push_str(&format!("idle_timeout_seconds = {}\n", timeout));
-            }
-        }
-
-        // Shepherd section
-        if sw.shepherd.runner.is_some() || sw.shepherd.idle_timeout_seconds.is_some() {
-            output.push_str("\n[service_workers.shepherd]\n");
-            if let Some(ref runner) = sw.shepherd.runner {
-                output.push_str(&format!("runner = \"{}\"\n", runner));
-            }
-            if let Some(timeout) = sw.shepherd.idle_timeout_seconds {
-                output.push_str(&format!("idle_timeout_seconds = {}\n", timeout));
-            }
         }
 
         output.push('\n');

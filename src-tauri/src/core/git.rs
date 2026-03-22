@@ -6,6 +6,7 @@
 use git2::{BranchType, Error as Git2Error, Oid, Repository, Signature};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use thiserror::Error;
 use tracing::info;
 
@@ -705,6 +706,10 @@ pub fn push_staging_as_branch(
 
 /// Copy directory recursively
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+    if copy_dir_reflink(src, dst).is_ok() {
+        return Ok(());
+    }
+
     fs::create_dir_all(dst)?;
 
     for entry in fs::read_dir(src)? {
@@ -720,6 +725,26 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn copy_dir_reflink(src: &Path, dst: &Path) -> std::io::Result<()> {
+    if dst.exists() {
+        fs::remove_dir_all(dst)?;
+    }
+    fs::create_dir_all(dst)?;
+
+    let status = Command::new("cp")
+        .arg("-a")
+        .arg("--reflink=auto")
+        .arg(format!("{}/.", src.display()))
+        .arg(dst)
+        .status()?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other("cp --reflink=auto failed"))
+    }
 }
 
 /// Check if repository has uncommitted changes

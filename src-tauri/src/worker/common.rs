@@ -12,8 +12,6 @@ pub struct WorkerRunConfig {
     pub leader_name: Option<String>,
     pub teammates: Option<Vec<String>>,
     pub resume_session_id: Option<String>,
-    /// Optional API URL for reporting status (used by Docker/remote workers)
-    pub api_url: Option<String>,
     /// Task ID assigned to this worker (direct task assignment)
     pub assigned_task_id: Option<String>,
     /// Whether the assigned task is a plan task (NodeKind::Plan)
@@ -152,15 +150,14 @@ pub fn build_worker_prompt(
     prompt.push_str("- `add_check(check_id, name, validates?)` - Create check task\n\n");
 
     prompt.push_str("### Communication\n");
-    prompt
-        .push_str("- `list_contacts()` - Available chat targets (user, group, workers, scribe)\n");
+    prompt.push_str("- `list_contacts()` - Available chat targets (user, group, workers)\n");
     prompt.push_str("- `chat_history(with?, limit?)` - Read message history\n");
     prompt.push_str("- `chat_send(to, message)` - Send a message\n");
     prompt.push_str("- `chat_unread(with?)` - Check for new unread messages\n\n");
 
-    prompt.push_str("### Documentation\n");
-    prompt.push_str("- `scribe(content)` - Record a learning or discovery\n");
-    prompt.push_str("- `read_docs(file?)` - Read project documentation\n\n");
+    prompt.push_str("### Retained Context\n");
+    prompt.push_str("- `read_retained_context()` - Read durable project context\n");
+    prompt.push_str("- `scribe(content)` - Record durable context for scribe condensation\n\n");
 
     prompt.push_str("### Completion\n");
     prompt.push_str("- `work_done` - Signal task complete and ready for new assignment\n");
@@ -201,16 +198,9 @@ pub fn build_worker_prompt(
         .push_str("chat_send(\"user\", \"Which database should I use - PostgreSQL or SQLite?\")\n");
     prompt.push_str("```\n\n");
 
-    // Documentation
-    prompt.push_str("## Project Documentation\n\n");
-    prompt
-        .push_str("Use `scribe(content)` to record discoveries. A Scribe agent maintains docs/:\n");
-    prompt.push_str("- `architecture.md` - System design, module relationships\n");
-    prompt.push_str("- `patterns.md` - Code patterns and conventions\n");
-    prompt.push_str("- `gotchas.md` - Pitfalls and things to watch out for\n");
-    prompt.push_str("- `decisions.md` - Key decisions and rationale\n\n");
-    prompt.push_str("**At task start:** Call `read_docs()` to check accumulated knowledge.\n");
-    prompt.push_str("**During work:** Call `scribe()` when you discover something useful.\n\n");
+    prompt.push_str("## Retained Context\n\n");
+    prompt.push_str("Call `read_retained_context()` before major work to understand durable project constraints.\n");
+    prompt.push_str("Call `scribe()` only for context that should survive route churn, not for transient progress notes.\n\n");
 
     // Getting started
     prompt.push_str("## Getting Started\n\n");

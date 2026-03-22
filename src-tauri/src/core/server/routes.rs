@@ -6,7 +6,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use lash_core::oauth;
+use lash::oauth;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -26,7 +26,6 @@ impl IntoResponse for OrchestratorError {
             OrchestratorError::RunNotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
             OrchestratorError::WorkerNotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
             OrchestratorError::InvalidOperation(_) => (StatusCode::BAD_REQUEST, self.to_string()),
-            OrchestratorError::UnknownProfile(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
 
@@ -286,7 +285,7 @@ pub async fn get_worker_events(
 // Project Messages (Sheepfold)
 //
 // These endpoints are for workers to access project-level messages.
-// Workers use these via HttpState when running remotely.
+// Workers use these routes through the backend HTTP API.
 // =============================================================================
 
 use crate::core::{ProjectMessage, ProjectMessagesStore};
@@ -468,10 +467,6 @@ pub async fn get_project_threads(
     }))
 }
 
-// =============================================================================
-// Scribe - Documentation
-// =============================================================================
-
 #[derive(Debug, Deserialize)]
 pub struct ScribeSubmitRequest {
     pub worker_name: String,
@@ -490,7 +485,6 @@ pub async fn add_scribe(
     use crate::core::state::SQLiteState;
 
     let state = SQLiteState::new(&name).await?;
-
     let id = state
         .add_scribe_submission(&body.worker_name, &body.content)
         .await?;
@@ -498,125 +492,31 @@ pub async fn add_scribe(
     Ok(Json(ScribeSubmitResponse { id }))
 }
 
-// =============================================================================
-// Docs
-// =============================================================================
-
 #[derive(Debug, Serialize)]
-pub struct DocsResponse {
-    pub files: Vec<DocFileResponse>,
-    pub hashes: std::collections::HashMap<String, String>,
+pub struct RetainedContextResponse {
+    pub markdown: String,
 }
 
-#[derive(Debug, Serialize)]
-pub struct DocFileResponse {
-    pub name: String,
-    pub content: String,
-}
-
-/// Get all docs with hashes
-pub async fn get_docs(Path(name): Path<String>) -> Result<Json<DocsResponse>> {
-    use crate::core::storage::create_default_local_storage;
-    use crate::core::{config, Files};
-
-    let run_dir = config::run_dir(&name);
-    if !run_dir.exists() {
-        return Err(OrchestratorError::RunNotFound(name));
-    }
-
-    let files = Files::new(&run_dir);
-    let storage = create_default_local_storage();
-    let docs = files
-        .read_docs_async(&storage, None)
-        .await
-        .map_err(|e| OrchestratorError::Other(format!("Failed to read docs: {}", e)))?;
-    let hashes = files
-        .get_docs_hashes_async(&storage)
-        .await
-        .map_err(|e| OrchestratorError::Other(format!("Failed to get hashes: {}", e)))?;
-
-    let doc_files = match docs {
-        crate::core::files::DocsContent::All { files } => files
-            .into_iter()
-            .map(|f| DocFileResponse {
-                name: f.name,
-                content: f.content,
-            })
-            .collect(),
-        crate::core::files::DocsContent::Single { name, content } => {
-            vec![DocFileResponse { name, content }]
-        }
-    };
-
-    Ok(Json(DocsResponse {
-        files: doc_files,
-        hashes,
-    }))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct DocsSyncRequest {
-    /// Current hashes on the client side
-    pub hashes: std::collections::HashMap<String, String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct DocsSyncResponse {
-    /// Files that have changed (content included)
-    pub files: Vec<DocFileResponse>,
-    /// New hashes for all files
-    pub hashes: std::collections::HashMap<String, String>,
-}
-
-/// Sync docs - returns only changed files based on hash comparison
-pub async fn sync_docs(
+pub async fn get_retained_context(
     Path(name): Path<String>,
-    Json(body): Json<DocsSyncRequest>,
-) -> Result<Json<DocsSyncResponse>> {
-    use crate::core::storage::create_default_local_storage;
-    use crate::core::{config, Files};
+) -> Result<Json<RetainedContextResponse>> {
+    use crate::core::project::ProjectStore;
+    use crate::core::state::SQLiteState;
 
-    let run_dir = config::run_dir(&name);
-    if !run_dir.exists() {
-        return Err(OrchestratorError::RunNotFound(name));
-    }
-
-    let files = Files::new(&run_dir);
-    let storage = create_default_local_storage();
-    let docs = files
-        .read_docs_async(&storage, None)
+    let state = SQLiteState::new(&name).await?;
+    let project_id = state.get_project_id().await?.ok_or_else(|| {
+        OrchestratorError::InvalidOperation("Run is not linked to a project".to_string())
+    })?;
+    let store = ProjectStore::open()
         .await
-        .map_err(|e| OrchestratorError::Other(format!("Failed to read docs: {}", e)))?;
-    let server_hashes = files
-        .get_docs_hashes_async(&storage)
+        .map_err(|e| OrchestratorError::Other(e.to_string()))?;
+    let context = store
+        .get_project_retained_context(project_id)
         .await
-        .map_err(|e| OrchestratorError::Other(format!("Failed to get hashes: {}", e)))?;
+        .map_err(|e| OrchestratorError::Other(e.to_string()))?;
 
-    // Find changed files (hash mismatch or new files)
-    let changed_files: Vec<DocFileResponse> = match docs {
-        crate::core::files::DocsContent::All { files } => files
-            .into_iter()
-            .filter(|f| {
-                // Include if hash doesn't match or file is new to client
-                body.hashes.get(&f.name) != server_hashes.get(&f.name)
-            })
-            .map(|f| DocFileResponse {
-                name: f.name,
-                content: f.content,
-            })
-            .collect(),
-        crate::core::files::DocsContent::Single { name, content } => {
-            if body.hashes.get(&name) != server_hashes.get(&name) {
-                vec![DocFileResponse { name, content }]
-            } else {
-                vec![]
-            }
-        }
-    };
-
-    Ok(Json(DocsSyncResponse {
-        files: changed_files,
-        hashes: server_hashes,
+    Ok(Json(RetainedContextResponse {
+        markdown: context.markdown,
     }))
 }
 
@@ -667,7 +567,7 @@ use crate::core::api_types::{
     mask_credential, AgentConfigRequest, CredentialStatusResponse, GeneralConfigRequest,
     GitConfigRequest, LlmConfigRequest, RunnerConfigResponse, StoreCredentialRequest,
 };
-use crate::core::config::OrchestratorProfile;
+use crate::core::config::BackendConfig;
 use crate::core::credentials::CredentialStore;
 use crate::core::runner::RunnerConfig;
 
@@ -730,10 +630,7 @@ pub async fn list_runners(
     // Always include "local" as a built-in runner
     runners.insert(
         "local".to_string(),
-        RunnerConfigResponse {
-            host: crate::core::api_types::HostConfigResponse::Local,
-            container: None,
-        },
+        RunnerConfigResponse { container: None },
     );
 
     // Add configured runners
@@ -752,10 +649,7 @@ pub async fn get_runner(
     let config = state.config.read().await;
 
     if name == "local" {
-        return Ok(Json(RunnerConfigResponse {
-            host: crate::core::api_types::HostConfigResponse::Local,
-            container: None,
-        }));
+        return Ok(Json(RunnerConfigResponse { container: None }));
     }
 
     let runner = config
@@ -800,89 +694,6 @@ pub async fn delete_runner(
 
     let mut config = state.config.write().await;
     config.runners.remove(&name);
-    config
-        .save()
-        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-// =============================================================================
-// Profiles CRUD
-// =============================================================================
-
-/// List all configured profiles
-pub async fn list_profiles(
-    State(state): State<Arc<AppState>>,
-) -> Result<
-    Json<std::collections::HashMap<String, crate::core::api_types::OrchestratorProfileResponse>>,
-> {
-    let config = state.config.read().await;
-    let profiles = config
-        .profiles
-        .iter()
-        .map(|(name, profile)| (name.clone(), profile.clone().into()))
-        .collect();
-    Ok(Json(profiles))
-}
-
-/// Get a specific profile by name
-pub async fn get_profile(
-    State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-) -> Result<Json<crate::core::api_types::OrchestratorProfileResponse>> {
-    let config = state.config.read().await;
-    let profile = config
-        .profiles
-        .get(&name)
-        .ok_or_else(|| OrchestratorError::Other(format!("Profile '{}' not found", name)))?;
-    Ok(Json(profile.clone().into()))
-}
-
-/// Profile update request (with unmasked secrets)
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProfileUpdateRequest {
-    pub mode: crate::core::api_types::OrchestratorModeResponse,
-    pub url: Option<String>,
-    pub api_key: Option<String>,
-    pub access: Option<crate::core::config::OrchestratorAccess>,
-}
-
-/// Create or update a profile
-pub async fn put_profile(
-    State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-    Json(body): Json<ProfileUpdateRequest>,
-) -> Result<StatusCode> {
-    let mut config = state.config.write().await;
-
-    let profile = OrchestratorProfile {
-        mode: body.mode.into(),
-        url: body.url,
-        api_key: body.api_key,
-        access: body.access.unwrap_or_default(),
-    };
-
-    config.profiles.insert(name, profile);
-    config
-        .save()
-        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-/// Delete a profile
-pub async fn delete_profile(
-    State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-) -> Result<StatusCode> {
-    if name == "local" {
-        return Err(OrchestratorError::InvalidOperation(
-            "Cannot delete built-in 'local' profile".into(),
-        ));
-    }
-
-    let mut config = state.config.write().await;
-    config.profiles.remove(&name);
     config
         .save()
         .map_err(|e| OrchestratorError::Config(e.to_string()))?;
@@ -1089,11 +900,7 @@ pub struct PutConfigRequest {
     #[serde(default)]
     pub default_runner: Option<Option<String>>,
     #[serde(default)]
-    pub profiles: Option<std::collections::HashMap<String, OrchestratorProfile>>,
-    #[serde(default)]
-    pub default_profile: Option<String>,
-    #[serde(default)]
-    pub allow_local_workers: Option<bool>,
+    pub backend: Option<BackendConfig>,
     #[serde(default)]
     pub eval_timeout: Option<u32>,
     #[serde(default)]
@@ -1125,14 +932,8 @@ pub async fn put_config(
     if let Some(default_runner) = body.default_runner {
         config.default_runner = default_runner;
     }
-    if let Some(profiles) = body.profiles {
-        config.profiles = profiles;
-    }
-    if let Some(default_profile) = body.default_profile {
-        config.default_profile = default_profile;
-    }
-    if let Some(allow_local_workers) = body.allow_local_workers {
-        config.allow_local_workers = allow_local_workers;
+    if let Some(backend) = body.backend {
+        config.backend = backend;
     }
     if let Some(eval_timeout) = body.eval_timeout {
         config.eval_timeout = eval_timeout;

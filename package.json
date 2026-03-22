@@ -11,19 +11,16 @@
     "tauri": "tauri",
     "lint": "biome check src/",
     "lint:fix": "biome check --write src/",
-    "test": "cargo nextest run --manifest-path src-tauri/Cargo.toml",
-    "test:e2e": "bunx tsx tests/e2e/create-run.test.ts"
+    "test": "cargo nextest run --manifest-path src-tauri/Cargo.toml"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
-    "@tailwindcss/cli": "^4.1.18",
     "@tailwindcss/vite": "^4.1.18",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/cli": "^2",
-"@types/node": "^22",
+    "@types/node": "^22",
     "basecoat-css": "^0.3",
     "tailwindcss": "^4.1.18",
-    "tsx": "^4",
     "typescript": "^5",
     "vite": "^7.3.1",
     "vite-plugin-solid": "^2.11.6"

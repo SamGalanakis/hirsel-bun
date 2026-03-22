@@ -4,8 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use super::{
-    Config, ConfigError, GitConfig, GitProvider, LlmConfig, LlmProvider, OrchestratorAccess,
-    OrchestratorMode, OrchestratorProfile, S3Config, ServiceWorkerConfig, ServiceWorkersConfig,
+    BackendConfig, Config, ConfigError, GitConfig, GitProvider, LlmConfig, LlmProvider, S3Config,
     StorageBackend, StorageConfig, StorageProvider,
 };
 
@@ -15,7 +14,7 @@ fn parse_s3_config(table: &toml::Table) -> S3Config {
         .get("provider")
         .and_then(|v| v.as_str())
         .map(|s| match s {
-            "tigris" => StorageProvider::Tigris,
+            "minio" => StorageProvider::Minio,
             _ => StorageProvider::S3,
         })
         .unwrap_or(StorageProvider::S3);
@@ -252,36 +251,14 @@ pub fn load_config_file(
         }
     }
 
-    // Load default_profile
-    if let Some(val) = table.get("default_profile") {
-        if let Some(s) = val.as_str() {
-            config.default_profile = s.to_string();
-        }
-    }
-
-    // Load orchestrator profiles
-    load_profiles(&table, &mut config.profiles, &mut warnings);
+    // Load backend connection
+    load_backend_config(&table, &mut config.backend, &mut warnings);
 
     // Load git configuration
     load_git_config(&table, &mut config.git, &mut warnings);
 
     // Load storage configuration
     load_storage_config(&table, &mut config.storage, &mut warnings);
-
-    // Load allow_local_workers
-    if let Some(val) = table.get("allow_local_workers") {
-        if let Some(b) = val.as_bool() {
-            config.allow_local_workers = b;
-        } else {
-            warnings.push(format!(
-                "Config warning: allow_local_workers should be a boolean, got {}",
-                val.type_str()
-            ));
-        }
-    }
-
-    // Load service_workers configuration
-    load_service_workers_config(&table, &mut config.service_workers, &mut warnings);
 
     Ok(warnings)
 }
@@ -310,95 +287,23 @@ fn load_llm_config(table: &toml::Table, llm: &mut LlmConfig) {
     }
 }
 
-fn load_profiles(
+fn load_backend_config(
     table: &toml::Table,
-    profiles: &mut std::collections::HashMap<String, OrchestratorProfile>,
+    backend: &mut BackendConfig,
     warnings: &mut Vec<String>,
 ) {
-    if let Some(profiles_data) = table.get("profiles") {
-        if let Some(profiles_table) = profiles_data.as_table() {
-            for (name, profile_data) in profiles_table {
-                if let Some(profile_table) = profile_data.as_table() {
-                    let mode_str = profile_table
-                        .get("mode")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("local");
-
-                    let mode = match mode_str {
-                        "remote" => OrchestratorMode::Remote,
-                        _ => OrchestratorMode::Local,
-                    };
-
-                    // Parse access strategy
-                    let access = if let Some(access_data) = profile_table.get("access") {
-                        if let Some(access_table) = access_data.as_table() {
-                            let access_type = access_table
-                                .get("type")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("direct");
-
-                            match access_type {
-                                "tailscale" => {
-                                    let client_id = access_table
-                                        .get("oauth_client_id")
-                                        .and_then(|v| v.as_str());
-                                    let client_secret = access_table
-                                        .get("oauth_client_secret")
-                                        .and_then(|v| v.as_str());
-                                    let tag = access_table
-                                        .get("tag")
-                                        .and_then(|v| v.as_str())
-                                        .map(String::from);
-
-                                    if let (Some(id), Some(secret)) = (client_id, client_secret) {
-                                        OrchestratorAccess::Tailscale {
-                                            oauth_client_id: id.to_string(),
-                                            oauth_client_secret: secret.to_string(),
-                                            tag,
-                                        }
-                                    } else {
-                                        warnings.push(format!(
-                                            "Config warning: [profiles.{}.access] tailscale requires 'oauth_client_id' and 'oauth_client_secret'",
-                                            name
-                                        ));
-                                        OrchestratorAccess::Direct
-                                    }
-                                }
-                                _ => OrchestratorAccess::Direct,
-                            }
-                        } else {
-                            OrchestratorAccess::Direct
-                        }
-                    } else {
-                        OrchestratorAccess::Direct
-                    };
-
-                    let profile = OrchestratorProfile {
-                        mode,
-                        url: profile_table
-                            .get("url")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        api_key: profile_table
-                            .get("api_key")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        access,
-                    };
-
-                    // Validate remote profiles have required fields
-                    if mode == OrchestratorMode::Remote && profile.url.is_none() {
-                        warnings.push(format!(
-                            "Config warning: [profiles.{}] remote mode requires 'url' field",
-                            name
-                        ));
-                        continue;
-                    }
-                    // Note: api_key is optional in config - it can be loaded from credential store
-
-                    profiles.insert(name.clone(), profile);
-                }
-            }
+    if let Some(backend_data) = table.get("backend") {
+        if let Some(backend_table) = backend_data.as_table() {
+            backend.url = backend_table
+                .get("url")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            backend.api_key = backend_table
+                .get("api_key")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+        } else {
+            warnings.push("Config warning: [backend] must be a table".to_string());
         }
     }
 }
@@ -419,48 +324,6 @@ fn load_git_config(table: &toml::Table, git: &mut GitConfig, warnings: &mut Vec<
                 };
             }
         }
-    }
-}
-
-fn load_service_workers_config(
-    table: &toml::Table,
-    service_workers: &mut ServiceWorkersConfig,
-    _warnings: &mut Vec<String>,
-) {
-    if let Some(sw_data) = table.get("service_workers") {
-        if let Some(sw_table) = sw_data.as_table() {
-            // Load default runner
-            if let Some(runner) = sw_table.get("runner").and_then(|v| v.as_str()) {
-                service_workers.runner = Some(runner.to_string());
-            }
-
-            // Load scribe config
-            if let Some(scribe_data) = sw_table.get("scribe") {
-                if let Some(scribe_table) = scribe_data.as_table() {
-                    service_workers.scribe = load_service_worker_entry(scribe_table);
-                }
-            }
-
-            // Load shepherd config
-            if let Some(shepherd_data) = sw_table.get("shepherd") {
-                if let Some(shepherd_table) = shepherd_data.as_table() {
-                    service_workers.shepherd = load_service_worker_entry(shepherd_table);
-                }
-            }
-        }
-    }
-}
-
-fn load_service_worker_entry(table: &toml::Table) -> ServiceWorkerConfig {
-    ServiceWorkerConfig {
-        runner: table
-            .get("runner")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        idle_timeout_seconds: table
-            .get("idle_timeout_seconds")
-            .and_then(|v| v.as_integer())
-            .map(|v| v as u32),
     }
 }
 

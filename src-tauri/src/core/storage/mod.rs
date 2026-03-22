@@ -4,7 +4,7 @@
 //! supporting multiple backends:
 //!
 //! - **LocalFileStorage**: Filesystem storage (default)
-//! - **S3FileStorage**: S3-compatible object storage (MinIO, Tigris, AWS S3)
+//! - **S3FileStorage**: S3-compatible object storage (AWS S3, MinIO, and similar providers)
 //!
 //! # Usage
 //!

@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jacquard Loom — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Spectral:wght@300;400;500;700;800&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --loom-wood: #2a2018;
+      --brass: #b89040;
+      --brass-dim: rgba(184,144,64,0.2);
+      --indigo: #3a4a8a;
+      --crimson: #8a3040;
+      --gold: #c8a040;
+      --card-cream: #f0e8d0;
+      --panel: #f4f0e8;
+      --panel-inset: #e8e2d4;
+      --text: #2a2018;
+      --text-dim: #7a7060;
+    }
+
+    body {
+      font-family: 'Spectral', serif;
+      background: var(--panel);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    /* Paper texture */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+      pointer-events: none;
+    }
+
+    .direction-nav {
+      position: sticky; top: 0; z-index: 1000;
+      background: rgba(244,240,232,0.92); backdrop-filter: blur(14px);
+      border-bottom: 2px solid var(--panel-inset);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .direction-nav a {
+      font-size: 11px; font-weight: 500; color: var(--text-dim);
+      text-decoration: none; padding: 5px 12px; border-radius: 6px; transition: all 0.2s;
+    }
+    .direction-nav a:hover { color: var(--text); background: rgba(0,0,0,0.04); }
+    .direction-nav .nav-title {
+      font-weight: 700; font-size: 15px;
+      color: var(--text); flex: 1; text-align: center;
+    }
+    .direction-nav .nav-home {
+      font-family: 'Fira Code', monospace;
+      font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-dim); border-right: 2px solid var(--panel-inset);
+      padding-right: 16px; margin-right: 4px;
+    }
+
+    .page-header {
+      padding: 80px 48px 20px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .tag {
+      font-family: 'Fira Code', monospace;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--brass); margin-bottom: 12px; display: block;
+    }
+
+    h1 {
+      font-size: clamp(44px, 6vw, 76px);
+      font-weight: 800; line-height: 1.0;
+      color: var(--loom-wood); margin-bottom: 16px;
+    }
+
+    .subtitle {
+      font-size: 15px; font-weight: 300;
+      color: var(--text-dim); max-width: 600px; line-height: 1.8;
+    }
+
+    .showcase {
+      padding: 40px 48px 60px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    /* ====== JACQUARD LOOM ====== */
+    /*
+      The punch card IS the spec — holes encode intent.
+      The loom reads the card and weaves the pattern (tasks).
+      Workers are shuttle mechanisms carrying thread.
+      The emerging fabric IS the delivery — the woven code.
+      Different colored threads for different task types.
+    */
+
+    .loom {
+      background: var(--panel-inset);
+      border: 3px solid var(--loom-wood);
+      border-radius: 6px;
+      overflow: hidden;
+      position: relative;
+      box-shadow:
+        inset 0 2px 8px rgba(0,0,0,0.06),
+        0 4px 20px rgba(0,0,0,0.08);
+    }
+
+    .loom-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 14px 24px;
+      background: var(--loom-wood);
+      color: var(--panel);
+    }
+
+    .loom-header h2 {
+      font-size: 14px; font-weight: 700; letter-spacing: 0.06em;
+    }
+
+    .loom-master {
+      font-family: 'Fira Code', monospace;
+      font-size: 10px; color: var(--brass);
+      letter-spacing: 0.08em;
+    }
+
+    .loom-body {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      min-height: 480px;
+    }
+
+    /* Left: Punch card stack */
+    .card-stack {
+      padding: 20px;
+      background: rgba(0,0,0,0.02);
+      border-right: 2px solid var(--loom-wood);
+    }
+
+    .card-stack-header {
+      font-family: 'Fira Code', monospace;
+      font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim); padding-bottom: 12px;
+      border-bottom: 1px solid rgba(0,0,0,0.06);
+      margin-bottom: 12px;
+    }
+
+    .punch-card {
+      background: var(--card-cream);
+      border: 1px solid rgba(0,0,0,0.1);
+      border-radius: 3px;
+      padding: 12px 14px;
+      margin-bottom: 8px;
+      position: relative;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+      animation: card-slide 0.3s ease-out both;
+    }
+
+    .punch-card:nth-child(2) { animation-delay: 0.05s; }
+    .punch-card:nth-child(3) { animation-delay: 0.1s; }
+    .punch-card:nth-child(4) { animation-delay: 0.15s; }
+    .punch-card:nth-child(5) { animation-delay: 0.2s; }
+    .punch-card:nth-child(6) { animation-delay: 0.25s; }
+
+    @keyframes card-slide {
+      from { opacity: 0; transform: translateY(-8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .punch-card.reading {
+      border-color: var(--brass);
+      box-shadow: 0 0 0 2px var(--brass-dim), 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .punch-card.queued {
+      opacity: 0.5;
+      border-style: dashed;
+    }
+
+    .card-name {
+      font-size: 12px; font-weight: 700;
+      color: var(--loom-wood); margin-bottom: 6px;
+    }
+
+    .card-status {
+      font-family: 'Fira Code', monospace;
+      font-size: 9px; color: var(--text-dim);
+      margin-bottom: 8px;
+    }
+
+    /* Punch holes grid */
+    .holes {
+      display: flex; gap: 4px; flex-wrap: wrap;
+    }
+
+    .hole {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      border: 1px solid rgba(0,0,0,0.15);
+    }
+
+    .hole-punched {
+      background: var(--loom-wood);
+      border-color: var(--loom-wood);
+    }
+
+    .hole-reading {
+      background: var(--brass);
+      border-color: var(--brass);
+      box-shadow: 0 0 4px rgba(184,144,64,0.5);
+      animation: read-pulse 0.8s ease-in-out infinite;
+    }
+
+    .hole-empty {
+      background: transparent;
+    }
+
+    @keyframes read-pulse {
+      0%, 100% { box-shadow: 0 0 4px rgba(184,144,64,0.3); }
+      50% { box-shadow: 0 0 8px rgba(184,144,64,0.7); }
+    }
+
+    /* Card reader head indicator */
+    .reader-head {
+      position: absolute;
+      right: 8px; top: 8px;
+      font-family: 'Fira Code', monospace;
+      font-size: 8px;
+      background: linear-gradient(180deg, var(--brass), #a07828);
+      color: var(--loom-wood);
+      padding: 2px 6px;
+      border-radius: 2px;
+      letter-spacing: 0.05em;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
+
+    /* Right: Fabric / weave output */
+    .weave-area {
+      padding: 20px;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .weave-header {
+      font-family: 'Fira Code', monospace;
+      font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim); padding-bottom: 12px;
+      border-bottom: 1px solid rgba(0,0,0,0.06);
+      margin-bottom: 16px;
+    }
+
+    /* Warp threads (vertical) */
+    .fabric {
+      flex: 1;
+      position: relative;
+      background:
+        repeating-linear-gradient(
+          90deg,
+          transparent 0, transparent 11px,
+          rgba(0,0,0,0.03) 11px, rgba(0,0,0,0.03) 12px
+        );
+      border: 1px solid rgba(0,0,0,0.06);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    /* Woven rows (weft) */
+    .weft-row {
+      display: flex;
+      height: 20px;
+      align-items: center;
+      border-bottom: 1px solid rgba(0,0,0,0.02);
+      position: relative;
+    }
+
+    .weft-segment {
+      height: 6px;
+      border-radius: 1px;
+      flex-shrink: 0;
+    }
+
+    .thread-indigo { background: var(--indigo); }
+    .thread-crimson { background: var(--crimson); }
+    .thread-gold { background: var(--gold); }
+
+    /* Completed weave sections */
+    .weave-section {
+      padding: 8px 12px;
+      margin-bottom: 4px;
+    }
+
+    .weave-section-label {
+      font-family: 'Fira Code', monospace;
+      font-size: 8px;
+      color: var(--text-dim);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .weave-complete .weft-row { opacity: 1; }
+
+    .weave-in-progress .weft-row {
+      animation: weave-shuttle 1.2s ease-in-out infinite;
+    }
+
+    @keyframes weave-shuttle {
+      0% { opacity: 0.6; }
+      50% { opacity: 1; }
+      100% { opacity: 0.6; }
+    }
+
+    .weave-empty {
+      border: 1px dashed rgba(0,0,0,0.08);
+      border-radius: 3px;
+      padding: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .weave-empty-text {
+      font-family: 'Fira Code', monospace;
+      font-size: 9px;
+      color: var(--text-dim);
+      opacity: 0.5;
+    }
+
+    /* Shuttle indicator */
+    .shuttle {
+      display: inline-block;
+      font-family: 'Fira Code', monospace;
+      font-size: 8px; font-weight: 600;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--loom-wood);
+      background: linear-gradient(180deg, #d4b050, #a88030);
+      padding: 2px 8px;
+      border-radius: 2px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
+
+    .shuttle-active {
+      animation: shuttle-move 2s ease-in-out infinite;
+    }
+
+    @keyframes shuttle-move {
+      0%, 100% { transform: translateX(0); }
+      50% { transform: translateX(6px); }
+    }
+
+    .loom-footer {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 10px 24px;
+      background: var(--loom-wood);
+      color: var(--panel);
+      font-family: 'Fira Code', monospace;
+      font-size: 10px;
+    }
+
+    .loom-footer .status-text { color: var(--brass); }
+
+    .rationale {
+      padding: 0 48px 100px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .rationale h3 {
+      font-size: 24px; font-weight: 800; margin-bottom: 20px;
+    }
+
+    .rationale-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .rationale-card {
+      padding: 24px;
+      background: var(--panel-inset);
+      border: 1px solid rgba(0,0,0,0.06);
+      border-radius: 6px;
+    }
+
+    .rationale-card h4 {
+      font-size: 12px; font-weight: 700;
+      margin-bottom: 8px; color: var(--loom-wood);
+    }
+
+    .rationale-card p {
+      font-size: 13px; color: var(--text-dim); line-height: 1.7;
+    }
+
+    @media (max-width: 768px) {
+      .page-header, .showcase, .rationale { padding-left: 20px; padding-right: 20px; }
+      .loom-body { grid-template-columns: 1fr; }
+      .card-stack { border-right: none; border-bottom: 2px solid var(--loom-wood); }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="direction-nav">
+    <a href="../designs.html" class="nav-home">Storm</a>
+    <a href="aquifer.html">Prev</a>
+    <span class="nav-title">Jacquard Loom</span>
+    <a href="cathedral.html">Next</a>
+  </nav>
+
+  <div class="page-header">
+    <div class="tag">Direction 21 &mdash; Mechanical</div>
+    <h1>Jacquard Loom</h1>
+    <p class="subtitle">A Jacquard loom with punch cards. The card IS the spec — holes encode intent. The loom reads the card and weaves the pattern. Workers are shuttle mechanisms carrying thread. The emerging fabric IS the delivery — woven code in indigo, crimson, and gold.</p>
+  </div>
+
+  <div class="showcase">
+    <div class="loom">
+      <div class="loom-header">
+        <h2>Loom: Auth Overhaul</h2>
+        <span class="loom-master">Master Weaver: Shepherd</span>
+      </div>
+
+      <div class="loom-body">
+        <div class="card-stack">
+          <div class="card-stack-header">Punch Cards (specs)</div>
+
+          <!-- Schema Migration: validated, fully punched and read -->
+          <div class="punch-card">
+            <div class="card-name">Schema Migration</div>
+            <div class="card-status">read complete &middot; validated</div>
+            <div class="holes">
+              <div class="hole hole-punched"></div>
+              <div class="hole hole-punched"></div>
+              <div class="hole hole-punched"></div>
+              <div class="hole hole-punched"></div>
+              <div class="hole hole-punched"></div>
+              <div class="hole hole-punched"></div>
+              <div class="hole hole-punched"></div>
+              <div class="hole hole-punched"></div>
+            </div>
+          </div>
+
+          <!-- API Restructure: validated, fully punched and read -->
+          <div class="punch-card">
+            <div class="card-name">API Restructure</div>
+            <div class="card-status">read complete &middot; validated</div>
+            <div class="holes">
+              <div class="hole hole-punched"></div>
+              <div class="hole hole-punched"></div>
+              <div class="hole hole-punched"></div>
+              <div class="hole hole-punched"></div>
+              <div class="hole hole-punched"></div>
+              <div class="hole hole-punched"></div>
+            </div>
+          </div>
+
+          <!-- Token Rotation: working, being read now -->
+          <div class="punch-card reading">
+            <span class="reader-head">Reading</span>
+            <div class="card-name">Token Rotation</div>
+            <div class="card-status">in reader &middot; 2/4 holes read</div>
+            <div class="holes">
+              <div class="hole hole-reading"></div>
+              <div class="hole hole-reading"></div>
+              <div class="hole hole-punched"></div>
+              <div class="hole hole-punched"></div>
+            </div>
+          </div>
+
+          <!-- Rate Limiter: pending/blocked, punched but waiting -->
+          <div class="punch-card queued">
+            <div class="card-name">Rate Limiter</div>
+            <div class="card-status">queued &middot; blocked</div>
+            <div class="holes">
+              <div class="hole hole-punched"></div>
+              <div class="hole hole-punched"></div>
+              <div class="hole hole-empty"></div>
+              <div class="hole hole-empty"></div>
+              <div class="hole hole-empty"></div>
+            </div>
+          </div>
+
+          <!-- E2E Tests: draft, card not yet punched -->
+          <div class="punch-card queued">
+            <div class="card-name">E2E Tests</div>
+            <div class="card-status">blank card &middot; draft</div>
+            <div class="holes">
+              <div class="hole hole-empty"></div>
+              <div class="hole hole-empty"></div>
+              <div class="hole hole-empty"></div>
+              <div class="hole hole-empty"></div>
+              <div class="hole hole-empty"></div>
+              <div class="hole hole-empty"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="weave-area">
+          <div class="weave-header">Fabric Output (delivery)</div>
+
+          <div class="fabric">
+            <!-- Schema Migration: complete woven section -->
+            <div class="weave-section weave-complete">
+              <div class="weave-section-label">Schema Migration &middot; woven</div>
+              <div class="weft-row">
+                <div class="weft-segment thread-indigo" style="width: 30%; margin-right: 2px;"></div>
+                <div class="weft-segment thread-gold" style="width: 15%; margin-right: 2px;"></div>
+                <div class="weft-segment thread-indigo" style="width: 25%; margin-right: 2px;"></div>
+                <div class="weft-segment thread-crimson" style="width: 20%;"></div>
+              </div>
+              <div class="weft-row">
+                <div class="weft-segment thread-crimson" style="width: 20%; margin-right: 2px;"></div>
+                <div class="weft-segment thread-indigo" style="width: 35%; margin-right: 2px;"></div>
+                <div class="weft-segment thread-gold" style="width: 25%; margin-right: 2px;"></div>
+                <div class="weft-segment thread-indigo" style="width: 10%;"></div>
+              </div>
+              <div class="weft-row">
+                <div class="weft-segment thread-gold" style="width: 18%; margin-right: 2px;"></div>
+                <div class="weft-segment thread-crimson" style="width: 28%; margin-right: 2px;"></div>
+                <div class="weft-segment thread-indigo" style="width: 22%; margin-right: 2px;"></div>
+                <div class="weft-segment thread-gold" style="width: 22%;"></div>
+              </div>
+            </div>
+
+            <!-- API Restructure: complete woven section -->
+            <div class="weave-section weave-complete">
+              <div class="weave-section-label">API Restructure &middot; woven</div>
+              <div class="weft-row">
+                <div class="weft-segment thread-crimson" style="width: 25%; margin-right: 2px;"></div>
+                <div class="weft-segment thread-indigo" style="width: 30%; margin-right: 2px;"></div>
+                <div class="weft-segment thread-crimson" style="width: 20%; margin-right: 2px;"></div>
+                <div class="weft-segment thread-gold" style="width: 15%;"></div>
+              </div>
+              <div class="weft-row">
+                <div class="weft-segment thread-indigo" style="width: 22%; margin-right: 2px;"></div>
+                <div class="weft-segment thread-gold" style="width: 18%; margin-right: 2px;"></div>
+                <div class="weft-segment thread-crimson" style="width: 30%; margin-right: 2px;"></div>
+                <div class="weft-segment thread-indigo" style="width: 20%;"></div>
+              </div>
+            </div>
+
+            <!-- Token Rotation: in progress -->
+            <div class="weave-section weave-in-progress">
+              <div class="weave-section-label">Token Rotation &middot; weaving <span class="shuttle shuttle-active">Shuttle 1</span></div>
+              <div class="weft-row">
+                <div class="weft-segment thread-gold" style="width: 28%; margin-right: 2px;"></div>
+                <div class="weft-segment thread-indigo" style="width: 22%; margin-right: 2px;"></div>
+                <div class="weft-segment thread-crimson" style="width: 15%;"></div>
+              </div>
+              <div class="weft-row" style="opacity: 0.4;">
+                <div class="weft-segment thread-indigo" style="width: 18%; margin-right: 2px;"></div>
+                <div class="weft-segment thread-gold" style="width: 12%;"></div>
+              </div>
+            </div>
+
+            <!-- Remaining: empty -->
+            <div class="weave-section">
+              <div class="weave-empty">
+                <span class="weave-empty-text">awaiting cards: Rate Limiter, E2E Tests</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="loom-footer">
+        <span>Cards: 5 &middot; Shuttles: 1 active</span>
+        <span class="status-text">2 woven &middot; 1 weaving &middot; 1 queued &middot; 1 blank</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="rationale">
+    <h3>Why this is interesting</h3>
+    <div class="rationale-grid">
+      <div class="rationale-card">
+        <h4>Specs literally are programs</h4>
+        <p>A Jacquard punch card was the first stored program. Specs in Hirsel encode intent that machines execute — the parallel is exact. Holes in the card determine what gets woven. The spec's structure determines what tasks get created.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Sequential card reading</h4>
+        <p>The loom reads one card at a time through the reader head. This maps perfectly to how dispatch processes specs in dependency order. You can see which card is currently being read and which are queued. Blocked cards wait their turn.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Fabric is the deliverable</h4>
+        <p>The woven output IS the code — the delivery artifact. Different colored threads represent different types of work: indigo for data, crimson for logic, gold for configuration. The pattern emerges row by row as tasks complete.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Shuttles are workers</h4>
+        <p>Each shuttle carries a specific thread back and forth through the warp. Workers in Hirsel carry out specific task types. An active shuttle animates across the fabric. Idle shuttles sit in their bays waiting for the next card to feed.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

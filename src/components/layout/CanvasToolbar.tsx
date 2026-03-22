@@ -9,9 +9,9 @@
 import { type Component, Show, For, createSignal, createEffect, onCleanup } from 'solid-js';
 import { invoke } from '../../lib/invoke';
 import { emit } from '../../lib/events';
-import { useApp, useProject, useRuns } from '../../stores';
+import { useApp, useRuns, useWorkspace } from '../../stores';
 import { useDelta } from '../../stores/delta-context';
-import { Dropdown, Icon, SheepAvatar } from '../shared';
+import { Dropdown, Icon, WorkerAvatar } from '../shared';
 import { amber } from '../../lib/theme-colors';
 import { getWorkerGlowStyle } from '../../lib/utils/status';
 import { RunStatusPill } from '../specflow/RunStatusPill';
@@ -42,7 +42,7 @@ interface CanvasToolbarProps {
 
 export const CanvasToolbar: Component<CanvasToolbarProps> = (props) => {
   const app = useApp();
-  const project = useProject();
+  const workspace = useWorkspace();
   const delta = useDelta();
   const runsCtx = useRuns();
 
@@ -199,7 +199,7 @@ export const CanvasToolbar: Component<CanvasToolbarProps> = (props) => {
           {/* Sidebar collapse toggle */}
           <button
             onClick={() => app.toggleSidebar()}
-            class="p-1.5 rounded hover:bg-pasture-700 transition-colors"
+            class="p-1.5 rounded-none hover:bg-pasture-700 transition-colors"
             title={app.sidebarCollapsed() ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             <Icon
@@ -218,7 +218,7 @@ export const CanvasToolbar: Component<CanvasToolbarProps> = (props) => {
             <span class="text-wool-700">:</span>
             <button
               type="button"
-              class="px-1.5 py-0.5 rounded hover:bg-white/5 text-wool-400"
+              class="px-1.5 py-0.5 rounded-none hover:bg-white/5 text-wool-400"
               onClick={() => props.clearScope()}
               title="Clear scope"
             >
@@ -242,7 +242,7 @@ export const CanvasToolbar: Component<CanvasToolbarProps> = (props) => {
           {/* Worker avatars */}
           <Show when={runValid() && workers().length > 0}>
             <div
-              class="flex items-center gap-2 rounded-lg px-2.5 py-1"
+              class="flex items-center gap-2 rounded-none px-2.5 py-1"
               style={{
                 background: 'rgba(40, 40, 40, 0.5)',
                 border: '1px solid rgba(64, 64, 64, 0.3)',
@@ -275,7 +275,7 @@ export const CanvasToolbar: Component<CanvasToolbarProps> = (props) => {
                     >
                       <button
                         type="button"
-                        class="relative rounded-full focus:outline-none"
+                        class="relative rounded-none focus:outline-none"
                         style={{
                           'box-shadow': avatarShadow(),
                           transform: isHovered() ? 'scale(1.1)' : undefined,
@@ -283,11 +283,7 @@ export const CanvasToolbar: Component<CanvasToolbarProps> = (props) => {
                         }}
                         onClick={() => setSelectedWorker(worker)}
                       >
-                        <SheepAvatar
-                          config={worker.sheepConfig}
-                          size={34}
-                          status={worker.status}
-                        />
+                        <WorkerAvatar name={worker.name} size={34} />
                       </button>
                       {/* Half-moon radial menu */}
                       <Show when={halfMoonWorker()?.name === worker.name && halfMoonVisible()}>
@@ -302,7 +298,7 @@ export const CanvasToolbar: Component<CanvasToolbarProps> = (props) => {
                             }
                             closeHalfMoon();
                           }}
-                          onMessage={() => { project.openWorkerDM(worker.name); closeHalfMoon(); }}
+                          onMessage={() => { workspace.openWorkerDM(worker.name); closeHalfMoon(); }}
                           onClose={closeHalfMoon}
                         />
                       </Show>
@@ -325,7 +321,7 @@ export const CanvasToolbar: Component<CanvasToolbarProps> = (props) => {
             {/* Edge toggles */}
             <div class="hidden lg:flex items-center gap-1.5">
               <span class="text-[9px] text-wool-600 uppercase tracking-wide">Edges</span>
-              <div class="flex items-center rounded overflow-hidden" style={{ background: 'rgba(64, 64, 64, 0.4)' }}>
+              <div class="flex items-center rounded-none overflow-hidden" style={{ background: 'rgba(64, 64, 64, 0.4)' }}>
                 <button
                   onClick={() => props.setEdgeToggles({ ...props.edgeToggles(), hierarchy: !props.edgeToggles().hierarchy })}
                   class="px-2 py-0.5 text-[10px] font-medium transition-colors"
@@ -385,7 +381,7 @@ export const CanvasToolbar: Component<CanvasToolbarProps> = (props) => {
                 onChange={(v) => props.setGranularity(v as 'all' | '2')}
                 class="w-[88px]"
                 triggerClass="btn-outline w-full justify-between h-7 px-2 py-1 text-[10px] bg-[rgba(64,64,64,0.35)] border border-white/5 hover:bg-[rgba(64,64,64,0.45)] text-wool-300"
-                panelClass="absolute z-50 mt-1 w-full rounded-md shadow-md py-1 max-h-60 overflow-auto bg-[rgba(28,28,30,0.98)] border border-white/10 backdrop-blur-xl"
+                panelClass="absolute z-50 mt-1 w-full rounded-none shadow-md py-1 max-h-60 overflow-auto bg-[rgba(28,28,30,0.98)] border border-white/10 backdrop-blur-xl"
               />
             </div>
 
@@ -401,7 +397,7 @@ export const CanvasToolbar: Component<CanvasToolbarProps> = (props) => {
                       : [...current, 'worker-tasks']
                   );
                 }}
-                class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors"
+                class="flex items-center gap-1 px-1.5 py-0.5 rounded-none text-[10px] font-medium transition-colors"
                 style={{
                   background: props.liveFilters().includes('worker-tasks') ? amber(0.2) : 'rgba(64, 64, 64, 0.4)',
                   color: props.liveFilters().includes('worker-tasks') ? 'var(--amber-400)' : 'var(--wool-500)',
@@ -420,7 +416,7 @@ export const CanvasToolbar: Component<CanvasToolbarProps> = (props) => {
                       : [...current, 'plan-tasks']
                   );
                 }}
-                class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors"
+                class="flex items-center gap-1 px-1.5 py-0.5 rounded-none text-[10px] font-medium transition-colors"
                 style={{
                   background: props.liveFilters().includes('plan-tasks') ? amber(0.2) : 'rgba(64, 64, 64, 0.4)',
                   color: props.liveFilters().includes('plan-tasks') ? 'var(--amber-400)' : 'var(--wool-500)',
@@ -453,7 +449,7 @@ export const CanvasToolbar: Component<CanvasToolbarProps> = (props) => {
             }}
             onOpenDM={() => {
               const w = selectedWorker();
-              if (w) project.openWorkerDM(w.name);
+              if (w) workspace.openWorkerDM(w.name);
               setSelectedWorker(null);
             }}
           />

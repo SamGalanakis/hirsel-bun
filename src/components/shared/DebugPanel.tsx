@@ -139,7 +139,7 @@ export const DebugPanel: Component = () => {
           if (e.target === e.currentTarget) setVisible(false);
         }}
       >
-        <div class="bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl p-4 w-[480px] max-h-[80vh] overflow-y-auto">
+        <div class="bg-pasture-800 border border-pasture-600 rounded-none shadow-xl p-4 w-[480px] max-h-[80vh] overflow-y-auto">
           {/* Header */}
           <div class="flex items-center justify-between mb-4">
             <h3 class="text-sm font-medium text-wool-300 flex items-center gap-2">
@@ -148,7 +148,7 @@ export const DebugPanel: Component = () => {
             </h3>
             <button
               onClick={() => setVisible(false)}
-              class="p-1 rounded hover:bg-pasture-700 text-wool-500"
+              class="p-1 rounded-none hover:bg-pasture-700 text-wool-500"
             >
               <Icon name="x" class="w-4 h-4" />
             </button>
@@ -193,7 +193,7 @@ export const DebugPanel: Component = () => {
               <Show when={!daemonHealth()?.running}>
                 <button
                   onClick={handleStartDaemon}
-                  class="text-xs px-2 py-0.5 rounded bg-sage/20 text-sage hover:bg-sage/30"
+                  class="text-xs px-2 py-0.5 rounded-none bg-sage/20 text-sage hover:bg-sage/30"
                 >
                   Start
                 </button>
@@ -245,7 +245,7 @@ export const DebugPanel: Component = () => {
                   daemonHealth()?.gitSha !== versionInfo()?.gitSha
                 }
               >
-                <div class="mt-2 p-2 bg-honey/10 border border-honey/30 rounded text-[10px] text-honey">
+                <div class="mt-2 p-2 bg-honey/10 border border-honey/30 rounded-none text-[10px] text-honey">
                   <Icon name="alert-triangle" class="w-3 h-3 inline mr-1" />
                   Version mismatch: Daemon ({daemonHealth()?.gitSha?.slice(0, 8)}) differs
                   from frontend ({versionInfo()?.gitSha?.slice(0, 8)})
@@ -264,7 +264,7 @@ export const DebugPanel: Component = () => {
               </h4>
               <button
                 onClick={handleKillOrphanedProcesses}
-                class="text-xs px-2 py-0.5 rounded bg-rust/20 text-rust hover:bg-rust/30"
+                class="text-xs px-2 py-0.5 rounded-none bg-rust/20 text-rust hover:bg-rust/30"
               >
                 Kill Orphans
               </button>
@@ -274,13 +274,13 @@ export const DebugPanel: Component = () => {
               fallback={<p class="text-xs text-wool-500">Loading...</p>}
             >
               <div class="grid grid-cols-2 gap-2 text-xs text-center">
-                <div class="bg-pasture-700/50 rounded p-2">
+                <div class="bg-pasture-700/50 rounded-none p-2">
                   <div class="text-wool-300 font-mono text-lg">
                     {processCounts()?.hirsel || 0}
                   </div>
                   <div class="text-wool-500 text-[10px]">Hirsel</div>
                 </div>
-                <div class="bg-pasture-700/50 rounded p-2">
+                <div class="bg-pasture-700/50 rounded-none p-2">
                   <div class="text-wool-300 font-mono text-lg">
                     {processCounts()?.node || 0}
                   </div>

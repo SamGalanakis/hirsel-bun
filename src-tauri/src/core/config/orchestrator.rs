@@ -1,75 +1,17 @@
-//! Orchestrator mode and profile configuration.
+//! Backend connection configuration.
 
 use serde::{Deserialize, Serialize};
 
-/// Orchestrator mode - local or remote
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum OrchestratorMode {
-    #[default]
-    Local,
-    Remote,
-}
-
-/// How workers access the orchestrator
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-#[derive(Default)]
-pub enum OrchestratorAccess {
-    /// Direct access - assumes network is already configured (VPC, same network, etc.)
-    #[default]
-    Direct,
-    /// Tailscale - workers join the user's tailnet via OAuth-generated auth keys
-    Tailscale {
-        /// OAuth client ID from Tailscale admin console
-        oauth_client_id: String,
-        /// OAuth client secret from Tailscale admin console
-        oauth_client_secret: String,
-        /// Optional tag to apply to worker devices (e.g., "tag:hirsel-worker")
-        #[serde(default)]
-        tag: Option<String>,
-    },
-}
-
-/// Orchestrator profile configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OrchestratorProfile {
-    #[serde(default)]
-    pub mode: OrchestratorMode,
-    /// Server URL for remote mode
+/// Backend connection settings for a Hirsel client.
+///
+/// When `url` is set, clients talk to the remote Hirsel backend over HTTP.
+/// When `url` is absent, the local desktop app falls back to its embedded
+/// local runtime. That fallback is an internal transport detail, not a
+/// user-facing profile model.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BackendConfig {
+    /// Base URL for the Hirsel backend.
     pub url: Option<String>,
-    /// API key for remote mode
+    /// Optional API key for authenticated backend access.
     pub api_key: Option<String>,
-    /// How workers access the orchestrator (network strategy)
-    #[serde(default)]
-    pub access: OrchestratorAccess,
-}
-
-impl Default for OrchestratorProfile {
-    fn default() -> Self {
-        Self {
-            mode: OrchestratorMode::Local,
-            url: None,
-            api_key: None,
-            access: OrchestratorAccess::Direct,
-        }
-    }
-}
-
-impl OrchestratorProfile {
-    /// Get Tailscale OAuth credentials if access is configured for Tailscale
-    pub fn tailscale_oauth(&self) -> Option<(&str, &str, Option<&str>)> {
-        match &self.access {
-            OrchestratorAccess::Tailscale {
-                oauth_client_id,
-                oauth_client_secret,
-                tag,
-            } => Some((
-                oauth_client_id.as_str(),
-                oauth_client_secret.as_str(),
-                tag.as_deref(),
-            )),
-            _ => None,
-        }
-    }
 }

@@ -12,7 +12,7 @@ export interface StatusBadgeProps {
 
 export const StatusBadge: Component<StatusBadgeProps> = (props) => (
   <span
-    class={`px-2 py-0.5 text-xs font-medium rounded ${getStatusBadgeClass(props.status as RunStatus)} ${props.class || ''}`}
+    class={`px-2 py-0.5 text-xs font-medium rounded-none ${getStatusBadgeClass(props.status as RunStatus)} ${props.class || ''}`}
   >
     {getStatusLabel(props.status as RunStatus)}
   </span>

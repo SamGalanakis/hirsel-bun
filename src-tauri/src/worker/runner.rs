@@ -7,15 +7,12 @@
 //! - Manages heartbeats and status updates
 //! - Coordinates with other workers via messaging
 //!
-//! Workers are state-agnostic - they don't know if they're accessing state
-//! locally (SQLiteState) or remotely (HttpState). The HIRSEL_API_URL
-//! environment variable determines which backend is used.
+//! Workers always access local SQLite state on the single host backend.
 
 use crate::cli::{MsgSubcommands, TaskSubcommands, WorkerCommands};
 use crate::core::state::{SQLiteState, StateError, WorkerStatus, WorkerUpdate};
 use crate::core::state_access::{StateAccess, StateAccessError};
 use crate::core::Files;
-use crate::worker::http_state::HttpState;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -128,85 +125,46 @@ impl WorkerConfig {
     }
 }
 
-/// State backend enum - either local SQLite or remote HTTP.
-enum StateBackend {
-    Local {
-        state: SQLiteState,
-        runtime: tokio::runtime::Runtime,
-    },
-    Remote {
-        state: HttpState,
-        runtime: tokio::runtime::Runtime,
-    },
+/// Local SQLite state backend for worker subprocesses.
+struct StateBackend {
+    state: SQLiteState,
+    runtime: tokio::runtime::Runtime,
 }
 
 /// The main worker subprocess runner.
 ///
-/// Workers are state-agnostic - they don't know if they're accessing state
-/// locally or remotely. The backend is chosen based on HIRSEL_API_URL.
 pub struct WorkerRunner {
     config: WorkerConfig,
     backend: StateBackend,
-    _files: Option<Files>,
+    _files: Files,
     last_heartbeat: Instant,
 }
 
 impl WorkerRunner {
-    /// Create a new worker runner.
-    ///
-    /// If HIRSEL_API_URL is set, uses HttpState to communicate with a
-    /// remote coordinator. Otherwise, uses SQLiteState for local access.
+    /// Create a new worker runner backed by local SQLite state.
     pub fn new(config: WorkerConfig) -> WorkerResult<Self> {
-        // Check if we should use remote state
-        if let Ok(api_url) = std::env::var("HIRSEL_API_URL") {
-            // Remote mode - use HttpState
-            let runtime = tokio::runtime::Runtime::new()
-                .map_err(|e| WorkerError::Config(format!("Failed to create runtime: {}", e)))?;
+        let files = Files::new(&config.run_dir);
 
-            let state = HttpState::new(&api_url, &config.worker_name, 30);
+        let runtime = tokio::runtime::Runtime::new()
+            .map_err(|e| WorkerError::Config(format!("Failed to create runtime: {}", e)))?;
 
-            // Verify connection and worker exists
-            let workers = runtime
-                .block_on(state.get_workers())
-                .map_err(|e| WorkerError::StateAccess(e.into()))?;
+        let state = runtime
+            .block_on(SQLiteState::new(&config.run_name))
+            .map_err(WorkerError::State)?;
 
-            if !workers.iter().any(|w| w.name == config.worker_name) {
-                return Err(WorkerError::WorkerNotRegistered(config.worker_name.clone()));
-            }
-
-            Ok(Self {
-                config,
-                backend: StateBackend::Remote { state, runtime },
-                _files: None,
-                last_heartbeat: Instant::now(),
-            })
-        } else {
-            // Local mode - use SQLiteState
-            let files = Files::new(&config.run_dir);
-
-            // Create a runtime for async operations since WorkerRunner::new is sync
-            let runtime = tokio::runtime::Runtime::new()
-                .map_err(|e| WorkerError::Config(format!("Failed to create runtime: {}", e)))?;
-
-            let state = runtime
-                .block_on(SQLiteState::new(&config.run_name))
-                .map_err(WorkerError::State)?;
-
-            // Verify worker exists in database
-            let workers = runtime
-                .block_on(state.get_workers())
-                .map_err(WorkerError::State)?;
-            if !workers.iter().any(|w| w.name == config.worker_name) {
-                return Err(WorkerError::WorkerNotRegistered(config.worker_name.clone()));
-            }
-
-            Ok(Self {
-                config,
-                backend: StateBackend::Local { state, runtime },
-                _files: Some(files),
-                last_heartbeat: Instant::now(),
-            })
+        let workers = runtime
+            .block_on(state.get_workers())
+            .map_err(WorkerError::State)?;
+        if !workers.iter().any(|w| w.name == config.worker_name) {
+            return Err(WorkerError::WorkerNotRegistered(config.worker_name.clone()));
         }
+
+        Ok(Self {
+            config,
+            backend: StateBackend { state, runtime },
+            _files: files,
+            last_heartbeat: Instant::now(),
+        })
     }
 
     /// Get the worker name.
@@ -219,13 +177,9 @@ impl WorkerRunner {
         &self.config.run_dir
     }
 
-    /// Get access to the state for direct queries.
-    /// Returns None if using remote state (HttpState).
-    pub fn local_state(&self) -> Option<&SQLiteState> {
-        match &self.backend {
-            StateBackend::Local { state, .. } => Some(state),
-            StateBackend::Remote { .. } => None,
-        }
+    /// Get access to the local SQLite state for direct queries.
+    pub fn local_state(&self) -> &SQLiteState {
+        &self.backend.state
     }
 
     /// Execute an async operation on the state backend.
@@ -233,18 +187,12 @@ impl WorkerRunner {
     where
         F: std::future::Future<Output = T>,
     {
-        match &self.backend {
-            StateBackend::Local { runtime, .. } => runtime.block_on(f),
-            StateBackend::Remote { runtime, .. } => runtime.block_on(f),
-        }
+        self.backend.runtime.block_on(f)
     }
 
     /// Get a reference to the state as a trait object for async operations.
     fn state(&self) -> &dyn StateAccess {
-        match &self.backend {
-            StateBackend::Local { state, .. } => state,
-            StateBackend::Remote { state, .. } => state,
-        }
+        &self.backend.state
     }
 
     /// Update worker heartbeat in the database.
@@ -487,7 +435,7 @@ impl WorkerRunner {
     ///
     /// Workers are "dumb" - they do one task, then exit and get respawned.
     ///
-    /// For runs without board nodes (e.g., CLI runs via `hirsel go`), this will
+    /// For runs without board nodes, this will
     /// just signal completion without completing a specific task.
     pub fn task_done(&self, task_id: Option<&str>) -> WorkerResult<String> {
         let worker_name = self.config.worker_name.clone();
@@ -904,7 +852,7 @@ impl WorkerRunner {
     // =========================================================================
 
     /// List available chat contacts.
-    /// Returns: user (human), group (team), other workers, scribe.
+    /// Returns: user (human), group (team), other workers.
     pub fn list_contacts(&self) -> WorkerResult<String> {
         let workers = self.run_async(self.state().get_workers())?;
         let worker_names: Vec<String> = workers
@@ -920,7 +868,6 @@ impl WorkerRunner {
                 "user": true,
                 "group": is_multi_worker,
                 "workers": worker_names,
-                "scribe": true,
             },
             "note": "Use 'user' for human, 'group' for team chat, worker name for DM"
         })
@@ -1016,38 +963,25 @@ impl WorkerRunner {
         Ok(self.run_async(self.state().get_time_info())?)
     }
 
-    // =========================================================================
-    // Scribe - Documentation
-    // =========================================================================
-
-    /// Record a learning for the Scribe to integrate into docs.
-    ///
-    /// Learnings are batched and processed by an ephemeral Scribe agent
-    /// that maintains documentation in the run's docs/ directory.
+    /// Record durable project context for later condensation by the scribe.
     pub fn scribe(&self, content: &str) -> WorkerResult<String> {
         let worker_name = &self.config.worker_name;
         self.run_async(self.state().add_scribe_submission(worker_name, content))?;
 
         Ok(serde_json::json!({
             "success": true,
-            "message": "Learning recorded. The Scribe will integrate it into docs shortly.",
+            "message": "Recorded retained context for project scribe processing.",
         })
         .to_string())
     }
 
-    /// Read documentation maintained by the Scribe.
-    ///
-    /// Returns all docs or a specific file from the run's docs/ directory.
-    pub fn read_docs(&self, file: Option<&str>) -> WorkerResult<String> {
-        use crate::core::storage::create_default_local_storage;
+    /// Read the project-level retained context artifact.
+    pub fn read_retained_context(&self) -> WorkerResult<String> {
+        let markdown = self
+            .run_async(self.state().read_retained_context())
+            .map_err(|e| WorkerError::Config(format!("Failed to read retained context: {}", e)))?;
 
-        let files = Files::new(&self.config.run_dir);
-        let storage = create_default_local_storage();
-        let docs = self
-            .run_async(files.read_docs_async(&storage, file))
-            .map_err(|e| WorkerError::Config(format!("Failed to read docs: {}", e)))?;
-
-        Ok(serde_json::to_string(&docs).unwrap_or_else(|_| "{}".to_string()))
+        Ok(serde_json::json!({ "markdown": markdown }).to_string())
     }
 
     // =========================================================================

@@ -30,9 +30,8 @@ fn main() {
         #[cfg(not(feature = "gui"))]
         {
             eprintln!(
-                "GUI not available in this build. Use CLI commands or build with --features gui"
+                "GUI not available in this build. Run 'hirsel serve' or build with --features gui."
             );
-            eprintln!("Run 'hirsel --help' for available commands.");
             std::process::exit(1);
         }
     }

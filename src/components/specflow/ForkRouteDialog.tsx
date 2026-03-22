@@ -100,7 +100,7 @@ export const ForkRouteDialog: Component<ForkRouteDialogProps> = (props) => {
       }}
     >
       <div
-        class="w-full max-w-sm rounded-lg shadow-2xl overflow-hidden"
+        class="w-full max-w-sm rounded-none shadow-2xl overflow-hidden"
         style={{
           background: 'linear-gradient(180deg, #2a2a2a 0%, #242424 100%)',
           border: '1px solid rgba(64, 64, 64, 0.6)',
@@ -154,7 +154,7 @@ export const ForkRouteDialog: Component<ForkRouteDialogProps> = (props) => {
               onInput={(e) => handleNameChange(e.currentTarget.value)}
               placeholder="feature-auth"
               disabled={loading()}
-              class="w-full px-3 py-2 rounded text-[12px] placeholder:text-wool-600 disabled:opacity-50"
+              class="w-full px-3 py-2 rounded-none text-[12px] placeholder:text-wool-600 disabled:opacity-50"
               style={{
                 background: 'rgba(20, 20, 20, 0.6)',
                 border: error() ? '1px solid var(--terra)' : '1px solid rgba(64, 64, 64, 0.5)',
@@ -175,7 +175,7 @@ export const ForkRouteDialog: Component<ForkRouteDialogProps> = (props) => {
               type="button"
               onClick={props.onClose}
               disabled={loading()}
-              class="px-3 py-1.5 rounded text-[11px] font-medium transition-colors disabled:opacity-50"
+              class="px-3 py-1.5 rounded-none text-[11px] font-medium transition-colors disabled:opacity-50"
               style={{
                 background: 'transparent',
                 border: '1px solid rgba(64, 64, 64, 0.5)',
@@ -187,7 +187,7 @@ export const ForkRouteDialog: Component<ForkRouteDialogProps> = (props) => {
             <button
               type="submit"
               disabled={loading() || !name().trim()}
-              class="px-3 py-1.5 rounded text-[11px] font-medium transition-colors disabled:opacity-50"
+              class="px-3 py-1.5 rounded-none text-[11px] font-medium transition-colors disabled:opacity-50"
               style={{
                 background: amber(0.2),
                 border: `1px solid ${amber(0.35)}`,

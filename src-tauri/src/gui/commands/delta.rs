@@ -168,7 +168,6 @@ pub async fn start_shepherd_run(
                 human_in_the_loop: Some(route.human_in_the_loop),
                 runner: route.runner.clone(),
                 worker_runners: None,
-                tailscale_oauth: None,
             })
             .await
             .str_err()?;

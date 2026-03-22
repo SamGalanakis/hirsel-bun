@@ -620,8 +620,6 @@ impl BoardMcpServer {
             difficulty: crate::core::delta::BoardNodeDifficulty::Medium,
             validated_by: validated_by.unwrap_or_default(),
             blocked_by: blocked_by.unwrap_or_default(),
-            x: None,
-            y: None,
         };
 
         let node = block_on(self.state().create_node(&req)).map_err(|e| e.to_string())?;
@@ -717,8 +715,6 @@ impl BoardMcpServer {
             difficulty: crate::core::delta::BoardNodeDifficulty::Medium,
             validated_by: validated_by.unwrap_or_default(),
             blocked_by: blocked_by.unwrap_or_default(),
-            x: None,
-            y: None,
         };
 
         let node = block_on(self.state().create_node(&req)).map_err(|e| e.to_string())?;
@@ -767,8 +763,6 @@ impl BoardMcpServer {
             difficulty: None,
             validated_by,
             blocked_by,
-            x: None,
-            y: None,
         };
 
         block_on(self.state().update_node(id, &req)).map_err(|e| e.to_string())?;
@@ -875,8 +869,6 @@ impl BoardMcpServer {
             difficulty: crate::core::delta::BoardNodeDifficulty::Medium,
             validated_by: vec![], // Checks don't have validated_by
             blocked_by: vec![],
-            x: None,
-            y: None,
         };
 
         let node = block_on(self.state().create_node(&req)).map_err(|e| e.to_string())?;

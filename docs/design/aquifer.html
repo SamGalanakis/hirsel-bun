@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aquifer — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,300;6..72,400;6..72,500;6..72,700;6..72,800&family=Victor+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --surface: #2a4a28;
+      --soil: #4a3828;
+      --rock: #3a3a3a;
+      --water: #3080b0;
+      --aquifer: #20a0c0;
+      --panel: #f4f2ee;
+      --panel-inset: #e8e4dc;
+      --text: #2a2820;
+      --text-dim: #7a7868;
+      --validated: #2a4a28;
+      --working: #3080b0;
+      --pending: #4a3828;
+      --draft: #6a6a6a;
+      --failed: #a03030;
+    }
+
+    body {
+      font-family: 'Newsreader', serif;
+      background: var(--panel);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    /* Ground texture */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+      pointer-events: none;
+    }
+
+    .direction-nav {
+      position: sticky; top: 0; z-index: 1000;
+      background: rgba(244,242,238,0.92); backdrop-filter: blur(14px);
+      border-bottom: 2px solid var(--panel-inset);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .direction-nav a {
+      font-size: 11px; font-weight: 500; color: var(--text-dim);
+      text-decoration: none; padding: 5px 12px; border-radius: 6px; transition: all 0.2s;
+    }
+    .direction-nav a:hover { color: var(--text); background: rgba(0,0,0,0.04); }
+    .direction-nav .nav-title {
+      font-weight: 700; font-size: 15px;
+      color: var(--text); flex: 1; text-align: center;
+    }
+    .direction-nav .nav-home {
+      font-family: 'Victor Mono', monospace;
+      font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-dim); border-right: 2px solid var(--panel-inset);
+      padding-right: 16px; margin-right: 4px;
+    }
+
+    .page-header {
+      padding: 80px 48px 20px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .tag {
+      font-family: 'Victor Mono', monospace;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--water); margin-bottom: 12px; display: block;
+    }
+
+    h1 {
+      font-size: clamp(44px, 6vw, 76px);
+      font-weight: 800; line-height: 1.0;
+      color: var(--soil); margin-bottom: 16px;
+    }
+
+    .subtitle {
+      font-size: 15px; font-weight: 300;
+      color: var(--text-dim); max-width: 600px; line-height: 1.8;
+    }
+
+    .showcase {
+      padding: 40px 48px 60px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    /* ====== AQUIFER CROSS-SECTION ====== */
+    /*
+      The landscape above is the route. Wells drilled down are specs.
+      Deeper wells = more foundational specs. Tasks are water table layers.
+      Workers are pumps bringing water (results) to the surface.
+      Water level shows completion. Artesian wells = validated (overflow).
+      Dry wells = draft. Contamination = failed tasks.
+    */
+
+    .aquifer {
+      background: var(--panel-inset);
+      border: 3px solid var(--soil);
+      border-radius: 6px;
+      overflow: hidden;
+      position: relative;
+      box-shadow:
+        inset 0 2px 8px rgba(0,0,0,0.06),
+        0 4px 20px rgba(0,0,0,0.08);
+    }
+
+    .aq-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 14px 24px;
+      background: var(--surface);
+      color: var(--panel);
+    }
+
+    .aq-header h2 {
+      font-size: 14px; font-weight: 700; letter-spacing: 0.06em;
+    }
+
+    .aq-survey {
+      font-family: 'Victor Mono', monospace;
+      font-size: 10px; color: var(--aquifer);
+      letter-spacing: 0.08em;
+    }
+
+    .cross-section {
+      position: relative;
+      min-height: 480px;
+      background: linear-gradient(
+        180deg,
+        var(--surface) 0%,
+        var(--surface) 8%,
+        var(--soil) 8%,
+        var(--soil) 25%,
+        #3e3428 25%,
+        var(--rock) 40%,
+        var(--rock) 55%,
+        #2a3a4a 55%,
+        #1a3040 70%,
+        #183848 100%
+      );
+    }
+
+    /* Stratum labels */
+    .stratum-label {
+      position: absolute;
+      right: 16px;
+      font-family: 'Victor Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.35);
+    }
+
+    .stratum-surface { top: 12px; }
+    .stratum-soil { top: 70px; }
+    .stratum-rock { top: 160px; }
+    .stratum-water-table { top: 260px; color: rgba(48,128,176,0.6); }
+    .stratum-deep { top: 360px; color: rgba(32,160,192,0.5); }
+
+    /* Water table shimmer line */
+    .water-table-line {
+      position: absolute;
+      left: 0; right: 0;
+      top: 55%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--water), var(--aquifer), var(--water), transparent);
+      opacity: 0.5;
+      animation: shimmer 3s ease-in-out infinite;
+    }
+
+    @keyframes shimmer {
+      0%, 100% { opacity: 0.3; }
+      50% { opacity: 0.7; }
+    }
+
+    /* Wells */
+    .wells {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      justify-content: space-around;
+      padding: 0 40px;
+    }
+
+    .well {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 100px;
+    }
+
+    /* Well shaft */
+    .well-shaft {
+      position: absolute;
+      top: 38px;
+      width: 28px;
+      border-left: 2px solid rgba(255,255,255,0.15);
+      border-right: 2px solid rgba(255,255,255,0.15);
+      background: rgba(0,0,0,0.2);
+    }
+
+    .well-depth-full { height: 400px; }
+    .well-depth-deep { height: 340px; }
+    .well-depth-mid { height: 260px; }
+    .well-depth-shallow { height: 180px; }
+    .well-depth-surface { height: 100px; }
+
+    /* Water fill inside shaft */
+    .well-water {
+      position: absolute;
+      bottom: 0;
+      left: 2px; right: 2px;
+      background: linear-gradient(180deg, var(--aquifer), var(--water));
+      opacity: 0.7;
+      border-radius: 0 0 2px 2px;
+    }
+
+    .water-full { height: 100%; }
+    .water-high { height: 75%; }
+    .water-half { height: 50%; }
+    .water-low { height: 15%; }
+    .water-dry { height: 0; }
+
+    /* Overflow animation for artesian wells */
+    .well-overflow {
+      position: absolute;
+      top: 28px;
+      width: 40px;
+      height: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+
+    .overflow-drop {
+      position: absolute;
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: var(--aquifer);
+      opacity: 0.6;
+      animation: overflow 1.5s ease-out infinite;
+    }
+
+    .overflow-drop:nth-child(1) { left: 8px; animation-delay: 0s; }
+    .overflow-drop:nth-child(2) { left: 18px; animation-delay: 0.4s; }
+    .overflow-drop:nth-child(3) { left: 28px; animation-delay: 0.8s; }
+
+    @keyframes overflow {
+      0% { transform: translateY(0); opacity: 0.6; }
+      100% { transform: translateY(14px) translateX(-4px); opacity: 0; }
+    }
+
+    /* Pump mechanism */
+    .pump {
+      position: absolute;
+      top: 18px;
+      width: 20px; height: 20px;
+      background: var(--rock);
+      border: 2px solid rgba(255,255,255,0.3);
+      border-radius: 3px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+
+    .pump-active {
+      animation: pump-work 1s ease-in-out infinite;
+    }
+
+    @keyframes pump-work {
+      0%, 100% { transform: translateX(-50%) translateY(0); }
+      50% { transform: translateX(-50%) translateY(-3px); }
+    }
+
+    .pump-handle {
+      position: absolute;
+      top: -8px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 24px; height: 3px;
+      background: rgba(255,255,255,0.3);
+      border-radius: 2px;
+    }
+
+    /* Well head label */
+    .well-label {
+      position: absolute;
+      top: 0;
+      width: 100%;
+      text-align: center;
+    }
+
+    .well-name {
+      font-size: 10px; font-weight: 700;
+      color: rgba(255,255,255,0.9);
+      text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+      white-space: nowrap;
+    }
+
+    .well-status {
+      font-family: 'Victor Mono', monospace;
+      font-size: 8px;
+      color: rgba(255,255,255,0.5);
+      margin-top: 2px;
+    }
+
+    /* Task layers */
+    .task-layer {
+      position: absolute;
+      left: -6px; right: -6px;
+      height: 3px;
+      border-radius: 2px;
+      opacity: 0.8;
+    }
+
+    .task-done { background: var(--aquifer); }
+    .task-working { background: var(--water); animation: task-pulse 2s ease-in-out infinite; }
+    .task-pending { background: rgba(255,255,255,0.15); }
+
+    @keyframes task-pulse {
+      0%, 100% { opacity: 0.6; }
+      50% { opacity: 1; }
+    }
+
+    /* Bottom info */
+    .aq-footer {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 10px 24px;
+      background: var(--rock);
+      color: var(--panel);
+      font-family: 'Victor Mono', monospace;
+      font-size: 10px;
+    }
+
+    .aq-footer .status-text { color: var(--aquifer); }
+
+    /* Depth gauge */
+    .depth-gauge {
+      font-family: 'Victor Mono', monospace;
+      font-size: 8px;
+      display: inline-block;
+      padding: 2px 8px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--panel);
+      background: linear-gradient(180deg, var(--water), var(--aquifer));
+      border-radius: 2px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
+
+    .rationale {
+      padding: 0 48px 100px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .rationale h3 {
+      font-size: 24px; font-weight: 800; margin-bottom: 20px;
+    }
+
+    .rationale-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .rationale-card {
+      padding: 24px;
+      background: var(--panel-inset);
+      border: 1px solid rgba(0,0,0,0.06);
+      border-radius: 6px;
+    }
+
+    .rationale-card h4 {
+      font-size: 12px; font-weight: 700;
+      margin-bottom: 8px; color: var(--soil);
+    }
+
+    .rationale-card p {
+      font-size: 13px; color: var(--text-dim); line-height: 1.7;
+    }
+
+    @media (max-width: 768px) {
+      .page-header, .showcase, .rationale { padding-left: 20px; padding-right: 20px; }
+      .wells { padding: 0 10px; }
+      .well { width: 60px; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="direction-nav">
+    <a href="../designs.html" class="nav-home">Storm</a>
+    <a href="printing-press.html">Prev</a>
+    <span class="nav-title">Aquifer</span>
+    <a href="jacquard-loom.html">Next</a>
+  </nav>
+
+  <div class="page-header">
+    <div class="tag">Direction 20 &mdash; Natural</div>
+    <h1>Aquifer</h1>
+    <p class="subtitle">An underground water system. The route is the landscape above. Specs are wells drilled to different aquifer layers. Tasks are permeable strata holding completed work. Workers are pumps bringing results to the surface. Artesian wells overflow when validated. Dry wells need drilling.</p>
+  </div>
+
+  <div class="showcase">
+    <div class="aquifer">
+      <div class="aq-header">
+        <h2>Survey: Auth Overhaul</h2>
+        <span class="aq-survey">Geological Survey &middot; Shepherd</span>
+      </div>
+
+      <div class="cross-section">
+        <!-- Stratum labels -->
+        <span class="stratum-label stratum-surface">Surface</span>
+        <span class="stratum-label stratum-soil">Topsoil</span>
+        <span class="stratum-label stratum-rock">Bedrock</span>
+        <span class="stratum-label stratum-water-table">Water Table</span>
+        <span class="stratum-label stratum-deep">Deep Aquifer</span>
+
+        <div class="water-table-line"></div>
+
+        <div class="wells">
+          <!-- Schema Migration: validated, artesian, deep well -->
+          <div class="well">
+            <div class="well-label" style="top: 6px;">
+              <div class="well-name">Schema Migration</div>
+              <div class="well-status">artesian &middot; validated</div>
+            </div>
+            <div class="pump" style="top: 34px;">
+              <div class="pump-handle"></div>
+            </div>
+            <div class="well-shaft well-depth-full" style="top: 54px;">
+              <div class="well-water water-full"></div>
+            </div>
+            <div class="well-overflow" style="top: 44px;">
+              <div class="overflow-drop"></div>
+              <div class="overflow-drop"></div>
+              <div class="overflow-drop"></div>
+            </div>
+          </div>
+
+          <!-- API Restructure: validated, artesian, deep well -->
+          <div class="well">
+            <div class="well-label" style="top: 6px;">
+              <div class="well-name">API Restructure</div>
+              <div class="well-status">artesian &middot; validated</div>
+            </div>
+            <div class="pump" style="top: 34px;">
+              <div class="pump-handle"></div>
+            </div>
+            <div class="well-shaft well-depth-deep" style="top: 54px;">
+              <div class="well-water water-full"></div>
+            </div>
+            <div class="well-overflow" style="top: 44px;">
+              <div class="overflow-drop"></div>
+              <div class="overflow-drop"></div>
+              <div class="overflow-drop"></div>
+            </div>
+          </div>
+
+          <!-- Token Rotation: working, 2/4 tasks, mid well -->
+          <div class="well">
+            <div class="well-label" style="top: 6px;">
+              <div class="well-name">Token Rotation</div>
+              <div class="well-status">pumping &middot; 2/4 tasks</div>
+            </div>
+            <div class="pump pump-active" style="top: 34px;">
+              <div class="pump-handle"></div>
+            </div>
+            <div class="well-shaft well-depth-mid" style="top: 54px;">
+              <div class="well-water water-half"></div>
+              <div class="task-layer task-done" style="bottom: 20%;"></div>
+              <div class="task-layer task-done" style="bottom: 35%;"></div>
+              <div class="task-layer task-working" style="bottom: 50%;"></div>
+              <div class="task-layer task-pending" style="bottom: 65%;"></div>
+            </div>
+          </div>
+
+          <!-- Rate Limiter: pending/blocked, shallow well -->
+          <div class="well">
+            <div class="well-label" style="top: 6px;">
+              <div class="well-name">Rate Limiter</div>
+              <div class="well-status">blocked &middot; pending</div>
+            </div>
+            <div class="pump" style="top: 34px;">
+              <div class="pump-handle"></div>
+            </div>
+            <div class="well-shaft well-depth-shallow" style="top: 54px;">
+              <div class="well-water water-low"></div>
+              <div class="task-layer task-pending" style="bottom: 40%;"></div>
+              <div class="task-layer task-pending" style="bottom: 60%;"></div>
+            </div>
+          </div>
+
+          <!-- E2E Tests: draft, surface only, dry -->
+          <div class="well">
+            <div class="well-label" style="top: 6px;">
+              <div class="well-name">E2E Tests</div>
+              <div class="well-status">dry &middot; needs drilling</div>
+            </div>
+            <div class="well-shaft well-depth-surface" style="top: 54px; border-style: dashed;">
+              <div class="well-water water-dry"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="aq-footer">
+        <span>Wells: 5 &middot; Pumps: 2 active</span>
+        <span class="status-text">2 artesian &middot; 1 pumping &middot; 1 blocked &middot; 1 dry</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="rationale">
+    <h3>Why this is interesting</h3>
+    <div class="rationale-grid">
+      <div class="rationale-card">
+        <h4>Depth encodes dependency</h4>
+        <p>Foundational specs drill deeper because they touch more of the system. A schema migration goes all the way down to bedrock. E2E tests sit near the surface. The physical depth of the well communicates how fundamental the spec is.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Water level shows progress</h4>
+        <p>As tasks complete, water rises in the shaft. Half-full is half-done. Overflowing is validated. Empty is unstarted. You see completion as a physical substance accumulating, which is more visceral than a percentage bar.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Pumps are workers</h4>
+        <p>A pump actively bobbing means a worker is pulling results out of the ground. Idle pumps are available workers. No pump at all means the well hasn't been equipped yet. The mechanical action makes invisible compute visible.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Strata are shared context</h4>
+        <p>The water table and rock layers run behind all wells, showing that specs share underlying infrastructure. When one well taps the aquifer, it affects pressure in neighboring wells. Blocked specs are wells that can't reach water yet.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

@@ -49,7 +49,7 @@ use std::collections::HashMap;
 use crate::core::api_types::{
     ConfigResponse, Eval, HistoryEntry, RunDetail, RunSummary, Worker, WorkerEventsResponse,
 };
-use crate::core::config::{self, Config};
+use crate::core::config::Config;
 use crate::core::draft::StartingPoint;
 use crate::core::snapshot::WorkerStateHandle;
 
@@ -73,9 +73,6 @@ pub enum OrchestratorError {
 
     #[error("HTTP error: {0}")]
     Http(String),
-
-    #[error("Unknown profile: {0}")]
-    UnknownProfile(String),
 
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
@@ -140,16 +137,6 @@ pub struct DeliverRunRequest {
 pub struct HealthResponse {
     pub status: String,
     pub version: String,
-}
-
-/// Tailscale OAuth credentials for generating ephemeral auth keys
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TailscaleOAuth {
-    pub client_id: String,
-    pub client_secret: String,
-    #[serde(default)]
-    pub tag: Option<String>,
 }
 
 /// Request to spawn a single worker (used by daemon for lifecycle management)
@@ -224,8 +211,6 @@ pub struct StartRunRequest {
     pub runner: Option<String>,
     /// Per-worker runner assignments
     pub worker_runners: Option<HashMap<String, String>>,
-    /// Tailscale OAuth credentials for worker hosts to join tailnet
-    pub tailscale_oauth: Option<TailscaleOAuth>,
 }
 
 // =============================================================================
@@ -308,7 +293,7 @@ pub trait Orchestrator: Send + Sync {
     /// Get server/client configuration
     async fn get_config(&self) -> OrchestratorResult<ConfigResponse>;
 
-    /// Check server health (for remote orchestrator)
+    /// Check backend health
     async fn health(&self) -> OrchestratorResult<HealthResponse>;
 
     // -------------------------------------------------------------------------
@@ -390,7 +375,7 @@ pub trait Orchestrator: Send + Sync {
     /// running run.
     ///
     /// The runner system is used to ensure workers spawn correctly based on
-    /// the runner configuration (local, docker, fly, ssh, etc.).
+    /// the configured host/container runner.
     async fn spawn_single_worker(
         &self,
         run_name: &str,
@@ -425,60 +410,31 @@ pub trait Orchestrator: Send + Sync {
 // Factory Function
 // =============================================================================
 
-/// Create an orchestrator based on the profile configuration
-///
-/// If no profile is specified, uses the default profile from config.
-/// For local mode, returns a LocalOrchestrator (direct access to local state).
-/// For remote mode, connects to the remote server.
-///
-/// Note: For local mode with daemon lifecycle management, use `create_daemon_orchestrator()`.
-pub fn create_orchestrator(profile: Option<&str>) -> OrchestratorResult<Box<dyn Orchestrator>> {
+/// Create an orchestrator for the configured backend connection.
+pub fn create_orchestrator() -> OrchestratorResult<Box<dyn Orchestrator>> {
     use crate::core::credentials::CredentialStore;
 
     let (config, _) = Config::load().map_err(|e| OrchestratorError::Config(e.to_string()))?;
 
-    let profile_name = profile.unwrap_or(&config.default_profile);
+    if let Some(url) = config.backend.url.clone() {
+        let key = tokio::runtime::Handle::try_current()
+            .ok()
+            .and_then(|handle| {
+                handle.block_on(async {
+                    let store = CredentialStore::open().await.ok()?;
+                    store.load("backend_api_key").await.ok()
+                })
+            })
+            .or_else(|| config.backend.api_key.clone())
+            .ok_or_else(|| OrchestratorError::Config("Missing API key for backend".into()))?;
 
-    let profile_config = config
-        .profiles
-        .get(profile_name)
-        .ok_or_else(|| OrchestratorError::UnknownProfile(profile_name.to_string()))?;
-
-    match profile_config.mode {
-        config::OrchestratorMode::Local => {
-            // For local mode, use LocalOrchestrator for direct access
-            // The daemon runs separately and handles lifecycle management
-            Ok(Box::new(LocalOrchestrator::new(config)))
-        }
-        config::OrchestratorMode::Remote => {
-            let url = profile_config.url.as_ref().ok_or_else(|| {
-                OrchestratorError::Config("Missing URL for remote profile".into())
-            })?;
-
-            // Try to load API key from credential store first, fall back to config
-            let key = {
-                let cred_key = format!("profile_{}_api_key", profile_name);
-                // Use a runtime for async credential store operations
-                tokio::runtime::Handle::try_current()
-                    .ok()
-                    .and_then(|handle| {
-                        handle.block_on(async {
-                            let store = CredentialStore::open().await.ok()?;
-                            store.load(&cred_key).await.ok()
-                        })
-                    })
-                    .or_else(|| profile_config.api_key.clone())
-            }
-            .ok_or_else(|| {
-                OrchestratorError::Config("Missing API key for remote profile".into())
-            })?;
-
-            Ok(Box::new(RemoteOrchestrator::new(url.clone(), key)))
-        }
+        Ok(Box::new(RemoteOrchestrator::new(url, key)))
+    } else {
+        Ok(Box::new(LocalOrchestrator::new(config)))
     }
 }
 
-/// Create a local orchestrator directly (bypasses profile resolution)
+/// Create a local orchestrator directly.
 pub fn create_local_orchestrator() -> OrchestratorResult<LocalOrchestrator> {
     let (config, _) = Config::load().map_err(|e| OrchestratorError::Config(e.to_string()))?;
     Ok(LocalOrchestrator::new(config))

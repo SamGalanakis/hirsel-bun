@@ -10,10 +10,7 @@ use std::collections::HashMap;
 use thiserror::Error;
 use tokio::sync::OnceCell;
 
-use super::{
-    AgentConfig, Config, GitConfig, LlmConfig, OrchestratorProfile, ServiceWorkersConfig,
-    StorageConfig,
-};
+use super::{AgentConfig, BackendConfig, Config, GitConfig, LlmConfig, StorageConfig};
 use crate::core::db::{global_pool, utc_now};
 use crate::core::runner::RunnerConfig;
 
@@ -68,14 +65,9 @@ pub struct PartialConfig {
     pub runners: Option<HashMap<String, RunnerConfig>>,
     pub default_runner: Option<Option<String>>,
     pub worker_runners: Option<HashMap<String, String>>,
-    pub default_profile: Option<String>,
-    pub profiles: Option<HashMap<String, OrchestratorProfile>>,
+    pub backend: Option<BackendConfig>,
     pub git: Option<GitConfig>,
     pub storage: Option<StorageConfig>,
-    pub allow_local_workers: Option<bool>,
-    pub service_workers: Option<ServiceWorkersConfig>,
-    pub scribe_docs_path: Option<String>,
-    pub scribe_persist_docs_changes: Option<bool>,
     pub preferred_ide: Option<Option<String>>,
 }
 
@@ -247,14 +239,11 @@ impl ConfigStore {
                         }
                     };
                 }
-                "default_profile" => {
-                    partial.default_profile = Some(value);
-                }
-                "profiles" => {
-                    partial.profiles = match serde_json::from_str(&value) {
+                "backend" => {
+                    partial.backend = match serde_json::from_str(&value) {
                         Ok(v) => Some(v),
                         Err(e) => {
-                            tracing::debug!("Failed to parse config 'profiles': {}", e);
+                            tracing::debug!("Failed to parse config 'backend': {}", e);
                             None
                         }
                     };
@@ -276,24 +265,6 @@ impl ConfigStore {
                             None
                         }
                     };
-                }
-                "allow_local_workers" => {
-                    partial.allow_local_workers = Some(value == "true");
-                }
-                "service_workers" => {
-                    partial.service_workers = match serde_json::from_str(&value) {
-                        Ok(v) => Some(v),
-                        Err(e) => {
-                            tracing::debug!("Failed to parse config 'service_workers': {}", e);
-                            None
-                        }
-                    };
-                }
-                "scribe_docs_path" => {
-                    partial.scribe_docs_path = Some(value);
-                }
-                "scribe_persist_docs_changes" => {
-                    partial.scribe_persist_docs_changes = Some(value == "true");
                 }
                 "preferred_ide" => {
                     if value == "null" || value.is_empty() {
@@ -363,9 +334,8 @@ impl ConfigStore {
         )
         .await?;
 
-        // Profiles
-        self.set("default_profile", &config.default_profile).await?;
-        self.set("profiles", &serde_json::to_string(&config.profiles)?)
+        // Backend connection
+        self.set("backend", &serde_json::to_string(&config.backend)?)
             .await?;
 
         // Git
@@ -376,36 +346,12 @@ impl ConfigStore {
         self.set("storage", &serde_json::to_string(&config.storage)?)
             .await?;
 
-        // Allow local workers
-        self.set(
-            "allow_local_workers",
-            if config.allow_local_workers {
-                "true"
-            } else {
-                "false"
-            },
-        )
-        .await?;
-
-        // Service workers
-        self.set(
-            "service_workers",
-            &serde_json::to_string(&config.service_workers)?,
-        )
-        .await?;
-
-        // Scribe docs settings
-        self.set("scribe_docs_path", &config.scribe_docs_path)
-            .await?;
-        self.set(
-            "scribe_persist_docs_changes",
-            if config.scribe_persist_docs_changes {
-                "true"
-            } else {
-                "false"
-            },
-        )
-        .await?;
+        let _ = self.delete("scribe_docs_path").await;
+        let _ = self.delete("scribe_persist_docs_changes").await;
+        let _ = self.delete("service_workers").await;
+        let _ = self.delete("allow_local_workers").await;
+        let _ = self.delete("default_profile").await;
+        let _ = self.delete("profiles").await;
 
         // Preferred IDE
         match &config.preferred_ide {

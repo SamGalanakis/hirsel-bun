@@ -10,7 +10,7 @@ pub enum StorageBackend {
     /// Local filesystem storage (default)
     #[default]
     Local,
-    /// S3-compatible object storage (Tigris, AWS S3)
+    /// S3-compatible object storage
     S3,
 }
 
@@ -21,8 +21,8 @@ pub enum StorageProvider {
     /// AWS S3
     #[default]
     S3,
-    /// Tigris (Fly.io storage)
-    Tigris,
+    /// MinIO or other self-hosted S3-compatible storage
+    Minio,
 }
 
 impl StorageProvider {
@@ -30,7 +30,7 @@ impl StorageProvider {
     pub fn default_endpoint(&self) -> Option<&'static str> {
         match self {
             StorageProvider::S3 => None, // AWS S3 uses default
-            StorageProvider::Tigris => Some("https://fly.storage.tigris.dev"),
+            StorageProvider::Minio => Some("http://localhost:9000"),
         }
     }
 
@@ -38,7 +38,7 @@ impl StorageProvider {
     pub fn default_region(&self) -> &'static str {
         match self {
             StorageProvider::S3 => "us-east-1",
-            StorageProvider::Tigris => "auto",
+            StorageProvider::Minio => "us-east-1",
         }
     }
 }
@@ -49,13 +49,13 @@ pub struct S3Config {
     /// Provider type (for UI display, doesn't affect functionality)
     #[serde(default)]
     pub provider: StorageProvider,
-    /// S3 endpoint URL (e.g., Tigris URL)
+    /// S3 endpoint URL
     /// If not set, uses AWS S3 default endpoint
     pub endpoint: Option<String>,
     /// S3 bucket name
     #[serde(default)]
     pub bucket: String,
-    /// AWS region (e.g., "us-east-1", "auto" for Tigris)
+    /// AWS region (for example, "us-east-1")
     #[serde(default)]
     pub region: Option<String>,
     /// AWS access key ID (can also be set via environment)

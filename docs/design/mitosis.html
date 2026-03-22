@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mitosis — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist+Mono:wght@400;500;600&family=Manrope:wght@200;300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --void: #06080c;
+      --membrane: rgba(120,200,180,0.06);
+      --membrane-edge: rgba(120,200,180,0.15);
+      --cytoplasm: #0c1014;
+      --nucleus: #101820;
+      --chromatin: #78c8b4;
+      --chromatin-dim: rgba(120,200,180,0.3);
+      --spindle: rgba(120,200,180,0.08);
+      --rna: #e8a060;
+      --rna-dim: rgba(232,160,96,0.3);
+      --text: #c0d4cc;
+      --text-dim: #607870;
+      --mitotic: #d04878;
+    }
+
+    body {
+      font-family: 'Manrope', sans-serif;
+      background: var(--void);
+      color: var(--text);
+      line-height: 1.5;
+      overflow-x: hidden;
+      min-height: 100vh;
+    }
+
+    .direction-nav {
+      position: sticky; top: 0; z-index: 1000;
+      background: rgba(6,8,12,0.88); backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(120,200,180,0.06);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .direction-nav a {
+      font-size: 11px; font-weight: 500; color: var(--text-dim);
+      text-decoration: none; padding: 5px 12px; border-radius: 6px; transition: all 0.2s;
+    }
+    .direction-nav a:hover { color: var(--chromatin); background: var(--membrane); }
+    .direction-nav .nav-title {
+      font-family: 'Instrument Serif', serif; font-size: 16px;
+      color: var(--text); flex: 1; text-align: center;
+    }
+    .direction-nav .nav-home {
+      font-family: 'Geist Mono', monospace;
+      font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-dim); border-right: 1px solid rgba(120,200,180,0.06);
+      padding-right: 16px; margin-right: 4px;
+    }
+
+    .page-header {
+      padding: 80px 48px 20px;
+      max-width: 1200px;
+      margin: 0 auto;
+      position: relative;
+    }
+
+    .tag {
+      font-family: 'Geist Mono', monospace;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--chromatin); margin-bottom: 12px; display: block;
+    }
+
+    h1 {
+      font-family: 'Instrument Serif', serif;
+      font-size: clamp(48px, 7vw, 88px);
+      font-weight: 400;
+      font-style: italic;
+      line-height: 1.0;
+      color: var(--text);
+      margin-bottom: 16px;
+    }
+
+    .subtitle {
+      font-size: 15px; font-weight: 300;
+      color: var(--text-dim);
+      max-width: 600px; line-height: 1.8;
+    }
+
+    .showcase {
+      padding: 40px 48px 60px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    /* ====== THE MITOSIS VISUALIZATION ====== */
+    /*
+      Core idea: a spec is a CELL. When dispatched, it undergoes
+      MITOSIS — the nucleus (intent) duplicates, the cell membrane
+      stretches, then splits into child task-cells. Each child has
+      its own nucleus with a portion of the original DNA (plan).
+      Workers are the ENZYMES operating inside each cell.
+    */
+
+    .organism {
+      position: relative;
+      min-height: 700px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 60px;
+      padding: 40px 0;
+    }
+
+    /* === PARENT CELL (the spec) === */
+    .cell {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .cell-membrane {
+      position: relative;
+      border: 1.5px solid var(--membrane-edge);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--membrane);
+      transition: all 0.6s cubic-bezier(0.2, 0.9, 0.3, 1);
+    }
+
+    .parent-cell .cell-membrane {
+      width: 280px; height: 280px;
+      animation: breathe 4s ease-in-out infinite;
+    }
+
+    @keyframes breathe {
+      0%, 100% { transform: scale(1); border-color: var(--membrane-edge); }
+      50% { transform: scale(1.02); border-color: rgba(120,200,180,0.22); }
+    }
+
+    .nucleus {
+      width: 120px; height: 120px;
+      border-radius: 50%;
+      border: 1px solid rgba(120,200,180,0.2);
+      background: var(--nucleus);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      position: relative;
+      z-index: 2;
+    }
+
+    .nucleus-label {
+      font-family: 'Instrument Serif', serif;
+      font-size: 14px;
+      color: var(--text);
+      text-align: center;
+      line-height: 1.2;
+    }
+
+    .nucleus-id {
+      font-family: 'Geist Mono', monospace;
+      font-size: 9px;
+      color: var(--chromatin);
+      letter-spacing: 0.1em;
+    }
+
+    /* Chromatin strands inside nucleus */
+    .chromatin-strand {
+      position: absolute;
+      background: var(--chromatin);
+      border-radius: 1px;
+      opacity: 0.15;
+    }
+
+    .strand-1 { width: 40px; height: 1.5px; top: 25px; left: 20px; transform: rotate(25deg); }
+    .strand-2 { width: 30px; height: 1.5px; top: 45px; right: 15px; transform: rotate(-15deg); }
+    .strand-3 { width: 35px; height: 1.5px; bottom: 30px; left: 30px; transform: rotate(40deg); }
+
+    /* Organelles floating in cytoplasm */
+    .organelle {
+      position: absolute;
+      border-radius: 50%;
+      animation: drift 8s ease-in-out infinite;
+    }
+
+    .organelle-1 { width: 8px; height: 8px; background: var(--rna-dim); top: 40px; left: 50px; animation-delay: 0s; }
+    .organelle-2 { width: 6px; height: 6px; background: var(--chromatin-dim); bottom: 50px; right: 40px; animation-delay: 2s; }
+    .organelle-3 { width: 10px; height: 10px; background: var(--spindle); top: 60px; right: 60px; animation-delay: 4s; border: 1px solid var(--chromatin-dim); }
+    .organelle-4 { width: 5px; height: 5px; background: var(--rna-dim); bottom: 70px; left: 70px; animation-delay: 1s; }
+
+    @keyframes drift {
+      0%, 100% { transform: translate(0, 0); }
+      25% { transform: translate(5px, -3px); }
+      50% { transform: translate(-3px, 6px); }
+      75% { transform: translate(4px, 2px); }
+    }
+
+    /* Cell status ring */
+    .status-ring {
+      position: absolute;
+      inset: -8px;
+      border-radius: 50%;
+      border: 1px dashed transparent;
+    }
+
+    .status-ring.validated { border-color: var(--chromatin-dim); }
+    .status-ring.working {
+      border-color: var(--rna-dim);
+      animation: ring-spin 20s linear infinite;
+    }
+    .status-ring.pending { border-color: rgba(120,200,180,0.08); }
+
+    @keyframes ring-spin { to { transform: rotate(360deg); } }
+
+    /* === DIVISION INDICATOR (dispatch arrow) === */
+    .division-zone {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      position: relative;
+    }
+
+    .spindle-fiber {
+      width: 1px;
+      height: 60px;
+      background: linear-gradient(180deg, var(--chromatin-dim), transparent);
+      position: relative;
+    }
+
+    .spindle-fiber::before,
+    .spindle-fiber::after {
+      content: '';
+      position: absolute;
+      width: 100px;
+      height: 1px;
+      top: 50%;
+      background: linear-gradient(90deg, transparent, var(--spindle), transparent);
+    }
+    .spindle-fiber::before { right: 50%; }
+    .spindle-fiber::after { left: 50%; }
+
+    .division-label {
+      font-family: 'Geist Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--rna);
+      padding: 4px 12px;
+      border: 1px solid var(--rna-dim);
+      border-radius: 100px;
+      animation: pulse-label 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse-label {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* === DAUGHTER CELLS (tasks after dispatch) === */
+    .daughter-cluster {
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .daughter-cell .cell-membrane {
+      width: 160px; height: 160px;
+    }
+
+    .daughter-cell .nucleus {
+      width: 70px; height: 70px;
+    }
+
+    .daughter-cell .nucleus-label {
+      font-size: 11px;
+    }
+
+    .daughter-cell .nucleus-id {
+      font-size: 8px;
+    }
+
+    /* Worker enzyme inside daughter cell */
+    .enzyme {
+      position: absolute;
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      background: var(--rna);
+      box-shadow: 0 0 8px var(--rna-dim);
+      z-index: 3;
+    }
+
+    .enzyme.active {
+      animation: enzyme-work 3s ease-in-out infinite;
+    }
+
+    @keyframes enzyme-work {
+      0%, 100% { transform: translate(0, 0) scale(1); }
+      25% { transform: translate(15px, -10px) scale(1.1); }
+      50% { transform: translate(-10px, 15px) scale(0.9); }
+      75% { transform: translate(12px, 8px) scale(1.05); }
+    }
+
+    .enzyme-label {
+      position: absolute;
+      bottom: -20px; left: 50%;
+      transform: translateX(-50%);
+      font-family: 'Geist Mono', monospace;
+      font-size: 8px;
+      color: var(--rna);
+      white-space: nowrap;
+      letter-spacing: 0.05em;
+    }
+
+    /* Validation glow */
+    .daughter-cell.validated .cell-membrane {
+      border-color: var(--chromatin);
+      box-shadow: 0 0 30px rgba(120,200,180,0.08);
+    }
+
+    .daughter-cell.working .cell-membrane {
+      border-color: rgba(232,160,96,0.2);
+    }
+
+    .daughter-cell.pending .cell-membrane {
+      border-color: rgba(120,200,180,0.08);
+      opacity: 0.6;
+    }
+
+    /* === DELIVERY: cell leaving organism === */
+    .delivery-membrane {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 28px;
+      border: 1px solid rgba(120,200,180,0.08);
+      border-radius: 100px;
+      background: var(--membrane);
+      margin-top: 20px;
+    }
+
+    .delivery-membrane .delivery-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--chromatin);
+      animation: pulse-label 1.5s ease-in-out infinite;
+    }
+
+    .delivery-membrane .delivery-text {
+      font-family: 'Geist Mono', monospace;
+      font-size: 10px;
+      color: var(--chromatin);
+      letter-spacing: 0.08em;
+    }
+
+    /* === SIDE LEGEND === */
+    .bio-legend {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-top: 48px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 16px;
+      background: rgba(120,200,180,0.02);
+      border: 1px solid rgba(120,200,180,0.04);
+      border-radius: 8px;
+    }
+
+    .legend-glyph {
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .glyph-cell {
+      border: 1.5px solid var(--membrane-edge);
+      background: var(--membrane);
+    }
+    .glyph-cell::after {
+      content: '';
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      background: var(--nucleus);
+      border: 1px solid rgba(120,200,180,0.15);
+    }
+
+    .glyph-enzyme {
+      background: var(--rna);
+      box-shadow: 0 0 6px var(--rna-dim);
+      width: 16px; height: 16px;
+    }
+
+    .glyph-spindle {
+      border: 1px dashed var(--chromatin-dim);
+    }
+
+    .legend-text h4 {
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+
+    .legend-text p {
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+
+    /* === RATIONALE === */
+    .rationale {
+      padding: 0 48px 100px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .rationale h3 {
+      font-family: 'Instrument Serif', serif;
+      font-size: 24px;
+      font-style: italic;
+      margin-bottom: 20px;
+    }
+
+    .rationale-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .rationale-card {
+      padding: 24px;
+      background: rgba(120,200,180,0.02);
+      border: 1px solid rgba(120,200,180,0.04);
+      border-radius: 8px;
+    }
+
+    .rationale-card h4 {
+      font-size: 13px; font-weight: 700;
+      margin-bottom: 8px;
+      color: var(--chromatin);
+    }
+
+    .rationale-card p {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.7;
+    }
+
+    @media (max-width: 768px) {
+      .page-header, .showcase, .rationale { padding-left: 20px; padding-right: 20px; }
+      .daughter-cluster { flex-direction: column; align-items: center; }
+      .parent-cell .cell-membrane { width: 220px; height: 220px; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="direction-nav">
+    <a href="../designs.html" class="nav-home">Storm</a>
+    <a href="signal-tower.html">Prev</a>
+    <span class="nav-title">Mitosis</span>
+    <a href="pressure-vessel.html">Next</a>
+  </nav>
+
+  <div class="page-header">
+    <div class="tag">Direction 01</div>
+    <h1>Mitosis</h1>
+    <p class="subtitle">A spec is a living cell. When dispatched, the nucleus duplicates and the cell membrane stretches and splits — the spec undergoes mitosis into child tasks. Workers are enzymes operating inside each daughter cell. Delivery is exocytosis: the completed cell leaving the organism.</p>
+  </div>
+
+  <div class="showcase">
+    <div class="organism">
+
+      <!-- PARENT SPEC CELL -->
+      <div class="cell parent-cell">
+        <div class="cell-membrane">
+          <div class="status-ring working"></div>
+          <div class="organelle organelle-1"></div>
+          <div class="organelle organelle-2"></div>
+          <div class="organelle organelle-3"></div>
+          <div class="organelle organelle-4"></div>
+          <div class="nucleus">
+            <div class="chromatin-strand strand-1"></div>
+            <div class="chromatin-strand strand-2"></div>
+            <div class="chromatin-strand strand-3"></div>
+            <span class="nucleus-label">Auth<br>Overhaul</span>
+            <span class="nucleus-id">SPEC::001</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- DIVISION ZONE (dispatch) -->
+      <div class="division-zone">
+        <div class="spindle-fiber"></div>
+        <div class="division-label">dispatching</div>
+        <div class="spindle-fiber"></div>
+      </div>
+
+      <!-- DAUGHTER TASK CELLS -->
+      <div class="daughter-cluster">
+
+        <div class="cell daughter-cell validated">
+          <div class="cell-membrane">
+            <div class="status-ring validated"></div>
+            <div class="nucleus">
+              <span class="nucleus-label">Schema</span>
+              <span class="nucleus-id">TASK::01</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="cell daughter-cell validated">
+          <div class="cell-membrane">
+            <div class="status-ring validated"></div>
+            <div class="nucleus">
+              <span class="nucleus-label">API v2</span>
+              <span class="nucleus-id">TASK::02</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="cell daughter-cell working">
+          <div class="cell-membrane">
+            <div class="status-ring working"></div>
+            <div class="nucleus">
+              <span class="nucleus-label">Tokens</span>
+              <span class="nucleus-id">TASK::03</span>
+            </div>
+            <div class="enzyme active" style="top: 25px; left: 30px;">
+              <span class="enzyme-label">worker-1</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="cell daughter-cell pending">
+          <div class="cell-membrane">
+            <div class="nucleus">
+              <span class="nucleus-label">Limiter</span>
+              <span class="nucleus-id">TASK::04</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- DELIVERY -->
+      <div class="delivery-membrane">
+        <div class="delivery-dot"></div>
+        <span class="delivery-text">2 cells ready for exocytosis (PR pending)</span>
+      </div>
+
+    </div>
+
+    <!-- LEGEND -->
+    <div class="bio-legend">
+      <div class="legend-item">
+        <div class="legend-glyph glyph-cell"></div>
+        <div class="legend-text">
+          <h4>Cell = Spec or Task</h4>
+          <p>The membrane shows status. The nucleus carries intent. Organelles are metadata floating in context.</p>
+        </div>
+      </div>
+      <div class="legend-item">
+        <div class="legend-glyph glyph-enzyme"></div>
+        <div class="legend-text">
+          <h4>Enzyme = Worker</h4>
+          <p>Moves through the cell, transforming plan DNA into working code. Active enzymes drift and pulse.</p>
+        </div>
+      </div>
+      <div class="legend-item">
+        <div class="legend-glyph glyph-spindle"></div>
+        <div class="legend-text">
+          <h4>Spindle = Dispatch</h4>
+          <p>The division apparatus. When dispatch fires, spindle fibers pull the spec apart into tasks.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rationale">
+    <h3>Why this is interesting</h3>
+    <div class="rationale-grid">
+      <div class="rationale-card">
+        <h4>It maps perfectly</h4>
+        <p>Hirsel's spec→task decomposition IS cell division. A single intent duplicates its DNA (plan), splits into independent execution units (tasks), and each gets its own worker (enzyme). The biology maps 1:1.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>State is spatial</h4>
+        <p>You don't read status from labels — you see it. Validated cells glow green at the membrane. Working cells have spinning status rings and visible enzymes. Pending cells are translucent. The whole organism breathes.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Scale reveals itself</h4>
+        <p>A complex route would look like a tissue — dozens of cells at various stages of division, enzymes moving through them, some cells dying (failed specs) and being reabsorbed. The metaphor scales naturally.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Delivery is departure</h4>
+        <p>Exocytosis: the cell packages its contents and ejects them from the organism. That's exactly what delivery does — packages the completed work and pushes it out of the hirsel into the repo.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

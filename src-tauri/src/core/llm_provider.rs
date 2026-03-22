@@ -1,6 +1,6 @@
-//! Shared lash-core provider resolution from Hirsel config + credential store.
+//! Shared lash provider resolution from Hirsel config + credential store.
 
-use lash_core::provider::Provider;
+use lash::provider::Provider;
 
 use crate::core::config::{Config, LlmProvider};
 use crate::core::credentials::{CodexOAuthCredentials, CredentialStore};
@@ -74,13 +74,15 @@ pub async fn resolve_provider(config: &Config) -> Result<Provider, String> {
                 refresh_token: codex.refresh_token,
                 expires_at: codex.expires_at,
                 account_id: codex.account_id,
+                options: lash::provider::ProviderOptions::default(),
             })
         }
         LlmProvider::Openrouter => {
             let api_key = load_openrouter_key(&store).await?;
-            Ok(Provider::OpenRouter {
+            Ok(Provider::OpenAiGeneric {
                 api_key,
                 base_url: normalize_openrouter_base_url(config),
+                options: lash::provider::ProviderOptions::default(),
             })
         }
     }

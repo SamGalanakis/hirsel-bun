@@ -1,11 +1,4 @@
-//! Composed runner - combines executor and resource for lifecycle management.
-//!
-//! This module provides the compositional runner that combines a CommandExecutor
-//! (the "where") with a ResourceManager (the "what") to implement the Runner trait.
-//!
-//! Note: Spawn logic is complex and handled by dedicated runners (LocalRunner, SshRunner).
-//! ComposedRunner focuses on lifecycle management (stop, is_alive) which can be
-//! cleanly composed.
+//! Composed runner for host-local lifecycle management.
 
 use async_trait::async_trait;
 use tracing::info;
@@ -19,13 +12,11 @@ use super::{Runner, RunnerError, RunnerResult, SpawnResult, WorkerHandle, Worker
 /// This implements the Runner trait by delegating:
 /// - `stop` -> resource.stop_command() executed via executor
 /// - `is_alive` -> resource.is_alive_command() executed via executor
-/// - `spawn` -> Not supported (use LocalRunner or SshRunner for spawning)
+/// - `spawn` -> Not supported (use LocalRunner for spawning)
 ///
 /// The runner_type is computed from both executor and resource types:
 /// - "local" for LocalExecutor + ProcessResource
 /// - "docker" for LocalExecutor + DockerResource
-/// - "ssh" for SshExecutor + ProcessResource
-/// - "ssh-docker" for SshExecutor + DockerResource
 pub struct ComposedRunner<E, R>
 where
     E: CommandExecutor + 'static,
@@ -54,11 +45,10 @@ where
 {
     /// Spawn is not supported by ComposedRunner.
     ///
-    /// Use LocalRunner or SshRunner for spawning workers.
-    /// ComposedRunner is designed for lifecycle management only.
+    /// Use LocalRunner for spawning workers. ComposedRunner is designed for lifecycle management only.
     async fn spawn(&self, _config: &WorkerSpawnConfig) -> RunnerResult<SpawnResult> {
         Err(RunnerError::SpawnFailed(
-            "ComposedRunner does not support spawn. Use LocalRunner or SshRunner.".into(),
+            "ComposedRunner does not support spawn. Use LocalRunner.".into(),
         ))
     }
 
@@ -106,8 +96,6 @@ where
         match (exec_type, res_type) {
             ("local", "process") => "local",
             ("local", "docker") => "docker",
-            ("ssh", "process") => "ssh",
-            ("ssh", "docker") => "ssh-docker",
             _ => "unknown",
         }
     }

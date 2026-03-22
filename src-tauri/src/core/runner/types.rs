@@ -26,12 +26,6 @@ pub enum RunnerError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("SSH error: {0}")]
-    Ssh(String),
-
-    #[error("API error: {0}")]
-    Api(String),
-
     #[error("Configuration error: {0}")]
     Config(String),
 
@@ -43,9 +37,6 @@ pub enum RunnerError {
 
     #[error("Timeout: {0}")]
     Timeout(String),
-
-    #[error("Runner incompatible with orchestrator mode: {0}")]
-    IncompatibleMode(String),
 }
 
 pub type RunnerResult<T> = Result<T, RunnerError>;
@@ -75,10 +66,6 @@ pub struct WorkerSpawnConfig {
     pub env_vars: Option<HashMap<String, String>>,
     /// Credentials to forward to the worker (OAuth tokens, API keys)
     pub credentials: Option<ForwardedCredentials>,
-    /// URL for coordinator API (for remote workers)
-    pub coordinator_url: Option<String>,
-    /// Tailscale auth key for auto-joining worker hosts to tailnet
-    pub tailscale_authkey: Option<String>,
     /// Task ID assigned to this worker (required for direct task assignment)
     pub assigned_task_id: Option<String>,
     /// Whether the assigned task is a plan task (NodeKind::Plan)
@@ -99,11 +86,6 @@ impl WorkerSpawnConfig {
         // Start with explicit env_vars
         if let Some(ref vars) = self.env_vars {
             env.extend(vars.clone());
-        }
-
-        // Add Tailscale auth key if present (for Fly workers to join tailnet)
-        if let Some(ref authkey) = self.tailscale_authkey {
-            env.insert("TAILSCALE_AUTHKEY".to_string(), authkey.clone());
         }
 
         // Add credentials (override env_vars)
@@ -137,7 +119,7 @@ impl WorkerSpawnConfig {
 pub struct WorkerHandle {
     /// Worker name
     pub worker_name: String,
-    /// Runner-specific identifier (PID for local, machine ID for Fly, etc.)
+    /// Runner-specific identifier (PID for local, container ID for sandboxed workers, etc.)
     pub runner_id: String,
     /// Runner type that spawned this worker
     pub runner_type: String,
@@ -153,7 +135,7 @@ pub struct SpawnResult {
 }
 
 /// Trait for worker runners - implementations spawn and manage workers
-/// on different platforms (local, SSH, Fly).
+/// on the backend host.
 #[async_trait]
 pub trait Runner: Send + Sync {
     /// Spawn a worker on this runner.
@@ -202,25 +184,10 @@ pub trait Runner: Send + Sync {
     /// Returns `false` for runners where files remain on disk between restarts:
     /// - Local (bare process): files on local disk
     /// - Docker (volume mount): host directory persists
-    /// - SSH: files on remote disk
-    ///
-    /// Returns `true` for ephemeral runners where machines are destroyed:
-    /// - Fly.io: machines are destroyed on stop
     ///
     /// The orchestrator uses this to decide whether to restore snapshots
     /// during resume operations.
     fn is_ephemeral(&self) -> bool {
         false // default: persistent (most runners)
     }
-}
-
-/// Orchestrator mode - determines which runners are available.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OrchestratorMode {
-    /// Local mode - uses daemon TCP listener for remote hosts.
-    /// Compatible hosts: Local, SSH (via reverse tunnel to daemon TCP on localhost:19700)
-    Local,
-    /// Remote mode - HTTP API coordinator required.
-    /// Compatible hosts: All (Local, SSH, Fly, Client)
-    Remote,
 }

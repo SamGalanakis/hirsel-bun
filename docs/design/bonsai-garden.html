@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bonsai Garden — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@300;400;500;600;700;900&family=Karla:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --sand: #e8e0d0;
+      --sand-dark: #c8c0b0;
+      --sand-line: rgba(60,50,40,0.08);
+      --trunk: #3a2a1a;
+      --trunk-light: #5a4a38;
+      --foliage: #3a6a30;
+      --foliage-light: #5a8a48;
+      --ceramic: #6a5a48;
+      --ceramic-light: #8a7a68;
+      --bg: #f4efe6;
+      --bg-card: #ece6da;
+      --text: #5a4a38;
+      --text-dim: #9a8a78;
+      --text-bright: #2a1a0a;
+      --accent: #3a6a30;
+      --rake-line: rgba(60,50,40,0.05);
+    }
+
+    body {
+      font-family: 'Karla', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    .direction-nav {
+      position: sticky; top: 0; z-index: 1000;
+      background: rgba(244,239,230,0.92); backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--sand-line);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .direction-nav a {
+      font-size: 11px; font-weight: 500; color: var(--text-dim);
+      text-decoration: none; padding: 5px 12px; border-radius: 6px; transition: all 0.2s;
+    }
+    .direction-nav a:hover { color: var(--accent); background: rgba(58,106,48,0.06); }
+    .direction-nav .nav-title {
+      font-weight: 700; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--text-bright); flex: 1; text-align: center;
+    }
+    .direction-nav .nav-home {
+      font-family: 'Karla', sans-serif;
+      font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-dim); border-right: 1px solid var(--sand-line);
+      padding-right: 16px; margin-right: 4px;
+    }
+
+    .page-header {
+      padding: 80px 48px 20px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .tag {
+      font-family: 'Karla', sans-serif;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--accent); margin-bottom: 12px; display: block;
+    }
+
+    h1 {
+      font-family: 'Noto Serif JP', serif;
+      font-size: clamp(44px, 6vw, 76px);
+      font-weight: 900; text-transform: uppercase;
+      letter-spacing: 0.02em;
+      line-height: 1.0; color: var(--text-bright); margin-bottom: 16px;
+    }
+
+    h1 span { color: var(--accent); }
+
+    .subtitle {
+      font-size: 15px; font-weight: 300;
+      color: var(--text-dim); max-width: 580px; line-height: 1.8;
+    }
+
+    .showcase {
+      padding: 40px 48px 60px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    /* ====== BONSAI GARDEN ====== */
+    .garden-layout {
+      border: 1px solid var(--sand-line);
+      border-radius: 4px;
+      overflow: hidden;
+      background: var(--bg-card);
+    }
+
+    /* Raked sand header */
+    .garden-header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--sand-line);
+      font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim);
+      display: flex; justify-content: space-between; align-items: center;
+      background: repeating-linear-gradient(
+        90deg,
+        transparent 0px,
+        transparent 18px,
+        var(--rake-line) 18px,
+        var(--rake-line) 19px
+      );
+    }
+
+    .garden-header .route-name {
+      font-family: 'Noto Serif JP', serif;
+      font-size: 13px; font-weight: 500;
+      color: var(--text-bright);
+      letter-spacing: 0.08em;
+    }
+
+    /* Bonsai display area */
+    .garden-floor {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent 0px,
+        transparent 11px,
+        var(--rake-line) 11px,
+        var(--rake-line) 12px
+      );
+    }
+
+    .bonsai-alcove {
+      padding: 32px 16px 24px;
+      border-right: 1px solid var(--sand-line);
+      display: flex; flex-direction: column;
+      align-items: center; text-align: center;
+      min-height: 340px;
+      position: relative;
+      animation: alcove-reveal 0.5s ease-out both;
+    }
+
+    .bonsai-alcove:last-child { border-right: none; }
+    .bonsai-alcove:nth-child(2) { animation-delay: 0.08s; }
+    .bonsai-alcove:nth-child(3) { animation-delay: 0.16s; }
+    .bonsai-alcove:nth-child(4) { animation-delay: 0.24s; }
+    .bonsai-alcove:nth-child(5) { animation-delay: 0.32s; }
+
+    @keyframes alcove-reveal {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Tree visualization */
+    .tree-display {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: flex-end;
+      padding-bottom: 12px;
+      width: 100%;
+    }
+
+    /* Mature bonsai (validated) */
+    .tree-mature .canopy {
+      width: 80px; height: 50px;
+      background: radial-gradient(ellipse at 50% 60%, var(--foliage) 0%, var(--foliage-light) 40%, transparent 70%);
+      border-radius: 50%;
+      position: relative;
+      margin-bottom: -8px;
+    }
+
+    .tree-mature .canopy::before {
+      content: '';
+      position: absolute;
+      width: 60px; height: 35px;
+      background: radial-gradient(ellipse at 40% 50%, var(--foliage) 0%, transparent 70%);
+      border-radius: 50%;
+      top: -14px; left: -8px;
+    }
+
+    .tree-mature .trunk-line {
+      width: 4px; height: 36px;
+      background: linear-gradient(180deg, var(--trunk), var(--trunk-light));
+      border-radius: 2px;
+      position: relative;
+    }
+
+    .tree-mature .trunk-line::before {
+      content: '';
+      position: absolute;
+      top: 8px; left: -10px;
+      width: 12px; height: 3px;
+      background: var(--trunk);
+      border-radius: 2px;
+      transform: rotate(-25deg);
+    }
+
+    /* Display pot (ceramic) for validated */
+    .pot-display {
+      width: 64px; height: 24px;
+      background: linear-gradient(180deg, var(--ceramic-light), var(--ceramic));
+      border-radius: 2px 2px 4px 4px;
+      position: relative;
+      margin-top: 2px;
+    }
+
+    .pot-display::before {
+      content: '';
+      position: absolute;
+      top: -3px; left: -4px; right: -4px; height: 6px;
+      background: var(--ceramic-light);
+      border-radius: 2px;
+    }
+
+    /* Moss decoration for validated */
+    .pot-display .moss {
+      position: absolute;
+      top: -6px; left: 8px; right: 8px;
+      height: 6px;
+      background: radial-gradient(ellipse at 50% 100%, rgba(58,106,48,0.4), transparent);
+      border-radius: 50%;
+    }
+
+    /* Working tree (being shaped) */
+    .tree-working .canopy {
+      width: 60px; height: 40px;
+      background: radial-gradient(ellipse at 50% 60%, var(--foliage) 0%, var(--foliage-light) 50%, transparent 75%);
+      border-radius: 50%;
+      margin-bottom: -6px;
+      position: relative;
+    }
+
+    /* Wire training marks */
+    .tree-working .canopy::after {
+      content: '';
+      position: absolute;
+      top: 10px; left: 5px; right: 5px;
+      height: 20px;
+      border: 1px dashed rgba(100,80,60,0.4);
+      border-radius: 50%;
+    }
+
+    .tree-working .trunk-line {
+      width: 3px; height: 28px;
+      background: var(--trunk);
+      border-radius: 2px;
+    }
+
+    /* Wire visible on trunk */
+    .tree-working .wire {
+      position: absolute;
+      top: 4px; left: -6px;
+      width: 16px; height: 20px;
+      border: 1px solid rgba(160,140,100,0.5);
+      border-radius: 50%;
+      border-right: none;
+    }
+
+    /* Training pot */
+    .pot-training {
+      width: 52px; height: 20px;
+      background: linear-gradient(180deg, #8a7a68, #6a5a48);
+      border-radius: 2px;
+      margin-top: 2px;
+    }
+
+    /* Tools beside working tree */
+    .gardener-tools {
+      display: flex; gap: 8px;
+      margin-top: 8px;
+      font-size: 9px; color: var(--text-dim);
+      font-style: italic;
+    }
+
+    .tool-icon {
+      width: 16px; height: 16px;
+      border: 1px solid var(--sand-dark);
+      border-radius: 2px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 7px; color: var(--text-dim);
+    }
+
+    /* Seedling (draft) */
+    .tree-seedling .sprout {
+      width: 3px; height: 18px;
+      background: var(--foliage-light);
+      border-radius: 2px;
+      position: relative;
+      opacity: 0.5;
+    }
+
+    .tree-seedling .sprout::before {
+      content: '';
+      position: absolute;
+      top: 0; left: -4px;
+      width: 8px; height: 6px;
+      background: var(--foliage);
+      border-radius: 50%;
+      opacity: 0.4;
+    }
+
+    .tree-seedling .sprout::after {
+      content: '';
+      position: absolute;
+      top: 3px; right: -5px;
+      width: 7px; height: 5px;
+      background: var(--foliage);
+      border-radius: 50%;
+      opacity: 0.3;
+    }
+
+    .pot-seedling {
+      width: 32px; height: 16px;
+      background: linear-gradient(180deg, #9a8a70, #7a6a58);
+      border-radius: 2px;
+      margin-top: 2px;
+      opacity: 0.6;
+    }
+
+    /* Pending/blocked tree (covered) */
+    .tree-dormant .covered {
+      width: 50px; height: 50px;
+      border: 1px dashed var(--sand-dark);
+      border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--text-dim);
+      font-size: 9px;
+      opacity: 0.5;
+      position: relative;
+    }
+
+    .pot-dormant {
+      width: 48px; height: 20px;
+      background: linear-gradient(180deg, #8a7a68, #6a5a48);
+      border-radius: 2px;
+      margin-top: 2px;
+      opacity: 0.4;
+    }
+
+    /* Labels */
+    .bonsai-name {
+      font-family: 'Noto Serif JP', serif;
+      font-size: 12px; font-weight: 500;
+      color: var(--text-bright);
+      margin-top: 14px;
+      margin-bottom: 4px;
+    }
+
+    .bonsai-stage {
+      font-size: 10px; color: var(--text-dim);
+      letter-spacing: 0.08em; text-transform: uppercase;
+    }
+
+    .bonsai-stage.stage-mature { color: var(--accent); }
+    .bonsai-stage.stage-shaping { color: var(--trunk-light); }
+    .bonsai-stage.stage-blocked { color: var(--ceramic); }
+
+    /* Growth rings */
+    .growth-rings {
+      font-size: 9px;
+      color: var(--text-dim);
+      margin-top: 4px;
+      font-style: italic;
+      opacity: 0.7;
+    }
+
+    .rationale {
+      padding: 0 48px 100px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .rationale h3 {
+      font-family: 'Noto Serif JP', serif;
+      font-size: 20px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.04em; margin-bottom: 20px;
+    }
+
+    .rationale-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .rationale-card {
+      padding: 24px;
+      background: var(--bg-card);
+      border: 1px solid var(--sand-line);
+      border-radius: 4px;
+    }
+
+    .rationale-card h4 {
+      font-size: 12px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin-bottom: 8px; color: var(--accent);
+    }
+
+    .rationale-card p {
+      font-size: 13px; color: var(--text-dim); line-height: 1.7;
+    }
+
+    @media (max-width: 768px) {
+      .page-header, .showcase, .rationale { padding-left: 20px; padding-right: 20px; }
+      .garden-floor { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="direction-nav">
+    <a href="../designs.html" class="nav-home">Storm</a>
+    <a href="submarine.html">Prev</a>
+    <span class="nav-title">BONSAI GARDEN</span>
+    <a href="combustion-engine.html">Next</a>
+  </nav>
+
+  <div class="page-header">
+    <div class="tag">Direction 24 &mdash; Contemplative</div>
+    <h1>BONSAI <span>GARDEN</span></h1>
+    <p class="subtitle">Each spec is a bonsai tree at a different stage of cultivation. Draft specs are seedlings. Working specs are being pruned and shaped by workers. Validated specs are mature bonsai in ceramic display pots. The raked sand garden is the route context. Growth rings show time invested.</p>
+  </div>
+
+  <div class="showcase">
+    <div class="garden-layout">
+      <div class="garden-header">
+        <span class="route-name">Auth Overhaul</span>
+        <span>5 specimens</span>
+      </div>
+
+      <div class="garden-floor">
+        <!-- Schema Migration - Validated / Mature -->
+        <div class="bonsai-alcove">
+          <div class="tree-display">
+            <div class="tree-mature">
+              <div class="canopy"></div>
+              <div class="trunk-line"></div>
+            </div>
+            <div class="pot-display"><div class="moss"></div></div>
+          </div>
+          <div class="bonsai-name">Schema Migration</div>
+          <div class="bonsai-stage stage-mature">Mature &middot; Validated</div>
+          <div class="growth-rings">14 growth rings</div>
+        </div>
+
+        <!-- API Restructure - Validated / Mature -->
+        <div class="bonsai-alcove">
+          <div class="tree-display">
+            <div class="tree-mature">
+              <div class="canopy"></div>
+              <div class="trunk-line"></div>
+            </div>
+            <div class="pot-display"><div class="moss"></div></div>
+          </div>
+          <div class="bonsai-name">API Restructure</div>
+          <div class="bonsai-stage stage-mature">Mature &middot; Validated</div>
+          <div class="growth-rings">22 growth rings</div>
+        </div>
+
+        <!-- Token Rotation - Working / Being shaped -->
+        <div class="bonsai-alcove">
+          <div class="tree-display">
+            <div class="tree-working" style="position:relative;">
+              <div class="canopy"></div>
+              <div class="trunk-line">
+                <div class="wire"></div>
+              </div>
+            </div>
+            <div class="pot-training"></div>
+            <div class="gardener-tools">
+              <div class="tool-icon">&times;</div>
+              <div class="tool-icon">/</div>
+              <span>2 workers</span>
+            </div>
+          </div>
+          <div class="bonsai-name">Token Rotation</div>
+          <div class="bonsai-stage stage-shaping">Shaping &middot; 2/4 tasks</div>
+          <div class="growth-rings">8 growth rings</div>
+        </div>
+
+        <!-- Rate Limiter - Pending/Blocked / Dormant -->
+        <div class="bonsai-alcove">
+          <div class="tree-display">
+            <div class="tree-dormant">
+              <div class="covered">blocked</div>
+            </div>
+            <div class="pot-dormant"></div>
+          </div>
+          <div class="bonsai-name">Rate Limiter</div>
+          <div class="bonsai-stage stage-blocked">Covered &middot; Blocked</div>
+          <div class="growth-rings">awaiting sun</div>
+        </div>
+
+        <!-- E2E Tests - Draft / Seedling -->
+        <div class="bonsai-alcove">
+          <div class="tree-display">
+            <div class="tree-seedling">
+              <div class="sprout"></div>
+            </div>
+            <div class="pot-seedling"></div>
+          </div>
+          <div class="bonsai-name">E2E Tests</div>
+          <div class="bonsai-stage">Seedling &middot; Draft</div>
+          <div class="growth-rings">no rings yet</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rationale">
+    <h3>WHY THIS IS INTERESTING</h3>
+    <div class="rationale-grid">
+      <div class="rationale-card">
+        <h4>Patience made visible</h4>
+        <p>Bonsai cultivation takes years. Growth rings on each tree show how long a spec has been in development. This counteracts the impatience of software work &mdash; some specs genuinely need time to mature, and the metaphor honors that reality rather than treating slowness as failure.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Tools beside the work</h4>
+        <p>A gardener's scissors and wire sit next to the tree being shaped, not hidden in a drawer. Workers displayed beside active specs make the tooling tangible &mdash; you can see which trees have hands on them and which are growing unattended.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Stages of cultivation</h4>
+        <p>Seedling, training pot, ceramic display pot &mdash; bonsai move through distinct vessels as they mature. Each container signals the spec's readiness: rough clay for work-in-progress, glazed ceramic for validated specimens worthy of presentation.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>The raked sand</h4>
+        <p>A zen garden's raked sand provides context and negative space. The route is this sand &mdash; the environment that connects and frames individual trees. Raking patterns subtly guide the eye between related specs, showing flow without explicit arrows.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

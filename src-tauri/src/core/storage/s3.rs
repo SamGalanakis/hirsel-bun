@@ -1,7 +1,7 @@
 //! S3-compatible object storage implementation.
 //!
 //! This module provides a `FileStorage` implementation that stores files
-//! in S3-compatible object storage (AWS S3, MinIO, Tigris, etc.).
+//! in S3-compatible object storage (AWS S3, MinIO, and similar providers).
 
 use async_trait::async_trait;
 use aws_sdk_s3::{error::SdkError, primitives::ByteStream, Client};

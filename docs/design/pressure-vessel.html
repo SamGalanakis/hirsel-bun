@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pressure Vessel — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Archivo:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --steel: #1a1c22;
+      --steel-light: #24262e;
+      --steel-bright: #2e3038;
+      --rivet: #3a3c44;
+      --gauge-bg: #0e1014;
+      --caution: #e8c830;
+      --danger: #e04040;
+      --safe: #40c878;
+      --pressure-blue: #4080d0;
+      --steam: rgba(200,210,220,0.06);
+      --text: #c0c4cc;
+      --text-dim: #606470;
+      --text-bright: #e8eaf0;
+    }
+
+    body {
+      font-family: 'Archivo', sans-serif;
+      background: var(--steel);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    /* Brushed metal texture */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background:
+        repeating-linear-gradient(90deg, transparent 0, transparent 1px, rgba(255,255,255,0.003) 1px, rgba(255,255,255,0.003) 2px);
+      pointer-events: none;
+    }
+
+    .direction-nav {
+      position: sticky; top: 0; z-index: 1000;
+      background: rgba(26,28,34,0.92); backdrop-filter: blur(14px);
+      border-bottom: 2px solid var(--rivet);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .direction-nav a {
+      font-size: 11px; font-weight: 600; color: var(--text-dim);
+      text-decoration: none; padding: 5px 12px; border-radius: 4px; transition: all 0.2s;
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .direction-nav a:hover { color: var(--caution); background: rgba(232,200,48,0.06); }
+    .direction-nav .nav-title {
+      font-family: 'Archivo Black', sans-serif; font-size: 14px;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text-bright); flex: 1; text-align: center;
+    }
+    .direction-nav .nav-home {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-dim); border-right: 2px solid var(--rivet);
+      padding-right: 16px; margin-right: 4px;
+    }
+
+    .page-header {
+      padding: 80px 48px 20px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .tag {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--caution); margin-bottom: 12px; display: block;
+    }
+
+    h1 {
+      font-family: 'Archivo Black', sans-serif;
+      font-size: clamp(40px, 6vw, 72px);
+      letter-spacing: 0.03em; text-transform: uppercase;
+      line-height: 1.0; color: var(--text-bright); margin-bottom: 16px;
+    }
+
+    .subtitle {
+      font-size: 15px; font-weight: 300;
+      color: var(--text-dim); max-width: 580px; line-height: 1.7;
+    }
+
+    .showcase {
+      padding: 40px 48px 60px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    /* ====== PRESSURE VESSEL LAYOUT ====== */
+    /*
+      The run is a pressure vessel. Workers generate pressure (progress).
+      Gauges show system health. Relief valves are repair cycles.
+      Overpressure = too many tasks, too few workers.
+      The vessel has a viewport showing internal state.
+    */
+
+    .vessel {
+      background: var(--steel-light);
+      border: 2px solid var(--rivet);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Riveted top bar */
+    .vessel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 24px;
+      background: var(--steel-bright);
+      border-bottom: 2px solid var(--rivet);
+      position: relative;
+    }
+
+    /* Rivet dots */
+    .vessel-header::before, .vessel-header::after {
+      content: '';
+      position: absolute; top: 50%; transform: translateY(-50%);
+      width: 8px; height: 8px; border-radius: 50%;
+      background: radial-gradient(circle, var(--rivet) 40%, var(--steel-bright) 40%);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.3);
+    }
+    .vessel-header::before { left: 8px; }
+    .vessel-header::after { right: 8px; }
+
+    .vessel-id {
+      font-family: 'Archivo Black', sans-serif;
+      font-size: 13px; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--text-bright);
+    }
+
+    .vessel-warnings {
+      display: flex; gap: 8px;
+    }
+
+    .warning-light {
+      width: 10px; height: 10px; border-radius: 50%;
+      border: 1px solid rgba(0,0,0,0.3);
+    }
+    .light-safe { background: var(--safe); box-shadow: 0 0 6px rgba(64,200,120,0.4); }
+    .light-caution { background: var(--caution); box-shadow: 0 0 6px rgba(232,200,48,0.4); animation: blink-light 1s step-end infinite; }
+    .light-off { background: var(--rivet); }
+
+    @keyframes blink-light { 50% { opacity: 0.3; } }
+
+    .vessel-body {
+      display: grid;
+      grid-template-columns: 200px 1fr 200px;
+      min-height: 420px;
+    }
+
+    /* LEFT: Gauge cluster */
+    .gauge-panel {
+      background: var(--gauge-bg);
+      border-right: 2px solid var(--rivet);
+      padding: 20px;
+      display: flex; flex-direction: column; gap: 24px;
+    }
+
+    .gauge {
+      position: relative;
+    }
+
+    .gauge-label {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim); margin-bottom: 8px;
+    }
+
+    .gauge-dial {
+      width: 140px; height: 70px;
+      margin: 0 auto;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .gauge-dial svg {
+      width: 100%; height: 100%;
+    }
+
+    .gauge-track {
+      fill: none; stroke: var(--rivet); stroke-width: 8;
+      stroke-linecap: round;
+    }
+
+    .gauge-fill {
+      fill: none; stroke-width: 8; stroke-linecap: round;
+      transition: stroke-dashoffset 1s cubic-bezier(0.2, 0.9, 0.3, 1);
+    }
+
+    .gauge-value {
+      position: absolute; bottom: 0; left: 50%;
+      transform: translateX(-50%);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 18px; font-weight: 600;
+      color: var(--text-bright);
+    }
+
+    .gauge-unit {
+      font-size: 9px; color: var(--text-dim);
+      font-weight: 400;
+    }
+
+    /* CENTER: Viewport into vessel */
+    .viewport {
+      padding: 24px;
+      position: relative;
+      background:
+        radial-gradient(ellipse at 50% 50%, rgba(64,128,208,0.03) 0%, transparent 60%);
+    }
+
+    .viewport-label {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim); margin-bottom: 16px;
+      text-align: center;
+    }
+
+    /* Tasks as pressure particles */
+    .particles {
+      display: flex; flex-wrap: wrap; gap: 8px;
+      justify-content: center; align-items: center;
+      min-height: 300px; padding: 20px;
+    }
+
+    .particle {
+      display: flex; flex-direction: column;
+      align-items: center; gap: 6px;
+      padding: 16px;
+      border-radius: 50%;
+      width: 88px; height: 88px;
+      justify-content: center;
+      transition: all 0.3s;
+      position: relative;
+    }
+
+    .particle.high-pressure {
+      background: rgba(64,128,208,0.08);
+      border: 1px solid rgba(64,128,208,0.2);
+      animation: vibrate 0.3s linear infinite;
+    }
+
+    .particle.stable {
+      background: rgba(64,200,120,0.06);
+      border: 1px solid rgba(64,200,120,0.15);
+    }
+
+    .particle.cooling {
+      background: rgba(232,200,48,0.04);
+      border: 1px dashed rgba(232,200,48,0.15);
+      opacity: 0.6;
+    }
+
+    .particle.inert {
+      background: rgba(200,210,220,0.02);
+      border: 1px dashed rgba(200,210,220,0.06);
+      opacity: 0.4;
+    }
+
+    @keyframes vibrate {
+      0%, 100% { transform: translate(0, 0); }
+      25% { transform: translate(1px, -1px); }
+      50% { transform: translate(-1px, 1px); }
+      75% { transform: translate(1px, 0); }
+    }
+
+    .particle-name {
+      font-size: 10px; font-weight: 600;
+      color: var(--text); text-align: center;
+      line-height: 1.2;
+    }
+
+    .particle-temp {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 8px; color: var(--text-dim);
+    }
+
+    /* Worker flame under high-pressure particles */
+    .particle.high-pressure::after {
+      content: '';
+      position: absolute; bottom: -4px;
+      width: 20px; height: 6px;
+      background: radial-gradient(ellipse, var(--pressure-blue), transparent);
+      border-radius: 50%;
+      opacity: 0.5;
+    }
+
+    /* RIGHT: Control panel */
+    .control-panel {
+      background: var(--gauge-bg);
+      border-left: 2px solid var(--rivet);
+      padding: 20px;
+      display: flex; flex-direction: column; gap: 16px;
+    }
+
+    .control-section {
+      border-bottom: 1px solid var(--rivet);
+      padding-bottom: 14px;
+    }
+
+    .control-section:last-child { border-bottom: none; }
+
+    .control-label {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim); margin-bottom: 8px;
+    }
+
+    .relief-valve {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 0;
+    }
+
+    .valve-indicator {
+      width: 6px; height: 6px; border-radius: 50%;
+    }
+
+    .valve-closed { background: var(--safe); }
+    .valve-open { background: var(--danger); animation: blink-light 0.5s step-end infinite; }
+
+    .valve-text {
+      font-size: 11px; color: var(--text);
+    }
+
+    .worker-slot {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 0;
+    }
+
+    .slot-bar {
+      flex: 1; height: 4px;
+      background: var(--rivet); border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .slot-fill {
+      height: 100%; border-radius: 2px;
+      transition: width 0.5s;
+    }
+
+    .fill-hot { background: var(--pressure-blue); box-shadow: 0 0 4px rgba(64,128,208,0.4); }
+    .fill-warm { background: var(--caution); }
+    .fill-cold { background: var(--rivet); }
+
+    .slot-label {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9px; color: var(--text-dim);
+      min-width: 50px;
+    }
+
+    /* VESSEL FOOTER: pressure readout strip */
+    .vessel-footer {
+      display: flex; justify-content: space-between;
+      padding: 10px 24px;
+      background: var(--steel-bright);
+      border-top: 2px solid var(--rivet);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px; color: var(--text-dim);
+    }
+
+    .vessel-footer .reading {
+      display: flex; align-items: center; gap: 6px;
+    }
+
+    .reading-dot {
+      width: 5px; height: 5px; border-radius: 50%;
+    }
+
+    .rationale {
+      padding: 0 48px 100px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .rationale h3 {
+      font-family: 'Archivo Black', sans-serif;
+      font-size: 18px; letter-spacing: 0.04em;
+      text-transform: uppercase; margin-bottom: 20px;
+    }
+
+    .rationale-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .rationale-card {
+      padding: 24px;
+      background: var(--steel-light);
+      border: 1px solid var(--rivet);
+      border-radius: 4px;
+    }
+
+    .rationale-card h4 {
+      font-size: 12px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin-bottom: 8px; color: var(--caution);
+    }
+
+    .rationale-card p {
+      font-size: 13px; color: var(--text-dim); line-height: 1.7;
+    }
+
+    @media (max-width: 768px) {
+      .page-header, .showcase, .rationale { padding-left: 20px; padding-right: 20px; }
+      .vessel-body { grid-template-columns: 1fr; }
+      .gauge-panel, .control-panel { border: none; border-bottom: 2px solid var(--rivet); flex-direction: row; flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="direction-nav">
+    <a href="../designs.html" class="nav-home">Storm</a>
+    <a href="mitosis.html">Prev</a>
+    <span class="nav-title">PRESSURE VESSEL</span>
+    <a href="switchboard.html">Next</a>
+  </nav>
+
+  <div class="page-header">
+    <div class="tag">Direction 02</div>
+    <h1>PRESSURE VESSEL</h1>
+    <p class="subtitle">A run is a sealed vessel under pressure. Workers generate heat. Tasks are particles — high-pressure ones vibrate, completed ones are stable, blocked ones are inert. Relief valves are repair cycles. Overpressure triggers caution lights.</p>
+  </div>
+
+  <div class="showcase">
+    <div class="vessel">
+      <div class="vessel-header">
+        <span class="vessel-id">Run #024 &mdash; Auth Overhaul</span>
+        <div class="vessel-warnings">
+          <div class="warning-light light-safe"></div>
+          <div class="warning-light light-caution"></div>
+          <div class="warning-light light-off"></div>
+        </div>
+      </div>
+
+      <div class="vessel-body">
+        <div class="gauge-panel">
+          <div class="gauge">
+            <div class="gauge-label">System Pressure</div>
+            <div class="gauge-dial">
+              <svg viewBox="0 0 140 75">
+                <path class="gauge-track" d="M 15 70 A 55 55 0 0 1 125 70" />
+                <path class="gauge-fill" d="M 15 70 A 55 55 0 0 1 125 70"
+                  stroke="var(--pressure-blue)"
+                  stroke-dasharray="173"
+                  stroke-dashoffset="52" />
+              </svg>
+              <div class="gauge-value">72<span class="gauge-unit"> psi</span></div>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label">Throughput</div>
+            <div class="gauge-dial">
+              <svg viewBox="0 0 140 75">
+                <path class="gauge-track" d="M 15 70 A 55 55 0 0 1 125 70" />
+                <path class="gauge-fill" d="M 15 70 A 55 55 0 0 1 125 70"
+                  stroke="var(--safe)"
+                  stroke-dasharray="173"
+                  stroke-dashoffset="86" />
+              </svg>
+              <div class="gauge-value">3.2<span class="gauge-unit"> t/hr</span></div>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label">Token Burn</div>
+            <div class="gauge-dial">
+              <svg viewBox="0 0 140 75">
+                <path class="gauge-track" d="M 15 70 A 55 55 0 0 1 125 70" />
+                <path class="gauge-fill" d="M 15 70 A 55 55 0 0 1 125 70"
+                  stroke="var(--caution)"
+                  stroke-dasharray="173"
+                  stroke-dashoffset="35" />
+              </svg>
+              <div class="gauge-value">84k<span class="gauge-unit"> tok</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="viewport">
+          <div class="viewport-label">Internal State</div>
+          <div class="particles">
+            <div class="particle stable"><span class="particle-name">Schema</span><span class="particle-temp">done</span></div>
+            <div class="particle stable"><span class="particle-name">API v2</span><span class="particle-temp">done</span></div>
+            <div class="particle high-pressure"><span class="particle-name">Token Rot.</span><span class="particle-temp">w-1 active</span></div>
+            <div class="particle high-pressure"><span class="particle-name">PKCE</span><span class="particle-temp">w-2 active</span></div>
+            <div class="particle cooling"><span class="particle-name">Callback</span><span class="particle-temp">blocked</span></div>
+            <div class="particle inert"><span class="particle-name">Rate Lim.</span><span class="particle-temp">pending</span></div>
+            <div class="particle inert"><span class="particle-name">E2E</span><span class="particle-temp">draft</span></div>
+          </div>
+        </div>
+
+        <div class="control-panel">
+          <div class="control-section">
+            <div class="control-label">Relief Valves</div>
+            <div class="relief-valve">
+              <div class="valve-indicator valve-closed"></div>
+              <span class="valve-text">Repair cycle 1</span>
+            </div>
+            <div class="relief-valve">
+              <div class="valve-indicator valve-closed"></div>
+              <span class="valve-text">Repair cycle 2</span>
+            </div>
+            <div class="relief-valve">
+              <div class="valve-indicator valve-closed"></div>
+              <span class="valve-text">Emergency stop</span>
+            </div>
+          </div>
+          <div class="control-section">
+            <div class="control-label">Worker Load</div>
+            <div class="worker-slot">
+              <span class="slot-label">W-1</span>
+              <div class="slot-bar"><div class="slot-fill fill-hot" style="width:80%"></div></div>
+            </div>
+            <div class="worker-slot">
+              <span class="slot-label">W-2</span>
+              <div class="slot-bar"><div class="slot-fill fill-hot" style="width:65%"></div></div>
+            </div>
+            <div class="worker-slot">
+              <span class="slot-label">W-3</span>
+              <div class="slot-bar"><div class="slot-fill fill-cold" style="width:0%"></div></div>
+            </div>
+          </div>
+          <div class="control-section">
+            <div class="control-label">Delivery</div>
+            <div class="relief-valve">
+              <div class="valve-indicator valve-closed"></div>
+              <span class="valve-text">PR #847 staged</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="vessel-footer">
+        <div class="reading"><div class="reading-dot" style="background:var(--safe)"></div> Vessel nominal</div>
+        <div class="reading">Uptime 04:22:18</div>
+        <div class="reading">2/7 tasks stable</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rationale">
+    <h3>WHY THIS IS INTERESTING</h3>
+    <div class="rationale-grid">
+      <div class="rationale-card">
+        <h4>Pressure = Workload</h4>
+        <p>A run under too much pressure (too many active tasks, too few workers) literally looks stressed — particles vibrate, caution lights blink, gauges climb. You feel the system state.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Gauges are real metrics</h4>
+        <p>System pressure = task queue depth. Throughput = tasks completed per hour. Token burn = LLM cost. Relief valves = repair cycles. Every industrial metaphor maps to a real measurement.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Control room aesthetic</h4>
+        <p>Nuclear plant control rooms are designed for situation awareness. Riveted panels, warning lights, gauge clusters. Hirsel runs ARE industrial processes — treating them like one makes the stakes visible.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Particles show parallelism</h4>
+        <p>Unlike list views, the particle viewport shows all tasks simultaneously in a spatial cluster. High-pressure ones bounce near workers. Stable ones settle. You see the whole system's energy state.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

@@ -24,7 +24,7 @@ export type ShortcutAction =
   | 'switch-chat'
   | 'focus-message'
   | 'toggle-ai'
-  | 'sheep-game'
+  | 'toggle-debug'
   | 'close-panel'
   | 'toggle-sidebar'
   | 'toggle-theme'
@@ -136,8 +136,8 @@ export const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
 
   // Other
   {
-    action: 'sheep-game',
-    label: 'Sheep clicker',
+    action: 'toggle-debug',
+    label: 'Debug panel',
     category: 'other',
     binding: { key: 'g' },
     defaultBinding: { key: 'g' },

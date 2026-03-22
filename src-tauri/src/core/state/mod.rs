@@ -57,8 +57,6 @@ CREATE TABLE IF NOT EXISTS state (
     runner_configs TEXT,
     scribe_batch_started_at TEXT,
     docs_version INTEGER DEFAULT 0,
-    docs_path TEXT,
-    persist_docs_changes INTEGER DEFAULT 1,
     project_id INTEGER,
     project_name TEXT,
     route_id INTEGER,

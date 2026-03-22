@@ -18,7 +18,6 @@ export interface Project {
   id: number;
   name: string;
   description?: string;
-  // Canvas position (for OneBoard portfolio view)
   x?: number | null;
   y?: number | null;
   activeRouteId?: number | null;
@@ -36,22 +35,15 @@ interface RouteSettingsUpdate {
 }
 
 interface ProjectContextValue {
-  // Projects list
   projects: () => Project[];
   loading: () => boolean;
   loadProjects: () => Promise<void>;
-
-  // Selection
   selectedProject: () => Project | null;
   selectedProjectId: () => number | null;
   selectProject: (project: Project | null) => void;
   deselectProject: () => void;
-
-  // OneBoard focus (which project is zoomed into)
   focusedProjectId: () => number | null;
   setFocusedProjectId: (id: number | null) => void;
-
-  // Project setup/settings
   showProjectSetup: () => boolean;
   setShowProjectSetup: (show: boolean) => void;
   openProjectSetup: () => void;
@@ -59,38 +51,14 @@ interface ProjectContextValue {
   pendingProjectPosition: () => { x: number; y: number } | null;
   setPendingProjectPosition: (pos: { x: number; y: number } | null) => void;
   cancelProjectSetup: () => void;
-
   showProjectSettings: () => boolean;
   setShowProjectSettings: (show: boolean) => void;
-
-  // Project view state
-  activeProjectView: () => 'board' | 'runs';
-  setActiveProjectView: (view: 'board' | 'runs') => void;
-
-  // Docs panel state
-  docsOpen: () => boolean;
-  setDocsOpen: (open: boolean) => void;
-  selectedDocFile: () => string | null;
-  setSelectedDocFile: (file: string | null) => void;
-  docsFullScreen: () => boolean;
-  setDocsFullScreen: (fullScreen: boolean) => void;
-
-  // Sheepfold (project messaging) state
-  sheepfoldOpen: () => boolean;
-  setSheepfoldOpen: (open: boolean) => void;
-  activeThread: () => string; // 'chat' or worker name
-  setActiveThread: (thread: string) => void;
   projectUnreadCount: () => number;
-  openWorkerDM: (workerName: string) => void; // Opens drawer + selects thread
-
-  // Project selector dropdown
   projectSelectorOpen: () => boolean;
   setProjectSelectorOpen: (open: boolean) => void;
   projectSearchQuery: () => string;
   setProjectSearchQuery: (query: string) => void;
   filteredProjects: () => Project[];
-
-  // Actions
   removeProject: (projectId: number) => Promise<void>;
   updateProjectPosition: (projectId: number, routeId: number, x: number, y: number) => Promise<void>;
   updateProjectSettings: (
@@ -115,16 +83,8 @@ export const ProjectProvider: ParentComponent = (props) => {
     x: number;
     y: number;
   } | null>(null);
-  const [activeProjectView, setActiveProjectView] = createSignal<'board' | 'runs'>('board');
   const [projectSelectorOpen, setProjectSelectorOpen] = createSignal(false);
   const [projectSearchQuery, setProjectSearchQuery] = createSignal('');
-  const [docsOpen, setDocsOpen] = createSignal(false);
-  const [selectedDocFile, setSelectedDocFile] = createSignal<string | null>(null);
-  const [docsFullScreen, setDocsFullScreen] = createSignal(false);
-
-  // Sheepfold state
-  const [sheepfoldOpen, setSheepfoldOpen] = createSignal(false);
-  const [activeThread, setActiveThread] = createSignal('chat');
   const [projectUnreadCount, setProjectUnreadCount] = createSignal(0);
 
   const selectedProjectId = () => selectedProject()?.id ?? null;
@@ -144,7 +104,7 @@ export const ProjectProvider: ParentComponent = (props) => {
   const restoreProjectSelection = () => {
     const projectList = projects();
 
-    // No projects - let OneBoard show its empty state (user can trigger setup from there)
+    // No projects - let the welcome surface drive setup.
     if (projectList.length === 0) {
       return;
     }
@@ -184,7 +144,6 @@ export const ProjectProvider: ParentComponent = (props) => {
     setSelectedProject(null);
     setShowProjectSetup(false);
     setShowProjectSettings(false);
-    setActiveProjectView('board');
     localStorage.removeItem(STORAGE_KEY);
     emit('project-deselected');
   };
@@ -286,11 +245,6 @@ export const ProjectProvider: ParentComponent = (props) => {
     return projects().filter((p) => p.name.toLowerCase().includes(query));
   };
 
-  const openWorkerDM = (workerName: string) => {
-    setActiveThread(workerName);
-    setSheepfoldOpen(true);
-  };
-
   // Initialize
   createEffect(() => {
     loadProjects().then(restoreProjectSelection);
@@ -304,7 +258,6 @@ export const ProjectProvider: ParentComponent = (props) => {
         await loadProjects();
         selectProject(project);
         setShowProjectSetup(false);
-        setActiveProjectView('board');
       }
     });
 
@@ -357,8 +310,6 @@ export const ProjectProvider: ParentComponent = (props) => {
     cancelProjectSetup,
     showProjectSettings,
     setShowProjectSettings,
-    activeProjectView,
-    setActiveProjectView,
     projectSelectorOpen,
     setProjectSelectorOpen,
     projectSearchQuery,
@@ -367,18 +318,7 @@ export const ProjectProvider: ParentComponent = (props) => {
     removeProject,
     updateProjectPosition,
     updateProjectSettings,
-    docsOpen,
-    setDocsOpen,
-    selectedDocFile,
-    setSelectedDocFile,
-    docsFullScreen,
-    setDocsFullScreen,
-    sheepfoldOpen,
-    setSheepfoldOpen,
-    activeThread,
-    setActiveThread,
     projectUnreadCount,
-    openWorkerDM,
   };
 
   return <ProjectContext.Provider value={value}>{props.children}</ProjectContext.Provider>;

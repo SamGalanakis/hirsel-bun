@@ -19,8 +19,6 @@ CREATE TABLE IF NOT EXISTS board_nodes (
     content TEXT NOT NULL DEFAULT '',
     difficulty TEXT NOT NULL DEFAULT 'medium',
     status TEXT NOT NULL DEFAULT 'draft',
-    x REAL,
-    y REAL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     completed_at TEXT,
@@ -138,6 +136,12 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     SCHEMA_INIT
         .get_or_try_init(|| async {
             sqlx::raw_sql(SCHEMA).execute(pool).await?;
+            let _ = sqlx::query("ALTER TABLE board_nodes DROP COLUMN x")
+                .execute(pool)
+                .await;
+            let _ = sqlx::query("ALTER TABLE board_nodes DROP COLUMN y")
+                .execute(pool)
+                .await;
             let migration = sqlx::query(
                 "ALTER TABLE board_nodes ADD COLUMN difficulty TEXT NOT NULL DEFAULT 'medium'",
             )

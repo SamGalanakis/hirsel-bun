@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Direction 08: Mission Control - Hirsel Design</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Familjen+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --navy: #0a0e1a;
+            --navy-light: #111827;
+            --phosphor: #39ff14;
+            --phosphor-dim: #39ff1430;
+            --phosphor-mid: #39ff1470;
+            --red-alert: #ef4444;
+            --amber: #f59e0b;
+            --surface: #0f1525;
+            --surface-border: #1e293b;
+            --text: #d1d5db;
+            --text-dim: #6b7280;
+            --font-display: 'Familjen Grotesk', sans-serif;
+            --font-mono: 'DM Mono', monospace;
+        }
+
+        body {
+            background: var(--navy);
+            color: var(--text);
+            font-family: var(--font-mono);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        /* --- Direction Nav --- */
+        .direction-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 2rem;
+            border-bottom: 1px solid var(--surface-border);
+            font-size: 0.8rem;
+            color: var(--text-dim);
+        }
+        .direction-nav a {
+            color: var(--phosphor);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            transition: color 0.2s;
+        }
+        .direction-nav a:hover { color: #fff; }
+        .direction-nav .current { color: var(--text); font-weight: 600; }
+
+        /* --- Page Header --- */
+        .page-header {
+            text-align: center;
+            padding: 4rem 2rem 3rem;
+        }
+        .page-header .tag {
+            display: inline-block;
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            color: var(--phosphor);
+            border: 1px solid var(--phosphor-dim);
+            padding: 0.3rem 0.8rem;
+            border-radius: 2px;
+            margin-bottom: 1.2rem;
+        }
+        .page-header h1 {
+            font-family: var(--font-display);
+            font-size: 3.2rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: var(--phosphor);
+            text-shadow: 0 0 40px var(--phosphor-dim);
+            margin-bottom: 0.8rem;
+        }
+        .page-header .subtitle {
+            font-size: 1rem;
+            color: var(--text-dim);
+            max-width: 560px;
+            margin: 0 auto;
+        }
+
+        /* --- Showcase --- */
+        .showcase {
+            max-width: 1100px;
+            margin: 0 auto 4rem;
+            padding: 0 2rem;
+        }
+        .showcase-frame {
+            background: var(--surface);
+            border: 1px solid var(--surface-border);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        .showcase-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.8rem 1.2rem;
+            border-bottom: 1px solid var(--surface-border);
+            font-size: 0.7rem;
+            color: var(--text-dim);
+        }
+        .showcase-toolbar .dot {
+            width: 8px; height: 8px; border-radius: 50%;
+        }
+        .showcase-toolbar .dot.r { background: #ef4444; }
+        .showcase-toolbar .dot.y { background: #eab308; }
+        .showcase-toolbar .dot.g { background: #22c55e; }
+
+        /* --- Mission Control Layout --- */
+        .mission-console {
+            display: grid;
+            grid-template-columns: 220px 1fr 220px;
+            grid-template-rows: auto 1fr auto;
+            min-height: 560px;
+        }
+
+        /* Top banner */
+        .mission-banner {
+            grid-column: 1 / -1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.8rem 1.5rem;
+            border-bottom: 1px solid var(--surface-border);
+            background: linear-gradient(90deg, var(--navy), var(--surface), var(--navy));
+        }
+        .mission-clock {
+            font-family: var(--font-mono);
+            font-size: 1.8rem;
+            color: var(--phosphor);
+            text-shadow: 0 0 15px var(--phosphor-dim);
+            letter-spacing: 0.05em;
+        }
+        .mission-clock .label {
+            font-size: 0.6rem;
+            color: var(--text-dim);
+            display: block;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+        }
+        .mission-phase {
+            text-align: center;
+        }
+        .mission-phase .phase-name {
+            font-family: var(--font-display);
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: var(--phosphor);
+        }
+        .mission-phase .phase-status {
+            font-size: 0.65rem;
+            color: var(--amber);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        /* Left panel: GO/NO-GO */
+        .go-nogo-panel {
+            border-right: 1px solid var(--surface-border);
+            padding: 1rem;
+        }
+        .panel-title {
+            font-family: var(--font-display);
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+            color: var(--text-dim);
+            margin-bottom: 0.8rem;
+            padding-bottom: 0.4rem;
+            border-bottom: 1px solid var(--surface-border);
+        }
+        .go-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 0.6rem;
+            margin-bottom: 0.4rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            background: var(--navy);
+            border: 1px solid var(--surface-border);
+        }
+        .go-item .station-name {
+            color: var(--text);
+            font-weight: 500;
+        }
+        .go-badge {
+            font-size: 0.6rem;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 2px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .go-badge.go {
+            background: var(--phosphor-dim);
+            color: var(--phosphor);
+            border: 1px solid var(--phosphor-mid);
+        }
+        .go-badge.nogo {
+            background: #ef444430;
+            color: var(--red-alert);
+            border: 1px solid #ef444450;
+        }
+        .go-badge.standby {
+            background: #f59e0b20;
+            color: var(--amber);
+            border: 1px solid #f59e0b40;
+        }
+
+        /* Center: Flight Director Console */
+        .flight-console {
+            padding: 1.2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.8rem;
+        }
+
+        .phase-timeline {
+            display: flex;
+            gap: 0;
+            width: 100%;
+        }
+        .phase-block {
+            flex: 1;
+            text-align: center;
+            padding: 0.8rem 0.4rem;
+            border: 1px solid var(--surface-border);
+            position: relative;
+        }
+        .phase-block:first-child { border-radius: 6px 0 0 6px; }
+        .phase-block:last-child { border-radius: 0 6px 6px 0; }
+        .phase-block .p-label {
+            font-size: 0.6rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+        .phase-block .p-name {
+            font-family: var(--font-display);
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text);
+            margin-top: 0.2rem;
+        }
+        .phase-block.complete {
+            background: var(--phosphor-dim);
+            border-color: var(--phosphor-mid);
+        }
+        .phase-block.complete .p-name { color: var(--phosphor); }
+        .phase-block.active {
+            background: linear-gradient(180deg, #39ff1415, transparent);
+            border-color: var(--phosphor);
+            box-shadow: 0 0 15px var(--phosphor-dim);
+        }
+        .phase-block.active .p-name { color: var(--phosphor); }
+        .phase-block.active::after {
+            content: 'ACTIVE';
+            position: absolute;
+            top: -8px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 0.5rem;
+            background: var(--phosphor);
+            color: var(--navy);
+            padding: 1px 6px;
+            border-radius: 2px;
+            font-weight: 700;
+        }
+
+        /* Telemetry feeds */
+        .telemetry-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.6rem;
+            flex: 1;
+        }
+        .telemetry-card {
+            background: var(--navy);
+            border: 1px solid var(--surface-border);
+            border-radius: 6px;
+            padding: 0.8rem;
+        }
+        .telem-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.6rem;
+        }
+        .telem-label {
+            font-size: 0.6rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-dim);
+        }
+        .telem-status {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: var(--phosphor);
+            box-shadow: 0 0 6px var(--phosphor);
+            animation: blink 2s ease-in-out infinite;
+        }
+        .telem-status.warn {
+            background: var(--amber);
+            box-shadow: 0 0 6px var(--amber);
+        }
+        .telem-value {
+            font-size: 1.6rem;
+            font-weight: 500;
+            color: var(--phosphor);
+            text-shadow: 0 0 10px var(--phosphor-dim);
+            line-height: 1;
+        }
+        .telem-value.warn { color: var(--amber); text-shadow: 0 0 10px #f59e0b30; }
+        .telem-unit {
+            font-size: 0.6rem;
+            color: var(--text-dim);
+            margin-top: 0.3rem;
+        }
+        .telem-bar {
+            height: 3px;
+            background: var(--surface-border);
+            border-radius: 2px;
+            margin-top: 0.5rem;
+            overflow: hidden;
+        }
+        .telem-bar-fill {
+            height: 100%;
+            border-radius: 2px;
+            background: var(--phosphor);
+            box-shadow: 0 0 6px var(--phosphor);
+            transition: width 0.5s;
+        }
+        .telem-bar-fill.warn {
+            background: var(--amber);
+            box-shadow: 0 0 6px var(--amber);
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        /* Right panel: Comm Loop */
+        .comm-panel {
+            border-left: 1px solid var(--surface-border);
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+        }
+        .comm-feed {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+            overflow: hidden;
+        }
+        .comm-msg {
+            font-size: 0.65rem;
+            padding: 0.4rem 0.6rem;
+            background: var(--navy);
+            border-radius: 4px;
+            border-left: 2px solid var(--surface-border);
+        }
+        .comm-msg .comm-time {
+            color: var(--text-dim);
+            margin-right: 0.4rem;
+        }
+        .comm-msg .comm-src {
+            color: var(--phosphor);
+            font-weight: 500;
+            margin-right: 0.3rem;
+        }
+        .comm-msg .comm-text { color: var(--text); }
+        .comm-msg.alert {
+            border-left-color: var(--amber);
+        }
+        .comm-msg.critical {
+            border-left-color: var(--red-alert);
+        }
+        .comm-msg.success {
+            border-left-color: var(--phosphor);
+        }
+
+        /* Bottom status */
+        .mission-footer {
+            grid-column: 1 / -1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.6rem 1.5rem;
+            border-top: 1px solid var(--surface-border);
+            font-size: 0.65rem;
+        }
+        .footer-stat {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+        .footer-stat .f-dot {
+            width: 5px; height: 5px;
+            border-radius: 50%;
+        }
+        .footer-stat .f-dot.green { background: var(--phosphor); box-shadow: 0 0 4px var(--phosphor); }
+        .footer-stat .f-dot.amber { background: var(--amber); box-shadow: 0 0 4px var(--amber); }
+        .footer-stat .f-label { color: var(--text-dim); }
+        .footer-stat .f-val { color: var(--text); font-weight: 500; }
+
+        /* --- Rationale --- */
+        .rationale {
+            max-width: 1100px;
+            margin: 0 auto 4rem;
+            padding: 0 2rem;
+        }
+        .rationale h2 {
+            font-family: var(--font-display);
+            font-size: 1.4rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+            color: var(--text);
+        }
+        .rationale-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 1rem;
+        }
+        .rationale-card {
+            background: var(--surface);
+            border: 1px solid var(--surface-border);
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+        .rationale-card h3 {
+            font-family: var(--font-display);
+            font-size: 0.9rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            color: var(--phosphor);
+        }
+        .rationale-card p {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Direction Nav -->
+    <nav class="direction-nav">
+        <a href="neural-loom.html">&larr; 07: Neural Loom</a>
+        <span class="current">08 / 10</span>
+        <a href="data-crystal.html">09: Data Crystal &rarr;</a>
+    </nav>
+
+    <!-- Page Header -->
+    <header class="page-header">
+        <div class="tag">Direction 08 &mdash; Technofuturist</div>
+        <h1>Mission Control</h1>
+        <p class="subtitle">The orchestration board as a flight director console. Countdown timers, GO/NO-GO panels, telemetry feeds, and comm loops. Each spec is a mission phase. Workers are flight controllers.</p>
+    </header>
+
+    <!-- Showcase -->
+    <section class="showcase">
+        <div class="showcase-frame">
+            <div class="showcase-toolbar">
+                <span class="dot r"></span>
+                <span class="dot y"></span>
+                <span class="dot g"></span>
+                <span style="margin-left: 0.5rem;">HIRSEL MISSION CONTROL &mdash; T+00:14:32</span>
+            </div>
+
+            <div class="mission-console">
+                <!-- Top Banner -->
+                <div class="mission-banner">
+                    <div class="mission-clock">
+                        <span class="label">Mission Elapsed</span>
+                        T+00:14:32
+                    </div>
+                    <div class="mission-phase">
+                        <div class="phase-name">SPEC DECOMPOSITION</div>
+                        <div class="phase-status">Phase 2 of 4 &mdash; In Progress</div>
+                    </div>
+                    <div class="mission-clock" style="text-align: right;">
+                        <span class="label">Next Milestone</span>
+                        T+00:20:00
+                    </div>
+                </div>
+
+                <!-- Left: GO/NO-GO Panel -->
+                <div class="go-nogo-panel">
+                    <div class="panel-title">Flight Controllers</div>
+                    <div class="go-item">
+                        <span class="station-name">PLAN</span>
+                        <span class="go-badge go">GO</span>
+                    </div>
+                    <div class="go-item">
+                        <span class="station-name">WORKER:0</span>
+                        <span class="go-badge go">GO</span>
+                    </div>
+                    <div class="go-item">
+                        <span class="station-name">WORKER:1</span>
+                        <span class="go-badge go">GO</span>
+                    </div>
+                    <div class="go-item">
+                        <span class="station-name">WORKER:2</span>
+                        <span class="go-badge standby">STBY</span>
+                    </div>
+                    <div class="go-item">
+                        <span class="station-name">EVAL</span>
+                        <span class="go-badge go">GO</span>
+                    </div>
+                    <div class="go-item">
+                        <span class="station-name">DELIVERY</span>
+                        <span class="go-badge standby">STBY</span>
+                    </div>
+                    <div class="go-item">
+                        <span class="station-name">GIT OPS</span>
+                        <span class="go-badge go">GO</span>
+                    </div>
+
+                    <div class="panel-title" style="margin-top: 1.2rem;">Mission Status</div>
+                    <div class="go-item">
+                        <span class="station-name">ALL SYSTEMS</span>
+                        <span class="go-badge go">GO</span>
+                    </div>
+                </div>
+
+                <!-- Center: Flight Console -->
+                <div class="flight-console">
+                    <!-- Phase Timeline -->
+                    <div class="phase-timeline">
+                        <div class="phase-block complete">
+                            <div class="p-label">Phase 1</div>
+                            <div class="p-name">Init</div>
+                        </div>
+                        <div class="phase-block active">
+                            <div class="p-label">Phase 2</div>
+                            <div class="p-name">Decompose</div>
+                        </div>
+                        <div class="phase-block">
+                            <div class="p-label">Phase 3</div>
+                            <div class="p-name">Execute</div>
+                        </div>
+                        <div class="phase-block">
+                            <div class="p-label">Phase 4</div>
+                            <div class="p-name">Deliver</div>
+                        </div>
+                    </div>
+
+                    <!-- Telemetry Grid -->
+                    <div class="telemetry-grid">
+                        <div class="telemetry-card">
+                            <div class="telem-header">
+                                <span class="telem-label">Tasks Active</span>
+                                <span class="telem-status"></span>
+                            </div>
+                            <div class="telem-value">7</div>
+                            <div class="telem-unit">of 12 total</div>
+                            <div class="telem-bar"><div class="telem-bar-fill" style="width: 58%"></div></div>
+                        </div>
+                        <div class="telemetry-card">
+                            <div class="telem-header">
+                                <span class="telem-label">Completion</span>
+                                <span class="telem-status"></span>
+                            </div>
+                            <div class="telem-value">42%</div>
+                            <div class="telem-unit">3 specs validated</div>
+                            <div class="telem-bar"><div class="telem-bar-fill" style="width: 42%"></div></div>
+                        </div>
+                        <div class="telemetry-card">
+                            <div class="telem-header">
+                                <span class="telem-label">Worker Load</span>
+                                <span class="telem-status warn"></span>
+                            </div>
+                            <div class="telem-value warn">86%</div>
+                            <div class="telem-unit">2 of 3 saturated</div>
+                            <div class="telem-bar"><div class="telem-bar-fill warn" style="width: 86%"></div></div>
+                        </div>
+                        <div class="telemetry-card">
+                            <div class="telem-header">
+                                <span class="telem-label">Git Ops</span>
+                                <span class="telem-status"></span>
+                            </div>
+                            <div class="telem-value">14</div>
+                            <div class="telem-unit">commits staged</div>
+                            <div class="telem-bar"><div class="telem-bar-fill" style="width: 70%"></div></div>
+                        </div>
+                        <div class="telemetry-card">
+                            <div class="telem-header">
+                                <span class="telem-label">Eval Pass</span>
+                                <span class="telem-status"></span>
+                            </div>
+                            <div class="telem-value">3/3</div>
+                            <div class="telem-unit">all passing</div>
+                            <div class="telem-bar"><div class="telem-bar-fill" style="width: 100%"></div></div>
+                        </div>
+                        <div class="telemetry-card">
+                            <div class="telem-header">
+                                <span class="telem-label">ETA Delivery</span>
+                                <span class="telem-status"></span>
+                            </div>
+                            <div class="telem-value">5:28</div>
+                            <div class="telem-unit">min remaining</div>
+                            <div class="telem-bar"><div class="telem-bar-fill" style="width: 30%"></div></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right: Comm Loop -->
+                <div class="comm-panel">
+                    <div class="panel-title">Comm Loop</div>
+                    <div class="comm-feed">
+                        <div class="comm-msg success">
+                            <span class="comm-time">14:32</span>
+                            <span class="comm-src">PLAN</span>
+                            <span class="comm-text">Spec S-003 decomposed into 4 tasks</span>
+                        </div>
+                        <div class="comm-msg success">
+                            <span class="comm-time">14:28</span>
+                            <span class="comm-src">W:0</span>
+                            <span class="comm-text">Task T-07 complete, pushing</span>
+                        </div>
+                        <div class="comm-msg alert">
+                            <span class="comm-time">14:25</span>
+                            <span class="comm-src">W:1</span>
+                            <span class="comm-text">Retry on T-04, compile error</span>
+                        </div>
+                        <div class="comm-msg success">
+                            <span class="comm-time">14:20</span>
+                            <span class="comm-src">EVAL</span>
+                            <span class="comm-text">S-001 validated, all tasks pass</span>
+                        </div>
+                        <div class="comm-msg">
+                            <span class="comm-time">14:18</span>
+                            <span class="comm-src">GIT</span>
+                            <span class="comm-text">Branch hirsel/run-42 created</span>
+                        </div>
+                        <div class="comm-msg success">
+                            <span class="comm-time">14:15</span>
+                            <span class="comm-src">W:0</span>
+                            <span class="comm-text">Claimed T-05, starting work</span>
+                        </div>
+                        <div class="comm-msg">
+                            <span class="comm-time">14:12</span>
+                            <span class="comm-src">PLAN</span>
+                            <span class="comm-text">Spec S-002 decomposed into 3 tasks</span>
+                        </div>
+                        <div class="comm-msg success">
+                            <span class="comm-time">14:08</span>
+                            <span class="comm-src">SYS</span>
+                            <span class="comm-text">Mission initialized, 3 specs loaded</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Footer -->
+                <div class="mission-footer">
+                    <div class="footer-stat">
+                        <span class="f-dot green"></span>
+                        <span class="f-val">3</span>
+                        <span class="f-label">specs</span>
+                    </div>
+                    <div class="footer-stat">
+                        <span class="f-dot green"></span>
+                        <span class="f-val">12</span>
+                        <span class="f-label">tasks</span>
+                    </div>
+                    <div class="footer-stat">
+                        <span class="f-dot green"></span>
+                        <span class="f-val">2</span>
+                        <span class="f-label">workers active</span>
+                    </div>
+                    <div class="footer-stat">
+                        <span class="f-dot amber"></span>
+                        <span class="f-val">1</span>
+                        <span class="f-label">standby</span>
+                    </div>
+                    <div class="footer-stat">
+                        <span class="f-dot green"></span>
+                        <span class="f-val">0</span>
+                        <span class="f-label">anomalies</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Rationale -->
+    <section class="rationale">
+        <h2>Why This Direction</h2>
+        <div class="rationale-grid">
+            <div class="rationale-card">
+                <h3>Operational Gravity</h3>
+                <p>Mission control communicates seriousness and reliability. The GO/NO-GO pattern gives users a clear, binary read on system health. Every component either works or it doesn't -- no ambiguity.</p>
+            </div>
+            <div class="rationale-card">
+                <h3>Phase Awareness</h3>
+                <p>The mission timeline maps directly to hirsel's lifecycle: init, decompose, execute, deliver. Users always know where they are in the process and what comes next.</p>
+            </div>
+            <div class="rationale-card">
+                <h3>Telemetry Density</h3>
+                <p>The card grid packs maximum information into minimum space. Every metric has a value, trend bar, and status indicator. The phosphor green on dark navy is designed for sustained monitoring without eye strain.</p>
+            </div>
+            <div class="rationale-card">
+                <h3>Comm Loop as History</h3>
+                <p>The right panel serves as a timestamped activity log that reads like flight controller chatter. Color-coded borders let users scan for alerts without reading every line. It's the narrative thread through the mission.</p>
+            </div>
+        </div>
+    </section>
+
+</body>
+</html>

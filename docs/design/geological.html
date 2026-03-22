@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Geological Core — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,700;1,9..144,400&family=Hanken+Grotesk:wght@300;400;500;600;700&family=Victor+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --deep-earth: #0c0a08;
+      --mantle: #1a1410;
+      --crust: #2a2018;
+      --sediment: #3a3028;
+      --sandstone: #c8a878;
+      --basalt: #4a4038;
+      --magma: #e06030;
+      --magma-dim: rgba(224,96,48,0.2);
+      --crystal: #60b0d0;
+      --crystal-dim: rgba(96,176,208,0.2);
+      --fossil: #a09070;
+      --text: #d0c4b0;
+      --text-dim: #706050;
+    }
+
+    body {
+      font-family: 'Hanken Grotesk', sans-serif;
+      background: var(--deep-earth);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    .direction-nav {
+      position: sticky; top: 0; z-index: 1000;
+      background: rgba(12,10,8,0.92); backdrop-filter: blur(14px);
+      border-bottom: 1px solid rgba(208,196,176,0.06);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .direction-nav a {
+      font-size: 11px; font-weight: 500; color: var(--text-dim);
+      text-decoration: none; padding: 5px 12px; border-radius: 6px; transition: all 0.2s;
+    }
+    .direction-nav a:hover { color: var(--sandstone); background: rgba(200,168,120,0.06); }
+    .direction-nav .nav-title {
+      font-family: 'Fraunces', serif; font-size: 16px; font-weight: 700;
+      color: var(--text); flex: 1; text-align: center;
+    }
+    .direction-nav .nav-home {
+      font-family: 'Victor Mono', monospace;
+      font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-dim); border-right: 1px solid rgba(208,196,176,0.06);
+      padding-right: 16px; margin-right: 4px;
+    }
+
+    .page-header {
+      padding: 80px 48px 20px;
+      max-width: 1100px; margin: 0 auto;
+    }
+
+    .tag {
+      font-family: 'Victor Mono', monospace;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--magma); margin-bottom: 12px; display: block;
+    }
+
+    h1 {
+      font-family: 'Fraunces', serif;
+      font-size: clamp(40px, 6vw, 72px);
+      font-weight: 700; line-height: 1.05;
+      color: var(--text); margin-bottom: 16px;
+    }
+
+    h1 em { font-style: italic; color: var(--sandstone); }
+
+    .subtitle {
+      font-size: 15px; font-weight: 300;
+      color: var(--text-dim); max-width: 580px; line-height: 1.8;
+    }
+
+    .showcase {
+      padding: 40px 48px 60px;
+      max-width: 1100px; margin: 0 auto;
+    }
+
+    /* ====== GEOLOGICAL CORE SAMPLE ====== */
+    /*
+      The route is a bore core — a vertical cross-section through
+      the project's history and current state. Each STRATUM is a spec.
+      Deeper = older/more foundational. Surface = newest work.
+      Fossils are completed tasks embedded in the rock.
+      Magma intrusions are active workers breaking through layers.
+      Crystal formations are validated specs that have solidified.
+    */
+
+    .core-sample {
+      width: 320px;
+      margin: 0 auto;
+      position: relative;
+    }
+
+    /* Depth scale on left */
+    .depth-scale {
+      position: absolute;
+      left: -60px; top: 0; bottom: 0;
+      width: 40px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 20px 0;
+    }
+
+    .depth-mark {
+      font-family: 'Victor Mono', monospace;
+      font-size: 9px;
+      color: var(--text-dim);
+      text-align: right;
+      position: relative;
+    }
+
+    .depth-mark::after {
+      content: '';
+      position: absolute;
+      right: -12px; top: 50%;
+      width: 8px; height: 1px;
+      background: var(--text-dim);
+    }
+
+    /* Annotations on right */
+    .core-annotations {
+      position: absolute;
+      right: -220px; top: 0;
+      width: 200px;
+    }
+
+    .annotation {
+      position: absolute;
+      padding: 8px 12px;
+      background: rgba(208,196,176,0.04);
+      border-left: 2px solid var(--fossil);
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.4;
+      animation: annotate-in 0.5s ease-out both;
+    }
+
+    .annotation strong {
+      display: block;
+      color: var(--text);
+      font-weight: 600;
+      font-size: 12px;
+      margin-bottom: 2px;
+    }
+
+    @keyframes annotate-in {
+      from { opacity: 0; transform: translateX(8px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    .annotation::before {
+      content: '';
+      position: absolute;
+      left: -24px; top: 14px;
+      width: 22px; height: 1px;
+      background: var(--fossil);
+      opacity: 0.3;
+    }
+
+    /* The core itself */
+    .core-column {
+      border: 1px solid rgba(208,196,176,0.08);
+      border-radius: 4px;
+      overflow: hidden;
+      box-shadow:
+        inset 2px 0 8px rgba(0,0,0,0.3),
+        inset -2px 0 8px rgba(0,0,0,0.3);
+    }
+
+    .stratum {
+      position: relative;
+      padding: 28px 24px;
+      border-bottom: 1px solid rgba(208,196,176,0.04);
+      transition: all 0.3s;
+      animation: settle 0.5s ease-out both;
+    }
+
+    .stratum:nth-child(1) { animation-delay: 0.3s; }
+    .stratum:nth-child(2) { animation-delay: 0.25s; }
+    .stratum:nth-child(3) { animation-delay: 0.2s; }
+    .stratum:nth-child(4) { animation-delay: 0.15s; }
+    .stratum:nth-child(5) { animation-delay: 0.1s; }
+
+    @keyframes settle {
+      from { opacity: 0; transform: translateY(-8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Different rock textures per stratum */
+    .stratum-crystalline {
+      background: linear-gradient(180deg, rgba(96,176,208,0.06), rgba(96,176,208,0.02));
+    }
+
+    .stratum-sandstone {
+      background: linear-gradient(180deg,
+        var(--crust),
+        var(--sediment)
+      );
+      background-image: repeating-linear-gradient(0deg,
+        transparent 0, transparent 5px,
+        rgba(200,168,120,0.03) 5px, rgba(200,168,120,0.03) 6px
+      );
+    }
+
+    .stratum-basalt {
+      background: var(--basalt);
+    }
+
+    .stratum-magmatic {
+      background: linear-gradient(180deg, var(--mantle), var(--deep-earth));
+      position: relative;
+    }
+
+    /* Magma glow from below */
+    .stratum-magmatic::after {
+      content: '';
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 40%;
+      background: linear-gradient(0deg, var(--magma-dim), transparent);
+      pointer-events: none;
+    }
+
+    .stratum-surface {
+      background: linear-gradient(180deg, rgba(160,144,112,0.08), var(--crust));
+    }
+
+    .stratum-name {
+      font-family: 'Fraunces', serif;
+      font-size: 15px; font-weight: 700;
+      margin-bottom: 4px;
+      position: relative; z-index: 1;
+    }
+
+    .stratum-meta {
+      font-family: 'Victor Mono', monospace;
+      font-size: 9px; color: var(--text-dim);
+      letter-spacing: 0.05em;
+      position: relative; z-index: 1;
+    }
+
+    /* Fossils (completed tasks) embedded in rock */
+    .fossil {
+      display: inline-block;
+      font-family: 'Victor Mono', monospace;
+      font-size: 9px;
+      color: var(--fossil);
+      padding: 2px 8px;
+      border: 1px solid rgba(160,144,112,0.15);
+      border-radius: 100px;
+      margin: 6px 4px 0 0;
+      position: relative; z-index: 1;
+    }
+
+    /* Crystal formation (validated) */
+    .crystal {
+      position: absolute;
+      width: 3px;
+      background: var(--crystal);
+      opacity: 0.4;
+      box-shadow: 0 0 4px var(--crystal-dim);
+    }
+
+    .crystal-1 { height: 20px; top: 10px; right: 20px; transform: rotate(15deg); }
+    .crystal-2 { height: 14px; top: 18px; right: 35px; transform: rotate(-10deg); }
+    .crystal-3 { height: 18px; top: 8px; right: 48px; transform: rotate(25deg); }
+
+    /* Magma intrusion (active worker) */
+    .intrusion {
+      position: absolute;
+      bottom: 0; left: 30%;
+      width: 40%;
+      height: 0;
+      background: linear-gradient(0deg, var(--magma), transparent);
+      opacity: 0.15;
+      border-radius: 50% 50% 0 0;
+      animation: intrude 3s ease-in-out infinite;
+    }
+
+    @keyframes intrude {
+      0%, 100% { height: 0; opacity: 0.1; }
+      50% { height: 60%; opacity: 0.2; }
+    }
+
+    .worker-intrusion {
+      position: absolute;
+      bottom: 8px; left: 50%;
+      transform: translateX(-50%);
+      font-family: 'Victor Mono', monospace;
+      font-size: 8px;
+      color: var(--magma);
+      letter-spacing: 0.08em;
+      z-index: 2;
+      text-shadow: 0 0 6px var(--magma-dim);
+    }
+
+    .rationale {
+      padding: 0 48px 100px;
+      max-width: 1100px; margin: 0 auto;
+    }
+
+    .rationale h3 {
+      font-family: 'Fraunces', serif;
+      font-size: 24px; font-weight: 700; margin-bottom: 20px;
+    }
+
+    .rationale-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .rationale-card {
+      padding: 24px;
+      background: var(--mantle);
+      border: 1px solid rgba(208,196,176,0.04);
+      border-radius: 6px;
+    }
+
+    .rationale-card h4 {
+      font-size: 12px; font-weight: 700; margin-bottom: 8px;
+      color: var(--sandstone);
+    }
+
+    .rationale-card p {
+      font-size: 13px; color: var(--text-dim); line-height: 1.7;
+    }
+
+    @media (max-width: 900px) {
+      .page-header, .showcase, .rationale { padding-left: 20px; padding-right: 20px; }
+      .depth-scale { display: none; }
+      .core-annotations { display: none; }
+      .core-sample { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="direction-nav">
+    <a href="../designs.html" class="nav-home">Storm</a>
+    <a href="switchboard.html">Prev</a>
+    <span class="nav-title">Geological Core</span>
+    <a href="fermentation.html">Next</a>
+  </nav>
+
+  <div class="page-header">
+    <div class="tag">Direction 04</div>
+    <h1>Geological <em>Core</em></h1>
+    <p class="subtitle">The route is a bore-core sample — a vertical cross-section through the project. Each stratum is a spec. Deeper = older, foundational. Tasks are fossils embedded in rock. Workers are magma intrusions breaking upward. Validated specs crystallize.</p>
+  </div>
+
+  <div class="showcase">
+    <div class="core-sample">
+
+      <div class="depth-scale">
+        <div class="depth-mark">0m</div>
+        <div class="depth-mark">50m</div>
+        <div class="depth-mark">100m</div>
+        <div class="depth-mark">150m</div>
+        <div class="depth-mark">200m</div>
+      </div>
+
+      <div class="core-annotations">
+        <div class="annotation" style="top: 20px; animation-delay: 0.3s;">
+          <strong>Surface: E2E Tests</strong>
+          Topsoil. Recently deposited. Not yet compacted into tasks.
+        </div>
+        <div class="annotation" style="top: 140px; animation-delay: 0.2s;">
+          <strong>Active zone</strong>
+          Worker-1 intrusion pushing through Rate Limiter stratum toward Token Rotation above.
+        </div>
+        <div class="annotation" style="top: 340px; animation-delay: 0.1s;">
+          <strong>Bedrock</strong>
+          Schema Migration. Fully crystallized. Foundation of everything above.
+        </div>
+      </div>
+
+      <div class="core-column">
+        <!-- SURFACE: newest, least complete -->
+        <div class="stratum stratum-surface">
+          <div class="stratum-name">E2E Tests</div>
+          <div class="stratum-meta">draft &middot; topsoil &middot; unconsolidated</div>
+        </div>
+
+        <!-- SANDSTONE: pending, decomposed but blocked -->
+        <div class="stratum stratum-sandstone">
+          <div class="stratum-name">Rate Limiter</div>
+          <div class="stratum-meta">pending &middot; sandstone &middot; awaiting compression</div>
+          <div class="fossil">token-bucket</div>
+          <div class="fossil">endpoint-config</div>
+        </div>
+
+        <!-- BASALT: working, active intrusion -->
+        <div class="stratum stratum-basalt">
+          <div class="stratum-name">Token Rotation</div>
+          <div class="stratum-meta">working &middot; basalt &middot; 2/4 tasks fossilized</div>
+          <div class="fossil">provider-config</div>
+          <div class="fossil">challenge-gen</div>
+          <div class="intrusion"></div>
+          <div class="worker-intrusion">worker-1</div>
+        </div>
+
+        <!-- CRYSTALLINE: validated, solidified -->
+        <div class="stratum stratum-crystalline">
+          <div class="stratum-name">API Restructure</div>
+          <div class="stratum-meta">validated &middot; crystalline &middot; all tasks fossilized</div>
+          <div class="fossil">v2-namespace</div>
+          <div class="fossil">shim-removal</div>
+          <div class="fossil">migration</div>
+          <div class="crystal crystal-1"></div>
+          <div class="crystal crystal-2"></div>
+        </div>
+
+        <!-- DEEP CRYSTALLINE: oldest, most solidified -->
+        <div class="stratum stratum-crystalline" style="border-bottom: none;">
+          <div class="stratum-name">Schema Migration</div>
+          <div class="stratum-meta">validated &middot; deep crystalline &middot; bedrock</div>
+          <div class="fossil">create-tables</div>
+          <div class="fossil">seed-data</div>
+          <div class="fossil">index-optimization</div>
+          <div class="crystal crystal-1"></div>
+          <div class="crystal crystal-2"></div>
+          <div class="crystal crystal-3"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rationale">
+    <h3>Why this is interesting</h3>
+    <div class="rationale-grid">
+      <div class="rationale-card">
+        <h4>Depth = maturity</h4>
+        <p>Foundational specs settle to the bottom. Newest work is loose topsoil at the surface. This inverts the typical chronological list — you read from bedrock up, which matches how foundations support everything above.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Fossils = completed tasks</h4>
+        <p>Tasks don't disappear when done — they become fossils embedded in the stratum. You can see what work was required to form each layer. The record is geological, not just a checkmark.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Workers as forces of nature</h4>
+        <p>A worker isn't a card or a dot — it's a magma intrusion, a volcanic force pushing upward through the strata. When a worker hits a blocked layer, you see the pressure building below it. The metaphor creates genuine drama.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Crystallization = validation</h4>
+        <p>Validated specs don't just get a green checkmark. They crystallize — growing crystal formations that are visually distinct from unvalidated strata. The longer something has been validated, the more crystals grow.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

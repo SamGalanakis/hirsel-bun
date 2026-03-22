@@ -44,7 +44,7 @@ fn block_on<F: Future>(f: F) -> F::Output {
 pub use agent::AgentConfig;
 pub use git::{GitConfig, GitProvider};
 pub use llm::{LlmConfig, LlmProvider};
-pub use orchestrator::{OrchestratorAccess, OrchestratorMode, OrchestratorProfile};
+pub use orchestrator::BackendConfig;
 pub use paths::{global_db_path, hirsel_dir, project_assets_dir, run_dir, run_exists, runs_dir};
 pub use storage::{S3Config, StorageBackend, StorageConfig, StorageProvider};
 pub use store::{ConfigStore, ConfigStoreError, PartialConfig};
@@ -124,115 +124,12 @@ fn default_coordinator_port() -> u16 {
     19700
 }
 
-fn default_profile() -> String {
-    "local".to_string()
-}
-
-fn default_allow_local_workers() -> bool {
-    true
-}
-
 fn default_scribe_enabled() -> bool {
     true
 }
 
 fn default_scribe_batch_window() -> u32 {
     3
-}
-
-fn default_scribe_idle_timeout() -> u32 {
-    300 // 5 minutes
-}
-
-fn default_shepherd_idle_timeout() -> u32 {
-    600 // 10 minutes
-}
-
-fn default_conflict_resolver_idle_timeout() -> u32 {
-    600 // 10 minutes (conflict resolution can take a while)
-}
-
-fn default_scribe_docs_path() -> String {
-    "docs".to_string()
-}
-
-fn default_scribe_persist_docs_changes() -> bool {
-    true
-}
-
-fn default_profiles() -> HashMap<String, OrchestratorProfile> {
-    let mut profiles = HashMap::new();
-    profiles.insert("local".to_string(), OrchestratorProfile::default());
-    profiles
-}
-
-/// Configuration for a single service worker (scribe or shepherd)
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ServiceWorkerConfig {
-    /// Runner name override for this service worker
-    #[serde(default)]
-    pub runner: Option<String>,
-    /// Idle timeout in seconds before the worker self-terminates
-    #[serde(default)]
-    pub idle_timeout_seconds: Option<u32>,
-}
-
-/// Configuration for service workers (scribe, shepherd, conflict_resolver)
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ServiceWorkersConfig {
-    /// Default runner for all service workers (falls back to local)
-    #[serde(default)]
-    pub runner: Option<String>,
-    /// Scribe service worker configuration
-    #[serde(default)]
-    pub scribe: ServiceWorkerConfig,
-    /// Shepherd service worker configuration
-    #[serde(default)]
-    pub shepherd: ServiceWorkerConfig,
-    /// Conflict resolver service worker configuration
-    #[serde(default)]
-    pub conflict_resolver: ServiceWorkerConfig,
-}
-
-impl ServiceWorkersConfig {
-    /// Get the effective runner for scribe
-    pub fn scribe_runner(&self) -> Option<&str> {
-        self.scribe.runner.as_deref().or(self.runner.as_deref())
-    }
-
-    /// Get the effective runner for shepherd
-    pub fn shepherd_runner(&self) -> Option<&str> {
-        self.shepherd.runner.as_deref().or(self.runner.as_deref())
-    }
-
-    /// Get the idle timeout for scribe in seconds
-    pub fn scribe_idle_timeout(&self) -> u32 {
-        self.scribe
-            .idle_timeout_seconds
-            .unwrap_or(default_scribe_idle_timeout())
-    }
-
-    /// Get the idle timeout for shepherd in seconds
-    pub fn shepherd_idle_timeout(&self) -> u32 {
-        self.shepherd
-            .idle_timeout_seconds
-            .unwrap_or(default_shepherd_idle_timeout())
-    }
-
-    /// Get the effective runner for conflict resolver
-    pub fn conflict_resolver_runner(&self) -> Option<&str> {
-        self.conflict_resolver
-            .runner
-            .as_deref()
-            .or(self.runner.as_deref())
-    }
-
-    /// Get the idle timeout for conflict resolver in seconds
-    pub fn conflict_resolver_idle_timeout(&self) -> u32 {
-        self.conflict_resolver
-            .idle_timeout_seconds
-            .unwrap_or(default_conflict_resolver_idle_timeout())
-    }
 }
 
 /// Main configuration struct
@@ -278,13 +175,9 @@ pub struct Config {
     #[serde(default)]
     pub worker_runners: HashMap<String, String>,
 
-    /// Default orchestrator profile name
-    #[serde(default = "default_profile")]
-    pub default_profile: String,
-
-    /// Orchestrator profiles for local/remote connections
-    #[serde(default = "default_profiles")]
-    pub profiles: HashMap<String, OrchestratorProfile>,
+    /// Backend connection used by remote clients.
+    #[serde(default)]
+    pub backend: BackendConfig,
 
     /// Git provider configuration
     #[serde(default)]
@@ -294,30 +187,13 @@ pub struct Config {
     #[serde(default)]
     pub storage: StorageConfig,
 
-    /// Whether to allow local workers (default: true)
-    /// Set to false on remote coordinators (e.g., Fly.io) where local workers don't make sense
-    #[serde(default = "default_allow_local_workers")]
-    pub allow_local_workers: bool,
-
-    /// Whether to enable the scribe system for documentation updates (default: true)
+    /// Whether to enable the scribe system for retained-context updates (default: true)
     #[serde(default = "default_scribe_enabled")]
     pub scribe_enabled: bool,
 
     /// How long to wait (in seconds) for more submissions before processing a scribe batch (default: 3)
     #[serde(default = "default_scribe_batch_window")]
     pub scribe_batch_window_seconds: u32,
-
-    /// Service workers configuration (scribe, shepherd, conflict_resolver)
-    #[serde(default)]
-    pub service_workers: ServiceWorkersConfig,
-
-    /// Path to documentation directory relative to workspace (default: "docs")
-    #[serde(default = "default_scribe_docs_path")]
-    pub scribe_docs_path: String,
-
-    /// Whether to persist scribe documentation changes back to workspace on delivery (default: true)
-    #[serde(default = "default_scribe_persist_docs_changes")]
-    pub scribe_persist_docs_changes: bool,
 
     /// Preferred IDE for "Open in IDE" feature
     /// Options: "cursor", "code", "zed", "nvim"
@@ -341,16 +217,11 @@ impl Default for Config {
             runners: HashMap::new(),
             default_runner: None,
             worker_runners: HashMap::new(),
-            default_profile: default_profile(),
-            profiles: default_profiles(),
+            backend: BackendConfig::default(),
             git: GitConfig::default(),
             storage: StorageConfig::default(),
-            allow_local_workers: default_allow_local_workers(),
             scribe_enabled: default_scribe_enabled(),
             scribe_batch_window_seconds: default_scribe_batch_window(),
-            service_workers: ServiceWorkersConfig::default(),
-            scribe_docs_path: default_scribe_docs_path(),
-            scribe_persist_docs_changes: default_scribe_persist_docs_changes(),
             preferred_ide: None,
         }
     }
@@ -368,7 +239,6 @@ impl Config {
     /// Environment variables:
     /// - `HIRSEL_ROOT`: Override the hirsel root directory (default: ~/.hirsel)
     /// - `HIRSEL_RUN`: Set the current run name
-    /// - `HIRSEL_ALLOW_LOCAL_WORKERS`: Override allow_local_workers setting
     pub fn load() -> Result<(Self, Vec<String>), ConfigError> {
         let mut config = Self::default();
         let mut warnings = Vec::new();
@@ -413,10 +283,6 @@ impl Config {
         if let Ok(run) = env::var("HIRSEL_RUN") {
             config.run = Some(run);
         }
-        if let Ok(val) = env::var("HIRSEL_ALLOW_LOCAL_WORKERS") {
-            config.allow_local_workers = val != "0" && val.to_lowercase() != "false";
-        }
-
         Ok((config, warnings))
     }
 
@@ -455,29 +321,14 @@ impl Config {
         if let Some(worker_runners) = partial.worker_runners {
             self.worker_runners = worker_runners;
         }
-        if let Some(default_profile) = partial.default_profile {
-            self.default_profile = default_profile;
-        }
-        if let Some(profiles) = partial.profiles {
-            self.profiles = profiles;
+        if let Some(backend) = partial.backend {
+            self.backend = backend;
         }
         if let Some(git) = partial.git {
             self.git = git;
         }
         if let Some(storage) = partial.storage {
             self.storage = storage;
-        }
-        if let Some(allow_local_workers) = partial.allow_local_workers {
-            self.allow_local_workers = allow_local_workers;
-        }
-        if let Some(service_workers) = partial.service_workers {
-            self.service_workers = service_workers;
-        }
-        if let Some(scribe_docs_path) = partial.scribe_docs_path {
-            self.scribe_docs_path = scribe_docs_path;
-        }
-        if let Some(scribe_persist_docs_changes) = partial.scribe_persist_docs_changes {
-            self.scribe_persist_docs_changes = scribe_persist_docs_changes;
         }
         if let Some(preferred_ide) = partial.preferred_ide {
             self.preferred_ide = preferred_ide;
@@ -494,11 +345,6 @@ impl Config {
 
         if let Ok(run) = env::var("HIRSEL_RUN") {
             config.run = Some(run);
-        }
-
-        // Allow disabling local workers via env var (useful for Fly.io deployments)
-        if let Ok(val) = env::var("HIRSEL_ALLOW_LOCAL_WORKERS") {
-            config.allow_local_workers = val != "0" && val.to_lowercase() != "false";
         }
 
         config

@@ -2,13 +2,15 @@
  * Status bar component
  */
 import { type Component, Show } from 'solid-js';
-import { useApp, useRuns } from '../../stores';
+import { useApp, useProject, useRoute, useRuns, useWorkspace } from '../../stores';
 import { Icon } from '../shared';
-import { ShepherdConsoleBar } from '../chat/ShepherdConsole';
 
 export const StatusBar: Component = () => {
   const app = useApp();
   const runs = useRuns();
+  const project = useProject();
+  const route = useRoute();
+  const workspace = useWorkspace();
 
   const detail = () => runs.runDetail();
   const versionInfo = () => app.versionInfo();
@@ -77,9 +79,16 @@ export const StatusBar: Component = () => {
 
       {/* Spacer */}
       <div class="flex-1" />
-
-      {/* Shepherd Console Bar */}
-      <ShepherdConsoleBar />
+      <Show when={project.selectedProject()}>
+        <div class="flex items-center gap-2 text-xs text-wool-500">
+          <Icon name="git-branch" class="w-3.5 h-3.5" />
+          <span>{route.currentRoute()?.name ?? 'No active route'}</span>
+          <Show when={workspace.machineryOpen()}>
+            <span class="text-wool-700">/</span>
+            <span class="capitalize">{workspace.activeMachineryTab()}</span>
+          </Show>
+        </div>
+      </Show>
     </footer>
   );
 };

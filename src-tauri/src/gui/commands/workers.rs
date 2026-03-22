@@ -13,7 +13,7 @@ use super::{get_run_state, ResultExt};
 #[tracing::instrument]
 #[tauri::command]
 pub async fn get_workers(run_name: String) -> Result<Vec<Worker>, String> {
-    let orch = create_orchestrator(None).str_err()?;
+    let orch = create_orchestrator().str_err()?;
     orch.list_workers(&run_name).await.str_err()
 }
 
@@ -100,8 +100,6 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
         resume_session_id: None,
         env_vars: None,
         credentials: None,
-        coordinator_url: None,
-        tailscale_authkey: None,
         assigned_task_id: None,
         is_plan_task: false,
     };
@@ -266,7 +264,7 @@ pub async fn detach_worker(run_name: String, worker_id: u32) -> Result<(), Strin
 #[tracing::instrument]
 #[tauri::command]
 pub async fn restart_worker(run_name: String, worker_id: u32) -> Result<(), String> {
-    let orch = create_orchestrator(None).str_err()?;
+    let orch = create_orchestrator().str_err()?;
 
     // Get workers to find the worker name from the ID
     let workers = orch.list_workers(&run_name).await.str_err()?;

@@ -133,14 +133,12 @@ export async function updateDraft(runName: string, updates: DraftUpdateRequest):
  *
  * @param runName - The run name
  * @param startingPoint - How to initialize the workspace (greenfield, localFolder, or gitRepo)
- * @param profile - Optional profile name for remote orchestrator mode
  */
 export async function startDraft(
   runName: string,
   startingPoint?: StartingPoint,
-  profile?: string,
 ): Promise<RunDetail> {
-  return invoke<RunDetail>('start_draft', { runName, startingPoint, profile });
+  return invoke<RunDetail>('start_draft', { runName, startingPoint });
 }
 
 /**
@@ -764,65 +762,6 @@ export async function listenShepherdEvents(
   });
 
   return unlisten;
-}
-
-// =============================================================================
-// Shepherd Chat History API
-// =============================================================================
-
-/** Shepherd chat message stored in database */
-export interface ShepherdChatMessage {
-  id: number;
-  runName: string | null;
-  role: string;
-  timestamp: string;
-  chunksJson: string;
-}
-
-/**
- * Get Shepherd chat history for a run (or no-run if null)
- *
- * @param runName - The run name, or null for no-run conversations
- * @returns Array of saved chat messages
- */
-export async function getShepherdChatHistory(
-  runName: string | null,
-): Promise<ShepherdChatMessage[]> {
-  return invoke<ShepherdChatMessage[]>('get_shepherd_history', {
-    scope: runName ? { type: 'run', runName, workspacePath: '' } : { type: 'general' },
-    limit: 100,
-  });
-}
-
-/**
- * Save a Shepherd chat message for a run (or no-run if null)
- *
- * @param runName - The run name, or null for no-run conversations
- * @param role - Message role ('user', 'assistant', 'system')
- * @param chunksJson - JSON-encoded chunks array
- * @returns The saved message ID
- */
-export async function saveShepherdMessage(
-  runName: string | null,
-  role: string,
-  chunksJson: string,
-): Promise<number> {
-  return invoke<number>('save_shepherd_message', {
-    scope: runName ? { type: 'run', runName, workspacePath: '' } : { type: 'general' },
-    role,
-    chunksJson,
-  });
-}
-
-/**
- * Clear Shepherd chat history for a run (or no-run if null)
- *
- * @param runName - The run name, or null for no-run conversations
- */
-export async function clearShepherdChatHistory(runName: string | null): Promise<void> {
-  return invoke('clear_shepherd_history', {
-    scope: runName ? { type: 'run', runName, workspacePath: '' } : { type: 'general' },
-  });
 }
 
 // =============================================================================

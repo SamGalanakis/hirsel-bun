@@ -40,9 +40,6 @@ pub fn active_features() -> Vec<&'static str> {
     #[cfg(feature = "gui")]
     features.push("gui");
 
-    #[cfg(feature = "cli")]
-    features.push("cli");
-
     #[cfg(feature = "server")]
     features.push("server");
 
@@ -58,10 +55,10 @@ pub fn active_features() -> Vec<&'static str> {
 
 /// Check if this is a worker-only build
 pub fn is_worker_build() -> bool {
-    #[cfg(all(feature = "worker", not(feature = "cli")))]
+    #[cfg(all(feature = "worker", not(feature = "server"), not(feature = "gui")))]
     return true;
 
-    #[cfg(not(all(feature = "worker", not(feature = "cli"))))]
+    #[cfg(not(all(feature = "worker", not(feature = "server"), not(feature = "gui"))))]
     return false;
 }
 

@@ -1,12 +1,11 @@
-//! Scribe command - process scribe submissions for a run
+//! Scribe command - process retained-context submissions for a run.
 //!
-//! This is an internal command spawned by the daemon to process
-//! batched scribe submissions and update documentation.
+//! This is an internal command spawned by the daemon to condense batched
+//! worker learnings into project-level retained context.
 
 use crate::core::{
     config::{self, Config},
     scribe::{process_scribe_batch, ScribeError},
-    Files,
 };
 use tracing::{info, warn};
 
@@ -17,9 +16,6 @@ pub async fn execute(run_name: &str) -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("Run '{}' not found", run_name).into());
     }
 
-    let run_dir = config::run_dir(run_name);
-    let files = Files::new(&run_dir);
-
     // Load config
     let (global_config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
 
@@ -29,11 +25,8 @@ pub async fn execute(run_name: &str) -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    // Get agent command
-    let agent_command = crate::cli::config::get_agent_command();
-
     // Run scribe processing
-    let result = match process_scribe_batch(&files, &global_config, &agent_command).await {
+    let result = match process_scribe_batch(run_name).await {
         Ok(result) => {
             info!(
                 "Processed scribe batch {} for run '{}': {} submissions",

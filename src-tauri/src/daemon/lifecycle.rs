@@ -5,7 +5,7 @@
 //! - Scaling up workers when tasks are available (via orchestrator)
 //! - Enforcing time limits
 //! - Resuming workers (via orchestrator)
-//! - Processing scribe batches for documentation updates
+//! - Processing scribe batches for retained context updates
 //! - Auto-exit when idle
 
 use std::sync::Arc;
@@ -21,8 +21,8 @@ use crate::core::lifecycle::{
 use crate::core::orchestrator::{create_local_orchestrator, Orchestrator};
 use crate::core::scribe;
 use crate::core::server::AppState;
-use crate::core::service_worker::{ConflictResolverServiceWrapper, ScribeService};
 use crate::core::state::{SQLiteState, Status};
+use crate::core::ConflictResolverService;
 use crate::core::Files;
 
 use super::server::DaemonConfig;
@@ -307,11 +307,6 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
                     );
                 }
             }
-
-            // Process scribe batches for documentation updates
-            if let Err(e) = maybe_process_scribe(run_name, &files).await {
-                tracing::debug!("[Daemon] Scribe processing for '{}': {}", run_name, e);
-            }
         }
         Status::Eval => {
             // Check time limit even during eval
@@ -378,6 +373,10 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
                     }
                 }
             }
+
+            if let Err(e) = maybe_process_scribe(run_name, &files).await {
+                tracing::debug!("[Daemon] Scribe processing for '{}': {}", run_name, e);
+            }
         }
         _ => {}
     }
@@ -386,8 +385,6 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
 }
 
 /// Check and process scribe batches if the batch window has expired.
-///
-/// Uses ScribeService which handles local vs remote execution internally.
 #[tracing::instrument(skip(_files))]
 async fn maybe_process_scribe(run_name: &str, _files: &Files) -> anyhow::Result<()> {
     let config = Config::load().map(|(c, _)| c).unwrap_or_else(|e| {
@@ -402,7 +399,6 @@ async fn maybe_process_scribe(run_name: &str, _files: &Files) -> anyhow::Result<
         return Ok(());
     }
 
-    // Check if we should process
     let should_process = {
         let state = SQLiteState::new(run_name).await?;
         scribe::should_process_batch(&state, &config).await
@@ -410,11 +406,8 @@ async fn maybe_process_scribe(run_name: &str, _files: &Files) -> anyhow::Result<
 
     if should_process {
         let run_name = run_name.to_string();
-        let scribe_service = ScribeService::with_config(config);
-
-        // Spawn async task to process the batch
         tokio::spawn(async move {
-            match scribe_service.process_batch(&run_name).await {
+            match scribe::process_scribe_batch(&run_name).await {
                 Ok(result) => {
                     tracing::info!(
                         "[Daemon] Scribe batch processed for '{}': {} submissions",
@@ -438,7 +431,7 @@ async fn maybe_process_scribe(run_name: &str, _files: &Files) -> anyhow::Result<
 
 /// Handle lifecycle actions that require spawning workers via the orchestrator.
 ///
-/// This ensures workers are spawned using the correct runner (local/docker/fly/ssh)
+/// This ensures workers are spawned using the correct host/container runner
 /// based on the run's configuration.
 #[tracing::instrument(skip(actions))]
 async fn handle_lifecycle_actions(
@@ -672,8 +665,8 @@ async fn process_resolving_deliveries() -> anyhow::Result<()> {
 }
 
 /// Process a single delivery that needs conflict resolution
-#[tracing::instrument(skip(delivery, config), fields(delivery_id = delivery.id, project_id = delivery.project_id))]
-async fn process_single_delivery(delivery: &Delivery, config: &Config) -> anyhow::Result<()> {
+#[tracing::instrument(skip(delivery, _config), fields(delivery_id = delivery.id, project_id = delivery.project_id))]
+async fn process_single_delivery(delivery: &Delivery, _config: &Config) -> anyhow::Result<()> {
     let state = DeltaState::with_route(delivery.project_id, delivery.route_id);
 
     // Get the project run to find the work directory
@@ -720,8 +713,7 @@ async fn process_single_delivery(delivery: &Delivery, config: &Config) -> anyhow
         delivery.id, delivery.version_id, delivery.target_branch
     );
 
-    // Use the conflict resolver service wrapper which handles local vs remote execution
-    let resolver_service = ConflictResolverServiceWrapper::with_config(config.clone());
+    let resolver_service = ConflictResolverService::new();
     let result = resolver_service
         .resolve_conflicts(&work_dir, conflicts.clone(), &context)
         .await;

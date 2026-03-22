@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tidal Pool — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,700;1,400&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --ocean: #0a2028;
+      --rock: #3a3830;
+      --pool: #2080a0;
+      --pool-dim: rgba(32,128,160,0.12);
+      --foam: #f0f4f0;
+      --foam-dim: rgba(240,244,240,0.06);
+      --sand: #c8b898;
+      --kelp: #285838;
+      --text: #c0d0d8;
+      --text-dim: #506068;
+    }
+
+    body {
+      font-family: 'IBM Plex Sans', sans-serif;
+      background: var(--ocean);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    .direction-nav {
+      position: sticky; top: 0; z-index: 1000;
+      background: rgba(10,32,40,0.92); backdrop-filter: blur(14px);
+      border-bottom: 1px solid rgba(192,208,216,0.06);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .direction-nav a {
+      font-size: 11px; font-weight: 500; color: var(--text-dim);
+      text-decoration: none; padding: 5px 12px; border-radius: 6px; transition: all 0.2s;
+    }
+    .direction-nav a:hover { color: var(--pool); background: var(--pool-dim); }
+    .direction-nav .nav-title {
+      font-family: 'Lora', serif; font-size: 15px; font-style: italic;
+      color: var(--text); flex: 1; text-align: center;
+    }
+    .direction-nav .nav-home {
+      font-family: 'IBM Plex Sans', sans-serif;
+      font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-dim); border-right: 1px solid rgba(192,208,216,0.06);
+      padding-right: 16px; margin-right: 4px;
+    }
+
+    .page-header {
+      padding: 80px 48px 20px;
+      max-width: 1100px; margin: 0 auto;
+    }
+
+    .tag {
+      font-family: 'IBM Plex Sans', sans-serif;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--pool); margin-bottom: 12px; display: block;
+    }
+
+    h1 {
+      font-family: 'Lora', serif;
+      font-size: clamp(40px, 6vw, 68px);
+      font-weight: 400; font-style: italic;
+      line-height: 1.1; color: var(--text); margin-bottom: 16px;
+    }
+
+    .subtitle {
+      font-size: 15px; font-weight: 300;
+      color: var(--text-dim); max-width: 580px; line-height: 1.8;
+    }
+
+    .showcase {
+      padding: 40px 48px 60px;
+      max-width: 1100px; margin: 0 auto;
+    }
+
+    /* ====== TIDAL POOLS ====== */
+    /*
+      Each spec is a rock pool on the shore. Tasks are creatures
+      living in the pool. Workers are waves that wash over the pools.
+      High tide = dispatch. Low tide = review. Validated pools
+      have thriving ecosystems. Empty pools are draft specs.
+    */
+
+    .shoreline {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 24px;
+      position: relative;
+    }
+
+    /* Tide line indicator */
+    .shoreline::before {
+      content: '';
+      position: absolute;
+      top: -16px; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--sand), transparent);
+      opacity: 0.3;
+    }
+
+    .pool {
+      background: var(--rock);
+      border: 1px solid rgba(192,208,216,0.06);
+      border-radius: 16px 16px 12px 12px;
+      overflow: hidden;
+      position: relative;
+      animation: pool-appear 0.5s ease-out both;
+    }
+
+    .pool:nth-child(1) { animation-delay: 0.1s; }
+    .pool:nth-child(2) { animation-delay: 0.2s; }
+    .pool:nth-child(3) { animation-delay: 0.3s; }
+    .pool:nth-child(4) { animation-delay: 0.4s; }
+    .pool:nth-child(5) { animation-delay: 0.5s; }
+
+    @keyframes pool-appear {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Rock rim label */
+    .rock-label {
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(192,208,216,0.04);
+      display: flex; justify-content: space-between; align-items: baseline;
+    }
+
+    .pool-name {
+      font-family: 'Lora', serif;
+      font-size: 14px; font-weight: 700;
+    }
+
+    .pool-id {
+      font-family: 'IBM Plex Sans', sans-serif;
+      font-size: 9px; color: var(--text-dim); letter-spacing: 0.05em;
+    }
+
+    /* Pool water viewport */
+    .pool-water {
+      height: 200px;
+      position: relative;
+      overflow: hidden;
+      background: linear-gradient(180deg,
+        rgba(32,128,160,0.08) 0%,
+        rgba(32,128,160,0.15) 50%,
+        rgba(32,128,160,0.25) 100%
+      );
+    }
+
+    /* Water surface shimmer */
+    .pool-water::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg,
+        transparent 0%,
+        rgba(240,244,240,0.15) 30%,
+        rgba(240,244,240,0.25) 50%,
+        rgba(240,244,240,0.15) 70%,
+        transparent 100%
+      );
+      animation: shimmer 4s ease-in-out infinite;
+    }
+
+    @keyframes shimmer {
+      0%, 100% { transform: translateX(-20px); }
+      50% { transform: translateX(20px); }
+    }
+
+    /* Creatures (tasks) in the pool */
+    .creature {
+      position: absolute;
+      font-size: 10px;
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+    }
+
+    .creature-icon {
+      width: 24px; height: 24px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px;
+    }
+
+    .creature-label {
+      font-family: 'IBM Plex Sans', sans-serif;
+      font-size: 7px; letter-spacing: 0.05em;
+      color: rgba(192,208,216,0.5);
+      text-transform: uppercase;
+    }
+
+    /* Anemone: gently waving */
+    .anemone .creature-icon {
+      background: rgba(160,60,80,0.4);
+      border: 1px solid rgba(160,60,80,0.3);
+      animation: anemone-pulse 3s ease-in-out infinite;
+    }
+
+    @keyframes anemone-pulse {
+      0%, 100% { transform: scaleY(1); }
+      50% { transform: scaleY(0.85); }
+    }
+
+    /* Crab: sidling */
+    .crab .creature-icon {
+      background: rgba(200,140,60,0.4);
+      border: 1px solid rgba(200,140,60,0.3);
+      animation: crab-sidle 5s ease-in-out infinite;
+    }
+
+    @keyframes crab-sidle {
+      0%, 100% { transform: translateX(0); }
+      50% { transform: translateX(6px); }
+    }
+
+    /* Starfish: slow rotation */
+    .starfish .creature-icon {
+      background: rgba(200,180,80,0.4);
+      border: 1px solid rgba(200,180,80,0.3);
+      animation: starfish-turn 12s linear infinite;
+    }
+
+    @keyframes starfish-turn {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    /* Barnacle: fixed */
+    .barnacle .creature-icon {
+      background: rgba(192,208,216,0.15);
+      border: 1px solid rgba(192,208,216,0.1);
+    }
+
+    /* Wave wash effect for active pools */
+    .wave-wash {
+      position: absolute;
+      bottom: 0; left: -100%; right: -100%;
+      height: 40px;
+      background: linear-gradient(0deg, rgba(240,244,240,0.06), transparent);
+      animation: wave-pass 6s ease-in-out infinite;
+    }
+
+    @keyframes wave-pass {
+      0% { transform: translateX(-30%); opacity: 0; }
+      30% { opacity: 1; }
+      70% { opacity: 1; }
+      100% { transform: translateX(30%); opacity: 0; }
+    }
+
+    /* Depth gauge */
+    .depth-gauge {
+      position: absolute;
+      right: 8px; top: 8px; bottom: 8px;
+      width: 4px;
+      background: rgba(192,208,216,0.06);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .depth-fill {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      border-radius: 2px;
+      background: var(--pool);
+      opacity: 0.5;
+      transition: height 0.8s;
+    }
+
+    /* Pool stats */
+    .pool-stats {
+      padding: 12px 16px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .stat {
+      display: flex; flex-direction: column; gap: 2px;
+    }
+
+    .stat-label {
+      font-family: 'IBM Plex Sans', sans-serif;
+      font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .stat-value {
+      font-family: 'IBM Plex Sans', sans-serif;
+      font-size: 14px; font-weight: 500;
+      color: var(--text);
+    }
+
+    .stat-value.active {
+      color: var(--pool);
+      animation: tide-pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes tide-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    /* Tide badge */
+    .tide-badge {
+      display: inline-block;
+      font-family: 'IBM Plex Sans', sans-serif;
+      font-size: 8px; letter-spacing: 0.08em; text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 100px;
+      margin-top: 4px;
+    }
+
+    .tide-thriving { background: rgba(40,88,56,0.2); color: #68b878; }
+    .tide-active { background: var(--pool-dim); color: var(--pool); }
+    .tide-blocked { background: rgba(200,184,152,0.08); color: var(--sand); }
+    .tide-empty { background: rgba(192,208,216,0.06); color: var(--text-dim); }
+
+    .rationale {
+      padding: 0 48px 100px;
+      max-width: 1100px; margin: 0 auto;
+    }
+
+    .rationale h3 {
+      font-family: 'Lora', serif;
+      font-size: 24px; font-style: italic; margin-bottom: 20px;
+    }
+
+    .rationale-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .rationale-card {
+      padding: 24px;
+      background: var(--rock);
+      border: 1px solid rgba(192,208,216,0.04);
+      border-radius: 8px;
+    }
+
+    .rationale-card h4 {
+      font-size: 12px; font-weight: 700; margin-bottom: 8px;
+      color: var(--pool);
+    }
+
+    .rationale-card p {
+      font-size: 13px; color: var(--text-dim); line-height: 1.7;
+    }
+
+    @media (max-width: 768px) {
+      .page-header, .showcase, .rationale { padding-left: 20px; padding-right: 20px; }
+      .shoreline { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="direction-nav">
+    <a href="../designs.html" class="nav-home">Storm</a>
+    <a href="apiary.html">Prev</a>
+    <span class="nav-title">Tidal Pool</span>
+    <a href="murmuration.html">Next</a>
+  </nav>
+
+  <div class="page-header">
+    <div class="tag">Direction 17 — Natural</div>
+    <h1>Tidal Pool</h1>
+    <p class="subtitle">Specs are rock pools on a shore. Each pool is a contained micro-ecosystem. Tasks are the creatures living inside — anemones, crabs, starfish. Workers are waves washing over: each wave carries new work in and completed work out. High tide is dispatch. Low tide is review.</p>
+  </div>
+
+  <div class="showcase">
+    <div class="shoreline">
+
+      <!-- Pool 1: Schema Migration — validated, thriving -->
+      <div class="pool">
+        <div class="rock-label">
+          <span class="pool-name">Schema Migration</span>
+          <span class="pool-id">#001</span>
+        </div>
+        <div class="pool-water">
+          <div class="depth-gauge"><div class="depth-fill" style="height:100%"></div></div>
+          <div class="creature anemone" style="left:20%;bottom:20%">
+            <div class="creature-icon"></div>
+            <span class="creature-label">tables</span>
+          </div>
+          <div class="creature starfish" style="left:55%;bottom:30%">
+            <div class="creature-icon"></div>
+            <span class="creature-label">seeds</span>
+          </div>
+          <div class="creature crab" style="left:35%;bottom:45%">
+            <div class="creature-icon"></div>
+            <span class="creature-label">indexes</span>
+          </div>
+        </div>
+        <div class="pool-stats">
+          <div class="stat"><span class="stat-label">Tide</span><span class="tide-badge tide-thriving">thriving</span></div>
+          <div class="stat"><span class="stat-label">Life</span><span class="stat-value">3 species</span></div>
+          <div class="stat"><span class="stat-label">Depth</span><span class="stat-value">100%</span></div>
+          <div class="stat"><span class="stat-label">Waves</span><span class="stat-value">12 cycles</span></div>
+        </div>
+      </div>
+
+      <!-- Pool 2: API Restructure — validated, thriving -->
+      <div class="pool">
+        <div class="rock-label">
+          <span class="pool-name">API Restructure</span>
+          <span class="pool-id">#002</span>
+        </div>
+        <div class="pool-water">
+          <div class="depth-gauge"><div class="depth-fill" style="height:100%"></div></div>
+          <div class="creature anemone" style="left:15%;bottom:15%">
+            <div class="creature-icon"></div>
+            <span class="creature-label">v2-ns</span>
+          </div>
+          <div class="creature crab" style="left:40%;bottom:25%">
+            <div class="creature-icon"></div>
+            <span class="creature-label">shim</span>
+          </div>
+          <div class="creature starfish" style="left:60%;bottom:40%">
+            <div class="creature-icon"></div>
+            <span class="creature-label">compat</span>
+          </div>
+          <div class="creature barnacle" style="left:25%;bottom:50%">
+            <div class="creature-icon"></div>
+            <span class="creature-label">routes</span>
+          </div>
+          <div class="creature anemone" style="left:70%;bottom:18%">
+            <div class="creature-icon"></div>
+            <span class="creature-label">docs</span>
+          </div>
+        </div>
+        <div class="pool-stats">
+          <div class="stat"><span class="stat-label">Tide</span><span class="tide-badge tide-thriving">thriving</span></div>
+          <div class="stat"><span class="stat-label">Life</span><span class="stat-value">5 species</span></div>
+          <div class="stat"><span class="stat-label">Depth</span><span class="stat-value">100%</span></div>
+          <div class="stat"><span class="stat-label">Waves</span><span class="stat-value">28 cycles</span></div>
+        </div>
+      </div>
+
+      <!-- Pool 3: Token Rotation — working, 2/4 tasks, active waves -->
+      <div class="pool">
+        <div class="rock-label">
+          <span class="pool-name">Token Rotation</span>
+          <span class="pool-id">#003</span>
+        </div>
+        <div class="pool-water">
+          <div class="depth-gauge"><div class="depth-fill" style="height:50%"></div></div>
+          <div class="wave-wash"></div>
+          <div class="wave-wash" style="animation-delay: 3s;"></div>
+          <div class="creature crab" style="left:25%;bottom:20%">
+            <div class="creature-icon"></div>
+            <span class="creature-label">provider</span>
+          </div>
+          <div class="creature anemone" style="left:55%;bottom:30%">
+            <div class="creature-icon"></div>
+            <span class="creature-label">challenge</span>
+          </div>
+        </div>
+        <div class="pool-stats">
+          <div class="stat"><span class="stat-label">Tide</span><span class="tide-badge tide-active">incoming</span></div>
+          <div class="stat"><span class="stat-label">Life</span><span class="stat-value active">2/4</span></div>
+          <div class="stat"><span class="stat-label">Depth</span><span class="stat-value active">50%</span></div>
+          <div class="stat"><span class="stat-label">Waves</span><span class="stat-value active">active</span></div>
+        </div>
+      </div>
+
+      <!-- Pool 4: Rate Limiter — pending/blocked -->
+      <div class="pool">
+        <div class="rock-label">
+          <span class="pool-name">Rate Limiter</span>
+          <span class="pool-id">#004</span>
+        </div>
+        <div class="pool-water" style="opacity: 0.5;">
+          <div class="depth-gauge"><div class="depth-fill" style="height:0%"></div></div>
+        </div>
+        <div class="pool-stats">
+          <div class="stat"><span class="stat-label">Tide</span><span class="tide-badge tide-blocked">blocked</span></div>
+          <div class="stat"><span class="stat-label">Life</span><span class="stat-value">0</span></div>
+          <div class="stat"><span class="stat-label">Depth</span><span class="stat-value">0%</span></div>
+          <div class="stat"><span class="stat-label">Waves</span><span class="stat-value">—</span></div>
+        </div>
+      </div>
+
+      <!-- Pool 5: E2E Tests — draft, empty pool -->
+      <div class="pool" style="opacity: 0.4;">
+        <div class="rock-label">
+          <span class="pool-name">E2E Tests</span>
+          <span class="pool-id">#005</span>
+        </div>
+        <div class="pool-water">
+          <div class="depth-gauge"></div>
+        </div>
+        <div class="pool-stats">
+          <div class="stat"><span class="stat-label">Tide</span><span class="tide-badge tide-empty">empty</span></div>
+          <div class="stat"><span class="stat-label">Life</span><span class="stat-value">—</span></div>
+          <div class="stat"><span class="stat-label">Depth</span><span class="stat-value">—</span></div>
+          <div class="stat"><span class="stat-label">Waves</span><span class="stat-value">—</span></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="rationale">
+    <h3>Why this is interesting</h3>
+    <div class="rationale-grid">
+      <div class="rationale-card">
+        <h4>Waves = worker dispatch</h4>
+        <p>Workers are not persistent residents — they are waves. Each wave washes over a pool, deposits new work, and recedes. High tide means the dispatcher has filled every pool with activity. You feel the rhythm of the system in the rhythm of the waves.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Creatures = living tasks</h4>
+        <p>Tasks are not checkboxes — they are organisms. An anemone gently pulsing, a crab sidling, a starfish slowly turning. Each has its own lifecycle. A thriving pool full of diverse creatures means a well-decomposed spec with all its tasks alive and working.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Tide cycles = review cadence</h4>
+        <p>Low tide is when you can see everything clearly. The water recedes, and every creature in every pool is visible and inspectable. This maps to review phases — when activity pauses, you can see the state of every spec at a glance.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Empty pools = potential</h4>
+        <p>A dry pool on the rocks is not dead — it is waiting. When the tide comes in, it will fill with water and life will colonize it. Draft specs are empty pools: the infrastructure is there, the niche exists, but no wave has reached it yet.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

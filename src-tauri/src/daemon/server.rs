@@ -1,7 +1,7 @@
 //! TCP server for the hirsel daemon
 //!
 //! Listens on a TCP port (default 19700, configurable via HIRSEL_DAEMON_PORT) for HTTP requests.
-//! Local CLI/GUI connects via localhost, remote workers via Docker host or SSH tunnels.
+//! Local CLI/GUI and host-local workers connect via localhost.
 
 use anyhow::{anyhow, Result};
 use axum::{

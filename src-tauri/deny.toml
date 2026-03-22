@@ -29,7 +29,7 @@ allow = [
     "CC0-1.0",
     "BSL-1.0",
     "CDLA-Permissive-2.0",
-    # Internal proprietary dependency (lash-core)
+    # Internal proprietary dependency (lash)
     "LicenseRef-LASH-PROPRIETARY",
 ]
 confidence-threshold = 0.8
@@ -45,10 +45,10 @@ crate = "hirsel"
 expression = "MIT"
 license-files = []
 
-# lash-core currently has no SPDX metadata in Cargo.toml.
+# lash currently has no SPDX metadata in Cargo.toml.
 # Treat it as a private/proprietary internal dependency.
 [[licenses.clarify]]
-crate = "lash-core"
+crate = "lash"
 expression = "LicenseRef-LASH-PROPRIETARY"
 license-files = []
 

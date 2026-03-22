@@ -5,31 +5,27 @@
  * different implementation approaches without losing work.
  */
 import { invoke } from '../lib/invoke';
-import { emit } from '../lib/events';
 import {
   type ParentComponent,
   batch,
   createContext,
   createEffect,
   createSignal,
-  onCleanup,
   useContext,
 } from 'solid-js';
 import { useProject } from './project-context';
-import type { Route, RouteTree } from '../lib/types';
+import type { Route } from '../lib/types';
 
 // =============================================================================
 // Types
 // =============================================================================
 
 interface RouteContextValue {
-  // State
   routes: () => Route[];
-  routeTree: () => RouteTree[];
   activeRoute: () => Route | null;
+  currentRoute: () => Route | null;
+  currentRouteId: () => number | null;
   loading: () => boolean;
-
-  // Actions
   loadRoutes: () => Promise<void>;
   setActiveRoute: (routeId: number) => Promise<boolean>;
   createRoute: (
@@ -61,22 +57,17 @@ export const useRoute = () => {
 export const RouteProvider: ParentComponent = (props) => {
   const project = useProject();
 
-  // State
   const [routes, setRoutes] = createSignal<Route[]>([]);
-  const [routeTree, setRouteTree] = createSignal<RouteTree[]>([]);
   const [activeRoute, setActiveRouteState] = createSignal<Route | null>(null);
   const [loading, setLoading] = createSignal(false);
-
-  // ==========================================================================
-  // Actions
-  // ==========================================================================
+  const currentRoute = () => activeRoute() ?? routes()[0] ?? null;
+  const currentRouteId = () => currentRoute()?.id ?? null;
 
   const loadRoutes = async () => {
     const projectId = project.selectedProjectId();
     if (!projectId) {
       batch(() => {
         setRoutes([]);
-        setRouteTree([]);
         setActiveRouteState(null);
       });
       return;
@@ -85,15 +76,13 @@ export const RouteProvider: ParentComponent = (props) => {
     try {
       setLoading(true);
 
-      const [routesList, tree, active] = await Promise.all([
+      const [routesList, active] = await Promise.all([
         invoke<Route[]>('list_routes', { projectId }),
-        invoke<RouteTree[]>('get_route_tree', { projectId }),
         invoke<Route>('get_active_route', { projectId }).catch(() => null),
       ]);
 
       batch(() => {
         setRoutes(routesList);
-        setRouteTree(tree);
         setActiveRouteState(active);
       });
     } catch (e) {
@@ -110,12 +99,8 @@ export const RouteProvider: ParentComponent = (props) => {
     try {
       await invoke('set_active_route', { projectId, routeId });
 
-      // Get the route details
       const route = await invoke<Route>('get_route', { projectId, routeId });
       setActiveRouteState(route);
-
-      // Emit event for delta context to reload
-      emit('route-changed', { projectId, routeId });
 
       return true;
     } catch (e) {
@@ -137,11 +122,10 @@ export const RouteProvider: ParentComponent = (props) => {
       const route = await invoke<Route>('create_route', {
         projectId,
         name,
-        parentRouteId: parentRouteId ?? activeRoute()?.id ?? null,
+        parentRouteId: parentRouteId ?? currentRouteId(),
         parentVersionId: parentVersionId ?? null,
       });
 
-      // Reload routes list
       await loadRoutes();
 
       window.toast?.success(`Created route "${name}"`);
@@ -160,7 +144,6 @@ export const RouteProvider: ParentComponent = (props) => {
     try {
       await invoke('delete_route', { projectId, routeId });
 
-      // Reload routes list
       await loadRoutes();
 
       window.toast?.success('Route deleted');
@@ -172,32 +155,23 @@ export const RouteProvider: ParentComponent = (props) => {
     }
   };
 
-  // ==========================================================================
-  // Effects
-  // ==========================================================================
-
-  // Load routes when project changes
   createEffect(() => {
     const projectId = project.selectedProjectId();
     if (projectId) {
-      loadRoutes();
+      void loadRoutes();
     } else {
       batch(() => {
         setRoutes([]);
-        setRouteTree([]);
         setActiveRouteState(null);
       });
     }
   });
 
-  // ==========================================================================
-  // Context Value
-  // ==========================================================================
-
   const value: RouteContextValue = {
     routes,
-    routeTree,
     activeRoute,
+    currentRoute,
+    currentRouteId,
     loading,
     loadRoutes,
     setActiveRoute,

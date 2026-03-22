@@ -2,8 +2,8 @@
 //!
 //! This module provides the `StateAccess` trait that abstracts low-level state
 //! operations needed by workers during run execution. Workers use this trait
-//! to interact with run state without knowing if they're accessing SQLite directly
-//! (local workers) or via HTTP (remote workers through SSH tunnels).
+//! to interact with run state without coupling worker logic to the underlying
+//! state implementation.
 //!
 //! ## Messaging Architecture
 //!
@@ -59,7 +59,7 @@ pub enum StateAccessError {
 
 pub type StateAccessResult<T> = Result<T, StateAccessError>;
 
-/// Protocol for state operations - implemented by SQLiteState and HttpState.
+/// Protocol for worker state operations.
 ///
 /// This defines the interface that both local (SQLite) and remote (HTTP) state
 /// implementations must support. Workers use this interface and don't care
@@ -242,21 +242,16 @@ pub trait StateAccess: Send {
     async fn increment_iteration(&self) -> StateAccessResult<i64>;
 
     // =========================================================================
-    // Scribe - Documentation
+    // Scribe / Retained Context
     // =========================================================================
 
-    /// Record a learning for the Scribe to integrate into documentation.
     async fn add_scribe_submission(
         &self,
         worker_name: &str,
         content: &str,
     ) -> StateAccessResult<i64>;
 
-    /// Read project documentation maintained by the Scribe.
-    async fn read_docs(
-        &self,
-        file: Option<&str>,
-    ) -> StateAccessResult<crate::core::files::DocsContent>;
+    async fn read_retained_context(&self) -> StateAccessResult<String>;
 
     // =========================================================================
     // History
@@ -273,7 +268,7 @@ pub trait StateAccess: Send {
 
     async fn init_state(&self, project_path: Option<&str>) -> StateAccessResult<()>;
 
-    /// Heartbeat for remote workers - updates last_heartbeat timestamp
+    /// Update the worker heartbeat timestamp.
     async fn heartbeat(&self) -> StateAccessResult<Status>;
 
     // =========================================================================
@@ -701,22 +696,18 @@ impl StateAccess for SQLiteState {
         Ok(SQLiteState::add_scribe_submission(self, worker_name, content).await?)
     }
 
-    async fn read_docs(
-        &self,
-        file: Option<&str>,
-    ) -> StateAccessResult<crate::core::files::DocsContent> {
-        use crate::core::storage::create_default_local_storage;
-        use crate::core::Files;
-
-        // Get run_dir from run_name
-        let run_dir = crate::core::config::run_dir(self.run_name());
-        let files = Files::new(&run_dir);
-        let storage = create_default_local_storage();
-
-        files
-            .read_docs_async(&storage, file)
+    async fn read_retained_context(&self) -> StateAccessResult<String> {
+        let project_id = self.get_project_id().await?.ok_or_else(|| {
+            StateAccessError::Database("Run is not linked to a project".to_string())
+        })?;
+        let store = crate::core::project::ProjectStore::open()
             .await
-            .map_err(|e| StateAccessError::Database(format!("Failed to read docs: {}", e)))
+            .map_err(|e| StateAccessError::Database(e.to_string()))?;
+        let context = store
+            .get_project_retained_context(project_id)
+            .await
+            .map_err(|e| StateAccessError::Database(e.to_string()))?;
+        Ok(context.markdown)
     }
 
     async fn init_state(&self, project_path: Option<&str>) -> StateAccessResult<()> {

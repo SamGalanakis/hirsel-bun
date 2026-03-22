@@ -68,7 +68,7 @@ export const ToolCard: Component<ToolCardProps> = (props) => {
       >
         {/* Status indicator: distinct for pending vs in_progress */}
         <Show when={statusIndicator().animate}>
-          <span class="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
+          <span class="w-3 h-3 border border-current border-t-transparent rounded-none animate-spin" />
         </Show>
         <Show when={!statusIndicator().animate && working()}>
           <Icon name={statusIndicator().icon} class={`w-3 h-3 ${statusIndicator().color}`} />
@@ -87,7 +87,7 @@ export const ToolCard: Component<ToolCardProps> = (props) => {
 
       {/* Expanded drawer */}
       <Show when={props.expanded}>
-        <div class="shepherd-tool-drawer absolute left-0 top-full mt-1 z-50 w-72 bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl overflow-hidden">
+        <div class="shepherd-tool-drawer absolute left-0 top-full mt-1 z-50 w-72 bg-pasture-800 border border-pasture-600 rounded-none shadow-xl overflow-hidden">
           {/* Header */}
           <div class="px-2.5 py-1.5 bg-pasture-700 border-b border-pasture-600 flex items-center justify-between">
             <span class="text-[11px] font-medium text-wool-200 truncate flex-1">
@@ -95,7 +95,7 @@ export const ToolCard: Component<ToolCardProps> = (props) => {
             </span>
             <button
               onClick={props.onToggle}
-              class="p-0.5 rounded hover:bg-pasture-600 text-wool-500"
+              class="p-0.5 rounded-none hover:bg-pasture-600 text-wool-500"
             >
               <Icon name="x" class="w-3 h-3" />
             </button>
@@ -106,7 +106,7 @@ export const ToolCard: Component<ToolCardProps> = (props) => {
             <Show when={parsedInput()}>
               <div>
                 <p class="text-[10px] text-wool-500 mb-0.5 uppercase tracking-wide">Input</p>
-                <pre class="text-[10px] text-wool-300 bg-pasture-900 p-1.5 rounded overflow-x-auto whitespace-pre-wrap break-all">
+                <pre class="text-[10px] text-wool-300 bg-pasture-900 p-1.5 rounded-none overflow-x-auto whitespace-pre-wrap break-all">
                   {parsedInput()}
                 </pre>
               </div>
@@ -114,7 +114,7 @@ export const ToolCard: Component<ToolCardProps> = (props) => {
             <Show when={props.output}>
               <div>
                 <p class="text-[10px] text-wool-500 mb-0.5 uppercase tracking-wide">Output</p>
-                <pre class="text-[10px] text-wool-300 bg-pasture-900 p-1.5 rounded overflow-x-auto whitespace-pre-wrap break-all max-h-24 overflow-y-auto">
+                <pre class="text-[10px] text-wool-300 bg-pasture-900 p-1.5 rounded-none overflow-x-auto whitespace-pre-wrap break-all max-h-24 overflow-y-auto">
                   {props.output}
                 </pre>
               </div>

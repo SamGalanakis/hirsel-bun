@@ -22,7 +22,7 @@ impl DeltaState {
         let blocked_by_map = self.load_blocked_by(pool).await?;
 
         let rows = sqlx::query(
-            "SELECT id, project_id, parent_id, position, name, kind, source, content, difficulty, status, x, y, created_at, updated_at, completed_at, last_commit_sha, resolves, claimed_by, claimed_at, completed_by, check_result, check_feedback, tokens_used
+            "SELECT id, project_id, parent_id, position, name, kind, source, content, difficulty, status, created_at, updated_at, completed_at, last_commit_sha, resolves, claimed_by, claimed_at, completed_by, check_result, check_feedback, tokens_used
              FROM board_nodes
              WHERE project_id = ? AND route_id = ?
              ORDER BY parent_id NULLS FIRST, position",
@@ -58,7 +58,7 @@ impl DeltaState {
         let blocked_by = self.load_node_blocked_by(pool, id).await?;
 
         let row = sqlx::query(
-            "SELECT id, project_id, parent_id, position, name, kind, source, content, difficulty, status, x, y, created_at, updated_at, completed_at, last_commit_sha, resolves, claimed_by, claimed_at, completed_by, check_result, check_feedback, tokens_used
+            "SELECT id, project_id, parent_id, position, name, kind, source, content, difficulty, status, created_at, updated_at, completed_at, last_commit_sha, resolves, claimed_by, claimed_at, completed_by, check_result, check_feedback, tokens_used
              FROM board_nodes
              WHERE id = ? AND project_id = ? AND route_id = ?",
         )
@@ -83,8 +83,6 @@ impl DeltaState {
             validates,
             validated_by,
             blocked_by,
-            x: row.get("x"),
-            y: row.get("y"),
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
             completed_at: row.get("completed_at"),
@@ -132,7 +130,7 @@ impl DeltaState {
         let blocked_by_map = self.load_blocked_by(pool).await?;
 
         let rows = sqlx::query(
-            "SELECT id, project_id, parent_id, position, name, kind, source, content, difficulty, status, x, y, created_at, updated_at, completed_at, last_commit_sha, resolves, claimed_by, claimed_at, completed_by, check_result, check_feedback, tokens_used
+            "SELECT id, project_id, parent_id, position, name, kind, source, content, difficulty, status, created_at, updated_at, completed_at, last_commit_sha, resolves, claimed_by, claimed_at, completed_by, check_result, check_feedback, tokens_used
              FROM board_nodes
              WHERE parent_id = ? AND project_id = ? AND route_id = ?
              ORDER BY position",
@@ -290,8 +288,8 @@ impl DeltaState {
         let position = self.next_position(pool, parent_id.as_deref()).await?;
 
         sqlx::query(
-            "INSERT INTO board_nodes (id, project_id, route_id, parent_id, position, name, kind, source, content, difficulty, status, x, y, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'user', ?, ?, 'draft', ?, ?, ?, ?)",
+            "INSERT INTO board_nodes (id, project_id, route_id, parent_id, position, name, kind, source, content, difficulty, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'user', ?, ?, 'draft', ?, ?)",
         )
         .bind(&id)
         .bind(self.project_id)
@@ -302,8 +300,6 @@ impl DeltaState {
         .bind(req.kind.as_str())
         .bind(&req.content)
         .bind(req.difficulty.as_str())
-        .bind(req.x)
-        .bind(req.y)
         .bind(&now)
         .bind(&now)
         .execute(pool)
@@ -529,15 +525,6 @@ impl DeltaState {
             sql.push_str(&format!(", difficulty = ?{}", bind_index));
             bind_index += 1;
         }
-        if req.x.is_some() {
-            sql.push_str(&format!(", x = ?{}", bind_index));
-            bind_index += 1;
-        }
-        if req.y.is_some() {
-            sql.push_str(&format!(", y = ?{}", bind_index));
-            bind_index += 1;
-        }
-
         sql.push_str(&format!(
             " WHERE id = ?{} AND project_id = ?{} AND route_id = ?{}",
             bind_index,
@@ -554,12 +541,6 @@ impl DeltaState {
         }
         if let Some(difficulty) = req.difficulty {
             query = query.bind(difficulty.as_str());
-        }
-        if let Some(x) = req.x {
-            query = query.bind(x);
-        }
-        if let Some(y) = req.y {
-            query = query.bind(y);
         }
         query = query.bind(id).bind(self.project_id).bind(self.route_id);
         query.execute(pool).await?;
@@ -845,8 +826,6 @@ impl DeltaState {
                 last_commit_sha: node.last_commit_sha.clone(),
                 resolves: node.resolves.clone(),
                 children,
-                x: node.x,
-                y: node.y,
                 claimed_by: node.claimed_by.clone(),
                 claimed_at: node.claimed_at.clone(),
                 completed_by: node.completed_by.clone(),
@@ -962,8 +941,6 @@ impl DeltaState {
             validates: validates_map.get(id).cloned().unwrap_or_default(),
             validated_by: validated_by_map.get(id).cloned().unwrap_or_default(),
             blocked_by: blocked_by_map.get(id).cloned().unwrap_or_default(),
-            x: row.get("x"),
-            y: row.get("y"),
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
             completed_at: row.get("completed_at"),

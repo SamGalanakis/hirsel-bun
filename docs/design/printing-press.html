@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Printing Press — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,700;1,400&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --ink: #0a0a0a;
+      --paper: #f0e8d8;
+      --paper-dim: rgba(240,232,216,0.06);
+      --lead: #4a4a4a;
+      --lead-light: #6a6a6a;
+      --sheen: rgba(20,40,80,0.15);
+      --proof: #f8f0e0;
+      --rule: rgba(240,232,216,0.08);
+      --text: #c8c0b0;
+      --text-dim: #605848;
+    }
+
+    body {
+      font-family: 'IBM Plex Mono', monospace;
+      background: var(--ink);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    .direction-nav {
+      position: sticky; top: 0; z-index: 1000;
+      background: rgba(10,10,10,0.92); backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--rule);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .direction-nav a {
+      font-size: 11px; font-weight: 500; color: var(--text-dim);
+      text-decoration: none; padding: 5px 12px; border-radius: 6px; transition: all 0.2s;
+    }
+    .direction-nav a:hover { color: var(--paper); background: var(--paper-dim); }
+    .direction-nav .nav-title {
+      font-family: 'EB Garamond', serif; font-size: 15px; font-style: italic;
+      color: var(--text); flex: 1; text-align: center;
+    }
+    .direction-nav .nav-home {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-dim); border-right: 1px solid var(--rule);
+      padding-right: 16px; margin-right: 4px;
+    }
+
+    .page-header {
+      padding: 80px 48px 20px;
+      max-width: 1100px; margin: 0 auto;
+    }
+
+    .tag {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--paper); margin-bottom: 12px; display: block;
+      opacity: 0.6;
+    }
+
+    h1 {
+      font-family: 'EB Garamond', serif;
+      font-size: clamp(40px, 6vw, 68px);
+      font-weight: 400; font-style: italic;
+      line-height: 1.1; color: var(--text); margin-bottom: 16px;
+    }
+
+    .subtitle {
+      font-size: 15px; font-weight: 300;
+      color: var(--text-dim); max-width: 580px; line-height: 1.8;
+    }
+
+    .showcase {
+      padding: 40px 48px 60px;
+      max-width: 1100px; margin: 0 auto;
+    }
+
+    /* ====== PRINTING PRESS ====== */
+    /*
+      Specs are typeset galleys. Tasks are individual type blocks in
+      the composing stick. Workers are press rollers — they ink and
+      press each galley. Delivery is pulling the proof. Galleys at
+      different stages: set and locked (validated), being composed
+      (working), blank (draft). Ink coverage = completion.
+    */
+
+    .composing-room {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 24px;
+    }
+
+    .galley {
+      background: #141414;
+      border: 1px solid var(--rule);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+      animation: galley-appear 0.5s ease-out both;
+    }
+
+    .galley:nth-child(1) { animation-delay: 0.1s; }
+    .galley:nth-child(2) { animation-delay: 0.2s; }
+    .galley:nth-child(3) { animation-delay: 0.3s; }
+    .galley:nth-child(4) { animation-delay: 0.4s; }
+    .galley:nth-child(5) { animation-delay: 0.5s; }
+
+    @keyframes galley-appear {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Galley label — like a printer's job ticket */
+    .job-ticket {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--rule);
+      display: flex; justify-content: space-between; align-items: baseline;
+    }
+
+    .job-name {
+      font-family: 'EB Garamond', serif;
+      font-size: 14px; font-weight: 700;
+    }
+
+    .job-number {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9px; color: var(--text-dim);
+    }
+
+    /* Composing stick viewport */
+    .stick-viewport {
+      height: 200px;
+      position: relative;
+      overflow: hidden;
+      background: #0e0e0e;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    /* Individual type blocks (tasks) */
+    .type-block {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: 2px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.03em;
+    }
+
+    /* Set type: reversed (white on dark, like actual type) */
+    .type-block.set {
+      background: var(--lead);
+      color: var(--paper);
+      border: 1px solid #555;
+    }
+
+    /* Inked type: has the fresh-ink sheen */
+    .type-block.inked {
+      background: var(--lead);
+      color: var(--paper);
+      border: 1px solid #555;
+      box-shadow: inset 0 -1px 3px var(--sheen);
+    }
+
+    /* Being composed: partially visible */
+    .type-block.composing {
+      background: rgba(74,74,74,0.4);
+      color: rgba(240,232,216,0.5);
+      border: 1px dashed rgba(106,106,106,0.4);
+      animation: compose-blink 2s ease-in-out infinite;
+    }
+
+    @keyframes compose-blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* Blank slugs (placeholder for tasks not yet created) */
+    .type-slug {
+      height: 16px;
+      background: rgba(74,74,74,0.1);
+      border: 1px solid rgba(74,74,74,0.15);
+      border-radius: 2px;
+    }
+
+    /* Ink coverage bar */
+    .ink-coverage {
+      position: absolute;
+      right: 8px; top: 8px; bottom: 8px;
+      width: 4px;
+      background: rgba(240,232,216,0.04);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .ink-fill {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      border-radius: 2px;
+      background: var(--text);
+      opacity: 0.4;
+      transition: height 0.8s;
+    }
+
+    /* Roller animation for active galleys */
+    .roller {
+      position: absolute;
+      left: 0; right: 0;
+      height: 6px;
+      background: linear-gradient(180deg,
+        transparent,
+        rgba(20,40,80,0.3),
+        rgba(20,40,80,0.15),
+        transparent
+      );
+      animation: roll-pass 4s ease-in-out infinite;
+      pointer-events: none;
+    }
+
+    @keyframes roll-pass {
+      0% { top: -6px; opacity: 0; }
+      10% { opacity: 1; }
+      90% { opacity: 1; }
+      100% { top: 100%; opacity: 0; }
+    }
+
+    /* Proof mark for validated galleys */
+    .proof-mark {
+      position: absolute;
+      top: 8px; left: 8px;
+      font-family: 'EB Garamond', serif;
+      font-size: 10px;
+      font-style: italic;
+      color: rgba(240,232,216,0.25);
+      transform: rotate(-12deg);
+    }
+
+    /* Galley stats */
+    .galley-stats {
+      padding: 12px 16px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      border-top: 1px solid var(--rule);
+    }
+
+    .stat {
+      display: flex; flex-direction: column; gap: 2px;
+    }
+
+    .stat-label {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .stat-value {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 14px; font-weight: 500;
+      color: var(--text);
+    }
+
+    .stat-value.inking {
+      color: var(--paper);
+      animation: ink-pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes ink-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    /* Stage badge */
+    .stage-badge {
+      display: inline-block;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 8px; letter-spacing: 0.08em; text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 100px;
+      margin-top: 4px;
+    }
+
+    .stage-proofed { background: rgba(240,232,216,0.1); color: var(--paper); }
+    .stage-inking { background: rgba(20,40,80,0.2); color: #8090b0; }
+    .stage-waiting { background: rgba(240,232,216,0.04); color: var(--text-dim); }
+    .stage-blank { background: rgba(240,232,216,0.03); color: var(--text-dim); }
+
+    .rationale {
+      padding: 0 48px 100px;
+      max-width: 1100px; margin: 0 auto;
+    }
+
+    .rationale h3 {
+      font-family: 'EB Garamond', serif;
+      font-size: 24px; font-style: italic; margin-bottom: 20px;
+    }
+
+    .rationale-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .rationale-card {
+      padding: 24px;
+      background: #141414;
+      border: 1px solid var(--rule);
+      border-radius: 4px;
+    }
+
+    .rationale-card h4 {
+      font-size: 12px; font-weight: 700; margin-bottom: 8px;
+      color: var(--paper); opacity: 0.7;
+    }
+
+    .rationale-card p {
+      font-size: 13px; color: var(--text-dim); line-height: 1.7;
+    }
+
+    @media (max-width: 768px) {
+      .page-header, .showcase, .rationale { padding-left: 20px; padding-right: 20px; }
+      .composing-room { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="direction-nav">
+    <a href="../designs.html" class="nav-home">Storm</a>
+    <a href="murmuration.html">Prev</a>
+    <span class="nav-title">Printing Press</span>
+    <a href="aquifer.html">Next</a>
+  </nav>
+
+  <div class="page-header">
+    <div class="tag">Direction 19 — Mechanical</div>
+    <h1>Printing Press</h1>
+    <p class="subtitle">Specs are typeset galleys. Tasks are individual type blocks arranged in the composing stick. Workers are press rollers — they ink and press each galley. Delivery is pulling the finished proof. Ink coverage shows completion. The composing room reveals every stage of the work.</p>
+  </div>
+
+  <div class="showcase">
+    <div class="composing-room">
+
+      <!-- Galley 1: Schema Migration — validated, proofed -->
+      <div class="galley">
+        <div class="job-ticket">
+          <span class="job-name">Schema Migration</span>
+          <span class="job-number">G-001</span>
+        </div>
+        <div class="stick-viewport">
+          <div class="proof-mark">good to print</div>
+          <div class="ink-coverage"><div class="ink-fill" style="height:100%"></div></div>
+          <div class="type-block inked">tables &mdash; create &amp; migrate</div>
+          <div class="type-block inked">seeds &mdash; populate defaults</div>
+          <div class="type-block inked">indexes &mdash; add constraints</div>
+        </div>
+        <div class="galley-stats">
+          <div class="stat"><span class="stat-label">Stage</span><span class="stage-badge stage-proofed">proofed</span></div>
+          <div class="stat"><span class="stat-label">Ink</span><span class="stat-value">100%</span></div>
+          <div class="stat"><span class="stat-label">Blocks</span><span class="stat-value">3 set</span></div>
+          <div class="stat"><span class="stat-label">Pulls</span><span class="stat-value">1 proof</span></div>
+        </div>
+      </div>
+
+      <!-- Galley 2: API Restructure — validated, proofed -->
+      <div class="galley">
+        <div class="job-ticket">
+          <span class="job-name">API Restructure</span>
+          <span class="job-number">G-002</span>
+        </div>
+        <div class="stick-viewport">
+          <div class="proof-mark">good to print</div>
+          <div class="ink-coverage"><div class="ink-fill" style="height:100%"></div></div>
+          <div class="type-block inked">v2-ns &mdash; namespace routes</div>
+          <div class="type-block inked">shim &mdash; backward compat</div>
+          <div class="type-block inked">compat &mdash; version matrix</div>
+          <div class="type-block inked">routes &mdash; handler refactor</div>
+          <div class="type-block inked">docs &mdash; openapi spec</div>
+        </div>
+        <div class="galley-stats">
+          <div class="stat"><span class="stat-label">Stage</span><span class="stage-badge stage-proofed">proofed</span></div>
+          <div class="stat"><span class="stat-label">Ink</span><span class="stat-value">100%</span></div>
+          <div class="stat"><span class="stat-label">Blocks</span><span class="stat-value">5 set</span></div>
+          <div class="stat"><span class="stat-label">Pulls</span><span class="stat-value">1 proof</span></div>
+        </div>
+      </div>
+
+      <!-- Galley 3: Token Rotation — working, roller active -->
+      <div class="galley">
+        <div class="job-ticket">
+          <span class="job-name">Token Rotation</span>
+          <span class="job-number">G-003</span>
+        </div>
+        <div class="stick-viewport">
+          <div class="roller"></div>
+          <div class="ink-coverage"><div class="ink-fill" style="height:50%"></div></div>
+          <div class="type-block inked">provider &mdash; oauth flow</div>
+          <div class="type-block inked">challenge &mdash; mfa verify</div>
+          <div class="type-block composing">refresh &mdash; token cycle</div>
+          <div class="type-block composing">revoke &mdash; cleanup stale</div>
+        </div>
+        <div class="galley-stats">
+          <div class="stat"><span class="stat-label">Stage</span><span class="stage-badge stage-inking">inking</span></div>
+          <div class="stat"><span class="stat-label">Ink</span><span class="stat-value inking">50%</span></div>
+          <div class="stat"><span class="stat-label">Blocks</span><span class="stat-value inking">2/4</span></div>
+          <div class="stat"><span class="stat-label">Pulls</span><span class="stat-value inking">pressing</span></div>
+        </div>
+      </div>
+
+      <!-- Galley 4: Rate Limiter — pending/blocked, waiting -->
+      <div class="galley">
+        <div class="job-ticket">
+          <span class="job-name">Rate Limiter</span>
+          <span class="job-number">G-004</span>
+        </div>
+        <div class="stick-viewport" style="opacity: 0.5;">
+          <div class="ink-coverage"><div class="ink-fill" style="height:0%"></div></div>
+          <div class="type-slug"></div>
+          <div class="type-slug"></div>
+          <div class="type-slug"></div>
+        </div>
+        <div class="galley-stats">
+          <div class="stat"><span class="stat-label">Stage</span><span class="stage-badge stage-waiting">waiting</span></div>
+          <div class="stat"><span class="stat-label">Ink</span><span class="stat-value">0%</span></div>
+          <div class="stat"><span class="stat-label">Blocks</span><span class="stat-value">0</span></div>
+          <div class="stat"><span class="stat-label">Pulls</span><span class="stat-value">—</span></div>
+        </div>
+      </div>
+
+      <!-- Galley 5: E2E Tests — draft, blank galley -->
+      <div class="galley" style="opacity: 0.4;">
+        <div class="job-ticket">
+          <span class="job-name">E2E Tests</span>
+          <span class="job-number">G-005</span>
+        </div>
+        <div class="stick-viewport">
+          <div class="ink-coverage"></div>
+        </div>
+        <div class="galley-stats">
+          <div class="stat"><span class="stat-label">Stage</span><span class="stage-badge stage-blank">blank</span></div>
+          <div class="stat"><span class="stat-label">Ink</span><span class="stat-value">—</span></div>
+          <div class="stat"><span class="stat-label">Blocks</span><span class="stat-value">—</span></div>
+          <div class="stat"><span class="stat-label">Pulls</span><span class="stat-value">—</span></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="rationale">
+    <h3>Why this is interesting</h3>
+    <div class="rationale-grid">
+      <div class="rationale-card">
+        <h4>Type blocks = composable tasks</h4>
+        <p>Each task is a physical block of metal type. You arrange them in a composing stick to build a galley. The metaphor makes decomposition tangible — you can see how many blocks make up a spec, and each block is a discrete, movable unit that must be set before the galley can print.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Ink coverage = completion</h4>
+        <p>A fully inked galley is ready to pull a proof. Partial ink coverage means the roller hasn't finished its pass — some blocks are set but not yet pressed. You see completion as a physical property of the surface, not as a number in a progress bar.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Rollers = worker pressure</h4>
+        <p>The press roller sweeping down a galley is the worker executing tasks. It applies force uniformly across all set blocks. Multiple workers are multiple rollers, each pressing a different galley in parallel. The mechanical rhythm of the press maps to the dispatch cycle.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Proofs = delivery</h4>
+        <p>Pulling a proof is the moment the work becomes real — ink transfers from type to paper. Delivery is the same: code transfers from the workspace to a pull request. A validated galley marked "good to print" is a spec ready for delivery. The proof sheet is the PR diff.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

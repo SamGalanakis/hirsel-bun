@@ -194,8 +194,6 @@ pub struct BoardNode {
     pub validates: Vec<String>,
     pub validated_by: Vec<String>,
     pub blocked_by: Vec<String>,
-    pub x: Option<f64>,
-    pub y: Option<f64>,
     pub created_at: String,
     pub updated_at: String,
     pub completed_at: Option<String>,
@@ -228,8 +226,6 @@ pub struct BoardNodeTree {
     #[serde(default)]
     pub blocked_by: Vec<String>,
     pub children: Vec<BoardNodeTree>,
-    pub x: Option<f64>,
-    pub y: Option<f64>,
     pub completed_at: Option<String>,
     pub last_commit_sha: Option<String>,
     pub resolves: Option<String>,
@@ -257,8 +253,6 @@ impl From<BoardNode> for BoardNodeTree {
             validated_by: node.validated_by,
             blocked_by: node.blocked_by,
             children: vec![],
-            x: node.x,
-            y: node.y,
             completed_at: node.completed_at,
             last_commit_sha: node.last_commit_sha,
             resolves: node.resolves,
@@ -462,8 +456,6 @@ pub struct CreateBoardNodeRequest {
     pub validated_by: Vec<String>,
     #[serde(default)]
     pub blocked_by: Vec<String>,
-    pub x: Option<f64>,
-    pub y: Option<f64>,
 }
 
 /// Request to update a board node
@@ -475,8 +467,6 @@ pub struct UpdateBoardNodeRequest {
     pub difficulty: Option<BoardNodeDifficulty>,
     pub validated_by: Option<Vec<String>>,
     pub blocked_by: Option<Vec<String>>,
-    pub x: Option<f64>,
-    pub y: Option<f64>,
 }
 
 /// Result of a dispatch operation

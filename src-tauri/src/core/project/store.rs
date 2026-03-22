@@ -3,7 +3,10 @@
 use sqlx::{Row, SqlitePool};
 use tokio::sync::OnceCell;
 
-use super::types::{CreateProjectRequest, Project, UpdateProjectRequest};
+use super::focus::default_project_focus_html;
+use super::types::{
+    CreateProjectRequest, Project, ProjectFocusView, ProjectRetainedContext, UpdateProjectRequest,
+};
 use crate::core::db::{global_pool, utc_now};
 use crate::core::route::{CreateMainRouteRequest, RouteStore};
 
@@ -21,6 +24,20 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 
 CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name);
+
+CREATE TABLE IF NOT EXISTS project_focus_views (
+    project_id INTEGER PRIMARY KEY,
+    html TEXT NOT NULL,
+    source TEXT,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS project_retained_contexts (
+    project_id INTEGER PRIMARY KEY,
+    markdown TEXT NOT NULL,
+    source TEXT,
+    updated_at TEXT NOT NULL
+);
 "#;
 
 const SCHEMA_VERSION_KEY: &str = "project_route_model_version";
@@ -78,6 +95,7 @@ DROP TABLE IF EXISTS delivery_attempts;
 DROP TABLE IF EXISTS deliveries;
 DROP TABLE IF EXISTS project_messages;
 DROP TABLE IF EXISTS project_message_reads;
+DROP TABLE IF EXISTS project_focus_views;
 DROP TABLE IF EXISTS meta;
 "#;
 
@@ -164,8 +182,6 @@ impl ProjectStore {
                 worker_scale: None,
                 time_limit_minutes: None,
                 human_in_the_loop: None,
-                docs_path: None,
-                persist_docs_changes: None,
                 target_branch: None,
                 runner: None,
             })
@@ -177,6 +193,30 @@ impl ProjectStore {
             .bind(project_id)
             .execute(pool)
             .await?;
+
+        let focus_html = default_project_focus_html(&req.name);
+        sqlx::query(
+            "INSERT INTO project_focus_views (project_id, html, source, updated_at)
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(project_id)
+        .bind(focus_html)
+        .bind("seed")
+        .bind(utc_now())
+        .execute(pool)
+        .await?;
+
+        let retained_markdown = default_project_retained_context_markdown(&req.name);
+        sqlx::query(
+            "INSERT INTO project_retained_contexts (project_id, markdown, source, updated_at)
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(project_id)
+        .bind(retained_markdown)
+        .bind("seed")
+        .bind(utc_now())
+        .execute(pool)
+        .await?;
 
         self.get_project(project_id).await
     }
@@ -332,6 +372,10 @@ impl ProjectStore {
             .bind(id)
             .execute(pool)
             .await;
+        let _ = sqlx::query("DELETE FROM project_focus_views WHERE project_id = ?")
+            .bind(id)
+            .execute(pool)
+            .await;
 
         if let Ok(shepherd_store) = crate::core::shepherd_chat::ShepherdChatStore::open().await {
             let _ = shepherd_store.clear_project_messages(id).await;
@@ -353,6 +397,127 @@ impl ProjectStore {
         Ok(())
     }
 
+    pub async fn get_project_focus_view(&self, id: i64) -> ProjectResult<ProjectFocusView> {
+        let pool = self.pool().await;
+        let project = self.get_project(id).await?;
+
+        let row = sqlx::query(
+            "SELECT project_id, html, source, updated_at FROM project_focus_views WHERE project_id = ?",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+
+        if let Some(row) = row {
+            Ok(ProjectFocusView {
+                project_id: row.get("project_id"),
+                html: row.get("html"),
+                source: row.get("source"),
+                updated_at: row.get("updated_at"),
+            })
+        } else {
+            let html = default_project_focus_html(&project.name);
+            self.update_project_focus_view(id, &html, Some("seed"))
+                .await
+        }
+    }
+
+    pub async fn update_project_focus_view(
+        &self,
+        id: i64,
+        html: &str,
+        source: Option<&str>,
+    ) -> ProjectResult<ProjectFocusView> {
+        let pool = self.pool().await;
+        let _ = self.get_project(id).await?;
+        let now = utc_now();
+
+        sqlx::query(
+            "INSERT INTO project_focus_views (project_id, html, source, updated_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(project_id) DO UPDATE SET
+               html = excluded.html,
+               source = excluded.source,
+               updated_at = excluded.updated_at",
+        )
+        .bind(id)
+        .bind(html)
+        .bind(source)
+        .bind(&now)
+        .execute(pool)
+        .await?;
+
+        Ok(ProjectFocusView {
+            project_id: id,
+            html: html.to_string(),
+            source: source.map(ToOwned::to_owned),
+            updated_at: now,
+        })
+    }
+
+    pub async fn get_project_retained_context(
+        &self,
+        id: i64,
+    ) -> ProjectResult<ProjectRetainedContext> {
+        let pool = self.pool().await;
+        let project = self.get_project(id).await?;
+
+        let row = sqlx::query(
+            "SELECT project_id, markdown, source, updated_at
+             FROM project_retained_contexts
+             WHERE project_id = ?",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+
+        if let Some(row) = row {
+            Ok(ProjectRetainedContext {
+                project_id: row.get("project_id"),
+                markdown: row.get("markdown"),
+                source: row.get("source"),
+                updated_at: row.get("updated_at"),
+            })
+        } else {
+            let markdown = default_project_retained_context_markdown(&project.name);
+            self.update_project_retained_context(id, &markdown, Some("seed"))
+                .await
+        }
+    }
+
+    pub async fn update_project_retained_context(
+        &self,
+        id: i64,
+        markdown: &str,
+        source: Option<&str>,
+    ) -> ProjectResult<ProjectRetainedContext> {
+        let pool = self.pool().await;
+        let _ = self.get_project(id).await?;
+        let now = utc_now();
+
+        sqlx::query(
+            "INSERT INTO project_retained_contexts (project_id, markdown, source, updated_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(project_id) DO UPDATE SET
+               markdown = excluded.markdown,
+               source = excluded.source,
+               updated_at = excluded.updated_at",
+        )
+        .bind(id)
+        .bind(markdown)
+        .bind(source)
+        .bind(&now)
+        .execute(pool)
+        .await?;
+
+        Ok(ProjectRetainedContext {
+            project_id: id,
+            markdown: markdown.to_string(),
+            source: source.map(ToOwned::to_owned),
+            updated_at: now,
+        })
+    }
+
     fn row_to_project(row: &sqlx::sqlite::SqliteRow) -> Project {
         Project {
             id: row.get("id"),
@@ -365,6 +530,13 @@ impl ProjectStore {
             active_route_id: row.get("active_route_id"),
         }
     }
+}
+
+fn default_project_retained_context_markdown(project_name: &str) -> String {
+    format!(
+        "# Retained Context\n\nProject: {}\n\nKeep durable findings, constraints, and decisions here.\n",
+        project_name
+    )
 }
 
 #[cfg(test)]

@@ -5,6 +5,7 @@
 use async_trait::async_trait;
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 use tracing::info;
 
 use super::types::{FileEntry, StartingPoint, WorkspaceInfo};
@@ -36,6 +37,10 @@ impl LocalWorkspaceProvider {
 
     /// Copy a directory recursively
     fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> HirselResult<()> {
+        if Self::copy_dir_reflink(src, dst).is_ok() {
+            return Ok(());
+        }
+
         if !dst.exists() {
             fs::create_dir_all(dst)?;
         }
@@ -67,6 +72,26 @@ impl LocalWorkspaceProvider {
         }
 
         Ok(())
+    }
+
+    fn copy_dir_reflink(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+        if dst.exists() {
+            fs::remove_dir_all(dst)?;
+        }
+        fs::create_dir_all(dst)?;
+
+        let status = Command::new("cp")
+            .arg("-a")
+            .arg("--reflink=auto")
+            .arg(format!("{}/.", src.display()))
+            .arg(dst)
+            .status()?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err(std::io::Error::other("cp --reflink=auto failed"))
+        }
     }
 }
 

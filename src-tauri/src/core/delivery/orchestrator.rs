@@ -7,11 +7,11 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use super::git_ops::{GitOperations, PushResult};
-use super::workspace::{resolve_workspace_for_project, WorkspaceLocation};
+use super::workspace::{resolve_run_work_dir, resolve_workspace_for_project, WorkspaceLocation};
 use super::{DeliveryError, DeliveryResult};
 use crate::core::config::Config;
+use crate::core::conflict_resolver::ConflictResolverService;
 use crate::core::forge::{create_forge_for_remote, ForgeProvider, MergeResult, PrInfo};
-use crate::core::service_worker::ConflictResolverServiceWrapper;
 use crate::core::state::MergeState;
 
 /// Current delivery state
@@ -102,8 +102,12 @@ impl DeliveryOrchestrator {
     ///
     /// Resolves the work directory from the run name and delegates to `from_work_dir`.
     pub fn from_run_name(run_name: &str, expected_remote: Option<&str>) -> DeliveryResult<Self> {
-        let work_dir = crate::gui::commands::get_run_work_dir(run_name)
-            .map_err(DeliveryError::InvalidState)?;
+        let work_dir = resolve_run_work_dir(run_name).map_err(|e| match e {
+            super::workspace::WorkspaceError::WorkDirNotFound(message) => {
+                DeliveryError::InvalidState(message)
+            }
+            other => DeliveryError::InvalidState(other.to_string()),
+        })?;
         Self::from_work_dir(&work_dir, expected_remote)
     }
 
@@ -265,7 +269,7 @@ impl DeliveryOrchestrator {
         target_branch: &str,
         title: &str,
         body: &str,
-        config: Config,
+        _config: Config,
         context: Option<&str>,
     ) -> DeliveryResult<MergeResult> {
         let merge_state = self.check_merge_state(target_branch)?;
@@ -296,7 +300,7 @@ impl DeliveryOrchestrator {
         if !conflicts.is_empty() {
             let default_ctx = format!("Merging into {} for: {}", target_branch, title);
             let ctx = context.unwrap_or(&default_ctx);
-            let resolver = ConflictResolverServiceWrapper::with_config(config);
+            let resolver = ConflictResolverService::new();
 
             match resolver.resolve_conflicts(&work_dir, conflicts, ctx).await {
                 Ok(r) if r.success => { /* continue */ }

@@ -28,7 +28,7 @@ export const ThinkingBlock: Component<ThinkingBlockProps> = (props) => {
     >
       <div class="flex items-center gap-1.5 text-amber-500/70 text-xs mb-1">
         <Icon name="brain" class="w-3 h-3" />
-        <span class="italic" style="font-family: 'ET Book', serif;">
+        <span class="italic" style="font-family: 'Newsreader', serif; font-style: italic;">
           Thinking
         </span>
         <Show when={isCollapsible()}>

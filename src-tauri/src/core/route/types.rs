@@ -60,10 +60,6 @@ pub struct UpdateRouteSettingsRequest {
     #[serde(default)]
     pub human_in_the_loop: Option<bool>,
     #[serde(default)]
-    pub docs_path: Option<String>,
-    #[serde(default)]
-    pub persist_docs_changes: Option<bool>,
-    #[serde(default)]
     pub target_branch: Option<String>,
     #[serde(default)]
     pub runner: Option<String>,
@@ -87,8 +83,6 @@ pub struct Route {
     pub worker_scale: Option<String>,
     pub time_limit_minutes: Option<i64>,
     pub human_in_the_loop: bool,
-    pub docs_path: String,
-    pub persist_docs_changes: bool,
     pub target_branch: Option<String>,
     pub runner: Option<String>,
 }
@@ -142,10 +136,6 @@ pub struct CreateMainRouteRequest {
     pub time_limit_minutes: Option<i64>,
     #[serde(default)]
     pub human_in_the_loop: Option<bool>,
-    #[serde(default)]
-    pub docs_path: Option<String>,
-    #[serde(default)]
-    pub persist_docs_changes: Option<bool>,
     #[serde(default)]
     pub target_branch: Option<String>,
     #[serde(default)]

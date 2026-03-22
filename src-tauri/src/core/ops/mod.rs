@@ -11,14 +11,12 @@
 //! - No prompting or user interaction - that's the caller's responsibility
 //! - Operations are idempotent where possible
 
-pub mod docs;
 pub mod project;
 pub mod run;
 pub mod setup;
 pub mod spawn;
 pub mod types;
 
-pub use docs::{deliver_docs, setup_docs, DocsDeliveryConfig, DocsSetupConfig};
 pub use project::*;
 pub use run::*;
 pub use setup::*;

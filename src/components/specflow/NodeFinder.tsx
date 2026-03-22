@@ -125,7 +125,7 @@ export const NodeFinder: Component<{
         }}
       >
         <div
-          class="fixed left-1/2 top-[90px] -translate-x-1/2 w-[560px] rounded-xl overflow-hidden"
+          class="fixed left-1/2 top-[90px] -translate-x-1/2 w-[560px] rounded-none overflow-hidden"
           style={{
             background: 'linear-gradient(180deg, rgba(28,28,30,0.98) 0%, rgba(20,20,22,0.98) 100%)',
             border: '1px solid rgba(255,255,255,0.08)',
@@ -141,9 +141,9 @@ export const NodeFinder: Component<{
                 value={props.query}
                 onInput={(e) => props.setQuery(e.currentTarget.value)}
                 placeholder="Search nodes..."
-                class="w-full pl-9 pr-14 py-2.5 text-sm rounded-lg bg-black/30 border border-white/5 text-wool-200 placeholder-wool-600 focus:outline-none focus:border-amber-500/30 focus:ring-1 focus:ring-amber-500/20 transition-all"
+                class="w-full pl-9 pr-14 py-2.5 text-sm rounded-none bg-black/30 border border-white/5 text-wool-200 placeholder-wool-600 focus:outline-none focus:border-amber-500/30 focus:ring-1 focus:ring-amber-500/20 transition-all"
               />
-              <kbd class="absolute right-3 top-1/2 -translate-y-1/2 px-1.5 py-0.5 text-[10px] font-mono text-wool-600 bg-pasture-800 rounded border border-pasture-700">
+              <kbd class="absolute right-3 top-1/2 -translate-y-1/2 px-1.5 py-0.5 text-[10px] font-mono text-wool-600 bg-pasture-800 rounded-none border border-pasture-700">
                 {platformHint()}
               </kbd>
             </div>
@@ -163,7 +163,7 @@ export const NodeFinder: Component<{
                 {(item, index) => (
                   <button
                     type="button"
-                    class="w-full flex items-center gap-3 px-3 py-2 mx-1 rounded-lg text-left transition-colors"
+                    class="w-full flex items-center gap-3 px-3 py-2 mx-1 rounded-none text-left transition-colors"
                     classList={{
                       'bg-white/8': highlightedIndex() === index(),
                       'hover:bg-white/5': highlightedIndex() !== index(),
@@ -173,7 +173,7 @@ export const NodeFinder: Component<{
                     onClick={() => props.onSelect(item.id)}
                   >
                     <div
-                      class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                      class="w-8 h-8 rounded-none flex items-center justify-center shrink-0"
                       style={{
                         background: 'rgba(255,255,255,0.05)',
                         border: '1px solid rgba(255,255,255,0.08)',
@@ -191,7 +191,7 @@ export const NodeFinder: Component<{
                       <div class="flex items-center gap-2 text-[11px] text-wool-600">
                         <span>{kindLabel(item.kind)}</span>
                         <span class="inline-flex items-center gap-1">
-                          <span class="w-1.5 h-1.5 rounded-full" style={{ background: statusColor(item.status) }} />
+                          <span class="w-1.5 h-1.5 rounded-none" style={{ background: statusColor(item.status) }} />
                           <span>{statusLabel(item.status)}</span>
                         </span>
                         <Show when={item.claimedBy}>

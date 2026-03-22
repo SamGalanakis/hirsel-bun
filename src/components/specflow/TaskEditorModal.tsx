@@ -294,7 +294,7 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
       onClick={(e) => { if (e.target === e.currentTarget) props.onClose(); }}
     >
       <div
-        class="flex flex-col rounded-lg shadow-xl overflow-hidden"
+        class="flex flex-col rounded-none shadow-xl overflow-hidden"
         style={{
           width: 'min(640px, 90vw)',
           height: 'min(70vh, 700px)',
@@ -306,7 +306,7 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
         <div class="p-3 border-b border-pasture-600 flex items-center justify-between flex-shrink-0">
           <div class="flex items-center gap-2.5">
             <div
-              class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+              class="w-8 h-8 rounded-none flex items-center justify-center flex-shrink-0"
               style={{
                 background: isCheck() ? sage(0.15) : amber(0.12),
                 border: `1px solid ${isCheck() ? sage(0.25) : amber(0.2)}`,
@@ -332,7 +332,7 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
           </div>
           <button
             onClick={props.onClose}
-            class="p-1.5 rounded text-wool-500 hover:text-wool-300 hover:bg-white/5"
+            class="p-1.5 rounded-none text-wool-500 hover:text-wool-300 hover:bg-white/5"
           >
             <Icon name="x" size={16} />
           </button>
@@ -348,7 +348,7 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
               value={name()}
               onInput={(e) => setName(e.currentTarget.value)}
               placeholder={`${typeLabel()} name...`}
-              class="flex-1 px-2.5 py-1.5 rounded text-sm bg-pasture-900 border border-pasture-600 text-wool-100 placeholder-wool-600 focus:outline-none focus:ring-1 focus:ring-amber-500/30"
+              class="flex-1 px-2.5 py-1.5 rounded-none text-sm bg-pasture-900 border border-pasture-600 text-wool-100 placeholder-wool-600 focus:outline-none focus:ring-1 focus:ring-amber-500/30"
             />
           </div>
         </div>
@@ -359,28 +359,28 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
           <div class="flex items-center gap-0.5">
             <button
               onClick={() => insertFormatting('**', '**')}
-              class="p-1.5 rounded text-wool-400 hover:text-wool-200 hover:bg-white/5"
+              class="p-1.5 rounded-none text-wool-400 hover:text-wool-200 hover:bg-white/5"
               title="Bold (Cmd+B)"
             >
               <Icon name="bold" size={14} />
             </button>
             <button
               onClick={() => insertFormatting('*', '*')}
-              class="p-1.5 rounded text-wool-400 hover:text-wool-200 hover:bg-white/5"
+              class="p-1.5 rounded-none text-wool-400 hover:text-wool-200 hover:bg-white/5"
               title="Italic (Cmd+I)"
             >
               <Icon name="italic" size={14} />
             </button>
             <button
               onClick={() => insertFormatting('`', '`')}
-              class="p-1.5 rounded text-wool-400 hover:text-wool-200 hover:bg-white/5"
+              class="p-1.5 rounded-none text-wool-400 hover:text-wool-200 hover:bg-white/5"
               title="Code"
             >
               <Icon name="code" size={14} />
             </button>
             <button
               onClick={insertLink}
-              class="p-1.5 rounded text-wool-400 hover:text-wool-200 hover:bg-white/5"
+              class="p-1.5 rounded-none text-wool-400 hover:text-wool-200 hover:bg-white/5"
               title="Link"
             >
               <Icon name="link" size={14} />
@@ -388,7 +388,7 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
             <div class="w-px h-4 bg-pasture-600 mx-1" />
             <button
               onClick={openAssets}
-              class="p-1.5 rounded text-wool-400 hover:text-wool-200 hover:bg-white/5"
+              class="p-1.5 rounded-none text-wool-400 hover:text-wool-200 hover:bg-white/5"
               title="Open assets folder"
             >
               <Icon name="folder-open" size={14} />
@@ -396,10 +396,10 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
           </div>
 
           {/* Edit/Preview toggle */}
-          <div class="flex items-center gap-0.5 p-0.5 rounded-md bg-pasture-900">
+          <div class="flex items-center gap-0.5 p-0.5 rounded-none bg-pasture-900">
             <button
               onClick={() => setActiveTab('edit')}
-              class={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+              class={`px-2.5 py-1 rounded-none text-xs font-medium transition-colors ${
                 activeTab() === 'edit'
                   ? 'bg-pasture-700 text-wool-200'
                   : 'text-wool-500 hover:text-wool-300'
@@ -409,7 +409,7 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
             </button>
             <button
               onClick={() => setActiveTab('preview')}
-              class={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+              class={`px-2.5 py-1 rounded-none text-xs font-medium transition-colors ${
                 activeTab() === 'preview'
                   ? 'bg-pasture-700 text-wool-200'
                   : 'text-wool-500 hover:text-wool-300'
@@ -470,7 +470,7 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
                 value={validates()}
                 onInput={(e) => setValidates(e.currentTarget.value)}
                 placeholder="issue-id-1, issue-id-2"
-                class="flex-1 px-2.5 py-1.5 rounded text-xs font-mono bg-pasture-900 text-wool-200 placeholder-wool-600 focus:outline-none focus:ring-1 focus:ring-sage/30"
+                class="flex-1 px-2.5 py-1.5 rounded-none text-xs font-mono bg-pasture-900 text-wool-200 placeholder-wool-600 focus:outline-none focus:ring-1 focus:ring-sage/30"
                 style={{ border: `1px solid ${sage(0.4)}` }}
               />
             </div>
@@ -487,7 +487,7 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
                   value={blockedBy()}
                   onInput={(e) => setBlockedBy(e.currentTarget.value)}
                   placeholder="issue-id-1, issue-id-2"
-                  class="flex-1 px-2.5 py-1.5 rounded text-xs font-mono bg-pasture-900 text-wool-200 placeholder-wool-600 focus:outline-none focus:ring-1 focus:ring-amber-500/30"
+                  class="flex-1 px-2.5 py-1.5 rounded-none text-xs font-mono bg-pasture-900 text-wool-200 placeholder-wool-600 focus:outline-none focus:ring-1 focus:ring-amber-500/30"
                   style={{ border: `1px solid ${amber(0.4)}` }}
                 />
               </div>
@@ -501,7 +501,7 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
                   value={validatedBy()}
                   onInput={(e) => setValidatedBy(e.currentTarget.value)}
                   placeholder="eval-id-1, eval-id-2"
-                  class="flex-1 px-2.5 py-1.5 rounded text-xs font-mono bg-pasture-900 text-wool-200 placeholder-wool-600 focus:outline-none focus:ring-1 focus:ring-sage/30"
+                  class="flex-1 px-2.5 py-1.5 rounded-none text-xs font-mono bg-pasture-900 text-wool-200 placeholder-wool-600 focus:outline-none focus:ring-1 focus:ring-sage/30"
                   style={{ border: `1px solid ${sage(0.4)}` }}
                 />
               </div>
@@ -517,14 +517,14 @@ export const TaskEditorModal: Component<TaskEditorModalProps> = (props) => {
           <div class="flex items-center gap-2">
             <button
               onClick={props.onClose}
-              class="px-3 py-1.5 rounded text-xs font-medium text-wool-400 hover:text-wool-200 hover:bg-white/5"
+              class="px-3 py-1.5 rounded-none text-xs font-medium text-wool-400 hover:text-wool-200 hover:bg-white/5"
             >
               Cancel
             </button>
             <button
               onClick={handleSave}
               disabled={saving()}
-              class="px-3 py-1.5 rounded text-xs font-medium disabled:opacity-40"
+              class="px-3 py-1.5 rounded-none text-xs font-medium disabled:opacity-40"
               style={{
                 background: isCheck() ? sage(0.2) : 'var(--amber-500)',
                 color: isCheck() ? 'var(--sage)' : 'var(--pasture-900)',

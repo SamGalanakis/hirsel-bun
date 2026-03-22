@@ -22,6 +22,45 @@ pub struct Project {
     pub active_route_id: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectFocusView {
+    pub project_id: i64,
+    pub html: String,
+    pub updated_at: String,
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRetainedContext {
+    pub project_id: i64,
+    pub markdown: String,
+    pub updated_at: String,
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RouteSummary {
+    pub route_id: i64,
+    pub name: String,
+    pub selected: bool,
+    pub status: String,
+    #[serde(default)]
+    pub run_name: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSurfaceSnapshot {
+    pub focus_view: ProjectFocusView,
+    pub routes: Vec<RouteSummary>,
+}
+
 /// Request to create a new project
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

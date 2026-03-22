@@ -10,7 +10,6 @@ mod credentials;
 mod debug;
 mod delivery;
 mod delta;
-mod docs;
 mod drafts;
 mod events;
 mod files;
@@ -131,11 +130,10 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         config_cmd::get_config,
         config_cmd::get_config_defaults,
         config_cmd::save_config,
+        config_cmd::check_backend_health,
         config_cmd::codex_device_start_gui,
         config_cmd::codex_device_poll_gui,
         config_cmd::codex_device_exchange_gui,
-        config_cmd::get_tailscale_info,
-        config_cmd::check_ssh_runner,
         // Credential commands
         credentials::store_credential,
         credentials::delete_credential,
@@ -160,9 +158,14 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         // Project management commands
         projects::list_projects,
         projects::get_project,
+        projects::get_project_focus_view,
+        projects::get_project_retained_context,
+        projects::get_project_surface,
         projects::create_project,
         projects::create_project_from_path,
         projects::update_project,
+        projects::update_project_focus_view,
+        projects::update_project_retained_context,
         projects::update_project_name,
         projects::delete_project,
         // Delivery commands (run-based)
@@ -201,15 +204,13 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         delta::sync_and_get_shepherd_view,
         delta::sync_and_get_shepherd_view_if_changed,
         // Shepherd chat commands
-        shepherd::start_shepherd_session,
-        shepherd::send_shepherd_message,
-        shepherd::stop_shepherd_session,
-        shepherd::list_shepherd_sessions,
-        shepherd::get_shepherd_history,
-        shepherd::clear_shepherd_history,
-        shepherd::save_shepherd_message,
-        // Docs commands
-        docs::get_project_docs,
+        shepherd::commands::start_shepherd_session,
+        shepherd::commands::send_shepherd_message,
+        shepherd::commands::stop_shepherd_session,
+        shepherd::commands::list_shepherd_sessions,
+        shepherd::commands::get_shepherd_history,
+        shepherd::commands::clear_shepherd_history,
+        shepherd::commands::save_shepherd_message,
         // Project Messages (Sheepfold) commands
         project_messages::get_project_messages,
         project_messages::get_project_threads,

@@ -12,11 +12,9 @@
 //! orchestrator, and workers modules.
 
 pub mod local;
-pub mod remote;
 pub mod transitions;
 
 pub use local::LocalLifecycleManager;
-pub use remote::RemoteLifecycleManager;
 pub use transitions::{RunStateMachine, WorkerStateMachine};
 
 use crate::core::snapshot::WorkerStateHandle;

@@ -305,7 +305,7 @@ impl From<LlmConfigResponse> for config::LlmConfig {
 }
 
 // =============================================================================
-// Runner Config Types (Host + Container Model)
+// Runner Config Types (Single-Host Model)
 // =============================================================================
 
 /// Container configuration for frontend
@@ -315,233 +315,51 @@ pub struct ContainerConfigResponse {
     pub image: String,
 }
 
-/// Host configuration for frontend
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "type")]
-pub enum HostConfigResponse {
-    #[serde(rename = "local")]
-    Local,
-    #[serde(rename = "client")]
-    Client,
-    #[serde(rename = "ssh")]
-    Ssh {
-        address: String,
-        port: u16,
-        ssh_key: Option<String>,
-        work_base: String,
-        location: Option<String>,
-    },
-    #[serde(rename = "fly")]
-    Fly {
-        api_token: Option<String>,
-        app: String,
-        region: Option<String>,
-        #[serde(default = "default_fly_cpu_kind")]
-        cpu_kind: String,
-        #[serde(default = "default_fly_cpus")]
-        cpus: u32,
-        #[serde(default = "default_fly_memory_mb")]
-        memory_mb: u32,
-        #[serde(default = "default_auto_destroy")]
-        auto_destroy: bool,
-    },
-}
-
-/// Runner configuration for frontend (Host + Container model)
+/// Runner configuration for frontend (single-host model)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunnerConfigResponse {
-    pub host: HostConfigResponse,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub container: Option<ContainerConfigResponse>,
 }
 
 impl From<crate::core::runner::RunnerConfig> for RunnerConfigResponse {
     fn from(cfg: crate::core::runner::RunnerConfig) -> Self {
-        use crate::core::runner::{HostConfig, HostConfigOrShortcut};
-
-        let host = match &cfg.host {
-            HostConfigOrShortcut::Shortcut(s) => match s.to_lowercase().as_str() {
-                "client" => HostConfigResponse::Client,
-                _ => HostConfigResponse::Local,
-            },
-            HostConfigOrShortcut::Full(h) => match h {
-                HostConfig::Local => HostConfigResponse::Local,
-                HostConfig::Client => HostConfigResponse::Client,
-                HostConfig::Ssh(ssh) => HostConfigResponse::Ssh {
-                    address: ssh.address.clone(),
-                    port: ssh.port,
-                    ssh_key: ssh.ssh_key.clone(),
-                    work_base: ssh.work_base.clone(),
-                    location: ssh.location.clone(),
-                },
-                HostConfig::Fly(fly) => HostConfigResponse::Fly {
-                    api_token: fly.api_token.clone(),
-                    app: fly.app.clone(),
-                    region: fly.region.clone(),
-                    cpu_kind: fly.cpu_kind.clone(),
-                    cpus: fly.cpus,
-                    memory_mb: fly.memory_mb,
-                    auto_destroy: fly.auto_destroy,
-                },
-            },
-        };
-
         let container = cfg
             .container
             .map(|c| ContainerConfigResponse { image: c.image });
 
-        RunnerConfigResponse { host, container }
+        RunnerConfigResponse { container }
     }
 }
 
 impl From<RunnerConfigResponse> for crate::core::runner::RunnerConfig {
     fn from(cfg: RunnerConfigResponse) -> Self {
-        use crate::core::runner::{
-            ContainerConfig, FlyHostConfig, HostConfig, HostConfigOrShortcut, RunnerConfig,
-            SshHostConfig,
-        };
-
-        let host = match cfg.host {
-            HostConfigResponse::Local => HostConfigOrShortcut::Shortcut("local".to_string()),
-            HostConfigResponse::Client => HostConfigOrShortcut::Shortcut("client".to_string()),
-            HostConfigResponse::Ssh {
-                address,
-                port,
-                ssh_key,
-                work_base,
-                location,
-            } => HostConfigOrShortcut::Full(HostConfig::Ssh(SshHostConfig {
-                address,
-                port,
-                ssh_key,
-                work_base,
-                location,
-            })),
-            HostConfigResponse::Fly {
-                api_token,
-                app,
-                region,
-                cpu_kind,
-                cpus,
-                memory_mb,
-                auto_destroy,
-            } => HostConfigOrShortcut::Full(HostConfig::Fly(FlyHostConfig {
-                api_token,
-                app,
-                region,
-                cpu_kind,
-                cpus,
-                memory_mb,
-                auto_destroy,
-            })),
-        };
+        use crate::core::runner::{ContainerConfig, RunnerConfig};
 
         let container = cfg.container.map(|c| ContainerConfig { image: c.image });
 
-        RunnerConfig { host, container }
+        RunnerConfig { container }
     }
-}
-
-fn default_auto_destroy() -> bool {
-    true
-}
-fn default_fly_cpu_kind() -> String {
-    "shared".to_string()
-}
-fn default_fly_cpus() -> u32 {
-    1
-}
-fn default_fly_memory_mb() -> u32 {
-    1024
 }
 
 // =============================================================================
-// Orchestrator Profile Types
+// Backend Connection Types
 // =============================================================================
 
-/// Orchestrator mode for frontend
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum OrchestratorModeResponse {
-    Local,
-    Remote,
-}
-
-impl From<config::OrchestratorMode> for OrchestratorModeResponse {
-    fn from(mode: config::OrchestratorMode) -> Self {
-        match mode {
-            config::OrchestratorMode::Local => Self::Local,
-            config::OrchestratorMode::Remote => Self::Remote,
-        }
-    }
-}
-
-impl From<OrchestratorModeResponse> for config::OrchestratorMode {
-    fn from(mode: OrchestratorModeResponse) -> Self {
-        match mode {
-            OrchestratorModeResponse::Local => Self::Local,
-            OrchestratorModeResponse::Remote => Self::Remote,
-        }
-    }
-}
-
-/// Orchestrator profile for frontend
+/// Backend connection settings for the frontend/client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OrchestratorProfileResponse {
-    pub mode: OrchestratorModeResponse,
+pub struct BackendConfigResponse {
     pub url: Option<String>,
-    /// API key is masked for display (only shows first/last 4 chars)
     pub api_key: Option<String>,
-    /// How workers access the orchestrator
-    pub access: config::OrchestratorAccess,
 }
 
-impl From<config::OrchestratorProfile> for OrchestratorProfileResponse {
-    fn from(profile: config::OrchestratorProfile) -> Self {
-        // Mask OAuth credentials in the access field
-        let access = match profile.access {
-            config::OrchestratorAccess::Direct => config::OrchestratorAccess::Direct,
-            config::OrchestratorAccess::Tailscale {
-                oauth_client_id,
-                oauth_client_secret,
-                tag,
-            } => config::OrchestratorAccess::Tailscale {
-                // Mask credentials - show first/last 4 chars
-                oauth_client_id: if oauth_client_id.len() > 8 {
-                    format!(
-                        "{}...{}",
-                        &oauth_client_id[..4],
-                        &oauth_client_id[oauth_client_id.len() - 4..]
-                    )
-                } else {
-                    "****".to_string()
-                },
-                oauth_client_secret: if oauth_client_secret.len() > 8 {
-                    format!(
-                        "{}...{}",
-                        &oauth_client_secret[..4],
-                        &oauth_client_secret[oauth_client_secret.len() - 4..]
-                    )
-                } else {
-                    "****".to_string()
-                },
-                tag,
-            },
-        };
-
+impl From<config::BackendConfig> for BackendConfigResponse {
+    fn from(backend: config::BackendConfig) -> Self {
         Self {
-            mode: profile.mode.into(),
-            url: profile.url,
-            api_key: profile.api_key.map(|k| {
-                if k.len() > 8 {
-                    format!("{}...{}", &k[..4], &k[k.len() - 4..])
-                } else {
-                    "****".to_string()
-                }
-            }),
-            access,
+            url: backend.url,
+            api_key: backend.api_key,
         }
     }
 }
@@ -555,14 +373,14 @@ impl From<config::OrchestratorProfile> for OrchestratorProfileResponse {
 #[serde(rename_all = "lowercase")]
 pub enum StorageProviderResponse {
     S3,
-    Tigris,
+    Minio,
 }
 
 impl From<config::StorageProvider> for StorageProviderResponse {
     fn from(provider: config::StorageProvider) -> Self {
         match provider {
             config::StorageProvider::S3 => Self::S3,
-            config::StorageProvider::Tigris => Self::Tigris,
+            config::StorageProvider::Minio => Self::Minio,
         }
     }
 }
@@ -571,7 +389,7 @@ impl From<StorageProviderResponse> for config::StorageProvider {
     fn from(provider: StorageProviderResponse) -> Self {
         match provider {
             StorageProviderResponse::S3 => Self::S3,
-            StorageProviderResponse::Tigris => Self::Tigris,
+            StorageProviderResponse::Minio => Self::Minio,
         }
     }
 }
@@ -730,8 +548,7 @@ pub struct ConfigResponse {
     pub runners: std::collections::HashMap<String, RunnerConfigResponse>,
     pub default_runner: Option<String>,
     pub worker_runners: std::collections::HashMap<String, String>,
-    pub profiles: std::collections::HashMap<String, OrchestratorProfileResponse>,
-    pub default_profile: String,
+    pub backend: BackendConfigResponse,
     pub git: GitConfigResponse,
     pub storage: StorageConfigResponse,
 }

@@ -1,8 +1,8 @@
 //! S3 archive strategy.
 //!
 //! This strategy archives directories as tar.gz files and uploads them to
-//! S3-compatible storage. Used for ephemeral hosts like Fly.io where machines
-//! are destroyed between runs.
+//! S3-compatible storage. Used for ephemeral hosts where machines are
+//! destroyed between runs.
 //!
 //! # S3 Layout
 //!

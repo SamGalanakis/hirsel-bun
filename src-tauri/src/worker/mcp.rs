@@ -153,7 +153,7 @@ fn get_tools() -> Vec<Tool> {
         // ==========================================================================
         Tool {
             name: "list_contacts",
-            description: "List available chat contacts: user (human), group (team), other workers, scribe.",
+            description: "List available chat contacts: user (human), group (team), other workers.",
             input_schema: json!({
                 "type": "object",
                 "properties": {}
@@ -167,7 +167,7 @@ fn get_tools() -> Vec<Tool> {
                 "properties": {
                     "with": {
                         "type": "string",
-                        "description": "Contact name to filter: 'user', 'group', 'worker-N', 'scribe'. Omit for all."
+                        "description": "Contact name to filter: 'user', 'group', or 'worker-N'. Omit for all."
                     },
                     "limit": {
                         "type": "integer",
@@ -184,7 +184,7 @@ fn get_tools() -> Vec<Tool> {
                 "properties": {
                     "to": {
                         "type": "string",
-                        "description": "Recipient: 'user', 'group', 'worker-N', or 'scribe'"
+                        "description": "Recipient: 'user', 'group', or 'worker-N'"
                     },
                     "message": {
                         "type": "string",
@@ -207,34 +207,26 @@ fn get_tools() -> Vec<Tool> {
                 }
             }),
         },
-        // ==========================================================================
-        // Documentation
-        // ==========================================================================
         Tool {
             name: "scribe",
-            description: "Record a learning or discovery about the codebase. Use for patterns, gotchas, architecture decisions, or anything future workers should know. Learnings are batched and integrated into docs/ by a Scribe agent.",
+            description: "Record durable project context, constraints, or discoveries for project-level condensation.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "content": {
                         "type": "string",
-                        "description": "The learning to record (patterns, gotchas, architecture decisions, etc.)"
+                        "description": "Durable context worth retaining across route work."
                     }
                 },
                 "required": ["content"]
             }),
         },
         Tool {
-            name: "read_docs",
-            description: "Read the current project documentation maintained by the Scribe. Returns all docs or a specific file. Check docs at task start for accumulated project knowledge.",
+            name: "read_retained_context",
+            description: "Read the current project-level retained context artifact.",
             input_schema: json!({
                 "type": "object",
-                "properties": {
-                    "file": {
-                        "type": "string",
-                        "description": "Optional: specific file to read (e.g., 'architecture.md'). If omitted, returns all docs."
-                    }
-                }
+                "properties": {}
             }),
         },
         // ==========================================================================
@@ -436,7 +428,6 @@ impl McpServer {
                 self.runner.chat_unread(with).map(|s| (s, false))
             }
 
-            // Documentation
             "scribe" => {
                 let content = args
                     .get("content")
@@ -444,10 +435,7 @@ impl McpServer {
                     .ok_or_else(|| WorkerError::Config("content is required".into()))?;
                 self.runner.scribe(content).map(|s| (s, false))
             }
-            "read_docs" => {
-                let file = args.get("file").and_then(|v| v.as_str());
-                self.runner.read_docs(file).map(|s| (s, false))
-            }
+            "read_retained_context" => self.runner.read_retained_context().map(|s| (s, false)),
 
             // Work Management
             "work_done" => self.runner.task_done(None).map(|s| (s, true)),
@@ -513,7 +501,7 @@ mod tests {
         assert!(names.contains(&"chat_send"));
         assert!(names.contains(&"chat_unread"));
         assert!(names.contains(&"scribe"));
-        assert!(names.contains(&"read_docs"));
+        assert!(names.contains(&"read_retained_context"));
         assert!(names.contains(&"work_done"));
         assert!(names.contains(&"time_status"));
         assert!(names.contains(&"check_pass"));

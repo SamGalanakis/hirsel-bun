@@ -151,23 +151,13 @@ pub trait RunManager: Send + Sync {
 // =============================================================================
 
 /// Create a run manager based on configuration.
-pub fn create_run_manager(profile: Option<&str>) -> RunManagerResult<Arc<dyn RunManager>> {
+pub fn create_run_manager() -> RunManagerResult<Arc<dyn RunManager>> {
     let (config, _) = Config::load().map_err(|e| RunManagerError::Other(e.to_string()))?;
 
-    // Get profile config - use provided profile or default
-    let profile_name = profile.unwrap_or(&config.default_profile);
-    let profile_config = config
-        .profiles
-        .get(profile_name)
-        .cloned()
-        .unwrap_or_default();
-
-    if let Some(ref url) = profile_config.url {
-        // Remote mode
-        let api_key = profile_config.api_key.clone().unwrap_or_default();
+    if let Some(ref url) = config.backend.url {
+        let api_key = config.backend.api_key.clone().unwrap_or_default();
         Ok(Arc::new(RemoteRunManager::new(url.clone(), api_key)))
     } else {
-        // Local mode
         Ok(Arc::new(LocalRunManager::new(config)))
     }
 }

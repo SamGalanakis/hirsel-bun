@@ -36,7 +36,7 @@ export const RunStatusPill: Component<RunStatusPillProps> = (props) => {
       {/* Status dot + text */}
       <div class="flex items-center gap-1">
         <div
-          class={`w-1.5 h-1.5 rounded-full ${isPulsing() ? 'animate-pulse' : ''}`}
+          class={`w-1.5 h-1.5 rounded-none ${isPulsing() ? 'animate-pulse' : ''}`}
           style={{ background: statusColor() }}
         />
         <span
@@ -54,7 +54,7 @@ export const RunStatusPill: Component<RunStatusPillProps> = (props) => {
             e.stopPropagation();
             props.onPause();
           }}
-          class="flex items-center justify-center w-4 h-4 rounded transition-all duration-150 hover:scale-110"
+          class="flex items-center justify-center w-4 h-4 rounded-none transition-all duration-150 hover:scale-110"
           style={{
             background: 'rgba(201, 162, 39, 0.2)',
             border: '1px solid rgba(201, 162, 39, 0.3)',
@@ -80,7 +80,7 @@ export const RunStatusPill: Component<RunStatusPillProps> = (props) => {
             e.stopPropagation();
             props.onResume();
           }}
-          class="flex items-center justify-center w-4 h-4 rounded transition-all duration-150 hover:scale-110"
+          class="flex items-center justify-center w-4 h-4 rounded-none transition-all duration-150 hover:scale-110"
           style={{
             background: 'rgba(139, 168, 110, 0.2)',
             border: '1px solid rgba(139, 168, 110, 0.3)',

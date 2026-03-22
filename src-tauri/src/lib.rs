@@ -89,7 +89,10 @@ fn init_tracing() {
 fn init_tracing() {}
 
 // Re-export commonly used types
-pub use cli::{parse_cli, parse_worker_cli, Cli, Commands, WorkerCli, WorkerCommands};
+pub use cli::{
+    parse_cli, parse_worker_cli, Cli, Commands, MsgSubcommands, TaskSubcommands, WorkerCli,
+    WorkerCommands,
+};
 pub use core::state;
 pub use core::Files;
 pub use worker::{WorkerConfig, WorkerError, WorkerRunner};
@@ -99,7 +102,6 @@ pub fn run_cli() -> i32 {
     init_tracing();
 
     use clap::Parser;
-    use cli::*;
 
     let cli = Cli::parse();
 
@@ -117,7 +119,7 @@ pub fn run_cli() -> i32 {
             println!();
             Ok(())
         }
-        Some(cmd) => run_command(cmd, cli.json, cli.profile.as_deref()),
+        Some(cmd) => run_command(cmd),
     };
 
     match result {
@@ -130,216 +132,8 @@ pub fn run_cli() -> i32 {
 }
 
 /// Execute a CLI command
-fn run_command(
-    cmd: Commands,
-    json: bool,
-    _profile: Option<&str>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use cli::*;
-
+fn run_command(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
     match cmd {
-        Commands::Runs => list_runs(json)?,
-        Commands::View(args) => view::execute(&args.run_name, json)?,
-        Commands::Log(args) => {
-            let format = if json {
-                OutputFormat::Json
-            } else {
-                OutputFormat::Pretty
-            };
-            match run_log(&args.run_name, args.follow, args.limit, format) {
-                log::LogResult::Success => {}
-                log::LogResult::Empty => println!("No activity yet"),
-                log::LogResult::Interrupted => {}
-                log::LogResult::Error(e) => return Err(e.into()),
-            }
-        }
-        #[cfg(feature = "cli")]
-        Commands::Attach(args) => {
-            run_attach(&args.run_name, args.target.as_deref(), json)?;
-        }
-        Commands::Msg(args) => {
-            if args.list_threads {
-                let threads = get_available_threads(&args.run_name)?;
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&threads)?);
-                } else {
-                    for thread in threads {
-                        println!("{}", thread);
-                    }
-                }
-            } else {
-                let result = run_msg(&MsgArgs {
-                    run_name: args.run_name.clone(),
-                    message: args.message.clone(),
-                    thread: args.thread.clone(),
-                    list_threads: false,
-                })?;
-                // MsgOutput doesn't implement Serialize, just print success
-                match result {
-                    MsgOutput::Sent { thread, .. } => {
-                        if json {
-                            println!("{{\"sent\": true, \"thread\": \"{}\"}}", thread);
-                        } else {
-                            println!("Message sent to {}", thread);
-                        }
-                    }
-                    MsgOutput::Messages { messages, .. } => {
-                        for msg in messages {
-                            println!("[{}] {}: {}", msg.timestamp, msg.sender, msg.content);
-                        }
-                    }
-                    MsgOutput::ThreadList { threads, .. } => {
-                        for thread in threads {
-                            println!("{}: {} messages", thread.name, thread.message_count);
-                        }
-                    }
-                }
-            }
-        }
-        Commands::Diff(args) => {
-            let result = cli::diff::run_diff(&args.run_name, false)?;
-            if json {
-                println!(
-                    "{{\"run_name\": \"{}\", \"has_changes\": {}}}",
-                    result.run_name, result.has_changes
-                );
-            } else if let Some(diff) = result.diff {
-                println!("{}", diff);
-            } else {
-                println!("No changes");
-            }
-        }
-        Commands::Deliver(args) => {
-            cli::deliver::execute(&args.run_name, args.branch.as_deref(), json)?;
-        }
-        Commands::Pause(args) => {
-            run_pause(&args.run_name, json)?;
-        }
-        Commands::Resume(args) => {
-            run_resume(&args.run_name, args.time_limit.as_deref(), json)?;
-        }
-        Commands::Delete(args) => {
-            run_delete(&args.run_name, json)?;
-        }
-        Commands::Clone(_) => {
-            // Clone is fully handled by cli/mod.rs
-            // This should not be reached via lib.rs
-            unreachable!("Clone command should be handled by CLI module");
-        }
-        Commands::Prune => {
-            run_prune(json)?;
-        }
-        Commands::Summary(args) => {
-            let output = run_summary(&args.run_name, args.regenerate, json)?;
-            if !json {
-                println!("{}", output);
-            }
-        }
-        Commands::Mode(args) => {
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| format!("Failed to create runtime: {}", e))?;
-            rt.block_on(async {
-                let state = core::state::SQLiteState::new(&args.run_name)
-                    .await
-                    .map_err(|e| format!("Failed to open database: {}", e))?;
-                let hitl = args.new_mode.to_lowercase() == "hitl";
-                state
-                    .set_human_in_the_loop(hitl)
-                    .await
-                    .map_err(|e| format!("Failed to set mode: {}", e))?;
-                Ok::<(), String>(())
-            })?;
-            let hitl = args.new_mode.to_lowercase() == "hitl";
-            if json {
-                println!(r#"{{"mode": "{}"}}"#, if hitl { "hitl" } else { "yolo" });
-            } else {
-                println!("Mode set to {}", if hitl { "hitl" } else { "yolo" });
-            }
-        }
-        Commands::Spec(args) => {
-            let run_dir = core::config::run_dir(&args.run_name);
-            let spec = run_spec(&run_dir)?;
-            println!("{}", spec);
-        }
-        Commands::Asset(args) => {
-            let added = cli::run_asset(&args.run_name, &args.paths)?;
-            if json {
-                println!("{}", serde_json::json!({ "added": added }));
-            } else {
-                for file in &added {
-                    println!("Added: assets/{}", file);
-                }
-                println!(
-                    "\nReference in spec.md: ![description](assets/{})",
-                    added.first().unwrap_or(&String::new())
-                );
-            }
-        }
-        Commands::Tasks(args) => {
-            let output = cli::tasks::run_tasks(&args.run_name, json)?;
-            println!("{}", output);
-        }
-        Commands::TaskAdd(args) => {
-            let output = cli::tasks::run_task_add(
-                &args.run_name,
-                &args.task_id,
-                &args.description,
-                args.parent.as_deref(),
-                &args.blocked_by,
-                json,
-            )?;
-            print!("{}", output);
-        }
-        Commands::TaskDelete(args) => {
-            let output = cli::tasks::run_task_delete(&args.run_name, &args.task_id, json)?;
-            print!("{}", output);
-        }
-        Commands::TaskDone(args) => {
-            let output = cli::tasks::run_task_done(&args.run_name, &args.task_id, json)?;
-            print!("{}", output);
-        }
-        Commands::TaskReopen(args) => {
-            let output = cli::tasks::run_task_reopen(&args.run_name, &args.task_id, json)?;
-            print!("{}", output);
-        }
-        Commands::TaskUnclaim(args) => {
-            let output = cli::tasks::run_task_unclaim(&args.run_name, &args.task_id, json)?;
-            print!("{}", output);
-        }
-        Commands::Config(args) => {
-            run_config(args.agent)?;
-        }
-        Commands::Templates => {
-            let output = run_templates(json)?;
-            println!("{}", output);
-        }
-        Commands::Completions(args) => {
-            run_completions(&args)?;
-        }
-        Commands::Man(args) => {
-            run_man(&args)?;
-        }
-        Commands::Reset(args) => {
-            let target = if args.all {
-                cli::reset::ResetTarget::All
-            } else if args.config {
-                cli::reset::ResetTarget::Config
-            } else if args.runs {
-                cli::reset::ResetTarget::Runs
-            } else {
-                return Err("Please specify: --runs, --config, or --all".into());
-            };
-
-            if let Some(confirm) = &args.confirm {
-                if confirm == "reset" {
-                    cli::reset::execute_reset_confirmed(target, json)?;
-                } else {
-                    return Err("Invalid confirmation. Use --confirm reset".into());
-                }
-            } else {
-                cli::reset::run_reset(target, json)?;
-            }
-        }
         Commands::WorkerRun(args) => {
             // Internal command for worker subprocess
             use std::path::PathBuf;
@@ -349,9 +143,6 @@ fn run_command(
             std::env::set_var("HIRSEL_RUN", &args.run);
             std::env::set_var("HIRSEL_WORKER", &args.worker);
             std::env::set_var("HIRSEL_RUN_DIR", &args.run_dir);
-            if let Some(ref url) = args.api_url {
-                std::env::set_var("HIRSEL_API_URL", url);
-            }
 
             let agent_command: Vec<String> = serde_json::from_str(&args.agent_command)
                 .map_err(|e| format!("Invalid agent_command JSON: {}", e))?;
@@ -372,7 +163,6 @@ fn run_command(
                 leader_name: args.leader_name,
                 teammates,
                 resume_session_id: args.resume_session_id,
-                api_url: args.api_url,
                 assigned_task_id: args.assigned_task_id,
                 is_plan_task: args.plan_task,
             };
@@ -449,52 +239,6 @@ fn run_command(
             })
             .map_err(|e| format!("Scribe error: {}", e))?;
         }
-        Commands::ServiceWorker(args) => {
-            // Internal command to run service worker HTTP server
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| format!("Failed to create runtime: {}", e))?;
-            rt.block_on(async {
-                cli::service_worker::execute(&args.r#type, args.idle_timeout, args.port).await
-            })
-            .map_err(|e| format!("Service worker error: {}", e))?;
-        }
-        Commands::RemoteWorker(args) => {
-            // Internal command for remote worker subprocess
-            let agent_command: Vec<String> = serde_json::from_str(&args.agent_command)
-                .map_err(|e| format!("Invalid agent_command JSON: {}", e))?;
-            let teammates = args.teammates.map(|t| {
-                t.split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect()
-            });
-
-            // Run the async remote worker
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| format!("Failed to create runtime: {}", e))?;
-            rt.block_on(async {
-                tokio::task::LocalSet::new()
-                    .run_until(async {
-                        worker::run_remote_worker_with_config(worker::RemoteWorkerConfig {
-                            api_url: &args.api_url,
-                            run_name: &args.run_name,
-                            worker_name: &args.worker_name,
-                            work_dir: &args.work_dir,
-                            agent_command: &agent_command,
-                            is_leader: args.is_leader,
-                            leader_name: args.leader_name.as_deref(),
-                            teammates,
-                            wait_for_files: args.wait_for_files,
-                            file_receiver_port: args.file_receiver_port,
-                            assigned_task_id: args.assigned_task_id,
-                            is_plan_task: args.plan_task,
-                        })
-                        .await
-                    })
-                    .await
-            })
-            .map_err(|e| format!("Remote worker error: {}", e))?;
-        }
         Commands::BoardMcp => {
             // Run board MCP server for Shepherd
             let project_id: i64 = std::env::var("HIRSEL_PROJECT_ID")
@@ -506,7 +250,7 @@ fn run_command(
         }
         #[cfg(feature = "server")]
         Commands::Serve(args) => {
-            // Server mode - run HTTP server for remote orchestration
+            // Server mode - run the backend HTTP server
             let rt = tokio::runtime::Runtime::new()
                 .map_err(|e| format!("Failed to create runtime: {}", e))?;
             rt.block_on(async { core::server::start_server(args.port).await })
@@ -526,84 +270,6 @@ fn run_command(
                 .map_err(|e| format!("Failed to create runtime: {}", e))?;
             rt.block_on(async { start_daemon(config).await })
                 .map_err(|e| format!("Daemon error: {}", e))?;
-        }
-        #[cfg(feature = "server")]
-        Commands::DaemonCtl(args) => {
-            // Daemon control commands
-            use cli::DaemonCommand;
-
-            match args.command {
-                DaemonCommand::Start => {
-                    if daemon::is_daemon_running() {
-                        if json {
-                            println!(r#"{{"status": "already_running"}}"#);
-                        } else {
-                            println!("Daemon is already running");
-                        }
-                    } else {
-                        // Start daemon by connecting (which auto-starts)
-                        let rt = tokio::runtime::Runtime::new()
-                            .map_err(|e| format!("Failed to create runtime: {}", e))?;
-                        let client = daemon::DaemonClient::connect_or_start()
-                            .map_err(|e| format!("Failed to start daemon: {}", e))?;
-                        rt.block_on(async { client.health().await })
-                            .map_err(|e| format!("Daemon health check failed: {}", e))?;
-                        if json {
-                            println!(r#"{{"status": "started"}}"#);
-                        } else {
-                            println!("Daemon started");
-                        }
-                    }
-                }
-                DaemonCommand::Stop => {
-                    if !daemon::is_daemon_running() {
-                        if json {
-                            println!(r#"{{"status": "not_running"}}"#);
-                        } else {
-                            println!("Daemon is not running");
-                        }
-                    } else {
-                        let rt = tokio::runtime::Runtime::new()
-                            .map_err(|e| format!("Failed to create runtime: {}", e))?;
-                        let client = daemon::DaemonClient::connect()
-                            .map_err(|e| format!("Failed to connect to daemon: {}", e))?;
-                        rt.block_on(async { client.stop().await })
-                            .map_err(|e| format!("Failed to stop daemon: {}", e))?;
-                        if json {
-                            println!(r#"{{"status": "stopped"}}"#);
-                        } else {
-                            println!("Daemon stopped");
-                        }
-                    }
-                }
-                DaemonCommand::Status => {
-                    if daemon::is_daemon_running() {
-                        if json {
-                            // Get full status from daemon
-                            let rt = tokio::runtime::Runtime::new()
-                                .map_err(|e| format!("Failed to create runtime: {}", e))?;
-                            let client = daemon::DaemonClient::connect()
-                                .map_err(|e| format!("Failed to connect to daemon: {}", e))?;
-                            let status: serde_json::Value = rt
-                                .block_on(async { client.get("/daemon/status").await })
-                                .map_err(|e| format!("Failed to get status: {}", e))?;
-                            println!("{}", serde_json::to_string_pretty(&status).unwrap());
-                        } else {
-                            println!("Daemon is running");
-                            println!("Port: {}", daemon::DEFAULT_TCP_PORT);
-                        }
-                    } else if json {
-                        println!(r#"{{"running": false}}"#);
-                    } else {
-                        println!("Daemon is not running");
-                    }
-                }
-            }
-        }
-        // Completion helpers - handled by cli/mod.rs
-        Commands::CompleteRuns | Commands::CompleteWorkers(_) | Commands::CompleteThreads(_) => {
-            // These are handled by the cli module's run_cli function
-            // This code path should not be reached
         }
     }
 

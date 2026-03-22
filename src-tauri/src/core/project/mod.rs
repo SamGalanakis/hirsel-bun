@@ -8,8 +8,13 @@
 //! - Documentation persistence through git history
 //! - Organized run management
 
+mod focus;
 mod store;
 mod types;
 
+pub use focus::validate_project_focus_view_html;
 pub use store::{ProjectError, ProjectResult, ProjectStore};
-pub use types::{CreateProjectRequest, Project, UpdateProjectRequest};
+pub use types::{
+    CreateProjectRequest, Project, ProjectFocusView, ProjectRetainedContext,
+    ProjectSurfaceSnapshot, RouteSummary, UpdateProjectRequest,
+};

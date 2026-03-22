@@ -68,23 +68,19 @@ impl LlmConfigUpdate {
     }
 }
 
-/// Orchestrator profile update request
+/// Backend connection update request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OrchestratorProfileUpdate {
-    pub mode: crate::core::api_types::OrchestratorModeResponse,
+pub struct BackendConfigUpdate {
     pub url: Option<String>,
     pub api_key: Option<String>,
-    pub access: config::OrchestratorAccess,
 }
 
-impl From<OrchestratorProfileUpdate> for config::OrchestratorProfile {
-    fn from(update: OrchestratorProfileUpdate) -> Self {
+impl From<BackendConfigUpdate> for config::BackendConfig {
+    fn from(update: BackendConfigUpdate) -> Self {
         Self {
-            mode: update.mode.into(),
             url: update.url,
             api_key: update.api_key,
-            access: update.access,
         }
     }
 }
@@ -119,8 +115,7 @@ pub struct ConfigUpdateRequest {
     pub runners: Option<std::collections::HashMap<String, RunnerConfigResponse>>,
     pub default_runner: Option<Option<String>>,
     pub worker_runners: Option<std::collections::HashMap<String, String>>,
-    pub profiles: Option<std::collections::HashMap<String, OrchestratorProfileUpdate>>,
-    pub default_profile: Option<String>,
+    pub backend: Option<BackendConfigUpdate>,
     pub git: Option<GitConfigUpdate>,
     pub storage: Option<crate::core::api_types::StorageConfigResponse>,
 }

@@ -1,16 +1,13 @@
-//! Scribe system for maintaining project documentation.
+//! Scribe batch processing for route and project artifacts.
 //!
-//! Workers call `scribe()` to record learnings. Submissions are batched and
-//! written into docs as a shared running log.
-
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+//! Workers submit durable learnings into run state. The daemon periodically
+//! condenses pending submissions into the project's retained context.
 
 use thiserror::Error;
 use tracing::{info, warn};
 
 use crate::core::config::Config;
-use crate::core::files::Files;
+use crate::core::project::ProjectStore;
 use crate::core::state::{SQLiteState, StateError};
 
 /// Error type for scribe operations.
@@ -68,23 +65,19 @@ pub async fn should_process_batch(state: &SQLiteState, config: &Config) -> bool 
     false
 }
 
-/// Process pending scribe submissions.
-///
-/// Current behavior is intentionally minimal while migration to lash-based
-/// scribe is pending: batched submissions are appended to `docs/learnings.md`.
-pub async fn process_scribe_batch(
-    files: &Files,
-    _config: &Config,
-    _agent_command: &[String],
-) -> Result<ScribeBatchResult, ScribeError> {
-    let run_name = files
-        .run_name()
-        .ok_or_else(|| ScribeError::InvalidPath("Failed to extract run name".to_string()))?;
-
-    let (batch_id, submissions) = {
-        let state = SQLiteState::new(&run_name)
+/// Process pending scribe submissions for a run.
+pub async fn process_scribe_batch(run_name: &str) -> Result<ScribeBatchResult, ScribeError> {
+    let (project_id, batch_id, submissions) = {
+        let state = SQLiteState::new(run_name)
             .await
             .map_err(|e| ScribeError::Database(e.to_string()))?;
+        let project_id = state
+            .get_project_id()
+            .await
+            .map_err(ScribeError::State)?
+            .ok_or_else(|| {
+                ScribeError::InvalidPath(format!("Run '{}' is not linked to a project", run_name))
+            })?;
         let submissions = state
             .get_pending_scribe_submissions()
             .await
@@ -109,39 +102,44 @@ pub async fn process_scribe_batch(
             submissions.len()
         );
 
-        (batch_id, submissions)
+        (project_id, batch_id, submissions)
     };
 
-    files.init_docs()?;
-    let docs_dir = files.docs_dir();
-    let learnings_path = docs_dir.join("learnings.md");
-
-    let write_result = (|| -> Result<(), std::io::Error> {
-        fs::create_dir_all(&docs_dir)?;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&learnings_path)?;
-        writeln!(
-            file,
-            "\n## Batch {} - {}\n",
+    let write_result = async {
+        let store = ProjectStore::open()
+            .await
+            .map_err(|e| ScribeError::Database(e.to_string()))?;
+        let existing = store
+            .get_project_retained_context(project_id)
+            .await
+            .map_err(|e| ScribeError::Database(e.to_string()))?;
+        let mut markdown = existing.markdown.trim_end().to_string();
+        if !markdown.is_empty() {
+            markdown.push_str("\n\n");
+        }
+        markdown.push_str(&format!(
+            "## Batch {} - {}\n\n",
             batch_id,
             chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
-        )?;
+        ));
         for submission in &submissions {
-            writeln!(
-                file,
-                "- [{}] {}",
+            markdown.push_str(&format!(
+                "- **{}**: {}\n",
                 submission.worker_name,
                 submission.content.trim()
-            )?;
+            ));
         }
-        Ok(())
-    })();
+        store
+            .update_project_retained_context(project_id, &markdown, Some("scribe"))
+            .await
+            .map_err(|e| ScribeError::Database(e.to_string()))?;
+        Ok::<(), ScribeError>(())
+    }
+    .await;
 
     let success = write_result.is_ok();
     {
-        let state = SQLiteState::new(&run_name)
+        let state = SQLiteState::new(run_name)
             .await
             .map_err(|e| ScribeError::Database(e.to_string()))?;
         state
@@ -152,7 +150,7 @@ pub async fn process_scribe_batch(
 
     if let Err(e) = write_result {
         warn!("Scribe batch {} failed: {}", batch_id, e);
-        return Err(ScribeError::Io(e));
+        return Err(e);
     }
 
     info!("Scribe batch {} completed successfully", batch_id);

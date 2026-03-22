@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Submarine — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --sub-dark: #0a0e14;
+      --sonar-green: #00e868;
+      --sonar-dim: rgba(0,232,104,0.25);
+      --depth-amber: #e8a030;
+      --hull-grey: #2a3040;
+      --emergency-red: #e04040;
+      --text: #6090a0;
+      --text-dim: #384858;
+      --text-bright: #b0d0e0;
+      --grid: rgba(0,232,104,0.06);
+      --grid-line: rgba(0,232,104,0.12);
+    }
+
+    body {
+      font-family: 'Rajdhani', sans-serif;
+      background: var(--sub-dark);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    .direction-nav {
+      position: sticky; top: 0; z-index: 1000;
+      background: rgba(10,14,20,0.92); backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--grid);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .direction-nav a {
+      font-size: 11px; font-weight: 500; color: var(--text-dim);
+      text-decoration: none; padding: 5px 12px; border-radius: 6px; transition: all 0.2s;
+    }
+    .direction-nav a:hover { color: var(--sonar-green); background: rgba(0,232,104,0.06); }
+    .direction-nav .nav-title {
+      font-weight: 700; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--text-bright); flex: 1; text-align: center;
+    }
+    .direction-nav .nav-home {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-dim); border-right: 1px solid var(--grid);
+      padding-right: 16px; margin-right: 4px;
+    }
+
+    .page-header {
+      padding: 80px 48px 20px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .tag {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--sonar-green); margin-bottom: 12px; display: block;
+    }
+
+    h1 {
+      font-size: clamp(44px, 6vw, 76px);
+      font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.02em;
+      line-height: 1.0; color: var(--text-bright); margin-bottom: 16px;
+    }
+
+    h1 span { color: var(--sonar-green); }
+
+    .subtitle {
+      font-size: 15px; font-weight: 300;
+      color: var(--text-dim); max-width: 580px; line-height: 1.8;
+    }
+
+    .showcase {
+      padding: 40px 48px 60px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    /* ====== SUBMARINE CONTROL ====== */
+    .sub-layout {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 0;
+      border: 1px solid var(--grid-line);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    /* Depth gauge panel */
+    .depth-panel {
+      background: #0c1018;
+      border-right: 1px solid var(--grid-line);
+      padding: 0;
+      display: flex; flex-direction: column;
+    }
+
+    .depth-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--grid-line);
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .depth-gauge {
+      flex: 1; padding: 16px;
+      display: flex; flex-direction: column; gap: 0;
+      position: relative;
+    }
+
+    .depth-gauge::before {
+      content: '';
+      position: absolute;
+      left: 32px; top: 16px; bottom: 16px;
+      width: 2px;
+      background: linear-gradient(180deg, var(--sonar-green) 0%, var(--depth-amber) 50%, var(--emergency-red) 100%);
+      opacity: 0.2;
+    }
+
+    .depth-marker {
+      padding: 10px 12px 10px 52px;
+      position: relative;
+      border-bottom: 1px solid var(--grid);
+      animation: depth-emerge 0.4s ease-out both;
+    }
+
+    .depth-marker:nth-child(2) { animation-delay: 0.06s; }
+    .depth-marker:nth-child(3) { animation-delay: 0.12s; }
+    .depth-marker:nth-child(4) { animation-delay: 0.18s; }
+    .depth-marker:nth-child(5) { animation-delay: 0.24s; }
+
+    @keyframes depth-emerge {
+      from { opacity: 0; transform: translateY(-6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .depth-marker::before {
+      content: '';
+      position: absolute;
+      left: 27px; top: 50%; transform: translateY(-50%);
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      border: 2px solid var(--hull-grey);
+      background: var(--sub-dark);
+    }
+
+    .depth-marker.surfaced::before { border-color: var(--sonar-green); background: var(--sonar-green); box-shadow: 0 0 6px var(--sonar-dim); }
+    .depth-marker.cruising::before { border-color: var(--depth-amber); background: var(--depth-amber); box-shadow: 0 0 6px rgba(232,160,48,0.3); }
+    .depth-marker.deep::before { border-color: var(--hull-grey); }
+    .depth-marker.flooding::before { border-color: var(--emergency-red); background: var(--emergency-red); box-shadow: 0 0 6px rgba(224,64,64,0.3); }
+
+    .depth-label {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 12px; font-weight: 600;
+      color: var(--text-bright);
+      margin-bottom: 2px;
+    }
+
+    .depth-reading {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px; color: var(--text-dim);
+    }
+
+    .depth-status {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 9px; color: var(--text-dim);
+      padding: 2px 6px;
+      background: rgba(0,232,104,0.04);
+      border-radius: 2px;
+      display: inline-block;
+      margin-top: 4px;
+    }
+
+    .depth-status.st-surfaced { color: var(--sonar-green); }
+    .depth-status.st-cruising { color: var(--depth-amber); }
+    .depth-status.st-blocked { color: var(--emergency-red); }
+
+    /* Sonar scope */
+    .sonar-scope {
+      aspect-ratio: 1;
+      max-height: 520px;
+      position: relative;
+      overflow: hidden;
+      background: var(--sub-dark);
+    }
+
+    /* Sonar rings */
+    .sonar-scope::before {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(circle at 50% 50%, transparent 14%, var(--grid) 14.5%, transparent 15%),
+        radial-gradient(circle at 50% 50%, transparent 29%, var(--grid) 29.5%, transparent 30%),
+        radial-gradient(circle at 50% 50%, transparent 44%, var(--grid) 44.5%, transparent 45%),
+        radial-gradient(circle at 50% 50%, transparent 59%, var(--grid) 59.5%, transparent 60%),
+        radial-gradient(circle at 50% 50%, transparent 74%, var(--grid) 74.5%, transparent 75%);
+      pointer-events: none;
+    }
+
+    /* Cross hairs */
+    .sonar-scope::after {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        linear-gradient(90deg, transparent 49.7%, var(--grid) 49.7%, var(--grid) 50.3%, transparent 50.3%),
+        linear-gradient(0deg, transparent 49.7%, var(--grid) 49.7%, var(--grid) 50.3%, transparent 50.3%);
+      pointer-events: none;
+    }
+
+    /* Sonar ping sweep */
+    .ping-sweep {
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 50%; height: 2px;
+      background: linear-gradient(90deg, var(--sonar-green), transparent);
+      transform-origin: left center;
+      animation: ping-rotate 5s linear infinite;
+      opacity: 0.5;
+    }
+
+    .ping-sweep::before {
+      content: '';
+      position: absolute;
+      top: -60px; left: 0;
+      width: 100%; height: 120px;
+      background: linear-gradient(90deg, rgba(0,232,104,0.06), transparent);
+      transform: rotate(-8deg);
+      transform-origin: left center;
+      filter: blur(6px);
+    }
+
+    @keyframes ping-rotate { to { transform: rotate(360deg); } }
+
+    /* Sonar blips (tasks) */
+    .sonar-blip {
+      position: absolute;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--sonar-green);
+      box-shadow: 0 0 6px var(--sonar-dim);
+      animation: blip-pulse 2s ease-in-out infinite;
+    }
+
+    .sonar-blip.task-done { background: var(--sonar-green); opacity: 0.4; animation: none; }
+    .sonar-blip.task-working { background: var(--depth-amber); box-shadow: 0 0 8px rgba(232,160,48,0.4); }
+    .sonar-blip.task-pending { background: var(--hull-grey); opacity: 0.3; animation: none; }
+
+    @keyframes blip-pulse {
+      0%, 100% { transform: scale(1); opacity: 0.8; }
+      50% { transform: scale(1.4); opacity: 1; }
+    }
+
+    .sonar-blip-label {
+      position: absolute;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 9px;
+      color: var(--text-dim);
+      white-space: nowrap;
+      background: rgba(10,14,20,0.7);
+      padding: 1px 4px;
+      border-radius: 2px;
+    }
+
+    /* Sub silhouette at center */
+    .sub-icon {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 9px;
+      color: var(--sonar-green);
+      opacity: 0.5;
+      text-align: center;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+    }
+
+    /* Route label overlay */
+    .sonar-route-label {
+      position: absolute;
+      bottom: 12px; left: 12px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px;
+      color: var(--text-dim);
+      background: rgba(10,14,20,0.8);
+      padding: 4px 8px;
+      border-radius: 2px;
+    }
+
+    /* Progress bar */
+    .mission-progress {
+      position: absolute;
+      bottom: 12px; right: 12px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 9px;
+      color: var(--depth-amber);
+      background: rgba(10,14,20,0.8);
+      padding: 4px 8px;
+      border-radius: 2px;
+      display: flex; align-items: center; gap: 6px;
+    }
+
+    .progress-bar {
+      width: 60px; height: 4px;
+      background: var(--hull-grey);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: var(--sonar-green);
+      border-radius: 2px;
+    }
+
+    .rationale {
+      padding: 0 48px 100px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .rationale h3 {
+      font-size: 20px; font-weight: 800; text-transform: uppercase;
+      letter-spacing: 0.04em; margin-bottom: 20px;
+    }
+
+    .rationale-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .rationale-card {
+      padding: 24px;
+      background: #0c1018;
+      border: 1px solid var(--grid);
+      border-radius: 4px;
+    }
+
+    .rationale-card h4 {
+      font-size: 12px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin-bottom: 8px; color: var(--sonar-green);
+    }
+
+    .rationale-card p {
+      font-size: 13px; color: var(--text-dim); line-height: 1.7;
+    }
+
+    @media (max-width: 768px) {
+      .page-header, .showcase, .rationale { padding-left: 20px; padding-right: 20px; }
+      .sub-layout { grid-template-columns: 1fr; }
+      .sonar-scope { max-height: 320px; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="direction-nav">
+    <a href="../designs.html" class="nav-home">Storm</a>
+    <a href="cathedral.html">Prev</a>
+    <span class="nav-title">SUBMARINE</span>
+    <a href="bonsai-garden.html">Next</a>
+  </nav>
+
+  <div class="page-header">
+    <div class="tag">Direction 23 &mdash; Systems</div>
+    <h1>SUB<span>MARINE</span></h1>
+    <p class="subtitle">A submarine control room. The route is a mission. Specs are mission objectives at different depths. The sub dives deeper as it tackles more complex specs. Sonar pings detect tasks. Workers are torpedo tubes firing solutions at targets. Ballast tanks control priority &mdash; blow tanks to surface validated work for delivery.</p>
+  </div>
+
+  <div class="showcase">
+    <div class="sub-layout">
+      <div class="depth-panel">
+        <div class="depth-header">Depth Gauge &mdash; Mission Objectives</div>
+
+        <div class="depth-gauge">
+          <div class="depth-marker surfaced">
+            <div class="depth-label">Schema Migration</div>
+            <div class="depth-reading">0m &mdash; Surfaced</div>
+            <div class="depth-status st-surfaced">BALLAST BLOWN &middot; VALIDATED</div>
+          </div>
+
+          <div class="depth-marker surfaced">
+            <div class="depth-label">API Restructure</div>
+            <div class="depth-reading">0m &mdash; Surfaced</div>
+            <div class="depth-status st-surfaced">BALLAST BLOWN &middot; VALIDATED</div>
+          </div>
+
+          <div class="depth-marker cruising">
+            <div class="depth-label">Token Rotation</div>
+            <div class="depth-reading">180m &mdash; Cruising depth</div>
+            <div class="depth-status st-cruising">TUBES 1-2 ACTIVE &middot; 2/4 TASKS</div>
+          </div>
+
+          <div class="depth-marker flooding">
+            <div class="depth-label">Rate Limiter</div>
+            <div class="depth-reading">240m &mdash; Blocked</div>
+            <div class="depth-status st-blocked">COMPARTMENT SEALED &middot; PENDING</div>
+          </div>
+
+          <div class="depth-marker deep">
+            <div class="depth-label">E2E Tests</div>
+            <div class="depth-reading">--- &mdash; Unmapped</div>
+            <div class="depth-status">DRAFT &middot; NO ORDERS</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sonar-scope">
+        <div class="ping-sweep"></div>
+
+        <div class="sub-icon">AUTH<br>OVERHAUL</div>
+
+        <!-- Task blips for Schema Migration (validated - done blips near center-top) -->
+        <div class="sonar-blip task-done" style="top:28%;left:38%;"></div>
+        <div class="sonar-blip task-done" style="top:32%;left:42%;"></div>
+        <div class="sonar-blip-label" style="top:25%;left:36%;">SCH &middot; 3/3</div>
+
+        <!-- Task blips for API Restructure (validated) -->
+        <div class="sonar-blip task-done" style="top:58%;left:35%;"></div>
+        <div class="sonar-blip task-done" style="top:62%;left:40%;"></div>
+        <div class="sonar-blip-label" style="top:55%;left:33%;">API &middot; 4/4</div>
+
+        <!-- Task blips for Token Rotation (working - 2 done, 2 active) -->
+        <div class="sonar-blip task-done" style="top:42%;left:58%;"></div>
+        <div class="sonar-blip task-done" style="top:46%;left:62%;"></div>
+        <div class="sonar-blip task-working" style="top:38%;left:64%;"></div>
+        <div class="sonar-blip task-working" style="top:44%;left:68%;"></div>
+        <div class="sonar-blip-label" style="top:35%;left:56%;">TOK &middot; 2/4</div>
+
+        <!-- Task blips for Rate Limiter (pending - dim) -->
+        <div class="sonar-blip task-pending" style="top:30%;left:76%;"></div>
+        <div class="sonar-blip task-pending" style="top:34%;left:80%;"></div>
+        <div class="sonar-blip-label" style="top:27%;left:74%;">LIM &middot; blocked</div>
+
+        <!-- E2E Tests - nothing on sonar -->
+        <div class="sonar-blip-label" style="top:18%;left:84%;">E2E &middot; unfiled</div>
+
+        <div class="sonar-route-label">MISSION: AUTH OVERHAUL</div>
+
+        <div class="mission-progress">
+          DEPTH PROGRESS
+          <div class="progress-bar"><div class="progress-fill" style="width:55%;"></div></div>
+          55%
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rationale">
+    <h3>WHY THIS IS INTERESTING</h3>
+    <div class="rationale-grid">
+      <div class="rationale-card">
+        <h4>Depth = complexity</h4>
+        <p>Submarines dive deeper for harder missions. Specs naturally sort by complexity &mdash; validated work surfaces for delivery while harder problems are tackled at depth. The vertical axis creates an intuitive progress metaphor: rising toward the surface means approaching completion.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Sonar = awareness</h4>
+        <p>A sonar scope reveals the invisible. Tasks are hidden underwater work &mdash; blips on the screen confirm they exist and show their position relative to the sub. The periodic ping sweep mirrors hirsel's polling for worker status updates.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Torpedo tubes = workers</h4>
+        <p>Workers are weapons systems: loaded, aimed, and fired at specific targets. Each tube handles one task at a time. The metaphor captures the precision and parallelism of worker dispatch &mdash; multiple tubes firing simultaneously at different objectives.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Ballast = priority control</h4>
+        <p>Blowing ballast tanks forces a submarine to surface. In hirsel, surfacing validated specs means pushing them to delivery. The ballast metaphor makes priority tangible &mdash; you control buoyancy to decide what rises to the top and what stays submerged.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

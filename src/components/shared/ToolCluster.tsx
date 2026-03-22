@@ -90,7 +90,7 @@ export const ToolCluster: Component<ToolClusterProps> = (props) => {
                   >
                     {/* Status indicator */}
                     <Show when={statusIndicator().animate}>
-                      <span class="w-3 h-3 border border-amber-500 border-t-transparent rounded-full animate-spin shrink-0" />
+                      <span class="w-3 h-3 border border-amber-500 border-t-transparent rounded-none animate-spin shrink-0" />
                     </Show>
                     <Show when={!statusIndicator().animate}>
                       <Icon
@@ -131,7 +131,7 @@ export const ToolCluster: Component<ToolClusterProps> = (props) => {
                           <p class="text-[10px] text-wool-600 mb-0.5 uppercase tracking-wide">
                             Input
                           </p>
-                          <pre class="text-[10px] text-wool-400 bg-pasture-900 p-1.5 rounded overflow-x-auto whitespace-pre-wrap break-all max-h-24 overflow-y-auto">
+                          <pre class="text-[10px] text-wool-400 bg-pasture-900 p-1.5 rounded-none overflow-x-auto whitespace-pre-wrap break-all max-h-24 overflow-y-auto">
                             {formatInput(tool.input)}
                           </pre>
                         </div>
@@ -141,7 +141,7 @@ export const ToolCluster: Component<ToolClusterProps> = (props) => {
                           <p class="text-[10px] text-wool-600 mb-0.5 uppercase tracking-wide">
                             Output
                           </p>
-                          <pre class="text-[10px] text-wool-400 bg-pasture-900 p-1.5 rounded overflow-x-auto whitespace-pre-wrap break-all max-h-24 overflow-y-auto">
+                          <pre class="text-[10px] text-wool-400 bg-pasture-900 p-1.5 rounded-none overflow-x-auto whitespace-pre-wrap break-all max-h-24 overflow-y-auto">
                             {tool.output}
                           </pre>
                         </div>

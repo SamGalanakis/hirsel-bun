@@ -22,92 +22,30 @@ import { invoke } from '../../lib/invoke';
 import { on as onEvent } from '../../lib/events';
 import { useProject, useRoute } from '../../stores';
 import { useDelta } from '../../stores/delta-context';
-import { Icon } from '../shared';
+import { Icon, Markdown } from '../shared';
 import { amber, sage, terra } from '../../lib/theme-colors';
 import { CanvasToolbar } from '../layout/CanvasToolbar';
 import { TaskEditorModal } from './TaskEditorModal';
 import { DeliveryDialog } from './DeliveryDialog';
 import { ForkRouteDialog } from './ForkRouteDialog';
-import { MarkdownContent } from '../docs/MarkdownContent';
 import { computeElkLayout, type LayoutInputNode, type ElkLayoutResult } from '../../lib/elk-layout';
 import { NodeFinder, type NodeFinderItem } from './NodeFinder';
 import { buildFocusIndices, computeFocusSet } from '../../lib/specboard/focus';
+import {
+  CHAR_WIDTH,
+  TEXT_PADDING,
+  type NodePosition,
+  type EdgeRoute,
+  type LayoutTreeResult,
+  wrapTextToWidth,
+  buildSmoothPath,
+} from '../../lib/specboard/layout';
 import { contentYToRelative, panForContentPoint, viewportCenterPoint, zoomAroundViewportPoint } from '../../lib/specboard/navigation';
 import type {
   BoardNodeTree,
   NodeKind,
   BoardNodeStatus,
 } from '../../lib/types';
-
-// =============================================================================
-// Layout Constants
-// =============================================================================
-
-const CHAR_WIDTH = 5.8;
-const TEXT_PADDING = 20;
-
-interface NodePosition {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  lines: string[];
-  layer: number;
-}
-
-// =============================================================================
-// Helper: Wrap text to fit within a given width
-// =============================================================================
-
-function wrapTextToWidth(name: string, width: number): string[] {
-  const maxChars = Math.floor((width - TEXT_PADDING) / CHAR_WIDTH);
-  const charsPerLine = Math.max(8, maxChars);
-
-  if (name.length <= charsPerLine) {
-    return [name];
-  }
-
-  const words = name.split(/\s+/);
-  const lines: string[] = [];
-  let currentLine = '';
-
-  for (const word of words) {
-    const testLine = currentLine ? `${currentLine} ${word}` : word;
-    if (testLine.length <= charsPerLine) {
-      currentLine = testLine;
-    } else {
-      if (currentLine) lines.push(currentLine);
-      currentLine = word.length > charsPerLine ? word.slice(0, charsPerLine - 1) + '\u2026' : word;
-    }
-  }
-  if (currentLine) lines.push(currentLine);
-
-  if (lines.length > 2) {
-    lines.length = 2;
-    lines[1] = lines[1].slice(0, -1) + '\u2026';
-  }
-
-  return lines;
-}
-
-// =============================================================================
-// Layout Types
-// =============================================================================
-
-interface EdgeRoute {
-  from: string;
-  to: string;
-  type: 'blockedBy' | 'validates' | 'hierarchy' | 'resolves';
-  waypoints: [number, number][];
-}
-
-interface LayoutTreeResult {
-  positions: Map<string, NodePosition>;
-  width: number;
-  height: number;
-  checksWithValidates: { id: string; validates: string[] }[];
-  edgeRoutes: EdgeRoute[];
-}
 
 // =============================================================================
 // Node Card Component (unified — renders based on kind + status)
@@ -290,7 +228,7 @@ const BoardNodeCard: Component<{
         <Show when={isFeature() && !isDraft()}>
           <button
             type="button"
-            class="absolute left-1 top-1 w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+            class="absolute left-1 top-1 w-5 h-5 rounded-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
             style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.06)' }}
             title={props.collapsed ? 'Expand' : 'Collapse'}
             onClick={(e) => { e.stopPropagation(); props.onToggleCollapse(); }}
@@ -303,7 +241,7 @@ const BoardNodeCard: Component<{
         <Show when={isFeature() && !isDraft()}>
           <button
             type="button"
-            class="absolute right-1 top-1 w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+            class="absolute right-1 top-1 w-5 h-5 rounded-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
             style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.06)' }}
             title="Focus this milestone"
             onClick={(e) => { e.stopPropagation(); props.onEnterScope(); }}
@@ -343,7 +281,7 @@ const BoardNodeCard: Component<{
         {/* Planning indicator (feature blocked by active plan node) */}
         <Show when={isBeingPlanned() && !props.collapsed}>
           <div
-            class="absolute -bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-medium"
+            class="absolute -bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 rounded-none text-[9px] font-medium"
             style={{
               background: 'rgba(20,20,22,0.92)',
               border: '1px solid rgba(255,255,255,0.1)',
@@ -360,7 +298,7 @@ const BoardNodeCard: Component<{
         <Show when={props.collapsed && props.hiddenCounts}>
           {(counts) => (
             <div
-              class="absolute -bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 px-1.5 py-0.5 rounded-full"
+              class="absolute -bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 px-1.5 py-0.5 rounded-none"
               style={{
                 background: 'rgba(20,20,22,0.92)',
                 border: '1px solid rgba(255,255,255,0.08)',
@@ -368,32 +306,32 @@ const BoardNodeCard: Component<{
               }}
             >
               <Show when={counts().working > 0}>
-                <span class="px-1.5 py-0.5 rounded-full text-[9px] font-medium" style={{ color: 'var(--amber-400)', background: 'rgba(212,165,116,0.12)' }}>
+                <span class="px-1.5 py-0.5 rounded-none text-[9px] font-medium" style={{ color: 'var(--amber-400)', background: 'rgba(212,165,116,0.12)' }}>
                   W {counts().working}
                 </span>
               </Show>
               <Show when={counts().pending > 0}>
-                <span class="px-1.5 py-0.5 rounded-full text-[9px] font-medium" style={{ color: 'var(--wool-400)', background: 'rgba(255,255,255,0.06)' }}>
+                <span class="px-1.5 py-0.5 rounded-none text-[9px] font-medium" style={{ color: 'var(--wool-400)', background: 'rgba(255,255,255,0.06)' }}>
                   P {counts().pending}
                 </span>
               </Show>
               <Show when={counts().done > 0}>
-                <span class="px-1.5 py-0.5 rounded-full text-[9px] font-medium" style={{ color: 'var(--sage-light, var(--sage))', background: 'rgba(125,153,112,0.14)' }}>
+                <span class="px-1.5 py-0.5 rounded-none text-[9px] font-medium" style={{ color: 'var(--sage-light, var(--sage))', background: 'rgba(125,153,112,0.14)' }}>
                   D {counts().done}
                 </span>
               </Show>
               <Show when={counts().needsRepair > 0}>
-                <span class="px-1.5 py-0.5 rounded-full text-[9px] font-medium" style={{ color: 'var(--golden-light, var(--golden))', background: 'rgba(201,162,39,0.14)' }}>
+                <span class="px-1.5 py-0.5 rounded-none text-[9px] font-medium" style={{ color: 'var(--golden-light, var(--golden))', background: 'rgba(201,162,39,0.14)' }}>
                   R {counts().needsRepair}
                 </span>
               </Show>
               <Show when={counts().failed > 0}>
-                <span class="px-1.5 py-0.5 rounded-full text-[9px] font-medium" style={{ color: 'var(--terra-light, var(--terra))', background: 'rgba(196,92,74,0.14)' }}>
+                <span class="px-1.5 py-0.5 rounded-none text-[9px] font-medium" style={{ color: 'var(--terra-light, var(--terra))', background: 'rgba(196,92,74,0.14)' }}>
                   F {counts().failed}
                 </span>
               </Show>
               <Show when={counts().checks > 0}>
-                <span class="px-1.5 py-0.5 rounded-full text-[9px] font-medium" style={{ color: 'var(--sage)', background: 'rgba(85,115,75,0.12)' }}>
+                <span class="px-1.5 py-0.5 rounded-none text-[9px] font-medium" style={{ color: 'var(--sage)', background: 'rgba(85,115,75,0.12)' }}>
                   C {counts().checks}
                 </span>
               </Show>
@@ -406,7 +344,7 @@ const BoardNodeCard: Component<{
       {/* Status corner badge — only for non-draft nodes */}
       <Show when={!isDraft() && (isComplete() || isFailed() || isWorking() || isNeedsRepair())}>
         <div
-          class="absolute -top-1 -right-1 flex items-center justify-center rounded-full"
+          class="absolute -top-1 -right-1 flex items-center justify-center rounded-none"
           style={{
             width: '14px',
             height: '14px',
@@ -444,52 +382,11 @@ const BoardNodeCard: Component<{
       </Show>
 
       {/* Connection anchors */}
-      <div class="absolute left-1/2 -bottom-1 w-1.5 h-1.5 rounded-full bg-wool-600/50 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity" />
-      <div class="absolute left-1/2 -top-1 w-1.5 h-1.5 rounded-full bg-wool-600/50 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity" />
+      <div class="absolute left-1/2 -bottom-1 w-1.5 h-1.5 rounded-none bg-wool-600/50 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity" />
+      <div class="absolute left-1/2 -top-1 w-1.5 h-1.5 rounded-none bg-wool-600/50 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity" />
     </div>
   );
 };
-
-// =============================================================================
-// Smooth Edge Path Builder
-// =============================================================================
-
-function buildSmoothPath(waypoints: [number, number][]): string {
-  if (waypoints.length < 2) return '';
-  if (waypoints.length === 2) {
-    return `M ${waypoints[0][0]} ${waypoints[0][1]} L ${waypoints[1][0]} ${waypoints[1][1]}`;
-  }
-  const parts: string[] = [`M ${waypoints[0][0]} ${waypoints[0][1]}`];
-  const radius = 6;
-
-  for (let i = 1; i < waypoints.length - 1; i++) {
-    const prev = waypoints[i - 1];
-    const curr = waypoints[i];
-    const next = waypoints[i + 1];
-
-    const dx1 = curr[0] - prev[0];
-    const dy1 = curr[1] - prev[1];
-    const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
-    const dx2 = next[0] - curr[0];
-    const dy2 = next[1] - curr[1];
-    const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
-
-    const r1 = Math.min(radius, len1 / 2);
-    const r2 = Math.min(radius, len2 / 2);
-
-    const beforeX = curr[0] - (dx1 / len1) * r1;
-    const beforeY = curr[1] - (dy1 / len1) * r1;
-    const afterX = curr[0] + (dx2 / len2) * r2;
-    const afterY = curr[1] + (dy2 / len2) * r2;
-
-    parts.push(`L ${beforeX} ${beforeY}`);
-    parts.push(`Q ${curr[0]} ${curr[1]} ${afterX} ${afterY}`);
-  }
-
-  const last = waypoints[waypoints.length - 1];
-  parts.push(`L ${last[0]} ${last[1]}`);
-  return parts.join(' ');
-}
 
 // =============================================================================
 // Dependency Connectors
@@ -1410,7 +1307,7 @@ export const SpecBoard: Component = () => {
   const NoProjectSelected = () => (
     <div class="flex-1 flex flex-col items-center justify-center bg-pasture-900">
       <div
-        class="w-16 h-16 mb-4 rounded-lg flex items-center justify-center"
+        class="w-16 h-16 mb-4 rounded-none flex items-center justify-center"
         style={{
           background: amber(0.05),
           border: `1px solid ${amber(0.1)}`,
@@ -1423,7 +1320,7 @@ export const SpecBoard: Component = () => {
       <p class="text-sm text-wool-500 mb-4">No project selected</p>
       <button
         onClick={() => project.openProjectSetup()}
-        class="px-3 py-1.5 rounded text-[12px] font-medium"
+        class="px-3 py-1.5 rounded-none text-[12px] font-medium"
         style={{
           background: amber(0.15),
           border: `1px solid ${amber(0.25)}`,
@@ -1496,24 +1393,24 @@ export const SpecBoard: Component = () => {
 
           {/* Zoom controls */}
           <div
-            class="absolute bottom-3 right-3 z-20 flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-medium"
+            class="absolute bottom-3 right-3 z-20 flex items-center gap-1.5 px-2 py-1 rounded-none text-[10px] font-medium"
             style={{ background: 'rgba(30, 30, 30, 0.85)', border: '1px solid rgba(64, 64, 64, 0.4)' }}
           >
             <button
               type="button"
-              class="px-1.5 py-0.5 rounded hover:bg-white/5 text-wool-500"
+              class="px-1.5 py-0.5 rounded-none hover:bg-white/5 text-wool-500"
               onClick={fitToContent}
               title="Fit"
             >
               Fit
             </button>
-            <button type="button" class="w-6 h-5 rounded hover:bg-white/5 text-wool-500" onClick={() => zoomBy(0.9)} title="Zoom out">
+            <button type="button" class="w-6 h-5 rounded-none hover:bg-white/5 text-wool-500" onClick={() => zoomBy(0.9)} title="Zoom out">
               -
             </button>
-            <button type="button" class="w-6 h-5 rounded hover:bg-white/5 text-wool-500" onClick={() => zoomBy(1.1)} title="Zoom in">
+            <button type="button" class="w-6 h-5 rounded-none hover:bg-white/5 text-wool-500" onClick={() => zoomBy(1.1)} title="Zoom in">
               +
             </button>
-            <button type="button" class="px-1.5 py-0.5 rounded hover:bg-white/5 text-wool-500" onClick={() => zoomAroundCenter(1)} title="100%">
+            <button type="button" class="px-1.5 py-0.5 rounded-none hover:bg-white/5 text-wool-500" onClick={() => zoomAroundCenter(1)} title="100%">
               100%
             </button>
             <span class="text-wool-600 ml-1">{Math.round(zoom() * 100)}%</span>
@@ -1532,7 +1429,7 @@ export const SpecBoard: Component = () => {
               }}
             >
               <div
-                class="tree-section flex-1 rounded-lg relative overflow-hidden h-full"
+                class="tree-section flex-1 rounded-none relative overflow-hidden h-full"
                 onClick={(e) => {
                   if (e.target === e.currentTarget) {
                     setSelectedNodeId(null);
@@ -1617,7 +1514,7 @@ export const SpecBoard: Component = () => {
             onContextMenu={(e) => { e.preventDefault(); hideContextMenu(); }}
           />
           <div
-            class="fixed z-[100] py-1 min-w-[140px] rounded overflow-hidden"
+            class="fixed z-[100] py-1 min-w-[140px] rounded-none overflow-hidden"
             style={{
               left: `${contextMenu()!.x}px`,
               top: `${contextMenu()!.y}px`,
@@ -1670,7 +1567,7 @@ export const SpecBoard: Component = () => {
                 }}
               >
                 <div
-                  class="w-[360px] rounded-lg shadow-xl"
+                  class="w-[360px] rounded-none shadow-xl"
                   style={{
                     background: 'var(--pasture-800)',
                     border: '1px solid var(--pasture-600)',
@@ -1679,7 +1576,7 @@ export const SpecBoard: Component = () => {
                   <div class="p-4 border-b border-pasture-600">
                     <div class="flex items-center gap-3">
                       <div
-                        class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
+                        class="w-9 h-9 rounded-none flex items-center justify-center flex-shrink-0"
                         style={{
                           background: isCheck() ? sage(0.15) : amber(0.12),
                           border: `1px solid ${isCheck() ? sage(0.25) : amber(0.2)}`,
@@ -1716,7 +1613,7 @@ export const SpecBoard: Component = () => {
                           onInput={(e) => setNewNodeName(e.currentTarget.value)}
                           onKeyDown={(e) => { if (e.key === 'Escape') setShowNewPrompt(false); }}
                           placeholder={isCheck() ? 'e.g., API returns valid JSON' : isFeature() ? 'e.g., Improve checkout conversion' : 'e.g., Build authentication flow'}
-                          class="w-full px-3 py-2 rounded-md text-sm bg-pasture-900 border text-wool-100 placeholder-wool-600 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+                          class="w-full px-3 py-2 rounded-none text-sm bg-pasture-900 border text-wool-100 placeholder-wool-600 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
                           style={{
                             'font-family': 'system-ui, -apple-system, sans-serif',
                             'border-color': isCheck() ? sage(0.4) : 'var(--pasture-600)',
@@ -1730,14 +1627,14 @@ export const SpecBoard: Component = () => {
                   <div class="px-4 py-3 border-t border-pasture-600 flex justify-end gap-2">
                     <button
                       onClick={() => setShowNewPrompt(false)}
-                      class="px-3 py-1.5 rounded-md text-xs font-medium text-wool-400 hover:text-wool-200 hover:bg-white/5"
+                      class="px-3 py-1.5 rounded-none text-xs font-medium text-wool-400 hover:text-wool-200 hover:bg-white/5"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleCreateNode}
                       disabled={!newNodeName().trim()}
-                      class="px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-40"
+                      class="px-3 py-1.5 rounded-none text-xs font-medium disabled:opacity-40"
                       style={{
                         background: isCheck() ? sage(0.2) : 'var(--amber-500)',
                         color: isCheck() ? 'var(--sage)' : 'var(--pasture-900)',
@@ -1806,7 +1703,7 @@ export const SpecBoard: Component = () => {
                 onClick={(e) => { if (e.target === e.currentTarget) { setViewingNode(null); setSelectedNodeId(null); } }}
               >
                 <div
-                  class="w-[560px] max-h-[85vh] flex flex-col rounded-lg shadow-xl"
+                  class="w-[560px] max-h-[85vh] flex flex-col rounded-none shadow-xl"
                   style={{
                     background: 'linear-gradient(180deg, rgba(36,36,36,0.98) 0%, rgba(26,26,26,0.98) 100%)',
                     border: '1px solid rgba(255,255,255,0.10)',
@@ -1817,7 +1714,7 @@ export const SpecBoard: Component = () => {
                   <div class="p-4 border-b border-white/5 flex items-start justify-between">
                     <div class="flex items-center gap-3">
                       <div
-                        class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+                        class="w-10 h-10 rounded-none flex items-center justify-center flex-shrink-0"
                         style={{
                           background: isCheck() ? sage(0.15) : amber(0.12),
                           border: `1px solid ${isCheck() ? sage(0.25) : amber(0.2)}`,
@@ -1852,7 +1749,7 @@ export const SpecBoard: Component = () => {
                     </div>
                     <button
                       onClick={() => { setViewingNode(null); setSelectedNodeId(null); }}
-                      class="p-1 rounded text-wool-500 hover:text-wool-300 hover:bg-white/5"
+                      class="p-1 rounded-none text-wool-500 hover:text-wool-300 hover:bg-white/5"
                     >
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -1867,10 +1764,10 @@ export const SpecBoard: Component = () => {
                           {isCheck() ? 'Acceptance Criteria' : 'Description'}
                         </label>
                         <div
-                          class="w-full px-4 py-3 rounded-md bg-pasture-900/50 border border-pasture-700 overflow-auto"
+                          class="w-full px-4 py-3 rounded-none bg-pasture-900/50 border border-pasture-700 overflow-auto"
                           style={{ 'max-height': '400px' }}
                         >
-                          <MarkdownContent content={node().content} compact />
+                          <Markdown content={node().content} compact />
                         </div>
                       </div>
                     </Show>
@@ -1883,7 +1780,7 @@ export const SpecBoard: Component = () => {
                             {(taskId) => (
                               <button
                                 type="button"
-                                class="px-2 py-0.5 rounded-full text-[11px] font-mono hover:brightness-110 transition"
+                                class="px-2 py-0.5 rounded-none text-[11px] font-mono hover:brightness-110 transition"
                                 style={{ background: sage(0.14), color: 'var(--sage)', border: `1px solid ${sage(0.28)}` }}
                                 onClick={() => {
                                   setViewingNode(null);
@@ -1902,7 +1799,7 @@ export const SpecBoard: Component = () => {
                     <Show when={node().lastCommitSha}>
                       <div class="space-y-1.5">
                         <label class="text-xs font-medium text-wool-300">Last Commit</label>
-                        <code class="px-2 py-1 rounded text-xs font-mono bg-pasture-900/50 border border-pasture-700 text-wool-300">
+                        <code class="px-2 py-1 rounded-none text-xs font-mono bg-pasture-900/50 border border-pasture-700 text-wool-300">
                           {node().lastCommitSha?.slice(0, 7)}
                         </code>
                       </div>
@@ -1953,7 +1850,7 @@ export const SpecBoard: Component = () => {
                           return (
                             <button
                               type="button"
-                              class="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium max-w-full hover:brightness-110 transition"
+                              class="inline-flex items-center gap-1.5 px-2 py-1 rounded-none text-[11px] font-medium max-w-full hover:brightness-110 transition"
                               style={{ background: bg, border: `1px solid ${border}`, color: fg }}
                               title={id}
                               onClick={() => {
@@ -1965,7 +1862,7 @@ export const SpecBoard: Component = () => {
                               <span class="text-[9px] font-semibold opacity-70">{kindLetter}</span>
                               <span class="truncate max-w-[220px]">{name}</span>
                               <Show when={statusDot}>
-                                <span class="w-1.5 h-1.5 rounded-full" style={{ background: statusDot || 'transparent' }} />
+                                <span class="w-1.5 h-1.5 rounded-none" style={{ background: statusDot || 'transparent' }} />
                               </Show>
                             </button>
                           );
@@ -2028,7 +1925,7 @@ export const SpecBoard: Component = () => {
                               <div class="flex items-start gap-2 text-[11px]">
                                 <span class="text-wool-500 w-16 pt-0.5">Worker:</span>
                                 <div class="flex flex-wrap gap-1">
-                                  <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium"
+                                  <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-none text-[11px] font-medium"
                                     style={{ background: 'rgba(212,165,116,0.14)', border: '1px solid rgba(212,165,116,0.25)', color: 'var(--amber-300)' }}
                                   >
                                     {node().claimedBy}
@@ -2043,14 +1940,14 @@ export const SpecBoard: Component = () => {
 
                     <div class="space-y-1.5 pt-2 border-t border-pasture-700/50">
                       <label class="text-xs font-medium text-wool-500">Node ID</label>
-                      <code class="block px-2 py-1 rounded text-[10px] font-mono bg-pasture-900/30 border border-pasture-700/50 text-wool-500 truncate">{node().id}</code>
+                      <code class="block px-2 py-1 rounded-none text-[10px] font-mono bg-pasture-900/30 border border-pasture-700/50 text-wool-500 truncate">{node().id}</code>
                     </div>
                   </div>
 
                   <div class="px-4 py-3 border-t border-pasture-600 flex justify-end">
                     <button
                       onClick={() => { setViewingNode(null); setSelectedNodeId(null); }}
-                      class="px-3 py-1.5 rounded-md text-xs font-medium text-wool-400 hover:text-wool-200 hover:bg-white/5"
+                      class="px-3 py-1.5 rounded-none text-xs font-medium text-wool-400 hover:text-wool-200 hover:bg-white/5"
                     >
                       Close
                     </button>
@@ -2065,7 +1962,7 @@ export const SpecBoard: Component = () => {
         <Show when={delta.loading()}>
           <div class="absolute inset-0 bg-black/30 flex items-center justify-center">
             <div
-              class="w-6 h-6 rounded-full animate-spin"
+              class="w-6 h-6 rounded-none animate-spin"
               style={{ border: `2px solid ${amber(0.2)}`, 'border-top-color': 'var(--amber-500)' }}
             />
           </div>

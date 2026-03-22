@@ -8,7 +8,7 @@
  */
 import { type Component, Show, For, createSignal, createEffect, onCleanup } from 'solid-js';
 import { emit } from '../../lib/events';
-import { useApp, useProject } from '../../stores';
+import { useApp, useProject, useWorkspace, useDelivery } from '../../stores';
 import { useDelta } from '../../stores/delta-context';
 import { Icon } from '../shared';
 import { findClosestItem, getRadialItemStyle, renderSlicePath } from '../../lib/radial-utils';
@@ -17,7 +17,9 @@ import { amber } from '../../lib/theme-colors';
 export const RadialMenu: Component = () => {
   const app = useApp();
   const project = useProject();
+  const workspace = useWorkspace();
   const delta = useDelta();
+  const delivery = useDelivery();
 
   const isOpen = () => app.radialMenuOpen();
   const position = () => app.radialMenuPosition();
@@ -166,15 +168,17 @@ export const RadialMenu: Component = () => {
     emit('radial-deliver');
   };
 
-  const handleDocs = () => {
+  const handleBoard = () => {
     app.closeRadialMenu();
-    project.setDocsOpen(!project.docsOpen());
+    workspace.setActiveMachineryTab('board');
+    workspace.setMachineryOpen(true);
   };
 
-  const handleChat = () => {
+  const handleWorkers = () => {
     app.closeRadialMenu();
-    project.setActiveThread('chat');
-    project.setSheepfoldOpen(true);
+    workspace.setActiveThread('chat');
+    workspace.setActiveMachineryTab('workers');
+    workspace.setMachineryOpen(true);
   };
 
   const handleIde = () => {
@@ -191,14 +195,14 @@ export const RadialMenu: Component = () => {
     }
   };
 
-  // 6 route-level actions evenly spaced (60° intervals)
+  // 6 project-surface actions evenly spaced (60° intervals)
   // Starting from top (0°) going clockwise
   const menuItems = () => [
-    { id: 'deliver', angle: 0, icon: 'package', label: 'Deliver', shortcut: '8', badge: undefined, variant: canDeliver() ? 'success' : 'default', disabled: !canDeliver() || delta.deliveryPending(), onClick: handleDeliver },
-    { id: 'chat', angle: 60, icon: 'message-circle', label: 'Chat', shortcut: '9', badge: undefined, variant: 'default', disabled: false, onClick: handleChat },
+    { id: 'deliver', angle: 0, icon: 'package', label: 'Deliver', shortcut: '8', badge: undefined, variant: canDeliver() ? 'success' : 'default', disabled: !canDeliver() || delivery.deliveryPending(), onClick: handleDeliver },
+    { id: 'workers', angle: 60, icon: 'message-circle', label: 'Workers', shortcut: '9', badge: undefined, variant: 'default', disabled: false, onClick: handleWorkers },
     { id: 'settings', angle: 120, icon: 'settings', label: 'Settings', shortcut: '3', badge: undefined, variant: 'default', disabled: false, onClick: handleSettings },
     { id: 'ide', angle: 180, icon: 'folder-open', label: 'IDE', shortcut: '2', badge: undefined, variant: 'default', disabled: !delta.projectRun(), onClick: handleIde },
-    { id: 'docs', angle: 240, icon: 'book-open', label: 'Docs', shortcut: '1', badge: undefined, variant: project.docsOpen() ? 'primary' : 'default', disabled: false, onClick: handleDocs },
+    { id: 'board', angle: 240, icon: 'blocks', label: 'Board', shortcut: '1', badge: undefined, variant: workspace.machineryOpen() && workspace.activeMachineryTab() === 'board' ? 'primary' : 'default', disabled: false, onClick: handleBoard },
     { id: 'start-shepherd', angle: 300, icon: 'rocket', label: 'Start', shortcut: '7', badge: draftBadge(), variant: delta.hasDraftNodes() ? 'primary' : 'default', disabled: !delta.hasDraftNodes() || delta.shepherdStartPending(), onClick: handleStartShepherd },
   ];
 
@@ -222,7 +226,7 @@ export const RadialMenu: Component = () => {
       >
         {/* Outer glow ring */}
         <div
-          class="absolute w-12 h-12 rounded-full"
+          class="absolute w-12 h-12 rounded-none"
           style={{
             left: '50%',
             top: '50%',
@@ -232,7 +236,7 @@ export const RadialMenu: Component = () => {
         />
         {/* Center ring */}
         <div
-          class="relative w-7 h-7 rounded-full flex items-center justify-center"
+          class="relative w-7 h-7 rounded-none flex items-center justify-center"
           style={{
             background: 'rgba(25, 25, 25, 0.98)',
             border: `2px solid ${amber(0.7)}`,
@@ -240,7 +244,7 @@ export const RadialMenu: Component = () => {
           }}
         >
           <div
-            class="w-2 h-2 rounded-full"
+            class="w-2 h-2 rounded-none"
             style={{
               background: amber(0.9),
               'box-shadow': `0 0 6px ${amber(0.8)}`,
@@ -358,7 +362,7 @@ export const RadialMenu: Component = () => {
 
           return (
             <div
-              class="fixed z-[9999] flex items-center gap-2 px-3 py-2 rounded-lg transition-all duration-75 whitespace-nowrap pointer-events-none"
+              class="fixed z-[9999] flex items-center gap-2 px-3 py-2 rounded-none transition-all duration-75 whitespace-nowrap pointer-events-none"
               style={{
                 left: `${x()}px`,
                 top: `${y()}px`,
@@ -380,7 +384,7 @@ export const RadialMenu: Component = () => {
               </span>
               <Show when={item.badge}>
                 <span
-                  class="ml-1 px-1.5 py-0.5 rounded text-[9px] font-bold"
+                  class="ml-1 px-1.5 py-0.5 rounded-none text-[9px] font-bold"
                   style={{ background: 'var(--amber-500)', color: 'var(--pasture-900)' }}
                 >
                   {item.badge}

@@ -90,7 +90,7 @@ pub async fn spawn_worker(
     env.insert("HIRSEL_RUN".to_string(), config.run_name.clone());
     env.insert("HIRSEL_WORKER".to_string(), config.worker_name.clone());
 
-    // Apply forwarded credentials (for remote orchestrator mode)
+    // Apply forwarded credentials from the backend runtime
     if let Some(ref creds) = config.credentials {
         if let Some(ref key) = creds.openai_api_key {
             env.insert("OPENAI_API_KEY".to_string(), key.clone());
@@ -637,8 +637,6 @@ mod tests {
             resume_session_id: None,
             env_vars: None,
             credentials: None,
-            coordinator_url: None,
-            tailscale_authkey: None,
             assigned_task_id: None,
             is_plan_task: false,
         };

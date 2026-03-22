@@ -66,7 +66,7 @@ pub async fn get_process_counts() -> Result<serde_json::Value, String> {
         // Count hirsel worker processes
         let hirsel_output = Command::new("sh")
             .arg("-c")
-            .arg("ps aux | grep -E '[h]irsel .*(__worker-run|__remote-worker)' | wc -l")
+            .arg("ps aux | grep -E '[h]irsel .*__worker-run' | wc -l")
             .output()
             .str_err()?;
         let hirsel_count: i32 = String::from_utf8_lossy(&hirsel_output.stdout)
@@ -88,7 +88,7 @@ pub async fn get_process_counts() -> Result<serde_json::Value, String> {
         // Get detailed process list
         let detail_output = Command::new("sh")
             .arg("-c")
-            .arg("ps aux | grep -E 'hirsel .*(__worker-run|__remote-worker)|node' | grep -v grep | head -20")
+            .arg("ps aux | grep -E 'hirsel .*__worker-run|node' | grep -v grep | head -20")
             .output()
             .str_err()?;
         let details = String::from_utf8_lossy(&detail_output.stdout).to_string();

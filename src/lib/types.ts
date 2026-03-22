@@ -6,45 +6,16 @@
  */
 
 // =============================================================================
-// Runner Types (Host + Container Model)
+// Runner Types (Single-Host Model)
 // =============================================================================
-
-/** Host type - where compute runs */
-export type HostType = 'local' | 'client' | 'ssh' | 'fly';
 
 /** Container configuration for Docker */
 export interface ContainerConfig {
   image: string;
 }
 
-/** SSH host configuration */
-export interface SshHostConfig {
-  type: 'ssh';
-  address: string;
-  port: number;
-  sshKey: string | null;
-  workBase: string;
-  location: string | null;
-}
-
-/** Fly.io host configuration */
-export interface FlyHostConfig {
-  type: 'fly';
-  apiToken: string | null;
-  app: string;
-  region: string | null;
-  cpuKind: string;
-  cpus: number;
-  memoryMb: number;
-  autoDestroy: boolean;
-}
-
-/** Host configuration - where workers run */
-export type HostConfig = { type: 'local' } | { type: 'client' } | SshHostConfig | FlyHostConfig;
-
-/** Runner configuration - Host + optional Container */
+/** Runner configuration - backend host plus optional container */
 export interface RunnerConfig {
-  host: HostConfig;
   container?: ContainerConfig;
 }
 
@@ -707,7 +678,7 @@ export interface ChatMessage {
 // Shepherd Session Types
 // =============================================================================
 
-/** Task focus for board context */
+/** Task focus for project context */
 export interface TaskFocus {
   taskId: string;
   taskName: string;
@@ -739,14 +710,14 @@ export type ShepherdMessageChunk =
 export type ShepherdScope =
   | { type: 'general' }
   | { type: 'run'; runName: string; workspacePath: string; projectPath?: string }
-  | { type: 'board'; projectId: number; workspacePath?: string; focus?: TaskFocus };
+  | { type: 'project'; projectId: number; workspacePath?: string; focus?: TaskFocus };
 
 /** Request to start a Shepherd session */
 export type StartShepherdSessionRequest =
   | { type: 'general' }
   | { type: 'run'; runName: string }
-  | { type: 'board'; projectId: number }
-  | { type: 'boardFocused'; projectId: number; taskId: string; taskName: string };
+  | { type: 'project'; projectId: number }
+  | { type: 'projectFocused'; projectId: number; taskId: string; taskName: string };
 
 /** Response from starting a Shepherd session */
 export interface StartShepherdSessionResponse {
@@ -1095,8 +1066,6 @@ export interface BoardNode {
   validates: string[];
   validatedBy: string[];
   blockedBy: string[];
-  x: number | null;
-  y: number | null;
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
@@ -1123,8 +1092,6 @@ export interface BoardNodeTree {
   validatedBy: string[];
   blockedBy: string[];
   children: BoardNodeTree[];
-  x: number | null;
-  y: number | null;
   completedAt: string | null;
   lastCommitSha: string | null;
   resolves: string | null;
@@ -1154,8 +1121,6 @@ export interface CreateBoardNodeRequest {
   content?: string;
   validatedBy?: string[];
   blockedBy?: string[];
-  x?: number | null;
-  y?: number | null;
 }
 
 /** Request to update a board node */
@@ -1164,8 +1129,6 @@ export interface UpdateBoardNodeRequest {
   content?: string;
   validatedBy?: string[];
   blockedBy?: string[];
-  x?: number | null;
-  y?: number | null;
 }
 
 /** Response from starting Shepherd orchestration */
@@ -1333,10 +1296,30 @@ export interface Route {
   workerScale: string | null;
   timeLimitMinutes: number | null;
   humanInTheLoop: boolean;
-  docsPath: string;
-  persistDocsChanges: boolean;
   targetBranch: string | null;
   runner: string | null;
+}
+
+/** Latest persisted project-focus artifact for a project */
+export interface ProjectFocusView {
+  projectId: number;
+  html: string;
+  updatedAt: string;
+  source: string | null;
+}
+
+export interface RouteSummary {
+  routeId: number;
+  name: string;
+  selected: boolean;
+  status: string;
+  runName: string | null;
+  updatedAt: string;
+}
+
+export interface ProjectSurfaceSnapshot {
+  focusView: ProjectFocusView;
+  routes: RouteSummary[];
 }
 
 /** Route with ancestry information for tree display */

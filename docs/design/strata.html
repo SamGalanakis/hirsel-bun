@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Strata — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,600;1,6..72,300;1,6..72,400&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --void: #000000;
+      --surface: #0e0e0e;
+      --surface-1: #131313;
+      --surface-2: #1a1919;
+      --surface-3: #201f1f;
+      --surface-4: #262626;
+      --surface-5: #2c2c2c;
+      --border: #494847;
+      --border-dim: rgba(73,72,71,0.3);
+      --border-faint: rgba(73,72,71,0.12);
+      --text: #ffffff;
+      --text-2: #adaaaa;
+      --text-3: #777575;
+      --text-4: #494847;
+      --cyan: #c1fffe;
+      --cyan-bright: #00ffff;
+      --cyan-dim: #00e6e6;
+      --cyan-muted: rgba(0,230,230,0.5);
+      --cyan-ghost: rgba(0,230,230,0.08);
+      --cyan-whisper: rgba(193,255,254,0.04);
+      --orange: #ff734c;
+      --orange-dim: rgba(255,115,76,0.15);
+      --green: #4ade80;
+      --green-dim: rgba(74,222,128,0.12);
+      --amber: #fbbf24;
+      --amber-dim: rgba(251,191,36,0.12);
+      --red: #f87171;
+      --red-dim: rgba(248,113,113,0.12);
+      --font-h: 'Newsreader', serif;
+      --font-b: 'Space Grotesk', sans-serif;
+    }
+
+    .mi { /* material icon shorthand */
+      font-family: 'Material Symbols Outlined';
+      font-variation-settings: 'FILL' 0, 'wght' 200, 'GRAD' 0, 'opsz' 20;
+      font-size: 18px;
+      line-height: 1;
+      display: inline-block;
+      vertical-align: middle;
+    }
+    .mi-fill { font-variation-settings: 'FILL' 1, 'wght' 200, 'GRAD' 0, 'opsz' 20; }
+
+    body {
+      font-family: var(--font-b);
+      background: var(--void);
+      color: var(--text);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ═══════════════════════════════════════
+       DESIGN-STORM NAV (meta, not part of redesign)
+       ═══════════════════════════════════════ */
+    .storm-nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
+      height: 36px;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(16px);
+      display: flex; align-items: center;
+      padding: 0 16px;
+      gap: 12px;
+      border-bottom: 1px solid var(--border-faint);
+      font-size: 10px;
+    }
+    .storm-nav a {
+      color: var(--text-3); text-decoration: none;
+      letter-spacing: 0.05em; text-transform: uppercase;
+      transition: color 0.2s;
+    }
+    .storm-nav a:hover { color: var(--cyan-dim); }
+    .storm-nav .sn-title {
+      flex: 1; text-align: center;
+      font-family: var(--font-h); font-style: italic;
+      font-size: 13px; color: var(--text-2);
+      letter-spacing: 0;
+    }
+    .storm-nav .sn-label {
+      font-size: 9px; color: var(--text-4);
+      letter-spacing: 0.15em; text-transform: uppercase;
+      border-right: 1px solid var(--border-faint);
+      padding-right: 12px; margin-right: 4px;
+    }
+
+    /* ═══════════════════════════════════════
+       APP SHELL
+       ═══════════════════════════════════════ */
+    .app {
+      display: grid;
+      grid-template-rows: 40px 1fr 28px;
+      grid-template-columns: 56px 1fr 380px;
+      height: calc(100vh - 36px);
+      margin-top: 36px;
+    }
+
+    /* ═══════════════════════════════════════
+       TOP BAR
+       ═══════════════════════════════════════ */
+    .topbar {
+      grid-column: 1 / -1;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border-faint);
+      display: flex; align-items: center;
+      padding: 0 16px;
+      gap: 0;
+      position: relative;
+    }
+    .topbar::after {
+      content: '';
+      position: absolute; bottom: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--cyan-whisper), transparent);
+    }
+
+    .tb-logo {
+      font-family: var(--font-h);
+      font-size: 16px; font-style: italic; font-weight: 300;
+      color: var(--text);
+      letter-spacing: -0.02em;
+      margin-right: 24px;
+      white-space: nowrap;
+    }
+
+    .tb-tabs {
+      display: flex; gap: 0; height: 100%;
+    }
+    .tb-tab {
+      display: flex; align-items: center; gap: 5px;
+      padding: 0 14px;
+      font-size: 10px; font-weight: 600;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-3);
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+      cursor: default;
+      height: 100%;
+    }
+    .tb-tab:hover { color: var(--text-2); }
+    .tb-tab.active {
+      color: var(--text);
+      border-bottom-color: var(--cyan-dim);
+    }
+    .tb-tab .mi { font-size: 15px; opacity: 0.6; }
+
+    .tb-spacer { flex: 1; }
+
+    .tb-run {
+      display: flex; align-items: center; gap: 6px;
+      padding: 3px 10px 3px 8px;
+      background: var(--cyan-ghost);
+      border: 1px solid rgba(0,230,230,0.12);
+      font-size: 10px; font-weight: 600;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--cyan-dim);
+    }
+    .tb-run .mi { font-size: 14px; color: var(--cyan-dim); }
+
+    .tb-scope {
+      display: flex; align-items: center; gap: 4px;
+      margin-left: 16px;
+      font-size: 10px; color: var(--text-3);
+      letter-spacing: 0.05em;
+    }
+    .tb-scope strong { color: var(--text-2); font-weight: 500; }
+
+    .tb-workers {
+      display: flex; align-items: center; gap: 3px;
+      margin-left: 16px;
+    }
+    .tb-w-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+    }
+    .tb-w-dot.active { background: var(--cyan-dim); box-shadow: 0 0 6px var(--cyan-muted); }
+    .tb-w-dot.idle { background: var(--text-4); }
+    .tb-w-dot.error { background: var(--orange); box-shadow: 0 0 4px var(--orange-dim); }
+
+    .tb-actions {
+      display: flex; align-items: center; gap: 8px;
+      margin-left: 16px;
+    }
+    .tb-actions .mi {
+      color: var(--text-3);
+      cursor: pointer;
+      transition: color 0.2s;
+    }
+    .tb-actions .mi:hover { color: var(--cyan-dim); }
+
+    /* ═══════════════════════════════════════
+       LEFT RAIL
+       ═══════════════════════════════════════ */
+    .rail {
+      background: var(--surface);
+      border-right: 1px solid var(--border-faint);
+      display: flex; flex-direction: column;
+      align-items: center;
+      padding: 12px 0;
+      gap: 2px;
+    }
+    .rail-item {
+      width: 100%; padding: 10px 0;
+      display: flex; flex-direction: column;
+      align-items: center; gap: 3px;
+      color: var(--text-4);
+      cursor: default;
+      transition: all 0.15s;
+      position: relative;
+    }
+    .rail-item:hover { color: var(--text-3); }
+    .rail-item.active {
+      color: var(--cyan-dim);
+    }
+    .rail-item.active::before {
+      content: '';
+      position: absolute; left: 0; top: 6px; bottom: 6px;
+      width: 2px; background: var(--cyan-dim);
+    }
+    .rail-item .mi { font-size: 20px; }
+    .rail-item span:last-child {
+      font-size: 8px; font-weight: 600;
+      letter-spacing: 0.12em; text-transform: uppercase;
+    }
+    .rail-badge {
+      position: absolute; top: 6px; right: 10px;
+      min-width: 14px; height: 14px;
+      background: var(--orange);
+      color: var(--void);
+      font-size: 8px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      padding: 0 3px;
+    }
+    .rail-spacer { flex: 1; }
+
+    /* ═══════════════════════════════════════
+       BOARD CANVAS (center)
+       ═══════════════════════════════════════ */
+    .board {
+      background: var(--void);
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Faint dot grid */
+    .board::before {
+      content: '';
+      position: absolute; inset: 0;
+      background-image:
+        radial-gradient(circle, rgba(73,72,71,0.18) 1px, transparent 1px);
+      background-size: 24px 24px;
+      pointer-events: none;
+    }
+
+    /* Light leak */
+    .board::after {
+      content: '';
+      position: absolute;
+      top: -120px; right: -80px;
+      width: 400px; height: 400px;
+      background: var(--cyan-whisper);
+      filter: blur(120px);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+
+    /* === BOARD NODES === */
+    .board-content {
+      position: absolute;
+      inset: 0;
+      padding: 40px;
+    }
+
+    /* SVG edges behind nodes */
+    .board-edges {
+      position: absolute; inset: 0;
+      pointer-events: none;
+    }
+    .board-edges line {
+      stroke: var(--border-dim);
+      stroke-width: 1;
+    }
+    .board-edges line.edge-active {
+      stroke: rgba(0,230,230,0.2);
+      stroke-dasharray: 6 4;
+      animation: dash-flow 1.2s linear infinite;
+    }
+    @keyframes dash-flow {
+      to { stroke-dashoffset: -10; }
+    }
+
+    /* Node cards */
+    .node {
+      position: absolute;
+      background: var(--surface-2);
+      border: 1px solid var(--border-faint);
+      padding: 10px 14px;
+      min-width: 160px;
+      max-width: 220px;
+      transition: all 0.25s;
+      cursor: default;
+    }
+    .node:hover {
+      border-color: var(--border);
+      background: var(--surface-3);
+    }
+
+    .node-kind {
+      font-size: 8px; font-weight: 700;
+      letter-spacing: 0.15em; text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .node-kind.kind-spec { color: var(--cyan-dim); }
+    .node-kind.kind-task { color: var(--text-3); }
+    .node-kind.kind-eval { color: var(--amber); }
+
+    .node-title {
+      font-size: 12px; font-weight: 400;
+      color: var(--text);
+      line-height: 1.35;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .node-status {
+      display: flex; align-items: center; gap: 5px;
+      margin-top: 6px;
+      font-size: 9px; font-weight: 500;
+      letter-spacing: 0.06em; text-transform: uppercase;
+    }
+    .ns-dot {
+      width: 5px; height: 5px;
+    }
+    .ns-dot.validated { background: var(--green); box-shadow: 0 0 4px var(--green-dim); }
+    .ns-dot.working { background: var(--cyan-dim); box-shadow: 0 0 4px var(--cyan-ghost); animation: pulse-dot 2s ease-in-out infinite; }
+    .ns-dot.pending { background: var(--amber); }
+    .ns-dot.draft { background: var(--text-4); }
+    .ns-dot.blocked { background: var(--orange); }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .ns-text.validated { color: var(--green); }
+    .ns-text.working { color: var(--cyan-dim); }
+    .ns-text.pending { color: var(--amber); }
+    .ns-text.draft { color: var(--text-4); }
+    .ns-text.blocked { color: var(--orange); }
+
+    /* Worker tag on node */
+    .node-worker {
+      display: inline-flex; align-items: center; gap: 3px;
+      margin-top: 5px;
+      padding: 1px 6px;
+      background: var(--cyan-ghost);
+      border: 1px solid rgba(0,230,230,0.1);
+      font-size: 8px; font-weight: 600;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--cyan-dim);
+    }
+    .node-worker .mi { font-size: 10px; }
+
+    /* Active node glow */
+    .node.node-active {
+      border-color: rgba(0,230,230,0.2);
+      box-shadow: 0 0 20px var(--cyan-whisper);
+    }
+
+    /* Validated node */
+    .node.node-validated {
+      border-color: rgba(74,222,128,0.15);
+    }
+
+    /* Blocked node */
+    .node.node-blocked {
+      border-color: rgba(255,115,76,0.15);
+    }
+
+    /* Draft node */
+    .node.node-draft {
+      opacity: 0.45;
+      border-style: dashed;
+    }
+
+    /* ═══════════════════════════════════════
+       SHEPHERD CONSOLE (right pane)
+       ═══════════════════════════════════════ */
+    .shepherd {
+      background: var(--surface-1);
+      border-left: 1px solid var(--border-faint);
+      display: flex; flex-direction: column;
+      position: relative;
+    }
+    .shepherd::before {
+      content: '';
+      position: absolute; top: 0; left: 0; bottom: 0;
+      width: 1px;
+      background: linear-gradient(180deg, var(--cyan-whisper), transparent 30%);
+      pointer-events: none;
+    }
+
+    .sh-header {
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border-faint);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .sh-header-left {
+      display: flex; align-items: center; gap: 8px;
+    }
+    .sh-header-left .mi { color: var(--cyan-dim); font-size: 18px; }
+    .sh-title {
+      font-family: var(--font-h);
+      font-size: 15px; font-weight: 400; font-style: italic;
+      color: var(--text);
+    }
+    .sh-context {
+      font-size: 9px; font-weight: 600;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-3);
+      padding: 2px 8px;
+      border: 1px solid var(--border-faint);
+    }
+
+    .sh-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex; flex-direction: column;
+      gap: 16px;
+    }
+
+    .sh-msg {
+      max-width: 92%;
+    }
+    .sh-msg.user {
+      align-self: flex-end;
+    }
+    .sh-msg.assistant {
+      align-self: flex-start;
+    }
+
+    .sh-msg-meta {
+      font-size: 9px; font-weight: 500;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .sh-msg.user .sh-msg-meta { color: var(--text-3); text-align: right; }
+    .sh-msg.assistant .sh-msg-meta { color: var(--cyan-dim); }
+
+    .sh-msg-body {
+      font-size: 13px; line-height: 1.65;
+      color: var(--text-2);
+      padding: 12px 16px;
+    }
+    .sh-msg.user .sh-msg-body {
+      background: var(--surface-3);
+      border: 1px solid var(--border-faint);
+      color: var(--text);
+    }
+    .sh-msg.assistant .sh-msg-body {
+      background: var(--surface-2);
+      border: 1px solid var(--border-faint);
+      border-left: 2px solid rgba(0,230,230,0.2);
+    }
+    .sh-msg-body code {
+      font-family: 'Space Grotesk', monospace;
+      font-size: 11px;
+      background: var(--surface-4);
+      padding: 1px 5px;
+      color: var(--cyan);
+    }
+
+    /* Tool call in message */
+    .sh-tool {
+      margin-top: 8px;
+      padding: 8px 12px;
+      background: var(--surface-3);
+      border: 1px solid var(--border-faint);
+      font-size: 10px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .sh-tool .mi { font-size: 14px; color: var(--cyan-dim); }
+    .sh-tool-name { color: var(--cyan-dim); font-weight: 600; letter-spacing: 0.05em; }
+    .sh-tool-arg { color: var(--text-3); }
+
+    /* Input area */
+    .sh-input-area {
+      padding: 12px 16px;
+      border-top: 1px solid var(--border-faint);
+      display: flex; gap: 8px;
+      align-items: flex-end;
+    }
+    .sh-textarea {
+      flex: 1;
+      background: var(--surface-3);
+      border: 1px solid var(--border-faint);
+      color: var(--text);
+      font-family: var(--font-b);
+      font-size: 13px;
+      padding: 10px 14px;
+      resize: none;
+      outline: none;
+      min-height: 40px;
+      max-height: 120px;
+      transition: border-color 0.2s;
+    }
+    .sh-textarea::placeholder { color: var(--text-4); }
+    .sh-textarea:focus { border-color: rgba(0,230,230,0.2); }
+
+    .sh-send {
+      width: 36px; height: 36px;
+      background: var(--cyan-dim);
+      color: var(--void);
+      border: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.2s;
+    }
+    .sh-send:hover {
+      background: var(--cyan-bright);
+      box-shadow: 0 0 16px var(--cyan-ghost);
+    }
+    .sh-send .mi {
+      font-size: 18px;
+      font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+      color: var(--void);
+    }
+
+    /* ═══════════════════════════════════════
+       STATUS BAR
+       ═══════════════════════════════════════ */
+    .statusbar {
+      grid-column: 1 / -1;
+      background: var(--surface);
+      border-top: 1px solid var(--border-faint);
+      display: flex; align-items: center;
+      padding: 0 12px;
+      gap: 16px;
+      font-size: 10px;
+      color: var(--text-4);
+    }
+    .sb-item {
+      display: flex; align-items: center; gap: 4px;
+    }
+    .sb-item .mi { font-size: 12px; }
+    .sb-item.sb-cyan { color: var(--cyan-dim); }
+    .sb-spacer { flex: 1; }
+    .sb-item a {
+      color: var(--text-3);
+      text-decoration: none;
+    }
+
+    /* ═══════════════════════════════════════
+       RATIONALE (below the app mock)
+       ═══════════════════════════════════════ */
+    .rationale-wrap {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      height: 0;
+      overflow: visible;
+      z-index: 0;
+    }
+
+    /* ═══════════════════════════════════════
+       RESPONSIVE
+       ═══════════════════════════════════════ */
+    @media (max-width: 1100px) {
+      .app { grid-template-columns: 48px 1fr 280px; }
+    }
+    @media (max-width: 800px) {
+      .app { grid-template-columns: 1fr; grid-template-rows: 40px 1fr 200px 28px; }
+      .rail { display: none; }
+      .shepherd { border-left: none; border-top: 1px solid var(--border-faint); }
+      .board-content { padding: 20px; }
+    }
+
+    /* Selection */
+    ::selection { background: rgba(0,230,230,0.2); color: var(--text); }
+  </style>
+</head>
+<body>
+
+  <!-- Design storm nav (meta) -->
+  <nav class="storm-nav">
+    <span class="sn-label">Storm</span>
+    <a href="../designs.html">Gallery</a>
+    <a href="combustion-engine.html">Prev</a>
+    <span class="sn-title">Strata</span>
+    <a href="" style="visibility:hidden;">Next</a>
+  </nav>
+
+  <!-- ═══════════ THE APP MOCK ═══════════ -->
+  <div class="app">
+
+    <!-- TOP BAR -->
+    <header class="topbar">
+      <span class="tb-logo">Hirsel</span>
+
+      <div class="tb-tabs">
+        <div class="tb-tab active"><span class="mi">account_tree</span> Board</div>
+        <div class="tb-tab"><span class="mi">play_circle</span> Runs</div>
+        <div class="tb-tab"><span class="mi">local_shipping</span> Delivery</div>
+      </div>
+
+      <div class="tb-spacer"></div>
+
+      <div class="tb-scope">
+        <span class="mi" style="font-size:13px;">filter_center_focus</span>
+        Scope: <strong>All</strong>
+      </div>
+
+      <div class="tb-run">
+        <span class="mi">play_arrow</span>
+        Working
+      </div>
+
+      <div class="tb-workers">
+        <div class="tb-w-dot active"></div>
+        <div class="tb-w-dot active"></div>
+        <div class="tb-w-dot error"></div>
+        <div class="tb-w-dot idle"></div>
+      </div>
+
+      <div class="tb-actions">
+        <span class="mi">tune</span>
+        <span class="mi">settings</span>
+      </div>
+    </header>
+
+    <!-- LEFT RAIL -->
+    <nav class="rail">
+      <div class="rail-item active">
+        <span class="mi">folder_open</span>
+        <span>Project</span>
+      </div>
+      <div class="rail-item">
+        <span class="mi">route</span>
+        <span>Routes</span>
+      </div>
+      <div class="rail-item">
+        <span class="mi">smart_toy</span>
+        <span>Workers</span>
+        <span class="rail-badge">2</span>
+      </div>
+      <div class="rail-item">
+        <span class="mi">history</span>
+        <span>Scribe</span>
+      </div>
+      <div class="rail-spacer"></div>
+      <div class="rail-item">
+        <span class="mi">help_outline</span>
+        <span></span>
+      </div>
+    </nav>
+
+    <!-- BOARD CANVAS -->
+    <main class="board">
+      <svg class="board-edges" viewBox="0 0 1000 700" preserveAspectRatio="none">
+        <!-- Hierarchy edges -->
+        <line x1="180" y1="90" x2="120" y2="220" />
+        <line x1="180" y1="90" x2="310" y2="200" />
+        <line x1="180" y1="90" x2="500" y2="160" />
+        <line x1="500" y1="160" x2="460" y2="310" />
+        <line x1="500" y1="160" x2="620" y2="290" class="edge-active" />
+        <line x1="180" y1="90" x2="700" y2="120" />
+        <line x1="180" y1="90" x2="760" y2="260" />
+        <!-- Blocked-by edge -->
+        <line x1="700" y1="120" x2="500" y2="160" style="stroke:rgba(255,115,76,0.15); stroke-dasharray:4 3;" />
+      </svg>
+
+      <div class="board-content">
+        <!-- Root spec -->
+        <div class="node" style="left:80px; top:50px; min-width:200px;">
+          <div class="node-kind kind-spec">Spec</div>
+          <div class="node-title">Auth Overhaul</div>
+          <div class="node-status"><div class="ns-dot working"></div><span class="ns-text working">Working</span></div>
+        </div>
+
+        <!-- Validated specs -->
+        <div class="node node-validated" style="left:40px; top:200px;">
+          <div class="node-kind kind-spec">Spec</div>
+          <div class="node-title">Schema Migration v3</div>
+          <div class="node-status"><div class="ns-dot validated"></div><span class="ns-text validated">Validated</span></div>
+        </div>
+
+        <div class="node node-validated" style="left:230px; top:180px;">
+          <div class="node-kind kind-spec">Spec</div>
+          <div class="node-title">API Endpoint Restructure</div>
+          <div class="node-status"><div class="ns-dot validated"></div><span class="ns-text validated">Validated</span></div>
+        </div>
+
+        <!-- Working spec with child tasks -->
+        <div class="node node-active" style="left:420px; top:120px; min-width: 190px;">
+          <div class="node-kind kind-spec">Spec</div>
+          <div class="node-title">Auth Token Rotation</div>
+          <div class="node-status"><div class="ns-dot working"></div><span class="ns-text working">Working &middot; 2/4</span></div>
+        </div>
+
+        <div class="node" style="left:380px; top:280px;">
+          <div class="node-kind kind-task">Task</div>
+          <div class="node-title">Provider config setup</div>
+          <div class="node-status"><div class="ns-dot validated"></div><span class="ns-text validated">Done</span></div>
+        </div>
+
+        <div class="node node-active" style="left:540px; top:260px;">
+          <div class="node-kind kind-task">Task</div>
+          <div class="node-title">PKCE challenge generation</div>
+          <div class="node-status"><div class="ns-dot working"></div><span class="ns-text working">Working</span></div>
+          <div class="node-worker"><span class="mi">smart_toy</span> W-1</div>
+        </div>
+
+        <!-- Blocked spec -->
+        <div class="node node-blocked" style="left:620px; top:90px;">
+          <div class="node-kind kind-spec">Spec</div>
+          <div class="node-title">Rate Limiter</div>
+          <div class="node-status"><div class="ns-dot blocked"></div><span class="ns-text blocked">Blocked</span></div>
+        </div>
+
+        <!-- Draft spec -->
+        <div class="node node-draft" style="left:680px; top:230px;">
+          <div class="node-kind kind-spec">Spec</div>
+          <div class="node-title">E2E Integration Tests</div>
+          <div class="node-status"><div class="ns-dot draft"></div><span class="ns-text draft">Draft</span></div>
+        </div>
+      </div>
+    </main>
+
+    <!-- SHEPHERD CONSOLE -->
+    <aside class="shepherd">
+      <div class="sh-header">
+        <div class="sh-header-left">
+          <span class="mi">psychology</span>
+          <span class="sh-title">Shepherd</span>
+        </div>
+        <span class="sh-context">Board</span>
+      </div>
+
+      <div class="sh-messages">
+        <div class="sh-msg user">
+          <div class="sh-msg-meta">You</div>
+          <div class="sh-msg-body">What's blocking the rate limiter spec?</div>
+        </div>
+
+        <div class="sh-msg assistant">
+          <div class="sh-msg-meta">Shepherd</div>
+          <div class="sh-msg-body">
+            Rate Limiter depends on Token Rotation completing first &mdash; it needs the new <code>refresh_token</code> endpoint to exist before it can implement rate limiting on it.
+            <br><br>
+            Token Rotation is 2/4 tasks done. Worker-1 is on PKCE challenge generation now. Once callback verification completes after that, Rate Limiter will unblock automatically.
+            <div class="sh-tool">
+              <span class="mi">build</span>
+              <span class="sh-tool-name">read_board_node</span>
+              <span class="sh-tool-arg">&nbsp;spec_id: rate-limiter-001</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sh-msg user">
+          <div class="sh-msg-meta">You</div>
+          <div class="sh-msg-body">Can you add a task to Token Rotation for the refresh interval config? Platform team needs that before we ship.</div>
+        </div>
+
+        <div class="sh-msg assistant">
+          <div class="sh-msg-meta">Shepherd</div>
+          <div class="sh-msg-body">
+            Done. Added task "Configure token refresh interval" to Token Rotation. It's now 2/5 tasks.
+            <div class="sh-tool">
+              <span class="mi">add_circle</span>
+              <span class="sh-tool-name">create_task</span>
+              <span class="sh-tool-arg">&nbsp;parent: token-rotation</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sh-input-area">
+        <textarea class="sh-textarea" rows="1" placeholder="Ask the shepherd..."></textarea>
+        <button class="sh-send"><span class="mi">arrow_upward</span></button>
+      </div>
+    </aside>
+
+    <!-- STATUS BAR -->
+    <footer class="statusbar">
+      <div class="sb-item"><span class="mi">commit</span> v0.4.2</div>
+      <div class="sb-item"><span class="mi">cloud</span> github.com/org/auth-service</div>
+      <div class="sb-item"><span class="mi">fork_right</span> hirsel/auth-overhaul</div>
+      <div class="sb-spacer"></div>
+      <div class="sb-item sb-cyan"><span class="mi" style="font-size:11px;">circle</span> 2 workers active</div>
+      <div class="sb-item">Board workspace</div>
+    </footer>
+
+  </div>
+
+  <!-- Light leaks -->
+  <div style="position:fixed;top:-100px;right:-80px;width:500px;height:500px;background:rgba(0,230,230,0.025);filter:blur(150px);border-radius:50%;pointer-events:none;z-index:-1;"></div>
+  <div style="position:fixed;bottom:-200px;left:-150px;width:700px;height:700px;background:rgba(255,115,76,0.015);filter:blur(180px);border-radius:50%;pointer-events:none;z-index:-1;"></div>
+
+</body>
+</html>

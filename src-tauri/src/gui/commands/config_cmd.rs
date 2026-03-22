@@ -7,20 +7,17 @@ use super::ResultExt;
 use crate::core::api_types::ConfigResponse;
 use crate::core::config;
 use crate::core::credentials::{CodexOAuthCredentials, CredentialStore};
-use crate::core::orchestrator::create_orchestrator;
-use crate::core::tailscale::{get_tailscale_status, is_tailscale_connected};
-use lash_core::oauth;
+use crate::core::orchestrator::{LocalOrchestrator, Orchestrator, RemoteOrchestrator};
+use lash::oauth;
 use serde::{Deserialize, Serialize};
-use std::process::Command;
-use std::time::Instant;
 
-/// Get application configuration
-/// Uses the orchestrator to support both local and remote modes
+/// Get application configuration stored on this client.
 #[tracing::instrument]
 #[tauri::command]
 pub async fn get_config() -> Result<ConfigResponse, String> {
-    let orch = create_orchestrator(None).str_err()?;
-    orch.get_config().await.str_err()
+    let (config, _) =
+        config::Config::load().unwrap_or_else(|_| (config::Config::default(), vec![]));
+    LocalOrchestrator::new(config).get_config().await.str_err()
 }
 
 /// Get global config defaults for project settings inheritance
@@ -95,14 +92,9 @@ pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
         cfg.worker_runners = worker_runners;
     }
 
-    // Apply profiles updates (replace entire map if provided)
-    if let Some(profiles) = updates.profiles {
-        cfg.profiles = profiles.into_iter().map(|(k, v)| (k, v.into())).collect();
-    }
-
-    // Apply default_profile update
-    if let Some(default_profile) = updates.default_profile {
-        cfg.default_profile = default_profile;
+    // Apply backend connection update
+    if let Some(backend) = updates.backend {
+        cfg.backend = backend.into();
     }
 
     // Apply git config update
@@ -121,6 +113,15 @@ pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
     // Write to file
     std::fs::write(&config_path, toml_str).context("Failed to write config")?;
 
+    Ok(())
+}
+
+/// Check connectivity to a configured Hirsel backend.
+#[tracing::instrument(skip(api_key))]
+#[tauri::command]
+pub async fn check_backend_health(url: String, api_key: Option<String>) -> Result<(), String> {
+    let orchestrator = RemoteOrchestrator::new(url, api_key.unwrap_or_default());
+    orchestrator.health().await.str_err()?;
     Ok(())
 }
 
@@ -218,133 +219,4 @@ pub async fn codex_device_exchange_gui(
         status: "ok".to_string(),
         expires_at: tokens.expires_at,
     })
-}
-
-/// Tailscale connection info for the "This Machine" feature
-#[derive(Serialize)]
-pub struct TailscaleInfo {
-    pub connected: bool,
-    pub hostname: Option<String>,
-    pub dns_name: Option<String>,
-    pub tailscale_ips: Vec<String>,
-}
-
-/// Get Tailscale connection info for this machine
-#[tracing::instrument]
-#[tauri::command]
-pub fn get_tailscale_info() -> Result<TailscaleInfo, String> {
-    if !is_tailscale_connected() {
-        return Ok(TailscaleInfo {
-            connected: false,
-            hostname: None,
-            dns_name: None,
-            tailscale_ips: vec![],
-        });
-    }
-
-    match get_tailscale_status() {
-        Ok(status) => Ok(TailscaleInfo {
-            connected: true,
-            hostname: Some(status.self_node.hostname),
-            dns_name: Some(status.self_node.dns_name),
-            tailscale_ips: status.self_node.tailscale_ips,
-        }),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-/// SSH connection check result
-#[derive(Serialize)]
-pub struct SshCheckResult {
-    pub reachable: bool,
-    pub error: Option<String>,
-    pub latency_ms: Option<u64>,
-}
-
-/// Check if an SSH runner is reachable
-///
-/// Runs: ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new {host} echo ok
-#[tracing::instrument]
-#[tauri::command]
-pub async fn check_ssh_runner(
-    host: String,
-    port: u16,
-    ssh_key: Option<String>,
-) -> Result<SshCheckResult, String> {
-    let start = Instant::now();
-
-    let mut cmd = Command::new("ssh");
-
-    // Basic SSH options for non-interactive check
-    cmd.args([
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "ConnectTimeout=5",
-        "-o",
-        "StrictHostKeyChecking=accept-new",
-    ]);
-
-    // Add port if not default
-    if port != 22 {
-        cmd.args(["-p", &port.to_string()]);
-    }
-
-    // Add SSH key if provided
-    if let Some(key) = ssh_key {
-        if !key.is_empty() {
-            cmd.args(["-i", &key]);
-        }
-    }
-
-    // Add host and command
-    cmd.arg(&host);
-    cmd.arg("echo");
-    cmd.arg("ok");
-
-    // Run the command
-    let output = cmd.output();
-
-    let latency_ms = start.elapsed().as_millis() as u64;
-
-    match output {
-        Ok(output) => {
-            if output.status.success() {
-                Ok(SshCheckResult {
-                    reachable: true,
-                    error: None,
-                    latency_ms: Some(latency_ms),
-                })
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                // Extract meaningful error message
-                let error_msg = if stderr.contains("Permission denied") {
-                    "Permission denied".to_string()
-                } else if stderr.contains("Connection refused") {
-                    "Connection refused".to_string()
-                } else if stderr.contains("Connection timed out")
-                    || stderr.contains("Operation timed out")
-                {
-                    "Connection timed out".to_string()
-                } else if stderr.contains("Could not resolve hostname") {
-                    "Host not found".to_string()
-                } else if stderr.is_empty() {
-                    "SSH connection failed".to_string()
-                } else {
-                    stderr.lines().next().unwrap_or("SSH error").to_string()
-                };
-
-                Ok(SshCheckResult {
-                    reachable: false,
-                    error: Some(error_msg),
-                    latency_ms: Some(latency_ms),
-                })
-            }
-        }
-        Err(e) => Ok(SshCheckResult {
-            reachable: false,
-            error: Some(format!("Failed to run ssh: {}", e)),
-            latency_ms: None,
-        }),
-    }
 }

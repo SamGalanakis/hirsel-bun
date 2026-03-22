@@ -1,10 +1,9 @@
 //! Archive strategy system for worker pause/resume.
 //!
-//! This module provides a unified interface for archiving worker state
-//! across pause/resume cycles. The strategy is determined by host type:
-//!
-//! - **NoOp**: For Local and SSH hosts where files persist on disk.
-//! - **S3**: For Fly hosts where machines are destroyed.
+//! Workers now always run on the backend host, so work directories persist on
+//! local disk across pause/resume cycles. Snapshotting remains in place for
+//! agent session handling, but the work directory archive strategy is always
+//! a no-op.
 //!
 //! # Usage
 //!
@@ -24,20 +23,15 @@
 mod agent_session;
 mod archive;
 mod noop;
-#[cfg(feature = "s3-storage")]
-mod s3;
-
 pub use agent_session::{agent_session_dir, host_session_path};
 pub use archive::{ArchiveHandle, ArchiveResult, ArchiveStrategy};
 pub use noop::NoOpArchiveStrategy;
-#[cfg(feature = "s3-storage")]
-pub use s3::S3ArchiveStrategy;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::core::config::StorageConfig;
-use crate::core::runner::{HostConfig, RunnerConfig};
+use crate::core::runner::RunnerConfig;
 
 // =============================================================================
 // Unified Worker State Handle
@@ -193,49 +187,13 @@ pub type SnapshotResult<T> = Result<T, SnapshotError>;
 
 /// Create an archive strategy based on runner and storage configuration.
 ///
-/// This is the preferred factory for new code. It returns a unified `ArchiveStrategy`
-/// that can be used for both work directories and agent sessions.
-///
-/// # Strategy Selection
-///
-/// | Host Type | Strategy |
-/// |-----------|----------|
-/// | Local | NoOpArchiveStrategy (files persist on disk) |
-/// | SSH | NoOpArchiveStrategy (files persist on remote disk) |
-/// | Fly | S3ArchiveStrategy (machines are destroyed, need S3 storage) |
-/// | Client | NoOpArchiveStrategy (no archiving needed) |
+/// Worker files stay on the coordinator host now, so this always returns a
+/// no-op archive strategy.
 pub async fn create_archive_strategy(
-    runner_config: &RunnerConfig,
-    storage_config: &StorageConfig,
+    _runner_config: &RunnerConfig,
+    _storage_config: &StorageConfig,
 ) -> ArchiveResult<Box<dyn ArchiveStrategy>> {
-    match runner_config.host.resolve() {
-        HostConfig::Local | HostConfig::Ssh(_) | HostConfig::Client => {
-            Ok(Box::new(NoOpArchiveStrategy::new()))
-        }
-        HostConfig::Fly(_) => {
-            #[cfg(feature = "s3-storage")]
-            {
-                let s3_config = storage_config.get_storage(None).ok_or_else(|| {
-                    SnapshotError::Config(
-                        "Fly runner requires S3 storage configuration for pause/resume. \
-                         Add a storage in Settings > Storage, or configure [storage.storages] in config.toml"
-                            .into(),
-                    )
-                })?;
-                let strategy = S3ArchiveStrategy::new(s3_config, None).await?;
-                Ok(Box::new(strategy))
-            }
-            #[cfg(not(feature = "s3-storage"))]
-            {
-                let _ = storage_config;
-                // Fall back to no-op - sessions won't persist across Fly machine restarts
-                tracing::warn!(
-                    "S3 storage feature not enabled - Fly sessions will not persist across restarts"
-                );
-                Ok(Box::new(NoOpArchiveStrategy::new()))
-            }
-        }
-    }
+    Ok(Box::new(NoOpArchiveStrategy::new()))
 }
 
 #[cfg(test)]

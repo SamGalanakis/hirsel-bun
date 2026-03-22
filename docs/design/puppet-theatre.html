@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Puppet Theatre — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Crimson+Text:wght@400;600;700&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --velvet: #2a0808;
+      --velvet-deep: #1a0404;
+      --gold: #c8a040;
+      --gold-dim: #806828;
+      --gold-bright: #e8c860;
+      --spotlight: #f0e0c0;
+      --spotlight-dim: rgba(240,224,192,0.06);
+      --backstage: #0a0a0a;
+      --backstage-mid: #141414;
+      --curtain: #3a0c0c;
+      --text: #c8b898;
+      --text-dim: #786848;
+      --text-bright: #f0e8d8;
+      --applause: #e8c860;
+    }
+
+    body {
+      font-family: 'Crimson Text', serif;
+      background: var(--velvet-deep);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    /* Velvet texture */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background:
+        radial-gradient(ellipse at 50% 0%, rgba(60,12,12,0.3) 0%, transparent 50%),
+        repeating-linear-gradient(180deg, transparent 0, transparent 3px, rgba(0,0,0,0.05) 3px, rgba(0,0,0,0.05) 4px);
+      pointer-events: none;
+    }
+
+    .direction-nav {
+      position: sticky; top: 0; z-index: 1000;
+      background: rgba(26,4,4,0.92); backdrop-filter: blur(14px);
+      border-bottom: 2px solid var(--gold-dim);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .direction-nav a {
+      font-size: 11px; font-weight: 700; color: var(--text-dim);
+      text-decoration: none; padding: 5px 12px; border-radius: 4px; transition: all 0.2s;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      font-family: 'Courier Prime', monospace;
+    }
+    .direction-nav a:hover { color: var(--gold); background: rgba(200,160,64,0.06); }
+    .direction-nav .nav-title {
+      font-family: 'Playfair Display', serif; font-size: 14px;
+      font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text-bright); flex: 1; text-align: center;
+    }
+    .direction-nav .nav-home {
+      font-family: 'Courier Prime', monospace;
+      font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-dim); border-right: 2px solid var(--gold-dim);
+      padding-right: 16px; margin-right: 4px;
+    }
+
+    .page-header {
+      padding: 80px 48px 20px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .tag {
+      font-family: 'Courier Prime', monospace;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--gold); margin-bottom: 12px; display: block;
+    }
+
+    h1 {
+      font-family: 'Playfair Display', serif;
+      font-size: clamp(40px, 6vw, 72px);
+      font-weight: 900;
+      letter-spacing: 0.03em; text-transform: uppercase;
+      line-height: 1.0; color: var(--text-bright); margin-bottom: 16px;
+    }
+
+    .subtitle {
+      font-size: 15px; font-weight: 400;
+      color: var(--text-dim); max-width: 580px; line-height: 1.7;
+    }
+
+    .showcase {
+      padding: 40px 48px 60px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    /* ====== PUPPET THEATRE ====== */
+
+    .theatre {
+      background: var(--backstage);
+      border: 2px solid var(--gold-dim);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Proscenium Arch */
+    .proscenium {
+      position: relative;
+      background: linear-gradient(180deg, var(--velvet) 0%, var(--velvet-deep) 100%);
+      padding: 0;
+    }
+
+    .proscenium-arch {
+      position: relative;
+      border: 4px solid var(--gold-dim);
+      border-top: none;
+      border-radius: 0 0 8px 8px;
+      margin: 0 20px;
+      overflow: hidden;
+    }
+
+    /* Gold ornamental top bar */
+    .arch-top {
+      display: flex; align-items: center; justify-content: center;
+      padding: 12px 24px;
+      background: linear-gradient(90deg, var(--gold-dim), var(--gold), var(--gold-dim));
+      position: relative;
+    }
+
+    .arch-top::before, .arch-top::after {
+      content: '';
+      position: absolute; top: 50%; transform: translateY(-50%);
+      width: 12px; height: 12px; border-radius: 50%;
+      background: radial-gradient(circle, var(--gold-bright) 30%, var(--gold) 60%, var(--gold-dim) 100%);
+    }
+    .arch-top::before { left: 16px; }
+    .arch-top::after { right: 16px; }
+
+    .arch-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 14px; font-weight: 900; letter-spacing: 0.15em;
+      text-transform: uppercase; color: var(--velvet-deep);
+    }
+
+    /* Curtains */
+    .curtains {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .curtain-left, .curtain-right {
+      position: absolute; top: 0; bottom: 0; width: 60px;
+      z-index: 3;
+    }
+
+    .curtain-left {
+      left: 0;
+      background: linear-gradient(90deg, var(--curtain), rgba(58,12,12,0.3), transparent);
+    }
+
+    .curtain-right {
+      right: 0;
+      background: linear-gradient(-90deg, var(--curtain), rgba(58,12,12,0.3), transparent);
+    }
+
+    /* Puppeteer bridge (above stage) */
+    .puppeteer-bridge {
+      background: var(--backstage-mid);
+      border-bottom: 2px solid var(--gold-dim);
+      padding: 16px 24px;
+      display: flex; align-items: flex-end; justify-content: center;
+      gap: 60px;
+      position: relative;
+      min-height: 60px;
+    }
+
+    .puppeteer-label {
+      position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+      font-family: 'Courier Prime', monospace;
+      font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .puppeteer-hand {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 4px;
+    }
+
+    .control-bar {
+      width: 60px; height: 6px;
+      background: linear-gradient(90deg, var(--gold-dim), var(--gold), var(--gold-dim));
+      border-radius: 2px;
+      position: relative;
+    }
+
+    .control-bar::before, .control-bar::after {
+      content: '';
+      position: absolute; bottom: -2px;
+      width: 1px; height: 8px;
+      background: var(--gold-dim);
+    }
+    .control-bar::before { left: 10px; }
+    .control-bar::after { right: 10px; }
+
+    .hand-label {
+      font-family: 'Courier Prime', monospace;
+      font-size: 8px; color: var(--text-dim);
+      text-transform: uppercase;
+    }
+
+    /* Stage */
+    .stage {
+      position: relative;
+      min-height: 400px;
+      padding: 20px 80px 40px;
+      background:
+        radial-gradient(ellipse 600px 300px at 50% 80%, rgba(240,224,192,0.04) 0%, transparent 70%);
+    }
+
+    /* Spotlight beams */
+    .spotlights {
+      position: absolute; top: 0; left: 0; right: 0;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .spotlight-beam {
+      position: absolute; top: 0;
+      width: 200px; height: 100%;
+      opacity: 0.08;
+    }
+
+    .spotlight-active {
+      background: linear-gradient(180deg, var(--spotlight) 0%, transparent 80%);
+      opacity: 0.12;
+      animation: spotlight-flicker 4s ease-in-out infinite;
+    }
+
+    @keyframes spotlight-flicker {
+      0%, 100% { opacity: 0.12; }
+      50% { opacity: 0.08; }
+    }
+
+    /* Strings from bridge to marionettes */
+    .string-svg {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .puppet-string {
+      stroke: var(--gold-dim);
+      stroke-width: 1;
+      opacity: 0.4;
+      fill: none;
+    }
+
+    .puppet-string-active {
+      stroke: var(--gold);
+      opacity: 0.6;
+      animation: string-taut 2s ease-in-out infinite;
+    }
+
+    @keyframes string-taut {
+      0%, 100% { opacity: 0.6; }
+      50% { opacity: 0.3; }
+    }
+
+    /* Acts (specs as acts in the play) */
+    .acts {
+      display: flex; gap: 8px;
+      justify-content: center; align-items: flex-start;
+      flex-wrap: wrap;
+      position: relative;
+      z-index: 4;
+      padding-top: 20px;
+    }
+
+    .act {
+      display: flex; flex-direction: column;
+      align-items: center; gap: 12px;
+      padding: 20px 16px;
+      width: 160px;
+      position: relative;
+    }
+
+    .act-number {
+      font-family: 'Courier Prime', monospace;
+      font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .act-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 14px; font-weight: 700;
+      color: var(--text-bright); text-align: center;
+      line-height: 1.3;
+    }
+
+    .act-status {
+      font-family: 'Courier Prime', monospace;
+      font-size: 9px; color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+
+    /* Marionette (worker) below each active act */
+    .marionette {
+      width: 40px; height: 56px;
+      position: relative;
+      margin-top: 8px;
+    }
+
+    /* Marionette body */
+    .marionette-head {
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      background: var(--gold-dim);
+      margin: 0 auto 2px;
+    }
+
+    .marionette-body {
+      width: 8px; height: 18px;
+      background: var(--gold-dim);
+      border-radius: 2px;
+      margin: 0 auto;
+    }
+
+    .marionette-legs {
+      display: flex; justify-content: center; gap: 4px;
+      margin-top: 1px;
+    }
+
+    .marionette-leg {
+      width: 3px; height: 14px;
+      background: var(--gold-dim);
+      border-radius: 1px;
+    }
+
+    /* Dancing marionette (active worker) */
+    .marionette-active .marionette-head {
+      background: var(--gold);
+      box-shadow: 0 0 8px rgba(200,160,64,0.3);
+    }
+
+    .marionette-active .marionette-body {
+      background: var(--gold);
+      animation: puppet-sway 1.5s ease-in-out infinite;
+    }
+
+    .marionette-active .marionette-leg:first-child {
+      animation: leg-left 1s ease-in-out infinite;
+    }
+
+    .marionette-active .marionette-leg:last-child {
+      animation: leg-right 1s ease-in-out infinite;
+    }
+
+    @keyframes puppet-sway {
+      0%, 100% { transform: rotate(-3deg); }
+      50% { transform: rotate(3deg); }
+    }
+
+    @keyframes leg-left {
+      0%, 100% { transform: rotate(8deg); }
+      50% { transform: rotate(-8deg); }
+    }
+
+    @keyframes leg-right {
+      0%, 100% { transform: rotate(-8deg); }
+      50% { transform: rotate(8deg); }
+    }
+
+    /* Limp marionette (idle worker) */
+    .marionette-idle .marionette-head { background: var(--text-dim); opacity: 0.5; }
+    .marionette-idle .marionette-body { background: var(--text-dim); opacity: 0.5; transform: rotate(5deg); }
+    .marionette-idle .marionette-leg { background: var(--text-dim); opacity: 0.5; }
+    .marionette-idle .marionette-leg:first-child { transform: rotate(15deg); }
+    .marionette-idle .marionette-leg:last-child { transform: rotate(-10deg); }
+
+    /* Applause effect on validated acts */
+    .act-validated {
+      position: relative;
+    }
+
+    .act-validated::after {
+      content: '';
+      position: absolute; bottom: -10px; left: 50%; transform: translateX(-50%);
+      width: 80px; height: 20px;
+      background: radial-gradient(ellipse, rgba(232,200,96,0.15) 0%, transparent 70%);
+    }
+
+    .confetti-container {
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      pointer-events: none; overflow: hidden;
+    }
+
+    .confetti {
+      position: absolute;
+      width: 4px; height: 4px;
+      border-radius: 1px;
+      animation: confetti-fall 3s linear infinite;
+    }
+
+    @keyframes confetti-fall {
+      0% { transform: translateY(-10px) rotate(0deg); opacity: 1; }
+      100% { transform: translateY(60px) rotate(360deg); opacity: 0; }
+    }
+
+    /* Act illumination (active spec gets spotlight) */
+    .act-illuminated {
+      background: radial-gradient(ellipse at 50% 0%, rgba(240,224,192,0.08) 0%, transparent 80%);
+      border-radius: 4px;
+    }
+
+    .act-illuminated .act-title { color: var(--spotlight); }
+
+    /* Act dimmed (draft) */
+    .act-dimmed { opacity: 0.4; }
+    .act-blocked { opacity: 0.6; }
+
+    .act-blocked .act-title { color: var(--text-dim); }
+
+    /* Stage floor */
+    .stage-floor {
+      height: 30px;
+      background: linear-gradient(180deg, var(--backstage-mid) 0%, var(--backstage) 100%);
+      border-top: 2px solid var(--gold-dim);
+      position: relative;
+    }
+
+    .stage-floor::before {
+      content: '';
+      position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+      width: 60%; height: 2px;
+      background: linear-gradient(90deg, transparent, rgba(200,160,64,0.2), transparent);
+    }
+
+    /* Programme bar (delivery) */
+    .programme-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 24px;
+      background: var(--velvet-deep);
+      border-top: 1px solid var(--gold-dim);
+    }
+
+    .programme-label {
+      font-family: 'Courier Prime', monospace;
+      font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .programme-status {
+      font-family: 'Playfair Display', serif;
+      font-size: 12px; font-weight: 700; font-style: italic;
+      color: var(--gold);
+    }
+
+    .rationale {
+      padding: 0 48px 100px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .rationale h3 {
+      font-family: 'Playfair Display', serif;
+      font-size: 18px; font-weight: 900; letter-spacing: 0.04em;
+      text-transform: uppercase; margin-bottom: 20px;
+    }
+
+    .rationale-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .rationale-card {
+      padding: 24px;
+      background: var(--velvet);
+      border: 1px solid var(--gold-dim);
+      border-radius: 4px;
+    }
+
+    .rationale-card h4 {
+      font-size: 12px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin-bottom: 8px; color: var(--gold);
+      font-family: 'Courier Prime', monospace;
+    }
+
+    .rationale-card p {
+      font-size: 13px; color: var(--text-dim); line-height: 1.7;
+    }
+
+    @media (max-width: 768px) {
+      .page-header, .showcase, .rationale { padding-left: 20px; padding-right: 20px; }
+      .acts { flex-direction: column; align-items: center; }
+      .proscenium-arch { margin: 0 8px; }
+      .stage { padding: 20px 20px 40px; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="direction-nav">
+    <a href="../designs.html" class="nav-home">Storm</a>
+    <a href="weather-system.html">Prev</a>
+    <span class="nav-title">PUPPET THEATRE</span>
+    <a href="apiary.html">Next</a>
+  </nav>
+
+  <div class="page-header">
+    <div class="tag">Direction 15 &mdash; Cinematic</div>
+    <h1>PUPPET THEATRE</h1>
+    <p class="subtitle">Workers are marionettes on strings. The shepherd is the puppeteer above. Specs are acts in a play framed by a proscenium arch. Active workers dance, idle ones hang limp. Validated acts receive applause. The curtain rises on dispatch.</p>
+  </div>
+
+  <div class="showcase">
+    <div class="theatre">
+      <div class="proscenium">
+        <div class="proscenium-arch">
+          <div class="arch-top">
+            <span class="arch-title">Auth Overhaul &mdash; A Play in Five Acts</span>
+          </div>
+
+          <div class="curtains">
+            <div class="curtain-left"></div>
+            <div class="curtain-right"></div>
+
+            <!-- Puppeteer bridge (shepherd/dispatch) -->
+            <div class="puppeteer-bridge">
+              <span class="puppeteer-label">Shepherd / Dispatch</span>
+              <div class="puppeteer-hand">
+                <div class="control-bar"></div>
+                <span class="hand-label">W-1</span>
+              </div>
+              <div class="puppeteer-hand">
+                <div class="control-bar"></div>
+                <span class="hand-label">W-2</span>
+              </div>
+              <div class="puppeteer-hand">
+                <div class="control-bar" style="opacity: 0.3;"></div>
+                <span class="hand-label" style="opacity: 0.3;">W-3</span>
+              </div>
+            </div>
+
+            <div class="stage">
+              <!-- Spotlights -->
+              <div class="spotlights">
+                <div class="spotlight-beam" style="left: 10%;"></div>
+                <div class="spotlight-beam spotlight-active" style="left: 38%;"></div>
+                <div class="spotlight-beam" style="left: 65%;"></div>
+              </div>
+
+              <!-- Strings SVG -->
+              <svg class="string-svg" viewBox="0 0 800 400" preserveAspectRatio="none">
+                <!-- Strings from bridge to active marionettes -->
+                <line class="puppet-string-active" x1="320" y1="0" x2="370" y2="280" />
+                <line class="puppet-string-active" x1="320" y1="0" x2="360" y2="280" />
+                <line class="puppet-string-active" x1="440" y1="0" x2="430" y2="280" />
+                <line class="puppet-string-active" x1="440" y1="0" x2="440" y2="280" />
+                <!-- Limp string to idle worker -->
+                <path class="puppet-string" d="M 560 0 Q 570 140, 560 280" />
+              </svg>
+
+              <div class="acts">
+                <!-- Act I: Schema Migration (validated — applause) -->
+                <div class="act act-validated">
+                  <span class="act-number">Act I</span>
+                  <span class="act-title">Schema Migration</span>
+                  <span class="act-status">Validated</span>
+                  <div class="confetti-container">
+                    <div class="confetti" style="left:20%; background:var(--gold); animation-delay:0s;"></div>
+                    <div class="confetti" style="left:50%; background:var(--gold-bright); animation-delay:0.5s;"></div>
+                    <div class="confetti" style="left:70%; background:var(--gold); animation-delay:1.2s;"></div>
+                    <div class="confetti" style="left:35%; background:var(--gold-dim); animation-delay:1.8s;"></div>
+                    <div class="confetti" style="left:80%; background:var(--gold-bright); animation-delay:2.4s;"></div>
+                  </div>
+                </div>
+
+                <!-- Act II: API Restructure (validated — applause) -->
+                <div class="act act-validated">
+                  <span class="act-number">Act II</span>
+                  <span class="act-title">API Restructure</span>
+                  <span class="act-status">Validated</span>
+                  <div class="confetti-container">
+                    <div class="confetti" style="left:30%; background:var(--gold); animation-delay:0.3s;"></div>
+                    <div class="confetti" style="left:60%; background:var(--gold-bright); animation-delay:0.9s;"></div>
+                    <div class="confetti" style="left:45%; background:var(--gold); animation-delay:1.5s;"></div>
+                    <div class="confetti" style="left:75%; background:var(--gold-dim); animation-delay:2.1s;"></div>
+                  </div>
+                </div>
+
+                <!-- Act III: Token Rotation (working — illuminated, dancing marionettes) -->
+                <div class="act act-illuminated">
+                  <span class="act-number">Act III</span>
+                  <span class="act-title">Token Rotation</span>
+                  <span class="act-status">Working &middot; 2/4 tasks</span>
+                  <div class="marionette marionette-active">
+                    <div class="marionette-head"></div>
+                    <div class="marionette-body"></div>
+                    <div class="marionette-legs">
+                      <div class="marionette-leg"></div>
+                      <div class="marionette-leg"></div>
+                    </div>
+                  </div>
+                  <div class="marionette marionette-active" style="animation-delay: 0.3s;">
+                    <div class="marionette-head"></div>
+                    <div class="marionette-body"></div>
+                    <div class="marionette-legs">
+                      <div class="marionette-leg"></div>
+                      <div class="marionette-leg"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Act IV: Rate Limiter (blocked) -->
+                <div class="act act-blocked">
+                  <span class="act-number">Act IV</span>
+                  <span class="act-title">Rate Limiter</span>
+                  <span class="act-status">Pending / Blocked</span>
+                  <div class="marionette marionette-idle">
+                    <div class="marionette-head"></div>
+                    <div class="marionette-body"></div>
+                    <div class="marionette-legs">
+                      <div class="marionette-leg"></div>
+                      <div class="marionette-leg"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Act V: E2E Tests (draft — dimmed, waiting in wings) -->
+                <div class="act act-dimmed">
+                  <span class="act-number">Act V</span>
+                  <span class="act-title">E2E Tests</span>
+                  <span class="act-status">Draft &middot; In the Wings</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="stage-floor"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="programme-bar">
+        <span class="programme-label">Programme &mdash; Delivery</span>
+        <span class="programme-status">Curtain call approaching &mdash; PR #847</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="rationale">
+    <h3>WHY THIS IS INTERESTING</h3>
+    <div class="rationale-grid">
+      <div class="rationale-card">
+        <h4>Visible Control</h4>
+        <p>The puppeteer above with strings to each worker makes the orchestration relationship literal and visible. You see the shepherd controlling workers from above. Taut strings mean active work, slack strings mean idle. The power structure is spatial.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Acts Give Narrative</h4>
+        <p>Specs as acts in a play create a natural sequence and sense of dramatic progression. Act I, II, III — each builds on the last. Validated acts receive applause. The whole run becomes a performance with a beginning, middle, and end.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Animation Carries State</h4>
+        <p>Dancing marionettes are immediately legible as active workers. Limp, hanging marionettes read as idle. The spotlight illuminates the current focus. No labels needed — the animation vocabulary maps directly to worker state through physical metaphor.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>The Curtain Is Dispatch</h4>
+        <p>Dispatch raises the curtain on a new act. The audience watches the performance unfold. When all acts are done, the curtain call begins — delivery. Theatre has centuries of visual language for "prepare, perform, conclude" that maps perfectly to plan, execute, ship.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

@@ -795,55 +795,6 @@ impl SQLiteState {
     }
 
     // =========================================================================
-    // Docs Persistence Settings
-    // =========================================================================
-
-    /// Get the docs path for this run (relative to workspace)
-    pub async fn get_docs_path(&self) -> StateResult<Option<String>> {
-        let pool = self.pool().await;
-        let result: Option<Option<String>> =
-            sqlx::query_scalar("SELECT docs_path FROM state WHERE id = 1")
-                .fetch_optional(&pool)
-                .await?;
-        Ok(result.flatten())
-    }
-
-    /// Set the docs path for this run (relative to workspace)
-    pub async fn set_docs_path(&self, path: Option<&str>) -> StateResult<()> {
-        let pool = self.pool().await;
-        sqlx::query("UPDATE state SET docs_path = ?, updated_at = ? WHERE id = 1")
-            .bind(path)
-            .bind(utc_now())
-            .execute(&pool)
-            .await?;
-        Ok(())
-    }
-
-    /// Get whether to persist docs changes on delivery
-    pub async fn get_persist_docs_changes(&self) -> StateResult<bool> {
-        let pool = self.pool().await;
-        let result: Option<Option<i64>> =
-            sqlx::query_scalar("SELECT persist_docs_changes FROM state WHERE id = 1")
-                .fetch_optional(&pool)
-                .await?;
-        match result.flatten() {
-            Some(val) => Ok(val != 0),
-            None => Ok(true), // Default to persisting
-        }
-    }
-
-    /// Set whether to persist docs changes on delivery
-    pub async fn set_persist_docs_changes(&self, persist: bool) -> StateResult<()> {
-        let pool = self.pool().await;
-        sqlx::query("UPDATE state SET persist_docs_changes = ?, updated_at = ? WHERE id = 1")
-            .bind(if persist { 1i64 } else { 0i64 })
-            .bind(utc_now())
-            .execute(&pool)
-            .await?;
-        Ok(())
-    }
-
-    // =========================================================================
     // Dispatch Tracking
     // =========================================================================
 

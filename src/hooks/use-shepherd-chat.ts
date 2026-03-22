@@ -4,8 +4,8 @@ import { createStore, produce } from 'solid-js/store';
 /**
  * Unified Shepherd Chat Hook
  *
- * Manages Shepherd chat sessions across all contexts (board, run, draft, general).
- * Uses the unified backend ShepherdContextBuilder for consistent prompt and context handling.
+ * Manages Shepherd chat sessions for the docked Shepherd surface.
+ * The desktop UI now uses only project or general Shepherd contexts.
  */
 import { invoke } from '../lib/invoke';
 import type {
@@ -20,14 +20,11 @@ import type {
   StartShepherdSessionResponse,
 } from '../lib/types';
 
-export type ShepherdContextType = 'general' | 'board' | 'run' | 'draft';
+export type ShepherdContextType = 'general' | 'project';
 
 export interface ShepherdChatContext {
   type: ShepherdContextType;
   projectId?: number;
-  projectName?: string;
-  runName?: string;
-  projectPath?: string | null;
   focusNodeId?: string;
   focusNodeName?: string;
 }
@@ -43,7 +40,6 @@ interface UseShepherdChatReturn {
   // Connection
   connected: () => boolean;
   connecting: () => boolean;
-  sessionId: () => string | null;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
 
@@ -67,7 +63,7 @@ interface UseShepherdChatReturn {
   reset: () => Promise<void>;
 }
 
-const WELCOME_MESSAGE = `Hello! I'm Shepherd, your AI assistant for Hirsel. I can help you manage runs, tasks, and workers.
+const WELCOME_MESSAGE = `Hello! I'm Shepherd, your AI assistant for Hirsel. I can help you steer the project surface, routes, tasks, and workers.
 
 What would you like to do today?`;
 
@@ -82,10 +78,6 @@ export function useShepherdChat(
   const [connected, setConnected] = createSignal(false);
   const [connecting, setConnecting] = createSignal(false);
 
-  // Current scope (from backend)
-  const [currentScope, setCurrentScope] = createSignal<ShepherdScope | null>(null);
-
-  // Message state
   const [messages, setMessages] = createStore<ChatMessage[]>([]);
   const [currentMessage, setCurrentMessage] = createSignal<Partial<ChatMessage> | null>(null);
 
@@ -93,7 +85,7 @@ export function useShepherdChat(
   const [shepherdEditing, setShepherdEditing] = createSignal(false);
   const [editingIslands, setEditingIslands] = createSignal<Set<string>>(new Set());
 
-  // Focus node (for board context)
+  // Focus node (for project context)
   const [focusNodeId, setFocusNodeIdState] = createSignal<string | null>(null);
   const [focusNodeName, setFocusNodeNameState] = createSignal<string | null>(null);
 
@@ -140,39 +132,28 @@ export function useShepherdChat(
 
   // Convert context to backend request
   const contextToRequest = (ctx: ShepherdChatContext): StartShepherdSessionRequest => {
-    if (ctx.type === 'board' && ctx.projectId) {
+    if (ctx.type === 'project' && ctx.projectId) {
       if (ctx.focusNodeId && ctx.focusNodeName) {
         return {
-          type: 'boardFocused',
+          type: 'projectFocused',
           projectId: ctx.projectId,
           taskId: ctx.focusNodeId,
           taskName: ctx.focusNodeName,
         };
       }
-      return { type: 'board', projectId: ctx.projectId };
-    }
-    if ((ctx.type === 'run' || ctx.type === 'draft') && ctx.runName) {
-      return { type: 'run', runName: ctx.runName };
+      return { type: 'project', projectId: ctx.projectId };
     }
     return { type: 'general' };
   };
 
   // Convert context to scope for sending messages
   const contextToScope = (ctx: ShepherdChatContext): ShepherdScope => {
-    if (ctx.type === 'board' && ctx.projectId) {
+    if (ctx.type === 'project' && ctx.projectId) {
       const focus =
         ctx.focusNodeId && ctx.focusNodeName
           ? { taskId: ctx.focusNodeId, taskName: ctx.focusNodeName }
           : undefined;
-      return { type: 'board', projectId: ctx.projectId, focus };
-    }
-    if ((ctx.type === 'run' || ctx.type === 'draft') && ctx.runName) {
-      return {
-        type: 'run',
-        runName: ctx.runName,
-        workspacePath: '',
-        projectPath: ctx.projectPath || undefined,
-      };
+      return { type: 'project', projectId: ctx.projectId, focus };
     }
     return { type: 'general' };
   };
@@ -410,7 +391,6 @@ export function useShepherdChat(
       });
 
       setSessionId(response.sessionId);
-      setCurrentScope(response.scope);
       setConnected(true);
     } catch (e) {
       console.error('[shepherd-chat] Failed to connect:', e);
@@ -586,7 +566,6 @@ export function useShepherdChat(
   return {
     connected,
     connecting,
-    sessionId,
     connect,
     disconnect,
     messages,

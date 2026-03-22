@@ -194,7 +194,7 @@ export const ProjectSelector: Component<ProjectSelectorProps> = (props) => {
           ref={triggerRef}
           type="button"
           onClick={toggle}
-          class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition-all group"
+          class="flex items-center gap-2 px-2.5 py-1.5 rounded-none transition-all group"
           classList={{
             'bg-pasture-700/60 text-wool-100': project.projectSelectorOpen(),
             'text-wool-200 hover:text-wool-100 hover:bg-pasture-800/80': !project.projectSelectorOpen(),
@@ -226,7 +226,7 @@ export const ProjectSelector: Component<ProjectSelectorProps> = (props) => {
           ref={dropdownRef}
           class={props.dropdownOnly ? 'fixed z-[100]' : 'absolute top-full left-0 mt-2 z-50'}
           classList={{
-            'w-72 rounded-xl overflow-hidden shadow-2xl': true,
+            'w-72 rounded-none overflow-hidden shadow-2xl': true,
           }}
           style={{
             ...(props.dropdownOnly ? { top: '80px', left: '56px' } : {}),
@@ -251,10 +251,10 @@ export const ProjectSelector: Component<ProjectSelectorProps> = (props) => {
                   value={project.projectSearchQuery()}
                   onInput={(e) => project.setProjectSearchQuery(e.currentTarget.value)}
                   onKeyDown={handleKeyDown}
-                  class="w-full pl-9 pr-3 py-2.5 text-sm rounded-lg bg-black/30 border border-white/5 text-wool-200 placeholder-wool-600 focus:outline-none focus:border-amber-500/30 focus:ring-1 focus:ring-amber-500/20 transition-all"
+                  class="w-full pl-9 pr-3 py-2.5 text-sm rounded-none bg-black/30 border border-white/5 text-wool-200 placeholder-wool-600 focus:outline-none focus:border-amber-500/30 focus:ring-1 focus:ring-amber-500/20 transition-all"
                 />
                 <Show when={!project.projectSearchQuery()}>
-                  <kbd class="absolute right-3 top-1/2 -translate-y-1/2 px-1.5 py-0.5 text-[10px] font-mono text-wool-600 bg-pasture-800 rounded border border-pasture-700">
+                  <kbd class="absolute right-3 top-1/2 -translate-y-1/2 px-1.5 py-0.5 text-[10px] font-mono text-wool-600 bg-pasture-800 rounded-none border border-pasture-700">
                     {navigator.platform.includes('Mac') ? '⌘K' : 'Ctrl+K'}
                   </kbd>
                 </Show>
@@ -287,7 +287,7 @@ export const ProjectSelector: Component<ProjectSelectorProps> = (props) => {
                         <div class="mx-2 my-1 border-t border-white/5" />
                         <button
                           type="button"
-                          class="w-full flex items-center gap-3 px-3 py-2.5 mx-1 rounded-lg text-left transition-colors"
+                          class="w-full flex items-center gap-3 px-3 py-2.5 mx-1 rounded-none text-left transition-colors"
                           classList={{
                             'bg-amber-500/10 text-amber-400': highlightedIndex() === index(),
                             'text-wool-400 hover:bg-white/5': highlightedIndex() !== index(),
@@ -298,7 +298,7 @@ export const ProjectSelector: Component<ProjectSelectorProps> = (props) => {
                           role="option"
                         >
                           <div
-                            class="w-8 h-8 rounded-lg flex items-center justify-center"
+                            class="w-8 h-8 rounded-none flex items-center justify-center"
                             style={{
                               background: highlightedIndex() === index()
                                 ? 'rgba(251,191,36,0.15)'
@@ -319,7 +319,7 @@ export const ProjectSelector: Component<ProjectSelectorProps> = (props) => {
                     {/* Project item */}
                     <button
                       type="button"
-                      class="w-full flex items-center gap-3 px-3 py-2 mx-1 rounded-lg text-left transition-colors"
+                      class="w-full flex items-center gap-3 px-3 py-2 mx-1 rounded-none text-left transition-colors"
                       classList={{
                         'bg-white/8': highlightedIndex() === index(),
                         'hover:bg-white/5': highlightedIndex() !== index(),
@@ -331,7 +331,7 @@ export const ProjectSelector: Component<ProjectSelectorProps> = (props) => {
                       aria-selected={project.selectedProjectId() === (item as { type: 'project'; project: { id: number } }).project.id}
                     >
                       <div
-                        class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                        class="w-8 h-8 rounded-none flex items-center justify-center shrink-0"
                         style={{
                           background: `linear-gradient(135deg, rgba(251,191,36,0.1) 0%, ${amber(0.05)} 100%)`,
                           border: '1px solid rgba(251,191,36,0.15)',

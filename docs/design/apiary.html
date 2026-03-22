@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Apiary — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Vollkorn:wght@400;600;700;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --honey: #c89030;
+      --honey-light: #e0a840;
+      --honey-deep: #a07020;
+      --wax: #e8d8a0;
+      --wax-dim: #c8b880;
+      --hive: #1a1408;
+      --hive-mid: #2a2010;
+      --hive-light: #3a3018;
+      --bee-yellow: #e8c020;
+      --bee-dark: #302808;
+      --capped: #d8c888;
+      --queen: #d04848;
+      --text: #c8b880;
+      --text-dim: #887848;
+      --text-bright: #f0e8c8;
+    }
+
+    body {
+      font-family: 'Vollkorn', serif;
+      background: var(--hive);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    /* Faint honeycomb texture */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background:
+        radial-gradient(ellipse at 50% 50%, rgba(200,144,48,0.03) 0%, transparent 50%);
+      pointer-events: none;
+    }
+
+    .direction-nav {
+      position: sticky; top: 0; z-index: 1000;
+      background: rgba(26,20,8,0.92); backdrop-filter: blur(14px);
+      border-bottom: 2px solid var(--hive-light);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .direction-nav a {
+      font-size: 11px; font-weight: 700; color: var(--text-dim);
+      text-decoration: none; padding: 5px 12px; border-radius: 4px; transition: all 0.2s;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      font-family: 'Space Mono', monospace;
+    }
+    .direction-nav a:hover { color: var(--honey); background: rgba(200,144,48,0.06); }
+    .direction-nav .nav-title {
+      font-family: 'Vollkorn', serif; font-size: 14px;
+      font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text-bright); flex: 1; text-align: center;
+    }
+    .direction-nav .nav-home {
+      font-family: 'Space Mono', monospace;
+      font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-dim); border-right: 2px solid var(--hive-light);
+      padding-right: 16px; margin-right: 4px;
+    }
+
+    .page-header {
+      padding: 80px 48px 20px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .tag {
+      font-family: 'Space Mono', monospace;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--honey); margin-bottom: 12px; display: block;
+    }
+
+    h1 {
+      font-family: 'Vollkorn', serif;
+      font-size: clamp(40px, 6vw, 72px);
+      font-weight: 900;
+      letter-spacing: 0.03em; text-transform: uppercase;
+      line-height: 1.0; color: var(--text-bright); margin-bottom: 16px;
+    }
+
+    .subtitle {
+      font-size: 15px; font-weight: 400;
+      color: var(--text-dim); max-width: 580px; line-height: 1.7;
+    }
+
+    .showcase {
+      padding: 40px 48px 60px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    /* ====== BEEHIVE CROSS-SECTION ====== */
+
+    .hive-frame {
+      background: var(--hive-mid);
+      border: 2px solid var(--hive-light);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .hive-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 24px;
+      background: var(--hive);
+      border-bottom: 2px solid var(--hive-light);
+    }
+
+    .hive-id {
+      font-family: 'Vollkorn', serif;
+      font-size: 13px; font-weight: 900; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--text-bright);
+    }
+
+    .queen-badge {
+      display: flex; align-items: center; gap: 6px;
+      font-family: 'Space Mono', monospace;
+      font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--queen);
+    }
+
+    .queen-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--queen);
+      box-shadow: 0 0 6px rgba(208,72,72,0.4);
+      animation: queen-pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes queen-pulse {
+      0%, 100% { box-shadow: 0 0 6px rgba(208,72,72,0.4); }
+      50% { box-shadow: 0 0 12px rgba(208,72,72,0.6); }
+    }
+
+    .hive-body {
+      position: relative;
+      min-height: 480px;
+      padding: 40px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    /* Honeycomb grid */
+    .honeycomb {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 4px;
+      max-width: 700px;
+      position: relative;
+    }
+
+    .hex-row {
+      display: flex;
+      gap: 4px;
+      justify-content: center;
+    }
+
+    .hex-row:nth-child(even) {
+      margin-left: 52px;
+    }
+
+    /* Hexagonal cells */
+    .hex-cell {
+      width: 100px; height: 115px;
+      position: relative;
+      clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      text-align: center;
+      transition: all 0.3s;
+      padding: 16px 8px;
+    }
+
+    /* Cell base (empty comb) */
+    .hex-cell::before {
+      content: '';
+      position: absolute; inset: 0;
+      clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+      background: var(--hive-light);
+      z-index: -2;
+    }
+
+    /* Honey fill (from bottom up, representing task progress) */
+    .hex-cell::after {
+      content: '';
+      position: absolute; left: 0; right: 0; bottom: 0;
+      clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+      z-index: -1;
+      transition: height 1.5s ease-out;
+    }
+
+    /* Validated: fully filled + wax cap */
+    .cell-capped {
+      background: var(--wax);
+      border: none;
+    }
+
+    .cell-capped::after {
+      height: 100%;
+      background: linear-gradient(0deg, var(--honey) 0%, var(--honey-light) 60%, var(--wax) 90%);
+    }
+
+    .cell-capped .cell-name { color: var(--hive); font-weight: 700; }
+    .cell-capped .cell-status { color: var(--honey-deep); }
+
+    /* Wax cap pattern on validated cells */
+    .wax-cap {
+      position: absolute; top: 0; left: 0; right: 0;
+      height: 30%;
+      clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+      background: linear-gradient(180deg, var(--capped) 0%, var(--wax) 100%);
+      opacity: 0.6;
+      z-index: 1;
+    }
+
+    /* Working: partially filled with honey */
+    .cell-filling {
+      background: var(--hive-light);
+    }
+
+    .cell-filling::after {
+      height: 50%;
+      background: linear-gradient(0deg, var(--honey) 0%, var(--honey-light) 80%, transparent 100%);
+      animation: honey-fill 3s ease-in-out infinite;
+    }
+
+    @keyframes honey-fill {
+      0%, 100% { height: 50%; }
+      50% { height: 58%; }
+    }
+
+    .cell-filling .cell-name { color: var(--text-bright); }
+    .cell-filling .cell-status { color: var(--honey); }
+
+    /* Pending/Blocked: empty cell, dim */
+    .cell-empty {
+      background: var(--hive-light);
+      opacity: 0.6;
+    }
+
+    .cell-empty .cell-name { color: var(--text-dim); }
+    .cell-empty .cell-status { color: var(--text-dim); }
+
+    /* Draft: barely visible cell */
+    .cell-draft {
+      background: var(--hive-light);
+      opacity: 0.35;
+    }
+
+    .cell-draft .cell-name { color: var(--text-dim); }
+    .cell-draft .cell-status { color: var(--text-dim); }
+
+    .cell-name {
+      font-size: 11px; font-weight: 700;
+      line-height: 1.2; margin-bottom: 2px;
+      position: relative; z-index: 2;
+    }
+
+    .cell-status {
+      font-family: 'Space Mono', monospace;
+      font-size: 8px; letter-spacing: 0.05em;
+      text-transform: uppercase;
+      position: relative; z-index: 2;
+    }
+
+    .cell-progress {
+      font-family: 'Space Mono', monospace;
+      font-size: 14px; font-weight: 700;
+      margin-top: 4px;
+      position: relative; z-index: 2;
+    }
+
+    /* Bees (workers) */
+    .bees-container {
+      position: absolute; inset: 0;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    .bee {
+      position: absolute;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--bee-yellow);
+      box-shadow: 0 0 6px rgba(232,192,32,0.4);
+    }
+
+    .bee::before {
+      content: '';
+      position: absolute; top: 1px; left: 1px;
+      width: 3px; height: 8px;
+      background: var(--bee-dark);
+      border-radius: 1px;
+      transform: rotate(-20deg);
+    }
+
+    /* Bee flight paths */
+    .bee-1 {
+      animation: bee-path-1 6s ease-in-out infinite;
+    }
+
+    .bee-2 {
+      animation: bee-path-2 8s ease-in-out infinite;
+      animation-delay: -2s;
+    }
+
+    .bee-3 {
+      animation: bee-path-3 5s ease-in-out infinite;
+      animation-delay: -1s;
+      opacity: 0.6;
+      width: 8px; height: 8px;
+    }
+
+    @keyframes bee-path-1 {
+      0% { top: 40%; left: 30%; }
+      25% { top: 35%; left: 50%; }
+      50% { top: 50%; left: 60%; }
+      75% { top: 45%; left: 45%; }
+      100% { top: 40%; left: 30%; }
+    }
+
+    @keyframes bee-path-2 {
+      0% { top: 55%; left: 55%; }
+      25% { top: 45%; left: 40%; }
+      50% { top: 38%; left: 55%; }
+      75% { top: 50%; left: 65%; }
+      100% { top: 55%; left: 55%; }
+    }
+
+    @keyframes bee-path-3 {
+      0% { top: 35%; left: 60%; }
+      33% { top: 50%; left: 50%; }
+      66% { top: 42%; left: 35%; }
+      100% { top: 35%; left: 60%; }
+    }
+
+    /* Waggle dance indicator (dispatch) */
+    .waggle-dance {
+      position: absolute;
+      bottom: 60px; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 16px;
+      background: rgba(26,20,8,0.8);
+      border: 1px solid var(--hive-light);
+      border-radius: 20px;
+      z-index: 11;
+    }
+
+    .waggle-bee {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      background: var(--bee-yellow);
+      animation: waggle 0.4s ease-in-out infinite;
+    }
+
+    @keyframes waggle {
+      0%, 100% { transform: translateX(0) rotate(0deg); }
+      25% { transform: translateX(3px) rotate(10deg); }
+      75% { transform: translateX(-3px) rotate(-10deg); }
+    }
+
+    .waggle-label {
+      font-family: 'Space Mono', monospace;
+      font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--bee-yellow);
+    }
+
+    /* Hive stats footer */
+    .hive-footer {
+      display: flex; justify-content: space-between;
+      padding: 14px 24px;
+      background: var(--hive);
+      border-top: 2px solid var(--hive-light);
+      font-family: 'Space Mono', monospace;
+      font-size: 10px; color: var(--text-dim);
+    }
+
+    .hive-footer .reading {
+      display: flex; align-items: center; gap: 6px;
+    }
+
+    .reading-hex {
+      width: 10px; height: 12px;
+      clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    }
+
+    /* Delivery bar */
+    .harvest-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 24px;
+      background: var(--hive);
+      border-top: 1px solid var(--hive-light);
+    }
+
+    .harvest-label {
+      font-family: 'Space Mono', monospace;
+      font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .harvest-status {
+      font-family: 'Vollkorn', serif;
+      font-size: 12px; font-weight: 700;
+      color: var(--honey);
+    }
+
+    .rationale {
+      padding: 0 48px 100px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .rationale h3 {
+      font-family: 'Vollkorn', serif;
+      font-size: 18px; font-weight: 900; letter-spacing: 0.04em;
+      text-transform: uppercase; margin-bottom: 20px;
+    }
+
+    .rationale-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .rationale-card {
+      padding: 24px;
+      background: var(--hive-mid);
+      border: 1px solid var(--hive-light);
+      border-radius: 4px;
+    }
+
+    .rationale-card h4 {
+      font-size: 12px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin-bottom: 8px; color: var(--honey);
+      font-family: 'Space Mono', monospace;
+    }
+
+    .rationale-card p {
+      font-size: 13px; color: var(--text-dim); line-height: 1.7;
+    }
+
+    @media (max-width: 768px) {
+      .page-header, .showcase, .rationale { padding-left: 20px; padding-right: 20px; }
+      .hex-cell { width: 80px; height: 92px; }
+      .hex-row:nth-child(even) { margin-left: 42px; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="direction-nav">
+    <a href="../designs.html" class="nav-home">Storm</a>
+    <a href="puppet-theatre.html">Prev</a>
+    <span class="nav-title">APIARY</span>
+    <a href="tidal-pool.html">Next</a>
+  </nav>
+
+  <div class="page-header">
+    <div class="tag">Direction 16 &mdash; Ecosystem</div>
+    <h1>APIARY</h1>
+    <p class="subtitle">The board as a beehive cross-section. Specs are honeycomb cells that fill with amber honey as tasks complete. Workers are bees moving between cells. The waggle dance is dispatch. Validated cells are capped with wax. The queen is the shepherd.</p>
+  </div>
+
+  <div class="showcase">
+    <div class="hive-frame">
+      <div class="hive-header">
+        <span class="hive-id">Hive &mdash; Auth Overhaul</span>
+        <div class="queen-badge">
+          <div class="queen-dot"></div>
+          Queen (Shepherd) Active
+        </div>
+      </div>
+
+      <div class="hive-body">
+        <!-- Bees (workers) flying between cells -->
+        <div class="bees-container">
+          <div class="bee bee-1" title="Worker 1"></div>
+          <div class="bee bee-2" title="Worker 2"></div>
+          <div class="bee bee-3" title="Drone (remote)"></div>
+        </div>
+
+        <div class="honeycomb">
+          <!-- Row 1: Two validated cells (capped) -->
+          <div class="hex-row">
+            <div class="hex-cell cell-capped">
+              <div class="wax-cap"></div>
+              <span class="cell-name">Schema Migration</span>
+              <span class="cell-status">Capped</span>
+            </div>
+            <div class="hex-cell cell-capped">
+              <div class="wax-cap"></div>
+              <span class="cell-name">API Restructure</span>
+              <span class="cell-status">Capped</span>
+            </div>
+          </div>
+
+          <!-- Row 2: Working cell (filling with honey) + blocked cell -->
+          <div class="hex-row">
+            <div class="hex-cell cell-filling">
+              <span class="cell-name">Token Rotation</span>
+              <span class="cell-status">Filling</span>
+              <span class="cell-progress">2/4</span>
+            </div>
+            <div class="hex-cell cell-empty">
+              <span class="cell-name">Rate Limiter</span>
+              <span class="cell-status">Blocked</span>
+            </div>
+            <div class="hex-cell cell-draft">
+              <span class="cell-name">E2E Tests</span>
+              <span class="cell-status">Empty</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Waggle dance (dispatch) -->
+        <div class="waggle-dance">
+          <div class="waggle-bee"></div>
+          <span class="waggle-label">Waggle Dance &mdash; Dispatching to Token Rotation</span>
+        </div>
+      </div>
+
+      <div class="hive-footer">
+        <div class="reading">
+          <div class="reading-hex" style="background: var(--wax);"></div>
+          2 cells capped
+        </div>
+        <div class="reading">
+          <div class="reading-hex" style="background: var(--honey);"></div>
+          1 cell filling
+        </div>
+        <div class="reading">
+          <div class="reading-hex" style="background: var(--hive-light);"></div>
+          2 cells empty
+        </div>
+        <div class="reading">3 bees active</div>
+      </div>
+
+      <div class="harvest-bar">
+        <span class="harvest-label">Harvest (Delivery)</span>
+        <span class="harvest-status">Honey extraction pending &mdash; PR #847</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="rationale">
+    <h3>WHY THIS IS INTERESTING</h3>
+    <div class="rationale-grid">
+      <div class="rationale-card">
+        <h4>Hexagons Are Efficient</h4>
+        <p>Honeycomb is nature's most space-efficient tiling. Specs as hexagonal cells create a dense, beautiful grid where every cell touches its neighbors. The geometry implies collaboration — adjacent cells share walls, just like specs share dependencies.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Honey Fill Shows Progress</h4>
+        <p>Tasks filling a cell with amber honey from the bottom up is an immediately legible progress indicator. Half-full means half-done. Full means ready for capping. The viscous, warm fill animation makes progress feel organic and satisfying.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Waggle Dance IS Dispatch</h4>
+        <p>Real bees return to the hive and perform a waggle dance to tell others where to find resources. This maps perfectly to dispatch — the system analyzing the board and directing workers to unclaimed tasks. The biological metaphor is not decoration; it is the architecture.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Colony Intelligence</h4>
+        <p>No single bee knows the plan. The hive emerges from simple rules: find work, do work, report back. Hirsel workers operate the same way — claim a task, execute it, complete it. The queen (shepherd) coaches but does not micromanage. The colony is the orchestrator.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

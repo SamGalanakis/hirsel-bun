@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Air Traffic — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Overpass:wght@300;400;500;600;700;800;900&family=Overpass+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --radar-bg: #0a1018;
+      --radar-grid: rgba(0,180,100,0.06);
+      --radar-line: rgba(0,180,100,0.15);
+      --blip: #00e868;
+      --blip-dim: rgba(0,232,104,0.3);
+      --hold: #e8c040;
+      --emergency: #e04040;
+      --cleared: #40a0e8;
+      --text: #80c0a0;
+      --text-dim: #406050;
+      --text-bright: #c0e8d0;
+      --sweep: rgba(0,232,104,0.04);
+    }
+
+    body {
+      font-family: 'Overpass', sans-serif;
+      background: var(--radar-bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    .direction-nav {
+      position: sticky; top: 0; z-index: 1000;
+      background: rgba(10,16,24,0.92); backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--radar-grid);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .direction-nav a {
+      font-size: 11px; font-weight: 500; color: var(--text-dim);
+      text-decoration: none; padding: 5px 12px; border-radius: 6px; transition: all 0.2s;
+    }
+    .direction-nav a:hover { color: var(--blip); background: rgba(0,232,104,0.06); }
+    .direction-nav .nav-title {
+      font-weight: 700; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--text-bright); flex: 1; text-align: center;
+    }
+    .direction-nav .nav-home {
+      font-family: 'Overpass Mono', monospace;
+      font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-dim); border-right: 1px solid var(--radar-grid);
+      padding-right: 16px; margin-right: 4px;
+    }
+
+    .page-header {
+      padding: 80px 48px 20px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .tag {
+      font-family: 'Overpass Mono', monospace;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--blip); margin-bottom: 12px; display: block;
+    }
+
+    h1 {
+      font-size: clamp(44px, 6vw, 76px);
+      font-weight: 900; text-transform: uppercase;
+      letter-spacing: 0.02em;
+      line-height: 1.0; color: var(--text-bright); margin-bottom: 16px;
+    }
+
+    h1 span { color: var(--blip); }
+
+    .subtitle {
+      font-size: 15px; font-weight: 300;
+      color: var(--text-dim); max-width: 580px; line-height: 1.8;
+    }
+
+    .showcase {
+      padding: 40px 48px 60px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    /* ====== RADAR SCOPE ====== */
+    .atc-layout {
+      display: grid;
+      grid-template-columns: 1fr 280px;
+      gap: 0;
+      border: 1px solid var(--radar-line);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    /* Radar display */
+    .radar-scope {
+      aspect-ratio: 1;
+      max-height: 520px;
+      position: relative;
+      overflow: hidden;
+      background: var(--radar-bg);
+    }
+
+    /* Range rings */
+    .radar-scope::before {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(circle at 50% 50%, transparent 19%, var(--radar-grid) 19.5%, transparent 20%),
+        radial-gradient(circle at 50% 50%, transparent 39%, var(--radar-grid) 39.5%, transparent 40%),
+        radial-gradient(circle at 50% 50%, transparent 59%, var(--radar-grid) 59.5%, transparent 60%),
+        radial-gradient(circle at 50% 50%, transparent 79%, var(--radar-grid) 79.5%, transparent 80%);
+      pointer-events: none;
+    }
+
+    /* Cross hairs */
+    .radar-scope::after {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        linear-gradient(90deg, transparent 49.7%, var(--radar-grid) 49.7%, var(--radar-grid) 50.3%, transparent 50.3%),
+        linear-gradient(0deg, transparent 49.7%, var(--radar-grid) 49.7%, var(--radar-grid) 50.3%, transparent 50.3%);
+      pointer-events: none;
+    }
+
+    /* Sweep arm */
+    .sweep-arm {
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 50%; height: 2px;
+      background: linear-gradient(90deg, var(--blip), transparent);
+      transform-origin: left center;
+      animation: sweep 6s linear infinite;
+      opacity: 0.4;
+    }
+
+    .sweep-arm::before {
+      content: '';
+      position: absolute;
+      top: -50%; left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, var(--sweep), transparent);
+      transform: rotate(-15deg);
+      transform-origin: left center;
+      filter: blur(8px);
+    }
+
+    @keyframes sweep { to { transform: rotate(360deg); } }
+
+    /* Aircraft blips */
+    .blip {
+      position: absolute;
+      display: flex; align-items: flex-start; gap: 6px;
+      cursor: default;
+    }
+
+    .blip-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      position: relative;
+    }
+
+    .blip-active .blip-dot {
+      background: var(--blip);
+      box-shadow: 0 0 8px var(--blip-dim);
+    }
+
+    .blip-holding .blip-dot {
+      background: var(--hold);
+      box-shadow: 0 0 6px rgba(232,192,64,0.3);
+    }
+
+    .blip-cleared .blip-dot {
+      background: var(--cleared);
+      opacity: 0.6;
+    }
+
+    .blip-ghost .blip-dot {
+      background: var(--text-dim);
+      opacity: 0.3;
+    }
+
+    /* Trail dots */
+    .blip-trail {
+      position: absolute;
+      display: flex; gap: 6px;
+    }
+
+    .trail-dot {
+      width: 3px; height: 3px;
+      border-radius: 50%;
+      background: var(--blip);
+      opacity: 0.15;
+    }
+
+    .trail-dot:nth-child(2) { opacity: 0.1; }
+    .trail-dot:nth-child(3) { opacity: 0.05; }
+
+    .blip-tag {
+      font-family: 'Overpass Mono', monospace;
+      font-size: 10px;
+      color: var(--text);
+      line-height: 1.3;
+      white-space: nowrap;
+      background: rgba(10,16,24,0.7);
+      padding: 2px 6px;
+      border-radius: 2px;
+    }
+
+    .blip-tag .callsign {
+      color: var(--blip);
+      font-weight: 600;
+    }
+
+    .blip-tag .altitude {
+      color: var(--text-dim);
+    }
+
+    /* Flight strips panel */
+    .strips-panel {
+      background: #0e1420;
+      border-left: 1px solid var(--radar-line);
+      padding: 0;
+      overflow-y: auto;
+    }
+
+    .strips-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--radar-line);
+      font-family: 'Overpass Mono', monospace;
+      font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .strip {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--radar-grid);
+      border-left: 3px solid transparent;
+      transition: all 0.2s;
+      animation: strip-print 0.3s ease-out both;
+    }
+
+    .strip:nth-child(2) { animation-delay: 0.05s; }
+    .strip:nth-child(3) { animation-delay: 0.1s; }
+    .strip:nth-child(4) { animation-delay: 0.15s; }
+    .strip:nth-child(5) { animation-delay: 0.2s; }
+    .strip:nth-child(6) { animation-delay: 0.25s; }
+
+    @keyframes strip-print {
+      from { opacity: 0; transform: translateX(8px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    .strip:hover { background: rgba(0,232,104,0.02); }
+
+    .strip.active { border-left-color: var(--blip); }
+    .strip.holding { border-left-color: var(--hold); }
+    .strip.cleared { border-left-color: var(--cleared); }
+
+    .strip-callsign {
+      font-family: 'Overpass Mono', monospace;
+      font-size: 12px; font-weight: 600;
+      color: var(--text-bright);
+      margin-bottom: 2px;
+    }
+
+    .strip-route {
+      font-size: 11px; color: var(--text-dim);
+      margin-bottom: 4px;
+    }
+
+    .strip-clearance {
+      font-family: 'Overpass Mono', monospace;
+      font-size: 9px; color: var(--text-dim);
+      padding: 2px 6px;
+      background: rgba(0,180,100,0.04);
+      border-radius: 2px;
+      display: inline-block;
+    }
+
+    .strip-clearance.clr-active { color: var(--blip); }
+    .strip-clearance.clr-hold { color: var(--hold); }
+    .strip-clearance.clr-landed { color: var(--cleared); }
+
+    .rationale {
+      padding: 0 48px 100px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .rationale h3 {
+      font-size: 20px; font-weight: 800; text-transform: uppercase;
+      letter-spacing: 0.04em; margin-bottom: 20px;
+    }
+
+    .rationale-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .rationale-card {
+      padding: 24px;
+      background: #0e1420;
+      border: 1px solid var(--radar-grid);
+      border-radius: 4px;
+    }
+
+    .rationale-card h4 {
+      font-size: 12px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin-bottom: 8px; color: var(--blip);
+    }
+
+    .rationale-card p {
+      font-size: 13px; color: var(--text-dim); line-height: 1.7;
+    }
+
+    @media (max-width: 768px) {
+      .page-header, .showcase, .rationale { padding-left: 20px; padding-right: 20px; }
+      .atc-layout { grid-template-columns: 1fr; }
+      .radar-scope { max-height: 320px; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="direction-nav">
+    <a href="../designs.html" class="nav-home">Storm</a>
+    <a href="fermentation.html">Prev</a>
+    <span class="nav-title">AIR TRAFFIC</span>
+    <a href="neural-loom.html">Next</a>
+  </nav>
+
+  <div class="page-header">
+    <div class="tag">Direction 06</div>
+    <h1>AIR <span>TRAFFIC</span></h1>
+    <p class="subtitle">The dispatch system IS air traffic control. Specs are aircraft requesting clearance. Workers are runways. The shepherd is the controller. The radar shows everything in the airspace — position, heading, altitude. Flight strips track clearances.</p>
+  </div>
+
+  <div class="showcase">
+    <div class="atc-layout">
+      <div class="radar-scope">
+        <div class="sweep-arm"></div>
+
+        <!-- Blips on radar -->
+        <div class="blip blip-cleared" style="top:25%;left:20%;">
+          <div class="blip-dot"></div>
+          <div class="blip-tag"><span class="callsign">SCH01</span> <span class="altitude">FL000</span><br>Schema &middot; landed</div>
+        </div>
+
+        <div class="blip blip-cleared" style="top:60%;left:25%;">
+          <div class="blip-dot"></div>
+          <div class="blip-tag"><span class="callsign">API02</span> <span class="altitude">FL000</span><br>API Refactor &middot; landed</div>
+        </div>
+
+        <div class="blip blip-active" style="top:40%;left:55%;">
+          <div class="blip-dot"></div>
+          <div class="blip-tag"><span class="callsign">TOK03</span> <span class="altitude">FL180</span><br>Token Rot. &middot; on approach</div>
+          <div class="blip-trail" style="top:3px;right:100%;margin-right:10px;">
+            <div class="trail-dot"></div>
+            <div class="trail-dot"></div>
+            <div class="trail-dot"></div>
+          </div>
+        </div>
+
+        <div class="blip blip-holding" style="top:30%;left:72%;">
+          <div class="blip-dot"></div>
+          <div class="blip-tag"><span class="callsign">LIM04</span> <span class="altitude">FL240</span><br>Rate Lim. &middot; in hold</div>
+        </div>
+
+        <div class="blip blip-ghost" style="top:18%;left:82%;">
+          <div class="blip-dot"></div>
+          <div class="blip-tag"><span class="callsign">E2E05</span> <span class="altitude">—</span><br>E2E Tests &middot; not filed</div>
+        </div>
+      </div>
+
+      <div class="strips-panel">
+        <div class="strips-header">Flight Strips</div>
+
+        <div class="strip cleared">
+          <div class="strip-callsign">SCH01</div>
+          <div class="strip-route">Schema Migration &rarr; Validated</div>
+          <div class="strip-clearance clr-landed">LANDED RWY-1</div>
+        </div>
+
+        <div class="strip cleared">
+          <div class="strip-callsign">API02</div>
+          <div class="strip-route">API Restructure &rarr; Validated</div>
+          <div class="strip-clearance clr-landed">LANDED RWY-2</div>
+        </div>
+
+        <div class="strip active">
+          <div class="strip-callsign">TOK03</div>
+          <div class="strip-route">Token Rotation &rarr; Working</div>
+          <div class="strip-clearance clr-active">CLR ILS RWY-1 2/4</div>
+        </div>
+
+        <div class="strip holding">
+          <div class="strip-callsign">LIM04</div>
+          <div class="strip-route">Rate Limiter &rarr; Blocked</div>
+          <div class="strip-clearance clr-hold">HOLD AMBER-1 EFC 10:30</div>
+        </div>
+
+        <div class="strip">
+          <div class="strip-callsign">E2E05</div>
+          <div class="strip-route">E2E Tests &rarr; Draft</div>
+          <div class="strip-clearance">NO FLIGHT PLAN</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rationale">
+    <h3>WHY THIS IS INTERESTING</h3>
+    <div class="rationale-grid">
+      <div class="rationale-card">
+        <h4>Dispatch = clearance</h4>
+        <p>ATC's core job is granting clearances — which aircraft can approach, which must hold, which runway to use. Hirsel's dispatch does exactly this: which specs get workers, which must wait, which are complete.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Spatial awareness</h4>
+        <p>A radar scope shows all traffic simultaneously with position, heading, and separation. A spec board should too — not as a list, but as a spatial field where proximity shows dependency and altitude shows progress.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Flight strips = persistent record</h4>
+        <p>Real ATC uses paper flight strips next to the radar. Each strip has the aircraft's clearance, route, and status. The dual-panel layout gives both the spatial overview AND the detailed record.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>The sweep arm</h4>
+        <p>The rotating sweep reveals state periodically — like polling for updates. Blips brighten as the arm passes, then slowly fade. This creates a natural visual rhythm that matches hirsel's periodic status polling.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

@@ -1042,11 +1042,11 @@
     <main class="main">
       <section id="snapshot" class="hero">
         <div class="eyebrow">Interaction Architecture</div>
-        <h1>Hirsel should feel like a conversation that keeps condensing itself into a visible route.</h1>
+        <h1>Hirsel should feel like a conversation that keeps condensing itself into a visible project focus.</h1>
         <p class="subtitle">
-          This page reframes Hirsel from a worker dashboard into a hybrid architecture: Shepherd is the primary
-          control surface, the route view is a living HTML artifact, and the task machinery is still real but
-          normally hidden below the user’s level of concern.
+          This page reframes Hirsel from a worker dashboard into a project-level architecture: Shepherd is the primary
+          control surface, the user stays focused on the project rather than individual routes, and the right-hand
+          surface becomes a dynamic HTML focus view while routes and task machinery continue underneath.
         </p>
         <div class="hero-meta">
           <span class="badge target">Target State First</span>
@@ -1060,7 +1060,7 @@
           </div>
           <div class="kpi">
             <div class="n">1</div>
-            <div class="t">Living Route View</div>
+            <div class="t">Dynamic Focus View</div>
           </div>
           <div class="kpi">
             <div class="n">1</div>
@@ -1068,18 +1068,19 @@
           </div>
           <div class="kpi">
             <div class="n">2</div>
-            <div class="t">Truth Layers: Route + Runtime</div>
+            <div class="t">Truth Layers: Project + Runtime</div>
           </div>
         </div>
       </section>
 
       <section id="screen" class="section">
         <div class="section-label">2 — Screen Blueprint</div>
-        <h2>The main product is a split surface, not a collapsible chat attached to a board.</h2>
+        <h2>The main product is a project surface, not a route switcher attached to a board.</h2>
         <p class="section-intro">
           Shepherd stays present on the left as the user’s continuous conversational partner. The right side becomes a
-          route view: a stable HTML document that Shepherd edits incrementally when the meaning of the work changes.
-          Tasks, worker assignment, evals, and logs still exist, but they live behind a deliberate reveal.
+          dynamic focus view: the HTML artifact Shepherd updates to show what the user should currently pay attention to.
+          Routes can fork and run in parallel underneath, but they are visualized jointly at the project level rather
+          than as separate workspaces the user has to enter.
         </p>
 
         <div class="blueprint ve-card ve-card--hero">
@@ -1088,7 +1089,7 @@
               <div class="window-dots" aria-hidden="true">
                 <span></span><span></span><span></span>
               </div>
-              <div>hirsel / route interaction architecture</div>
+              <div>hirsel / project interaction architecture</div>
               <div>target-state blueprint</div>
             </div>
 
@@ -1102,7 +1103,8 @@
                   <h3 class="pane-title">Shepherd</h3>
                   <p class="section-intro" style="margin:0">
                     Free text stays the default. The user speaks naturally, Shepherd keeps state, asks questions,
-                    makes sense of the route, and decides when the route view actually needs to change.
+                    makes sense of the project, spins up or forks routes when needed, and decides what the focus view
+                    should actually show.
                   </p>
                 </div>
 
@@ -1113,11 +1115,11 @@
                   </div>
                   <div class="msg assistant">
                     <div class="who">Shepherd response</div>
-                    <p>I’ll inspect the current org and billing seams first, keep the route focused on safety, and update the view once the plan is coherent.</p>
+                    <p>I’ll inspect the current org and billing seams first, then try the safest implementation and a cleaner structural option in parallel.</p>
                   </div>
                   <div class="msg assistant">
                     <div class="who">Shepherd judgment</div>
-                    <p>No route-view rewrite yet. We have input, but not enough stable structure to promote.</p>
+                    <p>No major focus-view update yet. I have enough to fork two routes, but not enough evidence to ask you to choose.</p>
                   </div>
                 </div>
 
@@ -1132,38 +1134,39 @@
 
               <section class="pane route-pane">
                 <div class="route-toolbar">
-                  <div class="title">Route view / living HTML artifact</div>
+                  <div class="title">Project focus view / dynamic HTML artifact</div>
                   <div class="toggle">Show machinery</div>
                 </div>
 
                 <div class="route-header">
                   <article class="ve-card ve-card--soft">
                     <div class="ve-card__head">
-                      <div class="ve-card__label">Current pursuit</div>
+                      <div class="ve-card__label">Current focus</div>
                     </div>
                     <div class="ve-card__body">
-                      <h3>Team billing without destabilizing the single-user path</h3>
+                      <h3>Team billing exploration across two active routes</h3>
                       <p>
-                        The route view is not a task board the user must maintain. It is the stable reading of the
-                        work: what we are trying to do, what seems settled, what remains uncertain, and what is
-                        ready to ship or promote into memory.
+                        The focus view is not a task board and not a route picker. It is Shepherd’s current reading of
+                        what you should care about: what is being tried, what differs, what evidence is in, and what may
+                        need your decision.
                       </p>
                     </div>
                   </article>
 
                   <div class="route-stack">
                     <div class="route-card">
-                      <div class="tag">Decisions</div>
+                      <div class="tag">Routes</div>
                       <ul>
-                        <li>Favor simplicity over future billing flexibility</li>
-                        <li>Preserve today’s single-user signup experience</li>
+                        <li>2 active routes</li>
+                        <li>Seat model cleanup — working</li>
+                        <li>Minimal billing patch — validating</li>
                       </ul>
                     </div>
                     <div class="route-card">
-                      <div class="tag">Open questions</div>
+                      <div class="tag">Current ask</div>
                       <ul>
-                        <li>Can org membership and seat count share current auth state?</li>
-                        <li>Where should downgrade edge cases live?</li>
+                        <li>No user choice needed yet</li>
+                        <li>Waiting on preview and downgrade evidence</li>
                       </ul>
                     </div>
                   </div>
@@ -1171,24 +1174,25 @@
 
                 <div class="mini-grid">
                   <div class="mini-card">
-                    <div class="tag">Workstream</div>
-                    <p>Model map and constraints pulled from the codebase.</p>
+                    <div class="tag">Evidence</div>
+                    <p>Current comparison is grounded in code tracing, test runs, and route-level diffs.</p>
                   </div>
                   <div class="mini-card">
-                    <div class="tag">Validation</div>
-                    <p>Done means downgrade and seat-limit paths are exercised.</p>
+                    <div class="tag">Preview</div>
+                    <p>Relevant localhost or preview links can be attached directly when a route exposes something worth opening.</p>
                   </div>
                   <div class="mini-card">
-                    <div class="tag">Docs promotion</div>
-                    <p>Route outcomes can be promoted into stable product memory.</p>
+                    <div class="tag">Docs</div>
+                    <p>Async docs continue to accumulate the broader state of the project for later human or agent reference.</p>
                   </div>
                 </div>
 
                 <div class="toggle-card">
                   <div class="tag">Machinery reveal</div>
                   <p>
-                    Tasks, workers, eval runs, logs, and repair loops still exist, but they are subordinate. The main
-                    view only exposes them when the user explicitly asks to see the machinery underneath the route.
+                    Tasks, workers, routes, eval runs, logs, and repair loops still exist, but they are subordinate. The
+                    main view exposes route count, short labels, and status while keeping lifecycle management with
+                    Shepherd rather than making the user operate separate route UIs.
                   </p>
                 </div>
               </section>
@@ -1202,11 +1206,11 @@
             </div>
             <div class="note">
               <h4>AI-maintained region</h4>
-              <p>The route view content is editable by Shepherd through a constrained tool that updates the existing HTML artifact.</p>
+              <p>The focus view content is editable by Shepherd through a constrained tool that updates the existing HTML artifact.</p>
             </div>
             <div class="note">
               <h4>Hidden execution layer</h4>
-              <p>The task graph becomes an implementation layer under the route rather than the user’s primary authoring medium.</p>
+              <p>Routes and task graphs become implementation layers under the project rather than separate user workspaces.</p>
             </div>
           </div>
         </div>
@@ -1214,11 +1218,11 @@
 
       <section id="loop" class="section">
         <div class="section-label">3 — Interaction Loop</div>
-        <h2>Shepherd should edit the route view only when the route’s meaning actually changes.</h2>
+        <h2>Shepherd should update the project focus view only when the user’s attention should actually move.</h2>
         <p class="section-intro">
           The goal is not “generate a new explainer every turn.” The goal is to maintain a durable representation with
-          stable structure and selective updates. That creates continuity, trust, and a tactile sense that the route is
-          being worked on rather than reimagined from scratch.
+          stable structure and selective updates. That creates continuity, trust, and a tactile sense that the project is
+          being actively worked rather than theatrically reimagined from scratch.
         </p>
 
         <div class="flow">
@@ -1230,38 +1234,38 @@
           <div class="flow-arrow">→</div>
           <article class="step">
             <div class="idx">Step 02</div>
-            <h3>Route-state update</h3>
-            <p>Shepherd interprets the message as changes to intent, constraints, questions, decisions, or work progression.</p>
+            <h3>Project-state update</h3>
+            <p>Shepherd interprets the message as changes to intent, constraints, questions, decisions, or work progression at the project level.</p>
           </article>
           <div class="flow-arrow">→</div>
           <article class="step">
             <div class="idx">Step 03</div>
-            <h3>View edit decision</h3>
-            <p>Shepherd decides whether the route view needs an edit now, or whether the conversation is still too provisional.</p>
+            <h3>Route orchestration decision</h3>
+            <p>Shepherd decides whether to continue within the current route, fork additional routes, compare active routes, or keep gathering evidence.</p>
           </article>
           <div class="flow-arrow">→</div>
           <article class="step">
             <div class="idx">Step 04</div>
-            <h3>Incremental HTML edit</h3>
-            <p>A constrained tool updates the existing self-contained HTML route view. It rewrites sections, emphasis, and grouping without replacing the whole artifact.</p>
+            <h3>Focus-view edit</h3>
+            <p>A constrained tool updates the existing self-contained HTML focus view. It can become a comparison, diagram, code excerpt, preview surface, or brief depending on what the user should see now.</p>
           </article>
           <div class="flow-arrow">→</div>
           <article class="step">
             <div class="idx">Step 05</div>
-            <h3>Reveal machinery on demand</h3>
-            <p>The UI renders the latest route view by default and only drops to task/worker/eval detail when the user explicitly asks for it.</p>
+            <h3>Joint route visualization</h3>
+            <p>The UI renders the latest project focus by default and only surfaces minimal route metadata—count, short labels, and status—unless deeper machinery is explicitly requested.</p>
           </article>
         </div>
 
         <div class="callout">
-          The key product constraint is calmness. The route view should feel maintained, not regenerated. Stable objects,
+          The key product constraint is calmness. The focus view should feel maintained, not regenerated. Stable objects,
           stable placement, and selective edits matter more than maximum visual cleverness.
         </div>
       </section>
 
       <section id="artifacts" class="section">
         <div class="section-label">4 — Artifact Model</div>
-        <h2>The product has to distinguish between live pursuit, execution machinery, and retained understanding.</h2>
+        <h2>The product has to distinguish between project focus, route execution, machinery, and retained understanding.</h2>
         <p class="section-intro">
           Hirsel already has routes, board state, docs, delivery, and Shepherd chat. The new architecture clarifies their
           roles instead of inventing a separate authoring model.
@@ -1269,38 +1273,45 @@
 
         <div class="legend">
           <article class="ve-card">
-            <div class="ve-card__head"><div class="ve-card__label">Route</div></div>
+            <div class="ve-card__head"><div class="ve-card__label">Project</div></div>
             <div class="ve-card__body">
-              <h3>Live pursuit</h3>
-              <p>The active line of thought: what we are doing, why, what is uncertain, and how the work is progressing.</p>
+              <h3>User-facing unit</h3>
+              <p>The user works at the project level: what we are trying to do, what matters now, and what may need a decision.</p>
             </div>
           </article>
           <article class="ve-card">
-            <div class="ve-card__head"><div class="ve-card__label">Route view</div></div>
+            <div class="ve-card__head"><div class="ve-card__label">Focus view</div></div>
             <div class="ve-card__body">
-              <h3>Living HTML artifact</h3>
-              <p>The user-facing condensation of the route. Stable, inspectable, and incrementally editable by Shepherd.</p>
+              <h3>Dynamic HTML artifact</h3>
+              <p>The user-facing condensation of what Shepherd thinks matters now. Stable, inspectable, and incrementally editable.</p>
             </div>
           </article>
           <article class="ve-card">
             <div class="ve-card__head"><div class="ve-card__label">Docs / memory</div></div>
             <div class="ve-card__body">
               <h3>Retained understanding</h3>
-              <p>The durable knowledge promoted out of routes after work stabilizes: conventions, architecture notes, usage guidance, and lessons.</p>
+              <p>The broader project state promoted into durable references: conventions, architecture notes, usage guidance, and lessons.</p>
+            </div>
+          </article>
+          <article class="ve-card">
+            <div class="ve-card__head"><div class="ve-card__label">Routes</div></div>
+            <div class="ve-card__body">
+              <h3>Parallel execution branches</h3>
+              <p>Routes remain real and may fork freely, but Shepherd manages their lifecycle and the UI summarizes them jointly rather than as separate user workspaces.</p>
             </div>
           </article>
           <article class="ve-card">
             <div class="ve-card__head"><div class="ve-card__label">Machinery</div></div>
             <div class="ve-card__body">
               <h3>Execution substrate</h3>
-              <p>Tasks, workers, evals, repair loops, and logs remain necessary, but they serve the route rather than define the whole product.</p>
+              <p>Tasks, workers, evals, repair loops, and logs remain necessary, but they serve the project rather than define the whole product.</p>
             </div>
           </article>
           <article class="ve-card">
             <div class="ve-card__head"><div class="ve-card__label">Delivery</div></div>
             <div class="ve-card__body">
               <h3>Publication boundary</h3>
-              <p>Delivery becomes the act of crystallizing the route into code, PRs, docs, and promoted memory, not merely pushing a branch.</p>
+              <p>Delivery becomes the act of crystallizing project outcomes into code, PRs, docs, and promoted memory, not merely pushing a branch.</p>
             </div>
           </article>
         </div>
@@ -1310,9 +1321,9 @@
         <div class="section-label">5 — Current vs Target</div>
         <h2>The target architecture is new in emphasis, not completely new in ingredients.</h2>
         <p class="section-intro">
-          The current product already contains most of the substrate: Shepherd chat, SpecBoard, route-scoped files, docs,
+          The current product already contains most of the substrate: Shepherd chat, projects, routes, SpecBoard, docs,
           messaging, and delivery. The change is that these should be re-read through a product architecture where
-          Shepherd and the route view sit on top of the machinery instead of beside it.
+          Shepherd and the project focus view sit on top of the machinery instead of beside it.
         </p>
 
         <div class="matrix">
@@ -1342,7 +1353,7 @@
                   <div style="margin-top:8px"><span class="status current">Current</span></div>
                 </td>
                 <td>Machinery view and lower-level reveal.</td>
-                <td>Keep its statefulness and task graph power, but position it below the route view rather than as the first thing the user authors.</td>
+                <td>Keep its statefulness and task graph power, but position it below the project focus view rather than as the first thing the user authors.</td>
               </tr>
               <tr>
                 <td>Route-scoped docs and files</td>
@@ -1350,8 +1361,8 @@
                   Each route already owns docs and board task content files.
                   <div style="margin-top:8px"><span class="status bridge">Bridge</span></div>
                 </td>
-                <td>Foundation for the route view HTML artifact and docs promotion model.</td>
-                <td>Use existing route scoping as the persistence boundary for the living route representation.</td>
+                <td>Foundation for dynamic focus views, async docs, and route-local execution context.</td>
+                <td>Keep route scoping as the execution boundary, but make routes subordinate to the project and lifecycle-managed by Shepherd.</td>
               </tr>
               <tr>
                 <td>Docs panel / messaging panel</td>
@@ -1359,7 +1370,7 @@
                   Secondary right-side panels that open beside the board.
                   <div style="margin-top:8px"><span class="status bridge">Bridge</span></div>
                 </td>
-                <td>Supporting material around the route rather than parallel surfaces competing for attention.</td>
+                <td>Supporting material around the project rather than parallel surfaces competing for attention.</td>
                 <td>Promote docs into “retained understanding” and keep messaging tied to execution when needed.</td>
               </tr>
               <tr>
@@ -1369,24 +1380,24 @@
                   <div style="margin-top:8px"><span class="status current">Current</span></div>
                 </td>
                 <td>Hidden machinery layer with an explicit reveal affordance.</td>
-                <td>Do not remove it. Reframe it as substrate instead of the whole UX.</td>
+                <td>Do not remove it. Reframe it as substrate underneath the project surface and route summaries instead of the whole UX.</td>
               </tr>
               <tr>
-                <td><code>update_route_view</code> tool</td>
+                <td><code>update_project_focus_view</code> tool</td>
                 <td>
-                  Not implemented.
-                  <div style="margin-top:8px"><span class="status target">Target</span></div>
+                  Implemented as the constrained Shepherd edit path for the project focus artifact.
+                  <div style="margin-top:8px"><span class="status current">Current</span></div>
                 </td>
-                <td>Constrained Shepherd tool for editing the route-view HTML artifact.</td>
-                <td>Key new mechanism for making the right-hand view stable, inspectable, and AI-maintained.</td>
+                <td>Constrained Shepherd tool for editing the project-level dynamic HTML focus artifact.</td>
+                <td>Key new mechanism for making the right-hand view stable, inspectable, and AI-maintained without turning routes into separate UIs.</td>
               </tr>
             </tbody>
           </table>
         </div>
 
         <div class="callout">
-          The target is not “replace tasks with prose.” It is “keep tasks real, but make them subordinate to a more legible,
-          higher-order artifact.” Humans steer the route. Agents execute the machinery.
+          The target is not “replace tasks with prose.” It is “keep tasks and routes real, but make them subordinate to a
+          more legible project-level artifact.” Humans steer the project. Agents manage routes and execute the machinery.
         </div>
       </section>
 
@@ -1402,11 +1413,11 @@
           <article class="ve-card ve-card--recessed">
             <div class="ve-card__head"><div class="ve-card__label">Current layout composition</div></div>
             <div class="ve-card__body">
-              <h3>Primary canvas + overlays</h3>
+              <h3>Project surface + machinery reveal</h3>
               <ul class="clean">
-                <li><code>Layout.tsx</code> currently centers the app on <code>SpecBoard</code></li>
-                <li><code>ShepherdConsole</code> floats above the status bar as an overlay</li>
-                <li>Docs and messaging open as right-side panels beside the board</li>
+                <li><code>Layout.tsx</code> now renders a persistent <code>ShepherdConsole</code> plus a project-level focus surface</li>
+                <li><code>ProjectSurface.tsx</code> owns the right-hand HTML artifact and the machinery reveal</li>
+                <li><code>SpecBoard</code>, runs, workers, memory, and route switching now live under machinery tabs instead of driving the whole shell</li>
               </ul>
             </div>
           </article>
@@ -1430,7 +1441,7 @@
               <ul class="clean">
                 <li>Shepherd messages execute real turns and stream events to the UI</li>
                 <li>Workers remain isolated execution contexts operating on assigned board work</li>
-                <li>The future route view sits above this runtime instead of replacing it</li>
+                <li>The project focus view now sits above this runtime instead of replacing it</li>
               </ul>
             </div>
           </article>
@@ -1468,7 +1479,7 @@
                         </tr>
                       </thead>
                       <tbody>
-                        <tr><td>Add CLI command</td><td><code>src-tauri/src/cli/mod.rs</code> plus a new command file in <code>src-tauri/src/cli/</code></td></tr>
+                        <tr><td>Add backend/admin command</td><td><code>src-tauri/src/cli/mod.rs</code></td></tr>
                         <tr><td>Add GUI command</td><td><code>src-tauri/src/gui/commands/mod.rs</code> plus a new handler module</td></tr>
                         <tr><td>Add REST endpoint</td><td><code>src-tauri/src/core/server/mod.rs</code>, <code>routes.rs</code>, and the appropriate route builder</td></tr>
                         <tr><td>Modify run state</td><td><code>src-tauri/src/core/state/mod.rs</code> and <code>src-tauri/src/core/state/types.rs</code></td></tr>
@@ -1476,7 +1487,7 @@
                         <tr><td>Modify lifecycle</td><td><code>src-tauri/src/core/lifecycle/mod.rs</code> and <code>local.rs</code></td></tr>
                         <tr><td>Add board node behavior</td><td><code>src-tauri/src/core/delta/state/nodes.rs</code> and <code>src-tauri/src/gui/commands/delta.rs</code></td></tr>
                         <tr><td>Modify board UI</td><td><code>src/components/specflow/SpecBoard.tsx</code> and <code>src/components/layout/CanvasToolbar.tsx</code></td></tr>
-                        <tr><td>Add service worker</td><td><code>src-tauri/src/core/service_worker/</code> plus <code>src-tauri/src/cli/service_worker.rs</code></td></tr>
+                        <tr><td>Add backend config command</td><td><code>src-tauri/src/gui/commands/config_cmd.rs</code> and <code>src/components/modals/settings/</code></td></tr>
                       </tbody>
                     </table>
                   </div>
@@ -1494,10 +1505,9 @@
                         </tr>
                       </thead>
                       <tbody>
-                        <tr><td><code>gui</code></td><td>Tauri desktop app; implies CLI support</td><td>Yes</td></tr>
-                        <tr><td><code>cli</code></td><td>Full CLI including server mode and TUI attach</td><td>No, implied by <code>gui</code></td></tr>
-                        <tr><td><code>server</code></td><td>Coordinator / HTTP server mode</td><td>No, implied by <code>cli</code></td></tr>
-                        <tr><td><code>worker</code></td><td>Minimal remote worker binary</td><td>No</td></tr>
+                        <tr><td><code>gui</code></td><td>Tauri desktop app; includes the embedded backend runtime</td><td>Yes</td></tr>
+                        <tr><td><code>server</code></td><td>Headless backend / HTTP server mode</td><td>No, implied by <code>gui</code></td></tr>
+                        <tr><td><code>worker</code></td><td>Minimal sandbox worker binary</td><td>No</td></tr>
                         <tr><td><code>s3-storage</code></td><td>S3-compatible workspace and archive support</td><td>No</td></tr>
                         <tr><td><code>dev</code></td><td>Tracing subscriber and debug support</td><td>No</td></tr>
                         <tr><td><code>profiling</code></td><td>Tracing-chrome / Perfetto profiling output</td><td>No</td></tr>
@@ -1528,12 +1538,11 @@
                       <tr><td><code>delta/</code></td><td>Unified route-scoped board tree, dispatch, export, and persistent project runs</td></tr>
                       <tr><td><code>route/</code></td><td>Parallel route management, forking, active-route state, and route file layout</td></tr>
                       <tr><td><code>delivery/</code></td><td>Board delivery orchestration, git operations, workspace resolution</td></tr>
-                      <tr><td><code>orchestrator/</code></td><td>Local, daemon, and remote orchestration backends</td></tr>
+                      <tr><td><code>orchestrator/</code></td><td>Local and daemon-backed orchestration backends</td></tr>
                       <tr><td><code>lifecycle/</code></td><td>Event-driven lifecycle transitions and scaling behavior</td></tr>
-                      <tr><td><code>runner/</code></td><td>Worker host implementations for local, SSH, Fly, and composed runners</td></tr>
+                      <tr><td><code>runner/</code></td><td>Single-host worker execution with optional containerized runners</td></tr>
                       <tr><td><code>run_manager/</code></td><td>Unified run management over orchestration plus lifecycle</td></tr>
                       <tr><td><code>server/</code></td><td>Shared HTTP API, auth, board, worker, and eval routes</td></tr>
-                      <tr><td><code>service_worker/</code></td><td>Warm background services such as Scribe and conflict resolution</td></tr>
                       <tr><td><code>shepherd_chat.rs</code> / <code>project_messages.rs</code></td><td>Project-level Shepherd history plus route-scoped Sheepfold messaging</td></tr>
                     </tbody>
                   </table>
@@ -1548,7 +1557,7 @@
                     <li><code>worker/runner.rs</code> exposes MCP-backed worker operations</li>
                     <li><code>worker/mcp.rs</code> hosts worker tools including eval pass/fail signaling</li>
                     <li><code>worker/eval_mcp.rs</code> provides the eval-task MCP surface</li>
-                    <li><code>worker/http_state.rs</code> and <code>remote_runner.rs</code> support remote workers</li>
+                    <li>Worker state is local to the backend host; there is no separate remote worker transport layer in the current design</li>
                   </ul>
                 </div>
 
@@ -1556,9 +1565,10 @@
                   <div class="subhead">Frontend structure</div>
                   <ul class="clean">
                     <li><code>components/layout/</code> for shell, toolbars, drawer, overlays, welcome state</li>
-                    <li><code>components/specflow/</code> for SpecBoard, delivery, route dialogs, node editing</li>
-                    <li><code>components/chat/</code>, <code>docs/</code>, and <code>messaging/</code> for Shepherd, docs, and Sheepfold surfaces</li>
-                    <li><code>components/runs/</code>, <code>workers/</code>, <code>projects/</code>, <code>modals/</code>, <code>shared/</code>, <code>fun/</code>, and <code>tasks/</code> support the rest of the UI</li>
+                    <li><code>components/project/</code> owns the project focus surface and route machinery summary</li>
+                    <li><code>components/specflow/</code> for SpecBoard, delivery, route dialogs, and node editing under machinery</li>
+                    <li><code>components/chat/</code> and <code>components/messaging/</code> cover Shepherd and route-scoped worker messaging</li>
+                    <li><code>components/runs/</code>, <code>projects/</code>, <code>route/</code>, <code>modals/</code>, <code>shared/</code>, and <code>tasks/</code> support the rest of the UI</li>
                     <li><code>stores/</code> and <code>hooks/</code> coordinate app, project, route, run, and delta state</li>
                   </ul>
                 </div>
@@ -1569,7 +1579,7 @@
                   <div class="subhead">Tauri GUI command families</div>
                   <ul class="clean">
                     <li><code>runs</code>, <code>drafts</code>, <code>workers</code>, <code>events</code>, <code>messages</code>, <code>logs</code></li>
-                    <li><code>delta</code>, <code>delivery</code>, <code>routes</code>, <code>projects</code>, <code>project_messages</code>, <code>docs</code></li>
+                    <li><code>delta</code>, <code>delivery</code>, <code>routes</code>, <code>projects</code>, <code>project_messages</code></li>
                     <li><code>shepherd</code> for session lifecycle and message streaming</li>
                     <li><code>config_cmd</code>, <code>credentials</code>, <code>filesystem</code>, <code>debug</code>, <code>ide</code>, <code>files</code></li>
                   </ul>
@@ -1577,9 +1587,9 @@
                 </div>
 
                 <div class="compact-card">
-                  <div class="subhead">CLI and daemon surfaces</div>
+                  <div class="subhead">Backend and daemon surfaces</div>
                   <ul class="clean">
-                    <li>CLI commands live in <code>src-tauri/src/cli/</code> and include <code>runs</code>, <code>view</code>, <code>log</code>, <code>attach</code>, <code>msg</code>, <code>diff</code>, <code>deliver</code>, <code>pause</code>, <code>resume</code>, <code>delete</code>, <code>clone</code>, <code>tasks</code>, <code>summary</code>, <code>config</code>, <code>prune</code>, <code>reset</code>, <code>templates</code>, <code>completions</code>, <code>spec</code>, <code>scribe</code>, <code>man</code>, and the service worker entrypoint</li>
+                    <li><code>src-tauri/src/cli/</code> now holds a minimal admin parser for <code>hirsel serve</code> plus hidden worker/daemon subprocess entrypoints</li>
                     <li>The daemon lives in <code>src-tauri/src/daemon/</code> with socket/PID handling in <code>mod.rs</code>, the TCP/HTTP server in <code>server.rs</code>, lifecycle polling in <code>lifecycle.rs</code>, and a matching client in <code>client.rs</code></li>
                   </ul>
                 </div>
@@ -1632,7 +1642,7 @@
                   <ul class="clean">
                     <li>Main route is created automatically for each project</li>
                     <li>Forked routes copy board state plus route-scoped files from their parent</li>
-                    <li>Route scope applies to board nodes, validation/blocking edges, project messages, docs, and board task content files</li>
+                    <li>Route scope applies to board nodes, validation/blocking edges, project messages, retained route artifacts, and board task content files</li>
                     <li>The frontend route tree, active-route switching, and project-run dispatch all key off <code>route_id</code></li>
                   </ul>
                 </div>
@@ -1641,7 +1651,8 @@
                   <div class="subhead">File layout</div>
                   <ul class="clean">
                     <li><code>~/.hirsel/hirsel.db</code> stores global config, credentials, projects, routes, board state, and Shepherd history</li>
-                    <li><code>~/.hirsel/projects/{project_id}/routes/{route_name}/</code> stores route-scoped docs and board content files</li>
+                    <li><code>project_focus_views</code> in the global DB stores the project-level HTML focus artifact</li>
+                    <li><code>~/.hirsel/projects/{project_id}/routes/{route_name}/</code> stores route-scoped board content files and retained route artifacts</li>
                     <li><code>~/.hirsel/runs/{run_name}/hirsel.db</code> stores per-run lifecycle state, workers, events, evals, and history</li>
                     <li>Run workspaces live under <code>~/.hirsel/runs/{run_name}/work/</code> with staging and worker-specific worktrees</li>
                   </ul>
@@ -1679,7 +1690,7 @@
                   <ul class="clean">
                     <li><code>Orchestrator</code> has local, daemon, and remote implementations</li>
                     <li><code>LifecycleManager</code> has local and remote variants</li>
-                    <li><code>Runner</code> has local, SSH, Fly, and composed implementations</li>
+                    <li><code>Runner</code> covers host execution plus optional containerized execution on that host</li>
                     <li>Workspace and archive behavior are abstracted behind provider / strategy traits</li>
                   </ul>
                 </div>
@@ -1688,8 +1699,8 @@
                   <div class="subhead">Configuration model</div>
                   <ul class="clean">
                     <li>Config is loaded DB-first from the global store with file-based defaults and persistence helpers</li>
-                    <li>Key fields include agent config, eval timeout, HITL default, named runners, profiles, storage, and service workers</li>
-                    <li>Service workers support per-service runner overrides such as a local Scribe worker on top of a remote default</li>
+                    <li>Key fields include agent config, eval timeout, HITL default, one backend connection target, named runners, and storage</li>
+                    <li>The client stores the backend URL/API key it should connect to; there is no multi-profile orchestrator model in the current code</li>
                   </ul>
                 </div>
 
@@ -1715,8 +1726,7 @@
                   <ul class="clean">
                     <li><code>/api/runs</code> for run CRUD, workspace initialization, spawn, pause, resume, and delivery</li>
                     <li><code>/api/runs/{name}/workers/*</code> for worker listing, restart, spawn, resume, and event access</li>
-                    <li><code>/api/runs/{name}/docs</code>, <code>/evals</code>, <code>/history</code>, and message thread endpoints for run-specific support surfaces</li>
-                    <li><code>/git/{run_name}</code> exposes Git smart HTTP for remote worker clone/fetch/push flows</li>
+                    <li><code>/api/runs/{name}/evals</code>, <code>/history</code>, and message thread endpoints support run-specific inspection and coordination</li>
                   </ul>
                 </div>
 

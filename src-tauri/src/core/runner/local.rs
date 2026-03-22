@@ -6,6 +6,7 @@
 
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use tracing::{debug, info, warn};
 
@@ -42,6 +43,10 @@ impl LocalRunner {
         unsafe {
             libc::kill(-(pid as i32), signal);
         }
+    }
+
+    fn has_nix_flake(work_dir: &Path) -> bool {
+        work_dir.join("flake.nix").exists()
     }
 
     /// Spawn a worker directly on the host (no container).
@@ -117,15 +122,31 @@ impl LocalRunner {
             args.push("--plan-task".to_string());
         }
 
-        // Spawn the detached subprocess in its own process group
-        // This allows us to kill the entire process tree when stopping workers
-        let mut cmd = Command::new(&hirsel_exe);
-        cmd.args(&args)
-            .current_dir(&config.work_dir)
+        let use_nix = Self::has_nix_flake(&config.work_dir);
+
+        // Spawn the detached subprocess in its own process group.
+        // If the workspace defines a flake, launch the worker inside `nix develop`
+        // so shell tools, compilers, and test runners come from the project env.
+        let mut cmd = if use_nix {
+            let mut nix = Command::new("nix");
+            nix.arg("--extra-experimental-features")
+                .arg("nix-command flakes")
+                .arg("develop")
+                .arg("--command")
+                .arg(&hirsel_exe);
+            nix.args(&args);
+            nix
+        } else {
+            let mut bare = Command::new(&hirsel_exe);
+            bare.args(&args);
+            bare
+        };
+
+        cmd.current_dir(&config.work_dir)
             .envs(&env)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::inherit()); // DEBUG: inherit stderr to see errors
+            .stderr(Stdio::inherit());
 
         #[cfg(unix)]
         {
@@ -142,8 +163,14 @@ impl LocalRunner {
         let pid = child.id();
 
         info!(
-            "Spawned local worker {} (hirsel __worker-run, PID {})",
-            config.worker_name, pid
+            "Spawned local worker {} ({}, PID {})",
+            config.worker_name,
+            if use_nix {
+                "nix develop + hirsel __worker-run"
+            } else {
+                "hirsel __worker-run"
+            },
+            pid
         );
 
         Ok(SpawnResult {
@@ -242,11 +269,6 @@ impl LocalRunner {
 
         if let Some(ref session_id) = config.resume_session_id {
             worker_cmd_parts.push(format!("--resume-session-id '{}'", session_id));
-        }
-
-        // Pass coordinator URL so worker can communicate status
-        if let Some(ref url) = config.coordinator_url {
-            worker_cmd_parts.push(format!("--api-url '{}'", url));
         }
 
         if let Some(ref task_id) = config.assigned_task_id {

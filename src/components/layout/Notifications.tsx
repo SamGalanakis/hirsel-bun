@@ -3,15 +3,16 @@
  */
 import { invoke } from '../../lib/invoke';
 import { createPoll } from '../../lib/poll';
-import { type Component, For, Show, createEffect, createSignal, onCleanup } from 'solid-js';
+import { type Component, For, Show, createEffect, createSignal } from 'solid-js';
 import { useModalClosing } from '../../hooks';
 import type { UnreadNotification } from '../../lib/types';
 import { formatTimeShort } from '../../lib/utils/formatters';
-import { useProject } from '../../stores';
+import { useProject, useWorkspace } from '../../stores';
 import { Icon } from '../shared';
 
 export const NotificationsDropdown: Component = () => {
   const project = useProject();
+  const workspace = useWorkspace();
   const [open, setOpen] = createSignal(false);
   const [notifications, setNotifications] = createSignal<
     (UnreadNotification & { read: boolean })[]
@@ -84,9 +85,10 @@ export const NotificationsDropdown: Component = () => {
     if (targetProject) {
       project.selectProject(targetProject);
     }
-    // Open messaging panel and select the thread
-    project.setActiveThread(thread);
-    project.setSheepfoldOpen(true);
+    // Open worker/chat machinery and select the thread
+    workspace.setActiveThread(thread);
+    workspace.setActiveMachineryTab('workers');
+    workspace.setMachineryOpen(true);
   };
 
   const toggleOpen = () => {
@@ -103,12 +105,12 @@ export const NotificationsDropdown: Component = () => {
       <button
         type="button"
         onClick={toggleOpen}
-        class="p-2 rounded-md text-wool-500 hover:text-wool-300 hover:bg-pasture-800 transition-colors relative"
+        class="p-2 rounded-none text-wool-500 hover:text-wool-300 hover:bg-pasture-800 transition-colors relative"
         title="Notifications"
       >
         <Icon name="bell" class="w-4 h-4" />
         <Show when={totalUnread() > 0}>
-          <span class="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-terra rounded-full text-[10px] text-white font-bold flex items-center justify-center px-1">
+          <span class="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-terra rounded-none text-[10px] text-white font-bold flex items-center justify-center px-1">
             {totalUnread() > 99 ? '99+' : totalUnread()}
           </span>
         </Show>
@@ -116,7 +118,7 @@ export const NotificationsDropdown: Component = () => {
 
       {/* Dropdown */}
       <Show when={open()}>
-        <div class="absolute right-0 mt-2 w-80 bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl z-50 overflow-hidden">
+        <div class="absolute right-0 mt-2 w-80 bg-pasture-800 border border-pasture-600 rounded-none shadow-xl z-50 overflow-hidden">
           <div class="p-3 border-b border-pasture-600 flex items-center justify-between">
             <h3 class="text-sm font-medium text-wool-300">Notifications</h3>
             <Show when={notifications().length > 0}>
@@ -166,7 +168,7 @@ export const NotificationsDropdown: Component = () => {
                           e.stopPropagation();
                           markOneRead(notif);
                         }}
-                        class="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-pasture-600 text-wool-500 hover:text-wool-300 transition-opacity"
+                        class="opacity-0 group-hover:opacity-100 p-0.5 rounded-none hover:bg-pasture-600 text-wool-500 hover:text-wool-300 transition-opacity"
                         title="Mark as read"
                       >
                         <Icon name="x" class="w-3 h-3" />

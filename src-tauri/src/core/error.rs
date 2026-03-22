@@ -477,17 +477,12 @@ impl From<crate::core::runner::RunnerError> for HirselError {
             }
             crate::core::runner::RunnerError::SetupFailed(msg) => HirselError::Process(msg),
             crate::core::runner::RunnerError::Io(e) => HirselError::Io(e),
-            crate::core::runner::RunnerError::Ssh(msg) => HirselError::Connection(msg),
-            crate::core::runner::RunnerError::Api(msg) => HirselError::Http(msg),
             crate::core::runner::RunnerError::Config(msg) => HirselError::InvalidInput(msg),
             crate::core::runner::RunnerError::State(msg) => HirselError::State(msg),
             crate::core::runner::RunnerError::RunPaused => {
                 HirselError::InvalidState("Run is paused".to_string())
             }
             crate::core::runner::RunnerError::Timeout(msg) => HirselError::Timeout(msg),
-            crate::core::runner::RunnerError::IncompatibleMode(msg) => {
-                HirselError::InvalidInput(msg)
-            }
         }
     }
 }

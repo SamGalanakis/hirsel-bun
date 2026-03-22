@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::core::config::{hirsel_dir, Config, OrchestratorMode};
+use crate::core::config::{hirsel_dir, Config};
 use crate::core::delta::DeltaState;
 
 #[derive(Debug, Error)]
@@ -39,6 +39,35 @@ pub enum WorkspaceLocation {
     },
 }
 
+/// Resolve the local work directory for a run.
+///
+/// Prefers the staging worktree when present, then falls back to the root
+/// work directory for older or single-worktree runs.
+pub fn resolve_run_work_dir(run_name: &str) -> WorkspaceResult<PathBuf> {
+    let run_path = hirsel_dir().join("runs").join(run_name);
+    if !run_path.exists() {
+        return Err(WorkspaceError::WorkDirNotFound(format!(
+            "Run not found: {}",
+            run_name
+        )));
+    }
+
+    let staging_dir = run_path.join("work").join("staging");
+    if staging_dir.exists() {
+        return Ok(staging_dir);
+    }
+
+    let work_dir = run_path.join("work");
+    if work_dir.exists() {
+        return Ok(work_dir);
+    }
+
+    Err(WorkspaceError::WorkDirNotFound(format!(
+        "Run work directory not found: {}",
+        run_name
+    )))
+}
+
 impl WorkspaceLocation {
     /// Get the local path if this is a Local workspace
     pub fn local_path(&self) -> Option<&PathBuf> {
@@ -58,36 +87,16 @@ impl WorkspaceLocation {
 pub async fn resolve_workspace(
     _project_id: i64,
     run_name: &str,
-    mode: OrchestratorMode,
 ) -> WorkspaceResult<WorkspaceLocation> {
-    match mode {
-        OrchestratorMode::Local => {
-            // For local mode, the workspace is in the run's work directory
-            let run_path = hirsel_dir().join("runs").join(run_name);
-            let work_dir = run_path.join("work").join("staging");
+    let (config, _) = Config::load().map_err(|e| WorkspaceError::Config(e.to_string()))?;
 
-            if !work_dir.exists() {
-                return Err(WorkspaceError::WorkDirNotFound(
-                    work_dir.display().to_string(),
-                ));
-            }
-
-            Ok(WorkspaceLocation::Local(work_dir))
-        }
-        OrchestratorMode::Remote => {
-            // For remote mode, operations go through the coordinator
-            let (config, _) = Config::load().map_err(|e| WorkspaceError::Config(e.to_string()))?;
-
-            let profile = config
-                .profiles
-                .get(&config.default_profile)
-                .ok_or_else(|| WorkspaceError::Config("No default profile".to_string()))?;
-
-            Ok(WorkspaceLocation::Coordinator {
-                run_name: run_name.to_string(),
-                coordinator_url: profile.url.clone(),
-            })
-        }
+    if let Some(url) = config.backend.url {
+        Ok(WorkspaceLocation::Coordinator {
+            run_name: run_name.to_string(),
+            coordinator_url: Some(url),
+        })
+    } else {
+        Ok(WorkspaceLocation::Local(resolve_run_work_dir(run_name)?))
     }
 }
 
@@ -104,12 +113,5 @@ pub async fn resolve_workspace_for_project(
         .map_err(|e| WorkspaceError::State(e.to_string()))?
         .ok_or(WorkspaceError::NoActiveRun(project_id))?;
 
-    // Determine the mode from config
-    let (config, _) = Config::load().map_err(|e| WorkspaceError::Config(e.to_string()))?;
-    let profile = config
-        .profiles
-        .get(&config.default_profile)
-        .ok_or_else(|| WorkspaceError::Config("No default profile".to_string()))?;
-
-    resolve_workspace(project_id, &project_run.run_name, profile.mode).await
+    resolve_workspace(project_id, &project_run.run_name).await
 }

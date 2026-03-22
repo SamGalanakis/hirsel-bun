@@ -152,6 +152,8 @@ pub async fn create_route(
 #[tauri::command]
 pub async fn delete_route(project_id: i64, route_id: i64) -> Result<(), String> {
     let store = RouteStore::new(project_id).await.str_err()?;
+    let project_store = crate::core::project::ProjectStore::open().await.str_err()?;
+    let project = project_store.get_project(project_id).await.str_err()?;
 
     let route = store.get_route(route_id).await.str_err()?;
     store.delete_route(route_id).await.str_err()?;
@@ -159,6 +161,10 @@ pub async fn delete_route(project_id: i64, route_id: i64) -> Result<(), String> 
     let route_files = RouteFiles::new(project_id, &route.name);
     if let Err(e) = route_files.delete() {
         tracing::warn!("Failed to delete route directory: {}", e);
+    }
+
+    if project.active_route_id == Some(route_id) {
+        let _ = get_active_route(project_id).await?;
     }
 
     Ok(())

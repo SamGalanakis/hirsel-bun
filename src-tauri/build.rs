@@ -5,7 +5,7 @@ fn main() {
         .map(|target| target.contains("linux"))
         .unwrap_or(false)
     {
-        // Bundled static Python in lash-core needs Python C API symbols exported
+        // Bundled static Python in lash needs Python C API symbols exported
         // from the host binary so embedded runtime lookups (ctypes.pythonapi) work.
         println!("cargo:rustc-link-arg=-Wl,--export-dynamic");
     }

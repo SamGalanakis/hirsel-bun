@@ -1,8 +1,7 @@
 /**
  * MessagingPanel - Right drawer for project messaging
  *
- * A refined side panel for Meadow (group chat) and worker DMs.
- * Matches the DocsPanel pattern - slides in from the right.
+ * A refined side panel for route chat and worker DMs.
  */
 import {
   type Component,
@@ -13,7 +12,7 @@ import {
   createSignal,
   onCleanup,
 } from 'solid-js';
-import { useProject, useRoute, useRuns } from '../../stores';
+import { useProject, useRoute, useRuns, useWorkspace } from '../../stores';
 import { useDelta } from '../../stores/delta-context';
 import {
   getProjectMessages,
@@ -21,12 +20,13 @@ import {
   markProjectMessagesRead,
   sendProjectMessage,
 } from '../../lib/api';
-import { Icon, SheepAvatar } from '../shared';
+import { Icon, WorkerAvatar } from '../shared';
 import { amber } from '../../lib/theme-colors';
 
 export const MessagingPanel: Component = () => {
   const project = useProject();
   const route = useRoute();
+  const workspace = useWorkspace();
   const delta = useDelta();
   const runsCtx = useRuns();
   const [messageInput, setMessageInput] = createSignal('');
@@ -35,8 +35,10 @@ export const MessagingPanel: Component = () => {
   let inputRef: HTMLTextAreaElement | undefined;
 
   const projectId = () => project.selectedProjectId();
-  const routeId = () => route.activeRoute()?.id;
-  const activeThread = () => project.activeThread();
+  const routeId = () => route.currentRouteId();
+  const activeThread = () => workspace.activeThread();
+  const tabIsActive = () =>
+    workspace.machineryOpen() && workspace.activeMachineryTab() === 'workers';
 
   // Workers — read from RunsContext store (centralized polling)
   const workers = () => {
@@ -45,6 +47,15 @@ export const MessagingPanel: Component = () => {
     if (runsCtx.selectedRun() === run.runName) return runsCtx.workers();
     return [];
   };
+
+  createEffect(() => {
+    const run = delta.projectRun();
+    if (!run) return;
+    if (!tabIsActive()) return;
+    if (runsCtx.selectedRun() !== run.runName) {
+      runsCtx.setSelectedRun(run.runName);
+    }
+  });
 
   // Fetch threads for tab display
   const [threads, { refetch: refetchThreads }] = createResource(
@@ -86,14 +97,14 @@ export const MessagingPanel: Component = () => {
     const pid = projectId();
     const rid = routeId();
     const thread = activeThread();
-    if (pid && rid && project.sheepfoldOpen()) {
+    if (pid && rid && tabIsActive()) {
       markProjectMessagesRead(pid, rid, thread).catch(console.error);
     }
   });
 
   // Poll for new messages
   createEffect(() => {
-    if (!project.sheepfoldOpen()) return;
+    if (!tabIsActive()) return;
 
     const interval = setInterval(() => {
       refetchMessages();
@@ -105,7 +116,7 @@ export const MessagingPanel: Component = () => {
 
   // Focus input when opened
   createEffect(() => {
-    if (project.sheepfoldOpen()) {
+    if (tabIsActive()) {
       setTimeout(() => inputRef?.focus(), 100);
     }
   });
@@ -163,22 +174,22 @@ export const MessagingPanel: Component = () => {
   };
 
   const handleClose = () => {
-    project.setSheepfoldOpen(false);
+    workspace.setMachineryOpen(false);
   };
 
   return (
-    <div class="w-80 flex flex-col border-l border-pasture-600/50 bg-pasture-900/95 backdrop-blur-sm">
+    <div class="h-full flex flex-col bg-pasture-900/95 backdrop-blur-sm">
       {/* Header */}
       <div class="flex items-center justify-between px-3 py-2 border-b border-pasture-600/50">
         <div class="flex items-center gap-2">
           <Icon name="message-circle" class="w-4 h-4 text-amber-500" />
-          <span class="text-sm font-medium text-wool-200">Messages</span>
+          <span class="text-sm font-medium text-wool-200">Workers & Chat</span>
         </div>
         <button
           type="button"
           onClick={handleClose}
-          class="p-1.5 rounded text-wool-500 hover:text-wool-300 hover:bg-pasture-800 transition-colors"
-          title="Close messages"
+          class="p-1.5 rounded-none text-wool-500 hover:text-wool-300 hover:bg-pasture-800 transition-colors"
+          title="Hide machinery"
         >
           <Icon name="x" class="w-4 h-4" />
         </button>
@@ -189,8 +200,8 @@ export const MessagingPanel: Component = () => {
         {/* Meadow tab */}
         <button
           type="button"
-          onClick={() => project.setActiveThread('chat')}
-          class="relative flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-all whitespace-nowrap"
+          onClick={() => workspace.setActiveThread('chat')}
+          class="relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-none text-xs font-medium transition-all whitespace-nowrap"
           classList={{
             'bg-amber-500/15 text-amber-300': activeThread() === 'chat',
             'text-wool-400 hover:text-wool-200 hover:bg-pasture-700': activeThread() !== 'chat',
@@ -200,7 +211,7 @@ export const MessagingPanel: Component = () => {
           <span>Chat</span>
           <Show when={getThreadUnread('chat') > 0}>
             <span
-              class="ml-1 min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold flex items-center justify-center"
+              class="ml-1 min-w-[16px] h-4 px-1 rounded-none text-[9px] font-bold flex items-center justify-center"
               style={{ background: 'var(--amber-500)', color: 'var(--pasture-900)' }}
             >
               {getThreadUnread('chat')}
@@ -217,22 +228,18 @@ export const MessagingPanel: Component = () => {
             return (
               <button
                 type="button"
-                onClick={() => project.setActiveThread(worker.name)}
-                class="relative flex items-center gap-1.5 px-2 py-1.5 rounded text-xs font-medium transition-all whitespace-nowrap"
+                onClick={() => workspace.setActiveThread(worker.name)}
+                class="relative flex items-center gap-1.5 px-2 py-1.5 rounded-none text-xs font-medium transition-all whitespace-nowrap"
                 classList={{
                   'bg-pasture-700/60 ring-1 ring-amber-500/30': isActive(),
                   'hover:bg-pasture-700': !isActive(),
                 }}
                 title={worker.name}
               >
-                <SheepAvatar
-                  config={worker.sheepConfig}
-                  size={18}
-                  status={worker.status}
-                />
+                <WorkerAvatar name={worker.name} size={18} />
                 <Show when={unread() > 0}>
                   <span
-                    class="absolute -top-1 -right-1 min-w-[14px] h-3.5 px-1 rounded-full text-[8px] font-bold flex items-center justify-center"
+                    class="absolute -top-1 -right-1 min-w-[14px] h-3.5 px-1 rounded-none text-[8px] font-bold flex items-center justify-center"
                     style={{ background: 'var(--amber-500)', color: 'var(--pasture-900)' }}
                   >
                     {unread()}
@@ -259,11 +266,7 @@ export const MessagingPanel: Component = () => {
             return (
               <div class="flex items-center gap-1.5">
                 <Show when={worker()}>
-                  <SheepAvatar
-                    config={worker()!.sheepConfig}
-                    size={14}
-                    status={worker()!.status}
-                  />
+                  <WorkerAvatar name={worker()!.name} size={14} />
                 </Show>
                 <span class="text-[11px] font-medium text-wool-300">{activeThread()}</span>
                 <span class="text-[10px] text-wool-600">· Direct message</span>
@@ -284,7 +287,7 @@ export const MessagingPanel: Component = () => {
         <Show when={!messages.loading && messages()?.length === 0}>
           <div class="flex flex-col items-center justify-center py-12 text-center">
             <div
-              class="w-12 h-12 rounded-full flex items-center justify-center mb-3"
+              class="w-12 h-12 rounded-none flex items-center justify-center mb-3"
               style={{ background: amber(0.08) }}
             >
               <Icon name="message-circle" class="w-6 h-6 text-wool-600" />
@@ -314,7 +317,7 @@ export const MessagingPanel: Component = () => {
                     when={!isUser() && worker()}
                     fallback={
                       <div
-                        class="w-7 h-7 rounded-full flex items-center justify-center"
+                        class="w-7 h-7 rounded-none flex items-center justify-center"
                         style={{
                           background: isUser()
                             ? 'linear-gradient(135deg, var(--amber-500), var(--amber-600))'
@@ -328,17 +331,13 @@ export const MessagingPanel: Component = () => {
                       </div>
                     }
                   >
-                    <SheepAvatar
-                      config={worker()!.sheepConfig}
-                      size={28}
-                      status={worker()!.status}
-                    />
+                    <WorkerAvatar name={worker()!.name} size={28} />
                   </Show>
                 </div>
 
                 {/* Message bubble */}
                 <div
-                  class="max-w-[75%] rounded-xl px-3 py-2"
+                  class="max-w-[75%] rounded-none px-3 py-2"
                   style={{
                     background: isUser()
                       ? `linear-gradient(135deg, ${amber(0.18)}, ${amber(0.12)})`
@@ -370,7 +369,7 @@ export const MessagingPanel: Component = () => {
       {/* Input area */}
       <div class="p-3 border-t border-pasture-700/50">
         <div
-          class="flex items-end gap-2 rounded-xl p-2"
+          class="flex items-end gap-2 rounded-none p-2"
           style={{
             background: 'rgba(26, 26, 26, 0.6)',
             border: '1px solid rgba(64, 64, 64, 0.4)',
@@ -394,7 +393,7 @@ export const MessagingPanel: Component = () => {
             type="button"
             onClick={handleSend}
             disabled={!messageInput().trim() || sending()}
-            class="p-2 rounded-lg transition-all disabled:opacity-40"
+            class="p-2 rounded-none transition-all disabled:opacity-40"
             style={{
               background: messageInput().trim()
                 ? 'linear-gradient(135deg, var(--amber-500), var(--amber-600))'

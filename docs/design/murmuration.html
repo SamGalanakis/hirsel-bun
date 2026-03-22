@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Murmuration — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=Azeret+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --dusk-deep: #1a1030;
+      --dusk-mid: #4a2848;
+      --dusk-warm: #c87848;
+      --dusk-glow: rgba(200,120,72,0.12);
+      --bird: #1a1020;
+      --bird-dim: rgba(26,16,32,0.4);
+      --shimmer: #e8c870;
+      --shimmer-dim: rgba(232,200,112,0.15);
+      --text: #d0c0c0;
+      --text-dim: #685868;
+    }
+
+    body {
+      font-family: 'Syne', sans-serif;
+      background: linear-gradient(180deg, var(--dusk-deep) 0%, #2a1838 40%, #583848 70%, var(--dusk-warm) 100%);
+      min-height: 100vh;
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    .direction-nav {
+      position: sticky; top: 0; z-index: 1000;
+      background: rgba(26,16,48,0.92); backdrop-filter: blur(14px);
+      border-bottom: 1px solid rgba(208,192,192,0.06);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .direction-nav a {
+      font-size: 11px; font-weight: 500; color: var(--text-dim);
+      text-decoration: none; padding: 5px 12px; border-radius: 6px; transition: all 0.2s;
+    }
+    .direction-nav a:hover { color: var(--dusk-warm); background: var(--dusk-glow); }
+    .direction-nav .nav-title {
+      font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 600;
+      color: var(--text); flex: 1; text-align: center;
+    }
+    .direction-nav .nav-home {
+      font-family: 'Azeret Mono', monospace;
+      font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-dim); border-right: 1px solid rgba(208,192,192,0.06);
+      padding-right: 16px; margin-right: 4px;
+    }
+
+    .page-header {
+      padding: 80px 48px 20px;
+      max-width: 1100px; margin: 0 auto;
+    }
+
+    .tag {
+      font-family: 'Azeret Mono', monospace;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--dusk-warm); margin-bottom: 12px; display: block;
+    }
+
+    h1 {
+      font-family: 'Syne', sans-serif;
+      font-size: clamp(40px, 6vw, 68px);
+      font-weight: 800;
+      line-height: 1.1; color: var(--text); margin-bottom: 16px;
+    }
+
+    .subtitle {
+      font-size: 15px; font-weight: 400;
+      color: var(--text-dim); max-width: 580px; line-height: 1.8;
+    }
+
+    .showcase {
+      padding: 40px 48px 60px;
+      max-width: 1100px; margin: 0 auto;
+    }
+
+    /* ====== MURMURATION FLOCKS ====== */
+    /*
+      Each spec generates a sub-flock. Tasks are individual birds.
+      Workers are the invisible forces (alignment, cohesion, separation).
+      Validated flocks form tight patterns. Working flocks shift dynamically.
+      Draft specs are lone birds not yet part of any formation.
+    */
+
+    .sky {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 24px;
+    }
+
+    .flock-card {
+      background: rgba(26,16,48,0.5);
+      border: 1px solid rgba(208,192,192,0.06);
+      border-radius: 12px;
+      overflow: hidden;
+      position: relative;
+      animation: flock-appear 0.5s ease-out both;
+    }
+
+    .flock-card:nth-child(1) { animation-delay: 0.1s; }
+    .flock-card:nth-child(2) { animation-delay: 0.2s; }
+    .flock-card:nth-child(3) { animation-delay: 0.3s; }
+    .flock-card:nth-child(4) { animation-delay: 0.4s; }
+    .flock-card:nth-child(5) { animation-delay: 0.5s; }
+
+    @keyframes flock-appear {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Flock label */
+    .flock-label {
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(208,192,192,0.04);
+      display: flex; justify-content: space-between; align-items: baseline;
+    }
+
+    .flock-name {
+      font-family: 'Syne', sans-serif;
+      font-size: 14px; font-weight: 700;
+    }
+
+    .flock-id {
+      font-family: 'Azeret Mono', monospace;
+      font-size: 9px; color: var(--text-dim);
+    }
+
+    /* Sky viewport */
+    .sky-viewport {
+      height: 200px;
+      position: relative;
+      overflow: hidden;
+      background: linear-gradient(180deg,
+        rgba(26,16,48,0.3) 0%,
+        rgba(88,56,72,0.2) 60%,
+        rgba(200,120,72,0.1) 100%
+      );
+    }
+
+    /* Individual birds as dots */
+    .bird {
+      position: absolute;
+      width: 4px; height: 4px;
+      background: var(--bird);
+      border-radius: 50%;
+      box-shadow: 0 0 2px rgba(0,0,0,0.4);
+    }
+
+    /* Validated: tight formation, birds shimmer */
+    .bird.validated {
+      background: var(--bird);
+      box-shadow: 0 0 4px var(--shimmer-dim), 0 0 1px rgba(0,0,0,0.3);
+    }
+
+    /* Drift animation for working flocks */
+    .bird.drifting {
+      animation: bird-drift var(--drift-duration, 4s) ease-in-out infinite alternate;
+    }
+
+    @keyframes bird-drift {
+      0% { transform: translate(0, 0); }
+      25% { transform: translate(var(--dx1, 3px), var(--dy1, -2px)); }
+      50% { transform: translate(var(--dx2, -2px), var(--dy2, 4px)); }
+      75% { transform: translate(var(--dx3, 5px), var(--dy3, 1px)); }
+      100% { transform: translate(var(--dx4, -1px), var(--dy4, -3px)); }
+    }
+
+    /* Lone bird for draft specs */
+    .bird.lone {
+      width: 5px; height: 5px;
+      animation: lone-wander 8s ease-in-out infinite alternate;
+    }
+
+    @keyframes lone-wander {
+      0% { transform: translate(0, 0); }
+      100% { transform: translate(20px, -15px); }
+    }
+
+    /* Shimmer overlay for validated flocks */
+    .shimmer-overlay {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at 50% 50%,
+        rgba(232,200,112,0.06) 0%,
+        transparent 70%
+      );
+      animation: shimmer-breathe 3s ease-in-out infinite;
+      pointer-events: none;
+    }
+
+    @keyframes shimmer-breathe {
+      0%, 100% { opacity: 0.5; }
+      50% { opacity: 1; }
+    }
+
+    /* Cohesion indicator (how tight the flock is) */
+    .cohesion-strip {
+      position: absolute;
+      right: 8px; top: 8px; bottom: 8px;
+      width: 4px;
+      background: rgba(208,192,192,0.06);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .cohesion-fill {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      border-radius: 2px;
+      background: var(--dusk-warm);
+      opacity: 0.5;
+      transition: height 0.8s;
+    }
+
+    /* Flock stats */
+    .flock-stats {
+      padding: 12px 16px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .stat {
+      display: flex; flex-direction: column; gap: 2px;
+    }
+
+    .stat-label {
+      font-family: 'Azeret Mono', monospace;
+      font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .stat-value {
+      font-family: 'Azeret Mono', monospace;
+      font-size: 14px; font-weight: 500;
+      color: var(--text);
+    }
+
+    .stat-value.shifting {
+      color: var(--dusk-warm);
+      animation: shift-pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes shift-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    /* Formation badge */
+    .formation-badge {
+      display: inline-block;
+      font-family: 'Azeret Mono', monospace;
+      font-size: 8px; letter-spacing: 0.08em; text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 100px;
+      margin-top: 4px;
+    }
+
+    .formation-tight { background: var(--shimmer-dim); color: var(--shimmer); }
+    .formation-dynamic { background: var(--dusk-glow); color: var(--dusk-warm); }
+    .formation-scattered { background: rgba(208,192,192,0.06); color: var(--text-dim); }
+    .formation-lone { background: rgba(208,192,192,0.04); color: var(--text-dim); }
+
+    .rationale {
+      padding: 0 48px 100px;
+      max-width: 1100px; margin: 0 auto;
+    }
+
+    .rationale h3 {
+      font-family: 'Syne', sans-serif;
+      font-size: 24px; font-weight: 700; margin-bottom: 20px;
+    }
+
+    .rationale-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .rationale-card {
+      padding: 24px;
+      background: rgba(26,16,48,0.5);
+      border: 1px solid rgba(208,192,192,0.04);
+      border-radius: 8px;
+    }
+
+    .rationale-card h4 {
+      font-size: 12px; font-weight: 700; margin-bottom: 8px;
+      color: var(--dusk-warm);
+    }
+
+    .rationale-card p {
+      font-size: 13px; color: var(--text-dim); line-height: 1.7;
+    }
+
+    @media (max-width: 768px) {
+      .page-header, .showcase, .rationale { padding-left: 20px; padding-right: 20px; }
+      .sky { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="direction-nav">
+    <a href="../designs.html" class="nav-home">Storm</a>
+    <a href="tidal-pool.html">Prev</a>
+    <span class="nav-title">Murmuration</span>
+    <a href="printing-press.html">Next</a>
+  </nav>
+
+  <div class="page-header">
+    <div class="tag">Direction 18 — Emergent</div>
+    <h1>Murmuration</h1>
+    <p class="subtitle">Tasks as individual birds in a starling murmuration. Each spec generates a sub-flock. Workers are the invisible forces — alignment, cohesion, separation — that shape the flock's movement. Validated flocks form tight, shimmering patterns. Draft specs are lone birds waiting to join a formation.</p>
+  </div>
+
+  <div class="showcase">
+    <div class="sky">
+
+      <!-- Flock 1: Schema Migration — validated, tight formation -->
+      <div class="flock-card">
+        <div class="flock-label">
+          <span class="flock-name">Schema Migration</span>
+          <span class="flock-id">#001</span>
+        </div>
+        <div class="sky-viewport">
+          <div class="shimmer-overlay"></div>
+          <div class="cohesion-strip"><div class="cohesion-fill" style="height:100%"></div></div>
+          <!-- Tight cluster of validated birds -->
+          <div class="bird validated" style="left:42%;top:38%"></div>
+          <div class="bird validated" style="left:46%;top:35%"></div>
+          <div class="bird validated" style="left:44%;top:42%"></div>
+          <div class="bird validated" style="left:48%;top:40%"></div>
+          <div class="bird validated" style="left:43%;top:36%"></div>
+          <div class="bird validated" style="left:47%;top:43%"></div>
+          <div class="bird validated" style="left:45%;top:39%"></div>
+          <div class="bird validated" style="left:50%;top:37%"></div>
+          <div class="bird validated" style="left:41%;top:41%"></div>
+        </div>
+        <div class="flock-stats">
+          <div class="stat"><span class="stat-label">Formation</span><span class="formation-badge formation-tight">tight</span></div>
+          <div class="stat"><span class="stat-label">Cohesion</span><span class="stat-value">100%</span></div>
+          <div class="stat"><span class="stat-label">Birds</span><span class="stat-value">3 tasks</span></div>
+          <div class="stat"><span class="stat-label">Forces</span><span class="stat-value">resolved</span></div>
+        </div>
+      </div>
+
+      <!-- Flock 2: API Restructure — validated, tight formation -->
+      <div class="flock-card">
+        <div class="flock-label">
+          <span class="flock-name">API Restructure</span>
+          <span class="flock-id">#002</span>
+        </div>
+        <div class="sky-viewport">
+          <div class="shimmer-overlay"></div>
+          <div class="cohesion-strip"><div class="cohesion-fill" style="height:100%"></div></div>
+          <div class="bird validated" style="left:35%;top:32%"></div>
+          <div class="bird validated" style="left:38%;top:28%"></div>
+          <div class="bird validated" style="left:40%;top:35%"></div>
+          <div class="bird validated" style="left:37%;top:30%"></div>
+          <div class="bird validated" style="left:42%;top:33%"></div>
+          <div class="bird validated" style="left:36%;top:36%"></div>
+          <div class="bird validated" style="left:39%;top:31%"></div>
+          <div class="bird validated" style="left:41%;top:29%"></div>
+          <div class="bird validated" style="left:43%;top:34%"></div>
+          <div class="bird validated" style="left:38%;top:37%"></div>
+          <div class="bird validated" style="left:34%;top:33%"></div>
+          <div class="bird validated" style="left:40%;top:27%"></div>
+        </div>
+        <div class="flock-stats">
+          <div class="stat"><span class="stat-label">Formation</span><span class="formation-badge formation-tight">tight</span></div>
+          <div class="stat"><span class="stat-label">Cohesion</span><span class="stat-value">100%</span></div>
+          <div class="stat"><span class="stat-label">Birds</span><span class="stat-value">5 tasks</span></div>
+          <div class="stat"><span class="stat-label">Forces</span><span class="stat-value">resolved</span></div>
+        </div>
+      </div>
+
+      <!-- Flock 3: Token Rotation — working, dynamic shifting -->
+      <div class="flock-card">
+        <div class="flock-label">
+          <span class="flock-name">Token Rotation</span>
+          <span class="flock-id">#003</span>
+        </div>
+        <div class="sky-viewport">
+          <div class="cohesion-strip"><div class="cohesion-fill" style="height:40%"></div></div>
+          <!-- Drifting, spread-out birds -->
+          <div class="bird drifting" style="left:30%;top:30%;--drift-duration:3.5s;--dx1:5px;--dy1:-3px;--dx2:-4px;--dy2:6px;--dx3:3px;--dy3:-1px;--dx4:-2px;--dy4:4px;"></div>
+          <div class="bird drifting" style="left:50%;top:45%;--drift-duration:4.2s;--dx1:-3px;--dy1:4px;--dx2:6px;--dy2:-2px;--dx3:-5px;--dy3:3px;--dx4:2px;--dy4:-5px;"></div>
+          <div class="bird drifting" style="left:40%;top:55%;--drift-duration:3.8s;--dx1:4px;--dy1:2px;--dx2:-3px;--dy2:-5px;--dx3:6px;--dy3:1px;--dx4:-4px;--dy4:3px;"></div>
+          <div class="bird drifting" style="left:60%;top:35%;--drift-duration:4.5s;--dx1:-6px;--dy1:-1px;--dx2:3px;--dy2:5px;--dx3:-2px;--dy3:-4px;--dx4:5px;--dy4:2px;"></div>
+          <div class="bird drifting" style="left:35%;top:65%;--drift-duration:3.2s;--dx1:2px;--dy1:-4px;--dx2:-5px;--dy2:3px;--dx3:4px;--dy3:-2px;--dx4:-3px;--dy4:6px;"></div>
+          <div class="bird drifting" style="left:55%;top:25%;--drift-duration:4s;--dx1:-4px;--dy1:5px;--dx2:2px;--dy2:-3px;--dx3:-6px;--dy3:2px;--dx4:3px;--dy4:-4px;"></div>
+        </div>
+        <div class="flock-stats">
+          <div class="stat"><span class="stat-label">Formation</span><span class="formation-badge formation-dynamic">dynamic</span></div>
+          <div class="stat"><span class="stat-label">Cohesion</span><span class="stat-value shifting">40%</span></div>
+          <div class="stat"><span class="stat-label">Birds</span><span class="stat-value shifting">2/4</span></div>
+          <div class="stat"><span class="stat-label">Forces</span><span class="stat-value shifting">active</span></div>
+        </div>
+      </div>
+
+      <!-- Flock 4: Rate Limiter — pending/blocked, scattered -->
+      <div class="flock-card">
+        <div class="flock-label">
+          <span class="flock-name">Rate Limiter</span>
+          <span class="flock-id">#004</span>
+        </div>
+        <div class="sky-viewport" style="opacity: 0.5;">
+          <div class="cohesion-strip"><div class="cohesion-fill" style="height:0%"></div></div>
+        </div>
+        <div class="flock-stats">
+          <div class="stat"><span class="stat-label">Formation</span><span class="formation-badge formation-scattered">scattered</span></div>
+          <div class="stat"><span class="stat-label">Cohesion</span><span class="stat-value">0%</span></div>
+          <div class="stat"><span class="stat-label">Birds</span><span class="stat-value">0</span></div>
+          <div class="stat"><span class="stat-label">Forces</span><span class="stat-value">—</span></div>
+        </div>
+      </div>
+
+      <!-- Flock 5: E2E Tests — draft, lone bird -->
+      <div class="flock-card" style="opacity: 0.4;">
+        <div class="flock-label">
+          <span class="flock-name">E2E Tests</span>
+          <span class="flock-id">#005</span>
+        </div>
+        <div class="sky-viewport">
+          <div class="bird lone" style="left:45%;top:50%"></div>
+        </div>
+        <div class="flock-stats">
+          <div class="stat"><span class="stat-label">Formation</span><span class="formation-badge formation-lone">lone</span></div>
+          <div class="stat"><span class="stat-label">Cohesion</span><span class="stat-value">—</span></div>
+          <div class="stat"><span class="stat-label">Birds</span><span class="stat-value">—</span></div>
+          <div class="stat"><span class="stat-label">Forces</span><span class="stat-value">—</span></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="rationale">
+    <h3>Why this is interesting</h3>
+    <div class="rationale-grid">
+      <div class="rationale-card">
+        <h4>Emergent order from simple rules</h4>
+        <p>A murmuration has no leader. Each bird follows three rules: align with neighbors, stay close, don't collide. Workers follow similar rules: claim available tasks, respect dependencies, don't duplicate effort. The beautiful pattern emerges from the protocol, not from a plan.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Cohesion = validation</h4>
+        <p>A tight flock shimmering in unison is a validated spec. Every bird knows where it belongs. A loose, scattered formation is work in progress — the forces haven't resolved yet. You can see validation as a physical quality: how closely the parts hold together.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Movement IS the state</h4>
+        <p>You don't need status labels when the dots themselves are moving. Drifting dots are working tasks. Still, tight clusters are done. A lone wandering dot is a draft. The animation carries all the information that a traditional status badge would — but you feel it instead of reading it.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Scale reveals beauty</h4>
+        <p>One bird is nothing. A hundred birds doing the same thing is a murmuration. This metaphor rewards scale: a route with many specs and many tasks becomes a genuinely beautiful visualization. The more complex the work, the more striking the display.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

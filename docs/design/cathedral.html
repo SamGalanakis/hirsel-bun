@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cathedral — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700;800;900&family=Hanken+Grotesk:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --stone-light: #c8b898;
+      --stone-dark: #8a7858;
+      --stone-mid: #a89878;
+      --scaffold: #a08050;
+      --sky: #c8d8e8;
+      --glass-blue: #3060a0;
+      --glass-red: #a03040;
+      --glass-green: #40a060;
+      --panel: #f0ede6;
+      --panel-inset: #e4e0d6;
+      --text: #3a3428;
+      --text-dim: #8a8070;
+    }
+
+    body {
+      font-family: 'Hanken Grotesk', sans-serif;
+      background: var(--panel);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    /* Stone texture */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+      pointer-events: none;
+    }
+
+    .direction-nav {
+      position: sticky; top: 0; z-index: 1000;
+      background: rgba(240,237,230,0.92); backdrop-filter: blur(14px);
+      border-bottom: 2px solid var(--panel-inset);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .direction-nav a {
+      font-size: 11px; font-weight: 500; color: var(--text-dim);
+      text-decoration: none; padding: 5px 12px; border-radius: 6px; transition: all 0.2s;
+    }
+    .direction-nav a:hover { color: var(--text); background: rgba(0,0,0,0.04); }
+    .direction-nav .nav-title {
+      font-family: 'Cinzel', serif;
+      font-weight: 700; font-size: 15px;
+      color: var(--text); flex: 1; text-align: center;
+    }
+    .direction-nav .nav-home {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 10px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-dim); border-right: 2px solid var(--panel-inset);
+      padding-right: 16px; margin-right: 4px;
+    }
+
+    .page-header {
+      padding: 80px 48px 20px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .tag {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 10px; font-weight: 600; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--stone-dark); margin-bottom: 12px; display: block;
+    }
+
+    h1 {
+      font-family: 'Cinzel', serif;
+      font-size: clamp(44px, 6vw, 76px);
+      font-weight: 900; line-height: 1.0;
+      color: var(--stone-dark); margin-bottom: 16px;
+    }
+
+    .subtitle {
+      font-size: 15px; font-weight: 300;
+      color: var(--text-dim); max-width: 600px; line-height: 1.8;
+    }
+
+    .showcase {
+      padding: 40px 48px 60px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    /* ====== CATHEDRAL ====== */
+    /*
+      Each spec is a structural element: foundation, nave, transept, spire, rose window.
+      Tasks are individual stones/pieces. Workers are mason crews.
+      The cathedral grows upward as work completes.
+      Validated = solid stone. Working = scaffolding. Draft = architectural plans.
+    */
+
+    .cathedral {
+      background: var(--panel-inset);
+      border: 3px solid var(--stone-dark);
+      border-radius: 6px;
+      overflow: hidden;
+      position: relative;
+      box-shadow:
+        inset 0 2px 8px rgba(0,0,0,0.06),
+        0 4px 20px rgba(0,0,0,0.08);
+    }
+
+    .cath-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 14px 24px;
+      background: var(--stone-dark);
+      color: var(--panel);
+    }
+
+    .cath-header h2 {
+      font-family: 'Cinzel', serif;
+      font-size: 14px; font-weight: 700; letter-spacing: 0.06em;
+    }
+
+    .cath-master {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 10px; font-weight: 600; color: var(--stone-light);
+      letter-spacing: 0.08em; text-transform: uppercase;
+    }
+
+    .building-site {
+      position: relative;
+      min-height: 520px;
+      background: linear-gradient(
+        180deg,
+        var(--sky) 0%,
+        var(--sky) 65%,
+        #b8c8a0 65%,
+        #a0b888 100%
+      );
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding: 0 40px 0;
+    }
+
+    /* Cathedral structure — built from bottom up */
+    .structure {
+      position: relative;
+      width: 500px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    /* Foundation: Schema Migration (validated) — solid stone */
+    .foundation {
+      width: 440px;
+      height: 60px;
+      background: linear-gradient(180deg, var(--stone-mid), var(--stone-dark));
+      border: 2px solid var(--stone-dark);
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .foundation::before {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        repeating-linear-gradient(
+          90deg,
+          transparent 0, transparent 28px,
+          rgba(0,0,0,0.08) 28px, rgba(0,0,0,0.08) 30px
+        ),
+        repeating-linear-gradient(
+          0deg,
+          transparent 0, transparent 18px,
+          rgba(0,0,0,0.06) 18px, rgba(0,0,0,0.06) 20px
+        );
+    }
+
+    .section-label {
+      font-family: 'Cinzel', serif;
+      font-size: 10px; font-weight: 700;
+      color: rgba(255,255,255,0.7);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      z-index: 1;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    }
+
+    .section-status {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 8px; font-weight: 500;
+      color: rgba(255,255,255,0.5);
+      letter-spacing: 0.08em;
+      z-index: 1;
+    }
+
+    /* Nave: API Restructure (validated) — solid stone walls */
+    .nave {
+      width: 360px;
+      height: 120px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+    }
+
+    .nave-wall-left, .nave-wall-right {
+      position: absolute;
+      top: 0; bottom: 0;
+      width: 40px;
+      background: linear-gradient(180deg, var(--stone-light), var(--stone-mid));
+      border: 1px solid var(--stone-dark);
+    }
+
+    .nave-wall-left { left: 0; }
+    .nave-wall-right { right: 0; }
+
+    .nave-wall-left::before, .nave-wall-right::before {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        repeating-linear-gradient(
+          0deg,
+          transparent 0, transparent 18px,
+          rgba(0,0,0,0.05) 18px, rgba(0,0,0,0.05) 20px
+        );
+    }
+
+    /* Arched windows in nave walls */
+    .nave-window {
+      position: absolute;
+      width: 16px; height: 28px;
+      border-radius: 8px 8px 0 0;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+
+    .window-glass {
+      background: linear-gradient(180deg, var(--glass-blue), var(--glass-green));
+      opacity: 0.7;
+    }
+
+    .nave-interior {
+      width: calc(100% - 80px);
+      height: 100%;
+      background: rgba(200,216,232,0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      margin: 0 40px;
+    }
+
+    /* Transept: Token Rotation (working) — scaffolding visible */
+    .transept {
+      width: 440px;
+      height: 80px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+    }
+
+    .transept-wing {
+      position: absolute;
+      top: 0; bottom: 0;
+      width: 80px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .transept-wing-left { left: -40px; }
+    .transept-wing-right { right: -40px; }
+
+    /* Scaffolding for working sections */
+    .scaffolding {
+      position: absolute;
+      inset: 0;
+      background:
+        repeating-linear-gradient(
+          0deg,
+          transparent 0, transparent 14px,
+          var(--scaffold) 14px, var(--scaffold) 16px
+        ),
+        repeating-linear-gradient(
+          90deg,
+          transparent 0, transparent 18px,
+          var(--scaffold) 18px, var(--scaffold) 20px
+        );
+      opacity: 0.25;
+    }
+
+    .scaffolding-cross {
+      position: absolute;
+      inset: 0;
+      background:
+        repeating-linear-gradient(
+          45deg,
+          transparent 0, transparent 24px,
+          var(--scaffold) 24px, var(--scaffold) 25px
+        );
+      opacity: 0.15;
+    }
+
+    /* Partial stone on working sections */
+    .partial-stone {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      background: linear-gradient(180deg, rgba(168,152,120,0.4), var(--stone-mid));
+      border: 1px solid rgba(138,120,88,0.4);
+    }
+
+    .partial-stone::before {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        repeating-linear-gradient(
+          90deg,
+          transparent 0, transparent 28px,
+          rgba(0,0,0,0.06) 28px, rgba(0,0,0,0.06) 30px
+        ),
+        repeating-linear-gradient(
+          0deg,
+          transparent 0, transparent 18px,
+          rgba(0,0,0,0.04) 18px, rgba(0,0,0,0.04) 20px
+        );
+    }
+
+    /* Crane for active construction */
+    .crane {
+      position: absolute;
+      top: -60px;
+      right: 20px;
+      width: 4px; height: 60px;
+      background: var(--scaffold);
+    }
+
+    .crane-arm {
+      position: absolute;
+      top: 0; left: -20px;
+      width: 44px; height: 3px;
+      background: var(--scaffold);
+    }
+
+    .crane-rope {
+      position: absolute;
+      top: 3px; right: 0;
+      width: 1px; height: 30px;
+      background: var(--text-dim);
+      animation: crane-lift 3s ease-in-out infinite;
+    }
+
+    @keyframes crane-lift {
+      0%, 100% { height: 30px; }
+      50% { height: 18px; }
+    }
+
+    .crane-block {
+      position: absolute;
+      bottom: -8px; left: -4px;
+      width: 10px; height: 8px;
+      background: var(--stone-light);
+      border: 1px solid var(--stone-dark);
+    }
+
+    /* Spire: Rate Limiter (pending/blocked) — just outline */
+    .spire-area {
+      width: 120px;
+      height: 90px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+    }
+
+    .spire-outline {
+      width: 0; height: 0;
+      border-left: 40px solid transparent;
+      border-right: 40px solid transparent;
+      border-bottom: 70px solid transparent;
+      position: relative;
+    }
+
+    .spire-outline::before {
+      content: '';
+      position: absolute;
+      top: 12px; left: -36px;
+      width: 0; height: 0;
+      border-left: 36px solid transparent;
+      border-right: 36px solid transparent;
+      border-bottom: 58px dashed rgba(138,120,88,0.3);
+    }
+
+    .blocked-banner {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 8px; font-weight: 600;
+      color: var(--glass-red);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      background: rgba(160,48,64,0.1);
+      padding: 2px 8px;
+      border-radius: 2px;
+      border: 1px dashed var(--glass-red);
+      position: absolute;
+      top: 30px;
+    }
+
+    /* Rose Window: E2E Tests (draft) — blueprint/plan pinned to wall */
+    .rose-window-plan {
+      position: absolute;
+      top: 20px;
+      left: 30px;
+      width: 80px; height: 100px;
+      background: rgba(255,255,255,0.85);
+      border: 1px solid rgba(0,0,0,0.15);
+      border-radius: 2px;
+      padding: 8px;
+      transform: rotate(-3deg);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    }
+
+    .plan-pin {
+      position: absolute;
+      top: -4px; left: 50%;
+      transform: translateX(-50%);
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--glass-red);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
+
+    .plan-title {
+      font-family: 'Cinzel', serif;
+      font-size: 7px; font-weight: 700;
+      color: var(--text);
+      margin-bottom: 4px;
+      text-align: center;
+    }
+
+    .plan-circle {
+      width: 40px; height: 40px;
+      border-radius: 50%;
+      border: 1px solid rgba(0,0,0,0.15);
+      margin: 4px auto;
+      position: relative;
+      background:
+        conic-gradient(
+          from 0deg,
+          rgba(48,96,160,0.15) 0deg,
+          rgba(160,48,64,0.15) 120deg,
+          rgba(64,160,96,0.15) 240deg,
+          rgba(48,96,160,0.15) 360deg
+        );
+    }
+
+    .plan-circle::before {
+      content: '';
+      position: absolute;
+      inset: 8px;
+      border-radius: 50%;
+      border: 1px dashed rgba(0,0,0,0.12);
+    }
+
+    .plan-status {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 7px;
+      color: var(--text-dim);
+      text-align: center;
+    }
+
+    /* Mason crew badges */
+    .mason-crew {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 8px; font-weight: 600;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text);
+      background: linear-gradient(180deg, var(--stone-light), var(--stone-mid));
+      padding: 2px 8px;
+      border-radius: 2px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
+
+    .mason-dot {
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: var(--glass-green);
+    }
+
+    .mason-dot.idle { background: var(--text-dim); }
+
+    .cath-footer {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 10px 24px;
+      background: var(--stone-dark);
+      color: var(--panel);
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 10px; font-weight: 500;
+    }
+
+    .cath-footer .status-text { color: var(--stone-light); }
+
+    .rationale {
+      padding: 0 48px 100px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .rationale h3 {
+      font-family: 'Cinzel', serif;
+      font-size: 24px; font-weight: 800; margin-bottom: 20px;
+    }
+
+    .rationale-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .rationale-card {
+      padding: 24px;
+      background: var(--panel-inset);
+      border: 1px solid rgba(0,0,0,0.06);
+      border-radius: 6px;
+    }
+
+    .rationale-card h4 {
+      font-family: 'Cinzel', serif;
+      font-size: 12px; font-weight: 700;
+      margin-bottom: 8px; color: var(--stone-dark);
+    }
+
+    .rationale-card p {
+      font-size: 13px; color: var(--text-dim); line-height: 1.7;
+    }
+
+    @media (max-width: 768px) {
+      .page-header, .showcase, .rationale { padding-left: 20px; padding-right: 20px; }
+      .structure { width: 300px; }
+      .foundation { width: 280px; }
+      .nave { width: 240px; }
+      .transept { width: 280px; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="direction-nav">
+    <a href="../designs.html" class="nav-home">Storm</a>
+    <a href="jacquard-loom.html">Prev</a>
+    <span class="nav-title">Cathedral</span>
+    <a href="submarine.html">Next</a>
+  </nav>
+
+  <div class="page-header">
+    <div class="tag">Direction 22 &mdash; Monumental</div>
+    <h1>Cathedral</h1>
+    <p class="subtitle">Building a cathedral. Each spec is a major structural element — foundation, nave, transept, spire, rose window. Tasks are individual stones. Workers are mason crews on scaffolding. Watch the building rise as work completes. The shepherd is the master builder.</p>
+  </div>
+
+  <div class="showcase">
+    <div class="cathedral">
+      <div class="cath-header">
+        <h2>Construction: Auth Overhaul</h2>
+        <span class="cath-master">Master Builder: Shepherd</span>
+      </div>
+
+      <div class="building-site">
+        <!-- Blueprint plan pinned to the side (E2E Tests - draft) -->
+        <div class="rose-window-plan">
+          <div class="plan-pin"></div>
+          <div class="plan-title">Rose Window</div>
+          <div class="plan-circle"></div>
+          <div class="plan-status">E2E Tests &middot; draft</div>
+        </div>
+
+        <div class="structure">
+          <!-- Spire: Rate Limiter (pending/blocked) — outlined, not yet built -->
+          <div class="spire-area">
+            <div class="spire-outline"></div>
+            <div class="blocked-banner">Blocked</div>
+            <div style="position: absolute; bottom: -4px; font-family: 'Cinzel', serif; font-size: 8px; color: var(--text-dim); letter-spacing: 0.08em;">Rate Limiter &middot; pending</div>
+          </div>
+
+          <!-- Transept: Token Rotation (working, 2/4 tasks) — scaffolding + partial stone -->
+          <div class="transept">
+            <div class="scaffolding"></div>
+            <div class="scaffolding-cross"></div>
+            <div class="partial-stone" style="height: 50%;"></div>
+            <div class="crane">
+              <div class="crane-arm">
+                <div class="crane-rope">
+                  <div class="crane-block"></div>
+                </div>
+              </div>
+            </div>
+            <div class="transept-wing transept-wing-left">
+              <div class="scaffolding"></div>
+              <div class="partial-stone" style="height: 40%;"></div>
+            </div>
+            <div class="transept-wing transept-wing-right">
+              <div class="scaffolding"></div>
+              <div class="partial-stone" style="height: 35%;"></div>
+            </div>
+            <span class="section-label" style="z-index: 2;">Token Rotation</span>
+            <span class="section-status" style="z-index: 2;">working &middot; 2/4 stones laid &middot; <span class="mason-crew"><span class="mason-dot"></span>Crew 1</span></span>
+          </div>
+
+          <!-- Nave: API Restructure (validated) — solid stone -->
+          <div class="nave">
+            <div class="nave-wall-left">
+              <div class="nave-window window-glass"></div>
+            </div>
+            <div class="nave-wall-right">
+              <div class="nave-window window-glass"></div>
+            </div>
+            <div class="nave-interior">
+              <span class="section-label">API Restructure</span>
+              <span class="section-status">validated &middot; walls complete</span>
+            </div>
+          </div>
+
+          <!-- Foundation: Schema Migration (validated) — solid stone base -->
+          <div class="foundation">
+            <div style="text-align: center; z-index: 1;">
+              <span class="section-label">Schema Migration</span><br>
+              <span class="section-status">validated &middot; bedrock set</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="cath-footer">
+        <span>Elements: 5 &middot; Crews: 1 active</span>
+        <span class="status-text">2 solid &middot; 1 under construction &middot; 1 planned &middot; 1 blueprint</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="rationale">
+    <h3>Why this is interesting</h3>
+    <div class="rationale-grid">
+      <div class="rationale-card">
+        <h4>Bottom-up dependency</h4>
+        <p>You cannot build the spire before the foundation. The cathedral enforces build order visually — the structure literally cannot stand without the lower sections. This maps exactly to spec dependencies in Hirsel. Blocked specs are unbuilt sections above.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Scaffolding shows work in progress</h4>
+        <p>Active construction is unmistakable: scaffolding, cranes, and partial walls. You see exactly where the mason crews are working and how much stone is laid. When the section is done, the scaffolding comes down to reveal solid stone. The before/after is dramatic.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Blueprints are drafts</h4>
+        <p>Unstarted specs appear as architectural drawings pinned to the wall — plans that exist but haven't been realized yet. You can see the intent (rose window design) without it being built. Moving from blueprint to stone is the draft-to-working transition.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>The building tells time</h4>
+        <p>A cathedral under construction encodes its entire history. The foundation is ancient and weathered. The walls are solid and established. The transept has fresh mortar. The spire is just an aspiration. Every layer of the building is a layer of project progress.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

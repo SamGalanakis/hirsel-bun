@@ -468,7 +468,7 @@ pub async fn change_starting_point(
         .context("Failed to clear branch")?;
 
     // Initialize new workspace
-    let workspace = create_workspace_provider(None);
+    let workspace = create_workspace_provider();
     let workspace_info = workspace
         .init(&run_name, &starting_point)
         .await
@@ -500,10 +500,9 @@ pub async fn change_starting_point(
 pub async fn start_draft(
     run_name: String,
     starting_point: Option<StartingPoint>,
-    profile: Option<String>,
 ) -> Result<RunDetail, String> {
     use crate::cli::config::get_agent_command;
-    use crate::cli::helpers::WorkerScale;
+    use crate::core::config::WorkerScale;
     use crate::core::names::get_available_names;
     use crate::core::ops::{compute_multi_worker_config, setup_run_workspace, RunSetupConfig};
     use crate::core::runner::{create_runner, WorkerSpawnConfig as RunnerSpawnConfig};
@@ -551,7 +550,7 @@ pub async fn start_draft(
             StartingPoint::Greenfield
         };
 
-        let workspace = create_workspace_provider(profile.as_deref());
+        let workspace = create_workspace_provider();
         let workspace_info = workspace
             .init(&run_name, &sp)
             .await
@@ -600,20 +599,6 @@ pub async fn start_draft(
     // Determine if multi-worker mode (current or potential via autoscale)
     let (is_multi_worker, leader) = compute_multi_worker_config(&worker_names, scale.max);
 
-    // Load config for scribe docs settings
-    let (global_config, _) =
-        config::Config::load().unwrap_or_else(|_| (config::Config::default(), vec![]));
-
-    // Store docs config in run state
-    state
-        .set_docs_path(Some(&global_config.scribe_docs_path))
-        .await
-        .context("Failed to set docs path")?;
-    state
-        .set_persist_docs_changes(global_config.scribe_persist_docs_changes)
-        .await
-        .context("Failed to set persist_docs_changes")?;
-
     // Set up workspace, worker clones, and chats using shared ops
     let setup_config = RunSetupConfig {
         run_name: run_name.clone(),
@@ -623,7 +608,6 @@ pub async fn start_draft(
         additional_chat_workers: Vec::new(), // GUI only has local workers
         is_multi_worker,
         leader_name: leader.clone(),
-        docs_path: global_config.scribe_docs_path.clone(),
     };
 
     let setup_result = setup_run_workspace(&setup_config).str_err()?;
@@ -719,8 +703,6 @@ pub async fn start_draft(
             teammates,
             resume_session_id: None,
             env_vars: None,
-            coordinator_url: None,
-            tailscale_authkey: None,
             credentials: None,
             assigned_task_id: None,
             is_plan_task: false,

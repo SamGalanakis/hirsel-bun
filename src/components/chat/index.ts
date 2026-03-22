@@ -1,1 +1,1 @@
-export { ShepherdConsole, ShepherdConsoleBar } from './ShepherdConsole';
+export { ShepherdConsole } from './ShepherdConsole';

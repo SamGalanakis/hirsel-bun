@@ -23,8 +23,6 @@ CREATE TABLE IF NOT EXISTS routes (
     worker_scale TEXT,
     time_limit_minutes INTEGER,
     human_in_the_loop INTEGER NOT NULL DEFAULT 1,
-    docs_path TEXT NOT NULL DEFAULT 'docs',
-    persist_docs_changes INTEGER NOT NULL DEFAULT 1,
     target_branch TEXT,
     runner TEXT,
     created_at TEXT NOT NULL,
@@ -137,16 +135,14 @@ impl RouteStore {
                 project_id, name, parent_route_id, parent_version_id,
                 default_repo_id,
                 worker_scale, time_limit_minutes, human_in_the_loop,
-                docs_path, persist_docs_changes, target_branch, runner,
+                target_branch, runner,
                 created_at, updated_at
-            ) VALUES (?, 'main', NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ) VALUES (?, 'main', NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(self.project_id)
         .bind(&req.worker_scale)
         .bind(req.time_limit_minutes)
         .bind(req.human_in_the_loop.unwrap_or(true) as i64)
-        .bind(req.docs_path.as_deref().unwrap_or("docs"))
-        .bind(req.persist_docs_changes.unwrap_or(true) as i64)
         .bind(&req.target_branch)
         .bind(&req.runner)
         .bind(&now)
@@ -191,8 +187,6 @@ impl RouteStore {
             worker_scale: None,
             time_limit_minutes: None,
             human_in_the_loop: Some(true),
-            docs_path: Some("docs".to_string()),
-            persist_docs_changes: Some(true),
             target_branch: Some("main".to_string()),
             runner: None,
         })
@@ -273,7 +267,7 @@ impl RouteStore {
 
     /// Create a new route by forking a parent route.
     ///
-    /// If parent_route_id is specified, copies all board nodes, repos, docs/code files,
+    /// If parent_route_id is specified, copies all board nodes, repos, and code files,
     /// and route settings from the parent route.
     pub async fn create_route(&self, req: &CreateRouteRequest) -> RouteResult<Route> {
         let pool = self.pool().await;
@@ -306,9 +300,9 @@ impl RouteStore {
                 project_id, name, parent_route_id, parent_version_id,
                 default_repo_id,
                 worker_scale, time_limit_minutes, human_in_the_loop,
-                docs_path, persist_docs_changes, target_branch, runner,
+                target_branch, runner,
                 created_at, updated_at
-             ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(self.project_id)
         .bind(name)
@@ -317,8 +311,6 @@ impl RouteStore {
         .bind(&parent_route.worker_scale)
         .bind(parent_route.time_limit_minutes)
         .bind(parent_route.human_in_the_loop as i64)
-        .bind(&parent_route.docs_path)
-        .bind(parent_route.persist_docs_changes as i64)
         .bind(&parent_route.target_branch)
         .bind(&parent_route.runner)
         .bind(&now)
@@ -347,10 +339,6 @@ impl RouteStore {
 
         // Copy files from parent route
         let parent_files = RouteFiles::new(self.project_id, &parent_route.name);
-
-        if let Err(e) = new_route_files.copy_docs_from(&parent_files) {
-            tracing::warn!("Failed to copy docs from parent route: {}", e);
-        }
 
         if let Err(e) = new_route_files.copy_code_from(&parent_files) {
             tracing::warn!("Failed to copy code from parent route: {}", e);
@@ -474,7 +462,7 @@ impl RouteStore {
         let row = sqlx::query(
             "SELECT id, project_id, name, parent_route_id, parent_version_id,
                     default_repo_id, worker_scale, time_limit_minutes, human_in_the_loop,
-                    docs_path, persist_docs_changes, target_branch, runner,
+                    target_branch, runner,
                     created_at, updated_at
              FROM routes WHERE id = ? AND project_id = ?",
         )
@@ -494,7 +482,7 @@ impl RouteStore {
         let row = sqlx::query(
             "SELECT id, project_id, name, parent_route_id, parent_version_id,
                     default_repo_id, worker_scale, time_limit_minutes, human_in_the_loop,
-                    docs_path, persist_docs_changes, target_branch, runner,
+                    target_branch, runner,
                     created_at, updated_at
              FROM routes WHERE lower(name) = lower(?) AND project_id = ?",
         )
@@ -516,7 +504,7 @@ impl RouteStore {
         let rows = sqlx::query(
             "SELECT id, project_id, name, parent_route_id, parent_version_id,
                     default_repo_id, worker_scale, time_limit_minutes, human_in_the_loop,
-                    docs_path, persist_docs_changes, target_branch, runner,
+                    target_branch, runner,
                     created_at, updated_at
              FROM routes WHERE project_id = ? ORDER BY created_at ASC",
         )
@@ -563,14 +551,6 @@ impl RouteStore {
             updates.push(format!("human_in_the_loop = ?{}", bind_index));
             bind_index += 1;
         }
-        if req.docs_path.is_some() {
-            updates.push(format!("docs_path = ?{}", bind_index));
-            bind_index += 1;
-        }
-        if req.persist_docs_changes.is_some() {
-            updates.push(format!("persist_docs_changes = ?{}", bind_index));
-            bind_index += 1;
-        }
         if req.target_branch.is_some() {
             updates.push(format!("target_branch = ?{}", bind_index));
             bind_index += 1;
@@ -597,12 +577,6 @@ impl RouteStore {
         }
         if let Some(human_in_the_loop) = req.human_in_the_loop {
             query = query.bind(human_in_the_loop as i64);
-        }
-        if let Some(ref docs_path) = req.docs_path {
-            query = query.bind(docs_path);
-        }
-        if let Some(persist_docs_changes) = req.persist_docs_changes {
-            query = query.bind(persist_docs_changes as i64);
         }
         if let Some(ref target_branch) = req.target_branch {
             query = query.bind(target_branch);
@@ -943,8 +917,6 @@ impl RouteStore {
             worker_scale: row.get("worker_scale"),
             time_limit_minutes: row.get("time_limit_minutes"),
             human_in_the_loop: row.get::<i64, _>("human_in_the_loop") != 0,
-            docs_path: row.get("docs_path"),
-            persist_docs_changes: row.get::<i64, _>("persist_docs_changes") != 0,
             target_branch: row.get("target_branch"),
             runner: row.get("runner"),
         })
@@ -1038,7 +1010,6 @@ impl RouteStore {
             .execute(pool)
             .await
             .ok();
-
         Ok(())
     }
 

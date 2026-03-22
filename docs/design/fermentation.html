@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fermentation — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Satoshi:wght@300;400;500;600;700&family=Commit+Mono&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --must: #1a1008;
+      --barrel: #2a1c10;
+      --oak: #3a2c18;
+      --yeast: #e8c850;
+      --yeast-dim: rgba(232,200,80,0.12);
+      --co2: rgba(255,255,255,0.06);
+      --tannin: #8a3030;
+      --clarity: #d0c098;
+      --lees: #4a3820;
+      --text: #d0c4a8;
+      --text-dim: #706040;
+    }
+
+    body {
+      font-family: 'Satoshi', sans-serif;
+      background: var(--must);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    .direction-nav {
+      position: sticky; top: 0; z-index: 1000;
+      background: rgba(26,16,8,0.92); backdrop-filter: blur(14px);
+      border-bottom: 1px solid rgba(208,192,152,0.06);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .direction-nav a {
+      font-size: 11px; font-weight: 500; color: var(--text-dim);
+      text-decoration: none; padding: 5px 12px; border-radius: 6px; transition: all 0.2s;
+    }
+    .direction-nav a:hover { color: var(--yeast); background: var(--yeast-dim); }
+    .direction-nav .nav-title {
+      font-family: 'Libre Baskerville', serif; font-size: 15px; font-style: italic;
+      color: var(--text); flex: 1; text-align: center;
+    }
+    .direction-nav .nav-home {
+      font-family: 'Commit Mono', monospace;
+      font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-dim); border-right: 1px solid rgba(208,192,152,0.06);
+      padding-right: 16px; margin-right: 4px;
+    }
+
+    .page-header {
+      padding: 80px 48px 20px;
+      max-width: 1100px; margin: 0 auto;
+    }
+
+    .tag {
+      font-family: 'Commit Mono', monospace;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--yeast); margin-bottom: 12px; display: block;
+    }
+
+    h1 {
+      font-family: 'Libre Baskerville', serif;
+      font-size: clamp(40px, 6vw, 68px);
+      font-weight: 400; font-style: italic;
+      line-height: 1.1; color: var(--text); margin-bottom: 16px;
+    }
+
+    .subtitle {
+      font-size: 15px; font-weight: 300;
+      color: var(--text-dim); max-width: 580px; line-height: 1.8;
+    }
+
+    .showcase {
+      padding: 40px 48px 60px;
+      max-width: 1100px; margin: 0 auto;
+    }
+
+    /* ====== FERMENTATION VESSELS ====== */
+    /*
+      Each spec is a fermentation vessel. You can see through
+      the glass wall: bubbles rising (worker activity), sediment
+      settling (completed tasks as lees), clarity increasing
+      (validation progress). The airlock shows CO2 output (tokens).
+      Temperature gauge = urgency. Batch number = spec ID.
+    */
+
+    .cellar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 24px;
+    }
+
+    .vessel {
+      background: var(--barrel);
+      border: 1px solid rgba(208,192,152,0.06);
+      border-radius: 12px;
+      overflow: hidden;
+      position: relative;
+      animation: vessel-appear 0.5s ease-out both;
+    }
+
+    .vessel:nth-child(1) { animation-delay: 0.1s; }
+    .vessel:nth-child(2) { animation-delay: 0.2s; }
+    .vessel:nth-child(3) { animation-delay: 0.3s; }
+    .vessel:nth-child(4) { animation-delay: 0.4s; }
+    .vessel:nth-child(5) { animation-delay: 0.5s; }
+
+    @keyframes vessel-appear {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Batch label */
+    .batch-label {
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(208,192,152,0.04);
+      display: flex; justify-content: space-between; align-items: baseline;
+    }
+
+    .batch-name {
+      font-family: 'Libre Baskerville', serif;
+      font-size: 14px; font-weight: 700;
+    }
+
+    .batch-id {
+      font-family: 'Commit Mono', monospace;
+      font-size: 9px; color: var(--text-dim);
+    }
+
+    /* Vessel viewport (the glass wall you see through) */
+    .vessel-viewport {
+      height: 200px;
+      position: relative;
+      overflow: hidden;
+      background: linear-gradient(180deg,
+        rgba(232,200,80,0.02) 0%,
+        rgba(232,200,80,0.04) 40%,
+        rgba(74,56,32,0.3) 80%,
+        rgba(74,56,32,0.5) 100%
+      );
+    }
+
+    /* Lees (sediment at bottom = completed tasks) */
+    .lees {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      background: linear-gradient(0deg, var(--lees), transparent);
+      transition: height 0.8s cubic-bezier(0.2, 0.9, 0.3, 1);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 3px;
+      padding: 6px 8px;
+      align-content: flex-end;
+    }
+
+    .sediment {
+      font-family: 'Commit Mono', monospace;
+      font-size: 7px;
+      color: rgba(208,192,152,0.4);
+      padding: 1px 4px;
+      border: 1px solid rgba(208,192,152,0.08);
+      border-radius: 2px;
+    }
+
+    /* CO2 Bubbles rising */
+    .bubble {
+      position: absolute;
+      border-radius: 50%;
+      background: var(--co2);
+      border: 1px solid rgba(255,255,255,0.04);
+      animation: rise linear infinite;
+    }
+
+    @keyframes rise {
+      0% { transform: translateY(0) translateX(0); opacity: 0; }
+      10% { opacity: 0.6; }
+      90% { opacity: 0.3; }
+      100% { transform: translateY(-200px) translateX(var(--drift)); opacity: 0; }
+    }
+
+    /* Clarity indicator (how clear the liquid is = validation) */
+    .clarity-strip {
+      position: absolute;
+      right: 8px; top: 8px; bottom: 8px;
+      width: 4px;
+      background: rgba(208,192,152,0.06);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .clarity-fill {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      border-radius: 2px;
+      background: var(--clarity);
+      opacity: 0.4;
+      transition: height 0.8s;
+    }
+
+    /* Vessel stats */
+    .vessel-stats {
+      padding: 12px 16px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .stat {
+      display: flex; flex-direction: column; gap: 2px;
+    }
+
+    .stat-label {
+      font-family: 'Commit Mono', monospace;
+      font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .stat-value {
+      font-family: 'Commit Mono', monospace;
+      font-size: 14px; font-weight: 500;
+      color: var(--text);
+    }
+
+    .stat-value.fermenting {
+      color: var(--yeast);
+      animation: bubble-text 2s ease-in-out infinite;
+    }
+
+    @keyframes bubble-text {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    /* Airlock indicator */
+    .airlock {
+      position: absolute;
+      top: -1px; left: 50%; transform: translateX(-50%);
+      width: 20px; height: 10px;
+      background: var(--barrel);
+      border: 1px solid rgba(208,192,152,0.1);
+      border-top: none;
+      border-radius: 0 0 6px 6px;
+    }
+
+    .airlock.active::after {
+      content: '';
+      position: absolute;
+      top: 2px; left: 50%; transform: translateX(-50%);
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: var(--yeast);
+      animation: airlock-bubble 1.5s ease-in-out infinite;
+    }
+
+    @keyframes airlock-bubble {
+      0%, 100% { transform: translateX(-50%) translateY(0); }
+      50% { transform: translateX(-50%) translateY(-3px); opacity: 0.5; }
+    }
+
+    /* Stage badge */
+    .stage-badge {
+      display: inline-block;
+      font-family: 'Commit Mono', monospace;
+      font-size: 8px; letter-spacing: 0.08em; text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 100px;
+      margin-top: 4px;
+    }
+
+    .stage-primary { background: var(--yeast-dim); color: var(--yeast); }
+    .stage-secondary { background: rgba(138,48,48,0.15); color: var(--tannin); }
+    .stage-clarified { background: rgba(208,192,152,0.1); color: var(--clarity); }
+    .stage-racked { background: rgba(208,192,152,0.06); color: var(--text-dim); }
+
+    .rationale {
+      padding: 0 48px 100px;
+      max-width: 1100px; margin: 0 auto;
+    }
+
+    .rationale h3 {
+      font-family: 'Libre Baskerville', serif;
+      font-size: 24px; font-style: italic; margin-bottom: 20px;
+    }
+
+    .rationale-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .rationale-card {
+      padding: 24px;
+      background: var(--barrel);
+      border: 1px solid rgba(208,192,152,0.04);
+      border-radius: 8px;
+    }
+
+    .rationale-card h4 {
+      font-size: 12px; font-weight: 700; margin-bottom: 8px;
+      color: var(--yeast);
+    }
+
+    .rationale-card p {
+      font-size: 13px; color: var(--text-dim); line-height: 1.7;
+    }
+
+    @media (max-width: 768px) {
+      .page-header, .showcase, .rationale { padding-left: 20px; padding-right: 20px; }
+      .cellar { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="direction-nav">
+    <a href="../designs.html" class="nav-home">Storm</a>
+    <a href="geological.html">Prev</a>
+    <span class="nav-title">Fermentation</span>
+    <a href="air-traffic.html">Next</a>
+  </nav>
+
+  <div class="page-header">
+    <div class="tag">Direction 05</div>
+    <h1>Fermentation</h1>
+    <p class="subtitle">Each spec is a fermentation vessel. You look through the glass: bubbles rise (worker activity), sediment settles (completed tasks as lees), clarity increases (validation). The airlock pulses with each token spent. Time does the work.</p>
+  </div>
+
+  <div class="showcase">
+    <div class="cellar">
+
+      <!-- Vessel 1: Fully clarified -->
+      <div class="vessel">
+        <div class="batch-label">
+          <span class="batch-name">Schema v3</span>
+          <span class="batch-id">#001</span>
+        </div>
+        <div class="vessel-viewport">
+          <div class="airlock"></div>
+          <div class="clarity-strip"><div class="clarity-fill" style="height:100%"></div></div>
+          <div class="lees" style="height:45%">
+            <span class="sediment">tables</span>
+            <span class="sediment">seeds</span>
+            <span class="sediment">indexes</span>
+          </div>
+        </div>
+        <div class="vessel-stats">
+          <div class="stat"><span class="stat-label">Stage</span><span class="stage-badge stage-clarified">clarified</span></div>
+          <div class="stat"><span class="stat-label">Clarity</span><span class="stat-value">100%</span></div>
+          <div class="stat"><span class="stat-label">Lees</span><span class="stat-value">3 tasks</span></div>
+          <div class="stat"><span class="stat-label">CO2 out</span><span class="stat-value">12k tok</span></div>
+        </div>
+      </div>
+
+      <!-- Vessel 2: Secondary fermentation -->
+      <div class="vessel">
+        <div class="batch-label">
+          <span class="batch-name">API Refactor</span>
+          <span class="batch-id">#002</span>
+        </div>
+        <div class="vessel-viewport">
+          <div class="airlock"></div>
+          <div class="clarity-strip"><div class="clarity-fill" style="height:85%"></div></div>
+          <div class="lees" style="height:40%">
+            <span class="sediment">v2-ns</span>
+            <span class="sediment">shim</span>
+            <span class="sediment">compat</span>
+            <span class="sediment">routes</span>
+            <span class="sediment">docs</span>
+          </div>
+        </div>
+        <div class="vessel-stats">
+          <div class="stat"><span class="stat-label">Stage</span><span class="stage-badge stage-clarified">clarified</span></div>
+          <div class="stat"><span class="stat-label">Clarity</span><span class="stat-value">85%</span></div>
+          <div class="stat"><span class="stat-label">Lees</span><span class="stat-value">5 tasks</span></div>
+          <div class="stat"><span class="stat-label">CO2 out</span><span class="stat-value">28k tok</span></div>
+        </div>
+      </div>
+
+      <!-- Vessel 3: Active primary fermentation -->
+      <div class="vessel">
+        <div class="batch-label">
+          <span class="batch-name">Token Rotation</span>
+          <span class="batch-id">#003</span>
+        </div>
+        <div class="vessel-viewport">
+          <div class="airlock active"></div>
+          <div class="clarity-strip"><div class="clarity-fill" style="height:30%"></div></div>
+          <!-- Active bubbles -->
+          <div class="bubble" style="width:5px;height:5px;left:30%;bottom:20%;animation-duration:3s;--drift:8px;"></div>
+          <div class="bubble" style="width:3px;height:3px;left:55%;bottom:10%;animation-duration:4s;--drift:-5px;animation-delay:0.5s;"></div>
+          <div class="bubble" style="width:4px;height:4px;left:40%;bottom:30%;animation-duration:3.5s;--drift:3px;animation-delay:1s;"></div>
+          <div class="bubble" style="width:6px;height:6px;left:65%;bottom:15%;animation-duration:2.8s;--drift:-8px;animation-delay:1.5s;"></div>
+          <div class="bubble" style="width:3px;height:3px;left:25%;bottom:5%;animation-duration:4.2s;--drift:6px;animation-delay:2s;"></div>
+          <div class="lees" style="height:20%">
+            <span class="sediment">provider</span>
+            <span class="sediment">challenge</span>
+          </div>
+        </div>
+        <div class="vessel-stats">
+          <div class="stat"><span class="stat-label">Stage</span><span class="stage-badge stage-primary">primary</span></div>
+          <div class="stat"><span class="stat-label">Clarity</span><span class="stat-value fermenting">30%</span></div>
+          <div class="stat"><span class="stat-label">Lees</span><span class="stat-value">2/4</span></div>
+          <div class="stat"><span class="stat-label">CO2 out</span><span class="stat-value fermenting">41k tok</span></div>
+        </div>
+      </div>
+
+      <!-- Vessel 4: Waiting to start -->
+      <div class="vessel">
+        <div class="batch-label">
+          <span class="batch-name">Rate Limiter</span>
+          <span class="batch-id">#004</span>
+        </div>
+        <div class="vessel-viewport" style="opacity: 0.5;">
+          <div class="airlock"></div>
+          <div class="clarity-strip"><div class="clarity-fill" style="height:0%"></div></div>
+        </div>
+        <div class="vessel-stats">
+          <div class="stat"><span class="stat-label">Stage</span><span class="stage-badge stage-racked">racked</span></div>
+          <div class="stat"><span class="stat-label">Clarity</span><span class="stat-value">0%</span></div>
+          <div class="stat"><span class="stat-label">Lees</span><span class="stat-value">0</span></div>
+          <div class="stat"><span class="stat-label">CO2 out</span><span class="stat-value">—</span></div>
+        </div>
+      </div>
+
+      <!-- Vessel 5: Not pitched yet -->
+      <div class="vessel" style="opacity: 0.4;">
+        <div class="batch-label">
+          <span class="batch-name">E2E Tests</span>
+          <span class="batch-id">#005</span>
+        </div>
+        <div class="vessel-viewport">
+          <div class="airlock"></div>
+        </div>
+        <div class="vessel-stats">
+          <div class="stat"><span class="stat-label">Stage</span><span class="stage-badge stage-racked">unpiched</span></div>
+          <div class="stat"><span class="stat-label">Clarity</span><span class="stat-value">—</span></div>
+          <div class="stat"><span class="stat-label">Lees</span><span class="stat-value">—</span></div>
+          <div class="stat"><span class="stat-label">CO2 out</span><span class="stat-value">—</span></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="rationale">
+    <h3>Why this is interesting</h3>
+    <div class="rationale-grid">
+      <div class="rationale-card">
+        <h4>Bubbles = worker activity</h4>
+        <p>When a worker is active inside a spec, you see actual bubbles rising through the liquid. More workers = more bubbles. Idle specs are still. The movement IS the information — you don't need status labels.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Sediment = history</h4>
+        <p>Completed tasks don't vanish — they settle to the bottom as lees. You can see the record of work that went into each spec. Dense sediment means lots of decomposed tasks. Light sediment means simple work.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Clarity = confidence</h4>
+        <p>A spec starts turbid (cloudy, uncertain). As tasks complete and validation passes, it clarifies. A perfectly clear vessel = fully validated. You literally see the uncertainty leaving the system.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>CO2 output = token cost</h4>
+        <p>Fermentation produces CO2 as a byproduct. Workers produce token usage as a byproduct. The airlock bubbles with each inference call. High CO2 output means lots of LLM work happening — you can feel the cost.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

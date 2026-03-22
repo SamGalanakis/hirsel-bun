@@ -139,7 +139,7 @@ jobs:
           files: hirsel-linux-x86_64.tar.gz
           tag_name: ${{ github.ref_name }}
 
-  # Build headless binaries for remote workers and CLI
+  # Build headless worker and backend-server binaries
   build-headless:
     needs: verify-branch
     runs-on: ubuntu-22.04
@@ -148,8 +148,8 @@ jobs:
         include:
           - feature: worker
             name: worker
-          - feature: cli
-            name: cli
+          - feature: server
+            name: server
     steps:
       - name: Checkout
         uses: actions/checkout@v4

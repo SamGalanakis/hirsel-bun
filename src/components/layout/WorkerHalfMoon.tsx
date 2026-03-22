@@ -57,7 +57,7 @@ export const WorkerHalfMoon: Component<WorkerHalfMoonProps> = (props) => {
         }}
       />
       <div
-        class="flex flex-col rounded-lg overflow-hidden"
+        class="flex flex-col rounded-none overflow-hidden"
         style={{
           background: 'var(--pasture-800)',
           border: '1px solid var(--pasture-600)',

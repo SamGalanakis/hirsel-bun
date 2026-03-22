@@ -7,7 +7,7 @@
 //! - Scribe batch processing
 //!
 //! The daemon listens on a TCP port (default 19700, configurable via HIRSEL_DAEMON_PORT).
-//! Local CLI/GUI connects via localhost, remote workers via Docker host or SSH tunnels.
+//! Local CLI/GUI and host-local workers connect over localhost.
 
 mod client;
 mod lifecycle;

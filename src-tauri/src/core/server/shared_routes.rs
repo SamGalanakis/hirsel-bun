@@ -1,8 +1,8 @@
-//! Shared route builders for daemon and remote server
+//! Shared route builders for the daemon and backend HTTP server
 //!
 //! Routes are defined in builder functions to avoid duplication between:
 //! - `daemon/server.rs` (local daemon, no auth)
-//! - `core/server/mod.rs` (remote server, with auth)
+//! - `core/server/mod.rs` (backend server, with auth)
 //!
 //! ## Route Categories
 //!
@@ -10,17 +10,16 @@
 //! |---------|---------|-------------|
 //! | `build_shared_routes()` | Both | Run ops, workers, tasks, messages, evals, history |
 //! | `build_legacy_chat_routes()` | N/A | Removed during lash migration |
-//! | `build_config_routes()` | Remote only | Config CRUD, credentials |
-//! | `build_board_routes()` | Remote only | Reserved (board file sync removed) |
+//! | `build_config_routes()` | Backend only | Config CRUD, credentials |
+//! | `build_board_routes()` | Backend only | Reserved (board file sync removed) |
 
 use axum::{
-    routing::{any, get, patch, post},
+    routing::{get, patch, post},
     Router,
 };
 use std::sync::Arc;
 
 use super::{routes, AppState};
-use crate::core::git_http;
 
 /// Routes shared between daemon and remote server
 ///
@@ -84,10 +83,11 @@ pub fn build_shared_routes() -> Router<Arc<AppState>> {
             "/api/projects/{project_id}/threads",
             get(routes::get_project_threads),
         )
-        // Scribe - documentation
         .route("/api/runs/{name}/scribe", post(routes::add_scribe))
-        .route("/api/runs/{name}/docs", get(routes::get_docs))
-        .route("/api/runs/{name}/docs/sync", post(routes::sync_docs))
+        .route(
+            "/api/runs/{name}/retained-context",
+            get(routes::get_retained_context),
+        )
         // Evals
         .route("/api/runs/{name}/evals", get(routes::list_evals))
         // History
@@ -140,14 +140,11 @@ pub fn build_shared_routes() -> Router<Arc<AppState>> {
             "/api/runs/{name}/nodes/{id}/validated",
             get(routes::get_validated_nodes),
         )
-        // Git HTTP backend for remote workers
-        .route("/git/{run_name}", any(git_http::git_run_root_handler))
-        .route("/git/{run_name}/{*path}", any(git_http::git_run_handler))
 }
 
 /// Shepherd routes were removed during lash migration.
 
-/// Config management routes (remote server only)
+/// Config management routes (backend server only)
 ///
 /// Full config CRUD - daemon only exposes read-only config endpoint.
 pub fn build_config_routes() -> Router<Arc<AppState>> {
@@ -169,13 +166,6 @@ pub fn build_config_routes() -> Router<Arc<AppState>> {
             get(routes::get_runner)
                 .put(routes::put_runner)
                 .delete(routes::delete_runner),
-        )
-        .route("/api/config/profiles", get(routes::list_profiles))
-        .route(
-            "/api/config/profiles/{name}",
-            get(routes::get_profile)
-                .put(routes::put_profile)
-                .delete(routes::delete_profile),
         )
         .route("/api/config/git", patch(routes::patch_git_config))
         // Credentials

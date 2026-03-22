@@ -24,8 +24,8 @@ RUN mkdir -p tauri-plugin-mcp/src && \
     echo '[package]\nname = "tauri-plugin-mcp"\nversion = "0.1.0"\nedition = "2021"\n\n[lib]\npath = "src/lib.rs"' > tauri-plugin-mcp/Cargo.toml && \
     echo '' > tauri-plugin-mcp/src/lib.rs
 
-# Build server-only binary (cli feature: server + TUI, no GUI)
-RUN cargo build --release --no-default-features --features cli --manifest-path src-tauri/Cargo.toml
+# Build server-only binary
+RUN cargo build --release --no-default-features --features server --manifest-path src-tauri/Cargo.toml
 
 # ==============================================================================
 # Stage 2: Runtime image

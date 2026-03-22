@@ -17,8 +17,8 @@
 //!
 //! | Strategy | Use Case | Implementation |
 //! |----------|----------|----------------|
-//! | `NoOpArchiveStrategy` | Local/SSH hosts | Files persist on disk |
-//! | `S3ArchiveStrategy` | Fly.io, ephemeral hosts | Tar + upload to S3 |
+//! | `NoOpArchiveStrategy` | Persistent local hosts | Files persist on disk |
+//! | `S3ArchiveStrategy` | Ephemeral hosts | Tar + upload to S3 |
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -72,8 +72,8 @@ impl ArchiveHandle {
 /// Implementations handle archiving and restoring directories for different
 /// deployment scenarios. The strategy is determined by the runner configuration:
 ///
-/// - **NoOp**: For local/SSH hosts where files persist on disk
-/// - **S3**: For ephemeral hosts (Fly.io) where directories must be uploaded
+/// - **NoOp**: For persistent local hosts where files remain on disk
+/// - **S3**: For ephemeral hosts where directories must be uploaded
 #[async_trait]
 pub trait ArchiveStrategy: Send + Sync {
     /// Archive a directory to storage.

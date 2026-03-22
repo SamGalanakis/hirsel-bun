@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mycelium Net — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Gambarino&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --earth: #0a0c06;
+      --soil: #1a1c10;
+      --soil-light: #282a1a;
+      --humus: #3a3420;
+      --mycelium: rgba(80,200,140,0.15);
+      --mycelium-bright: #50c88c;
+      --mycelium-dim: rgba(80,200,140,0.06);
+      --biolum: #40d0b8;
+      --biolum-glow: rgba(64,208,184,0.3);
+      --spore: #a0c878;
+      --spore-dim: rgba(160,200,120,0.3);
+      --bark: #8b7355;
+      --bark-dim: rgba(139,115,85,0.3);
+      --text: #c0ccb0;
+      --text-dim: #607050;
+      --accent: #70c098;
+    }
+
+    body {
+      font-family: 'Gambarino', serif;
+      background: var(--earth);
+      color: var(--text);
+      line-height: 1.5;
+      overflow-x: hidden;
+      min-height: 100vh;
+    }
+
+    .direction-nav {
+      position: sticky; top: 0; z-index: 1000;
+      background: rgba(10,12,6,0.88); backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(80,200,140,0.06);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .direction-nav a {
+      font-size: 11px; font-weight: 500; color: var(--text-dim);
+      text-decoration: none; padding: 5px 12px; border-radius: 6px; transition: all 0.2s;
+      font-family: 'Gambarino', serif;
+    }
+    .direction-nav a:hover { color: var(--accent); background: rgba(80,200,140,0.06); }
+    .direction-nav .nav-title {
+      font-family: 'Gambarino', serif; font-size: 16px;
+      color: var(--text); flex: 1; text-align: center;
+    }
+    .direction-nav .nav-home {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-dim); border-right: 1px solid rgba(80,200,140,0.06);
+      padding-right: 16px; margin-right: 4px;
+    }
+
+    .page-header {
+      padding: 80px 48px 20px;
+      max-width: 1200px;
+      margin: 0 auto;
+      position: relative;
+    }
+
+    .tag {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--accent); margin-bottom: 12px; display: block;
+    }
+
+    h1 {
+      font-family: 'Gambarino', serif;
+      font-size: clamp(48px, 7vw, 88px);
+      font-weight: 400;
+      line-height: 1.0;
+      color: var(--text);
+      margin-bottom: 16px;
+    }
+
+    .subtitle {
+      font-size: 15px; font-weight: 300;
+      color: var(--text-dim);
+      max-width: 600px; line-height: 1.8;
+    }
+
+    .showcase {
+      padding: 40px 48px 60px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    /* ====== THE MYCELIUM VISUALIZATION ====== */
+    /*
+      Core idea: underground fungal network. The route is the forest
+      floor. Specs are fruiting bodies (mushrooms) on the surface.
+      Tasks are hyphal threads connecting specs below ground. Workers
+      are nutrient pulses flowing through the hyphae. Validated specs
+      have full mushroom caps. Working = emerging. Draft = spore sites.
+    */
+
+    .forest {
+      position: relative;
+      min-height: 750px;
+    }
+
+    /* Forest floor / soil line */
+    .ground-line {
+      position: absolute;
+      top: 280px;
+      left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, transparent 0%, var(--bark-dim) 10%, var(--bark) 30%, var(--bark) 70%, var(--bark-dim) 90%, transparent 100%);
+      z-index: 5;
+    }
+
+    .ground-label {
+      position: absolute;
+      top: 262px;
+      right: 40px;
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      color: var(--bark);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      z-index: 6;
+    }
+
+    /* Route label above ground */
+    .route-canopy {
+      position: absolute;
+      top: 230px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      color: var(--text-dim);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      z-index: 6;
+      padding: 4px 16px;
+      border: 1px solid rgba(80,200,140,0.08);
+      border-radius: 100px;
+      background: rgba(10,12,6,0.8);
+    }
+
+    /* === MUSHROOMS (specs above ground) === */
+    .mushroom {
+      position: absolute;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      z-index: 10;
+    }
+
+    .mushroom-cap {
+      border-radius: 50% 50% 4px 4px;
+      display: flex; align-items: center; justify-content: center;
+      position: relative;
+    }
+
+    .mushroom-stem {
+      width: 6px;
+      background: linear-gradient(180deg, var(--soil-light), var(--humus));
+      border-radius: 0 0 3px 3px;
+    }
+
+    .mushroom-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      font-weight: 500;
+      text-align: center;
+      line-height: 1.1;
+      position: absolute;
+      top: -22px;
+      white-space: nowrap;
+    }
+
+    .mushroom-status {
+      font-family: 'DM Mono', monospace;
+      font-size: 7px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      position: absolute;
+      top: -10px;
+      white-space: nowrap;
+    }
+
+    /* Validated mushroom: full cap, bioluminescent */
+    .mushroom.validated .mushroom-cap {
+      width: 60px; height: 36px;
+      background: radial-gradient(ellipse at center, var(--biolum), rgba(64,208,184,0.4) 60%, transparent 85%);
+      box-shadow: 0 0 20px var(--biolum-glow), 0 -8px 30px rgba(64,208,184,0.1);
+    }
+    .mushroom.validated .mushroom-stem { height: 30px; }
+    .mushroom.validated .mushroom-label { color: var(--biolum); }
+    .mushroom.validated .mushroom-status { color: var(--biolum-glow); }
+
+    /* Gills under validated cap */
+    .mushroom.validated .mushroom-cap::after {
+      content: '';
+      position: absolute;
+      bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 48px; height: 3px;
+      background: repeating-linear-gradient(90deg, transparent, transparent 3px, rgba(64,208,184,0.2) 3px, rgba(64,208,184,0.2) 4px);
+    }
+
+    /* Working mushroom: emerging cap */
+    .mushroom.working .mushroom-cap {
+      width: 44px; height: 26px;
+      background: radial-gradient(ellipse at center, var(--spore), rgba(160,200,120,0.3) 60%, transparent 85%);
+      box-shadow: 0 0 12px var(--spore-dim);
+      animation: emerge 3s ease-in-out infinite;
+    }
+    .mushroom.working .mushroom-stem { height: 22px; }
+    .mushroom.working .mushroom-label { color: var(--spore); }
+    .mushroom.working .mushroom-status { color: var(--spore-dim); }
+
+    @keyframes emerge {
+      0%, 100% { transform: scaleY(1); }
+      50% { transform: scaleY(1.06); }
+    }
+
+    /* Pending mushroom: barely emerged */
+    .mushroom.pending .mushroom-cap {
+      width: 28px; height: 16px;
+      background: radial-gradient(ellipse at center, var(--soil-light), rgba(60,64,40,0.3));
+      border: 1px solid rgba(80,200,140,0.08);
+    }
+    .mushroom.pending .mushroom-stem { height: 14px; }
+    .mushroom.pending .mushroom-label { color: var(--text-dim); }
+    .mushroom.pending .mushroom-status { color: rgba(96,112,80,0.5); }
+
+    /* Draft: spore site (just a dot on the surface) */
+    .mushroom.draft .mushroom-cap {
+      width: 16px; height: 10px;
+      background: rgba(48,56,40,0.5);
+      border: 1px dashed rgba(80,200,140,0.1);
+      border-radius: 50%;
+    }
+    .mushroom.draft .mushroom-stem { height: 6px; opacity: 0.3; }
+    .mushroom.draft .mushroom-label { color: var(--text-dim); opacity: 0.5; }
+    .mushroom.draft .mushroom-status { color: rgba(96,112,80,0.3); }
+
+    /* Position mushrooms along the ground line */
+    .mushroom-1 { top: 190px; left: 8%; }
+    .mushroom-2 { top: 195px; left: 28%; }
+    .mushroom-3 { top: 198px; left: 50%; transform: translateX(-50%); }
+    .mushroom-4 { top: 210px; left: 68%; }
+    .mushroom-5 { top: 215px; left: 86%; }
+
+    /* === UNDERGROUND NETWORK (hyphae = tasks) === */
+    .underground {
+      position: absolute;
+      top: 283px;
+      left: 0; right: 0;
+      height: 450px;
+      overflow: hidden;
+    }
+
+    /* Soil gradient */
+    .underground::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, var(--soil) 0%, var(--earth) 100%);
+      z-index: 0;
+    }
+
+    /* Hyphal threads (SVG paths for organic curves) */
+    .hyphae-network {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+    }
+
+    .hyphae-network svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .hypha {
+      fill: none;
+      stroke: var(--mycelium);
+      stroke-width: 1.5;
+    }
+
+    .hypha.active {
+      stroke: rgba(80,200,140,0.25);
+    }
+
+    /* Nutrient pulse (worker) moving along hypha */
+    .nutrient-pulse {
+      fill: var(--mycelium-bright);
+      filter: drop-shadow(0 0 4px var(--biolum-glow));
+    }
+
+    .pulse-1 { animation: flow-1 6s linear infinite; }
+    .pulse-2 { animation: flow-2 8s linear infinite; }
+    .pulse-3 { animation: flow-3 5s linear infinite; }
+    .pulse-4 { animation: flow-4 7s linear infinite; }
+
+    /* Hyphal nodes (junction points underground) */
+    .hyphal-node {
+      position: absolute;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--mycelium);
+      z-index: 2;
+    }
+
+    .hyphal-node.active {
+      background: var(--mycelium-bright);
+      box-shadow: 0 0 8px var(--biolum-glow);
+      animation: node-glow 2s ease-in-out infinite;
+    }
+
+    @keyframes node-glow {
+      0%, 100% { box-shadow: 0 0 8px var(--biolum-glow); }
+      50% { box-shadow: 0 0 16px rgba(64,208,184,0.4); }
+    }
+
+    .node-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 8px;
+      color: var(--mycelium-bright);
+      position: absolute;
+      left: 14px; top: -2px;
+      white-space: nowrap;
+      opacity: 0.6;
+      letter-spacing: 0.05em;
+    }
+
+    /* Worker labels underground */
+    .worker-tag {
+      position: absolute;
+      font-family: 'DM Mono', monospace;
+      font-size: 8px;
+      color: var(--mycelium-bright);
+      padding: 2px 8px;
+      border: 1px solid rgba(80,200,140,0.15);
+      border-radius: 100px;
+      background: rgba(10,12,6,0.8);
+      z-index: 3;
+      animation: worker-drift 4s ease-in-out infinite;
+    }
+
+    @keyframes worker-drift {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-3px); }
+    }
+
+    /* Delivery */
+    .delivery-soil {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 28px;
+      border: 1px solid rgba(80,200,140,0.08);
+      border-radius: 100px;
+      background: rgba(80,200,140,0.03);
+      margin: 40px auto 0;
+      max-width: 460px;
+      position: relative;
+      z-index: 10;
+    }
+
+    .delivery-soil .delivery-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--biolum);
+      animation: dot-pulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes dot-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .delivery-soil .delivery-text {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      color: var(--accent);
+      letter-spacing: 0.08em;
+    }
+
+    /* Legend */
+    .mycelium-legend {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-top: 48px;
+      position: relative;
+      z-index: 10;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 16px;
+      background: rgba(80,200,140,0.02);
+      border: 1px solid rgba(80,200,140,0.04);
+      border-radius: 8px;
+    }
+
+    .legend-glyph {
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .glyph-mushroom {
+      background: radial-gradient(ellipse, var(--biolum), rgba(64,208,184,0.2));
+      border-radius: 50% 50% 4px 4px;
+      width: 24px; height: 16px;
+    }
+
+    .glyph-hypha {
+      border: 1.5px solid var(--mycelium);
+      background: var(--mycelium-dim);
+      width: 28px; height: 28px;
+    }
+
+    .glyph-nutrient {
+      background: var(--mycelium-bright);
+      box-shadow: 0 0 6px var(--biolum-glow);
+      width: 10px; height: 10px;
+    }
+
+    .legend-text h4 {
+      font-family: 'Gambarino', serif;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+
+    .legend-text p {
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.5;
+      font-family: 'Gambarino', serif;
+    }
+
+    /* === RATIONALE === */
+    .rationale {
+      padding: 0 48px 100px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .rationale h3 {
+      font-family: 'Gambarino', serif;
+      font-size: 24px;
+      margin-bottom: 20px;
+    }
+
+    .rationale-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .rationale-card {
+      padding: 24px;
+      background: rgba(80,200,140,0.02);
+      border: 1px solid rgba(80,200,140,0.04);
+      border-radius: 8px;
+    }
+
+    .rationale-card h4 {
+      font-size: 13px; font-weight: 700;
+      margin-bottom: 8px;
+      color: var(--accent);
+    }
+
+    .rationale-card p {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.7;
+    }
+
+    @media (max-width: 768px) {
+      .page-header, .showcase, .rationale { padding-left: 20px; padding-right: 20px; }
+      .mushroom-1 { left: 5%; }
+      .mushroom-5 { left: 80%; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="direction-nav">
+    <a href="../designs.html" class="nav-home">Storm</a>
+    <a href="orrery.html">Prev</a>
+    <span class="nav-title">Mycelium Net</span>
+    <a href="circuit-board.html">Next</a>
+  </nav>
+
+  <div class="page-header">
+    <div class="tag">Direction 12 — Ecosystem</div>
+    <h1>Mycelium Net</h1>
+    <p class="subtitle">An underground fungal network. The route is the forest floor. Specs are fruiting bodies — mushrooms — visible on the surface. Below ground, tasks are hyphal threads connecting specs. Workers are nutrient pulses flowing through the hyphae, visible as glowing dots tracing connections.</p>
+  </div>
+
+  <div class="showcase">
+    <div class="forest">
+
+      <!-- ROUTE LABEL -->
+      <div class="route-canopy">Auth Overhaul</div>
+
+      <!-- GROUND LINE -->
+      <div class="ground-line"></div>
+      <div class="ground-label">forest floor</div>
+
+      <!-- MUSHROOMS (specs above ground) -->
+
+      <!-- Schema Migration: validated, full cap -->
+      <div class="mushroom mushroom-1 validated">
+        <span class="mushroom-label">Schema Migration</span>
+        <span class="mushroom-status">validated</span>
+        <div class="mushroom-cap"></div>
+        <div class="mushroom-stem"></div>
+      </div>
+
+      <!-- API Restructure: validated -->
+      <div class="mushroom mushroom-2 validated">
+        <span class="mushroom-label">API Restructure</span>
+        <span class="mushroom-status">validated</span>
+        <div class="mushroom-cap"></div>
+        <div class="mushroom-stem"></div>
+      </div>
+
+      <!-- Token Rotation: working, emerging cap -->
+      <div class="mushroom mushroom-3 working">
+        <span class="mushroom-label">Token Rotation</span>
+        <span class="mushroom-status">2/4 tasks</span>
+        <div class="mushroom-cap"></div>
+        <div class="mushroom-stem"></div>
+      </div>
+
+      <!-- Rate Limiter: pending/blocked, barely emerged -->
+      <div class="mushroom mushroom-4 pending">
+        <span class="mushroom-label">Rate Limiter</span>
+        <span class="mushroom-status">blocked</span>
+        <div class="mushroom-cap"></div>
+        <div class="mushroom-stem"></div>
+      </div>
+
+      <!-- E2E Tests: draft, spore site -->
+      <div class="mushroom mushroom-5 draft">
+        <span class="mushroom-label">E2E Tests</span>
+        <span class="mushroom-status">spore</span>
+        <div class="mushroom-cap"></div>
+        <div class="mushroom-stem"></div>
+      </div>
+
+      <!-- UNDERGROUND NETWORK -->
+      <div class="underground">
+
+        <div class="hyphae-network">
+          <svg viewBox="0 0 1200 450" preserveAspectRatio="none">
+            <!-- Main root threads connecting mushroom bases -->
+            <!-- Schema to API -->
+            <path class="hypha active" d="M 110 10 C 140 60, 200 80, 280 50 Q 320 40, 350 10" />
+            <!-- API to Tokens -->
+            <path class="hypha active" d="M 350 10 C 380 70, 460 100, 560 70 Q 580 60, 600 15" />
+            <!-- Tokens to Limiter -->
+            <path class="hypha" d="M 600 15 C 640 80, 720 110, 800 80 Q 820 70, 840 25" />
+            <!-- Limiter to E2E -->
+            <path class="hypha" d="M 840 25 C 870 60, 940 70, 1020 50 Q 1050 40, 1060 20" />
+
+            <!-- Deeper branching hyphae -->
+            <path class="hypha" d="M 110 10 C 130 120, 200 180, 350 200 Q 500 220, 600 180" />
+            <path class="hypha active" d="M 280 50 C 300 130, 400 170, 520 150 Q 580 140, 600 100" />
+            <path class="hypha" d="M 600 100 C 650 200, 750 250, 840 200" />
+            <path class="hypha" d="M 350 200 C 450 280, 600 300, 800 270 Q 900 260, 1000 220" />
+
+            <!-- Fine tendrils -->
+            <path class="hypha" d="M 200 80 C 220 150, 180 200, 160 260" stroke-width="0.8" />
+            <path class="hypha" d="M 500 100 C 480 160, 520 200, 500 260" stroke-width="0.8" />
+            <path class="hypha" d="M 750 110 C 780 170, 760 220, 780 280" stroke-width="0.8" />
+
+            <!-- Worker nutrient pulses -->
+            <circle class="nutrient-pulse" r="3">
+              <animateMotion dur="6s" repeatCount="indefinite" path="M 350 10 C 380 70, 460 100, 560 70 Q 580 60, 600 15" />
+            </circle>
+            <circle class="nutrient-pulse" r="3">
+              <animateMotion dur="8s" repeatCount="indefinite" path="M 280 50 C 300 130, 400 170, 520 150 Q 580 140, 600 100" />
+            </circle>
+            <circle class="nutrient-pulse" r="2.5">
+              <animateMotion dur="5s" repeatCount="indefinite" path="M 110 10 C 140 60, 200 80, 280 50 Q 320 40, 350 10" />
+            </circle>
+            <circle class="nutrient-pulse" r="2">
+              <animateMotion dur="7s" repeatCount="indefinite" path="M 600 15 C 640 80, 720 110, 800 80 Q 820 70, 840 25" />
+            </circle>
+          </svg>
+        </div>
+
+        <!-- Task nodes at junctions -->
+        <div class="hyphal-node active" style="top: 50px; left: 22%;">
+          <span class="node-label">schema-task-1</span>
+        </div>
+        <div class="hyphal-node active" style="top: 80px; left: 38%;">
+          <span class="node-label">api-task-1</span>
+        </div>
+        <div class="hyphal-node active" style="top: 100px; left: 48%;">
+          <span class="node-label">token-task-1</span>
+        </div>
+        <div class="hyphal-node" style="top: 130px; left: 55%;">
+          <span class="node-label">token-task-2</span>
+        </div>
+        <div class="hyphal-node" style="top: 150px; left: 65%;">
+          <span class="node-label">limiter-task-1</span>
+        </div>
+
+        <!-- Worker tags -->
+        <div class="worker-tag" style="top: 70px; left: 42%;">worker-1</div>
+        <div class="worker-tag" style="top: 110px; left: 52%;">worker-2</div>
+
+      </div>
+
+    </div>
+
+    <!-- DELIVERY -->
+    <div class="delivery-soil">
+      <div class="delivery-dot"></div>
+      <span class="delivery-text">2 fruiting bodies ready for sporulation (PR pending)</span>
+    </div>
+
+    <!-- LEGEND -->
+    <div class="mycelium-legend">
+      <div class="legend-item">
+        <div class="legend-glyph glyph-mushroom"></div>
+        <div class="legend-text">
+          <h4>Mushroom = Spec</h4>
+          <p>Visible on the surface. Full cap means validated. Emerging cap is working. A spore site is a draft not yet germinated.</p>
+        </div>
+      </div>
+      <div class="legend-item">
+        <div class="legend-glyph glyph-hypha"></div>
+        <div class="legend-text">
+          <h4>Hyphae = Tasks</h4>
+          <p>Underground threads connecting specs. Active hyphae glow brighter. The network reveals how specs share dependencies beneath the surface.</p>
+        </div>
+      </div>
+      <div class="legend-item">
+        <div class="legend-glyph glyph-nutrient"></div>
+        <div class="legend-text">
+          <h4>Nutrient Pulse = Worker</h4>
+          <p>Glowing dots flowing through hyphae. Each pulse is a worker carrying intent from decomposition to execution along the fungal network.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rationale">
+    <h3>Why this is interesting</h3>
+    <div class="rationale-grid">
+      <div class="rationale-card">
+        <h4>Hidden complexity, visible results</h4>
+        <p>Users see mushrooms on the surface — simple status indicators. But the real orchestration happens underground in the hyphal network. This mirrors how Hirsel works: specs are the visible intent, but the task decomposition and worker coordination is the invisible engine beneath.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Networks, not hierarchies</h4>
+        <p>Mycelium connects everything to everything. A task from one spec can share nutrients with another spec's tasks. This models the reality that specs often share dependencies and workers can cross-pollinate — it's a network, not a tree.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Growth is organic</h4>
+        <p>Mushrooms don't appear instantly — they emerge. The working state shows a cap pushing through the soil. Blocked specs are buried. Validated specs bloom fully. The lifecycle of a spec becomes a visible, tangible growth process on the forest floor.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Delivery is sporulation</h4>
+        <p>A mature mushroom releases spores — sending its validated work out into the world. Delivery in Hirsel packages completed specs and pushes them as PRs. The spores land in the repository, seeding the next generation of the codebase.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

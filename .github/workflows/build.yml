@@ -19,7 +19,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # Build CLI binaries for Linux x86_64
+  # Build headless Linux binaries
   build-linux:
     runs-on: ubuntu-latest
     strategy:
@@ -30,8 +30,6 @@ jobs:
             features: worker
           - name: server
             features: server
-          - name: cli
-            features: cli
 
     steps:
       - uses: actions/checkout@v4
@@ -143,7 +141,7 @@ jobs:
           name: hirsel-ui-linux-amd64
           path: src-tauri/target/release/hirsel
 
-  # Combine all CLI binaries into single artifact
+  # Combine headless binaries into a single artifact
   combine-binaries:
     runs-on: ubuntu-latest
     needs: build-linux
@@ -181,7 +179,6 @@ jobs:
           mkdir -p combined
           cp artifacts/hirsel-worker-${SUFFIX}-linux-amd64/hirsel combined/hirsel-worker-${SUFFIX}-linux-amd64
           cp artifacts/hirsel-server-${SUFFIX}-linux-amd64/hirsel combined/hirsel-server-${SUFFIX}-linux-amd64
-          cp artifacts/hirsel-cli-${SUFFIX}-linux-amd64/hirsel combined/hirsel-cli-${SUFFIX}-linux-amd64
           chmod +x combined/*
 
       - name: Upload combined binaries
@@ -190,91 +187,11 @@ jobs:
           name: binaries-${{ steps.info.outputs.suffix }}
           path: combined/
 
-  # Build and push Docker image
-  docker:
-    runs-on: ubuntu-latest
-    needs: combine-binaries
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Get version and branch
-        id: info
-        run: |
-          VERSION=$(grep '^version' src-tauri/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            BRANCH="release"
-          else
-            BRANCH="${GITHUB_REF#refs/heads/}"
-          fi
-          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
-
-          if [[ "$BRANCH" == "main" || "$BRANCH" == "release" ]]; then
-            SUFFIX="$VERSION"
-          else
-            SUFFIX="${BRANCH}-${VERSION}"
-          fi
-          echo "suffix=$SUFFIX" >> $GITHUB_OUTPUT
-
-      - name: Download binary
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-${{ steps.info.outputs.suffix }}
-          path: docker/
-
-      - name: Rename binary for Dockerfile
-        run: |
-          SUFFIX=${{ steps.info.outputs.suffix }}
-          mv docker/hirsel-cli-${SUFFIX}-linux-amd64 docker/hirsel-linux-amd64
-          chmod +x docker/hirsel-linux-amd64
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Container Registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=${{ steps.info.outputs.suffix }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
   # Create release with binaries
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    needs: [combine-binaries, docker]
+    needs: combine-binaries
     permissions:
       contents: write
 

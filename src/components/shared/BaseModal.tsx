@@ -22,7 +22,7 @@ export function BaseModal(props: BaseModalProps): JSX.Element {
       class={`fixed inset-0 z-50 flex items-center justify-center bg-black/50 ${props.overlayClass || ''}`}
       onClick={handleOverlayClick}
     >
-      <div class={`bg-mantle rounded-lg shadow-xl ${props.class || ''}`} style={props.style}>
+      <div class={`bg-mantle rounded-none shadow-xl ${props.class || ''}`} style={props.style}>
         {props.children}
       </div>
     </div>

@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Combustion Engine — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;400;500;600;700;800;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --block-dark: #1a1c20;
+      --chrome: #c0c8d0;
+      --chrome-dim: #606870;
+      --oil-dark: #2a2018;
+      --combustion: #e06020;
+      --combustion-dim: rgba(224,96,32,0.25);
+      --coolant: #3080c0;
+      --coolant-dim: rgba(48,128,192,0.2);
+      --text: #808890;
+      --text-dim: #484c54;
+      --text-bright: #d0d4d8;
+      --grid: rgba(192,200,208,0.06);
+      --grid-line: rgba(192,200,208,0.12);
+    }
+
+    body {
+      font-family: 'Barlow Condensed', sans-serif;
+      background: var(--block-dark);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    .direction-nav {
+      position: sticky; top: 0; z-index: 1000;
+      background: rgba(26,28,32,0.92); backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--grid);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .direction-nav a {
+      font-size: 11px; font-weight: 500; color: var(--text-dim);
+      text-decoration: none; padding: 5px 12px; border-radius: 6px; transition: all 0.2s;
+    }
+    .direction-nav a:hover { color: var(--combustion); background: rgba(224,96,32,0.06); }
+    .direction-nav .nav-title {
+      font-weight: 700; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--text-bright); flex: 1; text-align: center;
+    }
+    .direction-nav .nav-home {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-dim); border-right: 1px solid var(--grid);
+      padding-right: 16px; margin-right: 4px;
+    }
+
+    .page-header {
+      padding: 80px 48px 20px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .tag {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--combustion); margin-bottom: 12px; display: block;
+    }
+
+    h1 {
+      font-size: clamp(44px, 6vw, 76px);
+      font-weight: 900; text-transform: uppercase;
+      letter-spacing: 0.02em;
+      line-height: 1.0; color: var(--text-bright); margin-bottom: 16px;
+    }
+
+    h1 span { color: var(--combustion); }
+
+    .subtitle {
+      font-size: 15px; font-weight: 300;
+      color: var(--text-dim); max-width: 580px; line-height: 1.8;
+    }
+
+    .showcase {
+      padding: 40px 48px 60px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    /* ====== ENGINE BLOCK ====== */
+    .engine-layout {
+      display: grid;
+      grid-template-columns: 1fr 240px;
+      gap: 0;
+      border: 1px solid var(--grid-line);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    /* Cylinder bank */
+    .cylinder-bank {
+      background: var(--block-dark);
+      padding: 0;
+      position: relative;
+    }
+
+    /* Crankshaft header */
+    .crankshaft-bar {
+      padding: 10px 20px;
+      border-bottom: 1px solid var(--grid-line);
+      display: flex; align-items: center; gap: 12px;
+      background: #1e2026;
+    }
+
+    .crankshaft-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .crankshaft-line {
+      flex: 1; height: 2px;
+      background: linear-gradient(90deg,
+        var(--chrome) 0%, var(--chrome) 20%,
+        var(--chrome-dim) 20%, var(--chrome-dim) 22%,
+        var(--chrome) 22%, var(--chrome) 40%,
+        var(--chrome-dim) 40%, var(--chrome-dim) 42%,
+        var(--chrome) 42%, var(--chrome) 60%,
+        var(--chrome-dim) 60%, var(--chrome-dim) 62%,
+        var(--chrome) 62%, var(--chrome) 80%,
+        var(--chrome-dim) 80%, var(--chrome-dim) 82%,
+        var(--chrome) 82%, var(--chrome) 100%
+      );
+      border-radius: 1px;
+      opacity: 0.3;
+    }
+
+    .crankshaft-route {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      color: var(--chrome-dim);
+    }
+
+    /* Cylinders grid */
+    .cylinders {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 0;
+    }
+
+    .cylinder {
+      border-right: 1px solid var(--grid-line);
+      padding: 20px 12px;
+      display: flex; flex-direction: column;
+      align-items: center;
+      min-height: 380px;
+      position: relative;
+      animation: cyl-mount 0.4s ease-out both;
+    }
+
+    .cylinder:last-child { border-right: none; }
+    .cylinder:nth-child(2) { animation-delay: 0.06s; }
+    .cylinder:nth-child(3) { animation-delay: 0.12s; }
+    .cylinder:nth-child(4) { animation-delay: 0.18s; }
+    .cylinder:nth-child(5) { animation-delay: 0.24s; }
+
+    @keyframes cyl-mount {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .cylinder-number {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px; color: var(--text-dim);
+      letter-spacing: 0.1em;
+      margin-bottom: 10px;
+    }
+
+    /* Cylinder bore */
+    .bore {
+      width: 80%; max-width: 100px;
+      aspect-ratio: 0.6;
+      border: 1px solid var(--grid-line);
+      border-radius: 4px 4px 0 0;
+      position: relative;
+      overflow: hidden;
+      background: #16181c;
+      flex: 1;
+    }
+
+    /* Stroke phases */
+    .stroke-labels {
+      position: absolute;
+      right: 4px; top: 0; bottom: 0;
+      display: flex; flex-direction: column;
+      justify-content: space-between;
+      padding: 6px 0;
+    }
+
+    .stroke-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 7px; color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      opacity: 0.5;
+    }
+
+    .stroke-label.active-stroke { opacity: 1; color: var(--combustion); }
+
+    /* Piston */
+    .piston {
+      position: absolute;
+      left: 10%; right: 10%;
+      height: 20px;
+      background: linear-gradient(180deg, var(--chrome), var(--chrome-dim));
+      border-radius: 2px;
+      transition: top 1s ease-in-out;
+    }
+
+    /* Piston positions by stroke phase */
+    .bore.phase-exhaust .piston { top: 8%; }
+    .bore.phase-power .piston { top: 70%; background: linear-gradient(180deg, var(--combustion), #a04010); box-shadow: 0 -4px 12px var(--combustion-dim); }
+    .bore.phase-compression .piston { top: 15%; }
+    .bore.phase-intake .piston { top: 65%; opacity: 0.4; }
+
+    /* Combustion glow */
+    .bore.phase-power::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; height: 30px;
+      background: radial-gradient(ellipse at 50% 0%, var(--combustion-dim), transparent);
+      animation: combust-glow 1.5s ease-in-out infinite;
+    }
+
+    @keyframes combust-glow {
+      0%, 100% { opacity: 0.6; }
+      50% { opacity: 1; }
+    }
+
+    /* Spark plug */
+    .spark-plug {
+      position: absolute;
+      top: 0; left: 50%; transform: translateX(-50%);
+      width: 10px; height: 14px;
+      background: linear-gradient(180deg, var(--chrome), var(--chrome-dim));
+      border-radius: 2px 2px 0 0;
+      z-index: 2;
+    }
+
+    .spark-plug::after {
+      content: '';
+      position: absolute;
+      bottom: -2px; left: 50%; transform: translateX(-50%);
+      width: 4px; height: 4px;
+      border-radius: 50%;
+    }
+
+    .spark-plug.firing::after {
+      background: var(--combustion);
+      box-shadow: 0 0 8px var(--combustion);
+      animation: spark-fire 0.8s ease-in-out infinite;
+    }
+
+    .spark-plug.idle::after {
+      background: var(--chrome-dim);
+    }
+
+    @keyframes spark-fire {
+      0%, 100% { opacity: 0.5; }
+      50% { opacity: 1; box-shadow: 0 0 12px var(--combustion); }
+    }
+
+    /* Misfire indicator */
+    .spark-plug.misfire::after {
+      background: #e04040;
+      box-shadow: 0 0 6px rgba(224,64,64,0.4);
+    }
+
+    /* Cylinder labels */
+    .cyl-name {
+      font-size: 12px; font-weight: 600;
+      color: var(--text-bright);
+      margin-top: 12px;
+      text-align: center;
+    }
+
+    .cyl-status {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px; color: var(--text-dim);
+      margin-top: 4px;
+      padding: 2px 6px;
+      background: rgba(192,200,208,0.04);
+      border-radius: 2px;
+    }
+
+    .cyl-status.st-firing { color: var(--combustion); }
+    .cyl-status.st-smooth { color: var(--coolant); }
+    .cyl-status.st-misfire { color: #e04040; }
+
+    /* Gauges panel */
+    .gauges-panel {
+      background: #1e2026;
+      border-left: 1px solid var(--grid-line);
+      padding: 0;
+      display: flex; flex-direction: column;
+    }
+
+    .gauges-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--grid-line);
+      font-family: 'DM Mono', monospace;
+      font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .gauge {
+      padding: 16px;
+      border-bottom: 1px solid var(--grid);
+    }
+
+    .gauge-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+    }
+
+    .gauge-dial {
+      width: 100%; height: 8px;
+      background: #16181c;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 4px;
+    }
+
+    .gauge-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.6s ease;
+    }
+
+    .gauge-fill.fill-rpm { background: linear-gradient(90deg, var(--coolant), var(--combustion)); }
+    .gauge-fill.fill-oil { background: linear-gradient(90deg, var(--combustion), #a04010); }
+    .gauge-fill.fill-coolant { background: var(--coolant); }
+    .gauge-fill.fill-timing { background: var(--chrome); }
+
+    .gauge-value {
+      font-family: 'DM Mono', monospace;
+      font-size: 18px; font-weight: 500;
+      color: var(--text-bright);
+      margin-top: 4px;
+    }
+
+    .gauge-unit {
+      font-size: 10px;
+      color: var(--text-dim);
+    }
+
+    /* Timing chain display */
+    .timing-display {
+      padding: 16px;
+      flex: 1;
+    }
+
+    .timing-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 10px;
+    }
+
+    .timing-chain {
+      display: flex; flex-direction: column; gap: 6px;
+    }
+
+    .timing-link {
+      display: flex; align-items: center; gap: 8px;
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+    }
+
+    .timing-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .timing-dot.synced { background: var(--coolant); }
+    .timing-dot.active { background: var(--combustion); animation: timing-pulse 1s ease-in-out infinite; }
+    .timing-dot.waiting { background: var(--chrome-dim); }
+    .timing-dot.off { background: var(--text-dim); opacity: 0.3; }
+
+    @keyframes timing-pulse {
+      0%, 100% { opacity: 0.6; }
+      50% { opacity: 1; }
+    }
+
+    .timing-name { color: var(--text); }
+    .timing-phase { color: var(--text-dim); margin-left: auto; }
+
+    .rationale {
+      padding: 0 48px 100px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .rationale h3 {
+      font-size: 20px; font-weight: 800; text-transform: uppercase;
+      letter-spacing: 0.04em; margin-bottom: 20px;
+    }
+
+    .rationale-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .rationale-card {
+      padding: 24px;
+      background: #1e2026;
+      border: 1px solid var(--grid);
+      border-radius: 4px;
+    }
+
+    .rationale-card h4 {
+      font-size: 12px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin-bottom: 8px; color: var(--combustion);
+    }
+
+    .rationale-card p {
+      font-size: 13px; color: var(--text-dim); line-height: 1.7;
+    }
+
+    @media (max-width: 768px) {
+      .page-header, .showcase, .rationale { padding-left: 20px; padding-right: 20px; }
+      .engine-layout { grid-template-columns: 1fr; }
+      .cylinders { grid-template-columns: repeat(3, 1fr); }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="direction-nav">
+    <a href="../designs.html" class="nav-home">Storm</a>
+    <a href="bonsai-garden.html">Prev</a>
+    <span class="nav-title">COMBUSTION ENGINE</span>
+  </nav>
+
+  <div class="page-header">
+    <div class="tag">Direction 25 &mdash; Mechanical</div>
+    <h1>COMBUSTION <span>ENGINE</span></h1>
+    <p class="subtitle">A transparent engine block showing pistons, valves, and timing chains. Each cylinder is a spec. The four-stroke cycle maps to task progress: intake is draft, compression is planning, power is execution, exhaust is delivery. Workers are spark plugs firing at the right moment. The crankshaft ties all cylinders together as the route.</p>
+  </div>
+
+  <div class="showcase">
+    <div class="engine-layout">
+      <div class="cylinder-bank">
+        <div class="crankshaft-bar">
+          <span class="crankshaft-label">Crankshaft</span>
+          <div class="crankshaft-line"></div>
+          <span class="crankshaft-route">Auth Overhaul</span>
+        </div>
+
+        <div class="cylinders">
+          <!-- CYL 1: Schema Migration - Validated (exhaust/complete) -->
+          <div class="cylinder">
+            <div class="cylinder-number">CYL 1</div>
+            <div class="bore phase-exhaust">
+              <div class="spark-plug idle"></div>
+              <div class="piston"></div>
+              <div class="stroke-labels">
+                <span class="stroke-label">INT</span>
+                <span class="stroke-label">CMP</span>
+                <span class="stroke-label">PWR</span>
+                <span class="stroke-label active-stroke">EXH</span>
+              </div>
+            </div>
+            <div class="cyl-name">Schema Migration</div>
+            <div class="cyl-status st-smooth">VALIDATED</div>
+          </div>
+
+          <!-- CYL 2: API Restructure - Validated (exhaust/complete) -->
+          <div class="cylinder">
+            <div class="cylinder-number">CYL 2</div>
+            <div class="bore phase-exhaust">
+              <div class="spark-plug idle"></div>
+              <div class="piston"></div>
+              <div class="stroke-labels">
+                <span class="stroke-label">INT</span>
+                <span class="stroke-label">CMP</span>
+                <span class="stroke-label">PWR</span>
+                <span class="stroke-label active-stroke">EXH</span>
+              </div>
+            </div>
+            <div class="cyl-name">API Restructure</div>
+            <div class="cyl-status st-smooth">VALIDATED</div>
+          </div>
+
+          <!-- CYL 3: Token Rotation - Working 2/4 (power stroke) -->
+          <div class="cylinder">
+            <div class="cylinder-number">CYL 3</div>
+            <div class="bore phase-power">
+              <div class="spark-plug firing"></div>
+              <div class="piston"></div>
+              <div class="stroke-labels">
+                <span class="stroke-label">INT</span>
+                <span class="stroke-label">CMP</span>
+                <span class="stroke-label active-stroke">PWR</span>
+                <span class="stroke-label">EXH</span>
+              </div>
+            </div>
+            <div class="cyl-name">Token Rotation</div>
+            <div class="cyl-status st-firing">FIRING &middot; 2/4</div>
+          </div>
+
+          <!-- CYL 4: Rate Limiter - Pending/Blocked (compression, misfire) -->
+          <div class="cylinder">
+            <div class="cylinder-number">CYL 4</div>
+            <div class="bore phase-compression">
+              <div class="spark-plug misfire"></div>
+              <div class="piston"></div>
+              <div class="stroke-labels">
+                <span class="stroke-label">INT</span>
+                <span class="stroke-label active-stroke">CMP</span>
+                <span class="stroke-label">PWR</span>
+                <span class="stroke-label">EXH</span>
+              </div>
+            </div>
+            <div class="cyl-name">Rate Limiter</div>
+            <div class="cyl-status st-misfire">BLOCKED &middot; PENDING</div>
+          </div>
+
+          <!-- CYL 5: E2E Tests - Draft (intake) -->
+          <div class="cylinder">
+            <div class="cylinder-number">CYL 5</div>
+            <div class="bore phase-intake">
+              <div class="spark-plug idle"></div>
+              <div class="piston"></div>
+              <div class="stroke-labels">
+                <span class="stroke-label active-stroke">INT</span>
+                <span class="stroke-label">CMP</span>
+                <span class="stroke-label">PWR</span>
+                <span class="stroke-label">EXH</span>
+              </div>
+            </div>
+            <div class="cyl-name">E2E Tests</div>
+            <div class="cyl-status">DRAFT &middot; INTAKE</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="gauges-panel">
+        <div class="gauges-header">Engine Telemetry</div>
+
+        <div class="gauge">
+          <div class="gauge-label">RPM &mdash; Throughput</div>
+          <div class="gauge-dial"><div class="gauge-fill fill-rpm" style="width:55%;"></div></div>
+          <div class="gauge-value">2,400 <span class="gauge-unit">rpm</span></div>
+        </div>
+
+        <div class="gauge">
+          <div class="gauge-label">Oil Pressure &mdash; Health</div>
+          <div class="gauge-dial"><div class="gauge-fill fill-oil" style="width:72%;"></div></div>
+          <div class="gauge-value">42 <span class="gauge-unit">psi</span></div>
+        </div>
+
+        <div class="gauge">
+          <div class="gauge-label">Coolant Temp</div>
+          <div class="gauge-dial"><div class="gauge-fill fill-coolant" style="width:48%;"></div></div>
+          <div class="gauge-value">195 <span class="gauge-unit">&deg;F</span></div>
+        </div>
+
+        <div class="gauge">
+          <div class="gauge-label">Timing Advance</div>
+          <div class="gauge-dial"><div class="gauge-fill fill-timing" style="width:60%;"></div></div>
+          <div class="gauge-value">12 <span class="gauge-unit">&deg; BTDC</span></div>
+        </div>
+
+        <div class="timing-display">
+          <div class="timing-label">Timing Chain &mdash; Firing Order</div>
+          <div class="timing-chain">
+            <div class="timing-link">
+              <div class="timing-dot synced"></div>
+              <span class="timing-name">Schema</span>
+              <span class="timing-phase">complete</span>
+            </div>
+            <div class="timing-link">
+              <div class="timing-dot synced"></div>
+              <span class="timing-name">API</span>
+              <span class="timing-phase">complete</span>
+            </div>
+            <div class="timing-link">
+              <div class="timing-dot active"></div>
+              <span class="timing-name">Token</span>
+              <span class="timing-phase">power</span>
+            </div>
+            <div class="timing-link">
+              <div class="timing-dot waiting"></div>
+              <span class="timing-name">Limiter</span>
+              <span class="timing-phase">blocked</span>
+            </div>
+            <div class="timing-link">
+              <div class="timing-dot off"></div>
+              <span class="timing-name">E2E</span>
+              <span class="timing-phase">intake</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rationale">
+    <h3>WHY THIS IS INTERESTING</h3>
+    <div class="rationale-grid">
+      <div class="rationale-card">
+        <h4>Four strokes = four phases</h4>
+        <p>The four-stroke cycle maps perfectly to spec lifecycle: intake (draft, gathering requirements), compression (planning, decomposing into tasks), power (execution, workers firing), exhaust (delivery, pushing results out). Each phase has a distinct visual character.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>The crankshaft connects</h4>
+        <p>In an engine, the crankshaft converts individual piston motion into unified rotation. The route is this crankshaft &mdash; it ties independent spec cylinders into coordinated output. When one cylinder fires, it drives the whole system forward.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Misfires are visible</h4>
+        <p>A misfiring cylinder is immediately obvious in a transparent engine &mdash; no combustion, no power stroke, the spark plug glowing wrong. Blocked or failed specs stand out the same way: the whole engine runs rougher when one cylinder is not contributing.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Gauges tell the system story</h4>
+        <p>RPM, oil pressure, coolant temp &mdash; these are system-level metrics, not per-cylinder. They show whether the overall route is healthy, overheating, or losing pressure. Dashboard gauges naturally separate individual spec status from aggregate route health.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

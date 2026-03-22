@@ -26,8 +26,6 @@ pub mod eval;
 pub mod files;
 pub mod forge;
 pub mod git;
-#[cfg(feature = "server")]
-pub mod git_http;
 pub mod github;
 pub mod http_client;
 pub mod lifecycle;
@@ -46,7 +44,6 @@ pub mod runner;
 pub mod scribe;
 #[cfg(feature = "server")]
 pub mod server;
-pub mod service_worker;
 pub mod shepherd;
 pub mod shepherd_chat;
 pub mod snapshot;
@@ -54,7 +51,6 @@ pub mod state;
 pub mod state_access;
 pub mod storage;
 pub mod system;
-pub mod tailscale;
 pub mod workers;
 
 // Re-export commonly used types
@@ -66,8 +62,7 @@ pub use eval::{run_eval, run_eval_from_args, EvalAcpConfig, EvalAcpResult, EvalE
 pub use files::Files;
 pub use lifecycle::{
     LifecycleAction, LifecycleContext, LifecycleError, LifecycleEvent, LifecycleManager,
-    LifecycleResult, LocalLifecycleManager, RemoteLifecycleManager, RunStateMachine,
-    WorkerStateMachine,
+    LifecycleResult, LocalLifecycleManager, RunStateMachine, WorkerStateMachine,
 };
 pub use names::{
     generate_run_name, generate_worker_name, get_available_name, get_available_names, slugify,
@@ -89,8 +84,7 @@ pub use run_manager::{
 };
 pub use runner::{
     create_runner, LocalRunner, Runner, RunnerConfig, RunnerError, RunnerResult,
-    SpawnResult as RunnerSpawnResult, SshHostConfig, SshRunner, WorkerHandle,
-    WorkerSpawnConfig as RunnerSpawnConfig,
+    SpawnResult as RunnerSpawnResult, WorkerHandle, WorkerSpawnConfig as RunnerSpawnConfig,
 };
 pub use scribe::{process_scribe_batch, should_process_batch, ScribeBatchResult, ScribeError};
 pub use shepherd::{
@@ -105,9 +99,6 @@ pub use shepherd_chat::{
 pub use conflict_resolver::{
     ConflictResolution, ConflictResolutionStatus, ConflictResolverError, ConflictResolverResult,
     ConflictResolverService, ConflictResolverState, ResolutionResult,
-};
-pub use service_worker::{
-    ScribeService, ServiceWorkerError, ServiceWorkerHandle, ServiceWorkerResult, ServiceWorkerType,
 };
 #[cfg(feature = "s3-storage")]
 pub use snapshot::S3ArchiveStrategy;
@@ -129,8 +120,6 @@ pub use workers::{
 };
 
 // Draft workspace management
-#[cfg(feature = "s3-storage")]
-pub use draft::S3WorkspaceProvider;
 pub use draft::{
     create_workspace_provider, FileEntry, LocalWorkspaceProvider, StartingPoint, WorkspaceInfo,
     WorkspaceProvider,

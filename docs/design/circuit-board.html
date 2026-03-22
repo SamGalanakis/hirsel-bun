@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Circuit Board — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;600;700&family=Titillium+Web:wght@200;300;400;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --pcb: #0a1428;
+      --pcb-light: #0e1a30;
+      --pcb-surface: #101e38;
+      --copper: #c87830;
+      --copper-dim: rgba(200,120,48,0.15);
+      --copper-glow: rgba(200,120,48,0.3);
+      --silver: #a0a8b8;
+      --silver-dim: rgba(160,168,184,0.2);
+      --led-green: #40d860;
+      --led-green-glow: rgba(64,216,96,0.4);
+      --led-amber: #e8a830;
+      --led-amber-glow: rgba(232,168,48,0.4);
+      --led-off: #303848;
+      --via: rgba(200,120,48,0.08);
+      --solder: #d0d8e0;
+      --text: #b0b8c8;
+      --text-dim: #506070;
+      --accent: #c87830;
+    }
+
+    body {
+      font-family: 'Titillium Web', sans-serif;
+      background: var(--pcb);
+      color: var(--text);
+      line-height: 1.5;
+      overflow-x: hidden;
+      min-height: 100vh;
+    }
+
+    .direction-nav {
+      position: sticky; top: 0; z-index: 1000;
+      background: rgba(10,20,40,0.88); backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(200,120,48,0.06);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .direction-nav a {
+      font-size: 11px; font-weight: 500; color: var(--text-dim);
+      text-decoration: none; padding: 5px 12px; border-radius: 6px; transition: all 0.2s;
+      font-family: 'Titillium Web', sans-serif;
+    }
+    .direction-nav a:hover { color: var(--accent); background: rgba(200,120,48,0.06); }
+    .direction-nav .nav-title {
+      font-family: 'Titillium Web', sans-serif; font-size: 16px;
+      color: var(--text); flex: 1; text-align: center; font-weight: 600;
+    }
+    .direction-nav .nav-home {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-dim); border-right: 1px solid rgba(200,120,48,0.06);
+      padding-right: 16px; margin-right: 4px;
+    }
+
+    .page-header {
+      padding: 80px 48px 20px;
+      max-width: 1200px;
+      margin: 0 auto;
+      position: relative;
+    }
+
+    .tag {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--accent); margin-bottom: 12px; display: block;
+    }
+
+    h1 {
+      font-family: 'Titillium Web', sans-serif;
+      font-size: clamp(48px, 7vw, 88px);
+      font-weight: 700;
+      line-height: 1.0;
+      color: var(--text);
+      margin-bottom: 16px;
+    }
+
+    .subtitle {
+      font-size: 15px; font-weight: 300;
+      color: var(--text-dim);
+      max-width: 600px; line-height: 1.8;
+    }
+
+    .showcase {
+      padding: 40px 48px 60px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    /* ====== THE CIRCUIT BOARD VISUALIZATION ====== */
+    /*
+      Core idea: PCB layout. The route is the board. Specs are ICs
+      (integrated circuits) placed on the board. Tasks are copper
+      traces connecting them. Workers are signal pulses on traces.
+      Delivery is the edge connector. LEDs show status.
+    */
+
+    .pcb {
+      position: relative;
+      background: var(--pcb-light);
+      border: 2px solid rgba(200,120,48,0.12);
+      border-radius: 8px;
+      min-height: 680px;
+      overflow: hidden;
+    }
+
+    /* PCB background texture — grid of drill holes */
+    .pcb::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image:
+        radial-gradient(circle, rgba(200,120,48,0.03) 1px, transparent 1px);
+      background-size: 20px 20px;
+    }
+
+    /* Board silkscreen label */
+    .board-label {
+      position: absolute;
+      top: 16px; left: 20px;
+      font-family: 'Roboto Mono', monospace;
+      font-size: 11px;
+      color: var(--silver-dim);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      z-index: 5;
+    }
+
+    .board-rev {
+      position: absolute;
+      top: 16px; right: 20px;
+      font-family: 'Roboto Mono', monospace;
+      font-size: 9px;
+      color: rgba(160,168,184,0.15);
+      letter-spacing: 0.08em;
+    }
+
+    /* Mounting holes in corners */
+    .mount-hole {
+      position: absolute;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      border: 2px solid rgba(200,120,48,0.1);
+      background: var(--pcb);
+    }
+    .mount-hole.tl { top: 10px; left: 10px; }
+    .mount-hole.tr { top: 10px; right: 10px; }
+    .mount-hole.bl { bottom: 10px; left: 10px; }
+    .mount-hole.br { bottom: 10px; right: 10px; }
+
+    /* === IC CHIPS (specs) === */
+    .ic-chip {
+      position: absolute;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      z-index: 10;
+    }
+
+    .ic-package {
+      background: #181e28;
+      border: 1px solid var(--silver-dim);
+      border-radius: 3px;
+      padding: 10px 14px;
+      position: relative;
+      min-width: 100px;
+    }
+
+    /* IC pins on sides */
+    .ic-package::before,
+    .ic-package::after {
+      content: '';
+      position: absolute;
+      left: 10px; right: 10px;
+      height: 4px;
+      background: repeating-linear-gradient(90deg,
+        var(--silver) 0px, var(--silver) 4px,
+        transparent 4px, transparent 10px
+      );
+    }
+    .ic-package::before { top: -4px; }
+    .ic-package::after { bottom: -4px; }
+
+    /* Notch on IC */
+    .ic-notch {
+      position: absolute;
+      top: -1px; left: 50%; transform: translateX(-50%);
+      width: 12px; height: 6px;
+      border-radius: 0 0 6px 6px;
+      background: var(--pcb-light);
+      border: 1px solid var(--silver-dim);
+      border-top: none;
+    }
+
+    .ic-label {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 9px;
+      font-weight: 600;
+      color: var(--silver);
+      letter-spacing: 0.08em;
+      text-align: center;
+      margin-bottom: 2px;
+    }
+
+    .ic-sublabel {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 7px;
+      color: var(--text-dim);
+      text-align: center;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    /* LED indicator on IC */
+    .ic-led {
+      position: absolute;
+      top: 8px; right: 8px;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+    }
+
+    .ic-led.green {
+      background: var(--led-green);
+      box-shadow: 0 0 8px var(--led-green-glow), 0 0 16px rgba(64,216,96,0.15);
+    }
+
+    .ic-led.amber {
+      background: var(--led-amber);
+      box-shadow: 0 0 8px var(--led-amber-glow);
+      animation: led-blink 1.5s ease-in-out infinite;
+    }
+
+    @keyframes led-blink {
+      0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--led-amber-glow); }
+      50% { opacity: 0.4; box-shadow: 0 0 4px rgba(232,168,48,0.2); }
+    }
+
+    .ic-led.off {
+      background: var(--led-off);
+    }
+
+    /* Position ICs on the board */
+    .ic-schema { top: 80px; left: 80px; }
+    .ic-api { top: 80px; right: 80px; }
+    .ic-tokens { top: 280px; left: 50%; transform: translateX(-50%); }
+    .ic-limiter { top: 440px; left: 120px; }
+    .ic-e2e { top: 440px; right: 120px; }
+
+    /* Via holes (spec decomposition into tasks) */
+    .via-hole {
+      position: absolute;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      border: 2px solid var(--copper);
+      background: var(--via);
+      z-index: 4;
+    }
+
+    .via-hole.active {
+      box-shadow: 0 0 6px var(--copper-glow);
+    }
+
+    .via-label {
+      position: absolute;
+      top: -14px; left: 50%; transform: translateX(-50%);
+      font-family: 'Roboto Mono', monospace;
+      font-size: 7px;
+      color: var(--copper);
+      white-space: nowrap;
+      opacity: 0.6;
+    }
+
+    /* Solder points (decision junctions) */
+    .solder-point {
+      position: absolute;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--solder);
+      box-shadow: 0 0 2px rgba(208,216,224,0.3);
+      z-index: 4;
+    }
+
+    /* Copper traces (SVG) and signal pulses (workers) */
+    .traces-layer {
+      position: absolute;
+      inset: 0;
+      z-index: 3;
+    }
+
+    .traces-layer svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .trace {
+      fill: none;
+      stroke: var(--copper-dim);
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .trace.active {
+      stroke: rgba(200,120,48,0.3);
+    }
+
+    .trace.validated {
+      stroke: rgba(200,120,48,0.25);
+    }
+
+    /* Signal pulse (worker) */
+    .signal-pulse {
+      fill: var(--copper);
+      filter: drop-shadow(0 0 4px var(--copper-glow));
+    }
+
+    /* Edge connector (delivery) */
+    .edge-connector {
+      position: absolute;
+      bottom: 0; left: 50%; transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      z-index: 10;
+    }
+
+    .connector-pins {
+      display: flex;
+      gap: 4px;
+      padding: 6px 20px;
+      background: var(--pcb);
+      border: 1px solid rgba(200,120,48,0.15);
+      border-bottom: none;
+      border-radius: 4px 4px 0 0;
+    }
+
+    .connector-pin {
+      width: 4px; height: 16px;
+      background: linear-gradient(180deg, var(--copper), rgba(200,120,48,0.4));
+      border-radius: 1px;
+    }
+
+    .connector-pin.active {
+      background: var(--copper);
+      box-shadow: 0 0 4px var(--copper-glow);
+    }
+
+    .connector-label {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 8px;
+      color: var(--copper);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    /* Task progress indicator near ICs */
+    .task-counter {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 8px;
+      color: var(--led-amber);
+      position: absolute;
+      bottom: -18px;
+      left: 50%; transform: translateX(-50%);
+      white-space: nowrap;
+      letter-spacing: 0.05em;
+    }
+
+    /* Blocked indicator */
+    .blocked-trace {
+      stroke-dasharray: 6 4;
+      opacity: 0.4;
+    }
+
+    /* Draft IC — dashed outline */
+    .ic-chip.draft .ic-package {
+      border-style: dashed;
+      border-color: rgba(160,168,184,0.1);
+      opacity: 0.5;
+    }
+
+    .ic-chip.draft .ic-package::before,
+    .ic-chip.draft .ic-package::after {
+      opacity: 0.3;
+    }
+
+    /* Delivery bar */
+    .delivery-edge {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 28px;
+      border: 1px solid rgba(200,120,48,0.08);
+      border-radius: 100px;
+      background: rgba(200,120,48,0.03);
+      margin: 40px auto 0;
+      max-width: 460px;
+    }
+
+    .delivery-edge .delivery-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--led-green);
+      animation: dot-pulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes dot-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .delivery-edge .delivery-text {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 10px;
+      color: var(--accent);
+      letter-spacing: 0.08em;
+    }
+
+    /* Legend */
+    .pcb-legend {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-top: 48px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 16px;
+      background: rgba(200,120,48,0.02);
+      border: 1px solid rgba(200,120,48,0.04);
+      border-radius: 8px;
+    }
+
+    .legend-glyph {
+      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .glyph-ic {
+      width: 28px; height: 20px;
+      background: #181e28;
+      border: 1px solid var(--silver-dim);
+      border-radius: 2px;
+      position: relative;
+    }
+
+    .glyph-ic::after {
+      content: '';
+      position: absolute;
+      top: 3px; right: 3px;
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: var(--led-green);
+      box-shadow: 0 0 4px var(--led-green-glow);
+    }
+
+    .glyph-trace {
+      width: 32px; height: 4px;
+      background: var(--copper);
+      border-radius: 2px;
+      box-shadow: 0 0 4px var(--copper-glow);
+    }
+
+    .glyph-signal {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--copper);
+      box-shadow: 0 0 8px var(--copper-glow);
+    }
+
+    .legend-text h4 {
+      font-family: 'Titillium Web', sans-serif;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+
+    .legend-text p {
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+
+    /* === RATIONALE === */
+    .rationale {
+      padding: 0 48px 100px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .rationale h3 {
+      font-family: 'Titillium Web', sans-serif;
+      font-size: 24px;
+      font-weight: 600;
+      margin-bottom: 20px;
+    }
+
+    .rationale-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .rationale-card {
+      padding: 24px;
+      background: rgba(200,120,48,0.02);
+      border: 1px solid rgba(200,120,48,0.04);
+      border-radius: 8px;
+    }
+
+    .rationale-card h4 {
+      font-size: 13px; font-weight: 700;
+      margin-bottom: 8px;
+      color: var(--accent);
+    }
+
+    .rationale-card p {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.7;
+    }
+
+    @media (max-width: 768px) {
+      .page-header, .showcase, .rationale { padding-left: 20px; padding-right: 20px; }
+      .pcb { min-height: 500px; }
+      .ic-schema { top: 60px; left: 20px; }
+      .ic-api { top: 60px; right: 20px; }
+      .ic-tokens { top: 220px; }
+      .ic-limiter { top: 360px; left: 20px; }
+      .ic-e2e { top: 360px; right: 20px; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="direction-nav">
+    <a href="../designs.html" class="nav-home">Storm</a>
+    <a href="mycelium-net.html">Prev</a>
+    <span class="nav-title">Circuit Board</span>
+    <a href="weather-system.html">Next</a>
+  </nav>
+
+  <div class="page-header">
+    <div class="tag">Direction 13 — Systems</div>
+    <h1>Circuit Board</h1>
+    <p class="subtitle">A PCB layout. The route is the board. Specs are integrated circuits placed on it. Tasks are copper traces connecting ICs. Workers are signal pulses flowing along traces. Delivery is the edge connector where signals leave the board. LEDs glow green for validated, amber for working.</p>
+  </div>
+
+  <div class="showcase">
+    <div class="pcb">
+
+      <!-- Board metadata -->
+      <div class="board-label">Auth Overhaul — PCB Rev 1.0</div>
+      <div class="board-rev">HIRSEL-PCB-2026</div>
+
+      <!-- Mounting holes -->
+      <div class="mount-hole tl"></div>
+      <div class="mount-hole tr"></div>
+      <div class="mount-hole bl"></div>
+      <div class="mount-hole br"></div>
+
+      <!-- COPPER TRACES (tasks connecting ICs) -->
+      <div class="traces-layer">
+        <svg viewBox="0 0 1200 680" preserveAspectRatio="xMidYMid meet">
+          <!-- Schema to API (validated trace) -->
+          <path class="trace validated" d="M 230 120 L 400 120 L 400 100 L 920 100 L 920 120" />
+
+          <!-- Schema to Tokens (validated trace going down) -->
+          <path class="trace validated" d="M 180 140 L 180 280 L 520 280 L 520 310" />
+
+          <!-- API to Tokens (validated trace) -->
+          <path class="trace validated" d="M 1020 140 L 1020 240 L 680 240 L 680 310" />
+
+          <!-- Tokens to Limiter (active trace — workers here) -->
+          <path class="trace active" d="M 560 380 L 400 380 L 400 460 L 270 460" />
+
+          <!-- Tokens to E2E (inactive trace) -->
+          <path class="trace blocked-trace" d="M 640 380 L 800 380 L 800 460 L 930 460" />
+
+          <!-- Limiter to E2E (inactive/blocked) -->
+          <path class="trace blocked-trace" d="M 270 490 L 270 560 L 930 560 L 930 490" />
+
+          <!-- Signal pulses (workers on active traces) -->
+          <circle class="signal-pulse" r="4">
+            <animateMotion dur="4s" repeatCount="indefinite" path="M 560 380 L 400 380 L 400 460 L 270 460" />
+          </circle>
+          <circle class="signal-pulse" r="3.5">
+            <animateMotion dur="5s" repeatCount="indefinite" path="M 180 140 L 180 280 L 520 280 L 520 310" />
+          </circle>
+          <circle class="signal-pulse" r="3">
+            <animateMotion dur="6s" repeatCount="indefinite" path="M 1020 140 L 1020 240 L 680 240 L 680 310" />
+          </circle>
+        </svg>
+      </div>
+
+      <!-- Via holes (decomposition points) -->
+      <div class="via-hole active" style="top: 270px; left: 42%;">
+        <span class="via-label">via-schema</span>
+      </div>
+      <div class="via-hole active" style="top: 230px; right: 17%;">
+        <span class="via-label">via-api</span>
+      </div>
+      <div class="via-hole" style="top: 370px; left: 32%;">
+        <span class="via-label">via-token-1</span>
+      </div>
+      <div class="via-hole" style="top: 370px; right: 34%;">
+        <span class="via-label">via-token-2</span>
+      </div>
+
+      <!-- Solder points (decision junctions) -->
+      <div class="solder-point" style="top: 374px; left: 48%;"></div>
+      <div class="solder-point" style="top: 374px; left: 53%;"></div>
+      <div class="solder-point" style="top: 115px; left: 33%;"></div>
+
+      <!-- IC CHIPS (specs) -->
+
+      <!-- Schema Migration: validated, green LED -->
+      <div class="ic-chip ic-schema">
+        <div class="ic-package">
+          <div class="ic-notch"></div>
+          <div class="ic-led green"></div>
+          <div class="ic-label">SCHEMA</div>
+          <div class="ic-sublabel">Migration</div>
+        </div>
+      </div>
+
+      <!-- API Restructure: validated, green LED -->
+      <div class="ic-chip ic-api">
+        <div class="ic-package">
+          <div class="ic-notch"></div>
+          <div class="ic-led green"></div>
+          <div class="ic-label">API</div>
+          <div class="ic-sublabel">Restructure</div>
+        </div>
+      </div>
+
+      <!-- Token Rotation: working, amber LED pulsing -->
+      <div class="ic-chip ic-tokens">
+        <div class="ic-package">
+          <div class="ic-notch"></div>
+          <div class="ic-led amber"></div>
+          <div class="ic-label">TOKEN</div>
+          <div class="ic-sublabel">Rotation</div>
+          <span class="task-counter">2/4 tasks</span>
+        </div>
+      </div>
+
+      <!-- Rate Limiter: pending/blocked, LED off -->
+      <div class="ic-chip ic-limiter">
+        <div class="ic-package">
+          <div class="ic-notch"></div>
+          <div class="ic-led off"></div>
+          <div class="ic-label">LIMITER</div>
+          <div class="ic-sublabel">Rate — blocked</div>
+        </div>
+      </div>
+
+      <!-- E2E Tests: draft, dashed outline -->
+      <div class="ic-chip draft ic-e2e">
+        <div class="ic-package">
+          <div class="ic-notch"></div>
+          <div class="ic-led off"></div>
+          <div class="ic-label">E2E</div>
+          <div class="ic-sublabel">Tests — draft</div>
+        </div>
+      </div>
+
+      <!-- EDGE CONNECTOR (delivery) -->
+      <div class="edge-connector">
+        <span class="connector-label">Delivery Bus</span>
+        <div class="connector-pins">
+          <div class="connector-pin active"></div>
+          <div class="connector-pin active"></div>
+          <div class="connector-pin"></div>
+          <div class="connector-pin"></div>
+          <div class="connector-pin"></div>
+          <div class="connector-pin active"></div>
+          <div class="connector-pin active"></div>
+          <div class="connector-pin"></div>
+          <div class="connector-pin"></div>
+          <div class="connector-pin"></div>
+          <div class="connector-pin active"></div>
+          <div class="connector-pin"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- DELIVERY -->
+    <div class="delivery-edge">
+      <div class="delivery-dot"></div>
+      <span class="delivery-text">2 ICs validated, signals queued at edge connector (PR pending)</span>
+    </div>
+
+    <!-- LEGEND -->
+    <div class="pcb-legend">
+      <div class="legend-item">
+        <div class="legend-glyph glyph-ic"></div>
+        <div class="legend-text">
+          <h4>IC Chip = Spec</h4>
+          <p>Each spec is an integrated circuit on the board. Green LED means validated. Amber pulses for working. Off means pending or draft.</p>
+        </div>
+      </div>
+      <div class="legend-item">
+        <div class="legend-glyph glyph-trace"></div>
+        <div class="legend-text">
+          <h4>Copper Trace = Task</h4>
+          <p>Tasks are the copper traces connecting ICs. Active traces carry signals. Blocked traces are dashed. The routing reveals task dependencies.</p>
+        </div>
+      </div>
+      <div class="legend-item">
+        <div class="legend-glyph glyph-signal"></div>
+        <div class="legend-text">
+          <h4>Signal Pulse = Worker</h4>
+          <p>Workers are signal pulses flowing along copper traces. Each pulse carries execution from one IC toward the next, transforming plan into code.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rationale">
+    <h3>Why this is interesting</h3>
+    <div class="rationale-grid">
+      <div class="rationale-card">
+        <h4>Engineers read this instantly</h4>
+        <p>A PCB layout is already a systems diagram. Developers immediately understand that ICs are components, traces are connections, and signals flow between them. The metaphor requires zero explanation for the target audience.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Routing is the hard problem</h4>
+        <p>In PCB design, trace routing is the critical challenge — just like task dependency management in Hirsel. Blocked traces (dashed) show where the system can't flow yet. Via holes show where specs decompose into deeper task layers. The board layout IS the orchestration plan.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Status is hardware-native</h4>
+        <p>LEDs are the most intuitive status indicator ever designed. Green means go. Amber pulsing means working. Off means not powered yet. No legend needed, no learning curve. The board tells you its state the way real hardware does.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Delivery is the edge connector</h4>
+        <p>The edge connector is where the board interfaces with the outside world. Validated signals queue at the connector pins and push out as a PR. The board's purpose is to process signals and deliver them — exactly what a Hirsel route does with specs.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

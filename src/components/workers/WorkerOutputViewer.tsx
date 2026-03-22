@@ -296,18 +296,18 @@ export const WorkerOutputViewer: Component = () => {
           if (e.target === e.currentTarget) setVisible(false);
         }}
       >
-        <div class="bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl w-[90vw] h-[90vh] max-w-6xl flex flex-col overflow-hidden">
+        <div class="bg-pasture-800 border border-pasture-600 rounded-none shadow-xl w-[90vw] h-[90vh] max-w-6xl flex flex-col overflow-hidden">
           {/* Header */}
           <div class="p-4 border-b border-pasture-600 flex items-center justify-between shrink-0">
             <div class="flex items-center gap-3">
-              <div class="w-10 h-10 rounded-full bg-pasture-700 flex items-center justify-center">
+              <div class="w-10 h-10 rounded-none bg-pasture-700 flex items-center justify-center">
                 <span class="text-xl">🐑</span>
               </div>
               <div>
                 <div class="flex items-center gap-2">
                   <h2 class="text-lg font-medium text-wool-100">{workerName()}</h2>
                   <Show when={workerStatus()}>
-                    <span class={`w-2 h-2 rounded-full ${statusColor()}`} />
+                    <span class={`w-2 h-2 rounded-none ${statusColor()}`} />
                     <span class="text-xs text-wool-500">{workerStatus()}</span>
                   </Show>
                 </div>
@@ -317,7 +317,7 @@ export const WorkerOutputViewer: Component = () => {
             <div class="flex items-center gap-2">
               {/* Toggle thinking */}
               <button
-                class={`px-2 py-1 text-xs rounded ${
+                class={`px-2 py-1 text-xs rounded-none ${
                   showThinking()
                     ? 'bg-amber-500/20 text-amber-400'
                     : 'bg-pasture-700 text-wool-500'
@@ -330,7 +330,7 @@ export const WorkerOutputViewer: Component = () => {
               </button>
               {/* Toggle auto-scroll */}
               <button
-                class={`px-2 py-1 text-xs rounded ${
+                class={`px-2 py-1 text-xs rounded-none ${
                   autoScroll()
                     ? 'bg-amber-500/20 text-amber-400'
                     : 'bg-pasture-700 text-wool-500'
@@ -344,7 +344,7 @@ export const WorkerOutputViewer: Component = () => {
               {/* Close */}
               <button
                 onClick={() => setVisible(false)}
-                class="p-2 rounded hover:bg-pasture-700 text-wool-500"
+                class="p-2 rounded-none hover:bg-pasture-700 text-wool-500"
               >
                 <Icon name="x" class="w-5 h-5" />
               </button>

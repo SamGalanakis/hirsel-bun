@@ -38,20 +38,20 @@ export const THEMES: Record<ThemeId, ThemeInfo> = {
   'hirsel-dark': {
     id: 'hirsel-dark',
     name: 'Hirsel Dark',
-    description: 'Pasture at Dusk - warm, earthy dark theme',
+    description: 'The Alchemical Ledger - deep ink substrate',
     isDark: true,
     family: 'hirsel',
     pairedTheme: 'hirsel-light',
-    swatches: ['#1a1a1a', '#d4a574', '#e8e4df'], // pasture-900, amber-500, wool-100
+    swatches: ['#131313', '#ffffff', '#e5e2e1'], // substrate, primary, on-surface
   },
   'hirsel-light': {
     id: 'hirsel-light',
     name: 'Hirsel Light',
-    description: 'Pasture at Dawn - warm, earthy light theme',
+    description: 'The Alchemical Ledger - vellum substrate',
     isDark: false,
     family: 'hirsel',
     pairedTheme: 'hirsel-dark',
-    swatches: ['#f5f3f0', '#b8895c', '#292724'], // wool-50, amber-600, wool-900
+    swatches: ['#f5f3f0', '#1f1b11', '#1c1b1b'], // substrate, primary, on-surface
   },
   'catppuccin-mocha': {
     id: 'catppuccin-mocha',
@@ -115,7 +115,7 @@ export const THEME_FAMILIES: Record<ThemeFamily, ThemeFamilyInfo> = {
   hirsel: {
     id: 'hirsel',
     name: 'Hirsel',
-    description: 'Warm, earthy tones inspired by pastoral landscapes',
+    description: 'Clinical precision with deep ink and vellum substrates',
     darkThemes: ['hirsel-dark'],
     lightTheme: 'hirsel-light',
   },
@@ -396,14 +396,15 @@ export const status = {
 } as const;
 
 export const fonts = {
-  primary: "'ET Book', 'Palatino', 'Palatino Linotype', Georgia, serif",
+  primary: "'Space Grotesk', system-ui, sans-serif",
+  display: "'Newsreader', 'Palatino', Georgia, serif",
   mono: "'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace",
 } as const;
 
 export const radius = {
-  card: '8px',
-  button: '6px',
-  pill: '9999px',
+  card: '0px',
+  button: '0px',
+  pill: '0px',
 } as const;
 
 export const transitions = {

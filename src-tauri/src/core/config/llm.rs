@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Supported LLM providers for lash-core runtime.
+/// Supported LLM providers for lash runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LlmProvider {

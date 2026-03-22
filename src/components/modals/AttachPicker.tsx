@@ -18,12 +18,12 @@ export const AttachPicker: Component = () => {
           if (e.target === e.currentTarget) selection.closeAttachPicker();
         }}
       >
-        <div class="bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl w-[400px] max-h-[500px] overflow-hidden">
+        <div class="bg-pasture-800 border border-pasture-600 rounded-none shadow-xl w-[400px] max-h-[500px] overflow-hidden">
           <div class="p-4 border-b border-pasture-600 flex items-center justify-between">
             <h2 class="text-lg font-medium text-wool-100">Attach to...</h2>
             <button
               onClick={() => selection.closeAttachPicker()}
-              class="p-1 rounded hover:bg-pasture-700 text-wool-500"
+              class="p-1 rounded-none hover:bg-pasture-700 text-wool-500"
             >
               <Icon name="x" class="w-4 h-4" />
             </button>
@@ -43,7 +43,7 @@ export const AttachPicker: Component = () => {
                         onClick={() =>
                           selection.attachToTarget('worker', worker.name)
                         }
-                        class="w-full px-3 py-2 text-left text-sm rounded hover:bg-pasture-700 flex items-center justify-between gap-2"
+                        class="w-full px-3 py-2 text-left text-sm rounded-none hover:bg-pasture-700 flex items-center justify-between gap-2"
                       >
                         <span class="flex items-center gap-2">
                           <Icon name="terminal" class="w-4 h-4 text-wool-500" />
@@ -80,7 +80,7 @@ export const AttachPicker: Component = () => {
                         onClick={() =>
                           selection.attachToTarget('eval', evalItem.evalName)
                         }
-                        class="w-full px-3 py-2 text-left text-sm rounded hover:bg-pasture-700 flex items-center justify-between gap-2"
+                        class="w-full px-3 py-2 text-left text-sm rounded-none hover:bg-pasture-700 flex items-center justify-between gap-2"
                       >
                         <span class="flex items-center gap-2">
                           <Icon name="flask-conical" class="w-4 h-4 text-wool-500" />

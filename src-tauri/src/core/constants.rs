@@ -23,9 +23,6 @@ pub const DEFAULT_CONTEXT_WINDOW: u32 = 200_000;
 /// Default timeout for agent operations (5 minutes)
 pub const DEFAULT_AGENT_TIMEOUT_SECS: u64 = 300;
 
-/// Timeout for scribe agent operations (2 minutes)
-pub const SCRIBE_TIMEOUT_SECS: u64 = 120;
-
 /// Timeout for conflict resolution agent (5 minutes)
 pub const RESOLUTION_TIMEOUT_SECS: u64 = 300;
 
@@ -59,13 +56,6 @@ pub const METRICS_CACHE_TTL: Duration = Duration::from_secs(5);
 
 /// Time notification thresholds as percentage of elapsed time (accelerating frequency)
 pub const TIME_NOTIFICATION_THRESHOLDS: &[i64] = &[25, 50, 75, 85, 90, 95, 98];
-
-// =============================================================================
-// External APIs
-// =============================================================================
-
-/// Fly.io Machines API base URL
-pub const FLY_API_BASE: &str = "https://api.machines.dev/v1";
 
 // =============================================================================
 // Agent Session Paths
@@ -121,12 +111,12 @@ pub const PLAN_TASK_PROMPT: &str = r#"You are a **planning worker** responsible 
 ## Your Job
 
 1. Read the target feature spec (shown above) with `get_task_details()` to understand what needs to be built
-2. Read project docs with `read_docs()` to understand the codebase
+2. Read retained project context with `read_retained_context()` to understand stable constraints
 3. Explore the codebase using filesystem tools to assess what exists vs what's needed
 4. Create implementation tasks as children of the target feature (via `add_task()`)
 5. Create checks to validate the implementation (via `add_check()`) — parent them under the feature they validate so they appear in the tree. Only omit parent for truly global/e2e checks.
 6. Set `blocked_by` relationships between tasks where needed
-7. Use `scribe()` to record your findings for other workers
+7. Use `scribe()` for durable findings that should survive route churn
 8. Call `work_done()` when planning is complete
 
 ## Task Design Principles
@@ -163,12 +153,12 @@ You are a **planning worker**, not an implementation worker. Your job is to deco
 ## Workflow
 
 1. **Read the plan task details** — `get_task_details("<your_task_id>")` to see the target feature you're planning
-2. **Explore the codebase** — understand existing patterns, files, and conventions
-3. **Read project docs** — check docs/ for architecture, patterns, prior art
+2. **Read retained project context** — `read_retained_context()` for stable constraints and decisions
+3. **Explore the codebase** — understand existing patterns, files, and conventions
 4. **Create tasks** — `add_task()` for each implementation unit
 5. **Create checks** — `add_check()` for validation/testing — parent under the feature so they appear in the tree. Only omit parent for global/e2e checks.
 6. **Set dependencies** — use `blocked_by` on `add_task()` to order work correctly
-7. **Update docs** — call `scribe()` if the planned work changes architecture
+7. **Update retained context** — call `scribe()` if you discover durable project constraints
 8. **Finish** — call `work_done()` when all tasks and checks are created
 
 ## Design Principles
@@ -181,49 +171,3 @@ You are a **planning worker**, not an implementation worker. Your job is to deco
 - **Minimize file overlap** — tasks touching the same files create merge conflicts
 
 Do NOT write implementation code. Create tasks that describe what to implement."#;
-
-// =============================================================================
-// Scribe System
-// =============================================================================
-
-/// Prompt template for the Scribe agent
-pub const SCRIBE_PROMPT: &str = r#"You are a documentation scribe maintaining developer reference docs.
-
-## First: Adopt Existing Structure
-
-Read docs/ first. If the project has its own documentation structure, adopt it.
-Maintain consistency with what exists.
-
-## Documentation Style
-
-Write **developer reference** docs - help someone understand the system and find what they need.
-
-**Good content:**
-- High-level feature descriptions (what the system does)
-- Technology stack and why each piece is used
-- Quick reference tables (Task -> Files to Modify)
-- Module/component maps with purposes
-- Key abstractions (traits, interfaces, patterns)
-- State machines and status flows
-- Architecture diagrams (ASCII)
-- Configuration options
-- Data flow descriptions
-- Gotchas, pitfalls, non-obvious constraints
-- Style conventions (especially frontend: components, patterns, naming)
-
-**Avoid:**
-- Prose explanations (use tables and bullets)
-- Implementation details that change often
-- Code snippets or examples
-- Tutorials or how-to guides
-- Anything obvious from reading code
-
-## Principles
-
-- Structure over prose
-- Help devs find the right place to look
-- Document the shape of the system, not the details
-- New info wins over old (update, don't duplicate)
-
-Learnings to process:
-"#;

@@ -1,5 +1,5 @@
 /**
- * WorkerCard - Displays a worker with sheep avatar and metrics
+ * WorkerCard - Displays a worker with status indicator and metrics
  */
 import { type Component, Show } from 'solid-js';
 import { useElapsedTime } from '../../hooks';
@@ -7,7 +7,7 @@ import type { WorkerDisplay } from '../../lib/types';
 import { getContextClass } from '../../lib/utils/context-class';
 import { formatTokens } from '../../lib/utils/formatters';
 import { getWorkerStatusConfig } from '../../lib/utils/status';
-import { Icon, SheepAvatar, StatusDot } from '../shared';
+import { Icon, StatusDot, WorkerAvatar } from '../shared';
 
 interface WorkerCardProps {
   worker: WorkerDisplay;
@@ -21,25 +21,25 @@ interface WorkerCardProps {
 export const WorkerCard: Component<WorkerCardProps> = (props) => {
   const elapsedTime = useElapsedTime(() => props.worker.sessionStartedAt);
 
-  const sheepSize = () => (props.compact ? 28 : 40);
+  const avatarSize = () => (props.compact ? 28 : 40);
 
   // Compact mode for horizontal strip
   if (props.compact) {
     const config = () => getWorkerStatusConfig(props.worker.status);
     return (
       <button
-        class={`relative flex items-center gap-2 px-3 py-2 rounded-lg border bg-pasture-800 hover:bg-pasture-700 transition-all text-left flex-shrink-0 ${
+        class={`relative flex items-center gap-2 px-3 py-2 rounded-none border bg-pasture-800 hover:bg-pasture-700 transition-all text-left flex-shrink-0 ${
           config().borderColor
         } ${props.selected ? 'ring-2 ring-amber-500' : ''}`}
         onClick={props.onClick}
         onDblClick={props.onDoubleClick}
       >
-        {/* Sheep avatar */}
+        {/* Worker initial */}
         <div class="relative flex-shrink-0">
-          <SheepAvatar config={props.worker.sheepConfig} size={sheepSize()} status={props.worker.status} />
+          <WorkerAvatar name={props.worker.name} size={avatarSize()} />
           <Show when={props.worker.isLeader}>
             <div
-              class="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-golden flex items-center justify-center"
+              class="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-none bg-golden flex items-center justify-center"
               title="Leader"
             >
               <Icon name="star" class="w-2 h-2 text-pasture-900" />
@@ -78,7 +78,7 @@ export const WorkerCard: Component<WorkerCardProps> = (props) => {
   const config = () => getWorkerStatusConfig(props.worker.status);
   return (
     <button
-      class={`relative p-3 rounded-lg border-2 bg-pasture-800 hover:bg-pasture-700 transition-all text-left ${
+      class={`relative p-3 rounded-none border-2 bg-pasture-800 hover:bg-pasture-700 transition-all text-left ${
         config().borderColor
       } ${props.selected ? 'ring-2 ring-amber-500 ring-offset-2 ring-offset-pasture-900' : ''}`}
       onClick={props.onClick}
@@ -90,13 +90,13 @@ export const WorkerCard: Component<WorkerCardProps> = (props) => {
       </div>
 
       <div class="flex items-start gap-3">
-        {/* Sheep avatar */}
+        {/* Worker initial */}
         <div class="relative flex-shrink-0">
-          <SheepAvatar config={props.worker.sheepConfig} size={sheepSize()} status={props.worker.status} />
+          <WorkerAvatar name={props.worker.name} size={avatarSize()} />
           {/* Leader badge */}
           <Show when={props.worker.isLeader}>
             <div
-              class="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-golden flex items-center justify-center"
+              class="absolute -top-1 -right-1 w-4 h-4 rounded-none bg-golden flex items-center justify-center"
               title="Leader"
             >
               <Icon name="star" class="w-2.5 h-2.5 text-pasture-900" />
@@ -138,9 +138,9 @@ export const WorkerCard: Component<WorkerCardProps> = (props) => {
                   {Math.round(props.worker.contextUtilization || 0)}%
                 </span>
               </div>
-              <div class="h-1 bg-pasture-600 rounded-full overflow-hidden">
+              <div class="h-1 bg-pasture-600 rounded-none overflow-hidden">
                 <div
-                  class={`h-full rounded-full transition-all ${
+                  class={`h-full rounded-none transition-all ${
                     (props.worker.contextUtilization || 0) >= 90
                       ? 'bg-terra'
                       : (props.worker.contextUtilization || 0) >= 75

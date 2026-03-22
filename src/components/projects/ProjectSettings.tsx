@@ -38,7 +38,7 @@ export const ProjectSettings: Component = () => {
   let nameInputRef: HTMLInputElement | undefined;
 
   const selectedProject = () => project.selectedProject();
-  const selectedRoute = () => route.activeRoute();
+  const selectedRoute = () => route.currentRoute();
 
   // Reset state and load config defaults when modal opens
   createEffect(() => {
@@ -158,10 +158,14 @@ export const ProjectSettings: Component = () => {
   const handleSave = async () => {
     const proj = selectedProject();
     if (!proj) return;
+    const routeId = route.currentRouteId();
+    if (!routeId) {
+      window.toast?.error('No route available to save settings');
+      return;
+    }
 
     // Capture ALL values before any async operation
     const projectId = proj.id;
-    const routeId = selectedRoute()?.id ?? route.routes()[0]?.id ?? 0;
     const settings = {
       workerScale: workerScale() || null,
       timeLimitMinutes: timeLimitMinutes() ? Number.parseInt(timeLimitMinutes(), 10) : null,
@@ -244,11 +248,11 @@ export const ProjectSettings: Component = () => {
         }}
       >
         {/* Modal Panel - matches SettingsModal styling */}
-        <div class="bg-pasture-800 border border-pasture-600 rounded-lg shadow-xl w-full max-w-lg mx-4 max-h-[85vh] flex flex-col">
+        <div class="bg-pasture-800 border border-pasture-600 rounded-none shadow-xl w-full max-w-lg mx-4 max-h-[85vh] flex flex-col">
           {/* Header */}
           <div class="px-6 py-4 border-b border-pasture-600 flex items-center justify-between shrink-0">
             <div class="flex items-center gap-3 flex-1 min-w-0">
-              <div class="w-10 h-10 rounded-lg bg-pasture-700 flex items-center justify-center shrink-0">
+              <div class="w-10 h-10 rounded-none bg-pasture-700 flex items-center justify-center shrink-0">
                 <Icon name="folder-cog" class="w-5 h-5 text-wool-400" />
               </div>
 
@@ -295,7 +299,7 @@ export const ProjectSettings: Component = () => {
             <div class="flex items-center gap-1 shrink-0 ml-2">
               <button
                 type="button"
-                class="p-2 rounded-lg text-wool-500 hover:text-destructive hover:bg-destructive/10 transition-all"
+                class="p-2 rounded-none text-wool-500 hover:text-destructive hover:bg-destructive/10 transition-all"
                 onClick={handleDelete}
                 disabled={deleting() || saving()}
                 title="Delete project"
@@ -309,7 +313,7 @@ export const ProjectSettings: Component = () => {
               </button>
               <button
                 type="button"
-                class="p-2 rounded-lg text-wool-500 hover:text-wool-300 hover:bg-pasture-700 transition-all"
+                class="p-2 rounded-none text-wool-500 hover:text-wool-300 hover:bg-pasture-700 transition-all"
                 onClick={handleClose}
                 disabled={deleting() || saving()}
               >
@@ -327,10 +331,10 @@ export const ProjectSettings: Component = () => {
                 <div class="space-y-2 mb-3">
                   <For each={selectedRoute()?.repos || []}>
                     {(repo) => (
-                      <div class="bg-pasture-900 rounded-lg p-3 border border-pasture-700 flex items-center justify-between gap-3">
+                      <div class="bg-pasture-900 rounded-none p-3 border border-pasture-700 flex items-center justify-between gap-3">
                         <span class="text-sm text-wool-200 truncate">{repo.name}</span>
                         <Show when={selectedRoute()?.defaultRepoId === repo.id}>
-                          <span class="text-[11px] px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                          <span class="text-[11px] px-2 py-0.5 rounded-none bg-amber-500/15 text-amber-300 border border-amber-500/30">
                             Default
                           </span>
                         </Show>
@@ -345,7 +349,7 @@ export const ProjectSettings: Component = () => {
             <Show when={defaultRepoInfo()}>
               <div>
                 <h4 class="text-sm font-medium text-wool-200 mb-3">Default Repo</h4>
-                <div class="bg-pasture-900 rounded-lg p-3 border border-pasture-700">
+                <div class="bg-pasture-900 rounded-none p-3 border border-pasture-700">
                   <div class="flex items-center gap-2 mb-1">
                     <Icon
                       name={defaultRepoInfo()?.icon || 'folder'}
@@ -422,7 +426,7 @@ export const ProjectSettings: Component = () => {
                 </div>
 
                 {/* Human in the Loop Toggle - Basecoat Switch pattern */}
-                <div role="group" class="field flex items-start justify-between rounded-lg border border-border p-4">
+                <div role="group" class="field flex items-start justify-between rounded-none border border-border p-4">
                   <div class="flex flex-col gap-0.5">
                     <label for="hitl-switch" class="font-medium leading-normal">Human in the Loop</label>
                     <p class="text-muted-foreground text-sm">Workers pause for approval on critical actions</p>

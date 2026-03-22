@@ -55,18 +55,18 @@ export const RunListItem: Component<RunListItemProps> = (props) => {
       <div class="flex items-center justify-between gap-2">
         <div class="flex items-center gap-2 min-w-0">
           <span
-            class="status-dot w-2 h-2 rounded-full flex-shrink-0"
+            class="status-dot w-2 h-2 rounded-none flex-shrink-0"
             classList={{
               [getStatusDotClass(props.run.status)]: true,
             }}
           />
           <span class="text-sm text-wool-100 truncate">{props.run.name}</span>
           <Show when={props.run.hasUnreadMessages}>
-            <span class="w-1.5 h-1.5 bg-amber-500 rounded-full flex-shrink-0" />
+            <span class="w-1.5 h-1.5 bg-amber-500 rounded-none flex-shrink-0" />
           </Show>
         </div>
         <span
-          class="text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0"
+          class="text-[10px] px-1.5 py-0.5 rounded-none font-medium flex-shrink-0"
           classList={{
             [getStatusBadgeClass(props.run.status)]: true,
           }}
@@ -104,9 +104,9 @@ export const RunListItem: Component<RunListItemProps> = (props) => {
       {/* Progress bar (hide for drafts) */}
       <Show when={props.run.status !== 'draft'}>
         <div class="mt-2 flex items-center gap-2">
-          <div class="flex-1 h-2 bg-pasture-600/50 rounded-full overflow-hidden relative">
+          <div class="flex-1 h-2 bg-pasture-600/50 rounded-none overflow-hidden relative">
             <div
-              class="h-full rounded-full transition-all duration-500 ease-out"
+              class="h-full rounded-none transition-all duration-500 ease-out"
               classList={{
                 [getProgressBarClass(
                   props.run.status,

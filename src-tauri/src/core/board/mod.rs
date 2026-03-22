@@ -37,9 +37,8 @@ use tokio::sync::OnceCell;
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use tracing::{debug, info};
 
-use crate::core::config::{hirsel_dir, OrchestratorMode, OrchestratorProfile};
+use crate::core::config::hirsel_dir;
 use crate::core::db::{global_pool, utc_now};
-use crate::core::http_client::AuthenticatedClient;
 use crate::core::names::slugify;
 
 /// Schema for board tables
@@ -143,8 +142,6 @@ pub enum BoardError {
     EvalNotFound(String),
     #[error("Bookmark not found: {0}")]
     BookmarkNotFound(String),
-    #[error("Remote error: {0}")]
-    Remote(String),
 }
 
 pub type BoardResult<T> = Result<T, BoardError>;
@@ -152,7 +149,6 @@ pub type BoardResult<T> = Result<T, BoardError>;
 /// Service for managing SpecFlow board data
 pub struct BoardService {
     project_id: i64,
-    profile: Option<OrchestratorProfile>,
     last_sync_time: Option<SystemTime>,
 }
 
@@ -161,16 +157,6 @@ impl BoardService {
     pub fn new(project_id: i64) -> Self {
         Self {
             project_id,
-            profile: None,
-            last_sync_time: None,
-        }
-    }
-
-    /// Create a board service with a profile (for remote mode)
-    pub fn with_profile(project_id: i64, profile: OrchestratorProfile) -> Self {
-        Self {
-            project_id,
-            profile: Some(profile),
             last_sync_time: None,
         }
     }
@@ -190,34 +176,6 @@ impl BoardService {
             std::fs::create_dir_all(&dir)?;
         }
         Ok(dir)
-    }
-
-    /// Check if we should use remote mode
-    fn should_use_remote(&self) -> bool {
-        self.profile
-            .as_ref()
-            .map(|p| p.mode == OrchestratorMode::Remote && p.url.is_some())
-            .unwrap_or(false)
-    }
-
-    /// Get authenticated HTTP client for remote mode
-    fn remote_client(&self) -> BoardResult<AuthenticatedClient> {
-        let profile = self
-            .profile
-            .as_ref()
-            .ok_or_else(|| BoardError::Remote("No profile configured".into()))?;
-
-        let url = profile
-            .url
-            .as_ref()
-            .ok_or_else(|| BoardError::Remote("No remote URL configured".into()))?;
-
-        let api_key = profile
-            .api_key
-            .as_ref()
-            .ok_or_else(|| BoardError::Remote("No API key configured".into()))?;
-
-        Ok(AuthenticatedClient::new(url, api_key))
     }
 
     /// Get pool and ensure schema
@@ -935,9 +893,6 @@ impl BoardService {
     /// Each top-level task gets its own file: `{task-slug}.json`
     /// Evals are included in each file if they validate any task in that subtree.
     pub async fn export_for_agent(&mut self, scope: &ExportScope) -> BoardResult<PathBuf> {
-        if self.should_use_remote() {
-            return self.export_remote(scope).await;
-        }
         self.export_local(scope).await
     }
 
@@ -1017,9 +972,6 @@ impl BoardService {
 
     /// Import changes from per-task JSON files (baseline-diff sync)
     pub async fn import_from_agent(&mut self) -> BoardResult<SyncResult> {
-        if self.should_use_remote() {
-            return self.import_remote().await;
-        }
         self.import_local().await
     }
 
@@ -1263,10 +1215,6 @@ impl BoardService {
 
     /// Sync file changes to database (detect changes and import)
     pub async fn sync_file_changes(&mut self) -> BoardResult<SyncResult> {
-        if self.should_use_remote() {
-            return self.import_remote().await;
-        }
-
         let board_dir = self.board_dir();
         if !board_dir.exists() {
             return Ok(SyncResult::default());
@@ -1303,30 +1251,6 @@ impl BoardService {
     /// Get the project ID
     pub fn project_id(&self) -> i64 {
         self.project_id
-    }
-
-    // ========== REMOTE MODE ==========
-
-    async fn export_remote(&self, scope: &ExportScope) -> BoardResult<PathBuf> {
-        let client = self.remote_client()?;
-        let path: String = client
-            .post(
-                &format!("/api/board/{}/export", self.project_id),
-                &serde_json::json!({ "scope": scope }),
-            )
-            .await?;
-        Ok(PathBuf::from(path))
-    }
-
-    async fn import_remote(&self) -> BoardResult<SyncResult> {
-        let client = self.remote_client()?;
-        let result: SyncResult = client
-            .post(
-                &format!("/api/board/{}/import", self.project_id),
-                &serde_json::json!({}),
-            )
-            .await?;
-        Ok(result)
     }
 
     // ========== SYNC VARIANTS (for blocking contexts) ==========

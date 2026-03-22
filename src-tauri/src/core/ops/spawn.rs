@@ -100,8 +100,6 @@ pub async fn spawn_local_workers(
             resume_session_id: None,
             env_vars: None,
             credentials: None,
-            coordinator_url: None,
-            tailscale_authkey: None,
             assigned_task_id: None,
             is_plan_task: false,
         };

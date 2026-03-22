@@ -89,7 +89,7 @@ export const DropdownShell: Component<DropdownShellProps> = (props) => {
   const triggerClass = () => props.triggerClass || 'btn-outline w-full justify-between';
   const panelClass = () =>
     props.panelClass ||
-    'absolute z-50 mt-1 w-full bg-popover border border-border rounded-md shadow-md py-1 max-h-60 overflow-auto';
+    'absolute z-50 mt-1 w-full bg-popover border border-border rounded-none shadow-md py-1 max-h-60 overflow-auto';
 
   return (
     <div ref={containerRef} class={`dropdown ${props.class || ''}`}>

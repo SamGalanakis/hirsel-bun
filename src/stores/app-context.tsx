@@ -226,7 +226,6 @@ export const AppProvider: ParentComponent = (props) => {
       case 'resume':
       case 'switch-chat':
       case 'focus-message':
-      case 'sheep-game':
         emit('shortcut-action', action);
         break;
     }

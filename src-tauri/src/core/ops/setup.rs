@@ -26,15 +26,13 @@ pub struct RunSetupConfig {
     pub run_dir: PathBuf,
     /// Names of workers to create clones for (local workers)
     pub worker_names: Vec<String>,
-    /// Additional workers that need chats but not clones (e.g., remote workers)
+    /// Additional workers that need chats but not clones
     /// These workers are included in group chat and get individual chats
     pub additional_chat_workers: Vec<String>,
     /// Whether this is a multi-worker run (affects workspace layout)
     pub is_multi_worker: bool,
     /// Name of the leader worker (first worker in multi-worker mode)
     pub leader_name: Option<String>,
-    /// Relative path to docs directory in workspace (default: "docs")
-    pub docs_path: String,
 }
 
 /// Result of setting up a run's workspace
@@ -109,7 +107,7 @@ pub fn compute_multi_worker_config(
 /// 1. Creates the main workspace (staging) from the project
 /// 2. Creates worker clone directories (in multi-worker mode) or uses workspace directly
 /// 3. Creates chat files (group chat if multi-worker, worker chats)
-/// 4. Initializes the docs directory for the scribe system
+/// 4. Creates chat files for the worker group
 ///
 /// # Arguments
 ///
@@ -128,14 +126,6 @@ pub fn setup_run_workspace(config: &RunSetupConfig) -> Result<RunSetupResult, Op
 
     // Create workspace with staging branch
     let workspace_dir = create_workspace(&config.run_name, &config.project_path, runs_dir)?;
-
-    // Set up docs: copy project docs to run_dir, hide from git
-    let docs_config = super::DocsSetupConfig {
-        workspace_dir: &workspace_dir,
-        run_dir: &config.run_dir,
-        docs_path: &config.docs_path,
-    };
-    super::setup_docs(&docs_config)?;
 
     // Create worker clones/worktrees
     let mut worker_dirs: Vec<(String, PathBuf)> = Vec::new();
@@ -169,9 +159,6 @@ pub fn setup_run_workspace(config: &RunSetupConfig) -> Result<RunSetupResult, Op
     if config.is_multi_worker {
         create_default_group_chat(&chats_dir, &all_workers, config.leader_name.as_deref())?;
     }
-
-    // Initialize docs directory for scribe system
-    files.init_docs()?;
 
     // Create individual worker chats for all workers
     for worker_name in &all_workers {

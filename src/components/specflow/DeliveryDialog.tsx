@@ -13,7 +13,7 @@
 import { type Component, Show, For, createSignal, createEffect, createMemo, onMount, onCleanup } from 'solid-js';
 import { invoke } from '../../lib/invoke';
 import { useEscapeKey } from '../../hooks';
-import { useProject, useRoute } from '../../stores';
+import { useProject, useRoute, useDelivery } from '../../stores';
 import { useDelta } from '../../stores/delta-context';
 import { Icon, Markdown } from '../shared';
 import { amber, sage, terra } from '../../lib/theme-colors';
@@ -31,11 +31,12 @@ interface DeliveryDialogProps {
 
 export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
   const delta = useDelta();
+  const deliveryState = useDelivery();
   const project = useProject();
   const route = useRoute();
 
   // Seed defaults from active route configuration
-  const activeRoute = () => route.activeRoute();
+  const activeRoute = () => route.currentRoute();
   const defaultRepo = () => {
     const r = activeRoute();
     if (!r?.repos?.length) return null;
@@ -185,7 +186,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
   // Validate target branch with debounce
   const runValidation = async (branch: string) => {
     const projectId = project.selectedProject()?.id;
-    const routeId = route.activeRoute()?.id;
+    const routeId = route.currentRouteId();
     if (!projectId || !routeId || !branch.trim()) {
       setValidation(null);
       return;
@@ -337,7 +338,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
   };
 
   useEscapeKey(() => {
-    if (!delta.deliveryPending()) {
+    if (!deliveryState.deliveryPending()) {
       props.onClose();
     }
   });
@@ -351,7 +352,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
       return;
     }
 
-    const result = await delta.startDelivery(branch, false, remoteUrl() || undefined);
+    const result = await deliveryState.startDelivery(branch, false, remoteUrl() || undefined);
     if (!result) {
       setError('Failed to start delivery');
     }
@@ -367,7 +368,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
       return;
     }
 
-    const result = await delta.completeDelivery(action, summary(), remoteUrl() || undefined);
+    const result = await deliveryState.completeDelivery(action, summary(), remoteUrl() || undefined);
     if (!result) {
       setError(`Failed to ${action === 'pr' ? 'create PR' : 'merge'}`);
     }
@@ -376,7 +377,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
   // Handle abandoning delivery
   const handleAbandon = async () => {
     setError(null);
-    const result = await delta.abandonDelivery();
+    const result = await deliveryState.abandonDelivery();
     if (result) {
       props.onClose();
     } else {
@@ -387,11 +388,11 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
   // Handle retry
   const handleRetry = async () => {
     setError(null);
-    await delta.retryDelivery();
+    await deliveryState.retryDelivery();
   };
 
   // Get current delivery status
-  const delivery = () => delta.currentDelivery();
+  const delivery = () => deliveryState.currentDelivery();
   const isActive = () => {
     const d = delivery();
     return d && !['abandoned', 'merged'].includes(d.status);
@@ -508,7 +509,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
     if (v.mergeState === 'conflicts') {
       return (
         <div
-          class="flex items-center gap-2 mt-2 px-3 py-2 rounded-lg text-xs"
+          class="flex items-center gap-2 mt-2 px-3 py-2 rounded-none text-xs"
           style={{
             background: amber(0.06),
             border: `1px solid ${amber(0.15)}`,
@@ -535,13 +536,13 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
     <div
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-[2px]"
       onClick={(e) => {
-        if (e.target === e.currentTarget && !delta.deliveryPending()) {
+        if (e.target === e.currentTarget && !deliveryState.deliveryPending()) {
           props.onClose();
         }
       }}
     >
       <div
-        class="w-full max-w-4xl flex flex-col rounded-xl shadow-2xl overflow-hidden"
+        class="w-full max-w-4xl flex flex-col rounded-none shadow-2xl overflow-hidden"
         style={{
           height: 'min(85vh, 720px)',
           background: 'var(--pasture-800)',
@@ -556,7 +557,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
         >
           <div class="flex items-center gap-3">
             <div
-              class="w-10 h-10 rounded-lg flex items-center justify-center"
+              class="w-10 h-10 rounded-none flex items-center justify-center"
               style={{
                 background: sage(0.12),
                 border: `1px solid ${sage(0.2)}`,
@@ -575,8 +576,8 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
           </div>
           <button
             onClick={props.onClose}
-            disabled={delta.deliveryPending()}
-            class="p-2 rounded-lg text-wool-500 hover:text-wool-300 hover:bg-pasture-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            disabled={deliveryState.deliveryPending()}
+            class="p-2 rounded-none text-wool-500 hover:text-wool-300 hover:bg-pasture-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           >
             <Icon name="x" class="w-5 h-5" />
           </button>
@@ -668,7 +669,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
                     />
                     <Show when={branchDropdownOpen() && (filteredBranches().length > 0 || (!isExactMatch() && targetBranch().trim()))}>
                       <div
-                        class="absolute z-50 left-0 right-0 mt-1 max-h-48 overflow-y-auto rounded-lg shadow-xl"
+                        class="absolute z-50 left-0 right-0 mt-1 max-h-48 overflow-y-auto rounded-none shadow-xl"
                         style={{
                           background: 'var(--pasture-900)',
                           border: '1px solid var(--pasture-600)',
@@ -737,7 +738,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
                       {/* Push only */}
                       <Show when={isActionAvailable('push')}>
                         <label
-                          class="flex items-center gap-3 p-3 rounded-lg transition-all cursor-pointer"
+                          class="flex items-center gap-3 p-3 rounded-none transition-all cursor-pointer"
                           style={{
                             background: deliveryAction() === 'push' ? amber(0.08) : 'transparent',
                             border: `1px solid ${deliveryAction() === 'push' ? amber(0.3) : 'var(--pasture-600)'}`,
@@ -751,14 +752,14 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
                             class="sr-only"
                           />
                           <div
-                            class="w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0"
+                            class="w-4 h-4 rounded-none border-2 flex items-center justify-center flex-shrink-0"
                             style={{
                               'border-color': deliveryAction() === 'push' ? 'var(--amber-500)' : 'var(--wool-600)',
                               background: deliveryAction() === 'push' ? 'var(--amber-500)' : 'transparent',
                             }}
                           >
                             <Show when={deliveryAction() === 'push'}>
-                              <div class="w-1.5 h-1.5 rounded-full bg-pasture-900" />
+                              <div class="w-1.5 h-1.5 rounded-none bg-pasture-900" />
                             </Show>
                           </div>
                           <div class="flex-1 min-w-0">
@@ -771,7 +772,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
                       {/* Create PR */}
                       <Show when={isActionAvailable('pr')}>
                         <label
-                          class="flex items-center gap-3 p-3 rounded-lg transition-all cursor-pointer"
+                          class="flex items-center gap-3 p-3 rounded-none transition-all cursor-pointer"
                           style={{
                             background: deliveryAction() === 'pr' ? 'rgba(56, 189, 248, 0.08)' : 'transparent',
                             border: `1px solid ${deliveryAction() === 'pr' ? 'rgba(56, 189, 248, 0.3)' : 'var(--pasture-600)'}`,
@@ -785,14 +786,14 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
                             class="sr-only"
                           />
                           <div
-                            class="w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0"
+                            class="w-4 h-4 rounded-none border-2 flex items-center justify-center flex-shrink-0"
                             style={{
                               'border-color': deliveryAction() === 'pr' ? 'var(--sky-400)' : 'var(--wool-600)',
                               background: deliveryAction() === 'pr' ? 'var(--sky-400)' : 'transparent',
                             }}
                           >
                             <Show when={deliveryAction() === 'pr'}>
-                              <div class="w-1.5 h-1.5 rounded-full bg-pasture-900" />
+                              <div class="w-1.5 h-1.5 rounded-none bg-pasture-900" />
                             </Show>
                           </div>
                           <div class="flex-1 min-w-0">
@@ -805,7 +806,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
                       {/* Direct merge / Yolomerge */}
                       <Show when={isActionAvailable('merge')}>
                         <label
-                          class="flex items-center gap-3 p-3 rounded-lg transition-all cursor-pointer"
+                          class="flex items-center gap-3 p-3 rounded-none transition-all cursor-pointer"
                           style={{
                             background: deliveryAction() === 'merge'
                               ? (isYolomerge() ? amber(0.08) : sage(0.08))
@@ -823,7 +824,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
                             class="sr-only"
                           />
                           <div
-                            class="w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0"
+                            class="w-4 h-4 rounded-none border-2 flex items-center justify-center flex-shrink-0"
                             style={{
                               'border-color': deliveryAction() === 'merge'
                                 ? (isYolomerge() ? 'var(--amber-500)' : 'var(--sage)')
@@ -834,7 +835,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
                             }}
                           >
                             <Show when={deliveryAction() === 'merge'}>
-                              <div class="w-1.5 h-1.5 rounded-full bg-pasture-900" />
+                              <div class="w-1.5 h-1.5 rounded-none bg-pasture-900" />
                             </Show>
                           </div>
                           <div class="flex-1 min-w-0">
@@ -863,12 +864,12 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
                     Summary
                   </label>
                   <div
-                    class="flex items-center p-0.5 rounded-lg"
+                    class="flex items-center p-0.5 rounded-none"
                     style={{ background: 'var(--pasture-900)' }}
                   >
                     <button
                       onClick={() => setActiveTab('edit')}
-                      class={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                      class={`px-3 py-1.5 rounded-none text-xs font-medium transition-all ${
                         activeTab() === 'edit'
                           ? 'bg-pasture-700 text-wool-100 shadow-sm'
                           : 'text-wool-500 hover:text-wool-300'
@@ -879,7 +880,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
                     </button>
                     <button
                       onClick={() => setActiveTab('preview')}
-                      class={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                      class={`px-3 py-1.5 rounded-none text-xs font-medium transition-all ${
                         activeTab() === 'preview'
                           ? 'bg-pasture-700 text-wool-100 shadow-sm'
                           : 'text-wool-500 hover:text-wool-300'
@@ -892,7 +893,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
                 </div>
 
                 <div
-                  class="flex-1 rounded-lg overflow-hidden"
+                  class="flex-1 rounded-none overflow-hidden"
                   style={{
                     background: 'var(--pasture-900)',
                     border: '1px solid var(--pasture-600)',
@@ -932,7 +933,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
             <div class="p-6 space-y-6">
               {/* Status card */}
               <div
-                class="p-5 rounded-xl"
+                class="p-5 rounded-none"
                 style={{
                   background: 'var(--pasture-900)',
                   border: '1px solid var(--pasture-600)',
@@ -940,7 +941,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
               >
                 <div class="flex items-center gap-4">
                   <div
-                    class={`w-12 h-12 rounded-xl flex items-center justify-center ${
+                    class={`w-12 h-12 rounded-none flex items-center justify-center ${
                       delivery()?.status === 'in_progress' ? 'animate-pulse' : ''
                     }`}
                     style={{
@@ -978,7 +979,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
 
               {/* Branch info */}
               <div
-                class="grid grid-cols-2 gap-4 p-5 rounded-xl"
+                class="grid grid-cols-2 gap-4 p-5 rounded-none"
                 style={{
                   background: 'var(--pasture-900)',
                   border: '1px solid var(--pasture-600)',
@@ -1013,7 +1014,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
               {/* Failure message */}
               <Show when={delivery()?.status === 'failed' && delivery()?.failureReason}>
                 <div
-                  class="p-4 rounded-xl flex items-start gap-3"
+                  class="p-4 rounded-none flex items-start gap-3"
                   style={{
                     background: terra(0.08),
                     border: `1px solid ${terra(0.2)}`,
@@ -1030,7 +1031,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
           <Show when={error()}>
             <div class="px-6 pb-4">
               <div
-                class="p-4 rounded-xl flex items-start gap-3"
+                class="p-4 rounded-none flex items-start gap-3"
                 style={{
                   background: terra(0.08),
                   border: `1px solid ${terra(0.2)}`,
@@ -1058,15 +1059,15 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
             </button>
             <button
               onClick={handleStartDelivery}
-              disabled={delta.deliveryPending()}
+              disabled={deliveryState.deliveryPending()}
               class="btn"
               style={{
                 background: 'var(--sage)',
                 color: 'var(--pasture-900)',
-                opacity: delta.deliveryPending() ? 0.5 : 1,
+                opacity: deliveryState.deliveryPending() ? 0.5 : 1,
               }}
             >
-              <Show when={delta.deliveryPending()} fallback={
+              <Show when={deliveryState.deliveryPending()} fallback={
                 <>
                   <Icon name="rocket" class="w-4 h-4 mr-2" />
                   Deliver
@@ -1082,7 +1083,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
           <Show when={delivery()?.status === 'pushed'}>
             <button
               onClick={handleAbandon}
-              disabled={delta.deliveryPending()}
+              disabled={deliveryState.deliveryPending()}
               class="btn btn-ghost"
             >
               Close
@@ -1100,15 +1101,15 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
             <Show when={deliveryAction() === 'pr'}>
               <button
                 onClick={handleCompleteDelivery}
-                disabled={delta.deliveryPending()}
+                disabled={deliveryState.deliveryPending()}
                 class="btn"
                 style={{
                   background: 'var(--sky-400)',
                   color: 'var(--pasture-900)',
-                  opacity: delta.deliveryPending() ? 0.5 : 1,
+                  opacity: deliveryState.deliveryPending() ? 0.5 : 1,
                 }}
               >
-                <Show when={delta.deliveryPending()} fallback={
+                <Show when={deliveryState.deliveryPending()} fallback={
                   <>
                     <Icon name="git-pull-request" class="w-4 h-4 mr-2" />
                     Create PR
@@ -1122,15 +1123,15 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
             <Show when={deliveryAction() === 'merge'}>
               <button
                 onClick={handleCompleteDelivery}
-                disabled={delta.deliveryPending()}
+                disabled={deliveryState.deliveryPending()}
                 class="btn"
                 style={{
                   background: 'var(--sage)',
                   color: 'var(--pasture-900)',
-                  opacity: delta.deliveryPending() ? 0.5 : 1,
+                  opacity: deliveryState.deliveryPending() ? 0.5 : 1,
                 }}
               >
-                <Show when={delta.deliveryPending()} fallback={
+                <Show when={deliveryState.deliveryPending()} fallback={
                   <>
                     <Icon name="git-merge" class="w-4 h-4 mr-2" />
                     Merge Now
@@ -1159,22 +1160,22 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
           <Show when={delivery()?.status === 'failed'}>
             <button
               onClick={handleAbandon}
-              disabled={delta.deliveryPending()}
+              disabled={deliveryState.deliveryPending()}
               class="btn btn-ghost"
             >
               Abandon
             </button>
             <button
               onClick={handleRetry}
-              disabled={delta.deliveryPending()}
+              disabled={deliveryState.deliveryPending()}
               class="btn"
               style={{
                 background: 'var(--amber-500)',
                 color: 'var(--pasture-900)',
-                opacity: delta.deliveryPending() ? 0.5 : 1,
+                opacity: deliveryState.deliveryPending() ? 0.5 : 1,
               }}
             >
-              <Show when={delta.deliveryPending()} fallback={
+              <Show when={deliveryState.deliveryPending()} fallback={
                 <>
                   <Icon name="refresh-cw" class="w-4 h-4 mr-2" />
                   Retry
@@ -1190,7 +1191,7 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
           <Show when={delivery()?.status === 'in_progress' || delivery()?.status === 'pending'}>
             <button
               onClick={handleAbandon}
-              disabled={delta.deliveryPending()}
+              disabled={deliveryState.deliveryPending()}
               class="btn btn-ghost"
             >
               Cancel

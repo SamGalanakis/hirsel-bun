@@ -1,18 +1,17 @@
-//! lash-core based worker runtime.
+//! lash-based worker runtime.
 //!
-//! Embedded lash-core worker runtime.
+//! Embedded lash worker runtime.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use anyhow::Context;
-use lash_core::tools::{
-    CompositeTools, EditFile, FindReplace, Glob, Grep, Ls, ReadFile, Shell, WriteFile,
-};
-use lash_core::{
-    Agent, AgentCapabilities, AgentConfig as LashAgentConfig, AgentEvent, AgentStateEnvelope,
-    EventSink, FsInstructionSource, InputItem, RuntimeEngine, Session, ToolDefinition, ToolParam,
-    ToolProvider, ToolResult, TurnInput,
+use lash::plugin::StaticPluginFactory;
+use lash::{
+    default_context_strategy, default_execution_mode, default_tool_plugin_factories, AgentEvent,
+    AgentStateEnvelope, DefaultToolPluginDeps, EventSink, FsInstructionSource, HostProfile,
+    InputItem, LashRuntime, PluginHost, PluginSpec, RuntimeHostConfig, RuntimeServices,
+    SessionPolicy, ToolDefinition, ToolParam, ToolProvider, ToolResult, TurnInput,
 };
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -91,8 +90,8 @@ impl ToolProvider for WorkerToolProvider {
                 params: vec![],
                 returns: "dict".into(),
                 examples: vec![],
-                hidden: false,
-                inject_into_prompt: true,
+                enabled: true,
+                injected: true,
             },
             ToolDefinition {
                 name: "get_available_tasks".into(),
@@ -100,8 +99,8 @@ impl ToolProvider for WorkerToolProvider {
                 params: vec![],
                 returns: "dict".into(),
                 examples: vec![],
-                hidden: false,
-                inject_into_prompt: true,
+                enabled: true,
+                injected: true,
             },
             ToolDefinition {
                 name: "get_my_tasks".into(),
@@ -109,8 +108,8 @@ impl ToolProvider for WorkerToolProvider {
                 params: vec![],
                 returns: "dict".into(),
                 examples: vec![],
-                hidden: false,
-                inject_into_prompt: true,
+                enabled: true,
+                injected: true,
             },
             ToolDefinition {
                 name: "get_task_details".into(),
@@ -118,8 +117,8 @@ impl ToolProvider for WorkerToolProvider {
                 params: vec![ToolParam::typed("task_id", "str")],
                 returns: "dict".into(),
                 examples: vec![],
-                hidden: false,
-                inject_into_prompt: true,
+                enabled: true,
+                injected: true,
             },
             ToolDefinition {
                 name: "complete_task".into(),
@@ -127,8 +126,8 @@ impl ToolProvider for WorkerToolProvider {
                 params: vec![ToolParam::optional("task_id", "str")],
                 returns: "dict".into(),
                 examples: vec![],
-                hidden: false,
-                inject_into_prompt: true,
+                enabled: true,
+                injected: true,
             },
             ToolDefinition {
                 name: "add_task".into(),
@@ -141,8 +140,8 @@ impl ToolProvider for WorkerToolProvider {
                 ],
                 returns: "dict".into(),
                 examples: vec![],
-                hidden: false,
-                inject_into_prompt: true,
+                enabled: true,
+                injected: true,
             },
             ToolDefinition {
                 name: "add_check".into(),
@@ -155,8 +154,8 @@ impl ToolProvider for WorkerToolProvider {
                 ],
                 returns: "dict".into(),
                 examples: vec![],
-                hidden: false,
-                inject_into_prompt: true,
+                enabled: true,
+                injected: true,
             },
             ToolDefinition {
                 name: "delete_task".into(),
@@ -164,8 +163,8 @@ impl ToolProvider for WorkerToolProvider {
                 params: vec![ToolParam::typed("task_id", "str")],
                 returns: "dict".into(),
                 examples: vec![],
-                hidden: false,
-                inject_into_prompt: true,
+                enabled: true,
+                injected: true,
             },
             ToolDefinition {
                 name: "list_contacts".into(),
@@ -173,8 +172,8 @@ impl ToolProvider for WorkerToolProvider {
                 params: vec![],
                 returns: "dict".into(),
                 examples: vec![],
-                hidden: false,
-                inject_into_prompt: true,
+                enabled: true,
+                injected: true,
             },
             ToolDefinition {
                 name: "chat_history".into(),
@@ -185,8 +184,8 @@ impl ToolProvider for WorkerToolProvider {
                 ],
                 returns: "dict".into(),
                 examples: vec![],
-                hidden: false,
-                inject_into_prompt: true,
+                enabled: true,
+                injected: true,
             },
             ToolDefinition {
                 name: "chat_send".into(),
@@ -197,8 +196,8 @@ impl ToolProvider for WorkerToolProvider {
                 ],
                 returns: "dict".into(),
                 examples: vec![],
-                hidden: false,
-                inject_into_prompt: true,
+                enabled: true,
+                injected: true,
             },
             ToolDefinition {
                 name: "chat_unread".into(),
@@ -206,26 +205,26 @@ impl ToolProvider for WorkerToolProvider {
                 params: vec![ToolParam::optional("with", "str")],
                 returns: "dict".into(),
                 examples: vec![],
-                hidden: false,
-                inject_into_prompt: true,
+                enabled: true,
+                injected: true,
             },
             ToolDefinition {
                 name: "scribe".into(),
-                description: "Record documentation learning".into(),
+                description: "Record durable project context".into(),
                 params: vec![ToolParam::typed("content", "str")],
                 returns: "dict".into(),
                 examples: vec![],
-                hidden: false,
-                inject_into_prompt: true,
+                enabled: true,
+                injected: true,
             },
             ToolDefinition {
-                name: "read_docs".into(),
-                description: "Read documentation".into(),
-                params: vec![ToolParam::optional("file", "str")],
+                name: "read_retained_context".into(),
+                description: "Read retained project context".into(),
+                params: vec![],
                 returns: "dict".into(),
                 examples: vec![],
-                hidden: false,
-                inject_into_prompt: true,
+                enabled: true,
+                injected: true,
             },
             ToolDefinition {
                 name: "work_done".into(),
@@ -233,8 +232,8 @@ impl ToolProvider for WorkerToolProvider {
                 params: vec![],
                 returns: "dict".into(),
                 examples: vec![],
-                hidden: false,
-                inject_into_prompt: true,
+                enabled: true,
+                injected: true,
             },
             ToolDefinition {
                 name: "time_status".into(),
@@ -242,8 +241,8 @@ impl ToolProvider for WorkerToolProvider {
                 params: vec![],
                 returns: "dict".into(),
                 examples: vec![],
-                hidden: false,
-                inject_into_prompt: true,
+                enabled: true,
+                injected: true,
             },
             ToolDefinition {
                 name: "check_pass".into(),
@@ -251,8 +250,8 @@ impl ToolProvider for WorkerToolProvider {
                 params: vec![],
                 returns: "dict".into(),
                 examples: vec![],
-                hidden: false,
-                inject_into_prompt: true,
+                enabled: true,
+                injected: true,
             },
             ToolDefinition {
                 name: "check_fail".into(),
@@ -260,8 +259,8 @@ impl ToolProvider for WorkerToolProvider {
                 params: vec![ToolParam::typed("feedback", "str")],
                 returns: "dict".into(),
                 examples: vec![],
-                hidden: false,
-                inject_into_prompt: true,
+                enabled: true,
+                injected: true,
             },
         ]
     }
@@ -342,9 +341,8 @@ impl ToolProvider for WorkerToolProvider {
                 Ok(content) => Self::from_worker_result(self.runner.scribe(content)),
                 Err(e) => ToolResult::err(json!({"error": e})),
             },
-            "read_docs" => {
-                let file = args.get("file").and_then(|v| v.as_str());
-                Self::from_worker_result(self.runner.read_docs(file))
+            "read_retained_context" => {
+                Self::from_worker_result(self.runner.read_retained_context())
             }
             "work_done" => {
                 let result = self.runner.task_done(None);
@@ -395,15 +393,15 @@ impl DbEventSink {
     fn tool_kind(name: &str) -> Option<&'static str> {
         if matches!(
             name,
-            "read_file" | "ls" | "glob" | "grep" | "diff_file" | "read_docs"
+            "read_file" | "ls" | "glob" | "grep" | "read_retained_context"
         ) {
             Some("read")
         } else if matches!(
             name,
-            "edit_file" | "write_file" | "find_replace" | "add_task" | "add_check" | "delete_task"
+            "apply_patch" | "add_task" | "add_check" | "delete_task"
         ) {
             Some("edit")
-        } else if name == "shell" {
+        } else if matches!(name, "exec_command" | "write_stdin" | "shell") {
             Some("execute")
         } else if matches!(
             name,
@@ -489,8 +487,9 @@ impl EventSink for DbEventSink {
             AgentEvent::LlmRequest { .. }
             | AgentEvent::LlmResponse { .. }
             | AgentEvent::TokenUsage { .. }
-            | AgentEvent::SubAgentDone { .. }
             | AgentEvent::RetryStatus { .. }
+            | AgentEvent::InjectedMessagesCommitted { .. }
+            | AgentEvent::PluginEvent { .. }
             | AgentEvent::Prompt { .. }
             | AgentEvent::CodeOutput { .. }
             | AgentEvent::Done => {}
@@ -514,54 +513,67 @@ pub async fn run_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
     ))?);
 
     let cancel = CancellationToken::new();
-    let tools: Arc<dyn ToolProvider> = Arc::new(
-        CompositeTools::new()
-            .add(Ls)
-            .add(Glob)
-            .add(Grep)
-            .add(ReadFile::new())
-            .add(EditFile)
-            .add(WriteFile)
-            .add(FindReplace)
-            .add(Shell::new().with_cwd(config.work_dir.clone()))
-            .add(WorkerToolProvider::new(worker_runner, cancel.clone())),
-    );
+    let worker_tools: Arc<dyn ToolProvider> =
+        Arc::new(WorkerToolProvider::new(worker_runner, cancel.clone()));
 
     let (hirsel_config, _) = Config::load().context("failed to load Hirsel config")?;
     let provider = llm_provider::resolve_provider(&hirsel_config)
         .await
         .map_err(anyhow::Error::msg)?;
 
-    let (model, reasoning_effort) = provider
+    let (model, model_variant) = provider
         .default_agent_model("high")
-        .map(|(m, effort)| (m.to_string(), effort.map(ToOwned::to_owned)))
-        .unwrap_or_else(|| (provider.default_model().to_string(), None));
-
-    let agent_config = LashAgentConfig {
-        capabilities: AgentCapabilities::default(),
-        model,
+        .map(|(m, variant)| (m.to_string(), variant.map(str::to_string)))
+        .unwrap_or_else(|| {
+            let model = provider.default_model().to_string();
+            let variant = provider.default_model_variant(&model).map(str::to_string);
+            (model, variant)
+        });
+    let execution_mode = default_execution_mode();
+    let instruction_source = Arc::new(FsInstructionSource::new());
+    let mut plugin_factories = default_tool_plugin_factories(
+        execution_mode,
+        DefaultToolPluginDeps {
+            tavily_api_key: None,
+            prompt_bridge: None,
+            instruction_source: Some(instruction_source),
+        },
+    );
+    plugin_factories.push(Arc::new(StaticPluginFactory::new(
+        "hirsel_worker_tools",
+        PluginSpec::new().with_tool_provider(Arc::clone(&worker_tools)),
+    )));
+    let plugin_host = PluginHost::new(plugin_factories);
+    let root_plugins = plugin_host
+        .build_session("root", execution_mode, None)
+        .map_err(|e| anyhow::anyhow!("failed to build worker tool session: {}", e))?;
+    let session_policy = SessionPolicy {
+        model: model.clone(),
         provider,
-        max_context_tokens: None,
-        sub_agent: false,
-        reasoning_effort,
+        max_context_tokens: Some(crate::core::config::get_context_window(&model) as usize),
+        model_variant,
         session_id: Some(config.worker_name.clone()),
-        max_turns: None,
-        include_soul: false,
-        llm_log_path: None,
-        headless: true,
-        prompt_overrides: Vec::new(),
-        instruction_source: Arc::new(FsInstructionSource::new()),
+        execution_mode,
+        context_strategy: default_context_strategy(),
+        ..Default::default()
     };
-
-    let session = Session::new(
-        tools,
-        &config.worker_name,
-        true,
-        agent_config.capabilities.clone(),
+    let host_config = RuntimeHostConfig {
+        host_profile: HostProfile::Embedded,
+        base_dir: Some(config.work_dir.clone()),
+        ..RuntimeHostConfig::default()
+    };
+    let mut runtime = LashRuntime::from_state(
+        session_policy.clone(),
+        host_config,
+        RuntimeServices::new(root_plugins),
+        AgentStateEnvelope {
+            agent_id: config.worker_name.clone(),
+            policy: session_policy,
+            ..AgentStateEnvelope::default()
+        },
     )
-    .await?;
-    let agent = Agent::new(session, agent_config, Some(config.worker_name.clone()));
-    let mut runtime = RuntimeEngine::from_agent(agent, AgentStateEnvelope::default());
+    .await
+    .map_err(|e| anyhow::anyhow!("failed to create worker lash runtime: {}", e))?;
 
     let prompt = build_worker_prompt(
         &config.worker_name,
@@ -580,7 +592,6 @@ pub async fn run_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
                 items: vec![InputItem::Text { text: prompt }],
                 image_blobs: Default::default(),
                 mode: None,
-                plan_file: None,
             },
             &sink,
             cancel,

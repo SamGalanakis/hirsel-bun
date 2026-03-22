@@ -24,8 +24,8 @@ mod workspace;
 pub use git_ops::{delivery_branch_name, pr_body, pr_title, GitOperations, PushResult};
 pub use orchestrator::{DeliveryOrchestrator, DeliveryState, DeliveryStatus};
 pub use workspace::{
-    resolve_workspace, resolve_workspace_for_project, WorkspaceError, WorkspaceLocation,
-    WorkspaceResult,
+    resolve_run_work_dir, resolve_workspace, resolve_workspace_for_project, WorkspaceError,
+    WorkspaceLocation, WorkspaceResult,
 };
 
 use thiserror::Error;

@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Weather System — Hirsel Design Storm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --map-bg: #f0ece0;
+      --map-bg-light: #f5f2e8;
+      --cold-front: #2060a8;
+      --warm-front: #c03030;
+      --isobar: #a0a098;
+      --isobar-light: #c8c4b8;
+      --storm: #2a1840;
+      --storm-mid: #3d2860;
+      --high-pressure: #4888c0;
+      --text: #2a2820;
+      --text-dim: #787060;
+      --text-bright: #1a1810;
+      --occluded: #6838a0;
+      --jet-stream: #e8a020;
+      --clearing: #58a868;
+    }
+
+    body {
+      font-family: 'Atkinson Hyperlegible', sans-serif;
+      background: var(--map-bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    /* Faint grid lines like a weather chart */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background:
+        repeating-linear-gradient(0deg, transparent 0, transparent 39px, rgba(0,0,0,0.03) 39px, rgba(0,0,0,0.03) 40px),
+        repeating-linear-gradient(90deg, transparent 0, transparent 39px, rgba(0,0,0,0.03) 39px, rgba(0,0,0,0.03) 40px);
+      pointer-events: none;
+    }
+
+    .direction-nav {
+      position: sticky; top: 0; z-index: 1000;
+      background: rgba(240,236,224,0.92); backdrop-filter: blur(14px);
+      border-bottom: 2px solid var(--isobar-light);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .direction-nav a {
+      font-size: 11px; font-weight: 700; color: var(--text-dim);
+      text-decoration: none; padding: 5px 12px; border-radius: 4px; transition: all 0.2s;
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .direction-nav a:hover { color: var(--cold-front); background: rgba(32,96,168,0.06); }
+    .direction-nav .nav-title {
+      font-family: 'Atkinson Hyperlegible', sans-serif; font-size: 14px;
+      font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text-bright); flex: 1; text-align: center;
+    }
+    .direction-nav .nav-home {
+      font-family: 'Fira Code', monospace;
+      font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--text-dim); border-right: 2px solid var(--isobar-light);
+      padding-right: 16px; margin-right: 4px;
+    }
+
+    .page-header {
+      padding: 80px 48px 20px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .tag {
+      font-family: 'Fira Code', monospace;
+      font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--cold-front); margin-bottom: 12px; display: block;
+    }
+
+    h1 {
+      font-family: 'Atkinson Hyperlegible', sans-serif;
+      font-size: clamp(40px, 6vw, 72px);
+      font-weight: 700;
+      letter-spacing: 0.03em; text-transform: uppercase;
+      line-height: 1.0; color: var(--text-bright); margin-bottom: 16px;
+    }
+
+    .subtitle {
+      font-size: 15px; font-weight: 400;
+      color: var(--text-dim); max-width: 580px; line-height: 1.7;
+    }
+
+    .showcase {
+      padding: 40px 48px 60px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    /* ====== SYNOPTIC CHART ====== */
+
+    .synoptic-chart {
+      background: var(--map-bg-light);
+      border: 2px solid var(--isobar);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .chart-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 24px;
+      background: var(--map-bg);
+      border-bottom: 2px solid var(--isobar-light);
+      position: relative;
+    }
+
+    .chart-id {
+      font-family: 'Atkinson Hyperlegible', sans-serif;
+      font-size: 13px; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--text-bright);
+    }
+
+    .chart-timestamp {
+      font-family: 'Fira Code', monospace;
+      font-size: 10px; color: var(--text-dim);
+    }
+
+    .chart-body {
+      position: relative;
+      min-height: 500px;
+      padding: 40px;
+      overflow: hidden;
+    }
+
+    /* Isobar lines (decorative SVG background) */
+    .chart-body::before {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(ellipse 300px 200px at 25% 30%, rgba(72,136,192,0.06) 0%, transparent 70%),
+        radial-gradient(ellipse 250px 180px at 70% 60%, rgba(72,136,192,0.04) 0%, transparent 70%),
+        radial-gradient(ellipse 200px 150px at 50% 45%, rgba(42,24,64,0.05) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .isobar-svg {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      pointer-events: none;
+    }
+
+    .isobar-line {
+      fill: none;
+      stroke: var(--isobar);
+      stroke-width: 1;
+      opacity: 0.4;
+    }
+
+    .front-line-cold {
+      fill: none;
+      stroke: var(--cold-front);
+      stroke-width: 2.5;
+    }
+
+    .front-line-warm {
+      fill: none;
+      stroke: var(--warm-front);
+      stroke-width: 2.5;
+    }
+
+    .front-line-occluded {
+      fill: none;
+      stroke: var(--occluded);
+      stroke-width: 2.5;
+      stroke-dasharray: 8 4;
+    }
+
+    .jet-stream-line {
+      fill: none;
+      stroke: var(--jet-stream);
+      stroke-width: 2;
+      stroke-dasharray: 12 6;
+      opacity: 0.7;
+      animation: jet-flow 2s linear infinite;
+    }
+
+    @keyframes jet-flow {
+      from { stroke-dashoffset: 0; }
+      to { stroke-dashoffset: -36; }
+    }
+
+    .front-triangle {
+      fill: var(--cold-front);
+    }
+
+    .front-semicircle {
+      fill: var(--warm-front);
+    }
+
+    /* Weather systems (specs) */
+    .weather-systems {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: auto auto;
+      gap: 30px 24px;
+      z-index: 1;
+    }
+
+    .weather-system {
+      position: relative;
+      padding: 24px;
+      border-radius: 50%;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      text-align: center;
+      width: 180px; height: 180px;
+      margin: 0 auto;
+      transition: all 0.3s;
+    }
+
+    /* Storm system (working) */
+    .system-storm {
+      background: radial-gradient(circle, var(--storm-mid) 0%, var(--storm) 60%, rgba(42,24,64,0.3) 100%);
+      border: 2px solid rgba(100,70,160,0.4);
+      box-shadow:
+        0 0 30px rgba(42,24,64,0.3),
+        inset 0 0 20px rgba(0,0,0,0.2);
+      animation: storm-pulse 3s ease-in-out infinite;
+    }
+
+    .system-storm .system-name { color: #e0d8f0; }
+    .system-storm .system-detail { color: #a090c0; }
+
+    @keyframes storm-pulse {
+      0%, 100% { box-shadow: 0 0 30px rgba(42,24,64,0.3), inset 0 0 20px rgba(0,0,0,0.2); }
+      50% { box-shadow: 0 0 50px rgba(42,24,64,0.5), inset 0 0 30px rgba(0,0,0,0.3); }
+    }
+
+    /* Isobar rings on storm */
+    .system-storm::before, .system-storm::after {
+      content: '';
+      position: absolute;
+      border-radius: 50%;
+      border: 1px solid rgba(160,140,200,0.2);
+      pointer-events: none;
+    }
+    .system-storm::before {
+      inset: -15px;
+    }
+    .system-storm::after {
+      inset: -30px;
+    }
+
+    /* Wind arrows on storms */
+    .wind-barbs {
+      position: absolute;
+      inset: -20px;
+      animation: rotate-slow 20s linear infinite;
+    }
+
+    @keyframes rotate-slow {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    .wind-barb {
+      position: absolute;
+      width: 2px; height: 12px;
+      background: rgba(160,140,200,0.4);
+      transform-origin: center bottom;
+    }
+
+    .wind-barb::after {
+      content: '';
+      position: absolute; top: 0; left: 0;
+      width: 6px; height: 2px;
+      background: rgba(160,140,200,0.4);
+    }
+
+    /* High pressure zone (validated) */
+    .system-high {
+      background: radial-gradient(circle, rgba(72,136,192,0.12) 0%, rgba(72,136,192,0.04) 60%, transparent 100%);
+      border: 1.5px solid rgba(72,136,192,0.2);
+    }
+
+    .system-high .system-name { color: var(--text-bright); }
+    .system-high .system-detail { color: var(--high-pressure); }
+
+    .system-high::before {
+      content: 'H';
+      position: absolute; top: 8px; right: 8px;
+      font-family: 'Atkinson Hyperlegible', sans-serif;
+      font-size: 24px; font-weight: 700;
+      color: var(--high-pressure); opacity: 0.3;
+    }
+
+    /* Occluded front (blocked) */
+    .system-occluded {
+      background: radial-gradient(circle, rgba(104,56,160,0.08) 0%, transparent 70%);
+      border: 1.5px dashed var(--occluded);
+      opacity: 0.7;
+    }
+
+    .system-occluded .system-name { color: var(--text); }
+    .system-occluded .system-detail { color: var(--occluded); }
+
+    /* Draft (no system yet, just a forecast marker) */
+    .system-forecast {
+      background: transparent;
+      border: 1px dashed var(--isobar);
+      opacity: 0.5;
+    }
+
+    .system-forecast .system-name { color: var(--text-dim); }
+    .system-forecast .system-detail { color: var(--isobar); }
+
+    .system-name {
+      font-size: 13px; font-weight: 700;
+      line-height: 1.2; margin-bottom: 4px;
+    }
+
+    .system-detail {
+      font-family: 'Fira Code', monospace;
+      font-size: 9px; letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .system-pressure {
+      font-family: 'Fira Code', monospace;
+      font-size: 18px; font-weight: 600;
+      margin-top: 8px;
+      opacity: 0.7;
+    }
+
+    /* Worker jet streams */
+    .jet-streams {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .jet-label {
+      font-family: 'Fira Code', monospace;
+      font-size: 8px;
+      fill: var(--jet-stream);
+      opacity: 0.8;
+    }
+
+    /* Pressure readings */
+    .pressure-reading {
+      font-family: 'Fira Code', monospace;
+      font-size: 9px;
+      fill: var(--isobar);
+    }
+
+    /* Forecast bar (delivery) */
+    .forecast-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 24px;
+      background: var(--map-bg);
+      border-top: 2px solid var(--isobar-light);
+    }
+
+    .forecast-label {
+      font-family: 'Fira Code', monospace;
+      font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .forecast-status {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 12px; font-weight: 700;
+      color: var(--clearing);
+    }
+
+    .forecast-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--clearing);
+      animation: forecast-blink 2s ease-in-out infinite;
+    }
+
+    @keyframes forecast-blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .legend {
+      display: flex; gap: 20px; padding: 10px 24px;
+      border-top: 1px solid var(--isobar-light);
+      background: var(--map-bg);
+    }
+
+    .legend-item {
+      display: flex; align-items: center; gap: 6px;
+      font-family: 'Fira Code', monospace;
+      font-size: 9px; color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+
+    .legend-swatch {
+      width: 20px; height: 3px; border-radius: 1px;
+    }
+
+    .rationale {
+      padding: 0 48px 100px;
+      max-width: 1200px; margin: 0 auto;
+    }
+
+    .rationale h3 {
+      font-family: 'Atkinson Hyperlegible', sans-serif;
+      font-size: 18px; font-weight: 700; letter-spacing: 0.04em;
+      text-transform: uppercase; margin-bottom: 20px;
+    }
+
+    .rationale-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .rationale-card {
+      padding: 24px;
+      background: var(--map-bg-light);
+      border: 1px solid var(--isobar-light);
+      border-radius: 4px;
+    }
+
+    .rationale-card h4 {
+      font-size: 12px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin-bottom: 8px; color: var(--cold-front);
+    }
+
+    .rationale-card p {
+      font-size: 13px; color: var(--text-dim); line-height: 1.7;
+    }
+
+    @media (max-width: 768px) {
+      .page-header, .showcase, .rationale { padding-left: 20px; padding-right: 20px; }
+      .weather-systems { grid-template-columns: 1fr 1fr; }
+      .weather-system { width: 140px; height: 140px; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="direction-nav">
+    <a href="../designs.html" class="nav-home">Storm</a>
+    <a href="circuit-board.html">Prev</a>
+    <span class="nav-title">WEATHER SYSTEM</span>
+    <a href="puppet-theatre.html">Next</a>
+  </nav>
+
+  <div class="page-header">
+    <div class="tag">Direction 14 &mdash; Atmospheric</div>
+    <h1>WEATHER SYSTEM</h1>
+    <p class="subtitle">Specs are weather fronts on a synoptic chart. Storm cells churn through active work, high-pressure zones mark validated stability, occluded fronts block progress. Workers flow as jet streams between systems. Delivery is the clearing forecast.</p>
+  </div>
+
+  <div class="showcase">
+    <div class="synoptic-chart">
+      <div class="chart-header">
+        <span class="chart-id">Synoptic Analysis &mdash; Auth Overhaul</span>
+        <span class="chart-timestamp">ISSUED 2026-03-19 14:00Z</span>
+      </div>
+
+      <div class="chart-body">
+        <!-- Isobar lines and fronts -->
+        <svg class="isobar-svg" viewBox="0 0 1000 500" preserveAspectRatio="none">
+          <!-- Isobars -->
+          <ellipse class="isobar-line" cx="200" cy="180" rx="140" ry="100" />
+          <ellipse class="isobar-line" cx="200" cy="180" rx="170" ry="120" />
+          <ellipse class="isobar-line" cx="750" cy="200" rx="120" ry="90" />
+          <ellipse class="isobar-line" cx="750" cy="200" rx="150" ry="110" />
+          <ellipse class="isobar-line" cx="500" cy="280" rx="160" ry="110" />
+          <ellipse class="isobar-line" cx="500" cy="280" rx="190" ry="130" />
+
+          <!-- Cold front -->
+          <path class="front-line-cold" d="M 120 350 Q 300 280, 420 320 Q 520 350, 600 310" />
+          <polygon class="front-triangle" points="250,290 256,280 262,290" />
+          <polygon class="front-triangle" points="350,310 356,300 362,310" />
+          <polygon class="front-triangle" points="450,330 456,320 462,330" />
+          <polygon class="front-triangle" points="540,330 546,320 552,330" />
+
+          <!-- Warm front -->
+          <path class="front-line-warm" d="M 600 310 Q 700 270, 820 290 Q 900 310, 950 280" />
+          <circle class="front-semicircle" cx="660" cy="286" r="5" />
+          <circle class="front-semicircle" cx="730" cy="278" r="5" />
+          <circle class="front-semicircle" cx="800" cy="288" r="5" />
+          <circle class="front-semicircle" cx="870" cy="296" r="5" />
+
+          <!-- Occluded front -->
+          <path class="front-line-occluded" d="M 420 320 Q 460 250, 500 200" />
+
+          <!-- Jet streams (workers) -->
+          <path class="jet-stream-line" d="M 50 120 Q 200 80, 400 130 Q 600 180, 800 100 Q 900 70, 980 90" />
+          <path class="jet-stream-line" d="M 30 400 Q 200 360, 450 380 Q 650 400, 850 350 Q 950 330, 980 340" />
+
+          <!-- Jet stream labels -->
+          <text class="jet-label" x="420" y="118">W-1</text>
+          <text class="jet-label" x="500" y="372">W-2</text>
+
+          <!-- Pressure readings -->
+          <text class="pressure-reading" x="170" y="175">1032 mb</text>
+          <text class="pressure-reading" x="720" y="195">1028 mb</text>
+          <text class="pressure-reading" x="460" y="265">996 mb</text>
+        </svg>
+
+        <div class="weather-systems">
+          <!-- Validated: High pressure zones -->
+          <div class="weather-system system-high">
+            <span class="system-name">Schema Migration</span>
+            <span class="system-detail">Validated</span>
+            <span class="system-pressure">1032</span>
+          </div>
+
+          <div class="weather-system system-high">
+            <span class="system-name">API Restructure</span>
+            <span class="system-detail">Validated</span>
+            <span class="system-pressure">1028</span>
+          </div>
+
+          <!-- Working: Storm system -->
+          <div class="weather-system system-storm">
+            <div class="wind-barbs">
+              <div class="wind-barb" style="top:0; left:50%; transform: rotate(0deg)"></div>
+              <div class="wind-barb" style="top:20%; right:0; transform: rotate(90deg)"></div>
+              <div class="wind-barb" style="bottom:0; left:50%; transform: rotate(180deg)"></div>
+              <div class="wind-barb" style="top:20%; left:0; transform: rotate(270deg)"></div>
+            </div>
+            <span class="system-name">Token Rotation</span>
+            <span class="system-detail">Working &middot; 2/4 tasks</span>
+            <span class="system-pressure">996</span>
+          </div>
+
+          <!-- Blocked: Occluded front -->
+          <div class="weather-system system-occluded">
+            <span class="system-name">Rate Limiter</span>
+            <span class="system-detail">Pending / Blocked</span>
+            <span class="system-pressure">1008</span>
+          </div>
+
+          <!-- Draft: Forecast marker -->
+          <div class="weather-system system-forecast">
+            <span class="system-name">E2E Tests</span>
+            <span class="system-detail">Draft &middot; Forecast</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="legend">
+        <div class="legend-item"><div class="legend-swatch" style="background:var(--cold-front)"></div> Cold Front</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:var(--warm-front)"></div> Warm Front</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:var(--occluded); border-top: 1px dashed var(--occluded)"></div> Occluded</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:var(--jet-stream)"></div> Jet Stream</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:var(--isobar)"></div> Isobar</div>
+      </div>
+
+      <div class="forecast-bar">
+        <span class="forecast-label">Delivery Forecast</span>
+        <div class="forecast-status">
+          <div class="forecast-dot"></div>
+          Clearing skies &mdash; PR #847 staging
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rationale">
+    <h3>WHY THIS IS INTERESTING</h3>
+    <div class="rationale-grid">
+      <div class="rationale-card">
+        <h4>Pressure = Progress</h4>
+        <p>Low-pressure storm systems are where the work happens — turbulent, energetic, drawing resources in. High-pressure zones are calm validated completions. The pressure metaphor maps perfectly to spec lifecycle: instability resolves into stability.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Fronts show boundaries</h4>
+        <p>Cold fronts advancing across the chart are dependency chains — they push forward and force change. Occluded fronts are blocked specs, trapped between competing pressures. The meteorological vocabulary makes state transitions spatial and visceral.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Jet streams are workers</h4>
+        <p>Workers flow between systems like jet streams — fast, high-altitude rivers of energy that connect weather systems. You can see which workers service which specs, and how the work flows across the board as animated dashed lines.</p>
+      </div>
+      <div class="rationale-card">
+        <h4>Delivery is the forecast</h4>
+        <p>A weather system clears. The forecast bar shows the approaching calm — delivery. "Clearing skies" means validated specs, merged PRs, stable production. The whole metaphor has a natural conclusion that maps to shipping code.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

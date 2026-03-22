@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>The Alchemical Ledger | Orchestration Board</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@1,6..72,200..800&amp;family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "surface-bright": "#393939",
+                        "error-container": "#93000a",
+                        "primary": "#ffffff",
+                        "on-tertiary": "#1c1b1b",
+                        "primary-fixed-dim": "#4b463a",
+                        "on-secondary-fixed": "#161d1f",
+                        "primary-container": "#dcd4c4",
+                        "surface-container-low": "#1c1b1b",
+                        "error": "#ffb4ab",
+                        "on-secondary-container": "#dde3e7",
+                        "secondary": "#c1c8cb",
+                        "surface-tint": "#cdc6b6",
+                        "surface-container-lowest": "#0e0e0e",
+                        "on-surface-variant": "#c6c6c6",
+                        "surface-container-highest": "#353534",
+                        "on-secondary-fixed-variant": "#363c3f",
+                        "on-primary": "#1f1b11",
+                        "tertiary-container": "#929090",
+                        "on-primary-container": "#000000",
+                        "secondary-container": "#41484b",
+                        "on-error": "#690005",
+                        "outline-variant": "#474747",
+                        "surface-container": "#201f1f",
+                        "on-tertiary-fixed": "#ffffff",
+                        "tertiary-fixed": "#5f5e5e",
+                        "tertiary": "#e5e2e1",
+                        "inverse-primary": "#635e51",
+                        "on-tertiary-fixed-variant": "#e5e2e1",
+                        "on-secondary": "#161d1f",
+                        "on-surface": "#e5e2e1",
+                        "inverse-surface": "#e5e2e1",
+                        "secondary-fixed": "#c1c8cb",
+                        "background": "#131313",
+                        "on-primary-fixed": "#ffffff",
+                        "primary-fixed": "#635e51",
+                        "surface-variant": "#353534",
+                        "inverse-on-surface": "#313030",
+                        "on-primary-fixed-variant": "#eae2d1",
+                        "on-tertiary-container": "#000000",
+                        "surface-container-high": "#2a2a2a",
+                        "on-background": "#e5e2e1",
+                        "surface": "#131313",
+                        "on-error-container": "#ffdad6",
+                        "secondary-fixed-dim": "#a5acaf",
+                        "tertiary-fixed-dim": "#474746",
+                        "outline": "#919191",
+                        "surface-dim": "#131313"
+                    },
+                    fontFamily: {
+                        "headline": ["Newsreader"],
+                        "body": ["Space Grotesk"],
+                        "label": ["Space Grotesk"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0px",
+                        "lg": "0px",
+                        "xl": "0px",
+                        "full": "0px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 200, 'GRAD' 0, 'opsz' 24;
+        }
+        .organic-fiber-overlay {
+            background-image:
+                url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.45' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E"),
+                url("data:image/svg+xml,%3Csvg viewBox='0 0 1000 1000' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='fiberFilter'%3E%3CfeTurbulence type='turbulence' baseFrequency='0.01' numOctaves='2' seed='5'/%3E%3CfeDisplacementMap in='SourceGraphic' scale='50'/%3E%3C/filter%3E%3Cg filter='url(%23fiberFilter)' opacity='0.08' stroke='%23ffffff'%3E%3Cpath d='M100,200 Q150,210 200,190 M400,600 Q450,580 500,620 M700,100 Q720,150 680,200 M200,800 Q250,820 300,780 M800,700 Q850,710 900,690' fill='none' stroke-width='0.5'/%3E%3Cpath d='M300,300 L320,350 M600,400 L580,450 M150,150 L170,120' fill='none' stroke-width='0.3'/%3E%3C/g%3E%3C/svg%3E");
+            opacity: 0.08;
+            pointer-events: none;
+            mix-blend-mode: overlay;
+        }
+        .nautilus-path {
+            stroke-dasharray: 1000;
+            stroke-dashoffset: 0;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 2px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #131313;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #474747;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-surface font-body overflow-hidden h-screen flex select-none relative">
+<div class="fixed inset-0 organic-fiber-overlay z-50"></div>
+<!-- SideNavBar -->
+<aside class="bg-[#1c1b1b] text-white flex flex-col h-full py-6 docked left-0 w-64 border-r border-[#474747]/20 relative z-40">
+<div class="px-6 mb-10 flex items-center gap-3">
+<div class="w-8 h-8 bg-white flex items-center justify-center">
+<span class="material-symbols-outlined text-on-primary text-sm" data-icon="architecture">architecture</span>
+</div>
+<div class="flex flex-col">
+<span class="font-body text-[0.68rem] uppercase tracking-widest text-white leading-none">Lead Architect</span>
+<span class="font-body text-[0.6rem] uppercase tracking-widest text-secondary opacity-70">ID: 0x942B</span>
+</div>
+</div>
+<nav class="flex-1 space-y-1">
+<div class="bg-[#2a2a2a] text-white border-l-2 border-white flex items-center px-6 py-4 gap-4 cursor-pointer transition-none">
+<span class="material-symbols-outlined text-lg" data-icon="dashboard">dashboard</span>
+<span class="font-body text-[0.68rem] uppercase tracking-widest">The Board</span>
+</div>
+<div class="text-[#c1c8cb] opacity-70 hover:bg-[#2a2a2a] hover:opacity-100 flex items-center px-6 py-4 gap-4 cursor-pointer transition-none">
+<span class="material-symbols-outlined text-lg" data-icon="alt_route">alt_route</span>
+<span class="font-body text-[0.68rem] uppercase tracking-widest">Routes</span>
+</div>
+<div class="text-[#c1c8cb] opacity-70 hover:bg-[#2a2a2a] hover:opacity-100 flex items-center px-6 py-4 gap-4 cursor-pointer transition-none">
+<span class="material-symbols-outlined text-lg" data-icon="inventory_2">inventory_2</span>
+<span class="font-body text-[0.68rem] uppercase tracking-widest">Archives</span>
+</div>
+<div class="text-[#c1c8cb] opacity-70 hover:bg-[#2a2a2a] hover:opacity-100 flex items-center px-6 py-4 gap-4 cursor-pointer transition-none">
+<span class="material-symbols-outlined text-lg" data-icon="terminal">terminal</span>
+<span class="font-body text-[0.68rem] uppercase tracking-widest">Terminal</span>
+</div>
+</nav>
+<div class="px-6 mt-auto pt-6 border-t border-[#474747]/20">
+<button class="w-full py-3 border border-primary text-primary font-body text-[0.68rem] uppercase tracking-widest hover:bg-primary hover:text-on-primary transition-none mb-6">
+                New Orchestration
+            </button>
+<div class="space-y-4">
+<div class="flex items-center gap-3 text-[#c1c8cb] opacity-70 cursor-pointer">
+<span class="material-symbols-outlined text-base" data-icon="menu_book">menu_book</span>
+<span class="font-body text-[0.6rem] uppercase tracking-widest">Documentation</span>
+</div>
+<div class="flex items-center gap-3 text-[#c1c8cb] opacity-70 cursor-pointer">
+<span class="material-symbols-outlined text-base" data-icon="query_stats">query_stats</span>
+<span class="font-body text-[0.6rem] uppercase tracking-widest">System Status</span>
+</div>
+</div>
+</div>
+</aside>
+<!-- Main Canvas -->
+<main class="flex-1 flex flex-col relative overflow-hidden">
+<!-- TopAppBar -->
+<header class="bg-[#131313] text-white flex justify-between items-center w-full px-10 h-16 border-b border-[#474747]/20 relative z-30">
+<div class="flex items-center gap-8">
+<span class="text-xl font-medium italic font-headline text-white tracking-tight">The Alchemical Ledger</span>
+<div class="hidden md:flex items-center gap-6">
+<span class="text-white border-b border-white pb-1 font-body text-[0.68rem] uppercase tracking-widest cursor-pointer">Project: Alpha-9</span>
+<span class="text-[#c1c8cb] font-body text-[0.68rem] uppercase tracking-widest cursor-pointer hover:text-white transition-none">Status: Active</span>
+</div>
+</div>
+<div class="flex items-center gap-6">
+<div class="flex items-center bg-[#1c1b1b] px-3 py-1 gap-2 border border-[#474747]/20">
+<span class="material-symbols-outlined text-sm text-secondary" data-icon="search">search</span>
+<input class="bg-transparent border-none focus:ring-0 text-[0.68rem] uppercase tracking-widest w-32 placeholder:text-secondary/40" placeholder="Locate Node..." type="text"/>
+</div>
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-lg cursor-pointer text-[#c1c8cb] hover:text-white" data-icon="history">history</span>
+<span class="material-symbols-outlined text-lg cursor-pointer text-[#c1c8cb] hover:text-white" data-icon="settings">settings</span>
+</div>
+</div>
+</header>
+<!-- Content Area -->
+<div class="flex-1 flex overflow-hidden">
+<!-- Board Interface -->
+<section class="flex-1 p-10 overflow-auto custom-scrollbar relative">
+<!-- Source Spec Header -->
+<div class="mb-16">
+<span class="font-body text-[0.6rem] uppercase tracking-widest text-secondary block mb-2">SOURCE_SPEC / ENTRY_001</span>
+<h1 class="text-5xl font-headline italic text-white max-w-2xl leading-tight">Refining the Architectural Manifesto</h1>
+<div class="mt-4 flex gap-4 items-center">
+<div class="h-px w-24 bg-[#474747]/40"></div>
+<span class="font-body text-[0.6rem] uppercase tracking-widest text-secondary opacity-50">Locus: 40.7128° N, 74.0060° W</span>
+</div>
+</div>
+<!-- Technical Orchestration Flow -->
+<div class="relative min-h-[600px] flex items-start gap-24">
+<!-- Flow Lines (SVG Background Layer) -->
+<svg class="absolute inset-0 pointer-events-none" height="100%" width="100%">
+<path class="opacity-30" d="M 120,40 L 120,120 L 300,120" fill="none" stroke="#474747" stroke-width="1"></path>
+<path class="opacity-30" d="M 120,120 L 120,280 L 300,280" fill="none" stroke="#474747" stroke-width="1"></path>
+<path class="opacity-30" d="M 120,280 L 120,440 L 300,440" fill="none" stroke="#474747" stroke-width="1"></path>
+<!-- Spiral Motif -->
+<g class="opacity-20" stroke="#ffffff" transform="translate(60, 100) scale(0.4)">
+<path d="M0,0 C20,0 40,20 40,40 C40,70 10,80 -20,80 C-60,80 -80,30 -80,-20 C-80,-90 -10,-130 70,-130" fill="none" stroke-width="2"></path>
+</g>
+</svg>
+<!-- Root Node -->
+<div class="relative z-10 pt-10">
+<div class="bg-white p-4 w-48 border border-white">
+<span class="font-body text-[0.6rem] uppercase tracking-widest text-on-primary font-bold block mb-1">Root_Master</span>
+<span class="font-body text-[0.6rem] uppercase tracking-[0.2em] text-on-primary opacity-60">ACTIVE_STREAM</span>
+</div>
+</div>
+<!-- Task Grid -->
+<div class="flex-1 grid grid-cols-1 md:grid-cols-2 gap-8 z-10">
+<!-- Task Card 1 -->
+<div class="bg-[#1c1b1b] p-6 border border-[#474747]/20 hover:border-white transition-none group cursor-pointer relative">
+<div class="flex justify-between items-start mb-6">
+<div>
+<span class="font-body text-[0.6rem] uppercase tracking-widest text-secondary block mb-1">Task_Alpha</span>
+<h3 class="font-body text-sm font-medium text-white">Substrate Analysis</h3>
+</div>
+<div class="px-2 py-0.5 border border-primary text-primary text-[0.55rem] uppercase tracking-widest font-bold">
+                                    VERIFIED
+                                </div>
+</div>
+<p class="font-headline italic text-secondary text-sm leading-relaxed mb-6 opacity-80">Calculating the tensile strength of the digital parchment across nested dimensions.</p>
+<div class="flex justify-between items-center text-[0.6rem] text-secondary/40 font-body">
+<span>COORD: 0x94/2A</span>
+<span>TS: 169482.002</span>
+</div>
+<div class="absolute -top-1 -left-1 w-2 h-2 border-t border-l border-white/20 group-hover:border-white transition-none"></div>
+</div>
+<!-- Task Card 2 -->
+<div class="bg-[#1c1b1b] p-6 border border-[#474747]/20 hover:border-white transition-none group cursor-pointer relative">
+<div class="flex justify-between items-start mb-6">
+<div>
+<span class="font-body text-[0.6rem] uppercase tracking-widest text-secondary block mb-1">Task_Beta</span>
+<h3 class="font-body text-sm font-medium text-white">Ink Distribution</h3>
+</div>
+<div class="px-2 py-0.5 bg-white text-on-primary text-[0.55rem] uppercase tracking-widest font-bold">
+                                    PROCESSING
+                                </div>
+</div>
+<p class="font-headline italic text-secondary text-sm leading-relaxed mb-6 opacity-80">Evaluating the chromatic density of architectural nodes relative to the master inkwell.</p>
+<div class="flex justify-between items-center text-[0.6rem] text-secondary/40 font-body">
+<span>COORD: 0x22/FB</span>
+<div class="flex gap-1 items-center">
+<div class="w-8 h-1 bg-white"></div>
+<div class="w-4 h-1 bg-white/20"></div>
+</div>
+</div>
+<div class="absolute -top-1 -left-1 w-2 h-2 border-t border-l border-white/20 group-hover:border-white transition-none"></div>
+</div>
+<!-- Task Card 3 -->
+<div class="bg-[#1c1b1b] p-6 border border-[#474747]/20 hover:border-white transition-none group cursor-pointer relative">
+<div class="flex justify-between items-start mb-6">
+<div>
+<span class="font-body text-[0.6rem] uppercase tracking-widest text-secondary block mb-1">Task_Gamma</span>
+<h3 class="font-body text-sm font-medium text-white">Binding Procedure</h3>
+</div>
+<div class="px-2 py-0.5 border border-[#474747] text-secondary text-[0.55rem] uppercase tracking-widest font-bold">
+                                    QUEUED
+                                </div>
+</div>
+<p class="font-headline italic text-secondary text-sm leading-relaxed mb-6 opacity-80">Synthesizing separate manifestos into a single, cohesive liturgical structure.</p>
+<div class="flex justify-between items-center text-[0.6rem] text-secondary/40 font-body">
+<span>COORD: 0x11/CC</span>
+<span>TS: PENDING</span>
+</div>
+<div class="absolute -top-1 -left-1 w-2 h-2 border-t border-l border-white/20 group-hover:border-white transition-none"></div>
+</div>
+<!-- Technical Noise Grid -->
+<div class="border border-dashed border-[#474747]/20 p-6 flex flex-col justify-center items-center text-center opacity-40">
+<span class="material-symbols-outlined text-4xl mb-2 text-secondary" data-icon="add">add</span>
+<span class="font-body text-[0.6rem] uppercase tracking-[0.3em] text-secondary">Awaiting New Logic</span>
+</div>
+</div>
+</div>
+<!-- Footer Annotations -->
+<div class="mt-24 pt-12 border-t border-[#474747]/10 flex justify-between items-end">
+<div class="max-w-sm">
+<span class="font-body text-[0.6rem] uppercase tracking-widest text-white mb-2 block">ARCHITECT_NOTE</span>
+<p class="font-headline italic text-secondary text-sm leading-relaxed">
+                            "The precision of the line is not a preference, but a requisite. Ensure all orchestration follows the Fibonacci sequence of the ledger's grid."
+                        </p>
+</div>
+<div class="text-right">
+<span class="font-body text-[0.5rem] uppercase tracking-[0.4em] text-secondary/30 block mb-1">SYSTEM_VER: 0.9.24_BETA</span>
+<span class="font-body text-[0.5rem] uppercase tracking-[0.4em] text-secondary/30 block">KERNEL_TICK: 49,293,102</span>
+</div>
+</div>
+</section>
+<!-- Shepherd AI Glass Panel -->
+<aside class="w-80 bg-white/5 backdrop-blur-xl border-l border-white/10 p-8 flex flex-col z-40 relative">
+<div class="flex items-center gap-3 mb-10">
+<div class="w-10 h-10 bg-white flex items-center justify-center">
+<span class="material-symbols-outlined text-on-primary text-xl" data-icon="psychology">psychology</span>
+</div>
+<div>
+<span class="font-body text-[0.68rem] uppercase tracking-widest text-white block">Shepherd AI</span>
+<span class="font-body text-[0.55rem] uppercase tracking-widest text-secondary opacity-60">Cognitive Layer</span>
+</div>
+</div>
+<div class="flex-1 overflow-auto custom-scrollbar space-y-8 pr-2">
+<div class="space-y-3">
+<span class="font-body text-[0.55rem] uppercase tracking-widest text-secondary block">Observations</span>
+<p class="font-headline italic text-tertiary text-lg leading-snug">
+                            "The substrate analysis is yielding a higher-than-expected density. I suggest increasing the ink flow in the Alpha sector to balance the visual weight."
+                        </p>
+</div>
+<div class="space-y-4">
+<span class="font-body text-[0.55rem] uppercase tracking-widest text-secondary block">Worker Status</span>
+<div class="space-y-3">
+<div class="flex justify-between items-center bg-white/5 p-3">
+<span class="font-body text-[0.6rem] uppercase tracking-widest text-white">Worker_419</span>
+<span class="w-2 h-2 bg-white"></span>
+</div>
+<div class="flex justify-between items-center bg-white/5 p-3">
+<span class="font-body text-[0.6rem] uppercase tracking-widest text-white">Worker_102</span>
+<span class="w-2 h-2 bg-white"></span>
+</div>
+<div class="flex justify-between items-center bg-white/5 p-3 opacity-30">
+<span class="font-body text-[0.6rem] uppercase tracking-widest text-white">Worker_088</span>
+<span class="w-2 h-2 bg-transparent border border-white"></span>
+</div>
+</div>
+</div>
+<div class="bg-white p-4">
+<span class="font-body text-[0.6rem] uppercase tracking-widest text-on-primary block mb-1">Directive_Required</span>
+<p class="font-body text-[0.7rem] text-on-primary leading-normal mb-4">Should I proceed with the terminal binding or await manual verification of the manifesto?</p>
+<div class="flex flex-col gap-2">
+<button class="w-full py-2 bg-on-primary text-white font-body text-[0.55rem] uppercase tracking-widest hover:opacity-90 transition-none">Execute Binding</button>
+<button class="w-full py-2 border border-on-primary text-on-primary font-body text-[0.55rem] uppercase tracking-widest hover:bg-on-primary hover:text-white transition-none">Hold for Review</button>
+</div>
+</div>
+</div>
+<div class="mt-8 pt-6 border-t border-white/10">
+<div class="flex items-center gap-2 mb-4">
+<span class="w-1.5 h-1.5 bg-white"></span>
+<span class="font-body text-[0.6rem] uppercase tracking-widest text-white">System Pulse: Steady</span>
+</div>
+<div class="bg-white/5 p-3 flex items-center justify-between">
+<span class="font-body text-[0.6rem] text-secondary">Awaiting Input...</span>
+<span class="material-symbols-outlined text-sm text-secondary" data-icon="send">send</span>
+</div>
+</div>
+</aside>
+</div>
+</main>
+</body></html>

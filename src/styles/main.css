@@ -1,51 +1,7 @@
 @import "tailwindcss";
 @import "basecoat-css";
 @plugin "@tailwindcss/typography";
-
-/* ============================================
-   ET Book Font - Edward Tufte's Bembo-style serif
-   ============================================ */
-
-@font-face {
-  font-family: 'ET Book';
-  src: url('/fonts/et-book-roman-line-figures.woff') format('woff');
-  font-weight: normal;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'ET Book';
-  src: url('/fonts/et-book-bold-line-figures.woff') format('woff');
-  font-weight: bold;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'ET Book';
-  src: url('/fonts/et-book-display-italic-old-style-figures.woff') format('woff');
-  font-weight: normal;
-  font-style: italic;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'ET Book';
-  src: url('/fonts/et-book-semi-bold-old-style-figures.woff') format('woff');
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-
-/* Oldstyle figures variant for prose/descriptions */
-@font-face {
-  font-family: 'ET Book Oldstyle';
-  src: url('/fonts/et-book-roman-old-style-figures.woff') format('woff');
-  font-weight: normal;
-  font-style: normal;
-  font-display: swap;
-}
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,600;1,6..72,200;1,6..72,300;1,6..72,400;1,6..72,600&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
 
 /* Fix tooltip truncation - allow wrapping, wider, and prevent clipping */
 [data-tooltip]::before {
@@ -104,29 +60,29 @@ input[type="number"] {
 }
 
 /* ============================================
-   HIRSEL THEME (Default) - "Pasture at Dusk"
+   HIRSEL THEME (Default) - "The Alchemical Ledger"
    ============================================ */
 
 /* Hirsel Dark (default) */
 :root,
 :root[data-theme="hirsel-dark"] {
-  /* Backgrounds (dark pasture at dusk) */
-  --pasture-900: #1a1a1a;
-  --pasture-800: #242424;
-  --pasture-700: #2d2d2d;
-  --pasture-600: #333333;
+  /* Backgrounds (the primary substrate) */
+  --pasture-900: #131313;
+  --pasture-800: #1c1b1b;
+  --pasture-700: #201f1f;
+  --pasture-600: #2a2a2a;
 
-  /* Text (warm off-white, like wool) */
-  --wool-100: #e8e4df;
-  --wool-300: #b5b0a8;
-  --wool-500: #8a8580;
-  --wool-700: #5a5550;
+  /* Text (pale vellum) */
+  --wool-100: #e5e2e1;
+  --wool-300: #c6c6c6;
+  --wool-500: #919191;
+  --wool-700: #474747;
 
-  /* Accent (shepherd's lantern) */
-  --amber-400: #e8c19a;
-  --amber-500: #d4a574;
-  --amber-500-rgb: 212, 165, 116;
-  --amber-600: #b8895c;
+  /* Accent (primary is now white) */
+  --amber-400: #dcd4c4;
+  --amber-500: #ffffff;
+  --amber-500-rgb: 255, 255, 255;
+  --amber-600: #cdc6b6;
 
   /* Status colors */
   --sage: #7d9970;
@@ -136,50 +92,50 @@ input[type="number"] {
   --terra-rgb: 196, 92, 74;
 
   /* Basecoat/shadcn compatibility */
-  --background: #1a1a1a;
-  --foreground: #e8e4df;
-  --card: #242424;
-  --card-foreground: #e8e4df;
-  --popover: #242424;
-  --popover-foreground: #e8e4df;
-  --primary: #d4a574;
-  --primary-foreground: #1a1a1a;
-  --secondary: #2d2d2d;
-  --secondary-foreground: #e8e4df;
-  --muted: #2d2d2d;
-  --muted-foreground: #8a8580;
-  --accent: #2d2d2d;
-  --accent-foreground: #e8e4df;
+  --background: #131313;
+  --foreground: #e5e2e1;
+  --card: #1c1b1b;
+  --card-foreground: #e5e2e1;
+  --popover: #1c1b1b;
+  --popover-foreground: #e5e2e1;
+  --primary: #ffffff;
+  --primary-foreground: #1f1b11;
+  --secondary: #201f1f;
+  --secondary-foreground: #e5e2e1;
+  --muted: #201f1f;
+  --muted-foreground: #919191;
+  --accent: #2a2a2a;
+  --accent-foreground: #e5e2e1;
   --destructive: #c45c4a;
-  --destructive-foreground: #e8e4df;
-  --border: #333333;
-  --input: #333333;
-  --ring: #d4a574;
+  --destructive-foreground: #e5e2e1;
+  --border: #2a2a2a;
+  --input: #2a2a2a;
+  --ring: #ffffff;
 }
 
-/* Hirsel Light - "Pasture at Dawn" */
+/* Hirsel Light - "The Alchemical Ledger (Light)" */
 :root.light,
 :root[data-theme="light"],
 :root[data-theme="hirsel-light"] {
-  /* Backgrounds (clean warm whites) */
-  --pasture-900: #faf9f7;
-  --pasture-800: #f4f2ef;
-  --pasture-700: #eae7e3;
-  --pasture-600: #ddd9d3;
+  /* Backgrounds */
+  --pasture-900: #f5f3f0;
+  --pasture-800: #eae7e3;
+  --pasture-700: #ddd9d3;
+  --pasture-600: #c6c3bd;
 
-  /* Text (dark earth tones) */
-  --wool-100: #1f1d1a;
-  --wool-300: #4a4744;
+  /* Text */
+  --wool-100: #1c1b1b;
+  --wool-300: #474747;
   --wool-500: #6b6864;
-  --wool-700: #a09c97;
+  --wool-700: #919191;
 
-  /* Accent (warm amber) */
+  /* Accent */
   --amber-400: #c4956a;
-  --amber-500: #a67c4e;
-  --amber-500-rgb: 166, 124, 78;
-  --amber-600: #8a6640;
+  --amber-500: #1f1b11;
+  --amber-500-rgb: 31, 27, 17;
+  --amber-600: #4b463a;
 
-  /* Status colors (good contrast for light bg) */
+  /* Status colors */
   --sage: #4a7340;
   --sage-rgb: 74, 115, 64;
   --golden: #9a7a18;
@@ -187,25 +143,25 @@ input[type="number"] {
   --terra-rgb: 184, 69, 53;
 
   /* Basecoat/shadcn compatibility */
-  --background: #faf9f7;
-  --foreground: #1f1d1a;
-  --card: #f4f2ef;
-  --card-foreground: #1f1d1a;
-  --popover: #f4f2ef;
-  --popover-foreground: #1f1d1a;
-  --primary: #a67c4e;
-  --primary-foreground: #faf9f7;
-  --secondary: #eae7e3;
-  --secondary-foreground: #1f1d1a;
-  --muted: #eae7e3;
+  --background: #f5f3f0;
+  --foreground: #1c1b1b;
+  --card: #eae7e3;
+  --card-foreground: #1c1b1b;
+  --popover: #eae7e3;
+  --popover-foreground: #1c1b1b;
+  --primary: #1f1b11;
+  --primary-foreground: #f5f3f0;
+  --secondary: #ddd9d3;
+  --secondary-foreground: #1c1b1b;
+  --muted: #ddd9d3;
   --muted-foreground: #6b6864;
-  --accent: #eae7e3;
-  --accent-foreground: #1f1d1a;
+  --accent: #ddd9d3;
+  --accent-foreground: #1c1b1b;
   --destructive: #b84535;
-  --destructive-foreground: #faf9f7;
-  --border: #ddd9d3;
-  --input: #ddd9d3;
-  --ring: #a67c4e;
+  --destructive-foreground: #f5f3f0;
+  --border: #c6c3bd;
+  --input: #c6c3bd;
+  --ring: #1f1b11;
 }
 
 /* ============================================
@@ -416,20 +372,41 @@ input[type="number"] {
 body {
   background-color: var(--pasture-900);
   color: var(--wool-100);
-  font-family: 'ET Book', 'Palatino', 'Palatino Linotype', Georgia, serif;
-  font-size: 15px;
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-size: 14px;
   line-height: 1.6;
   transition: var(--theme-transition);
 }
 
+/* Alchemical Ledger - Grain overlay */
+.grain-overlay {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.45' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  opacity: 0.04;
+  pointer-events: none;
+  mix-blend-mode: overlay;
+}
+
+/* Registration mark - crop mark on card corners */
+.reg-mark { position: relative; }
+.reg-mark::before {
+  content: '';
+  position: absolute; top: -1px; left: -1px;
+  width: 6px; height: 6px;
+  border-top: 1px solid rgba(255,255,255,0.12);
+  border-left: 1px solid rgba(255,255,255,0.12);
+  pointer-events: none;
+  transition: border-color 0.15s;
+}
+.group:hover .reg-mark::before,
+.reg-mark:hover::before {
+  border-color: rgba(255,255,255,0.4);
+}
+
 /* Theme transition for all themed elements */
 .title-bar,
-.run-list-panel,
 .chat-panel,
 .status-bar,
 .run-item,
-.worker-card,
-.task-item,
 .message,
 input,
 button {
@@ -448,15 +425,7 @@ button {
 }
 
 /* Panel backgrounds */
-.run-list-panel {
-  background-color: var(--pasture-800);
-}
-
 .chat-panel {
-  background-color: var(--pasture-800);
-}
-
-.ai-chat-panel {
   background-color: var(--pasture-800);
 }
 
@@ -587,8 +556,8 @@ button {
 [class*="btn-sm"],
 [class*="btn-lg"],
 [class*="btn-icon"] {
-  /* Override font to system-ui for consistent baseline */
-  font-family: system-ui, -apple-system, sans-serif;
+  /* Override font to Space Grotesk for consistent baseline */
+  font-family: 'Space Grotesk', system-ui, sans-serif;
   /* Ensure proper flex alignment */
   display: inline-flex;
   align-items: center;
@@ -703,7 +672,7 @@ button {
 
 ::-webkit-scrollbar-thumb {
   background: var(--pasture-600);
-  border-radius: 4px;
+  border-radius: 0;
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -749,105 +718,9 @@ button {
   }
 }
 
-/* Sheep walking animation for loading states */
-.sheep-walking-anim {
-  animation: sheep-bounce 1.2s ease-in-out infinite;
-}
-
-@keyframes sheep-bounce {
-  0%, 100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-4px);
-  }
-}
-
-/* Header sheep squish animation */
-.sheep-btn {
-  transition: transform 0.1s ease-out;
-}
-
-.sheep-squish {
-  animation: squish-shake 0.4s ease-out;
-}
-
-@keyframes squish-shake {
-  0% {
-    transform: scale(1) rotate(0deg);
-  }
-  15% {
-    transform: scale(1.3, 0.7) rotate(-5deg);
-  }
-  30% {
-    transform: scale(0.8, 1.2) rotate(5deg);
-  }
-  45% {
-    transform: scale(1.15, 0.85) rotate(-3deg);
-  }
-  60% {
-    transform: scale(0.95, 1.05) rotate(2deg);
-  }
-  75% {
-    transform: scale(1.05, 0.95) rotate(-1deg);
-  }
-  100% {
-    transform: scale(1) rotate(0deg);
-  }
-}
-
-/* Floating Baa! text */
-.baa-text {
-  opacity: 1;
-  transform: translateY(0) translateX(0);
-}
-
-.baa-float {
-  animation: baa-float-up 0.7s ease-out forwards;
-}
-
-@keyframes baa-float-up {
-  0% {
-    opacity: 1;
-    transform: translateY(0) translateX(0);
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-20px) translateX(calc(10px + var(--baa-x, 0px)));
-  }
-}
-
-/* Sheep Clicker Game Animations */
-.sheep-clicker-sheep.sheep-bounce {
-  transform: scale(0.95);
-}
-
-.sheep-clicker-floating {
-  animation: float-up 1s ease-out forwards;
-}
-
-@keyframes float-up {
-  0% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-60px) scale(1.2);
-  }
-}
-
-.sheep-clicker-overlay {
-  backdrop-filter: blur(4px);
-}
-
-.sheep-clicker-wool-count {
-  text-shadow: 0 0 20px rgba(245, 158, 11, 0.3);
-}
-
-/* Wool color class (for SVG sheep) */
+/* Wool color class */
 .text-wool-600 {
-  color: #6a655f;
+  color: var(--wool-700);
 }
 
 /* Additional empty state helper text styling */
@@ -902,87 +775,11 @@ button {
   }
 }
 
-/* Worker card animations */
-.worker-card {
-  transition: background-color 150ms ease-out, transform 150ms ease-out, box-shadow 200ms ease-out;
-}
-
-.worker-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-}
-
-.worker-card:active {
-  transform: translateY(0);
-  transition-duration: 50ms;
-}
-
-/* Card enter animation */
-.worker-card-enter {
-  animation: card-slide-in 300ms ease-out;
-}
-
-@keyframes card-slide-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* Task item animations */
-.task-item {
-  transition: background-color 150ms ease-out, padding-left 200ms ease-out;
-}
-
-.task-item:hover {
-  background-color: var(--pasture-700);
-}
-
-.task-item-enter {
-  animation: task-fade-in 250ms ease-out;
-}
-
-@keyframes task-fade-in {
-  from {
-    opacity: 0;
-    transform: translateX(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-/* Status badge animations */
-.status-badge {
-  transition: background-color 300ms ease-out, color 300ms ease-out;
-}
-
-.status-badge-change {
-  animation: badge-pulse 400ms ease-out;
-}
-
-@keyframes badge-pulse {
-  0% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.1);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
 /* Status dot state transitions */
 .status-dot {
   width: 0.5rem;
   height: 0.5rem;
-  border-radius: 9999px;
+  border-radius: 0;
   transition: background-color 300ms ease-out, box-shadow 300ms ease-out;
 }
 
@@ -1087,21 +884,7 @@ button {
   transition: background-color 100ms ease-out;
 }
 
-/* Activity log entry animations */
-.activity-entry {
-  animation: activity-slide-in 200ms ease-out;
-}
 
-@keyframes activity-slide-in {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
 
 /* Message animations */
 .message-enter {
@@ -1116,41 +899,6 @@ button {
   to {
     opacity: 1;
     transform: translateY(0);
-  }
-}
-
-/* Thread tab animations */
-.thread-tab {
-  transition: background-color 150ms ease-out, color 150ms ease-out, border-color 200ms ease-out;
-}
-
-.thread-tab.active {
-  animation: tab-activate 200ms ease-out;
-}
-
-@keyframes tab-activate {
-  0% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-2px);
-  }
-  100% {
-    transform: translateY(0);
-  }
-}
-
-/* Unread indicator pulse */
-.unread-indicator {
-  animation: unread-pulse 2s ease-in-out infinite;
-}
-
-@keyframes unread-pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
   }
 }
 
@@ -1183,7 +931,7 @@ button {
   );
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.5s ease-in-out infinite;
-  border-radius: 4px;
+  border-radius: 0;
 }
 
 @keyframes skeleton-shimmer {
@@ -1355,119 +1103,6 @@ button {
   }
 }
 
-/* =========================================================================
-   Sheep Clicker Mini-Game Styles
-   ========================================================================= */
-
-/* Overlay entrance animation */
-.sheep-clicker-overlay {
-  backdrop-filter: blur(4px);
-}
-
-/* Sheep button bounce animation on click */
-.sheep-clicker-sheep {
-  cursor: pointer;
-  user-select: none;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.sheep-clicker-sheep:hover {
-  transform: scale(1.02);
-}
-
-.sheep-clicker-sheep:active,
-.sheep-clicker-sheep.sheep-bounce {
-  transform: scale(0.95);
-}
-
-/* Wool counter pulse on big gains */
-.sheep-clicker-wool-count {
-  text-shadow: 0 0 20px rgba(245, 158, 11, 0.3);
-}
-
-/* Floating numbers animation */
-.sheep-clicker-floating {
-  animation: float-up 1s ease-out forwards;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
-}
-
-@keyframes float-up {
-  0% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-  50% {
-    opacity: 1;
-    transform: translateY(-30px) scale(1.2);
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-60px) scale(0.8);
-  }
-}
-
-/* Upgrade card hover effect */
-.sheep-clicker-overlay button:not(:disabled):hover {
-  transform: translateY(-1px);
-}
-
-/* Achievement badge glow */
-.sheep-clicker-overlay .bg-golden\/20 {
-  animation: achievement-glow 2s ease-in-out infinite;
-}
-
-@keyframes achievement-glow {
-  0%, 100% {
-    box-shadow: 0 0 5px rgba(218, 165, 32, 0.3);
-  }
-  50% {
-    box-shadow: 0 0 15px rgba(218, 165, 32, 0.5);
-  }
-}
-
-/* Combo indicator animation */
-.sheep-clicker-overlay .text-amber-400.font-bold {
-  animation: combo-pulse 0.3s ease-out;
-}
-
-@keyframes combo-pulse {
-  0% {
-    transform: scale(1.3);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
-/* Sheep idle animation (subtle breathing) */
-.sheep-clicker-sheep svg {
-  animation: sheep-breathe 3s ease-in-out infinite;
-}
-
-@keyframes sheep-breathe {
-  0%, 100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.02);
-  }
-}
-
-/* Upgrade purchase flash */
-@keyframes upgrade-flash {
-  0% {
-    background-color: rgba(74, 222, 128, 0.3);
-  }
-  100% {
-    background-color: transparent;
-  }
-}
-
-/* Stats counter animation */
-.sheep-clicker-overlay .text-wool-300 {
-  transition: color 150ms ease-out;
-}
-
 /* Reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -1487,48 +1122,6 @@ button {
 body {
   min-width: 100%;
   min-height: 100%;
-}
-
-/* Run list panel responsive behavior */
-.run-list-panel {
-  min-width: 2.5rem; /* 40px when collapsed */
-}
-
-/* When not collapsed, set reasonable min-width */
-.run-list-panel:not(.collapsed) {
-  min-width: 10rem; /* 160px minimum when expanded */
-}
-
-/* Workers and tasks panels - stack vertically on narrow screens */
-@media (max-width: 900px) {
-  /* Make workers/tasks panels narrower */
-  .workers-panel,
-  .tasks-panel {
-    min-width: 200px;
-  }
-}
-
-@media (max-width: 800px) {
-  /* Parent flex container should stack vertically */
-  .workers-tasks-container {
-    flex-direction: column !important;
-  }
-
-  /* Stack workers and tasks vertically instead of side by side */
-  .workers-panel,
-  .tasks-panel {
-    width: 100% !important;
-    border-right: none !important;
-    border-bottom: 1px solid var(--pasture-600);
-    max-height: 50%;
-    flex: 1;
-  }
-
-  /* Reduce activity panel height on smaller screens */
-  .activity-panel {
-    height: 8rem !important;
-    min-height: 6rem;
-  }
 }
 
 /* Chat panel responsive */
@@ -1569,17 +1162,6 @@ body {
   }
 }
 
-/* Worker/Task cards responsive */
-@media (max-width: 900px) {
-  .worker-card {
-    padding: 0.5rem !important;
-  }
-
-  .task-item {
-    padding: 0.375rem 0.5rem !important;
-  }
-}
-
 /* Modal responsive - prevent modal from being too wide on small screens */
 @media (max-width: 600px) {
   .fixed.inset-0 > div[class*="w-[500px]"],
@@ -1591,226 +1173,18 @@ body {
 }
 
 /* Prevent text overflow in constrained spaces */
-.run-item,
-.worker-card,
-.task-item {
+.run-item {
   overflow: hidden;
 }
 
-.run-item span,
-.worker-card span,
-.task-item span {
+.run-item span {
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-/* Activity panel responsive - shrink gracefully */
-.activity-panel {
-  min-height: 6rem;
-  flex-shrink: 1;
-}
-
-/* Make sure panels can shrink but have reasonable minimums */
-.workers-panel,
-.tasks-panel {
-  min-height: 150px;
-  min-width: 250px;
-  overflow: hidden;
 }
 
 /* Main content section - maintain readable width */
 section.flex-1.flex.flex-col {
   min-width: 450px;
-}
-
-/* Activity panel - keep it visible */
-.activity-panel {
-  min-width: 100%;
-}
-
-/* Ensure inner scrollable areas work properly */
-.workers-panel > div:last-child,
-.tasks-panel > div:last-child {
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-/* ============================================
-   AI Chat Assistant Panel Styles
-   ============================================ */
-
-.ai-chat-panel {
-  transition: width 200ms ease-out, transform 200ms ease-out;
-}
-
-/* Message bubbles */
-.ai-chat-message {
-  animation: message-slide-up 200ms ease-out;
-}
-
-.ai-chat-message-user {
-  background-color: var(--pasture-700);
-  border-radius: 1rem 1rem 0.25rem 1rem;
-}
-
-.ai-chat-message-assistant {
-  background-color: var(--pasture-600);
-  border-radius: 1rem 1rem 1rem 0.25rem;
-}
-
-/* Streaming cursor animation */
-.ai-chat-streaming::after {
-  content: '\25AE';
-  animation: cursor-blink 1s step-end infinite;
-  color: var(--amber-500);
-  margin-left: 2px;
-}
-
-@keyframes cursor-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
-
-/* Tool call cards */
-.ai-chat-tool-card {
-  background-color: var(--pasture-700);
-  border: 1px solid var(--pasture-600);
-  border-radius: 0.5rem;
-  transition: background-color 150ms ease-out;
-}
-
-.ai-chat-tool-card:hover {
-  background-color: var(--pasture-600);
-}
-
-.ai-chat-tool-card-pending {
-  border-left: 3px solid var(--wool-500);
-}
-
-.ai-chat-tool-card-running {
-  border-left: 3px solid var(--amber-500);
-}
-
-.ai-chat-tool-card-completed {
-  border-left: 3px solid var(--sage);
-}
-
-.ai-chat-tool-card-failed {
-  border-left: 3px solid var(--terra);
-}
-
-/* Thinking block */
-.ai-chat-thinking {
-  background-color: var(--pasture-700);
-  border-left: 2px solid var(--wool-500);
-  font-style: italic;
-  color: var(--wool-500);
-}
-
-/* Connect button */
-.ai-chat-connect-btn {
-  background: linear-gradient(135deg, var(--amber-600) 0%, var(--amber-500) 100%);
-  transition: transform 150ms ease-out, box-shadow 150ms ease-out;
-}
-
-.ai-chat-connect-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(212, 165, 116, 0.3);
-}
-
-.ai-chat-connect-btn:active {
-  transform: translateY(0);
-}
-
-/* Disconnect button */
-.ai-chat-disconnect-btn {
-  background-color: var(--pasture-600);
-  transition: background-color 150ms ease-out;
-}
-
-.ai-chat-disconnect-btn:hover {
-  background-color: var(--terra);
-}
-
-/* Permission modal */
-.ai-chat-permission-modal {
-  animation: modal-scale-in 200ms ease-out;
-}
-
-.ai-chat-permission-option {
-  transition: background-color 150ms ease-out, border-color 150ms ease-out;
-}
-
-.ai-chat-permission-option:hover {
-  background-color: var(--pasture-600);
-}
-
-.ai-chat-permission-allow {
-  border-color: var(--sage);
-}
-
-.ai-chat-permission-allow:hover {
-  background-color: rgba(125, 153, 112, 0.2);
-}
-
-.ai-chat-permission-deny {
-  border-color: var(--terra);
-}
-
-.ai-chat-permission-deny:hover {
-  background-color: rgba(196, 92, 74, 0.2);
-}
-
-/* AI chat floating toggle button */
-.ai-chat-fab {
-  position: fixed;
-  bottom: 3rem;
-  right: 1rem;
-  width: 3rem;
-  height: 3rem;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--amber-600) 0%, var(--amber-500) 100%);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  transition: transform 150ms ease-out, box-shadow 150ms ease-out;
-  z-index: 40;
-}
-
-.ai-chat-fab:hover {
-  transform: scale(1.1);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
-}
-
-.ai-chat-fab:active {
-  transform: scale(0.95);
-}
-
-/* Input focus glow */
-.ai-chat-input:focus {
-  box-shadow: 0 0 0 2px var(--amber-500);
-}
-
-/* Responsive adjustments */
-@media (max-width: 1000px) {
-  .ai-chat-panel {
-    width: 18rem !important;
-  }
-}
-
-@media (max-width: 850px) {
-  .ai-chat-panel {
-    position: fixed !important;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    width: 100% !important;
-    max-width: 24rem;
-    z-index: 50;
-    box-shadow: -4px 0 24px rgba(0, 0, 0, 0.4);
-  }
-
-  .ai-chat-fab {
-    bottom: 4.5rem;
-  }
 }
 
 /* Markdown Preview Styles */
@@ -1875,14 +1249,14 @@ section.flex-1.flex.flex-col {
   font-size: 0.85em;
   background: var(--pasture-700);
   padding: 0.15em 0.35em;
-  border-radius: 0.25rem;
+  border-radius: 0;
   color: var(--amber-400);
 }
 
 .markdown-preview pre {
   background: var(--pasture-800);
   padding: 1rem;
-  border-radius: 0.5rem;
+  border-radius: 0;
   overflow-x: auto;
   margin-bottom: 0.75rem;
 }
@@ -1916,7 +1290,7 @@ section.flex-1.flex.flex-col {
   min-width: 50px;
   width: 20vw;
   height: auto;
-  border-radius: 0.375rem;
+  border-radius: 0;
   margin: 0.5rem 0;
   border: 1px solid var(--pasture-600);
   display: block;
@@ -2047,101 +1421,6 @@ section.flex-1.flex.flex-col {
 }
 
 /* ============================================================================
-   Inline Messages Panel
-   ============================================================================ */
-
-.messages-panel {
-  border-left: 1px solid var(--pasture-600);
-}
-
-.inline-messages-container {
-  scrollbar-width: thin;
-  scrollbar-color: var(--pasture-600) transparent;
-}
-
-.inline-messages-container::-webkit-scrollbar {
-  width: 6px;
-}
-
-.inline-messages-container::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.inline-messages-container::-webkit-scrollbar-thumb {
-  background-color: var(--pasture-600);
-  border-radius: 3px;
-}
-
-/* ============================================================================
-   Notifications Dropdown
-   ============================================================================ */
-
-.notification-badge {
-  font-variant-numeric: tabular-nums;
-}
-
-/* Notification item hover effect */
-.notification-item:hover {
-  background-color: var(--pasture-700);
-}
-
-/* Responsive: messages panel collapses on narrow screens */
-@media (max-width: 1100px) {
-  .messages-panel {
-    width: 16rem !important;
-  }
-}
-
-@media (max-width: 900px) {
-  .messages-panel {
-    display: none !important;
-  }
-}
-
-/* ============================================================================
-   File Drop Zones for Draft Editor
-   ============================================================================ */
-
-.drop-zone {
-  transition: background-color 200ms ease-out, border-color 200ms ease-out;
-}
-
-.drop-zone-active {
-  background-color: rgba(212, 165, 116, 0.05);
-}
-
-/* Drop overlay styling */
-.drop-overlay {
-  animation: drop-overlay-in 150ms ease-out;
-}
-
-@keyframes drop-overlay-in {
-  from {
-    opacity: 0;
-    backdrop-filter: blur(0);
-  }
-  to {
-    opacity: 1;
-    backdrop-filter: blur(2px);
-  }
-}
-
-.drop-overlay-content {
-  animation: drop-content-in 200ms ease-out;
-}
-
-@keyframes drop-content-in {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-/* ============================================================================
    Breadcrumb Navigation
    ============================================================================ */
 
@@ -2185,27 +1464,17 @@ section.flex-1.flex.flex-col {
   font-weight: 500;
 }
 
-/* Navigation Rail */
-.nav-rail {
-  transition: width 200ms ease-out;
-}
-
 /* ============================================
-   Typography Utilities - Highland Craft Design
+   Typography Utilities - Alchemical Ledger Design
    ============================================ */
 
 /* Display text - for hero/page titles */
 .font-display {
-  font-family: 'ET Book', 'Palatino', Georgia, serif;
+  font-family: 'Newsreader', 'Palatino', Georgia, serif;
+  font-style: italic;
   font-weight: bold;
   font-size: 1.75rem;
   line-height: 1.2;
-}
-
-/* Oldstyle figures for prose text */
-.font-oldstyle {
-  font-family: 'ET Book Oldstyle', 'ET Book', serif;
-  font-variant-numeric: oldstyle-nums;
 }
 
 /* Semi-bold for card titles/nav (explicit utility) */
@@ -2231,36 +1500,8 @@ section.flex-1.flex.flex-col {
   transition-duration: 50ms;
 }
 
-/* Subtle hover for activity entries */
-.activity-entry-hover {
-  transition: background-color 100ms ease-out;
-}
-
-.activity-entry-hover:hover {
-  background-color: var(--pasture-700);
-}
-
 /* ============================================
-   Dispatch Bar Animation
-   ============================================ */
-
-.dispatch-bar {
-  animation: dispatch-bar-enter 200ms ease-out;
-}
-
-@keyframes dispatch-bar-enter {
-  from {
-    opacity: 0;
-    transform: translate(-50%, 8px);
-  }
-  to {
-    opacity: 1;
-    transform: translate(-50%, 0);
-  }
-}
-
-/* ============================================
-   Shepherd Chat - "The Shepherd's Hearth" Design
+   Shepherd Chat - "The Cognitive Layer" Design
    ============================================ */
 
 /* Shepherd Chat CSS Variables - adapt to theme */
@@ -2376,7 +1617,7 @@ section.flex-1.flex.flex-col {
   content: '';
   position: absolute;
   inset: -3px;
-  border-radius: 50%;
+  border-radius: 0;
   border: 2px solid transparent;
   transition: border-color 200ms ease-out, opacity 200ms ease-out;
 }
@@ -2409,16 +1650,16 @@ section.flex-1.flex.flex-col {
 .shepherd-message-user {
   background-color: rgba(var(--amber-500-rgb, 212, 165, 116), 0.08);
   border: 1px solid rgba(var(--amber-500-rgb, 212, 165, 116), 0.2);
-  border-radius: 1rem 1rem 0.25rem 1rem;
+  border-radius: 0;
   position: relative;
 }
 
 /* Shepherd message bubble */
 .shepherd-message-assistant {
   background-color: color-mix(in srgb, var(--pasture-700) 80%, transparent);
-  border-left: 2px solid rgba(var(--amber-500-rgb, 212, 165, 116), 0.3);
-  border-radius: 0.25rem 1rem 1rem 0.25rem;
-  font-family: 'ET Book', 'Palatino', Georgia, serif;
+  border-left: 2px solid rgba(var(--amber-500-rgb), 0.3);
+  border-radius: 0;
+  font-family: 'Space Grotesk', system-ui, sans-serif;
 }
 
 /* Message enter animation */
@@ -2457,7 +1698,7 @@ section.flex-1.flex.flex-col {
   width: 4px;
   height: 4px;
   background-color: var(--wool-500);
-  border-radius: 50%;
+  border-radius: 0;
   animation: shepherd-thinking-bounce 1.4s ease-in-out infinite;
 }
 
@@ -2474,7 +1715,7 @@ section.flex-1.flex.flex-col {
 .shepherd-thinking-block {
   background-color: color-mix(in srgb, var(--pasture-700) 60%, transparent);
   border-left: 2px solid rgba(var(--amber-500-rgb, 212, 165, 116), 0.25);
-  border-radius: 0.25rem;
+  border-radius: 0;
   overflow: hidden;
   transition: max-height 200ms ease-out;
 }
@@ -2493,7 +1734,7 @@ section.flex-1.flex.flex-col {
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  border-radius: 1rem;
+  border-radius: 0;
   font-size: 11px;
   font-weight: 500;
   background-color: color-mix(in srgb, var(--pasture-700) 60%, transparent);
@@ -2584,7 +1825,7 @@ section.flex-1.flex.flex-col {
   padding: 6px 12px;
   background: color-mix(in srgb, var(--pasture-700) 50%, transparent);
   border: 1px solid var(--pasture-600);
-  border-radius: 6px;
+  border-radius: 0;
   font-size: 12px;
   cursor: pointer;
   transition: all 150ms ease-out;
@@ -2605,7 +1846,7 @@ section.flex-1.flex.flex-col {
 .tool-pip {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: 0;
   transition: background-color 150ms ease-out;
 }
 
@@ -2667,7 +1908,7 @@ section.flex-1.flex.flex-col {
   padding: 4px 8px;
   font-family: var(--font-mono);
   font-size: 11px;
-  border-radius: 4px;
+  border-radius: 0;
   border: none;
   background: transparent;
   cursor: pointer;
@@ -2689,7 +1930,7 @@ section.flex-1.flex.flex-col {
   padding: 8px 12px;
   margin: 2px 0 4px 20px;
   background: color-mix(in srgb, var(--pasture-800) 80%, transparent);
-  border-radius: 4px;
+  border-radius: 0;
   border-left: 2px solid var(--pasture-500);
   animation: tool-row-details-expand 150ms ease-out;
 }
@@ -2732,7 +1973,7 @@ section.flex-1.flex.flex-col {
   font-size: 0.9em;
   background: color-mix(in srgb, var(--pasture-700) 60%, transparent);
   padding: 0.15em 0.4em;
-  border-radius: 4px;
+  border-radius: 0;
   color: var(--wool-300);
 }
 
@@ -2741,7 +1982,7 @@ section.flex-1.flex.flex-col {
   font-size: 0.85em;
   background: var(--pasture-900);
   padding: 0.75em 1em;
-  border-radius: 6px;
+  border-radius: 0;
   overflow-x: auto;
   margin: 0.75em 0;
 }
@@ -2838,8 +2079,8 @@ section.flex-1.flex.flex-col {
 .shepherd-decorative-dots span {
   width: 3px;
   height: 3px;
-  border-radius: 50%;
-  background-color: rgba(var(--amber-500-rgb, 212, 165, 116), 0.4);
+  border-radius: 0;
+  background-color: rgba(var(--amber-500-rgb), 0.4);
   animation: shepherd-dot-twinkle 3s ease-in-out infinite;
 }
 
@@ -2863,7 +2104,7 @@ section.flex-1.flex.flex-col {
 .shepherd-input-wrapper {
   background-color: color-mix(in srgb, var(--pasture-900) 80%, transparent);
   border: 1px solid var(--pasture-600);
-  border-radius: 0.75rem;
+  border-radius: 0;
   transition: border-color 150ms ease-out, box-shadow 150ms ease-out;
 }
 
@@ -2876,23 +2117,18 @@ section.flex-1.flex.flex-col {
   opacity: 0.5;
 }
 
-/* Send button with gradient and glow */
+/* Send button - mechanical switch feel */
 .shepherd-send-btn {
-  background: linear-gradient(
-    135deg,
-    var(--amber-600) 0%,
-    var(--amber-500) 100%
-  );
-  border: 1px solid rgba(var(--amber-500-rgb, 212, 165, 116), 0.5);
-  border-radius: 0.5rem;
+  background: var(--pasture-600);
+  border: 1px solid var(--wool-700);
+  border-radius: 0;
   padding: 0.5rem;
-  transition: all 150ms ease-out;
-  box-shadow: 0 2px 8px rgba(var(--amber-500-rgb, 212, 165, 116), 0.2);
+  transition: none;
 }
 
 .shepherd-send-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(var(--amber-500-rgb, 212, 165, 116), 0.3);
+  background: var(--wool-100);
+  border-color: var(--wool-100);
 }
 
 .shepherd-send-btn:active:not(:disabled) {
@@ -2901,7 +2137,6 @@ section.flex-1.flex.flex-col {
 
 .shepherd-send-btn:disabled {
   opacity: 0.3;
-  box-shadow: none;
 }
 
 /* Permission modal styling */
@@ -2911,13 +2146,9 @@ section.flex-1.flex.flex-col {
 }
 
 .shepherd-permission-modal {
-  background: linear-gradient(
-    135deg,
-    var(--pasture-800) 0%,
-    color-mix(in srgb, var(--pasture-800) 97%, var(--amber-500) 3%) 100%
-  );
+  background: var(--pasture-800);
   border: 1px solid var(--pasture-600);
-  border-radius: 1rem;
+  border-radius: 0;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   animation: shepherd-modal-enter 200ms ease-out;
   position: relative;
@@ -2932,10 +2163,8 @@ section.flex-1.flex.flex-col {
   right: 16px;
   width: 32px;
   height: 32px;
-  background-image: url('/shepherd.svg');
-  background-size: contain;
-  background-repeat: no-repeat;
-  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: transparent;
 }
 
 @keyframes shepherd-modal-enter {
@@ -2952,9 +2181,9 @@ section.flex-1.flex.flex-col {
 .shepherd-permission-option {
   background-color: var(--pasture-700);
   border: 1px solid var(--pasture-600);
-  border-radius: 0.5rem;
+  border-radius: 0;
   padding: 0.75rem 1rem;
-  transition: all 150ms ease-out;
+  transition: none;
   cursor: pointer;
   width: 100%;
   text-align: left;
@@ -2981,16 +2210,16 @@ section.flex-1.flex.flex-col {
 /* Options menu button */
 .shepherd-options-btn {
   padding: 6px;
-  border-radius: 6px;
+  border-radius: 0;
   color: var(--wool-500);
   background: transparent;
   border: none;
-  transition: all 150ms ease-out;
+  transition: none;
 }
 
 .shepherd-options-btn:hover {
-  background-color: rgba(var(--amber-500-rgb, 212, 165, 116), 0.15);
-  color: var(--wool-300);
+  background-color: var(--pasture-600);
+  color: var(--wool-100);
 }
 
 /* Focus node indicator */
@@ -2999,19 +2228,20 @@ section.flex-1.flex.flex-col {
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
-  border-radius: 1rem;
-  background-color: rgba(var(--amber-500-rgb, 212, 165, 116), 0.1);
-  border: 1px solid rgba(var(--amber-500-rgb, 212, 165, 116), 0.2);
+  border-radius: 0;
+  background-color: rgba(var(--amber-500-rgb), 0.06);
+  border: 1px solid rgba(var(--amber-500-rgb), 0.15);
   font-size: 11px;
-  color: var(--amber-400);
+  color: var(--wool-300);
 }
 
 /* Keyboard hint styling */
 .shepherd-keyboard-hints {
-  font-family: 'ET Book', serif;
+  font-family: 'Space Grotesk', system-ui, sans-serif;
   font-size: 10px;
-  font-style: italic;
-  color: var(--wool-600);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--wool-700);
 }
 
 /* Reduced motion preference */
@@ -3143,7 +2373,7 @@ section.flex-1.flex.flex-col {
   align-items: center;
   gap: 0.625rem;
   padding: 0.5rem 0.75rem;
-  border-radius: 0.5rem;
+  border-radius: 0;
   cursor: pointer;
   transition: all 150ms ease-out;
   background: var(--pasture-800);
@@ -3205,7 +2435,7 @@ section.flex-1.flex.flex-col {
 .work-node-status {
   width: 10px;
   height: 10px;
-  border-radius: 50%;
+  border-radius: 0;
   flex-shrink: 0;
 }
 
@@ -3254,7 +2484,7 @@ section.flex-1.flex.flex-col {
 }
 
 .work-node-name {
-  font-family: 'ET Book', serif;
+  font-family: 'Newsreader', serif;
   font-size: 0.8125rem;
   color: var(--wool-200);
   white-space: nowrap;
@@ -3281,7 +2511,7 @@ section.flex-1.flex.flex-col {
   align-items: center;
   gap: 0.25rem;
   padding: 0.125rem 0.375rem;
-  border-radius: 0.25rem;
+  border-radius: 0;
   font-size: 0.625rem;
   font-weight: 500;
   text-transform: uppercase;
@@ -3350,13 +2580,13 @@ section.flex-1.flex.flex-col {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: 0;
   background: var(--pasture-700);
   color: var(--wool-500);
 }
 
 .work-group-header-text {
-  font-family: 'ET Book', serif;
+  font-family: 'Newsreader', serif;
   font-size: 0.6875rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -3397,7 +2627,7 @@ section.flex-1.flex.flex-col {
 .work-status-hero {
   width: 48px;
   height: 48px;
-  border-radius: 12px;
+  border-radius: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3442,7 +2672,7 @@ section.flex-1.flex.flex-col {
   padding: 0.75rem 1rem;
   background: color-mix(in srgb, var(--pasture-700) 50%, transparent);
   border: 1px solid var(--pasture-600);
-  border-radius: 0.5rem;
+  border-radius: 0;
   transition: all 150ms ease-out;
 }
 
@@ -3459,11 +2689,11 @@ section.flex-1.flex.flex-col {
   padding: 1rem;
   background: color-mix(in srgb, var(--pasture-800) 50%, transparent);
   border: 1px solid var(--pasture-600);
-  border-radius: 0.5rem;
+  border-radius: 0;
 }
 
 .work-meta-label {
-  font-family: 'ET Book', serif;
+  font-family: 'Newsreader', serif;
   font-size: 0.75rem;
   color: var(--wool-500);
 }
@@ -3497,7 +2727,7 @@ section.flex-1.flex.flex-col {
 .work-empty-icon {
   width: 64px;
   height: 64px;
-  border-radius: 16px;
+  border-radius: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3507,7 +2737,7 @@ section.flex-1.flex.flex-col {
 }
 
 .work-empty-text {
-  font-family: 'ET Book', serif;
+  font-family: 'Newsreader', serif;
   font-style: italic;
   font-size: 0.875rem;
   color: var(--wool-500);
@@ -3517,7 +2747,7 @@ section.flex-1.flex.flex-col {
 .work-eval-hero {
   width: 80px;
   height: 80px;
-  border-radius: 50%;
+  border-radius: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3556,7 +2786,7 @@ section.flex-1.flex.flex-col {
   padding: 1rem;
   background: color-mix(in srgb, var(--pasture-700) 50%, transparent);
   border-left: 3px solid rgba(var(--sage-rgb, 125, 153, 112), 0.5);
-  border-radius: 0 0.5rem 0.5rem 0;
+  border-radius: 0;
 }
 
 /* Reduced motion */
@@ -3622,7 +2852,7 @@ section.flex-1.flex.flex-col {
     color-mix(in srgb, var(--pasture-800) 80%, transparent) 100%
   );
   border: 1px solid var(--pasture-600);
-  border-radius: 0.5rem;
+  border-radius: 0;
   cursor: pointer;
   transition: all 150ms ease-out;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
@@ -3699,7 +2929,7 @@ section.flex-1.flex.flex-col {
 .task-tree-node-status {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: 0;
   flex-shrink: 0;
   border: 1.5px solid;
 }
@@ -3747,7 +2977,7 @@ section.flex-1.flex.flex-col {
 }
 
 .task-tree-node-name {
-  font-family: 'ET Book', serif;
+  font-family: 'Newsreader', serif;
   font-size: 0.75rem;
   font-weight: 500;
   color: var(--wool-200);
@@ -3776,7 +3006,7 @@ section.flex-1.flex.flex-col {
   text-transform: uppercase;
   letter-spacing: 0.02em;
   padding: 0.125rem 0.375rem;
-  border-radius: 0.25rem;
+  border-radius: 0;
 }
 
 .task-tree-node-badge.blocked {
@@ -3903,7 +3133,7 @@ section.flex-1.flex.flex-col {
   font-size: 12px;
   color: var(--wool-300);
   padding: 6px 8px;
-  border-radius: 6px;
+  border-radius: 0;
   transition: background-color 150ms ease-out;
 }
 
@@ -3981,17 +3211,4 @@ section.flex-1.flex.flex-col {
 .status-idle,
 .status-pending {
   color: var(--wool-500);
-}
-
-/* ============================================
-   Welcome Screen Animations
-   ============================================ */
-
-@keyframes sheep-bounce {
-  0%, 100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-8px);
-  }
 }

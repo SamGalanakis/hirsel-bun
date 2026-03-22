@@ -6,9 +6,14 @@ use super::ResultExt;
 use crate::core::config;
 use crate::core::delta::DeltaState;
 use crate::core::draft::StartingPoint;
-use crate::core::project::{CreateProjectRequest, Project, ProjectStore, UpdateProjectRequest};
+use crate::core::project::{
+    validate_project_focus_view_html, CreateProjectRequest, Project, ProjectFocusView,
+    ProjectRetainedContext, ProjectStore, ProjectSurfaceSnapshot, RouteSummary,
+    UpdateProjectRequest,
+};
 use crate::core::route::{CreateRouteRepoRequest, RouteStore, UpdateRouteSettingsRequest};
 use crate::core::state::SQLiteState;
+use tauri::Emitter;
 
 /// List all projects, sorted by most recently created
 #[tracing::instrument]
@@ -24,6 +29,110 @@ pub async fn list_projects() -> Result<Vec<Project>, String> {
 pub async fn get_project(project_id: i64) -> Result<Project, String> {
     let store = ProjectStore::open().await.str_err()?;
     store.get_project(project_id).await.str_err()
+}
+
+#[tracing::instrument]
+#[tauri::command]
+pub async fn get_project_focus_view(project_id: i64) -> Result<ProjectFocusView, String> {
+    let store = ProjectStore::open().await.str_err()?;
+    store.get_project_focus_view(project_id).await.str_err()
+}
+
+#[tracing::instrument]
+#[tauri::command]
+pub async fn get_project_retained_context(
+    project_id: i64,
+) -> Result<ProjectRetainedContext, String> {
+    let store = ProjectStore::open().await.str_err()?;
+    store
+        .get_project_retained_context(project_id)
+        .await
+        .str_err()
+}
+
+#[tracing::instrument]
+#[tauri::command]
+pub async fn get_project_surface(project_id: i64) -> Result<ProjectSurfaceSnapshot, String> {
+    let store = ProjectStore::open().await.str_err()?;
+    let project = store.get_project(project_id).await.str_err()?;
+    let focus_view = store.get_project_focus_view(project_id).await.str_err()?;
+
+    let route_store = RouteStore::new(project_id).await.str_err()?;
+    let routes = route_store.list_routes().await.str_err()?;
+    let mut summaries = Vec::with_capacity(routes.len());
+
+    for route in routes {
+        let delta = DeltaState::with_route(project_id, route.id);
+        let project_run = delta.get_project_run().await.str_err()?;
+        summaries.push(RouteSummary {
+            route_id: route.id,
+            name: route.name,
+            selected: project.active_route_id == Some(route.id),
+            status: project_run
+                .as_ref()
+                .map(|run| run.status.as_str().to_string())
+                .unwrap_or_else(|| "idle".to_string()),
+            run_name: project_run.map(|run| run.run_name),
+            updated_at: route.updated_at,
+        });
+    }
+
+    Ok(ProjectSurfaceSnapshot {
+        focus_view,
+        routes: summaries,
+    })
+}
+
+#[tracing::instrument(skip(app, html))]
+#[tauri::command]
+pub async fn update_project_focus_view(
+    app: tauri::AppHandle,
+    project_id: i64,
+    html: String,
+    source: Option<String>,
+) -> Result<ProjectFocusView, String> {
+    validate_project_focus_view_html(&html)?;
+
+    let store = ProjectStore::open().await.str_err()?;
+    let view = store
+        .update_project_focus_view(project_id, &html, source.as_deref())
+        .await
+        .str_err()?;
+
+    let _ = app.emit(
+        "project-focus-view-updated",
+        serde_json::json!({
+            "projectId": project_id,
+            "updatedAt": view.updated_at,
+        }),
+    );
+
+    Ok(view)
+}
+
+#[tracing::instrument(skip(app, markdown))]
+#[tauri::command]
+pub async fn update_project_retained_context(
+    app: tauri::AppHandle,
+    project_id: i64,
+    markdown: String,
+    source: Option<String>,
+) -> Result<ProjectRetainedContext, String> {
+    let store = ProjectStore::open().await.str_err()?;
+    let context = store
+        .update_project_retained_context(project_id, &markdown, source.as_deref())
+        .await
+        .str_err()?;
+
+    let _ = app.emit(
+        "project-retained-context-updated",
+        serde_json::json!({
+            "projectId": project_id,
+            "updatedAt": context.updated_at,
+        }),
+    );
+
+    Ok(context)
 }
 
 /// Create a new project from a local folder path
@@ -156,8 +265,6 @@ pub async fn update_project(
                 worker_scale: worker_scale.clone(),
                 time_limit_minutes,
                 human_in_the_loop,
-                docs_path: None,
-                persist_docs_changes: None,
                 target_branch,
                 runner,
             },

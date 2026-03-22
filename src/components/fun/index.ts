@@ -1,1 +1,0 @@
-export { SheepClicker } from './SheepClicker';

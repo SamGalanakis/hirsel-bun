@@ -302,7 +302,7 @@ export const ProjectSetup: Component = () => {
       <div class="card w-full max-w-3xl mx-4">
         <header>
           <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-lg flex items-center justify-center bg-amber-500/15 border border-amber-500/30">
+            <div class="w-10 h-10 rounded-none flex items-center justify-center bg-amber-500/15 border border-amber-500/30">
               <svg class="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
               </svg>
@@ -319,7 +319,7 @@ export const ProjectSetup: Component = () => {
           <button
             type="button"
             aria-label="Close"
-            class="absolute top-4 right-4 p-2 rounded-lg text-wool-500 hover:text-wool-300 hover:bg-pasture-700 transition-all"
+            class="absolute top-4 right-4 p-2 rounded-none text-wool-500 hover:text-wool-300 hover:bg-pasture-700 transition-all"
             onClick={() => project.cancelProjectSetup()}
             disabled={creating()}
           >
@@ -381,7 +381,7 @@ export const ProjectSetup: Component = () => {
                 <For each={repos()}>
                   {(repo, index) => (
                     <div
-                      class="rounded-lg p-4 grid gap-4"
+                      class="rounded-none p-4 grid gap-4"
                       style={{
                         background:
                           defaultRepoId() === repo.id
